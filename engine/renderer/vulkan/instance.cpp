@@ -27,12 +27,38 @@ VulkanInstance::VulkanInstance(SDL_Window* window)
     createInfo.ppEnabledExtensionNames = extensions.data();
 
     CheckVulkan(vkCreateInstance(&createInfo, nullptr, &m_instance), "Failed to create Vulkan instance");
-    if (!SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface))
+
+    SDL_PropertiesID windowProperties = SDL_GetWindowProperties(window);
+    if (windowProperties == 0)
     {
         vkDestroyInstance(m_instance, nullptr);
         m_instance = VK_NULL_HANDLE;
-        throw std::runtime_error(std::string("SDL_Vulkan_CreateSurface failed: ") + SDL_GetError());
+        throw std::runtime_error(std::string("SDL_GetWindowProperties failed: ") + SDL_GetError());
     }
+
+#ifdef _WIN32
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(windowProperties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    HINSTANCE instanceHandle = static_cast<HINSTANCE>(
+        SDL_GetPointerProperty(windowProperties, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, GetModuleHandle(nullptr))
+    );
+    if (!hwnd || !instanceHandle)
+    {
+        vkDestroyInstance(m_instance, nullptr);
+        m_instance = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to retrieve Win32 handles from SDL window");
+    }
+
+    VkWin32SurfaceCreateInfoKHR surfaceCreateInfo{};
+    surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surfaceCreateInfo.hinstance = instanceHandle;
+    surfaceCreateInfo.hwnd = hwnd;
+
+    CheckVulkan(vkCreateWin32SurfaceKHR(m_instance, &surfaceCreateInfo, nullptr, &m_surface), "Failed to create Win32 surface");
+#else
+    vkDestroyInstance(m_instance, nullptr);
+    m_instance = VK_NULL_HANDLE;
+    throw std::runtime_error("Win32 surface creation is not implemented on this platform");
+#endif
 
     LOG_INFO("Vulkan instance created successfully");
 }
@@ -63,12 +89,12 @@ VkSurfaceKHR VulkanInstance::GetSurface() const
 
 std::vector<const char*> VulkanInstance::GetRequiredExtensions() const
 {
-    Uint32 extensionCount = 0;
-    const char* const* extensionNames = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
-    if (!extensionNames)
-    {
-        throw std::runtime_error(std::string("SDL_Vulkan_GetInstanceExtensions failed: ") + SDL_GetError());
-    }
-
-    return std::vector<const char*>(extensionNames, extensionNames + extensionCount);
+#ifdef _WIN32
+    return {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+    };
+#else
+    throw std::runtime_error("Required Vulkan instance extensions are not implemented on this platform");
+#endif
 }

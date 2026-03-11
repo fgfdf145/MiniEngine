@@ -6,12 +6,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(VULKAN_SDK "C:/VulkanSDK/1.4.341.1")
-set(Vulkan_ROOT "${VULKAN_SDK}")
+if(DEFINED ENV{VULKAN_SDK} AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")
+    set(Vulkan_ROOT "$ENV{VULKAN_SDK}")
+endif()
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/platform)

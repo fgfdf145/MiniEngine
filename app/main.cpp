@@ -11,12 +11,15 @@ int main()
 
     try
     {
-        Window window(1280, 720, "MiniEngine");
+        Window window(1920, 1080, "MiniEngine");
         VulkanRenderer renderer(window);
 
         while (!window.ShouldClose())
         {
-            window.PollEvents();
+            window.PollEvents([&renderer](const SDL_Event& event)
+            {
+                renderer.HandleEvent(event);
+            });
             renderer.DrawFrame();
         }
     }

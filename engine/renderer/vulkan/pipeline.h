@@ -5,7 +5,7 @@
 class VulkanPipeline
 {
 public:
-    VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass renderPass);
+    VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass renderPass, VkDescriptorSetLayout descriptorSetLayout);
     ~VulkanPipeline();
 
     VulkanPipeline(const VulkanPipeline&) = delete;

@@ -6,7 +6,7 @@
 
 #include <fstream>
 
-VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass renderPass)
+VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass renderPass, VkDescriptorSetLayout descriptorSetLayout)
     : m_device(device)
 {
     const std::string shaderDir = MINIENGINE_SHADER_DIR;
@@ -71,6 +71,14 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT |
@@ -85,6 +93,8 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
     CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_layout), "Failed to create pipeline layout");
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -96,6 +106,7 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.layout = m_layout;
     pipelineInfo.renderPass = renderPass;

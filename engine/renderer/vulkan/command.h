@@ -2,39 +2,37 @@
 
 #include "common.h"
 
+#include <functional>
+
 class VulkanCommandContext
 {
 public:
-    VulkanCommandContext(
-        VkDevice device,
-        const QueueFamilyIndices& queueFamilies,
-        VkRenderPass renderPass,
-        VkPipeline graphicsPipeline,
-        VkExtent2D extent,
-        VkBuffer vertexBuffer,
-        uint32_t vertexCount,
-        const std::vector<VkFramebuffer>& framebuffers
-    );
+    VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount);
     ~VulkanCommandContext();
 
     VulkanCommandContext(const VulkanCommandContext&) = delete;
     VulkanCommandContext& operator=(const VulkanCommandContext&) = delete;
 
     VkResult AcquireNextImage(VkSwapchainKHR swapchain, uint32_t& imageIndex);
+    void RecordCommandBuffer(
+        uint32_t imageIndex,
+        VkRenderPass renderPass,
+        VkFramebuffer framebuffer,
+        VkExtent2D extent,
+        VkPipeline graphicsPipeline,
+        VkPipelineLayout pipelineLayout,
+        VkBuffer vertexBuffer,
+        VkBuffer indexBuffer,
+        uint32_t indexCount,
+        VkDescriptorSet descriptorSet,
+        const std::function<void(VkCommandBuffer)>& additionalRecorder
+    );
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
 
 private:
     void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
     void AllocateCommandBuffers(size_t commandBufferCount);
-    void RecordCommandBuffers(
-        VkRenderPass renderPass,
-        VkPipeline graphicsPipeline,
-        VkExtent2D extent,
-        VkBuffer vertexBuffer,
-        uint32_t vertexCount,
-        const std::vector<VkFramebuffer>& framebuffers
-    );
     void CreateSyncObjects();
 
     VkDevice m_device = VK_NULL_HANDLE;

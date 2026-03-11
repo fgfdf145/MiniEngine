@@ -1,4 +1,5 @@
 add_library(engine_platform
+    input/input.cpp
     window/window.cpp
 )
 

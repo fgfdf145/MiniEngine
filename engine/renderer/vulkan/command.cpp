@@ -1,20 +1,12 @@
 #include "command.h"
 
-VulkanCommandContext::VulkanCommandContext(
-    VkDevice device,
-    const QueueFamilyIndices& queueFamilies,
-    VkRenderPass renderPass,
-    VkPipeline graphicsPipeline,
-    VkExtent2D extent,
-    VkBuffer vertexBuffer,
-    uint32_t vertexCount,
-    const std::vector<VkFramebuffer>& framebuffers
-)
+#include <array>
+
+VulkanCommandContext::VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount)
     : m_device(device)
 {
     CreateCommandPool(queueFamilies);
-    AllocateCommandBuffers(framebuffers.size());
-    RecordCommandBuffers(renderPass, graphicsPipeline, extent, vertexBuffer, vertexCount, framebuffers);
+    AllocateCommandBuffers(commandBufferCount);
     CreateSyncObjects();
 }
 
@@ -51,6 +43,68 @@ VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32
         VK_NULL_HANDLE,
         &imageIndex
     );
+}
+
+void VulkanCommandContext::RecordCommandBuffer(
+    uint32_t imageIndex,
+    VkRenderPass renderPass,
+    VkFramebuffer framebuffer,
+    VkExtent2D extent,
+    VkPipeline graphicsPipeline,
+    VkPipelineLayout pipelineLayout,
+    VkBuffer vertexBuffer,
+    VkBuffer indexBuffer,
+    uint32_t indexCount,
+    VkDescriptorSet descriptorSet,
+    const std::function<void(VkCommandBuffer)>& additionalRecorder
+)
+{
+    CheckVulkan(vkResetCommandBuffer(m_commandBuffers[imageIndex], 0), "Failed to reset command buffer");
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    CheckVulkan(vkBeginCommandBuffer(m_commandBuffers[imageIndex], &beginInfo), "Failed to begin command buffer");
+
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = { { 0.08f, 0.1f, 0.16f, 1.0f } };
+    clearValues[1].depthStencil = { 1.0f, 0 };
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = framebuffer;
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = extent;
+    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassInfo.pClearValues = clearValues.data();
+
+    vkCmdBeginRenderPass(m_commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(m_commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    const VkBuffer vertexBuffers[] = { vertexBuffer };
+    const VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(m_commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(m_commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindDescriptorSets(
+        m_commandBuffers[imageIndex],
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        pipelineLayout,
+        0,
+        1,
+        &descriptorSet,
+        0,
+        nullptr
+    );
+    vkCmdDrawIndexed(m_commandBuffers[imageIndex], indexCount, 1, 0, 0, 0);
+
+    if (additionalRecorder)
+    {
+        additionalRecorder(m_commandBuffers[imageIndex]);
+    }
+
+    vkCmdEndRenderPass(m_commandBuffers[imageIndex]);
+
+    CheckVulkan(vkEndCommandBuffer(m_commandBuffers[imageIndex]), "Failed to end command buffer");
 }
 
 void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
@@ -91,6 +145,7 @@ void VulkanCommandContext::CreateCommandPool(const QueueFamilyIndices& queueFami
 {
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = queueFamilies.graphicsFamily.value();
 
     CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool), "Failed to create command pool");
@@ -107,46 +162,6 @@ void VulkanCommandContext::AllocateCommandBuffers(size_t commandBufferCount)
     allocateInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
 
     CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, m_commandBuffers.data()), "Failed to allocate command buffers");
-}
-
-void VulkanCommandContext::RecordCommandBuffers(
-    VkRenderPass renderPass,
-    VkPipeline graphicsPipeline,
-    VkExtent2D extent,
-    VkBuffer vertexBuffer,
-    uint32_t vertexCount,
-    const std::vector<VkFramebuffer>& framebuffers
-)
-{
-    for (size_t i = 0; i < m_commandBuffers.size(); ++i)
-    {
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        CheckVulkan(vkBeginCommandBuffer(m_commandBuffers[i], &beginInfo), "Failed to begin command buffer");
-
-        VkClearValue clearColor{};
-        clearColor.color = { { 0.08f, 0.1f, 0.16f, 1.0f } };
-
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = framebuffers[i];
-        renderPassInfo.renderArea.offset = { 0, 0 };
-        renderPassInfo.renderArea.extent = extent;
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
-
-        vkCmdBeginRenderPass(m_commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(m_commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-        const VkBuffer vertexBuffers[] = { vertexBuffer };
-        const VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(m_commandBuffers[i], 0, 1, vertexBuffers, offsets);
-        vkCmdDraw(m_commandBuffers[i], vertexCount, 1, 0, 0);
-        vkCmdEndRenderPass(m_commandBuffers[i]);
-
-        CheckVulkan(vkEndCommandBuffer(m_commandBuffers[i]), "Failed to end command buffer");
-    }
 }
 
 void VulkanCommandContext::CreateSyncObjects()

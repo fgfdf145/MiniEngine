@@ -2,28 +2,26 @@
 
 #include <log/log.h>
 
+#include <stdexcept>
+
 Window::Window(int width, int height, const char* title)
 {
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
-        LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
-        m_running = false;
-        return;
+        throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
 
     m_window = SDL_CreateWindow(
         title,
         width,
         height,
-        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE
+        SDL_WINDOW_RESIZABLE
     );
 
     if (!m_window)
     {
-        LOG_ERROR("SDL_CreateWindow failed: {}", SDL_GetError());
-        m_running = false;
         SDL_Quit();
-        return;
+        throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
     }
 
     LOG_INFO("SDL window created: {}x{}", width, height);
@@ -44,12 +42,17 @@ bool Window::ShouldClose() const
     return !m_running;
 }
 
-void Window::PollEvents()
+void Window::PollEvents(const std::function<void(const SDL_Event&)>& eventHandler)
 {
     SDL_Event event;
 
     while (SDL_PollEvent(&event))
     {
+        if (eventHandler)
+        {
+            eventHandler(event);
+        }
+
         if (event.type == SDL_EVENT_QUIT)
         {
             m_running = false;

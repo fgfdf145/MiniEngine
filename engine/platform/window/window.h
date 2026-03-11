@@ -1,6 +1,8 @@
 #pragma once
 #include <SDL3/SDL.h>
 
+#include <functional>
+
 class Window
 {
 public:
@@ -8,7 +10,7 @@ public:
     ~Window();
 
     bool ShouldClose() const;
-    void PollEvents();
+    void PollEvents(const std::function<void(const SDL_Event&)>& eventHandler = {});
 
     SDL_Window* GetSDLWindow() const;
 
