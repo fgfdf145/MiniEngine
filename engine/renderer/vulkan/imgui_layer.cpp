@@ -3,6 +3,7 @@
 #include "../imgui/imgui_impl_sdl3.h"
 #include "../imgui/imgui_impl_vulkan.h"
 
+#include <file_dialog/file_dialog.h>
 #include <imgui.h>
 
 namespace
@@ -75,6 +76,27 @@ void VulkanImGuiLayer::DrawCameraControls(Camera& camera)
     ImGui::SliderFloat("Near", &camera.nearPlane, 0.01f, 5.0f);
     ImGui::SliderFloat("Far", &camera.farPlane, 1.0f, 200.0f);
     ImGui::End();
+}
+
+std::optional<std::string> VulkanImGuiLayer::DrawModelControls(const std::string& currentModelPath, const std::string& lastLoadError)
+{
+    std::optional<std::string> selectedPath;
+
+    ImGui::Begin("Assets");
+    if (ImGui::Button("Load Model"))
+    {
+        selectedPath = OpenModelFileDialog();
+    }
+
+    ImGui::Separator();
+    ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "Default Cube" : currentModelPath.c_str());
+    if (!lastLoadError.empty())
+    {
+        ImGui::TextWrapped("Last Error: %s", lastLoadError.c_str());
+    }
+    ImGui::End();
+
+    return selectedPath;
 }
 
 ImDrawData* VulkanImGuiLayer::GetDrawData() const

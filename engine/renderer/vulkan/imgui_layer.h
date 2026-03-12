@@ -5,6 +5,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <optional>
+#include <string>
+
 struct ImDrawData;
 
 class VulkanImGuiLayer
@@ -26,6 +29,7 @@ public:
     void ProcessEvent(const SDL_Event& event);
     void BeginFrame();
     void DrawCameraControls(Camera& camera);
+    std::optional<std::string> DrawModelControls(const std::string& currentModelPath, const std::string& lastLoadError);
     ImDrawData* GetDrawData() const;
     bool WantsKeyboardCapture() const;
     bool WantsMouseCapture() const;

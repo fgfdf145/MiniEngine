@@ -7,22 +7,25 @@ VulkanCommandContext::VulkanCommandContext(VkDevice device, const QueueFamilyInd
 {
     CreateCommandPool(queueFamilies);
     AllocateCommandBuffers(commandBufferCount);
-    CreateSyncObjects();
+    CreateSyncObjects(commandBufferCount);
 }
 
 VulkanCommandContext::~VulkanCommandContext()
 {
-    if (m_inFlightFence != VK_NULL_HANDLE)
+    for (const VulkanFrameSyncObjects& frameSyncObjects : m_frameSyncObjects)
     {
-        vkDestroyFence(m_device, m_inFlightFence, nullptr);
-    }
-    if (m_renderFinishedSemaphore != VK_NULL_HANDLE)
-    {
-        vkDestroySemaphore(m_device, m_renderFinishedSemaphore, nullptr);
-    }
-    if (m_imageAvailableSemaphore != VK_NULL_HANDLE)
-    {
-        vkDestroySemaphore(m_device, m_imageAvailableSemaphore, nullptr);
+        if (frameSyncObjects.inFlightFence != VK_NULL_HANDLE)
+        {
+            vkDestroyFence(m_device, frameSyncObjects.inFlightFence, nullptr);
+        }
+        if (frameSyncObjects.renderFinishedSemaphore != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(m_device, frameSyncObjects.renderFinishedSemaphore, nullptr);
+        }
+        if (frameSyncObjects.imageAvailableSemaphore != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(m_device, frameSyncObjects.imageAvailableSemaphore, nullptr);
+        }
     }
     if (m_commandPool != VK_NULL_HANDLE)
     {
@@ -32,17 +35,33 @@ VulkanCommandContext::~VulkanCommandContext()
 
 VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32_t& imageIndex)
 {
-    CheckVulkan(vkWaitForFences(m_device, 1, &m_inFlightFence, VK_TRUE, UINT64_MAX), "Failed waiting for in-flight fence");
-    CheckVulkan(vkResetFences(m_device, 1, &m_inFlightFence), "Failed resetting in-flight fence");
+    VulkanFrameSyncObjects& currentFrameSyncObjects = m_frameSyncObjects[m_currentFrame];
+    CheckVulkan(
+        vkWaitForFences(m_device, 1, &currentFrameSyncObjects.inFlightFence, VK_TRUE, UINT64_MAX),
+        "Failed waiting for in-flight fence"
+    );
 
-    return vkAcquireNextImageKHR(
+    const VkResult acquireResult = vkAcquireNextImageKHR(
         m_device,
         swapchain,
         UINT64_MAX,
-        m_imageAvailableSemaphore,
+        currentFrameSyncObjects.imageAvailableSemaphore,
         VK_NULL_HANDLE,
         &imageIndex
     );
+
+    if ((acquireResult == VK_SUCCESS || acquireResult == VK_SUBOPTIMAL_KHR) &&
+        m_imagesInFlight[imageIndex] != VK_NULL_HANDLE)
+    {
+        CheckVulkan(vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX), "Failed waiting for image fence");
+    }
+
+    if (acquireResult == VK_SUCCESS || acquireResult == VK_SUBOPTIMAL_KHR)
+    {
+        m_imagesInFlight[imageIndex] = currentFrameSyncObjects.inFlightFence;
+    }
+
+    return acquireResult;
 }
 
 void VulkanCommandContext::RecordCommandBuffer(
@@ -52,10 +71,7 @@ void VulkanCommandContext::RecordCommandBuffer(
     VkExtent2D extent,
     VkPipeline graphicsPipeline,
     VkPipelineLayout pipelineLayout,
-    VkBuffer vertexBuffer,
-    VkBuffer indexBuffer,
-    uint32_t indexCount,
-    VkDescriptorSet descriptorSet,
+    const std::vector<VulkanDrawItem>& drawItems,
     const std::function<void(VkCommandBuffer)>& additionalRecorder
 )
 {
@@ -81,21 +97,32 @@ void VulkanCommandContext::RecordCommandBuffer(
     vkCmdBeginRenderPass(m_commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(m_commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    const VkBuffer vertexBuffers[] = { vertexBuffer };
-    const VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(m_commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
-    vkCmdBindIndexBuffer(m_commandBuffers[imageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdBindDescriptorSets(
-        m_commandBuffers[imageIndex],
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        pipelineLayout,
-        0,
-        1,
-        &descriptorSet,
-        0,
-        nullptr
-    );
-    vkCmdDrawIndexed(m_commandBuffers[imageIndex], indexCount, 1, 0, 0, 0);
+    for (const VulkanDrawItem& drawItem : drawItems)
+    {
+        const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };
+        const VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(m_commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(m_commandBuffers[imageIndex], drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindDescriptorSets(
+            m_commandBuffers[imageIndex],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipelineLayout,
+            0,
+            1,
+            &drawItem.descriptorSet,
+            0,
+            nullptr
+        );
+        vkCmdPushConstants(
+            m_commandBuffers[imageIndex],
+            pipelineLayout,
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(MaterialPushConstants),
+            &drawItem.material
+        );
+        vkCmdDrawIndexed(m_commandBuffers[imageIndex], drawItem.indexCount, 1, 0, 0, 0);
+    }
 
     if (additionalRecorder)
     {
@@ -109,9 +136,12 @@ void VulkanCommandContext::RecordCommandBuffer(
 
 void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
 {
-    const VkSemaphore waitSemaphores[] = { m_imageAvailableSemaphore };
+    VulkanFrameSyncObjects& currentFrameSyncObjects = m_frameSyncObjects[m_currentFrame];
+    CheckVulkan(vkResetFences(m_device, 1, &currentFrameSyncObjects.inFlightFence), "Failed resetting in-flight fence");
+
+    const VkSemaphore waitSemaphores[] = { currentFrameSyncObjects.imageAvailableSemaphore };
     const VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    const VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphore };
+    const VkSemaphore signalSemaphores[] = { currentFrameSyncObjects.renderFinishedSemaphore };
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -123,12 +153,15 @@ void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    CheckVulkan(vkQueueSubmit(graphicsQueue, 1, &submitInfo, m_inFlightFence), "Failed to submit draw command buffer");
+    CheckVulkan(
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, currentFrameSyncObjects.inFlightFence),
+        "Failed to submit draw command buffer"
+    );
 }
 
 VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex)
 {
-    const VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphore };
+    const VkSemaphore signalSemaphores[] = { m_frameSyncObjects[m_currentFrame].renderFinishedSemaphore };
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -138,7 +171,9 @@ VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swap
     presentInfo.pSwapchains = &swapchain;
     presentInfo.pImageIndices = &imageIndex;
 
-    return vkQueuePresentKHR(presentQueue, &presentInfo);
+    const VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+    m_currentFrame = (m_currentFrame + 1) % static_cast<uint32_t>(m_frameSyncObjects.size());
+    return presentResult;
 }
 
 void VulkanCommandContext::CreateCommandPool(const QueueFamilyIndices& queueFamilies)
@@ -164,7 +199,7 @@ void VulkanCommandContext::AllocateCommandBuffers(size_t commandBufferCount)
     CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, m_commandBuffers.data()), "Failed to allocate command buffers");
 }
 
-void VulkanCommandContext::CreateSyncObjects()
+void VulkanCommandContext::CreateSyncObjects(size_t swapchainImageCount)
 {
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -173,7 +208,22 @@ void VulkanCommandContext::CreateSyncObjects()
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    CheckVulkan(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphore), "Failed to create image available semaphore");
-    CheckVulkan(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphore), "Failed to create render finished semaphore");
-    CheckVulkan(vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFence), "Failed to create in-flight fence");
+    m_frameSyncObjects.resize(kMaxFramesInFlight);
+    for (VulkanFrameSyncObjects& frameSyncObjects : m_frameSyncObjects)
+    {
+        CheckVulkan(
+            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &frameSyncObjects.imageAvailableSemaphore),
+            "Failed to create image available semaphore"
+        );
+        CheckVulkan(
+            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &frameSyncObjects.renderFinishedSemaphore),
+            "Failed to create render finished semaphore"
+        );
+        CheckVulkan(
+            vkCreateFence(m_device, &fenceInfo, nullptr, &frameSyncObjects.inFlightFence),
+            "Failed to create in-flight fence"
+        );
+    }
+
+    m_imagesInFlight.assign(swapchainImageCount, VK_NULL_HANDLE);
 }

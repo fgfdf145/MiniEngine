@@ -1,11 +1,25 @@
 #include "uniform_buffer.h"
 
+#include <array>
 #include <cstring>
+#include <glm/geometric.hpp>
 
-VulkanUniformBuffer::VulkanUniformBuffer(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t imageCount)
+VulkanUniformBuffer::VulkanUniformBuffer(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
+    uint32_t imageCount,
+    const std::vector<MaterialTextureBinding>& materialBindings
+)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_materialBindings(materialBindings),
+      m_imageCount(imageCount)
 {
+    if (m_materialBindings.empty())
+    {
+        throw std::runtime_error("Uniform buffer requires at least one material binding");
+    }
+
     CreateDescriptorSetLayout();
     CreateBuffers(imageCount);
     CreateDescriptorPool(imageCount);
@@ -46,9 +60,20 @@ VkDescriptorSetLayout VulkanUniformBuffer::GetDescriptorSetLayout() const
     return m_descriptorSetLayout;
 }
 
-VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex) const
+VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const
 {
-    return m_descriptorSets[imageIndex];
+    if (imageIndex >= m_imageCount)
+    {
+        throw std::runtime_error("Descriptor set image index is out of range");
+    }
+    if (materialIndex >= m_materialBindings.size())
+    {
+        throw std::runtime_error("Descriptor set material index is out of range");
+    }
+
+    const size_t descriptorIndex =
+        static_cast<size_t>(imageIndex) * m_materialBindings.size() + materialIndex;
+    return m_descriptorSets[descriptorIndex];
 }
 
 void VulkanUniformBuffer::Update(uint32_t imageIndex, const Camera& camera, VkExtent2D extent)
@@ -57,21 +82,37 @@ void VulkanUniformBuffer::Update(uint32_t imageIndex, const Camera& camera, VkEx
     data.model = camera.GetModelMatrix();
     data.view = camera.GetViewMatrix();
     data.proj = camera.GetProjectionMatrix(extent);
+    data.cameraWorldPosition = glm::vec4(camera.position, 1.0f);
+
+    const glm::vec3 lightDirection = glm::normalize(glm::vec3(-0.6f, -1.0f, -0.35f));
+    data.lightDirectionAndIntensity = glm::vec4(lightDirection, 2.25f);
+    data.lightColorAndAmbient = glm::vec4(1.0f, 0.98f, 0.95f, 0.2f);
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }
 
 void VulkanUniformBuffer::CreateDescriptorSetLayout()
 {
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutBinding uniformBinding{};
+    uniformBinding.binding = 0;
+    uniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uniformBinding.descriptorCount = 1;
+    uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
+    bindings[0] = uniformBinding;
+
+    for (uint32_t bindingIndex = 1; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
+    {
+        bindings[bindingIndex].binding = bindingIndex;
+        bindings[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[bindingIndex].descriptorCount = 1;
+        bindings[bindingIndex].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
 
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout), "Failed to create uniform descriptor set layout");
 }
@@ -109,29 +150,32 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = imageCount;
+    const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorSetCount },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 6 }
+    }};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = imageCount;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = descriptorSetCount;
 
     CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create uniform descriptor pool");
 }
 
 void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
 {
-    std::vector<VkDescriptorSetLayout> layouts(imageCount, m_descriptorSetLayout);
+    const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
+    std::vector<VkDescriptorSetLayout> layouts(descriptorSetCount, m_descriptorSetLayout);
     VkDescriptorSetAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocateInfo.descriptorPool = m_descriptorPool;
-    allocateInfo.descriptorSetCount = imageCount;
+    allocateInfo.descriptorSetCount = descriptorSetCount;
     allocateInfo.pSetLayouts = layouts.data();
 
-    m_descriptorSets.resize(imageCount);
+    m_descriptorSets.resize(descriptorSetCount);
     CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate uniform descriptor sets");
 
     for (uint32_t i = 0; i < imageCount; ++i)
@@ -141,15 +185,50 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(CameraUniformData);
 
-        VkWriteDescriptorSet descriptorWrite{};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = m_descriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pBufferInfo = &bufferInfo;
+        for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
+        {
+            const MaterialTextureBinding& materialBinding = m_materialBindings[materialIndex];
 
-        vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+            const size_t descriptorIndex =
+                static_cast<size_t>(i) * m_materialBindings.size() + materialIndex;
+
+            const std::array<TextureDescriptorBinding, 6> textureBindings = {
+                materialBinding.baseColor,
+                materialBinding.normal,
+                materialBinding.metallic,
+                materialBinding.roughness,
+                materialBinding.occlusion,
+                materialBinding.emissive
+            };
+
+            std::array<VkDescriptorImageInfo, 6> imageInfos{};
+            for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)
+            {
+                imageInfos[textureBindingIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfos[textureBindingIndex].imageView = textureBindings[textureBindingIndex].imageView;
+                imageInfos[textureBindingIndex].sampler = textureBindings[textureBindingIndex].sampler;
+            }
+
+            std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = m_descriptorSets[descriptorIndex];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+            for (uint32_t bindingIndex = 1; bindingIndex < static_cast<uint32_t>(descriptorWrites.size()); ++bindingIndex)
+            {
+                descriptorWrites[bindingIndex].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[bindingIndex].dstSet = m_descriptorSets[descriptorIndex];
+                descriptorWrites[bindingIndex].dstBinding = bindingIndex;
+                descriptorWrites[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[bindingIndex].descriptorCount = 1;
+                descriptorWrites[bindingIndex].pImageInfo = &imageInfos[bindingIndex - 1];
+            }
+
+            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        }
     }
 }
 

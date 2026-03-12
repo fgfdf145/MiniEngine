@@ -3,16 +3,71 @@
 #include <window/window.h>
 
 #include <exception>
+#include <optional>
+#include <string>
+#include <string_view>
 
-int main()
+namespace
+{
+struct AppOptions
+{
+    std::optional<std::string> startupModelPath;
+    uint32_t maxFrames = 0;
+};
+
+AppOptions ParseArgs(int argc, char** argv)
+{
+    AppOptions options{};
+
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string_view argument = argv[i];
+        if (argument == "--model")
+        {
+            if (i + 1 >= argc)
+            {
+                throw std::runtime_error("--model requires a file path");
+            }
+
+            options.startupModelPath = argv[++i];
+            continue;
+        }
+
+        if (argument == "--frames")
+        {
+            if (i + 1 >= argc)
+            {
+                throw std::runtime_error("--frames requires a positive integer");
+            }
+
+            const int parsedFrameCount = std::stoi(argv[++i]);
+            if (parsedFrameCount <= 0)
+            {
+                throw std::runtime_error("--frames requires a positive integer");
+            }
+
+            options.maxFrames = static_cast<uint32_t>(parsedFrameCount);
+            continue;
+        }
+
+        throw std::runtime_error("Unknown argument: " + std::string(argument));
+    }
+
+    return options;
+}
+}
+
+int main(int argc, char** argv)
 {
     Log::Init();
     LOG_INFO("MiniEngine starting");
 
     try
     {
+        const AppOptions options = ParseArgs(argc, argv);
         Window window(1920, 1080, "MiniEngine");
-        VulkanRenderer renderer(window);
+        VulkanRenderer renderer(window, options.startupModelPath);
+        uint32_t renderedFrameCount = 0;
 
         while (!window.ShouldClose())
         {
@@ -21,6 +76,15 @@ int main()
                 renderer.HandleEvent(event);
             });
             renderer.DrawFrame();
+
+            if (options.maxFrames > 0)
+            {
+                ++renderedFrameCount;
+                if (renderedFrameCount >= options.maxFrames)
+                {
+                    break;
+                }
+            }
         }
     }
     catch (const std::exception& error)

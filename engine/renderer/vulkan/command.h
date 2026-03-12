@@ -4,6 +4,22 @@
 
 #include <functional>
 
+struct VulkanDrawItem
+{
+    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    uint32_t indexCount = 0;
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    MaterialPushConstants material;
+};
+
+struct VulkanFrameSyncObjects
+{
+    VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
+    VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
+    VkFence inFlightFence = VK_NULL_HANDLE;
+};
+
 class VulkanCommandContext
 {
 public:
@@ -21,10 +37,7 @@ public:
         VkExtent2D extent,
         VkPipeline graphicsPipeline,
         VkPipelineLayout pipelineLayout,
-        VkBuffer vertexBuffer,
-        VkBuffer indexBuffer,
-        uint32_t indexCount,
-        VkDescriptorSet descriptorSet,
+        const std::vector<VulkanDrawItem>& drawItems,
         const std::function<void(VkCommandBuffer)>& additionalRecorder
     );
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
@@ -33,12 +46,14 @@ public:
 private:
     void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
     void AllocateCommandBuffers(size_t commandBufferCount);
-    void CreateSyncObjects();
+    void CreateSyncObjects(size_t swapchainImageCount);
 
     VkDevice m_device = VK_NULL_HANDLE;
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;
-    VkSemaphore m_imageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore m_renderFinishedSemaphore = VK_NULL_HANDLE;
-    VkFence m_inFlightFence = VK_NULL_HANDLE;
+    std::vector<VulkanFrameSyncObjects> m_frameSyncObjects;
+    std::vector<VkFence> m_imagesInFlight;
+    uint32_t m_currentFrame = 0;
+
+    static constexpr size_t kMaxFramesInFlight = 2;
 };

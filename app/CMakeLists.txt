@@ -8,3 +8,10 @@ PRIVATE
     engine_platform
     engine_renderer
 )
+
+add_custom_command(TARGET miniengine_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_RUNTIME_DLLS:miniengine_app>
+        $<TARGET_FILE_DIR:miniengine_app>
+    COMMAND_EXPAND_LISTS
+)

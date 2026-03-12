@@ -14,6 +14,7 @@ public:
     void MoveForward(float amount);
     void MoveRight(float amount);
     void Rotate(float deltaYaw, float deltaPitch);
+    void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
 
     glm::vec3 position = { 0.0f, 0.0f, 4.0f };
     glm::vec3 worldUp = { 0.0f, 1.0f, 0.0f };

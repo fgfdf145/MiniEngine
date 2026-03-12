@@ -1,16 +1,19 @@
 add_library(engine_renderer
     imgui/imgui_impl_sdl3.cpp
     imgui/imgui_impl_vulkan.cpp
+    vulkan/fbx_model_loader.cpp
     vulkan/buffer.cpp
     vulkan/camera.cpp
     vulkan/command.cpp
     vulkan/device.cpp
     vulkan/imgui_layer.cpp
     vulkan/instance.cpp
+    vulkan/model_loader.cpp
     vulkan/pipeline.cpp
     vulkan/render_pass.cpp
     vulkan/renderer.cpp
     vulkan/swapchain.cpp
+    vulkan/texture.cpp
     vulkan/texture_loader.cpp
     vulkan/uniform_buffer.cpp
 )
@@ -52,6 +55,8 @@ PRIVATE
 
 target_compile_definitions(engine_renderer
 PRIVATE
+    MINIENGINE_HAS_FBX_SDK=$<BOOL:${MINIENGINE_HAS_FBX_SDK}>
+    MINIENGINE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     MINIENGINE_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
 )
 
@@ -63,6 +68,11 @@ PUBLIC
     Vulkan::Vulkan
     glm::glm
     imgui::imgui
+    assimp::assimp
 )
+
+if(TARGET FbxSdk::sdk)
+    target_link_libraries(engine_renderer PRIVATE FbxSdk::sdk)
+endif()
 
 add_dependencies(engine_renderer engine_renderer_shaders)

@@ -7,25 +7,50 @@
 
 namespace
 {
-const std::array<Vertex, 8> kTriangleVertices = {{
-    {{ -0.75f, -0.75f, -0.75f }, { 1.0f, 0.2f, 0.2f }},
-    {{ 0.75f, -0.75f, -0.75f }, { 0.2f, 1.0f, 0.2f }},
-    {{ 0.75f, 0.75f, -0.75f }, { 0.2f, 0.2f, 1.0f }},
-    {{ -0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 0.2f }},
-    {{ -0.75f, -0.75f, 0.75f }, { 1.0f, 0.2f, 1.0f }},
-    {{ 0.75f, -0.75f, 0.75f }, { 0.2f, 1.0f, 1.0f }},
-    {{ 0.75f, 0.75f, 0.75f }, { 0.9f, 0.9f, 0.9f }},
-    {{ -0.75f, 0.75f, 0.75f }, { 0.3f, 0.3f, 0.3f }}
-}};
+MeshData CreateDefaultCubeMeshData()
+{
+    MeshData meshData{};
+    meshData.vertices = {
+        { { -0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { -0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
 
-const std::array<uint16_t, 36> kTriangleIndices = {{
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4,
-    0, 4, 7, 7, 3, 0,
-    1, 5, 6, 6, 2, 1,
-    3, 2, 6, 6, 7, 3,
-    0, 1, 5, 5, 4, 0
-}};
+        { { 0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
+        { { -0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
+        { { -0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
+
+        { { -0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+        { { -0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+        { { -0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+        { { -0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
+
+        { { 0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
+        { { 0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
+        { { 0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
+        { { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
+
+        { { -0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, 0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { -0.75f, 0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+
+        { { -0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, -0.75f, -0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { 0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { { -0.75f, -0.75f, 0.75f }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } }
+    };
+    meshData.indices = {
+        0, 1, 2, 2, 3, 0,
+        4, 5, 6, 6, 7, 4,
+        8, 9, 10, 10, 11, 8,
+        12, 13, 14, 14, 15, 12,
+        16, 17, 18, 18, 19, 16,
+        20, 21, 22, 22, 23, 20
+    };
+    return meshData;
+}
 }
 
 VkVertexInputBindingDescription Vertex::GetBindingDescription()
@@ -37,9 +62,9 @@ VkVertexInputBindingDescription Vertex::GetBindingDescription()
     return bindingDescription;
 }
 
-std::array<VkVertexInputAttributeDescription, 2> Vertex::GetAttributeDescriptions()
+std::array<VkVertexInputAttributeDescription, 5> Vertex::GetAttributeDescriptions()
 {
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
 
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
@@ -50,6 +75,21 @@ std::array<VkVertexInputAttributeDescription, 2> Vertex::GetAttributeDescription
     attributeDescriptions[1].location = 1;
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[1].offset = static_cast<uint32_t>(offsetof(Vertex, color));
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = static_cast<uint32_t>(offsetof(Vertex, texCoord));
+
+    attributeDescriptions[3].binding = 0;
+    attributeDescriptions[3].location = 3;
+    attributeDescriptions[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[3].offset = static_cast<uint32_t>(offsetof(Vertex, normal));
+
+    attributeDescriptions[4].binding = 0;
+    attributeDescriptions[4].location = 4;
+    attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributeDescriptions[4].offset = static_cast<uint32_t>(offsetof(Vertex, tangent));
 
     return attributeDescriptions;
 }
@@ -64,6 +104,28 @@ VulkanBuffer::VulkanBuffer(
       m_device(device),
       m_graphicsQueueFamily(graphicsQueueFamily),
       m_graphicsQueue(graphicsQueue)
+{
+    const MeshData defaultMesh = CreateDefaultCubeMesh();
+    m_vertices = defaultMesh.vertices;
+    m_indices = defaultMesh.indices;
+    UploadVertices();
+    UploadIndices();
+    LOG_INFO("Vertex buffer created successfully");
+}
+
+VulkanBuffer::VulkanBuffer(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
+    uint32_t graphicsQueueFamily,
+    VkQueue graphicsQueue,
+    const MeshData& meshData
+)
+    : m_physicalDevice(physicalDevice),
+      m_device(device),
+      m_graphicsQueueFamily(graphicsQueueFamily),
+      m_graphicsQueue(graphicsQueue),
+      m_vertices(meshData.vertices),
+      m_indices(meshData.indices)
 {
     UploadVertices();
     UploadIndices();
@@ -102,12 +164,12 @@ VkBuffer VulkanBuffer::GetIndexHandle() const
 
 uint32_t VulkanBuffer::GetVertexCount() const
 {
-    return static_cast<uint32_t>(kTriangleVertices.size());
+    return static_cast<uint32_t>(m_vertices.size());
 }
 
 uint32_t VulkanBuffer::GetIndexCount() const
 {
-    return static_cast<uint32_t>(kTriangleIndices.size());
+    return static_cast<uint32_t>(m_indices.size());
 }
 
 void VulkanBuffer::CreateBuffer(
@@ -198,7 +260,7 @@ uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
 
 void VulkanBuffer::UploadVertices()
 {
-    const VkDeviceSize bufferSize = sizeof(kTriangleVertices);
+    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(Vertex) * m_vertices.size());
 
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -212,7 +274,7 @@ void VulkanBuffer::UploadVertices()
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map staging buffer memory");
-    std::memcpy(data, kTriangleVertices.data(), static_cast<size_t>(bufferSize));
+    std::memcpy(data, m_vertices.data(), static_cast<size_t>(bufferSize));
     vkUnmapMemory(m_device, stagingMemory);
 
     CreateBuffer(
@@ -231,7 +293,7 @@ void VulkanBuffer::UploadVertices()
 
 void VulkanBuffer::UploadIndices()
 {
-    const VkDeviceSize bufferSize = sizeof(kTriangleIndices);
+    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(uint32_t) * m_indices.size());
 
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -245,7 +307,7 @@ void VulkanBuffer::UploadIndices()
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map index staging buffer memory");
-    std::memcpy(data, kTriangleIndices.data(), static_cast<size_t>(bufferSize));
+    std::memcpy(data, m_indices.data(), static_cast<size_t>(bufferSize));
     vkUnmapMemory(m_device, stagingMemory);
 
     CreateBuffer(
@@ -260,4 +322,9 @@ void VulkanBuffer::UploadIndices()
 
     vkFreeMemory(m_device, stagingMemory, nullptr);
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+}
+
+MeshData VulkanBuffer::CreateDefaultCubeMesh()
+{
+    return CreateDefaultCubeMeshData();
 }

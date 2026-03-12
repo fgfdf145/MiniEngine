@@ -33,6 +33,13 @@ struct SwapchainSupportDetails
     std::vector<VkPresentModeKHR> presentModes;
 };
 
+struct alignas(16) MaterialPushConstants
+{
+    float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float emissiveFactor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    float surfaceFactors[4] = { 0.0f, 1.0f, 1.0f, 1.0f };
+};
+
 inline void CheckVulkan(VkResult result, const char* message)
 {
     if (result != VK_SUCCESS)

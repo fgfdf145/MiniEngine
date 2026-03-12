@@ -1,4 +1,5 @@
 add_library(engine_platform
+    file_dialog/file_dialog.cpp
     input/input.cpp
     window/window.cpp
 )

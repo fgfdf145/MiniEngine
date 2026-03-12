@@ -4,6 +4,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 glm::mat4 Camera::GetModelMatrix() const
@@ -56,4 +57,22 @@ void Camera::Rotate(float deltaYaw, float deltaPitch)
     yawDegrees += deltaYaw;
     pitchDegrees += deltaPitch;
     pitchDegrees = glm::clamp(pitchDegrees, -89.0f, 89.0f);
+}
+
+void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
+{
+    const glm::vec3 center = (minBounds + maxBounds) * 0.5f;
+    const glm::vec3 extent = maxBounds - minBounds;
+    const float radius = std::max(glm::length(extent) * 0.5f, 0.5f);
+    const float halfFovRadians = glm::radians(fovDegrees) * 0.5f;
+    const float distance = radius / std::tan(std::max(halfFovRadians, 0.2f));
+
+    position = center + glm::vec3(0.0f, radius * 0.35f, distance * 1.35f);
+
+    const glm::vec3 forward = glm::normalize(center - position);
+    yawDegrees = glm::degrees(std::atan2(forward.z, forward.x));
+    pitchDegrees = glm::degrees(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)));
+
+    nearPlane = std::max(0.01f, radius * 0.01f);
+    farPlane = std::max(100.0f, distance + radius * 8.0f);
 }
