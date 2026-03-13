@@ -4,6 +4,7 @@
 #include "camera.h"
 #include "command.h"
 #include "device.h"
+#include "editor_scene.h"
 #include "imgui_layer.h"
 #include "instance.h"
 #include "model_loader.h"
@@ -25,6 +26,7 @@ class Window;
 
 struct RenderSubmesh
 {
+    entt::entity entity = entt::null;
     std::unique_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
     MaterialPushConstants material;
@@ -60,8 +62,18 @@ private:
     void DestroyPipelineResources();
     void RecreateSwapchain();
     bool HasDrawableArea() const;
-    void LoadModel(const std::string& path);
+    void LoadSelectedModel(const std::string& path, bool resetTransform = true);
+    void LoadScene(const std::string& path);
+    void RebuildSceneRenderables();
+    void ApplyRenderContent(
+        std::vector<std::unique_ptr<VulkanTexture>> newTextures,
+        std::vector<MaterialTextureSlots> newMaterialTextureSlots,
+        std::vector<RenderSubmesh> newRenderSubmeshes
+    );
     void ProcessPendingModelLoad();
+    void ProcessPendingSceneLoad();
+    void InitializeEditorScene();
+    void UpdateViewportMatrices(VkExtent2D extent);
 
     Window& m_window;
     std::unique_ptr<VulkanInstance> m_instance;
@@ -77,8 +89,11 @@ private:
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
     InputState m_input;
     Camera m_camera;
-    std::string m_currentModelPath;
+    ViewportMatrices m_viewportMatrices;
+    EditorScene m_editorScene;
     std::string m_lastModelLoadError;
+    std::string m_lastSceneIoError;
     std::optional<std::string> m_pendingModelPath;
+    std::optional<std::string> m_pendingScenePath;
     std::chrono::steady_clock::time_point m_lastFrameTime = std::chrono::steady_clock::now();
 };

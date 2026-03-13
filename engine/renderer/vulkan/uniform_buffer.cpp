@@ -76,13 +76,12 @@ VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint3
     return m_descriptorSets[descriptorIndex];
 }
 
-void VulkanUniformBuffer::Update(uint32_t imageIndex, const Camera& camera, VkExtent2D extent)
+void VulkanUniformBuffer::Update(uint32_t imageIndex, const ViewportMatrices& matrices, const glm::vec3& cameraPosition)
 {
     CameraUniformData data{};
-    data.model = camera.GetModelMatrix();
-    data.view = camera.GetViewMatrix();
-    data.proj = camera.GetProjectionMatrix(extent);
-    data.cameraWorldPosition = glm::vec4(camera.position, 1.0f);
+    data.view = matrices.view;
+    data.proj = matrices.renderProjection;
+    data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
 
     const glm::vec3 lightDirection = glm::normalize(glm::vec3(-0.6f, -1.0f, -0.35f));
     data.lightDirectionAndIntensity = glm::vec4(lightDirection, 2.25f);

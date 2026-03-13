@@ -8,6 +8,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <windows.h>
 #endif
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
 #include <optional>
@@ -38,6 +39,12 @@ struct alignas(16) MaterialPushConstants
     float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     float emissiveFactor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
     float surfaceFactors[4] = { 0.0f, 1.0f, 1.0f, 1.0f };
+};
+
+struct alignas(16) ObjectPushConstants
+{
+    glm::mat4 model{ 1.0f };
+    MaterialPushConstants material;
 };
 
 inline void CheckVulkan(VkResult result, const char* message)

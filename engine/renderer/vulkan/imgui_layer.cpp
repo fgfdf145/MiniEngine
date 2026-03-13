@@ -3,12 +3,405 @@
 #include "../imgui/imgui_impl_sdl3.h"
 #include "../imgui/imgui_impl_vulkan.h"
 
-#include <file_dialog/file_dialog.h>
 #include <imgui.h>
+#include <ImGuizmo.h>
+#include <file_dialog/file_dialog.h>
+#include <glm/common.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cfloat>
+#include <cstdio>
+#include <limits>
 
 namespace
 {
 constexpr uint32_t kImGuiDescriptorCount = 128;
+constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
+
+struct ProjectedEntityBounds
+{
+    entt::entity entity = entt::null;
+    ImVec2 min{ 0.0f, 0.0f };
+    ImVec2 max{ 0.0f, 0.0f };
+    float depth = std::numeric_limits<float>::max();
+    bool visible = false;
+};
+
+struct ViewportOverlayRect
+{
+    ImVec2 origin{ 0.0f, 0.0f };
+    ImVec2 size{ 0.0f, 0.0f };
+};
+
+ViewportOverlayRect BuildViewportOverlayRect(VkExtent2D viewportExtent)
+{
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    ViewportOverlayRect rect{};
+    rect.origin = mainViewport != nullptr ? mainViewport->Pos : ImVec2(0.0f, 0.0f);
+    rect.size = ImVec2(static_cast<float>(viewportExtent.width), static_cast<float>(viewportExtent.height));
+    return rect;
+}
+
+ImDrawList* GetViewportOverlayDrawList()
+{
+    return ImGui::GetForegroundDrawList();
+}
+
+std::array<glm::vec3, 8> BuildBoundsCorners(const glm::vec3& minBounds, const glm::vec3& maxBounds)
+{
+    return {
+        glm::vec3(minBounds.x, minBounds.y, minBounds.z),
+        glm::vec3(maxBounds.x, minBounds.y, minBounds.z),
+        glm::vec3(minBounds.x, maxBounds.y, minBounds.z),
+        glm::vec3(maxBounds.x, maxBounds.y, minBounds.z),
+        glm::vec3(minBounds.x, minBounds.y, maxBounds.z),
+        glm::vec3(maxBounds.x, minBounds.y, maxBounds.z),
+        glm::vec3(minBounds.x, maxBounds.y, maxBounds.z),
+        glm::vec3(maxBounds.x, maxBounds.y, maxBounds.z)
+    };
+}
+
+bool ComputeWorldBounds(
+    const EditorScene& scene,
+    entt::entity entity,
+    glm::vec3& minBounds,
+    glm::vec3& maxBounds
+)
+{
+    const ModelComponent& model = scene.GetModel(entity);
+    if (!model.hasBounds)
+    {
+        return false;
+    }
+
+    minBounds = glm::vec3(std::numeric_limits<float>::max());
+    maxBounds = glm::vec3(std::numeric_limits<float>::lowest());
+    const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+    for (const glm::vec3& corner : BuildBoundsCorners(model.minBounds, model.maxBounds))
+    {
+        const glm::vec3 worldPoint = glm::vec3(modelMatrix * glm::vec4(corner, 1.0f));
+        minBounds = glm::min(minBounds, worldPoint);
+        maxBounds = glm::max(maxBounds, worldPoint);
+    }
+
+    return true;
+}
+
+std::vector<ProjectedEntityBounds> ProjectSceneBounds(
+    const EditorScene& scene,
+    const ViewportMatrices& matrices,
+    const ViewportOverlayRect& viewportRect
+)
+{
+    std::vector<ProjectedEntityBounds> projectedBounds;
+    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    {
+        return projectedBounds;
+    }
+
+    const glm::mat4 viewProjection = matrices.projection * matrices.view;
+    projectedBounds.reserve(scene.GetEntityOrder().size());
+
+    scene.ForEachEntity([&](entt::entity entity, const TagComponent&, const TransformComponent&, const ModelComponent& model)
+    {
+        if (!model.hasBounds)
+        {
+            return;
+        }
+
+        ProjectedEntityBounds projected{};
+        projected.entity = entity;
+
+        float minX = std::numeric_limits<float>::max();
+        float minY = std::numeric_limits<float>::max();
+        float maxX = std::numeric_limits<float>::lowest();
+        float maxY = std::numeric_limits<float>::lowest();
+        float depthAccumulation = 0.0f;
+        int depthSamples = 0;
+
+        const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+        for (const glm::vec3& corner : BuildBoundsCorners(model.minBounds, model.maxBounds))
+        {
+            const glm::vec4 clip = viewProjection * modelMatrix * glm::vec4(corner, 1.0f);
+            if (clip.w <= 0.0f)
+            {
+                continue;
+            }
+
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            if (ndc.z < 0.0f || ndc.z > 1.0f)
+            {
+                continue;
+            }
+
+            const float screenX = viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x;
+            const float screenY = viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y;
+            minX = std::min(minX, screenX);
+            minY = std::min(minY, screenY);
+            maxX = std::max(maxX, screenX);
+            maxY = std::max(maxY, screenY);
+            depthAccumulation += ndc.z;
+            ++depthSamples;
+        }
+
+        if (depthSamples == 0)
+        {
+            return;
+        }
+
+        projected.min = ImVec2(
+            glm::clamp(minX, viewportRect.origin.x, viewportRect.origin.x + viewportRect.size.x),
+            glm::clamp(minY, viewportRect.origin.y, viewportRect.origin.y + viewportRect.size.y)
+        );
+        projected.max = ImVec2(
+            glm::clamp(maxX, viewportRect.origin.x, viewportRect.origin.x + viewportRect.size.x),
+            glm::clamp(maxY, viewportRect.origin.y, viewportRect.origin.y + viewportRect.size.y)
+        );
+        projected.depth = depthAccumulation / static_cast<float>(depthSamples);
+        projected.visible = projected.max.x > projected.min.x && projected.max.y > projected.min.y;
+        if (projected.visible)
+        {
+            projectedBounds.push_back(projected);
+        }
+    });
+
+    return projectedBounds;
+}
+
+const ProjectedEntityBounds* FindProjectedBounds(const std::vector<ProjectedEntityBounds>& projectedBounds, entt::entity entity)
+{
+    for (const ProjectedEntityBounds& bounds : projectedBounds)
+    {
+        if (bounds.entity == entity)
+        {
+            return &bounds;
+        }
+    }
+
+    return nullptr;
+}
+
+entt::entity PickHoveredEntity(const std::vector<ProjectedEntityBounds>& projectedBounds)
+{
+    const ImVec2 mousePosition = ImGui::GetMousePos();
+    entt::entity hoveredEntity = entt::null;
+    float bestDepth = std::numeric_limits<float>::max();
+
+    for (const ProjectedEntityBounds& bounds : projectedBounds)
+    {
+        const bool insideBounds =
+            mousePosition.x >= bounds.min.x &&
+            mousePosition.x <= bounds.max.x &&
+            mousePosition.y >= bounds.min.y &&
+            mousePosition.y <= bounds.max.y;
+        if (!insideBounds || bounds.depth >= bestDepth)
+        {
+            continue;
+        }
+
+        bestDepth = bounds.depth;
+        hoveredEntity = bounds.entity;
+    }
+
+    return hoveredEntity;
+}
+
+void DrawViewportSelectionOverlay(const EditorScene& scene, const std::vector<ProjectedEntityBounds>& projectedBounds)
+{
+    if (!scene.HasSelection())
+    {
+        return;
+    }
+
+    const ProjectedEntityBounds* bounds = FindProjectedBounds(projectedBounds, scene.GetSelectedEntity());
+    if (bounds == nullptr)
+    {
+        return;
+    }
+
+    GetViewportOverlayDrawList()->AddRect(bounds->min, bounds->max, kSelectionOutlineColor, 0.0f, 0, 2.0f);
+}
+
+bool DrawOperationButton(const char* label, ImGuizmo::OPERATION value, ImGuizmo::OPERATION& current)
+{
+    const bool selected = current == value;
+    if (ImGui::RadioButton(label, selected))
+    {
+        current = value;
+        return true;
+    }
+
+    return false;
+}
+
+void DrawTransformComponent(TransformComponent& transform)
+{
+    ImGui::DragFloat3("Translation", glm::value_ptr(transform.translation), 0.05f);
+    ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
+    ImGui::DragFloat3("Scale", glm::value_ptr(transform.scale), 0.02f, 0.001f, 100.0f);
+    transform.scale = glm::max(transform.scale, glm::vec3(0.001f));
+}
+
+void DrawGizmoControls(GizmoSettings& gizmo)
+{
+    DrawOperationButton("Translate", ImGuizmo::TRANSLATE, gizmo.operation);
+    ImGui::SameLine();
+    DrawOperationButton("Rotate", ImGuizmo::ROTATE, gizmo.operation);
+    ImGui::SameLine();
+    DrawOperationButton("Scale", ImGuizmo::SCALE, gizmo.operation);
+
+    const bool worldMode = gizmo.mode == ImGuizmo::WORLD;
+    if (ImGui::RadioButton("World", worldMode))
+    {
+        gizmo.mode = ImGuizmo::WORLD;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Local", !worldMode))
+    {
+        gizmo.mode = ImGuizmo::LOCAL;
+    }
+
+    ImGui::Checkbox("Use Snap", &gizmo.useSnap);
+    ImGui::DragFloat3("Move Snap", glm::value_ptr(gizmo.translationSnap), 0.05f, 0.01f, 10.0f);
+    ImGui::DragFloat("Rotate Snap", &gizmo.rotationSnap, 0.5f, 1.0f, 90.0f, "%.1f deg");
+    ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, 10.0f);
+}
+
+void RefreshViewportMatrices(Camera& camera, ViewportMatrices& matrices, const EditorScene& scene, VkExtent2D viewportExtent)
+{
+    matrices.view = camera.GetViewMatrix();
+    matrices.projection = camera.GetProjectionMatrix(viewportExtent, false);
+    matrices.renderProjection = camera.GetProjectionMatrix(viewportExtent, true);
+    matrices.model =
+        scene.HasSelection() ? scene.GetModelMatrix(scene.GetSelectedEntity()) : glm::mat4(1.0f);
+}
+
+void HandleViewportShortcuts(EditorScene& scene, Camera& camera)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureKeyboard || !scene.HasSelection())
+    {
+        return;
+    }
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
+    {
+        return;
+    }
+
+    GizmoSettings& gizmo = scene.GetGizmoSettings();
+    if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+    {
+        gizmo.operation = ImGuizmo::TRANSLATE;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+    {
+        gizmo.operation = ImGuizmo::ROTATE;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+    {
+        gizmo.operation = ImGuizmo::SCALE;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
+    {
+        glm::vec3 minBounds{};
+        glm::vec3 maxBounds{};
+        if (ComputeWorldBounds(scene, scene.GetSelectedEntity(), minBounds, maxBounds))
+        {
+            camera.FrameBounds(minBounds, maxBounds);
+        }
+    }
+}
+
+void HandleViewportSelection(EditorScene& scene, const std::vector<ProjectedEntityBounds>& projectedBounds)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    {
+        return;
+    }
+
+    if (scene.HasSelection() && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))
+    {
+        return;
+    }
+
+    scene.SetSelectedEntity(PickHoveredEntity(projectedBounds));
+}
+
+void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
+{
+    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    {
+        return;
+    }
+
+    ImGuizmo::SetDrawlist(GetViewportOverlayDrawList());
+    ImGuizmo::ViewManipulate(
+        glm::value_ptr(matrices.view),
+        7.5f,
+        ImVec2(viewportRect.origin.x + viewportRect.size.x - 144.0f, viewportRect.origin.y + 16.0f),
+        ImVec2(128.0f, 128.0f),
+        IM_COL32(32, 32, 32, 180)
+    );
+    camera.SetFromViewMatrix(matrices.view);
+    matrices.view = camera.GetViewMatrix();
+}
+
+void DrawGizmoOverlay(EditorScene& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
+{
+    if (!scene.HasSelection() || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    {
+        return;
+    }
+
+    entt::entity selectedEntity = scene.GetSelectedEntity();
+    GizmoSettings& gizmo = scene.GetGizmoSettings();
+    matrices.model = scene.GetModelMatrix(selectedEntity);
+    const glm::vec3 localCenter = scene.GetBoundsCenter(selectedEntity);
+    const glm::mat4 pivotOffset = glm::translate(glm::mat4(1.0f), localCenter);
+    const glm::mat4 inversePivotOffset = glm::translate(glm::mat4(1.0f), -localCenter);
+    glm::mat4 gizmoMatrix = matrices.model * pivotOffset;
+
+    std::array<float, 3> snapValues = {
+        gizmo.translationSnap.x,
+        gizmo.translationSnap.y,
+        gizmo.translationSnap.z
+    };
+    if (gizmo.operation == ImGuizmo::ROTATE)
+    {
+        snapValues = { gizmo.rotationSnap, 0.0f, 0.0f };
+    }
+    else if (gizmo.operation == ImGuizmo::SCALE)
+    {
+        snapValues = { gizmo.scaleSnap.x, gizmo.scaleSnap.y, gizmo.scaleSnap.z };
+    }
+
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetID(static_cast<int>(entt::to_integral(selectedEntity)));
+    ImGuizmo::SetDrawlist(GetViewportOverlayDrawList());
+    ImGuizmo::SetRect(viewportRect.origin.x, viewportRect.origin.y, viewportRect.size.x, viewportRect.size.y);
+    ImGuizmo::Manipulate(
+        glm::value_ptr(matrices.view),
+        glm::value_ptr(matrices.projection),
+        gizmo.operation,
+        gizmo.mode,
+        glm::value_ptr(gizmoMatrix),
+        nullptr,
+        gizmo.useSnap ? snapValues.data() : nullptr
+    );
+
+    if (!ImGuizmo::IsUsing())
+    {
+        return;
+    }
+
+    matrices.model = gizmoMatrix * inversePivotOffset;
+    scene.ApplyTransformMatrix(selectedEntity, matrices.model);
+}
 }
 
 VulkanImGuiLayer::VulkanImGuiLayer(
@@ -60,10 +453,21 @@ void VulkanImGuiLayer::BeginFrame()
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    ImGuizmo::BeginFrame();
 }
 
-void VulkanImGuiLayer::DrawCameraControls(Camera& camera)
+EditorUiActions VulkanImGuiLayer::DrawEditorUi(
+    Camera& camera,
+    ViewportMatrices& matrices,
+    EditorScene& scene,
+    const std::string& currentModelPath,
+    const std::string& lastLoadError,
+    const std::string& lastSceneIoError,
+    VkExtent2D viewportExtent
+)
 {
+    EditorUiActions actions{};
+
     ImGui::Begin("Camera");
     ImGui::Text("Move: WASD");
     ImGui::Text("Look: Hold Right Mouse");
@@ -76,27 +480,120 @@ void VulkanImGuiLayer::DrawCameraControls(Camera& camera)
     ImGui::SliderFloat("Near", &camera.nearPlane, 0.01f, 5.0f);
     ImGui::SliderFloat("Far", &camera.farPlane, 1.0f, 200.0f);
     ImGui::End();
-}
-
-std::optional<std::string> VulkanImGuiLayer::DrawModelControls(const std::string& currentModelPath, const std::string& lastLoadError)
-{
-    std::optional<std::string> selectedPath;
 
     ImGui::Begin("Assets");
     if (ImGui::Button("Load Model"))
     {
-        selectedPath = OpenModelFileDialog();
+        actions.selectedModelPath = OpenModelFileDialog();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Load Scene"))
+    {
+        actions.selectedSceneLoadPath = OpenSceneFileDialog();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save Scene"))
+    {
+        actions.selectedSceneSavePath = SaveSceneFileDialog();
     }
 
     ImGui::Separator();
-    ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "Default Cube" : currentModelPath.c_str());
+    ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "<builtin cube>" : currentModelPath.c_str());
+    ImGui::TextWrapped("Current Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
     if (!lastLoadError.empty())
     {
         ImGui::TextWrapped("Last Error: %s", lastLoadError.c_str());
     }
+    if (!lastSceneIoError.empty())
+    {
+        ImGui::TextWrapped("Scene Error: %s", lastSceneIoError.c_str());
+    }
     ImGui::End();
 
-    return selectedPath;
+    ImGui::Begin("Scene");
+    ImGui::TextWrapped("Selection: %s", scene.HasSelection() ? "Selected in viewport" : "Click a cube in the viewport to select");
+    ImGui::Text("Entities: %u", static_cast<unsigned int>(scene.GetEntityOrder().size()));
+    ImGui::Separator();
+    for (entt::entity entity : scene.GetEntityOrder())
+    {
+        const TagComponent& tag = scene.GetTag(entity);
+        if (ImGui::Selectable(tag.name.c_str(), scene.IsSelected(entity)))
+        {
+            scene.SetSelectedEntity(entity);
+        }
+    }
+
+    if (scene.HasSelection())
+    {
+        TagComponent& tag = scene.GetSelectedTag();
+        TransformComponent& transform = scene.GetSelectedTransform();
+        ModelComponent& model = scene.GetSelectedModel();
+        GizmoSettings& gizmo = scene.GetGizmoSettings();
+
+        ImGui::Separator();
+        ImGui::TextWrapped("Controller Target: %s", model.displayName.c_str());
+        ImGui::TextWrapped("Controller Mode: viewport gizmo");
+        char tagBuffer[128]{};
+        std::snprintf(tagBuffer, sizeof(tagBuffer), "%s", tag.name.c_str());
+        if (ImGui::InputText("TagComponent", tagBuffer, sizeof(tagBuffer)))
+        {
+            tag.name = tagBuffer;
+        }
+
+        if (ImGui::CollapsingHeader("TransformComponent", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawTransformComponent(transform);
+            if (ImGui::Button("Reset Transform"))
+            {
+                scene.ResetSelectedTransform();
+            }
+        }
+
+        if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
+            ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
+            ImGui::Text("Submeshes: %u", model.submeshCount);
+            if (model.hasBounds)
+            {
+                ImGui::Text("Bounds Min: %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
+                ImGui::Text("Bounds Max: %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
+            }
+        }
+
+        if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawGizmoControls(gizmo);
+        }
+
+        ImGui::Separator();
+        ImGui::TextWrapped("Default Config: %s", scene.GetConfigPath().empty() ? "<not loaded>" : scene.GetConfigPath().c_str());
+        ImGui::TextWrapped("Scene File: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+        const std::string yamlPreview = scene.BuildSceneYamlPreview();
+        ImGui::InputTextMultiline(
+            "Scene YAML",
+            const_cast<char*>(yamlPreview.c_str()),
+            yamlPreview.size() + 1,
+            ImVec2(-FLT_MIN, 180.0f),
+            ImGuiInputTextFlags_ReadOnly
+        );
+    }
+    else
+    {
+        ImGui::TextUnformatted("No entity selected.");
+    }
+    ImGui::End();
+
+    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportExtent);
+    HandleViewportShortcuts(scene, camera);
+    RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
+    DrawViewManipulator(camera, matrices, viewportRect);
+    RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
+    DrawGizmoOverlay(scene, matrices, viewportRect);
+    const std::vector<ProjectedEntityBounds> projectedBounds = ProjectSceneBounds(scene, matrices, viewportRect);
+    HandleViewportSelection(scene, projectedBounds);
+    DrawViewportSelectionOverlay(scene, projectedBounds);
+    return actions;
 }
 
 ImDrawData* VulkanImGuiLayer::GetDrawData() const

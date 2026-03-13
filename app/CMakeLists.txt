@@ -7,6 +7,9 @@ PRIVATE
     engine_core
     engine_platform
     engine_renderer
+    imguizmo::imguizmo
+    yaml-cpp::yaml-cpp
+    EnTT::EnTT
 )
 
 add_custom_command(TARGET miniengine_app POST_BUILD

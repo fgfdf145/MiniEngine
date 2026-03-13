@@ -24,7 +24,6 @@ struct MaterialTextureBinding
 
 struct alignas(16) CameraUniformData
 {
-    glm::mat4 model{ 1.0f };
     glm::mat4 view{ 1.0f };
     glm::mat4 proj{ 1.0f };
     glm::vec4 cameraWorldPosition{ 0.0f, 0.0f, 0.0f, 1.0f };
@@ -48,7 +47,7 @@ public:
 
     VkDescriptorSetLayout GetDescriptorSetLayout() const;
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
-    void Update(uint32_t imageIndex, const Camera& camera, VkExtent2D extent);
+    void Update(uint32_t imageIndex, const ViewportMatrices& matrices, const glm::vec3& cameraPosition);
 
 private:
     void CreateDescriptorSetLayout();

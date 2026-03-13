@@ -1,8 +1,15 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform CameraBuffer
+layout(push_constant) uniform DrawConstants
 {
     mat4 model;
+    vec4 baseColorFactor;
+    vec4 emissiveFactor;
+    vec4 surfaceFactors;
+} drawData;
+
+layout(set = 0, binding = 0) uniform CameraBuffer
+{
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
@@ -24,8 +31,8 @@ layout(location = 4) out vec3 fragWorldPosition;
 
 void main()
 {
-    vec4 worldPosition = ubo.model * vec4(inPosition, 1.0);
-    mat3 normalMatrix = transpose(inverse(mat3(ubo.model)));
+    vec4 worldPosition = drawData.model * vec4(inPosition, 1.0);
+    mat3 normalMatrix = transpose(inverse(mat3(drawData.model)));
     vec3 worldTangent = normalize(normalMatrix * inTangent.xyz);
 
     gl_Position = ubo.proj * ubo.view * worldPosition;

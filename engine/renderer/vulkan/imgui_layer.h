@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "common.h"
+#include "editor_scene.h"
 
 #include <SDL3/SDL.h>
 
@@ -9,6 +10,13 @@
 #include <string>
 
 struct ImDrawData;
+
+struct EditorUiActions
+{
+    std::optional<std::string> selectedModelPath;
+    std::optional<std::string> selectedSceneLoadPath;
+    std::optional<std::string> selectedSceneSavePath;
+};
 
 class VulkanImGuiLayer
 {
@@ -28,8 +36,15 @@ public:
 
     void ProcessEvent(const SDL_Event& event);
     void BeginFrame();
-    void DrawCameraControls(Camera& camera);
-    std::optional<std::string> DrawModelControls(const std::string& currentModelPath, const std::string& lastLoadError);
+    EditorUiActions DrawEditorUi(
+        Camera& camera,
+        ViewportMatrices& matrices,
+        EditorScene& scene,
+        const std::string& currentModelPath,
+        const std::string& lastLoadError,
+        const std::string& lastSceneIoError,
+        VkExtent2D viewportExtent
+    );
     ImDrawData* GetDrawData() const;
     bool WantsKeyboardCapture() const;
     bool WantsMouseCapture() const;

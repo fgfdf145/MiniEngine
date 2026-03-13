@@ -104,9 +104,9 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
     pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
     VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(MaterialPushConstants);
+    pushConstantRange.size = sizeof(ObjectPushConstants);
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 

@@ -1,6 +1,7 @@
 add_library(engine_renderer
     imgui/imgui_impl_sdl3.cpp
     imgui/imgui_impl_vulkan.cpp
+    vulkan/editor_scene.cpp
     vulkan/fbx_model_loader.cpp
     vulkan/buffer.cpp
     vulkan/camera.cpp
@@ -69,6 +70,10 @@ PUBLIC
     glm::glm
     imgui::imgui
     assimp::assimp
+    EnTT::EnTT
+PRIVATE
+    imguizmo::imguizmo
+    yaml-cpp::yaml-cpp
 )
 
 if(TARGET FbxSdk::sdk)

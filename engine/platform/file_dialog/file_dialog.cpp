@@ -41,6 +41,17 @@ std::string WideToUtf8(const std::wstring& wide)
     );
     return utf8;
 }
+
+std::optional<std::string> ShowFileDialog(OPENFILENAMEW& dialog, bool saveDialog)
+{
+    const BOOL result = saveDialog ? GetSaveFileNameW(&dialog) : GetOpenFileNameW(&dialog);
+    if (!result)
+    {
+        return std::nullopt;
+    }
+
+    return WideToUtf8(dialog.lpstrFile);
+}
 #endif
 }
 
@@ -59,13 +70,50 @@ std::optional<std::string> OpenModelFileDialog()
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     dialog.lpstrDefExt = L"obj";
 
-    if (!GetOpenFileNameW(&dialog))
-    {
-        return std::nullopt;
-    }
-
-    return WideToUtf8(fileBuffer.data());
+    return ShowFileDialog(dialog, false);
 #else
     throw std::runtime_error("OpenModelFileDialog is only implemented on Windows");
+#endif
+}
+
+std::optional<std::string> OpenSceneFileDialog()
+{
+#ifdef _WIN32
+    std::vector<wchar_t> fileBuffer(32768, L'\0');
+
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFilter =
+        L"Scene Files\0*.yaml;*.yml\0"
+        L"All Files\0*.*\0";
+    dialog.lpstrFile = fileBuffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(fileBuffer.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    dialog.lpstrDefExt = L"yaml";
+
+    return ShowFileDialog(dialog, false);
+#else
+    throw std::runtime_error("OpenSceneFileDialog is only implemented on Windows");
+#endif
+}
+
+std::optional<std::string> SaveSceneFileDialog()
+{
+#ifdef _WIN32
+    std::vector<wchar_t> fileBuffer(32768, L'\0');
+
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFilter =
+        L"Scene Files\0*.yaml;*.yml\0"
+        L"All Files\0*.*\0";
+    dialog.lpstrFile = fileBuffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(fileBuffer.size());
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    dialog.lpstrDefExt = L"yaml";
+
+    return ShowFileDialog(dialog, true);
+#else
+    throw std::runtime_error("SaveSceneFileDialog is only implemented on Windows");
 #endif
 }

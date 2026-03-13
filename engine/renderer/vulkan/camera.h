@@ -3,14 +3,23 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
+struct ViewportMatrices
+{
+    glm::mat4 view{ 1.0f };
+    glm::mat4 projection{ 1.0f };
+    glm::mat4 renderProjection{ 1.0f };
+    glm::mat4 model{ 1.0f };
+};
+
 class Camera
 {
 public:
     glm::mat4 GetModelMatrix() const;
     glm::mat4 GetViewMatrix() const;
-    glm::mat4 GetProjectionMatrix(VkExtent2D extent) const;
+    glm::mat4 GetProjectionMatrix(VkExtent2D extent, bool invertYAxisForVulkan) const;
     glm::vec3 GetForward() const;
     glm::vec3 GetRight() const;
+    void SetFromViewMatrix(const glm::mat4& viewMatrix);
     void MoveForward(float amount);
     void MoveRight(float amount);
     void Rotate(float deltaYaw, float deltaPitch);

@@ -10,7 +10,7 @@ struct VulkanDrawItem
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     uint32_t indexCount = 0;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-    MaterialPushConstants material;
+    ObjectPushConstants drawConstants;
 };
 
 struct VulkanFrameSyncObjects

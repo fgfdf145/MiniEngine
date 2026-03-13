@@ -2,7 +2,13 @@
 #include <vulkan/renderer.h>
 #include <window/window.h>
 
+#include <imgui.h>
+#include <ImGuizmo.h>
+#include <entt/entt.hpp>
+#include <yaml-cpp/yaml.h>
+
 #include <exception>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,6 +61,19 @@ AppOptions ParseArgs(int argc, char** argv)
 
     return options;
 }
+
+void PrintDependencyLinkStatus()
+{
+    const auto imguizmoSymbol = &ImGuizmo::SetOrthographic;
+    const YAML::Node yamlNode = YAML::Load("linked: true");
+
+    entt::registry registry;
+    const entt::entity entity = registry.create();
+
+    std::cout << "[link] ImGuizmo: " << (imguizmoSymbol != nullptr ? "OK" : "FAILED") << '\n';
+    std::cout << "[link] yaml-cpp: " << (yamlNode["linked"].as<bool>() ? "OK" : "FAILED") << '\n';
+    std::cout << "[link] EnTT: " << (registry.valid(entity) ? "OK" : "FAILED") << '\n';
+}
 }
 
 int main(int argc, char** argv)
@@ -64,6 +83,7 @@ int main(int argc, char** argv)
 
     try
     {
+        PrintDependencyLinkStatus();
         const AppOptions options = ParseArgs(argc, argv);
         Window window(1920, 1080, "MiniEngine");
         VulkanRenderer renderer(window, options.startupModelPath);

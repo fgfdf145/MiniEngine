@@ -116,10 +116,10 @@ void VulkanCommandContext::RecordCommandBuffer(
         vkCmdPushConstants(
             m_commandBuffers[imageIndex],
             pipelineLayout,
-            VK_SHADER_STAGE_FRAGMENT_BIT,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
-            sizeof(MaterialPushConstants),
-            &drawItem.material
+            sizeof(ObjectPushConstants),
+            &drawItem.drawConstants
         );
         vkCmdDrawIndexed(m_commandBuffers[imageIndex], drawItem.indexCount, 1, 0, 0, 0);
     }

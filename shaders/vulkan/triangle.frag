@@ -1,15 +1,15 @@
 #version 450
 
-layout(push_constant) uniform MaterialConstants
+layout(push_constant) uniform DrawConstants
 {
+    mat4 model;
     vec4 baseColorFactor;
     vec4 emissiveFactor;
     vec4 surfaceFactors;
-} material;
+} drawData;
 
 layout(set = 0, binding = 0) uniform CameraBuffer
 {
-    mat4 model;
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
@@ -69,7 +69,7 @@ vec3 FresnelSchlick(float cosineTheta, vec3 baseReflectivity)
 void main()
 {
     vec4 sampledBaseColor = texture(baseColorTexture, fragTexCoord);
-    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
+    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
 
     vec3 geometricNormal = normalize(fragWorldNormal);
     vec3 tangent = normalize(fragWorldTangent.xyz - geometricNormal * dot(geometricNormal, fragWorldTangent.xyz));
@@ -77,7 +77,7 @@ void main()
     mat3 tbn = mat3(tangent, bitangent, geometricNormal);
 
     vec3 sampledNormal = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;
-    sampledNormal.xy *= material.surfaceFactors.z;
+    sampledNormal.xy *= drawData.surfaceFactors.z;
     vec3 normal = normalize(tbn * sampledNormal);
 
     float metallicSample = texture(metallicTexture, fragTexCoord).b;
@@ -85,9 +85,9 @@ void main()
     float ambientOcclusionSample = texture(occlusionTexture, fragTexCoord).r;
     vec3 emissiveSample = texture(emissiveTexture, fragTexCoord).rgb;
 
-    float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
-    float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
-    float ambientOcclusion = mix(1.0, ambientOcclusionSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
+    float metallic = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
+    float roughness = clamp(drawData.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    float ambientOcclusion = mix(1.0, ambientOcclusionSample, clamp(drawData.surfaceFactors.w, 0.0, 1.0));
 
     vec3 viewDirection = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
     vec3 lightDirection = normalize(-ubo.lightDirectionAndIntensity.xyz);
@@ -113,7 +113,7 @@ void main()
 
     vec3 ambient = albedo.rgb * ubo.lightColorAndAmbient.w * ambientOcclusion;
     vec3 directLighting = (diffuse + specular) * radiance * nDotL;
-    vec3 emissive = emissiveSample * material.emissiveFactor.rgb;
+    vec3 emissive = emissiveSample * drawData.emissiveFactor.rgb;
 
     vec3 color = ambient + directLighting + emissive;
     color = color / (color + vec3(1.0));
