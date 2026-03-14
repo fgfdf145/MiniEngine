@@ -54,6 +54,7 @@ public:
 
 private:
     void ApplyUiScale();
+    float GetWindowUiScale() const;
     void CreateDescriptorPool();
     void UploadFonts() const;
     static void CheckVkResult(VkResult result);
@@ -67,5 +68,6 @@ private:
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     bool m_vulkanBackendInitialized = false;
     float m_uiScale = 1.0f;
+    float m_effectiveUiScale = 1.0f;
     ImGuiStyle m_baseStyle{};
 };

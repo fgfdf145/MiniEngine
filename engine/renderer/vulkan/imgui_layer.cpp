@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cfloat>
 #include <cstdio>
 #include <limits>
@@ -37,20 +38,33 @@ struct ViewportOverlayRect
 {
     ImVec2 origin{ 0.0f, 0.0f };
     ImVec2 size{ 0.0f, 0.0f };
+    ImDrawList* drawList = nullptr;
+    bool hovered = false;
+    bool focused = false;
 };
 
-ViewportOverlayRect BuildViewportOverlayRect(VkExtent2D viewportExtent)
+ViewportOverlayRect BuildViewportOverlayRect()
 {
-    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
     ViewportOverlayRect rect{};
-    rect.origin = mainViewport != nullptr ? mainViewport->Pos : ImVec2(0.0f, 0.0f);
-    rect.size = ImVec2(static_cast<float>(viewportExtent.width), static_cast<float>(viewportExtent.height));
-    return rect;
-}
+    rect.drawList = ImGui::GetWindowDrawList();
 
-ImDrawList* GetViewportOverlayDrawList()
-{
-    return ImGui::GetForegroundDrawList();
+    ImVec2 available = ImGui::GetContentRegionAvail();
+    available.x = std::max(available.x, 1.0f);
+    available.y = std::max(available.y, 1.0f);
+
+    ImGui::InvisibleButton("##viewport_canvas", available, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    rect.origin = ImGui::GetItemRectMin();
+    rect.size = ImGui::GetItemRectSize();
+    rect.hovered = ImGui::IsItemHovered();
+    rect.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+    if (rect.drawList != nullptr)
+    {
+        const ImVec2 max(rect.origin.x + rect.size.x, rect.origin.y + rect.size.y);
+        rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
+    }
+
+    return rect;
 }
 
 void EnsureDefaultDockLayout(ImGuiID dockspaceId)
@@ -85,6 +99,7 @@ void EnsureDefaultDockLayout(ImGuiID dockspaceId)
     ImGui::DockBuilderDockWindow("Scene", leftNode);
     ImGui::DockBuilderDockWindow("Assets", upperRightNode);
     ImGui::DockBuilderDockWindow("Camera", lowerRightNode);
+    ImGui::DockBuilderDockWindow("Viewport", centerNode);
     ImGui::DockBuilderFinish(dockspaceId);
 }
 
@@ -260,7 +275,7 @@ void DrawViewportSelectionOverlay(const EditorScene& scene, const std::vector<Pr
         return;
     }
 
-    GetViewportOverlayDrawList()->AddRect(bounds->min, bounds->max, kSelectionOutlineColor, 0.0f, 0, 2.0f);
+    ImGui::GetWindowDrawList()->AddRect(bounds->min, bounds->max, kSelectionOutlineColor, 0.0f, 0, 2.0f);
 }
 
 bool DrawOperationButton(const char* label, ImGuizmo::OPERATION value, ImGuizmo::OPERATION& current)
@@ -331,10 +346,10 @@ void RefreshViewportMatrices(Camera& camera, ViewportMatrices& matrices, const E
         scene.HasSelection() ? scene.GetModelMatrix(scene.GetSelectedEntity()) : glm::mat4(1.0f);
 }
 
-void HandleViewportShortcuts(EditorScene& scene, Camera& camera)
+void HandleViewportShortcuts(EditorScene& scene, Camera& camera, const ViewportOverlayRect& viewportRect)
 {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard || !scene.HasSelection())
+    if (io.WantCaptureKeyboard || !scene.HasSelection() || !viewportRect.focused)
     {
         return;
     }
@@ -367,10 +382,14 @@ void HandleViewportShortcuts(EditorScene& scene, Camera& camera)
     }
 }
 
-void HandleViewportSelection(EditorScene& scene, const std::vector<ProjectedEntityBounds>& projectedBounds)
+void HandleViewportSelection(
+    EditorScene& scene,
+    const std::vector<ProjectedEntityBounds>& projectedBounds,
+    const ViewportOverlayRect& viewportRect
+)
 {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    if (io.WantCaptureMouse || !viewportRect.hovered || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         return;
     }
@@ -385,12 +404,12 @@ void HandleViewportSelection(EditorScene& scene, const std::vector<ProjectedEnti
 
 void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
 {
-    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
     {
         return;
     }
 
-    ImGuizmo::SetDrawlist(GetViewportOverlayDrawList());
+    ImGuizmo::SetDrawlist(viewportRect.drawList);
     ImGuizmo::ViewManipulate(
         glm::value_ptr(matrices.view),
         7.5f,
@@ -404,7 +423,7 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
 
 void DrawGizmoOverlay(EditorScene& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
 {
-    if (!scene.HasSelection() || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    if (!scene.HasSelection() || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
     {
         return;
     }
@@ -433,7 +452,7 @@ void DrawGizmoOverlay(EditorScene& scene, ViewportMatrices& matrices, const View
 
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetID(static_cast<int>(entt::to_integral(selectedEntity)));
-    ImGuizmo::SetDrawlist(GetViewportOverlayDrawList());
+    ImGuizmo::SetDrawlist(viewportRect.drawList);
     ImGuizmo::SetRect(viewportRect.origin.x, viewportRect.origin.y, viewportRect.size.x, viewportRect.size.y);
     ImGuizmo::Manipulate(
         glm::value_ptr(matrices.view),
@@ -506,6 +525,7 @@ void VulkanImGuiLayer::BeginFrame()
 {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
+    ApplyUiScale();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
 }
@@ -525,11 +545,13 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
     EnsureDefaultDockLayout(dockspaceId);
 
     ImGui::Begin("Camera");
-    if (ImGui::SliderFloat("UI DPI Scale", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
+    if (ImGui::SliderFloat("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
     {
         ApplyUiScale();
     }
     const ImGuiIO& io = ImGui::GetIO();
+    ImGui::Text("Window DPI Scale: %.2f x", GetWindowUiScale());
+    ImGui::Text("Effective UI Scale: %.2f x", m_effectiveUiScale);
     ImGui::Text("Framebuffer Scale: %.2f x %.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
     ImGui::Text("World Units: 1.0 = %.1f meter", WorldUnits::kMetersPerUnit);
     ImGui::Text("Move: WASD");
@@ -654,15 +676,24 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
     }
     ImGui::End();
 
-    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportExtent);
-    HandleViewportShortcuts(scene, camera);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("Viewport");
+    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect();
+    HandleViewportShortcuts(scene, camera, viewportRect);
     RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
     DrawViewManipulator(camera, matrices, viewportRect);
     RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
     DrawGizmoOverlay(scene, matrices, viewportRect);
     const std::vector<ProjectedEntityBounds> projectedBounds = ProjectSceneBounds(scene, matrices, viewportRect);
-    HandleViewportSelection(scene, projectedBounds);
+    HandleViewportSelection(scene, projectedBounds, viewportRect);
     DrawViewportSelectionOverlay(scene, projectedBounds);
+    ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + 12.0f, viewportRect.origin.y + 12.0f));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("Viewport");
+    ImGui::TextUnformatted("F to frame, W/E/R to switch gizmo");
+    ImGui::EndGroup();
+    ImGui::End();
+    ImGui::PopStyleVar();
     return actions;
 }
 
@@ -685,9 +716,28 @@ void VulkanImGuiLayer::ApplyUiScale()
 {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiStyle& style = ImGui::GetStyle();
+    m_effectiveUiScale = std::clamp(GetWindowUiScale() * m_uiScale, 0.75f, 3.0f);
+
+    if (std::abs(io.FontGlobalScale - m_effectiveUiScale) <= 0.001f)
+    {
+        return;
+    }
+
     style = m_baseStyle;
-    style.ScaleAllSizes(m_uiScale);
-    io.FontGlobalScale = m_uiScale;
+    style.ScaleAllSizes(m_effectiveUiScale);
+    io.FontGlobalScale = m_effectiveUiScale;
+}
+
+float VulkanImGuiLayer::GetWindowUiScale() const
+{
+    const float displayScale = SDL_GetWindowDisplayScale(m_window);
+    if (displayScale > 0.0f)
+    {
+        return displayScale;
+    }
+
+    const float pixelDensity = SDL_GetWindowPixelDensity(m_window);
+    return pixelDensity > 0.0f ? pixelDensity : 1.0f;
 }
 
 void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount)
