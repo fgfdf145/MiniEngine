@@ -1,5 +1,7 @@
 #pragma once
 
+#include "world_units.h"
+
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
@@ -25,12 +27,12 @@ public:
     void Rotate(float deltaYaw, float deltaPitch);
     void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
 
-    glm::vec3 position = { 0.0f, 0.0f, 4.0f };
+    glm::vec3 position = WorldUnits::kDefaultCameraPositionMeters;
     glm::vec3 worldUp = { 0.0f, 1.0f, 0.0f };
     float fovDegrees = 45.0f;
-    float nearPlane = 0.1f;
-    float farPlane = 100.0f;
-    float moveSpeed = 4.0f;
+    float nearPlane = WorldUnits::kDefaultCameraNearPlaneMeters;
+    float farPlane = WorldUnits::kDefaultCameraFarPlaneMeters;
+    float moveSpeed = WorldUnits::kDefaultCameraMoveSpeedMetersPerSecond;
     float mouseSensitivity = 0.1f;
     float yawDegrees = -90.0f;
     float pitchDegrees = 0.0f;

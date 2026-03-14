@@ -115,7 +115,7 @@ TransformComponent DecomposeTransformMatrix(const glm::mat4& matrix, const Trans
         glm::degrees(glm::vec3(rotationX, rotationY, rotationZ)),
         reference.rotationDegrees
     );
-    transform.scale = glm::max(glm::abs(scale), glm::vec3(0.001f));
+    transform.scale = glm::max(glm::abs(scale), WorldUnits::kMinimumScale3);
     return transform;
 }
 
@@ -146,7 +146,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             const YAML::Node transformNode = entityNode["transform"];
             entityData.transform.translation = ReadVec3(transformNode["translation"], entityData.transform.translation);
             entityData.transform.rotationDegrees = ReadVec3(transformNode["rotation"], entityData.transform.rotationDegrees);
-            entityData.transform.scale = glm::max(ReadVec3(transformNode["scale"], entityData.transform.scale), glm::vec3(0.001f));
+            entityData.transform.scale = glm::max(ReadVec3(transformNode["scale"], entityData.transform.scale), WorldUnits::kMinimumScale3);
             sceneData.entities.push_back(entityData);
         }
     }
@@ -218,7 +218,7 @@ void EditorScene::LoadConfig(const std::string& path)
     const YAML::Node transformNode = root["entity"]["transform"];
     m_defaultTransform.translation = ReadVec3(transformNode["translation"], m_defaultTransform.translation);
     m_defaultTransform.rotationDegrees = ReadVec3(transformNode["rotation"], m_defaultTransform.rotationDegrees);
-    m_defaultTransform.scale = glm::max(ReadVec3(transformNode["scale"], m_defaultTransform.scale), glm::vec3(0.001f));
+    m_defaultTransform.scale = glm::max(ReadVec3(transformNode["scale"], m_defaultTransform.scale), WorldUnits::kMinimumScale3);
 
     const YAML::Node gizmoNode = root["editor"]["gizmo"];
     m_gizmoSettings.operation = ParseOperation(gizmoNode["operation"].as<std::string>("translate"));
@@ -269,8 +269,8 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
         entityData.modelSourcePath,
         entityData.modelDisplayName,
         1,
-        glm::vec3(-0.5f, -0.5f, -0.5f),
-        glm::vec3(0.5f, 0.5f, 0.5f),
+        WorldUnits::kDefaultCubeMinBoundsMeters,
+        WorldUnits::kDefaultCubeMaxBoundsMeters,
         true
     });
     m_entityOrder.push_back(entity);
@@ -535,7 +535,7 @@ glm::mat4 EditorScene::BuildTransformMatrix(const TransformComponent& transform)
     matrix = glm::rotate(matrix, glm::radians(transform.rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
     matrix = glm::rotate(matrix, glm::radians(transform.rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
     matrix = glm::rotate(matrix, glm::radians(transform.rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
-    matrix = glm::scale(matrix, glm::max(transform.scale, glm::vec3(0.001f)));
+    matrix = glm::scale(matrix, glm::max(transform.scale, WorldUnits::kMinimumScale3));
     return matrix;
 }
 

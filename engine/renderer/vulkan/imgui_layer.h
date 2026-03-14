@@ -53,6 +53,7 @@ public:
     void DestroyVulkanResources();
 
 private:
+    void ApplyUiScale();
     void CreateDescriptorPool();
     void UploadFonts() const;
     static void CheckVkResult(VkResult result);
@@ -65,4 +66,6 @@ private:
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     bool m_vulkanBackendInitialized = false;
+    float m_uiScale = 1.0f;
+    ImGuiStyle m_baseStyle{};
 };

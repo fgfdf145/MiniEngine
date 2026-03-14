@@ -1,5 +1,7 @@
 #pragma once
 
+#include "world_units.h"
+
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <entt/entt.hpp>
@@ -27,8 +29,8 @@ struct ModelComponent
     std::string sourcePath;
     std::string displayName = "Cube";
     uint32_t submeshCount = 1;
-    glm::vec3 minBounds{ -0.5f, -0.5f, -0.5f };
-    glm::vec3 maxBounds{ 0.5f, 0.5f, 0.5f };
+    glm::vec3 minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
+    glm::vec3 maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
     bool hasBounds = true;
 };
 
@@ -37,9 +39,9 @@ struct GizmoSettings
     ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE mode = ImGuizmo::WORLD;
     bool useSnap = false;
-    glm::vec3 translationSnap{ 0.5f, 0.5f, 0.5f };
-    float rotationSnap = 15.0f;
-    glm::vec3 scaleSnap{ 0.1f, 0.1f, 0.1f };
+    glm::vec3 translationSnap = WorldUnits::kDefaultTranslationSnapMeters;
+    float rotationSnap = WorldUnits::kDefaultRotationSnapDegrees;
+    glm::vec3 scaleSnap = WorldUnits::kDefaultScaleSnap;
 };
 
 struct SerializedEntityData

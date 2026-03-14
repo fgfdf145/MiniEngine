@@ -78,7 +78,7 @@ void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
 {
     const glm::vec3 center = (minBounds + maxBounds) * 0.5f;
     const glm::vec3 extent = maxBounds - minBounds;
-    const float radius = std::max(glm::length(extent) * 0.5f, 0.5f);
+    const float radius = std::max(glm::length(extent) * 0.5f, WorldUnits::kMinimumFramedRadiusMeters);
     const float halfFovRadians = glm::radians(fovDegrees) * 0.5f;
     const float distance = radius / std::tan(std::max(halfFovRadians, 0.2f));
 
@@ -88,6 +88,6 @@ void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
     yawDegrees = glm::degrees(std::atan2(forward.z, forward.x));
     pitchDegrees = glm::degrees(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)));
 
-    nearPlane = std::max(0.01f, radius * 0.01f);
-    farPlane = std::max(100.0f, distance + radius * 8.0f);
+    nearPlane = std::max(WorldUnits::kUiCameraNearMinMeters, radius * 0.01f);
+    farPlane = std::max(WorldUnits::kDefaultCameraFarPlaneMeters, distance + radius * 8.0f);
 }

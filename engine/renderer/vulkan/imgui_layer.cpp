@@ -4,6 +4,7 @@
 #include "../imgui/imgui_impl_vulkan.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <file_dialog/file_dialog.h>
 #include <glm/common.hpp>
@@ -21,6 +22,7 @@ namespace
 {
 constexpr uint32_t kImGuiDescriptorCount = 128;
 constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
+constexpr ImGuiDockNodeFlags kEditorDockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
 
 struct ProjectedEntityBounds
 {
@@ -49,6 +51,41 @@ ViewportOverlayRect BuildViewportOverlayRect(VkExtent2D viewportExtent)
 ImDrawList* GetViewportOverlayDrawList()
 {
     return ImGui::GetForegroundDrawList();
+}
+
+void EnsureDefaultDockLayout(ImGuiID dockspaceId)
+{
+    ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
+    if (dockNode != nullptr &&
+        (dockNode->ChildNodes[0] != nullptr || dockNode->ChildNodes[1] != nullptr || dockNode->Windows.Size > 0))
+    {
+        return;
+    }
+
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    if (mainViewport == nullptr)
+    {
+        return;
+    }
+
+    ImGui::DockBuilderRemoveNode(dockspaceId);
+    ImGui::DockBuilderAddNode(dockspaceId, kEditorDockspaceFlags | ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, mainViewport->Size);
+
+    ImGuiID leftNode = 0;
+    ImGuiID rightNode = 0;
+    ImGuiID centerNode = dockspaceId;
+    ImGui::DockBuilderSplitNode(centerNode, ImGuiDir_Left, 0.28f, &leftNode, &centerNode);
+    ImGui::DockBuilderSplitNode(centerNode, ImGuiDir_Right, 0.24f, &rightNode, &centerNode);
+
+    ImGuiID lowerRightNode = 0;
+    ImGuiID upperRightNode = rightNode;
+    ImGui::DockBuilderSplitNode(upperRightNode, ImGuiDir_Down, 0.42f, &lowerRightNode, &upperRightNode);
+
+    ImGui::DockBuilderDockWindow("Scene", leftNode);
+    ImGui::DockBuilderDockWindow("Assets", upperRightNode);
+    ImGui::DockBuilderDockWindow("Camera", lowerRightNode);
+    ImGui::DockBuilderFinish(dockspaceId);
 }
 
 std::array<glm::vec3, 8> BuildBoundsCorners(const glm::vec3& minBounds, const glm::vec3& maxBounds)
@@ -240,10 +277,17 @@ bool DrawOperationButton(const char* label, ImGuizmo::OPERATION value, ImGuizmo:
 
 void DrawTransformComponent(TransformComponent& transform)
 {
-    ImGui::DragFloat3("Translation", glm::value_ptr(transform.translation), 0.05f);
+    ImGui::DragFloat3(
+        "Translation (m)",
+        glm::value_ptr(transform.translation),
+        0.05f,
+        -WorldUnits::kUiTransformTranslationRangeMeters,
+        WorldUnits::kUiTransformTranslationRangeMeters,
+        "%.3f"
+    );
     ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
-    ImGui::DragFloat3("Scale", glm::value_ptr(transform.scale), 0.02f, 0.001f, 100.0f);
-    transform.scale = glm::max(transform.scale, glm::vec3(0.001f));
+    ImGui::DragFloat3("Scale (1 = source meters)", glm::value_ptr(transform.scale), 0.02f, WorldUnits::kMinimumScale, WorldUnits::kUiTransformScaleMax, "%.3f");
+    transform.scale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
 }
 
 void DrawGizmoControls(GizmoSettings& gizmo)
@@ -266,9 +310,16 @@ void DrawGizmoControls(GizmoSettings& gizmo)
     }
 
     ImGui::Checkbox("Use Snap", &gizmo.useSnap);
-    ImGui::DragFloat3("Move Snap", glm::value_ptr(gizmo.translationSnap), 0.05f, 0.01f, 10.0f);
+    ImGui::DragFloat3(
+        "Move Snap (m)",
+        glm::value_ptr(gizmo.translationSnap),
+        0.05f,
+        WorldUnits::kUiCameraNearMinMeters,
+        WorldUnits::kUiTranslationSnapMaxMeters,
+        "%.2f"
+    );
     ImGui::DragFloat("Rotate Snap", &gizmo.rotationSnap, 0.5f, 1.0f, 90.0f, "%.1f deg");
-    ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, 10.0f);
+    ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, WorldUnits::kUiScaleSnapMax, "%.2f");
 }
 
 void RefreshViewportMatrices(Camera& camera, ViewportMatrices& matrices, const EditorScene& scene, VkExtent2D viewportExtent)
@@ -421,7 +472,10 @@ VulkanImGuiLayer::VulkanImGuiLayer(
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
+    m_baseStyle = ImGui::GetStyle();
+    ApplyUiScale();
 
     CreateDescriptorPool();
 
@@ -467,18 +521,33 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
 )
 {
     EditorUiActions actions{};
+    const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), kEditorDockspaceFlags);
+    EnsureDefaultDockLayout(dockspaceId);
 
     ImGui::Begin("Camera");
+    if (ImGui::SliderFloat("UI DPI Scale", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
+    {
+        ApplyUiScale();
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::Text("Framebuffer Scale: %.2f x %.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+    ImGui::Text("World Units: 1.0 = %.1f meter", WorldUnits::kMetersPerUnit);
     ImGui::Text("Move: WASD");
     ImGui::Text("Look: Hold Right Mouse");
-    ImGui::SliderFloat3("Position", &camera.position.x, -10.0f, 10.0f);
+    ImGui::SliderFloat3("Position (m)", &camera.position.x, -WorldUnits::kUiCameraPositionRangeMeters, WorldUnits::kUiCameraPositionRangeMeters, "%.2f");
     ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
     ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
-    ImGui::SliderFloat("Speed", &camera.moveSpeed, 0.5f, 20.0f);
+    ImGui::SliderFloat(
+        "Speed (m/s)",
+        &camera.moveSpeed,
+        WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
+        WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond,
+        "%.2f"
+    );
     ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
     ImGui::SliderFloat("Fov", &camera.fovDegrees, 20.0f, 90.0f);
-    ImGui::SliderFloat("Near", &camera.nearPlane, 0.01f, 5.0f);
-    ImGui::SliderFloat("Far", &camera.farPlane, 1.0f, 200.0f);
+    ImGui::SliderFloat("Near (m)", &camera.nearPlane, WorldUnits::kUiCameraNearMinMeters, WorldUnits::kUiCameraNearMaxMeters, "%.3f");
+    ImGui::SliderFloat("Far (m)", &camera.farPlane, WorldUnits::kUiCameraFarMinMeters, WorldUnits::kUiCameraFarMaxMeters, "%.1f");
     ImGui::End();
 
     ImGui::Begin("Assets");
@@ -553,11 +622,12 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
         {
             ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
             ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
+            ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
             ImGui::Text("Submeshes: %u", model.submeshCount);
             if (model.hasBounds)
             {
-                ImGui::Text("Bounds Min: %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
-                ImGui::Text("Bounds Max: %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
+                ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
+                ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
             }
         }
 
@@ -609,6 +679,15 @@ bool VulkanImGuiLayer::WantsKeyboardCapture() const
 bool VulkanImGuiLayer::WantsMouseCapture() const
 {
     return ImGui::GetIO().WantCaptureMouse;
+}
+
+void VulkanImGuiLayer::ApplyUiScale()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = m_baseStyle;
+    style.ScaleAllSizes(m_uiScale);
+    io.FontGlobalScale = m_uiScale;
 }
 
 void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount)

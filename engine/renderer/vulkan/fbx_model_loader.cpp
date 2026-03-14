@@ -747,6 +747,11 @@ LoadedModelData FbxModelLoader::LoadModel(const std::string& path)
         throw std::runtime_error("Failed to import FBX scene from '" + path + "': " + importer->GetStatus().GetErrorString());
     }
 
+    if (scene->GetGlobalSettings().GetSystemUnit() != FbxSystemUnit::m)
+    {
+        FbxSystemUnit::m.ConvertScene(scene);
+    }
+
     FbxGeometryConverter geometryConverter(manager);
     geometryConverter.Triangulate(scene, true, false);
 

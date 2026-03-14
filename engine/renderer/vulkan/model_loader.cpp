@@ -362,6 +362,7 @@ LoadedModelData LoadModelWithAssimp(const std::string& path)
         aiProcess_Triangulate |
         aiProcess_GenSmoothNormals |
         aiProcess_PreTransformVertices |
+        aiProcess_GlobalScale |
         aiProcess_FlipUVs |
         aiProcess_JoinIdenticalVertices |
         aiProcess_ImproveCacheLocality |
