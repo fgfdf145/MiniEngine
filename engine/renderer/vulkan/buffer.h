@@ -2,31 +2,13 @@
 
 #include "common.h"
 
+#include "../mesh.h"
+
 #include <array>
 #include <vector>
 
-struct Vertex
-{
-    float position[3];
-    float color[3];
-    float texCoord[2];
-    float normal[3];
-    float tangent[4];
-
-    static VkVertexInputBindingDescription GetBindingDescription();
-    static std::array<VkVertexInputAttributeDescription, 5> GetAttributeDescriptions();
-};
-
-struct MeshData
-{
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-
-    bool IsValid() const
-    {
-        return !vertices.empty() && !indices.empty();
-    }
-};
+VkVertexInputBindingDescription GetVertexBindingDescription();
+std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions();
 
 class VulkanBuffer
 {
@@ -60,7 +42,6 @@ private:
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices();
     void UploadIndices();
-    static MeshData CreateDefaultCubeMesh();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;

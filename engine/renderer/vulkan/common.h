@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL3/SDL.h>
+#include "../material.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -32,19 +33,6 @@ struct SwapchainSupportDetails
     VkSurfaceCapabilitiesKHR capabilities{};
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
-};
-
-struct alignas(16) MaterialPushConstants
-{
-    float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    float emissiveFactor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-    float surfaceFactors[4] = { 0.0f, 1.0f, 1.0f, 1.0f };
-};
-
-struct alignas(16) ObjectPushConstants
-{
-    glm::mat4 model{ 1.0f };
-    MaterialPushConstants material;
 };
 
 inline void CheckVulkan(VkResult result, const char* message)

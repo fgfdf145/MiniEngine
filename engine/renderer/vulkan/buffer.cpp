@@ -1,61 +1,11 @@
 #include "buffer.h"
-#include <world_units.h>
 
 #include <log/log.h>
 
 #include <cstddef>
 #include <cstring>
 
-namespace
-{
-MeshData CreateDefaultCubeMeshData()
-{
-    constexpr float h = WorldUnits::kHalfDefaultCubeSizeMeters;
-    MeshData meshData{};
-    meshData.vertices = {
-        { { -h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { -h, h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-
-        { { h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
-        { { -h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
-        { { -h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f, 1.0f } },
-
-        { { -h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-        { { -h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-        { { -h, h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-        { { -h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-
-        { { h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
-        { { h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
-        { { h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
-        { { h, h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 1.0f } },
-
-        { { -h, h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { -h, h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-
-        { { -h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, -h, -h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-        { { -h, -h, h }, { 1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } }
-    };
-    meshData.indices = {
-        0, 1, 2, 2, 3, 0,
-        4, 5, 6, 6, 7, 4,
-        8, 9, 10, 10, 11, 8,
-        12, 13, 14, 14, 15, 12,
-        16, 17, 18, 18, 19, 16,
-        20, 21, 22, 22, 23, 20
-    };
-    return meshData;
-}
-}
-
-VkVertexInputBindingDescription Vertex::GetBindingDescription()
+VkVertexInputBindingDescription GetVertexBindingDescription()
 {
     VkVertexInputBindingDescription bindingDescription{};
     bindingDescription.binding = 0;
@@ -64,7 +14,7 @@ VkVertexInputBindingDescription Vertex::GetBindingDescription()
     return bindingDescription;
 }
 
-std::array<VkVertexInputAttributeDescription, 5> Vertex::GetAttributeDescriptions()
+std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions()
 {
     std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
 
@@ -324,9 +274,4 @@ void VulkanBuffer::UploadIndices()
 
     vkFreeMemory(m_device, stagingMemory, nullptr);
     vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-}
-
-MeshData VulkanBuffer::CreateDefaultCubeMesh()
-{
-    return CreateDefaultCubeMeshData();
 }

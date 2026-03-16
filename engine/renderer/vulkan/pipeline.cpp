@@ -30,8 +30,8 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
 
     const VkPipelineShaderStageCreateInfo shaderStages[] = { vertexShaderStageInfo, fragmentShaderStageInfo };
 
-    const VkVertexInputBindingDescription bindingDescription = Vertex::GetBindingDescription();
-    const auto attributeDescriptions = Vertex::GetAttributeDescriptions();
+    const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
+    const auto attributeDescriptions = GetVertexAttributeDescriptions();
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

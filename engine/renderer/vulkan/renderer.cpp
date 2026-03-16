@@ -2,20 +2,16 @@
 
 #include "../imgui/imgui_impl_vulkan.h"
 
-#include <editor_scene.h>
 #include <imgui.h>
 #include <log/log.h>
 #include <window/window.h>
 
 #include <array>
 #include <cstdint>
-#include <filesystem>
 #include <unordered_map>
 
 namespace
 {
-const char* kExampleTexturePath = MINIENGINE_ASSET_DIR "/textures/checkerboard.ppm";
-
 TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha)
 {
     TextureData texture{};
@@ -59,6 +55,22 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
     return bindings;
 }
 
+VkExtent2D ToVkExtent(RenderExtent extent)
+{
+    return VkExtent2D{
+        std::max(extent.width, 1u),
+        std::max(extent.height, 1u)
+    };
+}
+
+RenderExtent FromVkExtent(VkExtent2D extent)
+{
+    return RenderExtent{
+        extent.width,
+        extent.height
+    };
+}
+
 void LogVulkanRuntimeInfo()
 {
     uint32_t apiVersion = 0;
@@ -70,63 +82,21 @@ void LogVulkanRuntimeInfo()
         VK_API_VERSION_PATCH(apiVersion)
     );
 }
-
-void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaTime, bool blockKeyboardInput)
-{
-    const float moveDistance = camera.moveSpeed * deltaTime;
-
-    if (!blockKeyboardInput)
-    {
-        if (input.IsKeyDown(SDL_SCANCODE_W))
-        {
-            camera.MoveForward(moveDistance);
-        }
-        if (input.IsKeyDown(SDL_SCANCODE_S))
-        {
-            camera.MoveForward(-moveDistance);
-        }
-        if (input.IsKeyDown(SDL_SCANCODE_A))
-        {
-            camera.MoveRight(-moveDistance);
-        }
-        if (input.IsKeyDown(SDL_SCANCODE_D))
-        {
-            camera.MoveRight(moveDistance);
-        }
-    }
-
-    if (input.IsMouseLookActive())
-    {
-        camera.Rotate(
-            input.GetMouseDeltaX() * camera.mouseSensitivity,
-            -input.GetMouseDeltaY() * camera.mouseSensitivity
-        );
-    }
-
-    if (input.IsMousePanActive())
-    {
-        const float panDistancePerPixel = moveDistance * 0.1f;
-        camera.MoveRight(-input.GetMouseDeltaX() * panDistancePerPixel);
-        camera.MoveUp(input.GetMouseDeltaY() * panDistancePerPixel);
-    }
-}
 }
 
-VulkanRenderer::VulkanRenderer(Window& window, std::optional<std::string> startupModelPath)
-    : m_window(window),
-      m_pendingModelPath(std::move(startupModelPath))
+VulkanRenderer::VulkanRenderer(
+    Window& window,
+    std::shared_ptr<RendererSharedState> sharedState,
+    std::optional<std::string> startupModelPath
+)
+    : EditorRenderBackendBase(window, std::move(sharedState), RenderBackendType::Vulkan, std::move(startupModelPath))
 {
     LogVulkanRuntimeInfo();
-    m_editorScene = std::make_unique<EditorScene>();
-    InitializeEditorScene();
 
-    m_instance = std::make_unique<VulkanInstance>(m_window.GetSDLWindow());
+    m_instance = std::make_unique<VulkanInstance>(GetWindow().GetSDLWindow());
     m_device = std::make_unique<VulkanDevice>(m_instance->GetHandle(), m_instance->GetSurface());
-    m_editorScene->CreateTwoCubeTestScene();
-    RebuildSceneRenderables();
-
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
-        m_window.GetSDLWindow(),
+        GetWindow().GetSDLWindow(),
         m_instance->GetHandle(),
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -134,7 +104,7 @@ VulkanRenderer::VulkanRenderer(Window& window, std::optional<std::string> startu
         m_device->GetGraphicsQueue()
     );
     CreateSwapchainResources();
-    CreatePipelineResources();
+    UploadSceneResources();
 }
 
 VulkanRenderer::~VulkanRenderer()
@@ -153,34 +123,18 @@ VulkanRenderer::~VulkanRenderer()
     m_instance.reset();
 }
 
-void VulkanRenderer::HandleEvent(const SDL_Event& event)
-{
-    m_input.HandleEvent(event);
-    m_imguiLayer->ProcessEvent(event);
-
-    if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
-        (event.button.button == SDL_BUTTON_RIGHT || event.button.button == SDL_BUTTON_MIDDLE))
-    {
-        SDL_SetWindowRelativeMouseMode(m_window.GetSDLWindow(), m_input.WantsRelativeMouseMode());
-    }
-}
-
 void VulkanRenderer::DrawFrame()
 {
-    const auto currentFrameTime = std::chrono::steady_clock::now();
-    const float deltaTime = std::chrono::duration<float>(currentFrameTime - m_lastFrameTime).count();
-    m_lastFrameTime = currentFrameTime;
-
-    UpdateCameraFromInput(m_camera, m_input, deltaTime, m_imguiLayer->WantsKeyboardCapture());
-    m_input.EndFrame();
-
-    if (!HasDrawableArea())
+    if (!TickSharedFrame())
     {
         return;
     }
 
-    ProcessPendingSceneLoad();
-    ProcessPendingModelLoad();
+    if (ProcessPendingOperations())
+    {
+        UploadSceneResources();
+    }
+
     SyncSceneViewportLayer();
 
     uint32_t imageIndex = 0;
@@ -196,48 +150,18 @@ void VulkanRenderer::DrawFrame()
         CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
 
-    UpdateViewportMatrices(m_sceneViewportLayer->GetExtent());
+    UpdateViewportMatrices(FromVkExtent(m_sceneViewportLayer->GetExtent()));
 
     m_imguiLayer->BeginFrame();
-    const std::string selectedModelPath =
-        m_editorScene->HasSelection() ? m_editorScene->GetSelectedModel().sourcePath : std::string{};
-    const EditorUiFrameResult uiFrame = m_imguiLayer->DrawEditorUi(
-        m_camera,
-        m_viewportMatrices,
-        *m_editorScene,
-        selectedModelPath,
-        m_lastModelLoadError,
-        m_lastSceneIoError,
+    State().editorUi.BeginFrame(GetWindow().GetSDLWindow());
+    const EditorUiFrameResult uiFrame = DrawEditorUi(
         m_sceneViewportLayer->GetTextureId(imageIndex),
-        m_sceneViewportLayer->GetExtent()
+        FromVkExtent(m_sceneViewportLayer->GetExtent())
     );
-    m_requestedViewportExtent = uiFrame.viewportExtent;
-    if (uiFrame.actions.selectedModelPath.has_value())
-    {
-        m_pendingModelPath = *uiFrame.actions.selectedModelPath;
-    }
-    if (uiFrame.actions.selectedSceneLoadPath.has_value())
-    {
-        m_pendingScenePath = *uiFrame.actions.selectedSceneLoadPath;
-    }
-    if (uiFrame.actions.selectedSceneSavePath.has_value())
-    {
-        try
-        {
-            m_editorScene->SaveSceneToFile(*uiFrame.actions.selectedSceneSavePath);
-            m_editorScene->SetSceneFilePath(*uiFrame.actions.selectedSceneSavePath);
-            m_lastSceneIoError.clear();
-            LOG_INFO("Saved scene successfully: {}", *uiFrame.actions.selectedSceneSavePath);
-        }
-        catch (const std::exception& error)
-        {
-            m_lastSceneIoError = error.what();
-            LOG_ERROR("Failed to save scene '{}': {}", *uiFrame.actions.selectedSceneSavePath, error.what());
-        }
-    }
+    ApplyUiActions(uiFrame);
     ImGui::Render();
 
-    m_uniformBuffer->Update(imageIndex, m_viewportMatrices, m_camera.position);
+    m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
     {
@@ -259,11 +183,21 @@ void VulkanRenderer::DrawFrame()
     }
 }
 
+void VulkanRenderer::HandleBackendEvent(const SDL_Event& event)
+{
+    m_imguiLayer->ProcessEvent(event);
+}
+
+bool VulkanRenderer::WantsKeyboardCapture() const
+{
+    return m_imguiLayer->WantsKeyboardCapture();
+}
+
 void VulkanRenderer::CreateSwapchainResources()
 {
     const SwapchainSupportDetails supportDetails = m_device->QuerySwapchainSupport();
     m_swapchain = std::make_unique<VulkanSwapchain>(
-        m_window.GetSDLWindow(),
+        GetWindow().GetSDLWindow(),
         m_device->GetHandle(),
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
@@ -282,15 +216,15 @@ void VulkanRenderer::CreateSwapchainResources()
         m_renderPass->GetFramebuffers().size()
     );
     m_imguiLayer->CreateOrUpdateVulkanResources(m_renderPass->GetHandle(), static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
-    if (m_requestedViewportExtent.width == 0 || m_requestedViewportExtent.height == 0)
+    if (!State().requestedViewportExtent.IsValid())
     {
-        m_requestedViewportExtent = m_swapchain->GetExtent();
+        State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
     }
     m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
-        m_requestedViewportExtent,
+        ToVkExtent(State().requestedViewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size())
     );
 }
@@ -352,65 +286,36 @@ void VulkanRenderer::RecreateSwapchain()
     CreatePipelineResources();
 }
 
-bool VulkanRenderer::HasDrawableArea() const
+void VulkanRenderer::SyncSceneViewportLayer()
 {
-    int width = 0;
-    int height = 0;
-    if (!SDL_GetWindowSizeInPixels(m_window.GetSDLWindow(), &width, &height))
+    if (!m_swapchain || !m_sceneViewportLayer)
     {
-        throw std::runtime_error(std::string("SDL_GetWindowSizeInPixels failed: ") + SDL_GetError());
+        return;
     }
 
-    return width > 0 && height > 0;
+    if (!State().requestedViewportExtent.IsValid())
+    {
+        State().requestedViewportExtent = FromVkExtent(m_sceneViewportLayer->GetExtent());
+    }
+
+    if (m_sceneViewportLayer->MatchesExtent(ToVkExtent(State().requestedViewportExtent)))
+    {
+        return;
+    }
+
+    vkDeviceWaitIdle(m_device->GetHandle());
+    DestroyPipelineResources();
+    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_swapchain->GetImageFormat(),
+        ToVkExtent(State().requestedViewportExtent),
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
+    );
+    CreatePipelineResources();
 }
 
-void VulkanRenderer::LoadSelectedModel(const std::string& path, bool resetTransform)
-{
-    if (!m_editorScene->HasSelection())
-    {
-        throw std::runtime_error("No selected entity available to receive the model");
-    }
-
-    entt::entity selectedEntity = m_editorScene->GetSelectedEntity();
-    ModelComponent previousModel = m_editorScene->GetModel(selectedEntity);
-    m_editorScene->GetModel(selectedEntity).sourcePath = path;
-    m_editorScene->GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
-
-    try
-    {
-        RebuildSceneRenderables();
-    }
-    catch (...)
-    {
-        m_editorScene->GetModel(selectedEntity) = previousModel;
-        throw;
-    }
-
-    const ModelComponent& model = m_editorScene->GetModel(selectedEntity);
-    if (model.hasBounds)
-    {
-        m_camera.FrameBounds(model.minBounds, model.maxBounds);
-    }
-
-    m_lastModelLoadError.clear();
-    if (resetTransform)
-    {
-        m_editorScene->ResetSelectedTransform();
-    }
-    LOG_INFO("Loaded model successfully into '{}': {}", m_editorScene->GetTag(selectedEntity).name, path);
-}
-
-void VulkanRenderer::LoadScene(const std::string& path)
-{
-    const SerializedSceneData sceneData = EditorScene::LoadSceneDataFromFile(path);
-    m_editorScene->ApplySceneData(sceneData);
-    RebuildSceneRenderables();
-    m_editorScene->SetSceneFilePath(path);
-    m_lastSceneIoError.clear();
-    LOG_INFO("Loaded scene successfully: {}", path);
-}
-
-void VulkanRenderer::RebuildSceneRenderables()
+void VulkanRenderer::UploadSceneResources()
 {
     std::vector<std::unique_ptr<VulkanTexture>> newTextures;
     std::vector<MaterialTextureSlots> newMaterialTextureSlots;
@@ -478,7 +383,7 @@ void VulkanRenderer::RebuildSceneRenderables()
         defaultEmissiveIndex
     });
 
-    auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex, const std::string& materialName) -> uint32_t
+    auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex) -> uint32_t
     {
         if (texturePath.empty())
         {
@@ -507,111 +412,44 @@ void VulkanRenderer::RebuildSceneRenderables()
         }
         catch (const std::exception& error)
         {
-            LOG_ERROR(
-                "Failed to load model texture '{}' for material '{}': {}",
-                texturePath,
-                materialName,
-                error.what()
-            );
+            LOG_ERROR("Failed to load model texture '{}': {}", texturePath, error.what());
             return fallbackIndex;
         }
     };
 
-    m_editorScene->ForEachEntity([&](
-        entt::entity entity,
-        const TagComponent& tag,
-        const TransformComponent&,
-        const ModelComponent& model
-    )
+    for (const CpuRenderSubmesh& cpuRenderSubmesh : State().renderSubmeshes)
     {
-        if (model.sourcePath.empty())
-        {
-            RenderSubmesh renderSubmesh{};
-            renderSubmesh.entity = entity;
-            renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
-                m_device->GetPhysicalDevice(),
-                m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(),
-                m_device->GetGraphicsQueue()
-            );
-            renderSubmesh.materialBindingIndex = defaultMaterialBindingIndex;
-            renderSubmesh.material = MaterialPushConstants{};
-            renderSubmesh.name = tag.name;
-            if (tag.name == "Cube A")
-            {
-                renderSubmesh.material.baseColorFactor[0] = 1.0f;
-                renderSubmesh.material.baseColorFactor[1] = 0.55f;
-                renderSubmesh.material.baseColorFactor[2] = 0.35f;
-            }
-            else if (tag.name == "Cube B")
-            {
-                renderSubmesh.material.baseColorFactor[0] = 0.35f;
-                renderSubmesh.material.baseColorFactor[1] = 0.75f;
-                renderSubmesh.material.baseColorFactor[2] = 1.0f;
-            }
-            newRenderSubmeshes.push_back(std::move(renderSubmesh));
-            return;
-        }
-
-        const LoadedModelData modelData = ModelLoader::LoadModel(model.sourcePath);
-        std::vector<uint32_t> materialBindingIndices(modelData.materials.size(), 0);
-
-        for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(modelData.materials.size()); ++materialIndex)
-        {
-            const ModelMaterialData& material = modelData.materials[materialIndex];
-            MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
-            slots.baseColor = loadTextureIndex(material.baseColorTexturePath, VulkanTextureFormat::SrgbColor, defaultBaseColorIndex, material.name);
-            slots.normal = loadTextureIndex(material.normalTexturePath, VulkanTextureFormat::LinearData, defaultNormalIndex, material.name);
-            slots.metallic = loadTextureIndex(material.metallicTexturePath, VulkanTextureFormat::LinearData, defaultMetallicIndex, material.name);
-            slots.roughness = loadTextureIndex(material.roughnessTexturePath, VulkanTextureFormat::LinearData, defaultRoughnessIndex, material.name);
-            slots.occlusion = loadTextureIndex(material.occlusionTexturePath, VulkanTextureFormat::LinearData, defaultOcclusionIndex, material.name);
-            slots.emissive = loadTextureIndex(material.emissiveTexturePath, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex, material.name);
-
-            materialBindingIndices[materialIndex] = static_cast<uint32_t>(newMaterialTextureSlots.size());
-            newMaterialTextureSlots.push_back(slots);
-        }
-
-        for (const ModelSubmeshData& submesh : modelData.submeshes)
-        {
-            RenderSubmesh renderSubmesh{};
-            renderSubmesh.entity = entity;
-            renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
-                m_device->GetPhysicalDevice(),
-                m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(),
-                m_device->GetGraphicsQueue(),
-                submesh.mesh
-            );
-            renderSubmesh.materialBindingIndex =
-                submesh.hasTexCoords ? materialBindingIndices[submesh.materialIndex] : defaultMaterialBindingIndex;
-
-            const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
-            renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
-            renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
-            renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];
-            renderSubmesh.material.baseColorFactor[3] = material.baseColor[3];
-            renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[3] = material.emissiveIntensity;
-            renderSubmesh.material.surfaceFactors[0] = material.metallicFactor;
-            renderSubmesh.material.surfaceFactors[1] = material.roughnessFactor;
-            renderSubmesh.material.surfaceFactors[2] = material.normalScale;
-            renderSubmesh.material.surfaceFactors[3] = material.occlusionStrength;
-            renderSubmesh.name = submesh.name;
-            newRenderSubmeshes.push_back(std::move(renderSubmesh));
-        }
-
-        m_editorScene->UpdateModelInfo(
-            entity,
-            model.displayName,
-            model.sourcePath,
-            static_cast<uint32_t>(modelData.submeshes.size()),
-            modelData.minBounds,
-            modelData.maxBounds,
-            modelData.hasBounds
+        RenderSubmesh renderSubmesh{};
+        renderSubmesh.entity = cpuRenderSubmesh.entity;
+        renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            m_device->GetQueueFamilies().graphicsFamily.value(),
+            m_device->GetGraphicsQueue(),
+            cpuRenderSubmesh.mesh
         );
-    });
+        renderSubmesh.material = cpuRenderSubmesh.material;
+        renderSubmesh.name = cpuRenderSubmesh.name;
+
+        if (!cpuRenderSubmesh.hasTexCoords)
+        {
+            renderSubmesh.materialBindingIndex = defaultMaterialBindingIndex;
+            newRenderSubmeshes.push_back(std::move(renderSubmesh));
+            continue;
+        }
+
+        MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
+        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, VulkanTextureFormat::SrgbColor, defaultBaseColorIndex);
+        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, VulkanTextureFormat::LinearData, defaultNormalIndex);
+        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, VulkanTextureFormat::LinearData, defaultMetallicIndex);
+        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, VulkanTextureFormat::LinearData, defaultRoughnessIndex);
+        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, VulkanTextureFormat::LinearData, defaultOcclusionIndex);
+        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex);
+
+        renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
+        newMaterialTextureSlots.push_back(slots);
+        newRenderSubmeshes.push_back(std::move(renderSubmesh));
+    }
 
     ApplyRenderContent(std::move(newTextures), std::move(newMaterialTextureSlots), std::move(newRenderSubmeshes));
 }
@@ -625,7 +463,7 @@ void VulkanRenderer::ApplyRenderContent(
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
     std::unique_ptr<VulkanPipeline> newGraphicsPipeline;
 
-    if (m_swapchain && m_renderPass && m_sceneViewportLayer)
+    if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
         newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
             m_device->GetPhysicalDevice(),
@@ -649,96 +487,6 @@ void VulkanRenderer::ApplyRenderContent(
     m_renderSubmeshes = std::move(newRenderSubmeshes);
 }
 
-void VulkanRenderer::ProcessPendingModelLoad()
-{
-    if (!m_pendingModelPath.has_value())
-    {
-        return;
-    }
-
-    const std::string path = *m_pendingModelPath;
-    m_pendingModelPath.reset();
-
-    try
-    {
-        LOG_INFO("Loading model: {}", path);
-        LoadSelectedModel(path);
-    }
-    catch (const std::exception& error)
-    {
-        m_lastModelLoadError = error.what();
-        LOG_ERROR("Failed to load model '{}': {}", path, error.what());
-    }
-
-    m_lastFrameTime = std::chrono::steady_clock::now();
-}
-
-void VulkanRenderer::ProcessPendingSceneLoad()
-{
-    if (!m_pendingScenePath.has_value())
-    {
-        return;
-    }
-
-    const std::string path = *m_pendingScenePath;
-    m_pendingScenePath.reset();
-
-    try
-    {
-        LoadScene(path);
-    }
-    catch (const std::exception& error)
-    {
-        m_lastSceneIoError = error.what();
-        LOG_ERROR("Failed to load scene '{}': {}", path, error.what());
-    }
-
-    m_lastFrameTime = std::chrono::steady_clock::now();
-}
-
-void VulkanRenderer::InitializeEditorScene()
-{
-    m_editorScene->LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
-}
-
-void VulkanRenderer::UpdateViewportMatrices(VkExtent2D extent)
-{
-    m_viewportMatrices.view = m_camera.GetViewMatrix();
-    m_viewportMatrices.projection = m_camera.GetProjectionMatrix(extent, false);
-    m_viewportMatrices.renderProjection = m_camera.GetProjectionMatrix(extent, true);
-    m_viewportMatrices.model =
-        m_editorScene->HasSelection() ? m_editorScene->GetModelMatrix(m_editorScene->GetSelectedEntity()) : glm::mat4(1.0f);
-}
-
-void VulkanRenderer::SyncSceneViewportLayer()
-{
-    if (!m_swapchain || !m_sceneViewportLayer)
-    {
-        return;
-    }
-
-    if (m_requestedViewportExtent.width == 0 || m_requestedViewportExtent.height == 0)
-    {
-        m_requestedViewportExtent = m_sceneViewportLayer->GetExtent();
-    }
-
-    if (m_sceneViewportLayer->MatchesExtent(m_requestedViewportExtent))
-    {
-        return;
-    }
-
-    vkDeviceWaitIdle(m_device->GetHandle());
-    DestroyPipelineResources();
-    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_swapchain->GetImageFormat(),
-        m_requestedViewportExtent,
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
-    );
-    CreatePipelineResources();
-}
-
 std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) const
 {
     std::vector<VulkanDrawItem> drawItems;
@@ -747,7 +495,7 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
     for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
     {
         ObjectPushConstants drawConstants{};
-        drawConstants.model = m_editorScene->GetModelMatrix(renderSubmesh.entity);
+        drawConstants.model = State().editorScene.GetModelMatrix(renderSubmesh.entity);
         drawConstants.material = renderSubmesh.material;
         drawItems.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),
