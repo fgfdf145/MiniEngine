@@ -19,15 +19,18 @@
 namespace
 {
 constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
+constexpr float kSelectionCenterHitRadiusPixels = 20.0f;
+constexpr float kSelectionBoundsHitPaddingPixels = 6.0f;
+constexpr float kSelectionOutlineThickness = 2.0f;
 constexpr ImGuiDockNodeFlags kEditorDockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
 
-struct ProjectedEntityBounds
+struct ProjectedEntityCenter
 {
     entt::entity entity = entt::null;
+    ImVec2 center{ 0.0f, 0.0f };
     ImVec2 min{ 0.0f, 0.0f };
     ImVec2 max{ 0.0f, 0.0f };
     float depth = std::numeric_limits<float>::max();
-    bool visible = false;
 };
 
 struct ViewportOverlayRect
@@ -142,6 +145,67 @@ std::array<glm::vec3, 8> BuildBoundsCorners(const glm::vec3& minBounds, const gl
     };
 }
 
+constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = { {
+    { 0, 1 }, { 1, 3 }, { 3, 2 }, { 2, 0 },
+    { 4, 5 }, { 5, 7 }, { 7, 6 }, { 6, 4 },
+    { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }
+} };
+
+bool ProjectWorldPointToViewport(
+    const glm::vec3& worldPoint,
+    const glm::mat4& viewProjection,
+    const ViewportOverlayRect& viewportRect,
+    ImVec2& projectedPoint
+)
+{
+    const glm::vec4 clip = viewProjection * glm::vec4(worldPoint, 1.0f);
+    if (clip.w <= 0.0f)
+    {
+        return false;
+    }
+
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    if (ndc.z < 0.0f || ndc.z > 1.0f)
+    {
+        return false;
+    }
+
+    projectedPoint = ImVec2(
+        viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x,
+        viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y
+    );
+    return true;
+}
+
+bool BuildProjectedSelectionBox(
+    const EditorScene& scene,
+    entt::entity entity,
+    const ViewportMatrices& matrices,
+    const ViewportOverlayRect& viewportRect,
+    std::array<ImVec2, 8>& projectedCorners
+)
+{
+    const ModelComponent& model = scene.GetModel(entity);
+    if (!model.hasBounds || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    {
+        return false;
+    }
+
+    const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+    const glm::mat4 viewProjection = matrices.projection * matrices.view;
+    const auto localCorners = BuildBoundsCorners(model.minBounds, model.maxBounds);
+    for (size_t index = 0; index < localCorners.size(); ++index)
+    {
+        const glm::vec3 worldPoint = glm::vec3(modelMatrix * glm::vec4(localCorners[index], 1.0f));
+        if (!ProjectWorldPointToViewport(worldPoint, viewProjection, viewportRect, projectedCorners[index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool ComputeWorldBounds(
     const EditorScene& scene,
     entt::entity entity,
@@ -168,20 +232,20 @@ bool ComputeWorldBounds(
     return true;
 }
 
-std::vector<ProjectedEntityBounds> ProjectSceneBounds(
+std::vector<ProjectedEntityCenter> ProjectSceneCenters(
     const EditorScene& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect
 )
 {
-    std::vector<ProjectedEntityBounds> projectedBounds;
+    std::vector<ProjectedEntityCenter> projectedCenters;
     if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
     {
-        return projectedBounds;
+        return projectedCenters;
     }
 
     const glm::mat4 viewProjection = matrices.projection * matrices.view;
-    projectedBounds.reserve(scene.GetEntityOrder().size());
+    projectedCenters.reserve(scene.GetEntityOrder().size());
 
     scene.ForEachEntity([&](entt::entity entity, const TagComponent&, const TransformComponent&, const ModelComponent& model)
     {
@@ -190,117 +254,116 @@ std::vector<ProjectedEntityBounds> ProjectSceneBounds(
             return;
         }
 
-        ProjectedEntityBounds projected{};
+        ProjectedEntityCenter projected{};
         projected.entity = entity;
-
-        float minX = std::numeric_limits<float>::max();
-        float minY = std::numeric_limits<float>::max();
-        float maxX = std::numeric_limits<float>::lowest();
-        float maxY = std::numeric_limits<float>::lowest();
-        float depthAccumulation = 0.0f;
-        int depthSamples = 0;
-
-        const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
-        for (const glm::vec3& corner : BuildBoundsCorners(model.minBounds, model.maxBounds))
-        {
-            const glm::vec4 clip = viewProjection * modelMatrix * glm::vec4(corner, 1.0f);
-            if (clip.w <= 0.0f)
-            {
-                continue;
-            }
-
-            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
-            if (ndc.z < 0.0f || ndc.z > 1.0f)
-            {
-                continue;
-            }
-
-            const float screenX = viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x;
-            const float screenY = viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y;
-            minX = std::min(minX, screenX);
-            minY = std::min(minY, screenY);
-            maxX = std::max(maxX, screenX);
-            maxY = std::max(maxY, screenY);
-            depthAccumulation += ndc.z;
-            ++depthSamples;
-        }
-
-        if (depthSamples == 0)
+        std::array<ImVec2, 8> projectedCorners{};
+        if (!BuildProjectedSelectionBox(scene, entity, matrices, viewportRect, projectedCorners))
         {
             return;
         }
 
-        projected.min = ImVec2(
-            glm::clamp(minX, viewportRect.origin.x, viewportRect.origin.x + viewportRect.size.x),
-            glm::clamp(minY, viewportRect.origin.y, viewportRect.origin.y + viewportRect.size.y)
-        );
-        projected.max = ImVec2(
-            glm::clamp(maxX, viewportRect.origin.x, viewportRect.origin.x + viewportRect.size.x),
-            glm::clamp(maxY, viewportRect.origin.y, viewportRect.origin.y + viewportRect.size.y)
-        );
-        projected.depth = depthAccumulation / static_cast<float>(depthSamples);
-        projected.visible = projected.max.x > projected.min.x && projected.max.y > projected.min.y;
-        if (projected.visible)
+        projected.min = projectedCorners.front();
+        projected.max = projectedCorners.front();
+        for (const ImVec2& corner : projectedCorners)
         {
-            projectedBounds.push_back(projected);
+            projected.min.x = std::min(projected.min.x, corner.x);
+            projected.min.y = std::min(projected.min.y, corner.y);
+            projected.max.x = std::max(projected.max.x, corner.x);
+            projected.max.y = std::max(projected.max.y, corner.y);
         }
+
+        const glm::vec3 localCenter = scene.GetBoundsCenter(entity);
+        const glm::vec4 clip = viewProjection * scene.GetModelMatrix(entity) * glm::vec4(localCenter, 1.0f);
+        if (clip.w <= 0.0f)
+        {
+            return;
+        }
+
+        const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        if (ndc.x < -1.0f || ndc.x > 1.0f || ndc.y < -1.0f || ndc.y > 1.0f || ndc.z < 0.0f || ndc.z > 1.0f)
+        {
+            return;
+        }
+
+        projected.center = ImVec2(
+            viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x,
+            viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y
+        );
+        projected.depth = ndc.z;
+        projectedCenters.push_back(projected);
     });
 
-    return projectedBounds;
+    return projectedCenters;
 }
 
-const ProjectedEntityBounds* FindProjectedBounds(const std::vector<ProjectedEntityBounds>& projectedBounds, entt::entity entity)
-{
-    for (const ProjectedEntityBounds& bounds : projectedBounds)
-    {
-        if (bounds.entity == entity)
-        {
-            return &bounds;
-        }
-    }
-
-    return nullptr;
-}
-
-entt::entity PickHoveredEntity(const std::vector<ProjectedEntityBounds>& projectedBounds)
+entt::entity PickHoveredEntity(const std::vector<ProjectedEntityCenter>& projectedCenters)
 {
     const ImVec2 mousePosition = ImGui::GetMousePos();
     entt::entity hoveredEntity = entt::null;
     float bestDepth = std::numeric_limits<float>::max();
+    const float hitRadiusSquared = kSelectionCenterHitRadiusPixels * kSelectionCenterHitRadiusPixels;
 
-    for (const ProjectedEntityBounds& bounds : projectedBounds)
+    for (const ProjectedEntityCenter& projectedCenter : projectedCenters)
     {
         const bool insideBounds =
-            mousePosition.x >= bounds.min.x &&
-            mousePosition.x <= bounds.max.x &&
-            mousePosition.y >= bounds.min.y &&
-            mousePosition.y <= bounds.max.y;
-        if (!insideBounds || bounds.depth >= bestDepth)
+            mousePosition.x >= projectedCenter.min.x - kSelectionBoundsHitPaddingPixels &&
+            mousePosition.x <= projectedCenter.max.x + kSelectionBoundsHitPaddingPixels &&
+            mousePosition.y >= projectedCenter.min.y - kSelectionBoundsHitPaddingPixels &&
+            mousePosition.y <= projectedCenter.max.y + kSelectionBoundsHitPaddingPixels;
+        const float dx = mousePosition.x - projectedCenter.center.x;
+        const float dy = mousePosition.y - projectedCenter.center.y;
+        const float distanceSquared = dx * dx + dy * dy;
+        const bool insideCenterRadius = distanceSquared <= hitRadiusSquared;
+        if ((!insideBounds && !insideCenterRadius) || projectedCenter.depth >= bestDepth)
         {
             continue;
         }
 
-        bestDepth = bounds.depth;
-        hoveredEntity = bounds.entity;
+        bestDepth = projectedCenter.depth;
+        hoveredEntity = projectedCenter.entity;
     }
 
     return hoveredEntity;
 }
 
-void DrawViewportSelectionOverlay(const EditorScene& scene, const std::vector<ProjectedEntityBounds>& projectedBounds)
+void DrawViewportSelectionOverlay(
+    const EditorScene& scene,
+    const ViewportMatrices& matrices,
+    const ViewportOverlayRect& viewportRect,
+    const std::vector<ProjectedEntityCenter>& projectedCenters
+)
 {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    if (drawList == nullptr)
+    {
+        return;
+    }
+
     if (!scene.HasSelection())
     {
         return;
     }
 
-    const ProjectedEntityBounds* bounds = FindProjectedBounds(projectedBounds, scene.GetSelectedEntity());
-    if (bounds == nullptr)
+    std::array<ImVec2, 8> projectedSelectionCorners{};
+    if (!BuildProjectedSelectionBox(scene, scene.GetSelectedEntity(), matrices, viewportRect, projectedSelectionCorners))
     {
         return;
     }
 
-    ImGui::GetWindowDrawList()->AddRect(bounds->min, bounds->max, kSelectionOutlineColor, 0.0f, 0, 2.0f);
+    for (const auto& edge : kBoundsEdges)
+    {
+        drawList->AddLine(
+            projectedSelectionCorners[edge.first],
+            projectedSelectionCorners[edge.second],
+            kSelectionOutlineColor,
+            kSelectionOutlineThickness
+        );
+    }
+
+    for (const ImVec2& corner : projectedSelectionCorners)
+    {
+        drawList->AddCircleFilled(corner, 2.5f, kSelectionOutlineColor);
+    }
 }
 
 bool DrawOperationButton(const char* label, ImGuizmo::OPERATION value, ImGuizmo::OPERATION& current)
@@ -423,22 +486,21 @@ void HandleViewportShortcuts(EditorScene& scene, Camera& camera, const ViewportO
 
 void HandleViewportSelection(
     EditorScene& scene,
-    const std::vector<ProjectedEntityBounds>& projectedBounds,
+    const std::vector<ProjectedEntityCenter>& projectedCenters,
     const ViewportOverlayRect& viewportRect
 )
 {
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse || !viewportRect.hovered || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    if (!viewportRect.hovered || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         return;
     }
 
-    if (scene.HasSelection() && (ImGuizmo::IsOver() || ImGuizmo::IsUsing()))
+    if (scene.HasSelection() && ImGuizmo::IsUsing())
     {
         return;
     }
 
-    scene.SetSelectedEntity(PickHoveredEntity(projectedBounds));
+    scene.SetSelectedEntity(PickHoveredEntity(projectedCenters));
 }
 
 void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
@@ -648,7 +710,10 @@ EditorUiFrameResult EditorUiController::Draw(
     ImGui::End();
 
     ImGui::Begin("Scene");
-    ImGui::TextWrapped("Selection: %s", scene.HasSelection() ? "Selected in viewport" : "Click a cube in the viewport to select");
+    ImGui::TextWrapped(
+        "Selection: %s",
+        scene.HasSelection() ? "Selected by model center in viewport" : "Click a model center in the viewport to select"
+    );
     ImGui::Text("Entities: %u", static_cast<unsigned int>(scene.GetEntityOrder().size()));
     ImGui::Separator();
     for (entt::entity entity : scene.GetEntityOrder())
@@ -735,9 +800,9 @@ EditorUiFrameResult EditorUiController::Draw(
     DrawViewManipulator(camera, matrices, viewportRect);
     RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
     DrawGizmoOverlay(scene, matrices, viewportRect);
-    const std::vector<ProjectedEntityBounds> projectedBounds = ProjectSceneBounds(scene, matrices, viewportRect);
-    HandleViewportSelection(scene, projectedBounds, viewportRect);
-    DrawViewportSelectionOverlay(scene, projectedBounds);
+    const std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
+    HandleViewportSelection(scene, projectedCenters, viewportRect);
+    DrawViewportSelectionOverlay(scene, matrices, viewportRect, projectedCenters);
     ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + 12.0f, viewportRect.origin.y + 12.0f));
     ImGui::BeginGroup();
     ImGui::TextUnformatted("Viewport");
