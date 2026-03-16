@@ -3,6 +3,7 @@
 #include "../imgui/imgui_impl_sdl3.h"
 #include "../imgui/imgui_impl_vulkan.h"
 
+#include <editor_scene.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
@@ -43,7 +44,7 @@ struct ViewportOverlayRect
     bool focused = false;
 };
 
-ViewportOverlayRect BuildViewportOverlayRect()
+ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId)
 {
     ViewportOverlayRect rect{};
     rect.drawList = ImGui::GetWindowDrawList();
@@ -52,19 +53,45 @@ ViewportOverlayRect BuildViewportOverlayRect()
     available.x = std::max(available.x, 1.0f);
     available.y = std::max(available.y, 1.0f);
 
-    ImGui::InvisibleButton("##viewport_canvas", available, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    rect.origin = ImGui::GetItemRectMin();
-    rect.size = ImGui::GetItemRectSize();
-    rect.hovered = ImGui::IsItemHovered();
-    rect.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-
-    if (rect.drawList != nullptr)
+    if (viewportTextureId)
     {
-        const ImVec2 max(rect.origin.x + rect.size.x, rect.origin.y + rect.size.y);
-        rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
+        ImGui::Image(viewportTextureId, available);
+    }
+    else
+    {
+        ImGui::Dummy(available);
     }
 
+    rect.origin = ImGui::GetItemRectMin();
+    rect.size = ImGui::GetItemRectSize();
+    rect.hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    rect.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
     return rect;
+}
+
+VkExtent2D BuildViewportExtent(const ViewportOverlayRect& rect)
+{
+    return VkExtent2D{
+        std::max(static_cast<uint32_t>(std::lround(rect.size.x)), 1u),
+        std::max(static_cast<uint32_t>(std::lround(rect.size.y)), 1u)
+    };
+}
+
+void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTextureId)
+{
+    if (rect.drawList == nullptr)
+    {
+        return;
+    }
+
+    const ImVec2 max(rect.origin.x + rect.size.x, rect.origin.y + rect.size.y);
+    if (!viewportTextureId)
+    {
+        rect.drawList->AddRectFilled(rect.origin, max, IM_COL32(18, 22, 30, 255));
+    }
+
+    rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
 }
 
 void EnsureDefaultDockLayout(ImGuiID dockspaceId)
@@ -530,17 +557,19 @@ void VulkanImGuiLayer::BeginFrame()
     ImGuizmo::BeginFrame();
 }
 
-EditorUiActions VulkanImGuiLayer::DrawEditorUi(
+EditorUiFrameResult VulkanImGuiLayer::DrawEditorUi(
     Camera& camera,
     ViewportMatrices& matrices,
     EditorScene& scene,
     const std::string& currentModelPath,
     const std::string& lastLoadError,
     const std::string& lastSceneIoError,
+    ImTextureID viewportTextureId,
     VkExtent2D viewportExtent
 )
 {
-    EditorUiActions actions{};
+    EditorUiFrameResult result{};
+    result.viewportExtent = viewportExtent;
     const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), kEditorDockspaceFlags);
     EnsureDefaultDockLayout(dockspaceId);
 
@@ -556,6 +585,7 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
     ImGui::Text("World Units: 1.0 = %.1f meter", WorldUnits::kMetersPerUnit);
     ImGui::Text("Move: WASD");
     ImGui::Text("Look: Hold Right Mouse");
+    ImGui::Text("Pan: Hold Middle Mouse");
     ImGui::SliderFloat3("Position (m)", &camera.position.x, -WorldUnits::kUiCameraPositionRangeMeters, WorldUnits::kUiCameraPositionRangeMeters, "%.2f");
     ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
     ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
@@ -575,17 +605,17 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
     ImGui::Begin("Assets");
     if (ImGui::Button("Load Model"))
     {
-        actions.selectedModelPath = OpenModelFileDialog();
+        result.actions.selectedModelPath = OpenModelFileDialog();
     }
     ImGui::SameLine();
     if (ImGui::Button("Load Scene"))
     {
-        actions.selectedSceneLoadPath = OpenSceneFileDialog();
+        result.actions.selectedSceneLoadPath = OpenSceneFileDialog();
     }
     ImGui::SameLine();
     if (ImGui::Button("Save Scene"))
     {
-        actions.selectedSceneSavePath = SaveSceneFileDialog();
+        result.actions.selectedSceneSavePath = SaveSceneFileDialog();
     }
 
     ImGui::Separator();
@@ -678,11 +708,13 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::Begin("Viewport");
-    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect();
+    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId);
+    DrawViewportOverlay(viewportRect, viewportTextureId);
+    result.viewportExtent = BuildViewportExtent(viewportRect);
     HandleViewportShortcuts(scene, camera, viewportRect);
-    RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
+    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent);
     DrawViewManipulator(camera, matrices, viewportRect);
-    RefreshViewportMatrices(camera, matrices, scene, viewportExtent);
+    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent);
     DrawGizmoOverlay(scene, matrices, viewportRect);
     const std::vector<ProjectedEntityBounds> projectedBounds = ProjectSceneBounds(scene, matrices, viewportRect);
     HandleViewportSelection(scene, projectedBounds, viewportRect);
@@ -691,10 +723,11 @@ EditorUiActions VulkanImGuiLayer::DrawEditorUi(
     ImGui::BeginGroup();
     ImGui::TextUnformatted("Viewport");
     ImGui::TextUnformatted("F to frame, W/E/R to switch gizmo");
+    ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
     ImGui::EndGroup();
     ImGui::End();
     ImGui::PopStyleVar();
-    return actions;
+    return result;
 }
 
 ImDrawData* VulkanImGuiLayer::GetDrawData() const

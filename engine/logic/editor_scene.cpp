@@ -445,7 +445,7 @@ glm::vec3 EditorScene::GetBoundsCenter(entt::entity entity) const
     return (model.minBounds + model.maxBounds) * 0.5f;
 }
 
-void EditorScene::ForEachEntity(const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const ModelComponent&)>& visitor) const
+void EditorScene::ForEachEntity(const SceneEntityVisitor& visitor) const
 {
     for (entt::entity entity : m_entityOrder)
     {

@@ -41,5 +41,8 @@ find_package(assimp CONFIG REQUIRED)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/platform)
+add_subdirectory(engine/scene)
+add_subdirectory(engine/logic)
 add_subdirectory(engine/renderer)
+add_subdirectory(engine/application)
 add_subdirectory(app)

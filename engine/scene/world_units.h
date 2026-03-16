@@ -19,7 +19,7 @@ constexpr glm::vec3 kDefaultCubeMaxBoundsMeters(
     kHalfDefaultCubeSizeMeters
 );
 
-constexpr float kMinimumScale = 0.001f; // 1 mm
+constexpr float kMinimumScale = 0.001f;
 constexpr glm::vec3 kMinimumScale3(kMinimumScale, kMinimumScale, kMinimumScale);
 
 constexpr glm::vec3 kDefaultCameraPositionMeters(0.0f, 0.0f, 4.0f);

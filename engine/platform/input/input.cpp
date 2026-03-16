@@ -22,11 +22,19 @@ void InputState::HandleEvent(const SDL_Event& event)
         {
             m_mouseLookActive = true;
         }
+        if (event.button.button == SDL_BUTTON_MIDDLE)
+        {
+            m_mousePanActive = true;
+        }
         break;
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (event.button.button == SDL_BUTTON_RIGHT)
         {
             m_mouseLookActive = false;
+        }
+        if (event.button.button == SDL_BUTTON_MIDDLE)
+        {
+            m_mousePanActive = false;
         }
         break;
     default:
@@ -48,6 +56,16 @@ bool InputState::IsKeyDown(SDL_Scancode scancode) const
 bool InputState::IsMouseLookActive() const
 {
     return m_mouseLookActive;
+}
+
+bool InputState::IsMousePanActive() const
+{
+    return m_mousePanActive;
+}
+
+bool InputState::WantsRelativeMouseMode() const
+{
+    return m_mouseLookActive || m_mousePanActive;
 }
 
 float InputState::GetMouseDeltaX() const

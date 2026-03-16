@@ -5,11 +5,7 @@ add_executable(miniengine_app
 target_link_libraries(miniengine_app
 PRIVATE
     engine_core
-    engine_platform
-    engine_renderer
-    imguizmo::imguizmo
-    yaml-cpp::yaml-cpp
-    EnTT::EnTT
+    engine_application
 )
 
 add_custom_command(TARGET miniengine_app POST_BUILD

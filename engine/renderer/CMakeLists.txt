@@ -1,7 +1,6 @@
 add_library(engine_renderer
     imgui/imgui_impl_sdl3.cpp
     imgui/imgui_impl_vulkan.cpp
-    vulkan/editor_scene.cpp
     vulkan/fbx_model_loader.cpp
     vulkan/buffer.cpp
     vulkan/camera.cpp
@@ -13,6 +12,7 @@ add_library(engine_renderer
     vulkan/pipeline.cpp
     vulkan/render_pass.cpp
     vulkan/renderer.cpp
+    vulkan/scene_viewport.cpp
     vulkan/swapchain.cpp
     vulkan/texture.cpp
     vulkan/texture_loader.cpp
@@ -65,6 +65,7 @@ target_link_libraries(engine_renderer
 PUBLIC
     engine_core
     engine_platform
+    engine_scene
     SDL3::SDL3
     Vulkan::Vulkan
     glm::glm
@@ -72,6 +73,7 @@ PUBLIC
     assimp::assimp
     EnTT::EnTT
 PRIVATE
+    engine_logic
     imguizmo::imguizmo
     yaml-cpp::yaml-cpp
 )

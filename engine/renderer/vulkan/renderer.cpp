@@ -2,10 +2,12 @@
 
 #include "../imgui/imgui_impl_vulkan.h"
 
+#include <editor_scene.h>
 #include <imgui.h>
 #include <log/log.h>
 #include <window/window.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <unordered_map>
@@ -100,6 +102,13 @@ void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaT
             -input.GetMouseDeltaY() * camera.mouseSensitivity
         );
     }
+
+    if (input.IsMousePanActive())
+    {
+        const float panDistancePerPixel = moveDistance * 0.1f;
+        camera.MoveRight(-input.GetMouseDeltaX() * panDistancePerPixel);
+        camera.MoveUp(input.GetMouseDeltaY() * panDistancePerPixel);
+    }
 }
 }
 
@@ -108,11 +117,12 @@ VulkanRenderer::VulkanRenderer(Window& window, std::optional<std::string> startu
       m_pendingModelPath(std::move(startupModelPath))
 {
     LogVulkanRuntimeInfo();
+    m_editorScene = std::make_unique<EditorScene>();
     InitializeEditorScene();
 
     m_instance = std::make_unique<VulkanInstance>(m_window.GetSDLWindow());
     m_device = std::make_unique<VulkanDevice>(m_instance->GetHandle(), m_instance->GetSurface());
-    m_editorScene.CreateTwoCubeTestScene();
+    m_editorScene->CreateTwoCubeTestScene();
     RebuildSceneRenderables();
 
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
@@ -149,9 +159,9 @@ void VulkanRenderer::HandleEvent(const SDL_Event& event)
     m_imguiLayer->ProcessEvent(event);
 
     if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
-        event.button.button == SDL_BUTTON_RIGHT)
+        (event.button.button == SDL_BUTTON_RIGHT || event.button.button == SDL_BUTTON_MIDDLE))
     {
-        SDL_SetWindowRelativeMouseMode(m_window.GetSDLWindow(), event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+        SDL_SetWindowRelativeMouseMode(m_window.GetSDLWindow(), m_input.WantsRelativeMouseMode());
     }
 }
 
@@ -171,49 +181,7 @@ void VulkanRenderer::DrawFrame()
 
     ProcessPendingSceneLoad();
     ProcessPendingModelLoad();
-    UpdateViewportMatrices(m_swapchain->GetExtent());
-
-    m_imguiLayer->BeginFrame();
-    const std::string selectedModelPath =
-        m_editorScene.HasSelection() ? m_editorScene.GetSelectedModel().sourcePath : std::string{};
-    if (const EditorUiActions uiActions = m_imguiLayer->DrawEditorUi(
-            m_camera,
-            m_viewportMatrices,
-            m_editorScene,
-            selectedModelPath,
-            m_lastModelLoadError,
-            m_lastSceneIoError,
-            m_swapchain->GetExtent()
-        );
-        uiActions.selectedModelPath.has_value() ||
-        uiActions.selectedSceneLoadPath.has_value() ||
-        uiActions.selectedSceneSavePath.has_value())
-    {
-        if (uiActions.selectedModelPath.has_value())
-        {
-            m_pendingModelPath = *uiActions.selectedModelPath;
-        }
-        if (uiActions.selectedSceneLoadPath.has_value())
-        {
-            m_pendingScenePath = *uiActions.selectedSceneLoadPath;
-        }
-        if (uiActions.selectedSceneSavePath.has_value())
-        {
-            try
-            {
-                m_editorScene.SaveSceneToFile(*uiActions.selectedSceneSavePath);
-                m_editorScene.SetSceneFilePath(*uiActions.selectedSceneSavePath);
-                m_lastSceneIoError.clear();
-                LOG_INFO("Saved scene successfully: {}", *uiActions.selectedSceneSavePath);
-            }
-            catch (const std::exception& error)
-            {
-                m_lastSceneIoError = error.what();
-                LOG_ERROR("Failed to save scene '{}': {}", *uiActions.selectedSceneSavePath, error.what());
-            }
-        }
-    }
-    ImGui::Render();
+    SyncSceneViewportLayer();
 
     uint32_t imageIndex = 0;
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
@@ -228,37 +196,54 @@ void VulkanRenderer::DrawFrame()
         CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
 
-    m_uniformBuffer->Update(imageIndex, m_viewportMatrices, m_camera.position);
+    UpdateViewportMatrices(m_sceneViewportLayer->GetExtent());
 
-    std::vector<VulkanDrawItem> drawItems;
-    drawItems.reserve(m_renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
-    {
-        ObjectPushConstants drawConstants{};
-        drawConstants.model = m_editorScene.GetModelMatrix(renderSubmesh.entity);
-        drawConstants.material = renderSubmesh.material;
-        drawItems.push_back(VulkanDrawItem{
-            renderSubmesh.buffer->GetVertexHandle(),
-            renderSubmesh.buffer->GetIndexHandle(),
-            renderSubmesh.buffer->GetIndexCount(),
-            m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
-            drawConstants
-        });
-    }
-
-    m_commandContext->RecordCommandBuffer(
-        imageIndex,
-        m_renderPass->GetHandle(),
-        m_renderPass->GetFramebuffers()[imageIndex],
-        m_swapchain->GetExtent(),
-        m_graphicsPipeline->GetHandle(),
-        m_graphicsPipeline->GetLayout(),
-        drawItems,
-        [](VkCommandBuffer commandBuffer)
-        {
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
-        }
+    m_imguiLayer->BeginFrame();
+    const std::string selectedModelPath =
+        m_editorScene->HasSelection() ? m_editorScene->GetSelectedModel().sourcePath : std::string{};
+    const EditorUiFrameResult uiFrame = m_imguiLayer->DrawEditorUi(
+        m_camera,
+        m_viewportMatrices,
+        *m_editorScene,
+        selectedModelPath,
+        m_lastModelLoadError,
+        m_lastSceneIoError,
+        m_sceneViewportLayer->GetTextureId(imageIndex),
+        m_sceneViewportLayer->GetExtent()
     );
+    m_requestedViewportExtent = uiFrame.viewportExtent;
+    if (uiFrame.actions.selectedModelPath.has_value())
+    {
+        m_pendingModelPath = *uiFrame.actions.selectedModelPath;
+    }
+    if (uiFrame.actions.selectedSceneLoadPath.has_value())
+    {
+        m_pendingScenePath = *uiFrame.actions.selectedSceneLoadPath;
+    }
+    if (uiFrame.actions.selectedSceneSavePath.has_value())
+    {
+        try
+        {
+            m_editorScene->SaveSceneToFile(*uiFrame.actions.selectedSceneSavePath);
+            m_editorScene->SetSceneFilePath(*uiFrame.actions.selectedSceneSavePath);
+            m_lastSceneIoError.clear();
+            LOG_INFO("Saved scene successfully: {}", *uiFrame.actions.selectedSceneSavePath);
+        }
+        catch (const std::exception& error)
+        {
+            m_lastSceneIoError = error.what();
+            LOG_ERROR("Failed to save scene '{}': {}", *uiFrame.actions.selectedSceneSavePath, error.what());
+        }
+    }
+    ImGui::Render();
+
+    m_uniformBuffer->Update(imageIndex, m_viewportMatrices, m_camera.position);
+    const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
+    m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
+    {
+        RecordSceneLayer(commandBuffer, imageIndex, drawItems);
+        RecordEditorLayer(commandBuffer, imageIndex);
+    });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
@@ -297,10 +282,22 @@ void VulkanRenderer::CreateSwapchainResources()
         m_renderPass->GetFramebuffers().size()
     );
     m_imguiLayer->CreateOrUpdateVulkanResources(m_renderPass->GetHandle(), static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    if (m_requestedViewportExtent.width == 0 || m_requestedViewportExtent.height == 0)
+    {
+        m_requestedViewportExtent = m_swapchain->GetExtent();
+    }
+    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_swapchain->GetImageFormat(),
+        m_requestedViewportExtent,
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
+    );
 }
 
 void VulkanRenderer::DestroySwapchainResources()
 {
+    m_sceneViewportLayer.reset();
     if (m_imguiLayer)
     {
         m_imguiLayer->DestroyVulkanResources();
@@ -329,8 +326,8 @@ void VulkanRenderer::CreatePipelineResources()
     );
     m_graphicsPipeline = std::make_unique<VulkanPipeline>(
         m_device->GetHandle(),
-        m_swapchain->GetExtent(),
-        m_renderPass->GetHandle(),
+        m_sceneViewportLayer->GetExtent(),
+        m_sceneViewportLayer->GetRenderPass(),
         m_uniformBuffer->GetDescriptorSetLayout()
     );
 }
@@ -369,15 +366,15 @@ bool VulkanRenderer::HasDrawableArea() const
 
 void VulkanRenderer::LoadSelectedModel(const std::string& path, bool resetTransform)
 {
-    if (!m_editorScene.HasSelection())
+    if (!m_editorScene->HasSelection())
     {
         throw std::runtime_error("No selected entity available to receive the model");
     }
 
-    entt::entity selectedEntity = m_editorScene.GetSelectedEntity();
-    ModelComponent previousModel = m_editorScene.GetModel(selectedEntity);
-    m_editorScene.GetModel(selectedEntity).sourcePath = path;
-    m_editorScene.GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
+    entt::entity selectedEntity = m_editorScene->GetSelectedEntity();
+    ModelComponent previousModel = m_editorScene->GetModel(selectedEntity);
+    m_editorScene->GetModel(selectedEntity).sourcePath = path;
+    m_editorScene->GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
 
     try
     {
@@ -385,11 +382,11 @@ void VulkanRenderer::LoadSelectedModel(const std::string& path, bool resetTransf
     }
     catch (...)
     {
-        m_editorScene.GetModel(selectedEntity) = previousModel;
+        m_editorScene->GetModel(selectedEntity) = previousModel;
         throw;
     }
 
-    const ModelComponent& model = m_editorScene.GetModel(selectedEntity);
+    const ModelComponent& model = m_editorScene->GetModel(selectedEntity);
     if (model.hasBounds)
     {
         m_camera.FrameBounds(model.minBounds, model.maxBounds);
@@ -398,17 +395,17 @@ void VulkanRenderer::LoadSelectedModel(const std::string& path, bool resetTransf
     m_lastModelLoadError.clear();
     if (resetTransform)
     {
-        m_editorScene.ResetSelectedTransform();
+        m_editorScene->ResetSelectedTransform();
     }
-    LOG_INFO("Loaded model successfully into '{}': {}", m_editorScene.GetTag(selectedEntity).name, path);
+    LOG_INFO("Loaded model successfully into '{}': {}", m_editorScene->GetTag(selectedEntity).name, path);
 }
 
 void VulkanRenderer::LoadScene(const std::string& path)
 {
     const SerializedSceneData sceneData = EditorScene::LoadSceneDataFromFile(path);
-    m_editorScene.ApplySceneData(sceneData);
+    m_editorScene->ApplySceneData(sceneData);
     RebuildSceneRenderables();
-    m_editorScene.SetSceneFilePath(path);
+    m_editorScene->SetSceneFilePath(path);
     m_lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
 }
@@ -520,7 +517,7 @@ void VulkanRenderer::RebuildSceneRenderables()
         }
     };
 
-    m_editorScene.ForEachEntity([&](
+    m_editorScene->ForEachEntity([&](
         entt::entity entity,
         const TagComponent& tag,
         const TransformComponent&,
@@ -605,7 +602,7 @@ void VulkanRenderer::RebuildSceneRenderables()
             newRenderSubmeshes.push_back(std::move(renderSubmesh));
         }
 
-        m_editorScene.UpdateModelInfo(
+        m_editorScene->UpdateModelInfo(
             entity,
             model.displayName,
             model.sourcePath,
@@ -628,7 +625,7 @@ void VulkanRenderer::ApplyRenderContent(
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
     std::unique_ptr<VulkanPipeline> newGraphicsPipeline;
 
-    if (m_swapchain && m_renderPass)
+    if (m_swapchain && m_renderPass && m_sceneViewportLayer)
     {
         newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
             m_device->GetPhysicalDevice(),
@@ -638,8 +635,8 @@ void VulkanRenderer::ApplyRenderContent(
         );
         newGraphicsPipeline = std::make_unique<VulkanPipeline>(
             m_device->GetHandle(),
-            m_swapchain->GetExtent(),
-            m_renderPass->GetHandle(),
+            m_sceneViewportLayer->GetExtent(),
+            m_sceneViewportLayer->GetRenderPass(),
             newUniformBuffer->GetDescriptorSetLayout()
         );
         vkDeviceWaitIdle(m_device->GetHandle());
@@ -701,7 +698,7 @@ void VulkanRenderer::ProcessPendingSceneLoad()
 
 void VulkanRenderer::InitializeEditorScene()
 {
-    m_editorScene.LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
+    m_editorScene->LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
 }
 
 void VulkanRenderer::UpdateViewportMatrices(VkExtent2D extent)
@@ -710,5 +707,128 @@ void VulkanRenderer::UpdateViewportMatrices(VkExtent2D extent)
     m_viewportMatrices.projection = m_camera.GetProjectionMatrix(extent, false);
     m_viewportMatrices.renderProjection = m_camera.GetProjectionMatrix(extent, true);
     m_viewportMatrices.model =
-        m_editorScene.HasSelection() ? m_editorScene.GetModelMatrix(m_editorScene.GetSelectedEntity()) : glm::mat4(1.0f);
+        m_editorScene->HasSelection() ? m_editorScene->GetModelMatrix(m_editorScene->GetSelectedEntity()) : glm::mat4(1.0f);
+}
+
+void VulkanRenderer::SyncSceneViewportLayer()
+{
+    if (!m_swapchain || !m_sceneViewportLayer)
+    {
+        return;
+    }
+
+    if (m_requestedViewportExtent.width == 0 || m_requestedViewportExtent.height == 0)
+    {
+        m_requestedViewportExtent = m_sceneViewportLayer->GetExtent();
+    }
+
+    if (m_sceneViewportLayer->MatchesExtent(m_requestedViewportExtent))
+    {
+        return;
+    }
+
+    vkDeviceWaitIdle(m_device->GetHandle());
+    DestroyPipelineResources();
+    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_swapchain->GetImageFormat(),
+        m_requestedViewportExtent,
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
+    );
+    CreatePipelineResources();
+}
+
+std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) const
+{
+    std::vector<VulkanDrawItem> drawItems;
+    drawItems.reserve(m_renderSubmeshes.size());
+
+    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    {
+        ObjectPushConstants drawConstants{};
+        drawConstants.model = m_editorScene->GetModelMatrix(renderSubmesh.entity);
+        drawConstants.material = renderSubmesh.material;
+        drawItems.push_back(VulkanDrawItem{
+            renderSubmesh.buffer->GetVertexHandle(),
+            renderSubmesh.buffer->GetIndexHandle(),
+            renderSubmesh.buffer->GetIndexCount(),
+            m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
+            drawConstants
+        });
+    }
+
+    return drawItems;
+}
+
+void VulkanRenderer::RecordSceneLayer(
+    VkCommandBuffer commandBuffer,
+    uint32_t imageIndex,
+    const std::vector<VulkanDrawItem>& drawItems
+) const
+{
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = { { 0.08f, 0.1f, 0.16f, 1.0f } };
+    clearValues[1].depthStencil = { 1.0f, 0 };
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_sceneViewportLayer->GetRenderPass();
+    renderPassInfo.framebuffer = m_sceneViewportLayer->GetFramebuffer(imageIndex);
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = m_sceneViewportLayer->GetExtent();
+    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassInfo.pClearValues = clearValues.data();
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->GetHandle());
+
+    for (const VulkanDrawItem& drawItem : drawItems)
+    {
+        const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };
+        const VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(commandBuffer, drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_graphicsPipeline->GetLayout(),
+            0,
+            1,
+            &drawItem.descriptorSet,
+            0,
+            nullptr
+        );
+        vkCmdPushConstants(
+            commandBuffer,
+            m_graphicsPipeline->GetLayout(),
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(ObjectPushConstants),
+            &drawItem.drawConstants
+        );
+        vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, 0);
+    }
+
+    vkCmdEndRenderPass(commandBuffer);
+}
+
+void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const
+{
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = { { 0.04f, 0.05f, 0.08f, 1.0f } };
+    clearValues[1].depthStencil = { 1.0f, 0 };
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_renderPass->GetHandle();
+    renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
+    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassInfo.pClearValues = clearValues.data();
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    vkCmdEndRenderPass(commandBuffer);
 }

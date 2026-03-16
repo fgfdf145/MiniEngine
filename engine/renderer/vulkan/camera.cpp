@@ -46,6 +46,11 @@ glm::vec3 Camera::GetRight() const
     return glm::normalize(glm::cross(GetForward(), worldUp));
 }
 
+glm::vec3 Camera::GetUp() const
+{
+    return glm::normalize(glm::cross(GetRight(), GetForward()));
+}
+
 void Camera::SetFromViewMatrix(const glm::mat4& viewMatrix)
 {
     const glm::mat4 inverseView = glm::inverse(viewMatrix);
@@ -65,6 +70,11 @@ void Camera::MoveForward(float amount)
 void Camera::MoveRight(float amount)
 {
     position += GetRight() * amount;
+}
+
+void Camera::MoveUp(float amount)
+{
+    position += GetUp() * amount;
 }
 
 void Camera::Rotate(float deltaYaw, float deltaPitch)

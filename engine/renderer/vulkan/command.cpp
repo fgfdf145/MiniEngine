@@ -1,7 +1,5 @@
 #include "command.h"
 
-#include <array>
-
 VulkanCommandContext::VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount)
     : m_device(device)
 {
@@ -64,16 +62,7 @@ VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32
     return acquireResult;
 }
 
-void VulkanCommandContext::RecordCommandBuffer(
-    uint32_t imageIndex,
-    VkRenderPass renderPass,
-    VkFramebuffer framebuffer,
-    VkExtent2D extent,
-    VkPipeline graphicsPipeline,
-    VkPipelineLayout pipelineLayout,
-    const std::vector<VulkanDrawItem>& drawItems,
-    const std::function<void(VkCommandBuffer)>& additionalRecorder
-)
+void VulkanCommandContext::RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder)
 {
     CheckVulkan(vkResetCommandBuffer(m_commandBuffers[imageIndex], 0), "Failed to reset command buffer");
 
@@ -81,55 +70,10 @@ void VulkanCommandContext::RecordCommandBuffer(
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     CheckVulkan(vkBeginCommandBuffer(m_commandBuffers[imageIndex], &beginInfo), "Failed to begin command buffer");
 
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = { { 0.08f, 0.1f, 0.16f, 1.0f } };
-    clearValues[1].depthStencil = { 1.0f, 0 };
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = framebuffer;
-    renderPassInfo.renderArea.offset = { 0, 0 };
-    renderPassInfo.renderArea.extent = extent;
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
-
-    vkCmdBeginRenderPass(m_commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(m_commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-    for (const VulkanDrawItem& drawItem : drawItems)
+    if (recorder)
     {
-        const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };
-        const VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(m_commandBuffers[imageIndex], 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(m_commandBuffers[imageIndex], drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdBindDescriptorSets(
-            m_commandBuffers[imageIndex],
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            pipelineLayout,
-            0,
-            1,
-            &drawItem.descriptorSet,
-            0,
-            nullptr
-        );
-        vkCmdPushConstants(
-            m_commandBuffers[imageIndex],
-            pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            0,
-            sizeof(ObjectPushConstants),
-            &drawItem.drawConstants
-        );
-        vkCmdDrawIndexed(m_commandBuffers[imageIndex], drawItem.indexCount, 1, 0, 0, 0);
+        recorder(m_commandBuffers[imageIndex]);
     }
-
-    if (additionalRecorder)
-    {
-        additionalRecorder(m_commandBuffers[imageIndex]);
-    }
-
-    vkCmdEndRenderPass(m_commandBuffers[imageIndex]);
 
     CheckVulkan(vkEndCommandBuffer(m_commandBuffers[imageIndex]), "Failed to end command buffer");
 }

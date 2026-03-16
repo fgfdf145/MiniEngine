@@ -30,16 +30,7 @@ public:
     VulkanCommandContext& operator=(const VulkanCommandContext&) = delete;
 
     VkResult AcquireNextImage(VkSwapchainKHR swapchain, uint32_t& imageIndex);
-    void RecordCommandBuffer(
-        uint32_t imageIndex,
-        VkRenderPass renderPass,
-        VkFramebuffer framebuffer,
-        VkExtent2D extent,
-        VkPipeline graphicsPipeline,
-        VkPipelineLayout pipelineLayout,
-        const std::vector<VulkanDrawItem>& drawItems,
-        const std::function<void(VkCommandBuffer)>& additionalRecorder
-    );
+    void RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder);
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
 

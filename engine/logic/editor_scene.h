@@ -1,6 +1,9 @@
 #pragma once
 
-#include "world_units.h"
+#include <logic_layer.h>
+#include <scene_components.h>
+#include <scene_world.h>
+#include <world_units.h>
 
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -8,31 +11,8 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <vector>
-
-struct TagComponent
-{
-    std::string name = "Cube";
-};
-
-struct TransformComponent
-{
-    glm::vec3 translation{ 0.0f, 0.0f, 0.0f };
-    glm::vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
-    glm::vec3 scale{ 1.0f, 1.0f, 1.0f };
-};
-
-struct ModelComponent
-{
-    std::string sourcePath;
-    std::string displayName = "Cube";
-    uint32_t submeshCount = 1;
-    glm::vec3 minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
-    glm::vec3 maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
-    bool hasBounds = true;
-};
 
 struct GizmoSettings
 {
@@ -59,7 +39,7 @@ struct SerializedSceneData
     int selectedEntityIndex = 0;
 };
 
-class EditorScene
+class EditorScene final : public IEditorLogicLayer, public ISceneWorld
 {
 public:
     EditorScene();
@@ -76,14 +56,14 @@ public:
     entt::entity GetSelectedEntity() const;
     void SetSelectedEntity(entt::entity entity);
     void ClearSelection();
-    const std::vector<entt::entity>& GetEntityOrder() const;
+    const std::vector<entt::entity>& GetEntityOrder() const override;
 
-    TagComponent& GetTag(entt::entity entity);
-    const TagComponent& GetTag(entt::entity entity) const;
-    TransformComponent& GetTransform(entt::entity entity);
-    const TransformComponent& GetTransform(entt::entity entity) const;
-    ModelComponent& GetModel(entt::entity entity);
-    const ModelComponent& GetModel(entt::entity entity) const;
+    TagComponent& GetTag(entt::entity entity) override;
+    const TagComponent& GetTag(entt::entity entity) const override;
+    TransformComponent& GetTransform(entt::entity entity) override;
+    const TransformComponent& GetTransform(entt::entity entity) const override;
+    ModelComponent& GetModel(entt::entity entity) override;
+    const ModelComponent& GetModel(entt::entity entity) const override;
 
     TagComponent& GetSelectedTag();
     const TagComponent& GetSelectedTag() const;
@@ -106,10 +86,10 @@ public:
         bool hasBounds
     );
 
-    glm::mat4 GetModelMatrix(entt::entity entity) const;
-    void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix);
-    glm::vec3 GetBoundsCenter(entt::entity entity) const;
-    void ForEachEntity(const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const ModelComponent&)>& visitor) const;
+    glm::mat4 GetModelMatrix(entt::entity entity) const override;
+    void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix) override;
+    glm::vec3 GetBoundsCenter(entt::entity entity) const override;
+    void ForEachEntity(const SceneEntityVisitor& visitor) const override;
 
     void ApplySceneData(const SerializedSceneData& sceneData);
     void SaveSceneToFile(const std::string& path) const;
