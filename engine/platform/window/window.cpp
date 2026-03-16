@@ -86,11 +86,7 @@ void Window::CreateNativeWindow()
     }
 
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-    if (m_graphicsApi == WindowGraphicsApi::Vulkan)
-    {
-        flags |= SDL_WINDOW_VULKAN;
-    }
-    else if (m_graphicsApi == WindowGraphicsApi::OpenGL)
+    if (m_graphicsApi == WindowGraphicsApi::OpenGL)
     {
         flags |= SDL_WINDOW_OPENGL;
     }
@@ -101,17 +97,6 @@ void Window::CreateNativeWindow()
         m_height,
         flags
     );
-
-    if (m_window == nullptr && m_graphicsApi == WindowGraphicsApi::Vulkan)
-    {
-        LOG_WARN("SDL_WINDOW_VULKAN creation failed, retrying without explicit Vulkan flag");
-        m_window = SDL_CreateWindow(
-            m_title.c_str(),
-            m_width,
-            m_height,
-            SDL_WINDOW_RESIZABLE
-        );
-    }
 
     if (!m_window)
     {

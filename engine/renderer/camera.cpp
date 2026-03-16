@@ -49,7 +49,7 @@ glm::vec3 Camera::GetRight() const
 
 glm::vec3 Camera::GetUp() const
 {
-    return glm::normalize(glm::cross(GetRight(), GetForward()));
+    return glm::normalize(worldUp);
 }
 
 void Camera::SetFromViewMatrix(const glm::mat4& viewMatrix)
@@ -57,7 +57,6 @@ void Camera::SetFromViewMatrix(const glm::mat4& viewMatrix)
     const glm::mat4 inverseView = glm::inverse(viewMatrix);
     position = glm::vec3(inverseView[3]);
 
-    worldUp = glm::normalize(glm::vec3(inverseView[1]));
     const glm::vec3 forward = glm::normalize(-glm::vec3(inverseView[2]));
     yawDegrees = glm::degrees(std::atan2(forward.z, forward.x));
     pitchDegrees = glm::degrees(std::asin(glm::clamp(forward.y, -1.0f, 1.0f)));
@@ -75,7 +74,7 @@ void Camera::MoveRight(float amount)
 
 void Camera::MoveUp(float amount)
 {
-    position += GetUp() * amount;
+    position += glm::normalize(worldUp) * amount;
 }
 
 void Camera::Rotate(float deltaYaw, float deltaPitch)
