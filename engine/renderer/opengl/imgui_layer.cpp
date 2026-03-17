@@ -4,14 +4,26 @@
 #include "../imgui/imgui_impl_sdl3.h"
 
 #include <imgui.h>
+#include <filesystem>
 #include <stdexcept>
 
+namespace
+{
+std::string BuildImGuiIniPath()
+{
+    return (std::filesystem::path(MINIENGINE_PROJECT_DIR) / "imgui.ini").string();
+}
+}
+
 OpenGLImGuiLayer::OpenGLImGuiLayer(SDL_Window* window, SDL_GLContext glContext)
-    : m_window(window)
+    : m_window(window),
+      m_iniFilePath(BuildImGuiIniPath())
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.IniFilename = m_iniFilePath.c_str();
     ImGui::StyleColorsDark();
 
     if (!ImGui_ImplSDL3_InitForOpenGL(window, glContext))

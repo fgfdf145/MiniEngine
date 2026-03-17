@@ -4,6 +4,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <string>
+
 struct ImDrawData;
 
 class VulkanImGuiLayer
@@ -44,4 +46,5 @@ private:
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     bool m_vulkanBackendInitialized = false;
+    std::string m_iniFilePath;
 };

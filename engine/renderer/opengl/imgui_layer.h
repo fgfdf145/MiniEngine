@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <string>
+
 struct ImDrawData;
 
 class OpenGLImGuiLayer
@@ -21,4 +23,5 @@ public:
 
 private:
     SDL_Window* m_window = nullptr;
+    std::string m_iniFilePath;
 };

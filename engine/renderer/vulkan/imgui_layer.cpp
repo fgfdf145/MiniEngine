@@ -4,10 +4,16 @@
 #include "../imgui/imgui_impl_vulkan.h"
 
 #include <imgui.h>
+#include <filesystem>
 
 namespace
 {
 constexpr uint32_t kImGuiDescriptorCount = 128;
+
+std::string BuildImGuiIniPath()
+{
+    return (std::filesystem::path(MINIENGINE_PROJECT_DIR) / "imgui.ini").string();
+}
 }
 
 VulkanImGuiLayer::VulkanImGuiLayer(
@@ -23,11 +29,14 @@ VulkanImGuiLayer::VulkanImGuiLayer(
       m_physicalDevice(physicalDevice),
       m_device(device),
       m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue)
+      m_graphicsQueue(graphicsQueue),
+      m_iniFilePath(BuildImGuiIniPath())
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.IniFilename = m_iniFilePath.c_str();
     ImGui::StyleColorsDark();
 
     CreateDescriptorPool();

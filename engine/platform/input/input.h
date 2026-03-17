@@ -16,6 +16,8 @@ public:
     bool WantsRelativeMouseMode() const;
     float GetMouseDeltaX() const;
     float GetMouseDeltaY() const;
+    bool ShouldRestoreMouseLookAnchor() const;
+    void ConsumeMouseLookAnchor(int& x, int& y);
 
 private:
     std::array<bool, SDL_SCANCODE_COUNT> m_keys{};
@@ -23,4 +25,8 @@ private:
     float m_mouseDeltaY = 0.0f;
     bool m_mouseLookActive = false;
     bool m_mousePanActive = false;
+    bool m_hasMouseLookAnchor = false;
+    bool m_shouldRestoreMouseLookAnchor = false;
+    int m_mouseLookAnchorX = 0;
+    int m_mouseLookAnchorY = 0;
 };

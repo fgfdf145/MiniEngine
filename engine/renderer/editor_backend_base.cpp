@@ -56,6 +56,16 @@ void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
     {
         SDL_SetWindowRelativeMouseMode(m_window.GetSDLWindow(), State().input.WantsRelativeMouseMode());
     }
+
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
+        event.button.button == SDL_BUTTON_RIGHT &&
+        State().input.ShouldRestoreMouseLookAnchor())
+    {
+        int anchorX = 0;
+        int anchorY = 0;
+        State().input.ConsumeMouseLookAnchor(anchorX, anchorY);
+        SDL_WarpMouseInWindow(m_window.GetSDLWindow(), static_cast<float>(anchorX), static_cast<float>(anchorY));
+    }
 }
 
 std::optional<RenderBackendType> EditorRenderBackendBase::ConsumeBackendSwitchRequest()
