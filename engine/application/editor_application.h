@@ -2,8 +2,6 @@
 
 #include "application.h"
 
-#include <rhi/backend.h>
-
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -11,7 +9,6 @@
 struct EditorApplicationOptions
 {
     std::optional<std::string> startupModelPath;
-    RenderBackendType initialBackendType = RenderBackendType::Vulkan;
     uint32_t maxFrames = 0;
 };
 

@@ -3,14 +3,10 @@ add_library(engine_renderer
     editor_backend_base.cpp
     editor_ui.cpp
     imgui/imgui_impl_sdl3.cpp
-    imgui/imgui_impl_opengl3.cpp
     imgui/imgui_impl_vulkan.cpp
     mesh.cpp
     model_loader.cpp
     model_post_process.cpp
-    opengl/gl_functions.cpp
-    opengl/imgui_layer.cpp
-    opengl/renderer.cpp
     rhi/factory.cpp
     texture_loader.cpp
     vulkan/fbx_model_loader.cpp
@@ -78,7 +74,6 @@ PUBLIC
     engine_scene
     SDL3::SDL3
     Vulkan::Vulkan
-    OpenGL::GL
     glm::glm
     imgui::imgui
     assimp::assimp

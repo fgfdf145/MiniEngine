@@ -4,11 +4,10 @@
 
 #include <stdexcept>
 
-Window::Window(int width, int height, const char* title, WindowGraphicsApi graphicsApi)
+Window::Window(int width, int height, const char* title)
     : m_width(width),
       m_height(height),
-      m_title(title),
-      m_graphicsApi(graphicsApi)
+      m_title(title)
 {
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
@@ -56,40 +55,10 @@ SDL_Window* Window::GetSDLWindow() const
     return m_window;
 }
 
-void Window::Recreate(WindowGraphicsApi graphicsApi)
-{
-    m_graphicsApi = graphicsApi;
-    if (m_window)
-    {
-        SDL_DestroyWindow(m_window);
-        m_window = nullptr;
-    }
-
-    CreateNativeWindow();
-    m_running = true;
-}
-
 void Window::CreateNativeWindow()
 {
     SDL_GL_ResetAttributes();
-    if (m_graphicsApi == WindowGraphicsApi::OpenGL)
-    {
-        if (!SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) ||
-            !SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3) ||
-            !SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE) ||
-            !SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1) ||
-            !SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24) ||
-            !SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8))
-        {
-            throw std::runtime_error(std::string("SDL_GL_SetAttribute failed: ") + SDL_GetError());
-        }
-    }
-
-    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-    if (m_graphicsApi == WindowGraphicsApi::OpenGL)
-    {
-        flags |= SDL_WINDOW_OPENGL;
-    }
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
 
     m_window = SDL_CreateWindow(
         m_title.c_str(),
@@ -108,6 +77,6 @@ void Window::CreateNativeWindow()
         "SDL window created: {}x{} ({})",
         m_width,
         m_height,
-        m_graphicsApi == WindowGraphicsApi::Vulkan ? "Vulkan" : "OpenGL"
+        "Vulkan"
     );
 }

@@ -49,6 +49,5 @@ struct RendererSharedState
     std::optional<std::string> pendingModelPath;
     std::optional<std::string> pendingScenePath;
     RenderExtent requestedViewportExtent{};
-    std::optional<RenderBackendType> requestedBackendSwitch;
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
 };

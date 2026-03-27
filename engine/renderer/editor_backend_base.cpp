@@ -207,13 +207,6 @@ void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
     }
 }
 
-std::optional<RenderBackendType> EditorRenderBackendBase::ConsumeBackendSwitchRequest()
-{
-    std::optional<RenderBackendType> request = State().requestedBackendSwitch;
-    State().requestedBackendSwitch.reset();
-    return request;
-}
-
 bool EditorRenderBackendBase::TickSharedFrame()
 {
     const auto currentFrameTime = std::chrono::steady_clock::now();

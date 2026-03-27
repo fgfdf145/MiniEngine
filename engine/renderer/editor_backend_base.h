@@ -16,7 +16,6 @@ class EditorRenderBackendBase : public IRenderBackend
 public:
     RenderBackendType GetBackendType() const override;
     void HandleEvent(const SDL_Event& event) override;
-    std::optional<RenderBackendType> ConsumeBackendSwitchRequest() override;
 
 protected:
     EditorRenderBackendBase(

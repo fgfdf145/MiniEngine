@@ -465,14 +465,36 @@ void DrawTopToolbar(
     bool& showCameraWindow,
     bool& showAssetManagerWindow,
     bool& showSceneWindow,
-    bool& showViewportWindow
+    bool& showViewportWindow,
+    float effectiveUiScale
 )
 {
-    if (!ImGui::BeginMainMenuBar())
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    if (mainViewport == nullptr)
     {
         return;
     }
 
+    const float toolbarHeight = 44.0f * effectiveUiScale;
+    ImGui::SetNextWindowPos(mainViewport->Pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(mainViewport->Size.x, toolbarHeight), ImGuiCond_Always);
+    ImGui::SetNextWindowViewport(mainViewport->ID);
+    const ImGuiWindowFlags toolbarFlags =
+        ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings;
+
+    if (!ImGui::Begin("Toolbar", nullptr, toolbarFlags))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Panels");
     ImGui::SameLine();
 
@@ -519,7 +541,7 @@ void DrawTopToolbar(
     ImGui::SameLine();
     ImGui::TextDisabled("Close panels with the X button and reopen them here.");
 
-    ImGui::EndMainMenuBar();
+    ImGui::End();
 }
 
 bool ProjectWorldPointToViewport(
@@ -975,15 +997,16 @@ EditorUiFrameResult EditorUiController::Draw(
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
 
+    const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), kEditorDockspaceFlags);
+    EnsureDefaultDockLayout(dockspaceId);
+
     DrawTopToolbar(
         m_showCameraWindow,
         m_showAssetManagerWindow,
         m_showSceneWindow,
-        m_showViewportWindow
+        m_showViewportWindow,
+        m_effectiveUiScale
     );
-
-    const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), kEditorDockspaceFlags);
-    EnsureDefaultDockLayout(dockspaceId);
 
     if (m_showCameraWindow)
     {
@@ -1222,7 +1245,7 @@ EditorUiFrameResult EditorUiController::Draw(
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         if (ImGui::Begin("Viewport", &m_showViewportWindow))
         {
-            const bool flipViewportImageY = currentBackendType == RenderBackendType::OpenGL;
+            const bool flipViewportImageY = false;
             const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
             DrawViewportOverlay(viewportRect, viewportTextureId);
             result.viewportExtent = BuildViewportExtent(viewportRect);

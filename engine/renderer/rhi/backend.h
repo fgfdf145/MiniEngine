@@ -2,12 +2,9 @@
 
 #include <SDL3/SDL_events.h>
 
-#include <optional>
-
 enum class RenderBackendType
 {
-    Vulkan,
-    OpenGL
+    Vulkan
 };
 
 inline const char* ToString(RenderBackendType backendType)
@@ -16,8 +13,6 @@ inline const char* ToString(RenderBackendType backendType)
     {
     case RenderBackendType::Vulkan:
         return "Vulkan";
-    case RenderBackendType::OpenGL:
-        return "OpenGL";
     default:
         return "Unknown";
     }
@@ -31,5 +26,4 @@ public:
     virtual RenderBackendType GetBackendType() const = 0;
     virtual void HandleEvent(const SDL_Event& event) = 0;
     virtual void DrawFrame() = 0;
-    virtual std::optional<RenderBackendType> ConsumeBackendSwitchRequest() = 0;
 };

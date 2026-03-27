@@ -20,7 +20,6 @@ struct EditorUiActions
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
     std::optional<std::string> deleteAssetPath;
-    std::optional<RenderBackendType> requestedBackendType;
     bool clearSelectedBaseColorTexture = false;
 };
 

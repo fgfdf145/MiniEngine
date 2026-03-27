@@ -16,22 +16,6 @@
 #include <string_view>
 #include <utility>
 
-namespace
-{
-WindowGraphicsApi ToWindowGraphicsApi(RenderBackendType backendType)
-{
-    switch (backendType)
-    {
-    case RenderBackendType::Vulkan:
-        return WindowGraphicsApi::Vulkan;
-    case RenderBackendType::OpenGL:
-        return WindowGraphicsApi::OpenGL;
-    default:
-        return WindowGraphicsApi::Vulkan;
-    }
-}
-}
-
 EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
 {
     EditorApplicationOptions options{};
@@ -67,28 +51,6 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
-        if (argument == "--backend")
-        {
-            if (i + 1 >= argc)
-            {
-                throw std::runtime_error("--backend requires 'vulkan' or 'opengl'");
-            }
-
-            const std::string_view backendName = argv[++i];
-            if (backendName == "vulkan")
-            {
-                options.initialBackendType = RenderBackendType::Vulkan;
-                continue;
-            }
-            if (backendName == "opengl")
-            {
-                options.initialBackendType = RenderBackendType::OpenGL;
-                continue;
-            }
-
-            throw std::runtime_error("--backend requires 'vulkan' or 'opengl'");
-        }
-
         throw std::runtime_error("Unknown argument: " + std::string(argument));
     }
 
@@ -115,10 +77,9 @@ EditorApplication::EditorApplication(EditorApplicationOptions options)
 
 int EditorApplication::Run()
 {
-    RenderBackendType backendType = m_options.initialBackendType;
     auto sharedState = std::make_shared<RendererSharedState>();
-    Window window(1920, 1080, "MiniEngine", ToWindowGraphicsApi(backendType));
-    std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(backendType, window, sharedState, m_options.startupModelPath);
+    Window window(1920, 1080, "MiniEngine");
+    std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(window, sharedState, m_options.startupModelPath);
     uint32_t renderedFrameCount = 0;
 
     while (!window.ShouldClose())
@@ -128,15 +89,6 @@ int EditorApplication::Run()
             renderer->HandleEvent(event);
         });
         renderer->DrawFrame();
-        if (const std::optional<RenderBackendType> requestedBackend = renderer->ConsumeBackendSwitchRequest();
-            requestedBackend.has_value() && *requestedBackend != backendType)
-        {
-            backendType = *requestedBackend;
-            renderer.reset();
-            window.Recreate(ToWindowGraphicsApi(backendType));
-            renderer = CreateRenderBackend(backendType, window, sharedState);
-            continue;
-        }
 
         if (m_options.maxFrames > 0)
         {
