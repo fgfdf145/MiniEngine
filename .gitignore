@@ -9,6 +9,7 @@ build/
 out/
 bin/
 obj/
+vcpkg_installed/
 
 # CMake
 CMakeFiles/

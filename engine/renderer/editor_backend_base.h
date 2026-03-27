@@ -44,7 +44,11 @@ private:
     static void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaTime, bool blockKeyboardInput);
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();
+    std::string ImportModelIntoAssetDirectory(const std::string& sourcePath);
+    void DeleteAssetPath(const std::string& path);
     void LoadSelectedModel(const std::string& path, bool resetTransform = true);
+    void ApplySelectedModelBaseColorTexture(const std::string& path);
+    void ClearSelectedModelBaseColorTexture();
     void LoadScene(const std::string& path);
     void RebuildSceneRenderables();
 

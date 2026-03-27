@@ -4,5 +4,6 @@
 #include <string>
 
 std::optional<std::string> OpenModelFileDialog();
+std::optional<std::string> OpenTextureFileDialog();
 std::optional<std::string> OpenSceneFileDialog();
 std::optional<std::string> SaveSceneFileDialog();

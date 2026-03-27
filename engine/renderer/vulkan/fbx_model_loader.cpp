@@ -1,4 +1,7 @@
 #include "fbx_model_loader.h"
+#include "../model_post_process.h"
+
+#include <stdexcept>
 
 #if MINIENGINE_HAS_FBX_SDK
 
@@ -11,7 +14,6 @@
 #include <glm/geometric.hpp>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -678,6 +680,7 @@ void CollectNodeMeshes(
         {
             if (buildData.submesh.mesh.IsValid())
             {
+                ModelPostProcess::FinalizeSubmeshData(buildData.submesh);
                 modelData.submeshes.push_back(std::move(buildData.submesh));
             }
         }

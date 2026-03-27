@@ -11,10 +11,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cfloat>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
+#include <system_error>
 
 namespace
 {
@@ -124,9 +127,8 @@ void EnsureDefaultDockLayout(ImGuiID dockspaceId)
     ImGui::DockBuilderSplitNode(upperRightNode, ImGuiDir_Down, 0.42f, &lowerRightNode, &upperRightNode);
 
     ImGui::DockBuilderDockWindow("Scene", leftNode);
-    ImGui::DockBuilderDockWindow("Assets", upperRightNode);
+    ImGui::DockBuilderDockWindow("Asset Manager", upperRightNode);
     ImGui::DockBuilderDockWindow("Camera", lowerRightNode);
-    ImGui::DockBuilderDockWindow("Renderer", lowerRightNode);
     ImGui::DockBuilderDockWindow("Viewport", centerNode);
     ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -150,6 +152,375 @@ constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = { {
     { 4, 5 }, { 5, 7 }, { 7, 6 }, { 6, 4 },
     { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }
 } };
+
+std::string ToLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+    {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+bool MaterialHasAnyTexture(const ModelImportedMaterialInfo& material)
+{
+    return
+        !material.baseColorTexturePath.empty() ||
+        !material.normalTexturePath.empty() ||
+        !material.metallicTexturePath.empty() ||
+        !material.roughnessTexturePath.empty() ||
+        !material.occlusionTexturePath.empty() ||
+        !material.emissiveTexturePath.empty();
+}
+
+uint32_t CountUvReadySubmeshes(const ModelComponent& model)
+{
+    return static_cast<uint32_t>(std::count_if(
+        model.importedSubmeshes.begin(),
+        model.importedSubmeshes.end(),
+        [](const ModelImportedSubmeshInfo& submesh)
+        {
+            return submesh.hasTexCoords;
+        }
+    ));
+}
+
+uint32_t CountTexturedMaterials(const ModelComponent& model)
+{
+    return static_cast<uint32_t>(std::count_if(
+        model.importedMaterials.begin(),
+        model.importedMaterials.end(),
+        [](const ModelImportedMaterialInfo& material)
+        {
+            return MaterialHasAnyTexture(material);
+        }
+    ));
+}
+
+std::string DetectImporterName(const ModelComponent& model)
+{
+    if (model.sourcePath.empty())
+    {
+        return "Built-in";
+    }
+
+    const std::string extension = ToLowerCopy(std::filesystem::path(model.sourcePath).extension().string());
+    return extension == ".fbx" ? "FBX SDK" : "Assimp";
+}
+
+void DrawTexturePathRow(const char* label, const std::string& path)
+{
+    if (path.empty())
+    {
+        ImGui::TextDisabled("%s: <none>", label);
+        return;
+    }
+
+    std::error_code errorCode;
+    const bool exists = std::filesystem::exists(path, errorCode);
+    const ImVec4 statusColor = exists ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(0.95f, 0.4f, 0.4f, 1.0f);
+    ImGui::TextWrapped("%s: %s", label, path.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(statusColor, "[%s]", exists ? "resolved" : "missing");
+}
+
+void DrawImportedModelInspector(const ModelComponent& model)
+{
+    if (model.importedSubmeshes.empty() && model.importedMaterials.empty())
+    {
+        return;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Importer: %s", DetectImporterName(model).c_str());
+    ImGui::Text(
+        "UV Submeshes: %u / %u",
+        CountUvReadySubmeshes(model),
+        static_cast<unsigned int>(model.importedSubmeshes.size())
+    );
+    ImGui::Text(
+        "Textured Materials: %u / %u",
+        CountTexturedMaterials(model),
+        static_cast<unsigned int>(model.importedMaterials.size())
+    );
+    ImGui::TextWrapped("FBX texture bindings are applied only when the submesh carries valid UVs.");
+
+    if (ImGui::TreeNode("Imported Submeshes"))
+    {
+        for (size_t submeshIndex = 0; submeshIndex < model.importedSubmeshes.size(); ++submeshIndex)
+        {
+            const ModelImportedSubmeshInfo& submesh = model.importedSubmeshes[submeshIndex];
+            const std::string treeLabel =
+                submesh.name.empty()
+                ? ("Submesh " + std::to_string(submeshIndex))
+                : (submesh.name + "##submesh_" + std::to_string(submeshIndex));
+            if (!ImGui::TreeNode(treeLabel.c_str()))
+            {
+                continue;
+            }
+
+            ImGui::Text("Vertices: %u", submesh.vertexCount);
+            ImGui::Text("Indices: %u", submesh.indexCount);
+            ImGui::Text("Triangles: %u", submesh.indexCount / 3u);
+            ImGui::Text("Material Slot: %u", submesh.materialIndex);
+            ImGui::Text("Has UV: %s", submesh.hasTexCoords ? "Yes" : "No");
+            ImGui::Text("Has Normal: %s", submesh.hasNormals ? "Yes" : "No");
+            ImGui::Text("Has Tangent: %s", submesh.hasTangents ? "Yes" : "No");
+            ImGui::TreePop();
+        }
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Imported Materials"))
+    {
+        for (size_t materialIndex = 0; materialIndex < model.importedMaterials.size(); ++materialIndex)
+        {
+            const ModelImportedMaterialInfo& material = model.importedMaterials[materialIndex];
+            const std::string materialName = material.name.empty()
+                ? ("Material " + std::to_string(materialIndex))
+                : material.name;
+            const std::string treeLabel = materialName + "##material_" + std::to_string(materialIndex);
+            if (!ImGui::TreeNode(treeLabel.c_str()))
+            {
+                continue;
+            }
+
+            DrawTexturePathRow("Base Color", material.baseColorTexturePath);
+            DrawTexturePathRow("Normal", material.normalTexturePath);
+            DrawTexturePathRow("Metallic", material.metallicTexturePath);
+            DrawTexturePathRow("Roughness", material.roughnessTexturePath);
+            DrawTexturePathRow("Occlusion", material.occlusionTexturePath);
+            DrawTexturePathRow("Emissive", material.emissiveTexturePath);
+            ImGui::TreePop();
+        }
+        ImGui::TreePop();
+    }
+}
+
+void DrawSelectedModelUvTextureControls(
+    const ModelComponent* model,
+    EditorUiFrameResult& result,
+    bool compactLabels = false
+)
+{
+    const bool hasSelection = model != nullptr;
+    const bool hasImportedModel = hasSelection && !model->sourcePath.empty();
+    const bool hasUvSubmeshes = hasSelection && CountUvReadySubmeshes(*model) > 0;
+    const bool hasOverride = hasSelection && !model->baseColorTextureOverridePath.empty();
+
+    const char* applyLabel = compactLabels ? "Apply UV Texture##compact" : "Apply UV Texture";
+    const char* clearLabel = compactLabels ? "Clear UV Texture##compact" : "Clear UV Texture";
+
+    ImGui::BeginDisabled(!hasImportedModel || !hasUvSubmeshes);
+    if (ImGui::Button(applyLabel))
+    {
+        result.actions.selectedBaseColorTexturePath = OpenTextureFileDialog();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(!hasOverride);
+    if (ImGui::Button(clearLabel))
+    {
+        result.actions.clearSelectedBaseColorTexture = true;
+    }
+    ImGui::EndDisabled();
+
+    if (!hasSelection)
+    {
+        ImGui::TextWrapped("Select a model in the scene first, then choose a texture to apply through its UVs.");
+        return;
+    }
+
+    ImGui::TextWrapped(
+        "UV Base Color Override: %s",
+        model->baseColorTextureOverridePath.empty() ? "<none>" : model->baseColorTextureOverridePath.c_str()
+    );
+
+    if (!hasImportedModel)
+    {
+        ImGui::TextWrapped("The selected entity is still using the built-in cube, so UV texture application is unavailable.");
+    }
+    else if (!hasUvSubmeshes)
+    {
+        ImGui::TextWrapped("The current imported model does not expose usable UVs, so the texture button is disabled.");
+    }
+    else
+    {
+        ImGui::TextWrapped("The selected texture is sampled as the base color map using the current imported UVs.");
+    }
+}
+
+bool IsSupportedModelAssetPath(const std::filesystem::path& path)
+{
+    static constexpr std::array<const char*, 8> kExtensions = {
+        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".ply", ".stl"
+    };
+
+    const std::string extension = ToLowerCopy(path.extension().string());
+    return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
+}
+
+void CollectSortedDirectoryEntries(
+    const std::filesystem::path& directory,
+    std::vector<std::filesystem::directory_entry>& entries
+)
+{
+    entries.clear();
+
+    std::error_code errorCode;
+    for (std::filesystem::directory_iterator iterator(directory, errorCode);
+         !errorCode && iterator != std::filesystem::directory_iterator();
+         iterator.increment(errorCode))
+    {
+        entries.push_back(*iterator);
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right)
+    {
+        const bool leftIsDirectory = left.is_directory();
+        const bool rightIsDirectory = right.is_directory();
+        if (leftIsDirectory != rightIsDirectory)
+        {
+            return leftIsDirectory > rightIsDirectory;
+        }
+
+        return ToLowerCopy(left.path().filename().string()) < ToLowerCopy(right.path().filename().string());
+    });
+}
+
+void DrawAssetTreeNode(
+    const std::filesystem::path& path,
+    EditorUiFrameResult& result,
+    std::string& selectedAssetPath,
+    bool& selectedAssetIsDirectory,
+    bool defaultOpen = false
+)
+{
+    const std::string normalizedPath = path.lexically_normal().string();
+    const std::string nodeLabel = path.filename().empty() ? path.string() : path.filename().string();
+    std::error_code errorCode;
+    const bool isDirectory = std::filesystem::is_directory(path, errorCode) && !errorCode;
+    const bool isSelected = selectedAssetPath == normalizedPath;
+
+    if (!isDirectory)
+    {
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_Leaf |
+            ImGuiTreeNodeFlags_NoTreePushOnOpen |
+            ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (isSelected)
+        {
+            flags |= ImGuiTreeNodeFlags_Selected;
+        }
+
+        ImGui::TreeNodeEx(normalizedPath.c_str(), flags, "%s", nodeLabel.c_str());
+        if (ImGui::IsItemClicked())
+        {
+            selectedAssetPath = normalizedPath;
+            selectedAssetIsDirectory = false;
+        }
+        if (ImGui::IsItemHovered() &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
+            IsSupportedModelAssetPath(path))
+        {
+            result.actions.selectedModelPath = normalizedPath;
+        }
+        return;
+    }
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (isSelected)
+    {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+    if (defaultOpen)
+    {
+        flags |= ImGuiTreeNodeFlags_DefaultOpen;
+    }
+
+    const bool open = ImGui::TreeNodeEx(normalizedPath.c_str(), flags, "%s", nodeLabel.c_str());
+    if (ImGui::IsItemClicked())
+    {
+        selectedAssetPath = normalizedPath;
+        selectedAssetIsDirectory = true;
+    }
+
+    if (!open)
+    {
+        return;
+    }
+
+    std::vector<std::filesystem::directory_entry> entries;
+    CollectSortedDirectoryEntries(path, entries);
+    for (const std::filesystem::directory_entry& entry : entries)
+    {
+        DrawAssetTreeNode(entry.path(), result, selectedAssetPath, selectedAssetIsDirectory);
+    }
+    ImGui::TreePop();
+}
+
+void DrawTopToolbar(
+    bool& showCameraWindow,
+    bool& showAssetManagerWindow,
+    bool& showSceneWindow,
+    bool& showViewportWindow
+)
+{
+    if (!ImGui::BeginMainMenuBar())
+    {
+        return;
+    }
+
+    ImGui::TextUnformatted("Panels");
+    ImGui::SameLine();
+
+    ImGui::BeginDisabled(showCameraWindow);
+    if (ImGui::Button("Camera"))
+    {
+        showCameraWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(showAssetManagerWindow);
+    if (ImGui::Button("Asset Manager"))
+    {
+        showAssetManagerWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(showSceneWindow);
+    if (ImGui::Button("Scene"))
+    {
+        showSceneWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(showViewportWindow);
+    if (ImGui::Button("Viewport"))
+    {
+        showViewportWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button("Show All"))
+    {
+        showCameraWindow = true;
+        showAssetManagerWindow = true;
+        showSceneWindow = true;
+        showViewportWindow = true;
+    }
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("Close panels with the X button and reopen them here.");
+
+    ImGui::EndMainMenuBar();
+}
 
 bool ProjectWorldPointToViewport(
     const glm::vec3& worldPoint,
@@ -574,32 +945,6 @@ void DrawGizmoOverlay(EditorScene& scene, ViewportMatrices& matrices, const View
     scene.ApplyTransformMatrix(selectedEntity, matrices.model);
 }
 
-void DrawRendererWindow(RenderBackendType currentBackendType, EditorUiFrameResult& result)
-{
-    ImGui::Begin("Renderer");
-    ImGui::Text("Current Backend: %s", ToString(currentBackendType));
-    ImGui::Separator();
-
-    const bool usingVulkan = currentBackendType == RenderBackendType::Vulkan;
-    ImGui::BeginDisabled(usingVulkan);
-    if (ImGui::Button("Switch To Vulkan"))
-    {
-        result.actions.requestedBackendType = RenderBackendType::Vulkan;
-    }
-    ImGui::EndDisabled();
-
-    const bool usingOpenGL = currentBackendType == RenderBackendType::OpenGL;
-    ImGui::BeginDisabled(usingOpenGL);
-    if (ImGui::Button("Switch To OpenGL"))
-    {
-        result.actions.requestedBackendType = RenderBackendType::OpenGL;
-    }
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextWrapped("Switching backend rebuilds the renderer and recreates the graphics context on the next frame.");
-    ImGui::End();
-}
 }
 
 void EditorUiController::BeginFrame(SDL_Window* window)
@@ -630,187 +975,275 @@ EditorUiFrameResult EditorUiController::Draw(
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
 
+    DrawTopToolbar(
+        m_showCameraWindow,
+        m_showAssetManagerWindow,
+        m_showSceneWindow,
+        m_showViewportWindow
+    );
+
     const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), kEditorDockspaceFlags);
     EnsureDefaultDockLayout(dockspaceId);
 
-    ImGui::Begin("Camera");
-    if (ImGui::SliderFloat("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
+    if (m_showCameraWindow)
     {
-        ApplyUiScale();
-    }
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::Text("Window DPI Scale: %.2f x", GetWindowUiScale());
-    ImGui::Text("Effective UI Scale: %.2f x", m_effectiveUiScale);
-    ImGui::Text("Framebuffer Scale: %.2f x %.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-    ImGui::Text("World Units: 1.0 = %.1f meter", WorldUnits::kMetersPerUnit);
-    ImGui::Text("Move: WASD");
-    ImGui::Text("Look: Hold Right Mouse");
-    ImGui::Text("Pan: Hold Middle Mouse");
-    ImGui::SliderFloat3(
-        "Position (m)",
-        &camera.position.x,
-        -WorldUnits::kUiCameraPositionRangeMeters,
-        WorldUnits::kUiCameraPositionRangeMeters,
-        "%.2f"
-    );
-    ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
-    ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
-    ImGui::SliderFloat(
-        "Speed (m/s)",
-        &camera.moveSpeed,
-        WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
-        WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond,
-        "%.2f"
-    );
-    ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
-    ImGui::SliderFloat("Fov", &camera.fovDegrees, 20.0f, 90.0f);
-    ImGui::SliderFloat(
-        "Near (m)",
-        &camera.nearPlane,
-        WorldUnits::kUiCameraNearMinMeters,
-        WorldUnits::kUiCameraNearMaxMeters,
-        "%.3f"
-    );
-    ImGui::SliderFloat(
-        "Far (m)",
-        &camera.farPlane,
-        WorldUnits::kUiCameraFarMinMeters,
-        WorldUnits::kUiCameraFarMaxMeters,
-        "%.1f"
-    );
-    ImGui::End();
-
-    ImGui::Begin("Assets");
-    if (ImGui::Button("Load Model"))
-    {
-        result.actions.selectedModelPath = OpenModelFileDialog();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Load Scene"))
-    {
-        result.actions.selectedSceneLoadPath = OpenSceneFileDialog();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save Scene"))
-    {
-        result.actions.selectedSceneSavePath = SaveSceneFileDialog();
-    }
-
-    ImGui::Separator();
-    ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "<builtin cube>" : currentModelPath.c_str());
-    ImGui::TextWrapped("Current Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
-    if (!lastLoadError.empty())
-    {
-        ImGui::TextWrapped("Last Error: %s", lastLoadError.c_str());
-    }
-    if (!lastSceneIoError.empty())
-    {
-        ImGui::TextWrapped("Scene Error: %s", lastSceneIoError.c_str());
-    }
-    ImGui::End();
-
-    ImGui::Begin("Scene");
-    ImGui::TextWrapped(
-        "Selection: %s",
-        scene.HasSelection() ? "Selected by model center in viewport" : "Click a model center in the viewport to select"
-    );
-    ImGui::Text("Entities: %u", static_cast<unsigned int>(scene.GetEntityOrder().size()));
-    ImGui::Separator();
-    for (entt::entity entity : scene.GetEntityOrder())
-    {
-        const TagComponent& tag = scene.GetTag(entity);
-        if (ImGui::Selectable(tag.name.c_str(), scene.IsSelected(entity)))
+        if (ImGui::Begin("Camera", &m_showCameraWindow))
         {
-            scene.SetSelectedEntity(entity);
-        }
-    }
-
-    if (scene.HasSelection())
-    {
-        TagComponent& tag = scene.GetSelectedTag();
-        TransformComponent& transform = scene.GetSelectedTransform();
-        ModelComponent& model = scene.GetSelectedModel();
-        GizmoSettings& gizmo = scene.GetGizmoSettings();
-
-        ImGui::Separator();
-        ImGui::TextWrapped("Controller Target: %s", model.displayName.c_str());
-        ImGui::TextWrapped("Controller Mode: viewport gizmo");
-        char tagBuffer[128]{};
-        std::snprintf(tagBuffer, sizeof(tagBuffer), "%s", tag.name.c_str());
-        if (ImGui::InputText("TagComponent", tagBuffer, sizeof(tagBuffer)))
-        {
-            tag.name = tagBuffer;
-        }
-
-        if (ImGui::CollapsingHeader("TransformComponent", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            DrawTransformComponent(transform);
-            if (ImGui::Button("Reset Transform"))
+            if (ImGui::SliderFloat("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
             {
-                scene.ResetSelectedTransform();
+                ApplyUiScale();
+            }
+            const ImGuiIO& io = ImGui::GetIO();
+            ImGui::Text("Window DPI Scale: %.2f x", GetWindowUiScale());
+            ImGui::Text("Effective UI Scale: %.2f x", m_effectiveUiScale);
+            ImGui::Text("Framebuffer Scale: %.2f x %.2f", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+            ImGui::Text("World Units: 1.0 = %.1f meter", WorldUnits::kMetersPerUnit);
+            ImGui::Text("Move: WASD");
+            ImGui::Text("Look: Hold Right Mouse");
+            ImGui::Text("Pan: Hold Middle Mouse");
+            ImGui::SliderFloat3(
+                "Position (m)",
+                &camera.position.x,
+                -WorldUnits::kUiCameraPositionRangeMeters,
+                WorldUnits::kUiCameraPositionRangeMeters,
+                "%.2f"
+            );
+            ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
+            ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
+            ImGui::SliderFloat(
+                "Speed (m/s)",
+                &camera.moveSpeed,
+                WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
+                WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond,
+                "%.2f"
+            );
+            ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
+            ImGui::SliderFloat("Fov", &camera.fovDegrees, 20.0f, 90.0f);
+            ImGui::SliderFloat(
+                "Near (m)",
+                &camera.nearPlane,
+                WorldUnits::kUiCameraNearMinMeters,
+                WorldUnits::kUiCameraNearMaxMeters,
+                "%.3f"
+            );
+            ImGui::SliderFloat(
+                "Far (m)",
+                &camera.farPlane,
+                WorldUnits::kUiCameraFarMinMeters,
+                WorldUnits::kUiCameraFarMaxMeters,
+                "%.1f"
+            );
+        }
+        ImGui::End();
+    }
+
+    if (m_showAssetManagerWindow)
+    {
+        if (ImGui::Begin("Asset Manager", &m_showAssetManagerWindow))
+        {
+            if (ImGui::Button("Import Model"))
+            {
+                result.actions.importedModelSourcePath = OpenModelFileDialog();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Scene"))
+            {
+                result.actions.selectedSceneLoadPath = OpenSceneFileDialog();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save Scene"))
+            {
+                result.actions.selectedSceneSavePath = SaveSceneFileDialog();
+            }
+
+            const std::filesystem::path assetRoot = std::filesystem::path(MINIENGINE_ASSET_DIR);
+            std::error_code assetErrorCode;
+            std::filesystem::create_directories(assetRoot, assetErrorCode);
+
+            ImGui::Separator();
+            ImGui::TextWrapped("Asset Root: %s", assetRoot.string().c_str());
+            ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "<builtin cube>" : currentModelPath.c_str());
+            ImGui::TextWrapped("Current Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+
+            const float treeHeight = std::max(ImGui::GetContentRegionAvail().y * 0.5f, 220.0f);
+            if (ImGui::BeginChild("AssetTree", ImVec2(0.0f, treeHeight), true))
+            {
+                DrawAssetTreeNode(assetRoot, result, m_selectedAssetPath, m_selectedAssetIsDirectory, true);
+            }
+            ImGui::EndChild();
+
+            ImGui::SeparatorText("Selected Asset");
+            if (m_selectedAssetPath.empty())
+            {
+                ImGui::TextUnformatted("No asset selected.");
+            }
+            else
+            {
+                const std::filesystem::path selectedAssetPath(m_selectedAssetPath);
+                ImGui::TextWrapped("Path: %s", m_selectedAssetPath.c_str());
+                ImGui::Text("Type: %s", m_selectedAssetIsDirectory ? "Folder" : "File");
+
+                const bool canLoadSelectedModel =
+                    scene.HasSelection() &&
+                    !m_selectedAssetIsDirectory &&
+                    IsSupportedModelAssetPath(selectedAssetPath);
+                ImGui::BeginDisabled(!canLoadSelectedModel);
+                if (ImGui::Button("Load Selected Model"))
+                {
+                    result.actions.selectedModelPath = m_selectedAssetPath;
+                }
+                ImGui::EndDisabled();
+
+                ImGui::SameLine();
+
+                const bool canDeleteSelectedAsset = selectedAssetPath != assetRoot;
+                ImGui::BeginDisabled(!canDeleteSelectedAsset);
+                if (ImGui::Button("Delete Selected"))
+                {
+                    result.actions.deleteAssetPath = m_selectedAssetPath;
+                    m_selectedAssetPath.clear();
+                    m_selectedAssetIsDirectory = false;
+                }
+                ImGui::EndDisabled();
+            }
+
+            ImGui::SeparatorText("Selected Model UV");
+            if (scene.HasSelection())
+            {
+                const ModelComponent& selectedModel = scene.GetSelectedModel();
+                ImGui::TextWrapped("Target: %s", selectedModel.displayName.c_str());
+                DrawSelectedModelUvTextureControls(&selectedModel, result);
+            }
+            else
+            {
+                DrawSelectedModelUvTextureControls(nullptr, result);
+            }
+            if (!lastLoadError.empty())
+            {
+                ImGui::TextWrapped("Last Error: %s", lastLoadError.c_str());
+            }
+            if (!lastSceneIoError.empty())
+            {
+                ImGui::TextWrapped("Scene Error: %s", lastSceneIoError.c_str());
             }
         }
+        ImGui::End();
+    }
 
-        if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
+    if (m_showSceneWindow)
+    {
+        if (ImGui::Begin("Scene", &m_showSceneWindow))
         {
-            ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
-            ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
-            ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
-            ImGui::Text("Submeshes: %u", model.submeshCount);
-            if (model.hasBounds)
+            ImGui::TextWrapped(
+                "Selection: %s",
+                scene.HasSelection() ? "Selected by model center in viewport" : "Click a model center in the viewport to select"
+            );
+            ImGui::Text("Entities: %u", static_cast<unsigned int>(scene.GetEntityOrder().size()));
+            ImGui::Separator();
+            for (entt::entity entity : scene.GetEntityOrder())
             {
-                ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
-                ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
+                const TagComponent& tag = scene.GetTag(entity);
+                if (ImGui::Selectable(tag.name.c_str(), scene.IsSelected(entity)))
+                {
+                    scene.SetSelectedEntity(entity);
+                }
+            }
+
+            if (scene.HasSelection())
+            {
+                TagComponent& tag = scene.GetSelectedTag();
+                TransformComponent& transform = scene.GetSelectedTransform();
+                ModelComponent& model = scene.GetSelectedModel();
+                GizmoSettings& gizmo = scene.GetGizmoSettings();
+
+                ImGui::Separator();
+                ImGui::TextWrapped("Controller Target: %s", model.displayName.c_str());
+                ImGui::TextWrapped("Controller Mode: viewport gizmo");
+                char tagBuffer[128]{};
+                std::snprintf(tagBuffer, sizeof(tagBuffer), "%s", tag.name.c_str());
+                if (ImGui::InputText("TagComponent", tagBuffer, sizeof(tagBuffer)))
+                {
+                    tag.name = tagBuffer;
+                }
+
+                if (ImGui::CollapsingHeader("TransformComponent", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    DrawTransformComponent(transform);
+                    if (ImGui::Button("Reset Transform"))
+                    {
+                        scene.ResetSelectedTransform();
+                    }
+                }
+
+                if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
+                    ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
+                    ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
+                    ImGui::Text("Submeshes: %u", model.submeshCount);
+                    DrawSelectedModelUvTextureControls(&model, result, true);
+
+                    if (model.hasBounds)
+                    {
+                        ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
+                        ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
+                    }
+
+                    DrawImportedModelInspector(model);
+                }
+
+                if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    DrawGizmoControls(gizmo);
+                }
+
+                ImGui::Separator();
+                ImGui::TextWrapped("Default Config: %s", scene.GetConfigPath().empty() ? "<not loaded>" : scene.GetConfigPath().c_str());
+                ImGui::TextWrapped("Scene File: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+                const std::string yamlPreview = scene.BuildSceneYamlPreview();
+                ImGui::InputTextMultiline(
+                    "Scene YAML",
+                    const_cast<char*>(yamlPreview.c_str()),
+                    yamlPreview.size() + 1,
+                    ImVec2(-FLT_MIN, 180.0f),
+                    ImGuiInputTextFlags_ReadOnly
+                );
+            }
+            else
+            {
+                ImGui::TextUnformatted("No entity selected.");
             }
         }
-
-        if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            DrawGizmoControls(gizmo);
-        }
-
-        ImGui::Separator();
-        ImGui::TextWrapped("Default Config: %s", scene.GetConfigPath().empty() ? "<not loaded>" : scene.GetConfigPath().c_str());
-        ImGui::TextWrapped("Scene File: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
-        const std::string yamlPreview = scene.BuildSceneYamlPreview();
-        ImGui::InputTextMultiline(
-            "Scene YAML",
-            const_cast<char*>(yamlPreview.c_str()),
-            yamlPreview.size() + 1,
-            ImVec2(-FLT_MIN, 180.0f),
-            ImGuiInputTextFlags_ReadOnly
-        );
+        ImGui::End();
     }
-    else
+
+    if (m_showViewportWindow)
     {
-        ImGui::TextUnformatted("No entity selected.");
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        if (ImGui::Begin("Viewport", &m_showViewportWindow))
+        {
+            const bool flipViewportImageY = currentBackendType == RenderBackendType::OpenGL;
+            const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
+            DrawViewportOverlay(viewportRect, viewportTextureId);
+            result.viewportExtent = BuildViewportExtent(viewportRect);
+            HandleViewportShortcuts(scene, camera, viewportRect);
+            RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+            DrawViewManipulator(camera, matrices, viewportRect);
+            RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+            DrawGizmoOverlay(scene, matrices, viewportRect);
+            const std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
+            HandleViewportSelection(scene, projectedCenters, viewportRect);
+            DrawViewportSelectionOverlay(scene, matrices, viewportRect, projectedCenters);
+            ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + 12.0f, viewportRect.origin.y + 12.0f));
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted("Viewport");
+            ImGui::TextUnformatted("F to frame, W/E/R to switch gizmo");
+            ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
+            ImGui::EndGroup();
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
     }
-    ImGui::End();
-
-    DrawRendererWindow(currentBackendType, result);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::Begin("Viewport");
-    const bool flipViewportImageY = currentBackendType == RenderBackendType::OpenGL;
-    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
-    DrawViewportOverlay(viewportRect, viewportTextureId);
-    result.viewportExtent = BuildViewportExtent(viewportRect);
-    HandleViewportShortcuts(scene, camera, viewportRect);
-    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-    DrawViewManipulator(camera, matrices, viewportRect);
-    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-    DrawGizmoOverlay(scene, matrices, viewportRect);
-    const std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
-    HandleViewportSelection(scene, projectedCenters, viewportRect);
-    DrawViewportSelectionOverlay(scene, matrices, viewportRect, projectedCenters);
-    ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + 12.0f, viewportRect.origin.y + 12.0f));
-    ImGui::BeginGroup();
-    ImGui::TextUnformatted("Viewport");
-    ImGui::TextUnformatted("F to frame, W/E/R to switch gizmo");
-    ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
-    ImGui::EndGroup();
-    ImGui::End();
-    ImGui::PopStyleVar();
 
     return result;
 }

@@ -14,10 +14,14 @@ class EditorScene;
 
 struct EditorUiActions
 {
+    std::optional<std::string> importedModelSourcePath;
     std::optional<std::string> selectedModelPath;
+    std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
+    std::optional<std::string> deleteAssetPath;
     std::optional<RenderBackendType> requestedBackendType;
+    bool clearSelectedBaseColorTexture = false;
 };
 
 struct EditorUiFrameResult
@@ -51,4 +55,10 @@ private:
     float m_effectiveUiScale = 1.0f;
     ImGuiStyle m_baseStyle{};
     bool m_hasCapturedBaseStyle = false;
+    std::string m_selectedAssetPath;
+    bool m_selectedAssetIsDirectory = false;
+    bool m_showCameraWindow = true;
+    bool m_showAssetManagerWindow = true;
+    bool m_showSceneWindow = true;
+    bool m_showViewportWindow = true;
 };

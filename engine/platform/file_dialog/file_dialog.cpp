@@ -76,6 +76,27 @@ std::optional<std::string> OpenModelFileDialog()
 #endif
 }
 
+std::optional<std::string> OpenTextureFileDialog()
+{
+#ifdef _WIN32
+    std::vector<wchar_t> fileBuffer(32768, L'\0');
+
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFilter =
+        L"Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.gif;*.hdr;*.dds\0"
+        L"All Files\0*.*\0";
+    dialog.lpstrFile = fileBuffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(fileBuffer.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    dialog.lpstrDefExt = L"png";
+
+    return ShowFileDialog(dialog, false);
+#else
+    throw std::runtime_error("OpenTextureFileDialog is only implemented on Windows");
+#endif
+}
+
 std::optional<std::string> OpenSceneFileDialog()
 {
 #ifdef _WIN32

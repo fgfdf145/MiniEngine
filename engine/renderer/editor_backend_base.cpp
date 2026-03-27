@@ -2,9 +2,13 @@
 
 #include <log/log.h>
 #include <window/window.h>
+#include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 
 namespace
@@ -25,6 +29,141 @@ MaterialPushConstants BuildDefaultMaterialForTag(const std::string& tagName)
         material.baseColorFactor[2] = 1.0f;
     }
     return material;
+}
+
+ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
+{
+    return ModelImportedMaterialInfo{
+        material.name,
+        material.baseColorTexturePath,
+        material.normalTexturePath,
+        material.metallicTexturePath,
+        material.roughnessTexturePath,
+        material.occlusionTexturePath,
+        material.emissiveTexturePath
+    };
+}
+
+ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submesh)
+{
+    return ModelImportedSubmeshInfo{
+        submesh.name,
+        static_cast<uint32_t>(submesh.mesh.vertices.size()),
+        static_cast<uint32_t>(submesh.mesh.indices.size()),
+        submesh.materialIndex,
+        submesh.hasTexCoords,
+        submesh.hasNormals,
+        submesh.hasTangents
+    };
+}
+
+std::string ToLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+    {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+bool IsSupportedModelAssetPath(const std::filesystem::path& path)
+{
+    static constexpr std::array<const char*, 8> kExtensions = {
+        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".ply", ".stl"
+    };
+
+    const std::string extension = ToLowerCopy(path.extension().string());
+    return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
+}
+
+std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path& modelPath)
+{
+    return std::filesystem::path(modelPath.string() + ".miniengine_asset.yaml");
+}
+
+std::filesystem::path MakeUniquePath(const std::filesystem::path& desiredPath)
+{
+    if (!std::filesystem::exists(desiredPath))
+    {
+        return desiredPath;
+    }
+
+    const std::filesystem::path parentPath = desiredPath.parent_path();
+    const std::string stem = desiredPath.stem().string();
+    const std::string extension = desiredPath.extension().string();
+
+    for (uint32_t suffix = 1; suffix < 10000; ++suffix)
+    {
+        const std::filesystem::path candidate =
+            parentPath / (stem + "_" + std::to_string(suffix) + extension);
+        if (!std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    throw std::runtime_error("Failed to create a unique asset path for: " + desiredPath.string());
+}
+
+std::filesystem::path MakeUniqueDirectoryPath(const std::filesystem::path& desiredPath)
+{
+    if (!std::filesystem::exists(desiredPath))
+    {
+        return desiredPath;
+    }
+
+    const std::filesystem::path parentPath = desiredPath.parent_path();
+    const std::string baseName = desiredPath.filename().string();
+    for (uint32_t suffix = 1; suffix < 10000; ++suffix)
+    {
+        const std::filesystem::path candidate =
+            parentPath / (baseName + "_" + std::to_string(suffix));
+        if (!std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    throw std::runtime_error("Failed to create a unique asset directory for: " + desiredPath.string());
+}
+
+std::filesystem::path NormalizePath(const std::filesystem::path& path)
+{
+    std::error_code errorCode;
+    const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
+    return errorCode ? path.lexically_normal() : absolutePath.lexically_normal();
+}
+
+bool IsPathInsideDirectory(const std::filesystem::path& path, const std::filesystem::path& directory)
+{
+    const std::filesystem::path normalizedPath = NormalizePath(path);
+    const std::filesystem::path normalizedDirectory = NormalizePath(directory);
+
+    auto pathIterator = normalizedPath.begin();
+    auto directoryIterator = normalizedDirectory.begin();
+    for (; directoryIterator != normalizedDirectory.end(); ++directoryIterator, ++pathIterator)
+    {
+        if (pathIterator == normalizedPath.end() || *pathIterator != *directoryIterator)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void ResetModelToBuiltin(EditorScene& scene, entt::entity entity)
+{
+    ModelComponent& model = scene.GetModel(entity);
+    model.sourcePath.clear();
+    model.displayName = scene.GetTag(entity).name;
+    model.baseColorTextureOverridePath.clear();
+    model.submeshCount = 1;
+    model.minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
+    model.maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
+    model.hasBounds = true;
+    model.importedMaterials.clear();
+    model.importedSubmeshes.clear();
 }
 }
 
@@ -138,9 +277,54 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
     State().requestedViewportExtent = uiFrame.viewportExtent;
 
+    if (uiFrame.actions.importedModelSourcePath.has_value())
+    {
+        try
+        {
+            const std::string importedModelPath = ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelSourcePath);
+            if (State().editorScene.HasSelection())
+            {
+                State().pendingModelPath = importedModelPath;
+            }
+            State().lastModelLoadError.clear();
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to import model into assets '{}': {}", *uiFrame.actions.importedModelSourcePath, error.what());
+        }
+    }
     if (uiFrame.actions.selectedModelPath.has_value())
     {
         State().pendingModelPath = *uiFrame.actions.selectedModelPath;
+    }
+    if (uiFrame.actions.selectedBaseColorTexturePath.has_value())
+    {
+        try
+        {
+            ApplySelectedModelBaseColorTexture(*uiFrame.actions.selectedBaseColorTexturePath);
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR(
+                "Failed to apply base color texture '{}' to selected model: {}",
+                *uiFrame.actions.selectedBaseColorTexturePath,
+                error.what()
+            );
+        }
+    }
+    if (uiFrame.actions.clearSelectedBaseColorTexture)
+    {
+        try
+        {
+            ClearSelectedModelBaseColorTexture();
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to clear selected model texture override: {}", error.what());
+        }
     }
     if (uiFrame.actions.selectedSceneLoadPath.has_value())
     {
@@ -161,11 +345,17 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR("Failed to save scene '{}': {}", *uiFrame.actions.selectedSceneSavePath, error.what());
         }
     }
-
-    if (uiFrame.actions.requestedBackendType.has_value() &&
-        *uiFrame.actions.requestedBackendType != m_backendType)
+    if (uiFrame.actions.deleteAssetPath.has_value())
     {
-        State().requestedBackendSwitch = *uiFrame.actions.requestedBackendType;
+        try
+        {
+            DeleteAssetPath(*uiFrame.actions.deleteAssetPath);
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to delete asset '{}': {}", *uiFrame.actions.deleteAssetPath, error.what());
+        }
     }
 }
 
@@ -295,6 +485,154 @@ void EditorRenderBackendBase::InitializeEditorScene()
     State().editorScene.LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
 }
 
+std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::string& sourcePath)
+{
+    const std::filesystem::path sourceModelPath = NormalizePath(sourcePath);
+    if (!std::filesystem::exists(sourceModelPath))
+    {
+        throw std::runtime_error("Model source file does not exist: " + sourceModelPath.string());
+    }
+    if (!IsSupportedModelAssetPath(sourceModelPath))
+    {
+        throw std::runtime_error("Unsupported model format for asset import: " + sourceModelPath.string());
+    }
+
+    const std::filesystem::path assetModelsRoot = std::filesystem::path(MINIENGINE_ASSET_DIR) / "models";
+    std::filesystem::create_directories(assetModelsRoot);
+
+    const std::filesystem::path bundleDirectory =
+        MakeUniqueDirectoryPath(assetModelsRoot / sourceModelPath.stem());
+    std::filesystem::create_directories(bundleDirectory);
+
+    const std::filesystem::path importedModelPath = bundleDirectory / sourceModelPath.filename();
+    std::filesystem::copy_file(sourceModelPath, importedModelPath, std::filesystem::copy_options::overwrite_existing);
+
+    const LoadedModelData sourceModelData = ModelLoader::LoadModel(sourceModelPath.string());
+    const std::filesystem::path texturesDirectory = bundleDirectory / "textures";
+
+    YAML::Emitter emitter;
+    emitter << YAML::BeginMap;
+    emitter << YAML::Key << "asset" << YAML::Value << YAML::BeginMap;
+    emitter << YAML::Key << "version" << YAML::Value << 1;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "materials" << YAML::Value << YAML::BeginSeq;
+
+    auto copyTextureForManifest = [&](const std::string& texturePath, uint32_t materialIndex, const char* slotName) -> std::string
+    {
+        if (texturePath.empty())
+        {
+            return {};
+        }
+
+        const std::filesystem::path sourceTexturePath = NormalizePath(texturePath);
+        if (!std::filesystem::exists(sourceTexturePath))
+        {
+            return texturePath;
+        }
+
+        std::filesystem::create_directories(texturesDirectory);
+        const std::string destinationName =
+            "material_" + std::to_string(materialIndex) + "_" + slotName + sourceTexturePath.extension().string();
+        const std::filesystem::path destinationPath = MakeUniquePath(texturesDirectory / destinationName);
+        std::filesystem::copy_file(sourceTexturePath, destinationPath, std::filesystem::copy_options::overwrite_existing);
+        return destinationPath.string();
+    };
+
+    for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(sourceModelData.materials.size()); ++materialIndex)
+    {
+        const ModelMaterialData& material = sourceModelData.materials[materialIndex];
+        emitter << YAML::BeginMap;
+        emitter << YAML::Key << "name" << YAML::Value << material.name;
+        emitter << YAML::Key << "base_color_texture_path" << YAML::Value
+                << copyTextureForManifest(material.baseColorTexturePath, materialIndex, "base_color");
+        emitter << YAML::Key << "normal_texture_path" << YAML::Value
+                << copyTextureForManifest(material.normalTexturePath, materialIndex, "normal");
+        emitter << YAML::Key << "metallic_texture_path" << YAML::Value
+                << copyTextureForManifest(material.metallicTexturePath, materialIndex, "metallic");
+        emitter << YAML::Key << "roughness_texture_path" << YAML::Value
+                << copyTextureForManifest(material.roughnessTexturePath, materialIndex, "roughness");
+        emitter << YAML::Key << "occlusion_texture_path" << YAML::Value
+                << copyTextureForManifest(material.occlusionTexturePath, materialIndex, "occlusion");
+        emitter << YAML::Key << "emissive_texture_path" << YAML::Value
+                << copyTextureForManifest(material.emissiveTexturePath, materialIndex, "emissive");
+        emitter << YAML::EndMap;
+    }
+
+    emitter << YAML::EndSeq;
+    emitter << YAML::EndMap;
+
+    std::ofstream output(BuildImportedAssetManifestPath(importedModelPath), std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
+    {
+        throw std::runtime_error("Failed to create imported asset manifest for: " + importedModelPath.string());
+    }
+    output << emitter.c_str();
+    if (!output.good())
+    {
+        throw std::runtime_error("Failed to write imported asset manifest for: " + importedModelPath.string());
+    }
+
+    LOG_INFO("Imported model asset: {} -> {}", sourceModelPath.string(), importedModelPath.string());
+    return importedModelPath.string();
+}
+
+void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
+{
+    const std::filesystem::path assetRoot = NormalizePath(std::filesystem::path(MINIENGINE_ASSET_DIR));
+    const std::filesystem::path targetPath = NormalizePath(path);
+
+    if (!std::filesystem::exists(targetPath))
+    {
+        throw std::runtime_error("Asset path does not exist: " + targetPath.string());
+    }
+    if (targetPath == assetRoot)
+    {
+        throw std::runtime_error("Deleting the root assets directory is not allowed");
+    }
+    if (!IsPathInsideDirectory(targetPath, assetRoot))
+    {
+        throw std::runtime_error("Deletion is only allowed inside the assets directory");
+    }
+
+    bool hadAffectedEntities = false;
+    for (entt::entity entity : State().editorScene.GetEntityOrder())
+    {
+        ModelComponent& model = State().editorScene.GetModel(entity);
+        if (model.sourcePath.empty())
+        {
+            continue;
+        }
+
+        const std::filesystem::path modelPath = NormalizePath(model.sourcePath);
+        if (modelPath == targetPath || IsPathInsideDirectory(modelPath, targetPath))
+        {
+            ResetModelToBuiltin(State().editorScene, entity);
+            hadAffectedEntities = true;
+        }
+    }
+
+    if (std::filesystem::is_directory(targetPath))
+    {
+        std::filesystem::remove_all(targetPath);
+    }
+    else
+    {
+        std::filesystem::remove(targetPath);
+        const std::filesystem::path manifestPath = BuildImportedAssetManifestPath(targetPath);
+        if (std::filesystem::exists(manifestPath))
+        {
+            std::filesystem::remove(manifestPath);
+        }
+    }
+
+    if (hadAffectedEntities)
+    {
+        RebuildSceneRenderables();
+    }
+
+    LOG_INFO("Deleted asset path: {}", targetPath.string());
+}
+
 void EditorRenderBackendBase::LoadSelectedModel(const std::string& path, bool resetTransform)
 {
     if (!State().editorScene.HasSelection())
@@ -341,6 +679,72 @@ void EditorRenderBackendBase::LoadScene(const std::string& path)
     LOG_INFO("Loaded scene successfully: {}", path);
 }
 
+void EditorRenderBackendBase::ApplySelectedModelBaseColorTexture(const std::string& path)
+{
+    if (!State().editorScene.HasSelection())
+    {
+        throw std::runtime_error("No selected entity available to receive the texture");
+    }
+
+    entt::entity selectedEntity = State().editorScene.GetSelectedEntity();
+    ModelComponent previousModel = State().editorScene.GetModel(selectedEntity);
+    ModelComponent& model = State().editorScene.GetModel(selectedEntity);
+    if (model.sourcePath.empty())
+    {
+        throw std::runtime_error("The selected entity does not reference an imported model");
+    }
+
+    model.baseColorTextureOverridePath = path;
+
+    try
+    {
+        RebuildSceneRenderables();
+    }
+    catch (...)
+    {
+        State().editorScene.GetModel(selectedEntity) = previousModel;
+        throw;
+    }
+
+    State().lastModelLoadError.clear();
+    LOG_INFO(
+        "Applied selected texture override to '{}': {}",
+        State().editorScene.GetTag(selectedEntity).name,
+        path
+    );
+}
+
+void EditorRenderBackendBase::ClearSelectedModelBaseColorTexture()
+{
+    if (!State().editorScene.HasSelection())
+    {
+        throw std::runtime_error("No selected entity available to clear the texture override");
+    }
+
+    entt::entity selectedEntity = State().editorScene.GetSelectedEntity();
+    ModelComponent previousModel = State().editorScene.GetModel(selectedEntity);
+    ModelComponent& model = State().editorScene.GetModel(selectedEntity);
+    if (model.sourcePath.empty())
+    {
+        throw std::runtime_error("The selected entity does not reference an imported model");
+    }
+
+    model.baseColorTextureOverridePath.clear();
+
+    try
+    {
+        RebuildSceneRenderables();
+    }
+    catch (...)
+    {
+        State().editorScene.GetModel(selectedEntity) = previousModel;
+        throw;
+    }
+
+    State().lastModelLoadError.clear();
+    LOG_INFO("Cleared selected texture override for '{}'", State().editorScene.GetTag(selectedEntity).name);
+}
+
 void EditorRenderBackendBase::RebuildSceneRenderables()
 {
     std::vector<CpuRenderSubmesh> newRenderSubmeshes;
@@ -354,6 +758,18 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
     {
         if (model.sourcePath.empty())
         {
+            State().editorScene.UpdateModelInfo(
+                entity,
+                tag.name,
+                std::string{},
+                1,
+                WorldUnits::kDefaultCubeMinBoundsMeters,
+                WorldUnits::kDefaultCubeMaxBoundsMeters,
+                true,
+                {},
+                {}
+            );
+
             CpuRenderSubmesh renderSubmesh{};
             renderSubmesh.entity = entity;
             renderSubmesh.mesh = CreateDefaultCubeMesh();
@@ -365,6 +781,34 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
         }
 
         const LoadedModelData modelData = ModelLoader::LoadModel(model.sourcePath);
+        std::vector<ModelImportedMaterialInfo> importedMaterials;
+        importedMaterials.reserve(modelData.materials.size());
+        for (const ModelMaterialData& material : modelData.materials)
+        {
+            importedMaterials.push_back(BuildImportedMaterialInfo(material));
+        }
+
+        std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
+        importedSubmeshes.reserve(modelData.submeshes.size());
+        std::vector<bool> materialUsesUv(importedMaterials.size(), false);
+        for (const ModelSubmeshData& submesh : modelData.submeshes)
+        {
+            importedSubmeshes.push_back(BuildImportedSubmeshInfo(submesh));
+            if (submesh.hasTexCoords && submesh.materialIndex < materialUsesUv.size())
+            {
+                materialUsesUv[submesh.materialIndex] = true;
+            }
+        }
+        if (!model.baseColorTextureOverridePath.empty())
+        {
+            for (size_t materialIndex = 0; materialIndex < importedMaterials.size(); ++materialIndex)
+            {
+                if (materialUsesUv[materialIndex])
+                {
+                    importedMaterials[materialIndex].baseColorTexturePath = model.baseColorTextureOverridePath;
+                }
+            }
+        }
 
         for (const ModelSubmeshData& submesh : modelData.submeshes)
         {
@@ -389,7 +833,10 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
             renderSubmesh.name = submesh.name;
             if (submesh.hasTexCoords)
             {
-                renderSubmesh.textures.baseColor = material.baseColorTexturePath;
+                renderSubmesh.textures.baseColor =
+                    model.baseColorTextureOverridePath.empty()
+                    ? material.baseColorTexturePath
+                    : model.baseColorTextureOverridePath;
                 renderSubmesh.textures.normal = material.normalTexturePath;
                 renderSubmesh.textures.metallic = material.metallicTexturePath;
                 renderSubmesh.textures.roughness = material.roughnessTexturePath;
@@ -406,7 +853,9 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
             static_cast<uint32_t>(modelData.submeshes.size()),
             modelData.minBounds,
             modelData.maxBounds,
-            modelData.hasBounds
+            modelData.hasBounds,
+            importedMaterials,
+            importedSubmeshes
         );
     });
 

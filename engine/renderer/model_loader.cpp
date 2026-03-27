@@ -6,6 +6,7 @@
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cctype>
@@ -349,6 +350,70 @@ ModelMaterialData LoadMaterialData(const std::filesystem::path& modelDirectory, 
 
     return materialData;
 }
+
+std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path& modelPath)
+{
+    return std::filesystem::path(modelPath.string() + ".miniengine_asset.yaml");
+}
+
+void ApplyImportedAssetManifestOverrides(const std::filesystem::path& modelPath, LoadedModelData& modelData)
+{
+    const std::filesystem::path manifestPath = BuildImportedAssetManifestPath(modelPath);
+    if (!std::filesystem::exists(manifestPath))
+    {
+        return;
+    }
+
+    try
+    {
+        const YAML::Node root = YAML::LoadFile(manifestPath.string());
+        const YAML::Node materialsNode = root["materials"];
+        if (!materialsNode || !materialsNode.IsSequence())
+        {
+            return;
+        }
+
+        const size_t materialCount = std::min(materialsNode.size(), modelData.materials.size());
+        for (size_t materialIndex = 0; materialIndex < materialCount; ++materialIndex)
+        {
+            const YAML::Node materialNode = materialsNode[materialIndex];
+            if (!materialNode || !materialNode.IsMap())
+            {
+                continue;
+            }
+
+            ModelMaterialData& material = modelData.materials[materialIndex];
+            if (const YAML::Node value = materialNode["base_color_texture_path"]; value)
+            {
+                material.baseColorTexturePath = value.as<std::string>(material.baseColorTexturePath);
+            }
+            if (const YAML::Node value = materialNode["normal_texture_path"]; value)
+            {
+                material.normalTexturePath = value.as<std::string>(material.normalTexturePath);
+            }
+            if (const YAML::Node value = materialNode["metallic_texture_path"]; value)
+            {
+                material.metallicTexturePath = value.as<std::string>(material.metallicTexturePath);
+            }
+            if (const YAML::Node value = materialNode["roughness_texture_path"]; value)
+            {
+                material.roughnessTexturePath = value.as<std::string>(material.roughnessTexturePath);
+            }
+            if (const YAML::Node value = materialNode["occlusion_texture_path"]; value)
+            {
+                material.occlusionTexturePath = value.as<std::string>(material.occlusionTexturePath);
+            }
+            if (const YAML::Node value = materialNode["emissive_texture_path"]; value)
+            {
+                material.emissiveTexturePath = value.as<std::string>(material.emissiveTexturePath);
+            }
+        }
+    }
+    catch (...)
+    {
+        // Ignore invalid sidecar metadata and keep the model's original bindings.
+    }
+}
 }
 
 LoadedModelData LoadModelWithAssimp(const std::string& path)
@@ -567,10 +632,16 @@ LoadedModelData LoadModelWithAssimp(const std::string& path)
 
 LoadedModelData ModelLoader::LoadModel(const std::string& path)
 {
+    LoadedModelData modelData{};
     if (IsFbxModelPath(path) && FbxModelLoader::IsAvailable())
     {
-        return FbxModelLoader::LoadModel(path);
+        modelData = FbxModelLoader::LoadModel(path);
+    }
+    else
+    {
+        modelData = LoadModelWithAssimp(path);
     }
 
-    return LoadModelWithAssimp(path);
+    ApplyImportedAssetManifestOverrides(std::filesystem::path(path), modelData);
+    return modelData;
 }

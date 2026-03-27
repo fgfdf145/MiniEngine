@@ -29,6 +29,7 @@ struct SerializedEntityData
     std::string tagName = "Cube";
     std::string modelDisplayName = "Cube";
     std::string modelSourcePath;
+    std::string modelBaseColorTextureOverridePath;
     TransformComponent transform;
 };
 
@@ -83,7 +84,9 @@ public:
         uint32_t submeshCount,
         const glm::vec3& minBounds,
         const glm::vec3& maxBounds,
-        bool hasBounds
+        bool hasBounds,
+        const std::vector<ModelImportedMaterialInfo>& importedMaterials,
+        const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes
     );
 
     glm::mat4 GetModelMatrix(entt::entity entity) const override;

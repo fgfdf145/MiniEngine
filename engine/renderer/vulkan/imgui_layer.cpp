@@ -14,6 +14,24 @@ std::string BuildImGuiIniPath()
 {
     return (std::filesystem::path(MINIENGINE_PROJECT_DIR) / "imgui.ini").string();
 }
+
+void CleanupImGuiViewportState()
+{
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
+    ImGui::DestroyPlatformWindows();
+
+    if (ImGuiViewport* mainViewport = ImGui::GetMainViewport(); mainViewport != nullptr)
+    {
+        mainViewport->RendererUserData = nullptr;
+        mainViewport->PlatformUserData = nullptr;
+        mainViewport->PlatformHandle = nullptr;
+        mainViewport->PlatformHandleRaw = nullptr;
+    }
+}
 }
 
 VulkanImGuiLayer::VulkanImGuiLayer(
@@ -50,6 +68,7 @@ VulkanImGuiLayer::VulkanImGuiLayer(
 VulkanImGuiLayer::~VulkanImGuiLayer()
 {
     DestroyVulkanResources();
+    CleanupImGuiViewportState();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 

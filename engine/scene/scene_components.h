@@ -6,6 +6,29 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
+
+struct ModelImportedMaterialInfo
+{
+    std::string name;
+    std::string baseColorTexturePath;
+    std::string normalTexturePath;
+    std::string metallicTexturePath;
+    std::string roughnessTexturePath;
+    std::string occlusionTexturePath;
+    std::string emissiveTexturePath;
+};
+
+struct ModelImportedSubmeshInfo
+{
+    std::string name;
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
+    uint32_t materialIndex = 0;
+    bool hasTexCoords = false;
+    bool hasNormals = false;
+    bool hasTangents = false;
+};
 
 struct TagComponent
 {
@@ -23,8 +46,11 @@ struct ModelComponent
 {
     std::string sourcePath;
     std::string displayName = "Cube";
+    std::string baseColorTextureOverridePath;
     uint32_t submeshCount = 1;
     glm::vec3 minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
     glm::vec3 maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
     bool hasBounds = true;
+    std::vector<ModelImportedMaterialInfo> importedMaterials;
+    std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
 };

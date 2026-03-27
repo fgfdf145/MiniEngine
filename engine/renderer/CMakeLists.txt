@@ -7,6 +7,7 @@ add_library(engine_renderer
     imgui/imgui_impl_vulkan.cpp
     mesh.cpp
     model_loader.cpp
+    model_post_process.cpp
     opengl/gl_functions.cpp
     opengl/imgui_layer.cpp
     opengl/renderer.cpp
