@@ -240,17 +240,6 @@ uint32_t CountTexturedMaterials(const ModelComponent& model)
     ));
 }
 
-std::string DetectImporterName(const ModelComponent& model)
-{
-    if (model.sourcePath.empty())
-    {
-        return "Built-in";
-    }
-
-    const std::string extension = ToLowerCopy(std::filesystem::path(model.sourcePath).extension().string());
-    return extension == ".fbx" ? "FBX SDK" : "Assimp";
-}
-
 void DrawTexturePathRow(const char* label, const std::string& path)
 {
     if (path.empty())
@@ -399,7 +388,7 @@ void DrawImportedModelInspector(const ModelComponent& model)
     }
 
     ImGui::Separator();
-    ImGui::Text("Importer: %s", DetectImporterName(model).c_str());
+    ImGui::Text("Importer: %s", ModelLoader::GetImporterName());
     ImGui::Text(
         "UV Submeshes: %u / %u",
         CountUvReadySubmeshes(model),
@@ -790,12 +779,7 @@ void DrawMaterialGraphLink(ImDrawList* drawList, const ImVec2& start, const ImVe
 
 bool IsSupportedModelAssetPath(const std::filesystem::path& path)
 {
-    static constexpr std::array<const char*, 8> kExtensions = {
-        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".ply", ".stl"
-    };
-
-    const std::string extension = ToLowerCopy(path.extension().string());
-    return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
+    return ModelLoader::IsSupportedModelPath(path);
 }
 
 bool IsMaterialAssetPath(const std::filesystem::path& path)
@@ -1070,7 +1054,7 @@ std::string BuildAssetTypeLabel(const std::filesystem::path& path, bool isDirect
     const std::string extension = ToLowerCopy(path.extension().string());
     if (IsSupportedModelAssetPath(path))
     {
-        return "MESH";
+        return "FBX";
     }
     if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga" || extension == ".dds")
     {
@@ -1266,7 +1250,7 @@ void DrawAssetBrowserTile(
             payloadPath.c_str(),
             payloadPath.size() + 1
         );
-        ImGui::TextUnformatted("Place Model In Scene");
+        ImGui::TextUnformatted("Place FBX In Scene");
         ImGui::TextWrapped("%s", displayName.c_str());
         ImGui::EndDragDropSource();
     }
@@ -2119,7 +2103,7 @@ EditorUiFrameResult EditorUiController::Draw(
             const std::string normalizedAssetRoot = NormalizeAssetPath(assetRoot);
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * m_effectiveUiScale);
-            if (ImGui::Button("Import Model"))
+            if (ImGui::Button("Import FBX"))
             {
                 if (const std::optional<std::string> selectedImportPath = OpenModelFileDialog(); selectedImportPath.has_value())
                 {

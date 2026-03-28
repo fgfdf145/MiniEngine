@@ -125,7 +125,6 @@ find_package(imguizmo CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
-find_package(assimp CONFIG REQUIRED)
 
 if(NOT Vulkan_GLSLC_EXECUTABLE)
     set(_miniengine_glslc_hints "")

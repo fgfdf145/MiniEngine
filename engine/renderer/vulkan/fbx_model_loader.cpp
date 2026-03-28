@@ -1,11 +1,9 @@
 #include "fbx_model_loader.h"
 #include "../model_post_process.h"
 
-#include <stdexcept>
-
-#if MINIENGINE_HAS_FBX_SDK
-
 #include <fbxsdk.h>
+
+#include <stdexcept>
 
 #include <algorithm>
 #include <bit>
@@ -693,11 +691,6 @@ void CollectNodeMeshes(
 }
 }
 
-bool FbxModelLoader::IsAvailable()
-{
-    return true;
-}
-
 LoadedModelData FbxModelLoader::LoadModel(const std::string& path)
 {
     FbxManager* manager = FbxManager::Create();
@@ -791,17 +784,3 @@ LoadedModelData FbxModelLoader::LoadModel(const std::string& path)
 
     return modelData;
 }
-
-#else
-
-bool FbxModelLoader::IsAvailable()
-{
-    return false;
-}
-
-LoadedModelData FbxModelLoader::LoadModel(const std::string& path)
-{
-    throw std::runtime_error("FBX SDK support is not available in this build: " + path);
-}
-
-#endif

@@ -63,12 +63,12 @@ std::optional<std::string> OpenModelFileDialog()
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.lpstrFilter =
-        L"Model Files\0*.obj;*.fbx;*.gltf;*.glb;*.dae;*.3ds;*.ply;*.stl\0"
+        L"FBX Files\0*.fbx\0"
         L"All Files\0*.*\0";
     dialog.lpstrFile = fileBuffer.data();
     dialog.nMaxFile = static_cast<DWORD>(fileBuffer.size());
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    dialog.lpstrDefExt = L"obj";
+    dialog.lpstrDefExt = L"fbx";
 
     return ShowFileDialog(dialog, false);
 #else

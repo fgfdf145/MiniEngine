@@ -7,6 +7,5 @@
 class FbxModelLoader
 {
 public:
-    static bool IsAvailable();
     static LoadedModelData LoadModel(const std::string& path);
 };

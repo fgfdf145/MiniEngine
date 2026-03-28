@@ -1,0 +1,47 @@
+# Dependency Bootstrap
+
+This folder contains the repository bootstrap scripts that fetch and restore the third-party package dependencies used by `MiniEngine`.
+
+## What The Scripts Do
+
+- Clone `vcpkg` automatically when it is not already available.
+- Bootstrap the local `vcpkg` executable for the current host platform.
+- Run `vcpkg install` against the repository `vcpkg.json` manifest.
+- Detect the default triplet automatically from the host OS and architecture.
+- On Windows, warn when `FBX_SDK_ROOT` or `VULKAN_SDK` cannot be detected.
+
+## Usage
+
+Windows PowerShell:
+
+```powershell
+.\scripts\bootstrap-deps.ps1
+```
+
+Linux / macOS:
+
+```bash
+./scripts/bootstrap-deps.sh
+```
+
+Optional arguments:
+
+- `--vcpkg-root <path>` or `-VcpkgRoot <path>`: use a custom vcpkg checkout path.
+- `--triplet <name>` or `-Triplet <name>`: override the detected vcpkg triplet.
+- `--skip-install` or `-SkipInstall`: only clone/bootstrap vcpkg, skip `vcpkg install`.
+
+## Default vcpkg Location
+
+The scripts resolve `VCPKG_ROOT` in this order:
+
+1. Existing `VCPKG_ROOT` environment variable.
+2. Repository-local `.deps/vcpkg`.
+
+If you prefer a shared/global checkout such as `C:\vcpkg`, pass it explicitly with `--vcpkg-root` / `-VcpkgRoot` or export `VCPKG_ROOT` before running the script.
+
+## Current Build Limitation
+
+The bootstrap flow is cross-platform, but the current FBX build integration in this repository still depends on the Autodesk FBX SDK configuration used by the Windows build path. That means:
+
+- Windows: bootstrap plus SDK detection is fully supported.
+- Linux / macOS: package dependencies are restored, but a full configure/build still needs a non-Windows FBX SDK integration path in the project.

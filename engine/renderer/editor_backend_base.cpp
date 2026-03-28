@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -74,25 +73,6 @@ void EmitMaterialBlendGraph(YAML::Emitter& emitter, const MaterialTextureBlendGr
     emitter << YAML::Key << "secondary_occlusion_texture_path" << YAML::Value << blendGraph.secondaryOcclusionTexturePath;
     emitter << YAML::Key << "secondary_emissive_texture_path" << YAML::Value << blendGraph.secondaryEmissiveTexturePath;
     emitter << YAML::EndMap;
-}
-
-std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-    {
-        return static_cast<char>(std::tolower(character));
-    });
-    return value;
-}
-
-bool IsSupportedModelAssetPath(const std::filesystem::path& path)
-{
-    static constexpr std::array<const char*, 8> kExtensions = {
-        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".ply", ".stl"
-    };
-
-    const std::string extension = ToLowerCopy(path.extension().string());
-    return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
 }
 
 std::filesystem::path NormalizePath(const std::filesystem::path& path);
@@ -187,9 +167,9 @@ void ValidateImportedMaterialTargetPath(const std::filesystem::path& modelPath)
     {
         throw std::runtime_error("Material target model does not exist: " + modelPath.string());
     }
-    if (!IsSupportedModelAssetPath(modelPath))
+    if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Material target is not a supported imported model: " + modelPath.string());
+        throw std::runtime_error("Material target is not a supported FBX model: " + modelPath.string());
     }
 }
 
@@ -789,9 +769,9 @@ std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::st
     {
         throw std::runtime_error("Model source file does not exist: " + sourceModelPath.string());
     }
-    if (!IsSupportedModelAssetPath(sourceModelPath))
+    if (!ModelLoader::IsSupportedModelPath(sourceModelPath))
     {
-        throw std::runtime_error("Unsupported model format for asset import: " + sourceModelPath.string());
+        throw std::runtime_error("MiniEngine only imports FBX models (*.fbx): " + sourceModelPath.string());
     }
 
     const std::filesystem::path assetModelsRoot = std::filesystem::path(MINIENGINE_ASSET_DIR) / "models";
@@ -993,9 +973,9 @@ void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const
     {
         throw std::runtime_error("Dropped model asset does not exist: " + modelPath.string());
     }
-    if (!IsSupportedModelAssetPath(modelPath))
+    if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Dropped asset is not a supported model: " + modelPath.string());
+        throw std::runtime_error("Dropped asset is not a supported FBX model: " + modelPath.string());
     }
 
     SerializedEntityData entityData{};
@@ -1037,9 +1017,9 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
     {
         throw std::runtime_error("Preview model asset does not exist: " + modelPath.string());
     }
-    if (!IsSupportedModelAssetPath(modelPath))
+    if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Preview asset is not a supported model: " + modelPath.string());
+        throw std::runtime_error("Preview asset is not a supported FBX model: " + modelPath.string());
     }
 
     ViewportDragPreviewState& preview = State().viewportDragPreview;

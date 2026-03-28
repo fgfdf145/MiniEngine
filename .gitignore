@@ -9,6 +9,7 @@ build/
 out/
 bin/
 obj/
+.deps/
 vcpkg_installed/
 
 # CMake

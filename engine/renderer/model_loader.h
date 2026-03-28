@@ -5,6 +5,7 @@
 #include <material_graph.h>
 #include <glm/glm.hpp>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -55,5 +56,11 @@ struct LoadedModelData
 class ModelLoader
 {
 public:
+    static bool IsSupportedModelPath(const std::filesystem::path& path);
+    static constexpr const char* GetImporterName()
+    {
+        return "FBX SDK";
+    }
+
     static LoadedModelData LoadModel(const std::string& path);
 };

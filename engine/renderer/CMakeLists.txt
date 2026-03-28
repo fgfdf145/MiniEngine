@@ -61,7 +61,6 @@ PRIVATE
 
 target_compile_definitions(engine_renderer
 PRIVATE
-    MINIENGINE_HAS_FBX_SDK=$<BOOL:${MINIENGINE_HAS_FBX_SDK}>
     MINIENGINE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     MINIENGINE_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
     MINIENGINE_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
@@ -76,16 +75,12 @@ PUBLIC
     Vulkan::Vulkan
     glm::glm
     imgui::imgui
-    assimp::assimp
     EnTT::EnTT
 PRIVATE
     engine_logic
+    FbxSdk::sdk
     imguizmo::imguizmo
     yaml-cpp::yaml-cpp
 )
-
-if(TARGET FbxSdk::sdk)
-    target_link_libraries(engine_renderer PRIVATE FbxSdk::sdk)
-endif()
 
 add_dependencies(engine_renderer engine_renderer_shaders)

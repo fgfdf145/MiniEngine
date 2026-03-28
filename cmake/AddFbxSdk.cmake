@@ -1,25 +1,24 @@
-set(MINIENGINE_HAS_FBX_SDK OFF)
-
 if(NOT WIN32)
-    return()
+    message(FATAL_ERROR "MiniEngine now only supports FBX import on Windows with the Autodesk FBX SDK installed.")
 endif()
 
 if(NOT DEFINED MINIENGINE_FBX_SDK_ROOT OR MINIENGINE_FBX_SDK_ROOT STREQUAL "")
-    message(STATUS "FBX SDK root is not configured; .fbx files will use the Assimp fallback path.")
-    return()
+    message(FATAL_ERROR
+        "MINIENGINE_FBX_SDK_ROOT is not configured. MiniEngine now only supports FBX import, so the Autodesk FBX SDK is required."
+    )
 endif()
 
 set(_miniengine_fbx_sdk_root "${MINIENGINE_FBX_SDK_ROOT}")
 set(_miniengine_fbx_include_dir "${_miniengine_fbx_sdk_root}/include")
 
 if(NOT EXISTS "${_miniengine_fbx_include_dir}/fbxsdk.h")
-    message(WARNING "FBX SDK headers were not found under '${_miniengine_fbx_sdk_root}'. FBX SDK support will be disabled.")
-    return()
+    message(FATAL_ERROR
+        "FBX SDK headers were not found under '${_miniengine_fbx_sdk_root}'. Set MINIENGINE_FBX_SDK_ROOT to a valid Autodesk FBX SDK installation."
+    )
 endif()
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(WARNING "The Autodesk FBX SDK installed on this machine only provides 64-bit libraries. FBX SDK support will be disabled for this build.")
-    return()
+    message(FATAL_ERROR "The Autodesk FBX SDK installed on this machine only provides 64-bit libraries.")
 endif()
 
 set(_miniengine_fbx_arch "x64")
@@ -35,12 +34,12 @@ set(_miniengine_fbx_debug_dll "${_miniengine_fbx_sdk_root}/lib/${_miniengine_fbx
 set(_miniengine_fbx_release_dll "${_miniengine_fbx_sdk_root}/lib/${_miniengine_fbx_arch}/release/libfbxsdk.dll")
 
 if(NOT EXISTS "${_miniengine_fbx_debug_implib}" OR NOT EXISTS "${_miniengine_fbx_release_implib}")
-    message(WARNING "FBX SDK import libraries were not found for architecture '${_miniengine_fbx_arch}'. FBX SDK support will be disabled.")
-    return()
+    message(FATAL_ERROR
+        "FBX SDK import libraries were not found for architecture '${_miniengine_fbx_arch}' under '${_miniengine_fbx_sdk_root}'."
+    )
 endif()
 
 if(TARGET FbxSdk::sdk)
-    set(MINIENGINE_HAS_FBX_SDK ON)
     return()
 endif()
 
@@ -57,5 +56,4 @@ set_target_properties(FbxSdk::sdk PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${_miniengine_fbx_include_dir}"
 )
 
-set(MINIENGINE_HAS_FBX_SDK ON)
 message(STATUS "FBX SDK support enabled from '${_miniengine_fbx_sdk_root}' for architecture '${_miniengine_fbx_arch}'.")
