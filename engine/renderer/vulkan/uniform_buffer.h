@@ -1,6 +1,6 @@
 #pragma once
 
-#include "camera.h"
+#include "../camera.h"
 #include "common.h"
 
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES

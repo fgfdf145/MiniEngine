@@ -17,12 +17,10 @@ struct ViewportMatrices
 class Camera
 {
 public:
-    glm::mat4 GetModelMatrix() const;
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth) const;
     glm::vec3 GetForward() const;
     glm::vec3 GetRight() const;
-    glm::vec3 GetUp() const;
     void SetFromViewMatrix(const glm::mat4& viewMatrix);
     void MoveForward(float amount);
     void MoveRight(float amount);

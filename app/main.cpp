@@ -21,6 +21,4 @@ int main(int argc, char** argv)
         LOG_ERROR("Unhandled exception: {}", error.what());
         return 1;
     }
-
-    return 1;
 }

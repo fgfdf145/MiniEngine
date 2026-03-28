@@ -5,16 +5,43 @@
 #include <rhi/factory.h>
 #include <window/window.h>
 
-#include <imgui.h>
 #include <ImGuizmo.h>
 #include <entt/entt.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include <charconv>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+
+namespace
+{
+std::string_view ReadRequiredArgument(int& index, int argc, char** argv, std::string_view optionName)
+{
+    if (index + 1 >= argc)
+    {
+        throw std::runtime_error(std::string(optionName) + " requires a value");
+    }
+
+    return argv[++index];
+}
+
+uint32_t ParsePositiveFrameCount(std::string_view value)
+{
+    uint32_t frameCount = 0;
+    const char* const begin = value.data();
+    const char* const end = begin + value.size();
+    const auto [parsedEnd, errorCode] = std::from_chars(begin, end, frameCount);
+    if (errorCode != std::errc{} || parsedEnd != end || frameCount == 0)
+    {
+        throw std::runtime_error("--frames requires a positive integer");
+    }
+
+    return frameCount;
+}
+}
 
 EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
 {
@@ -25,29 +52,13 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         const std::string_view argument = argv[i];
         if (argument == "--model")
         {
-            if (i + 1 >= argc)
-            {
-                throw std::runtime_error("--model requires a file path");
-            }
-
-            options.startupModelPath = argv[++i];
+            options.startupModelPath = ReadRequiredArgument(i, argc, argv, argument);
             continue;
         }
 
         if (argument == "--frames")
         {
-            if (i + 1 >= argc)
-            {
-                throw std::runtime_error("--frames requires a positive integer");
-            }
-
-            const int parsedFrameCount = std::stoi(argv[++i]);
-            if (parsedFrameCount <= 0)
-            {
-                throw std::runtime_error("--frames requires a positive integer");
-            }
-
-            options.maxFrames = static_cast<uint32_t>(parsedFrameCount);
+            options.maxFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
             continue;
         }
 

@@ -95,6 +95,8 @@ bool IsSupportedModelAssetPath(const std::filesystem::path& path)
     return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
 }
 
+std::filesystem::path NormalizePath(const std::filesystem::path& path);
+
 std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path& modelPath)
 {
     return std::filesystem::path(modelPath.string() + ".miniengine_asset.yaml");
@@ -150,6 +152,124 @@ void WriteImportedMaterialAssetFile(
     if (!output.good())
     {
         throw std::runtime_error("Failed to write imported material asset: " + materialAssetPath.string());
+    }
+}
+
+YAML::Node LoadYamlMapOrEmpty(const std::filesystem::path& path)
+{
+    YAML::Node root =
+        std::filesystem::exists(path)
+        ? YAML::LoadFile(path.string())
+        : YAML::Node(YAML::NodeType::Map);
+    if (!root || !root.IsMap())
+    {
+        root = YAML::Node(YAML::NodeType::Map);
+    }
+
+    return root;
+}
+
+void EnsureImportedManifestVersionNode(YAML::Node& root)
+{
+    YAML::Node assetNode = root["asset"];
+    if (!assetNode || !assetNode.IsMap())
+    {
+        assetNode = YAML::Node(YAML::NodeType::Map);
+        root["asset"] = assetNode;
+    }
+
+    assetNode["version"] = assetNode["version"] ? assetNode["version"].as<int>(1) : 1;
+}
+
+void ValidateImportedMaterialTargetPath(const std::filesystem::path& modelPath)
+{
+    if (!std::filesystem::exists(modelPath))
+    {
+        throw std::runtime_error("Material target model does not exist: " + modelPath.string());
+    }
+    if (!IsSupportedModelAssetPath(modelPath))
+    {
+        throw std::runtime_error("Material target is not a supported imported model: " + modelPath.string());
+    }
+}
+
+YAML::Node BuildMaterialBlendGraphNode(const MaterialTextureBlendGraph& blendGraph)
+{
+    YAML::Node graphNode(YAML::NodeType::Map);
+    graphNode["enabled"] = blendGraph.enabled;
+    graphNode["blend_factor"] = std::clamp(blendGraph.blendFactor, 0.0f, 1.0f);
+    graphNode["blend_mask_texture_path"] = blendGraph.blendMaskTexturePath;
+    graphNode["secondary_base_color_texture_path"] = blendGraph.secondaryBaseColorTexturePath;
+    graphNode["secondary_normal_texture_path"] = blendGraph.secondaryNormalTexturePath;
+    graphNode["secondary_metallic_texture_path"] = blendGraph.secondaryMetallicTexturePath;
+    graphNode["secondary_roughness_texture_path"] = blendGraph.secondaryRoughnessTexturePath;
+    graphNode["secondary_occlusion_texture_path"] = blendGraph.secondaryOcclusionTexturePath;
+    graphNode["secondary_emissive_texture_path"] = blendGraph.secondaryEmissiveTexturePath;
+    return graphNode;
+}
+
+YAML::Node BuildImportedMaterialManifestNode(
+    const ModelImportedMaterialInfo& material,
+    const std::filesystem::path& materialAssetPath
+)
+{
+    YAML::Node materialNode(YAML::NodeType::Map);
+    materialNode["name"] = material.name;
+    materialNode["base_color_texture_path"] = material.baseColorTexturePath;
+    materialNode["normal_texture_path"] = material.normalTexturePath;
+    materialNode["metallic_texture_path"] = material.metallicTexturePath;
+    materialNode["roughness_texture_path"] = material.roughnessTexturePath;
+    materialNode["occlusion_texture_path"] = material.occlusionTexturePath;
+    materialNode["emissive_texture_path"] = material.emissiveTexturePath;
+    materialNode["texture_graph"] = BuildMaterialBlendGraphNode(material.blendGraph);
+    materialNode["material_asset_path"] = materialAssetPath.string();
+    return materialNode;
+}
+
+YAML::Node GetMaterialManifestNode(const YAML::Node& materialsNode, size_t materialIndex)
+{
+    if (!materialsNode || !materialsNode.IsSequence() || materialIndex >= materialsNode.size())
+    {
+        return {};
+    }
+
+    return materialsNode[materialIndex];
+}
+
+std::filesystem::path ResolveMaterialAssetPath(
+    const std::filesystem::path& modelPath,
+    uint32_t materialIndex,
+    const YAML::Node& materialNode
+)
+{
+    const std::string existingMaterialAssetPath =
+        materialNode && materialNode.IsMap() && materialNode["material_asset_path"]
+        ? materialNode["material_asset_path"].as<std::string>()
+        : std::string{};
+
+    return existingMaterialAssetPath.empty()
+        ? BuildImportedMaterialAssetPath(modelPath, materialIndex)
+        : NormalizePath(existingMaterialAssetPath);
+}
+
+void WriteYamlDocument(const YAML::Node& root, const std::filesystem::path& path, const char* description)
+{
+    YAML::Emitter emitter;
+    emitter << root;
+    if (!emitter.good())
+    {
+        throw std::runtime_error(std::string("Failed to serialize ") + description + ": " + path.string());
+    }
+
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
+    {
+        throw std::runtime_error(std::string("Failed to open ") + description + " for writing: " + path.string());
+    }
+    output << emitter.c_str();
+    if (!output.good())
+    {
+        throw std::runtime_error(std::string("Failed to write ") + description + ": " + path.string());
     }
 }
 
@@ -793,7 +913,6 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         throw std::runtime_error("Deletion is only allowed inside the assets directory");
     }
 
-    bool hadAffectedEntities = false;
     for (entt::entity entity : State().editorScene.GetEntityOrder())
     {
         ModelComponent& model = State().editorScene.GetModel(entity);
@@ -806,7 +925,6 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         if (modelPath == targetPath || IsPathInsideDirectory(modelPath, targetPath))
         {
             ResetModelToBuiltin(State().editorScene, entity);
-            hadAffectedEntities = true;
         }
     }
 
@@ -824,7 +942,7 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         }
     }
 
-    if (hadAffectedEntities)
+    if (State().editorScene.HasEntities())
     {
         RebuildSceneRenderables();
     }
@@ -1037,31 +1155,12 @@ void EditorRenderBackendBase::ClearViewportModelPreview(bool restoreSelection)
 
 void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiActions::ImportedMaterialUpdate& update)
 {
-    const float clampedBlendFactor = std::clamp(update.material.blendGraph.blendFactor, 0.0f, 1.0f);
     const std::filesystem::path modelPath = NormalizePath(update.modelPath);
-    if (!std::filesystem::exists(modelPath))
-    {
-        throw std::runtime_error("Material target model does not exist: " + modelPath.string());
-    }
-    if (!IsSupportedModelAssetPath(modelPath))
-    {
-        throw std::runtime_error("Material target is not a supported imported model: " + modelPath.string());
-    }
+    ValidateImportedMaterialTargetPath(modelPath);
 
     const std::filesystem::path manifestPath = BuildImportedAssetManifestPath(modelPath);
-    YAML::Node root = std::filesystem::exists(manifestPath) ? YAML::LoadFile(manifestPath.string()) : YAML::Node(YAML::NodeType::Map);
-    if (!root || !root.IsMap())
-    {
-        root = YAML::Node(YAML::NodeType::Map);
-    }
-
-    YAML::Node assetNode = root["asset"];
-    if (!assetNode || !assetNode.IsMap())
-    {
-        assetNode = YAML::Node(YAML::NodeType::Map);
-        root["asset"] = assetNode;
-    }
-    assetNode["version"] = assetNode["version"] ? assetNode["version"].as<int>(1) : 1;
+    YAML::Node root = LoadYamlMapOrEmpty(manifestPath);
+    EnsureImportedManifestVersionNode(root);
 
     YAML::Node materialsNode = root["materials"];
     if (!materialsNode || !materialsNode.IsSequence())
@@ -1073,61 +1172,16 @@ void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiAct
         materialsNode.push_back(YAML::Node(YAML::NodeType::Map));
     }
 
-    YAML::Node materialNode = materialsNode[update.materialIndex];
-    if (!materialNode || !materialNode.IsMap())
-    {
-        materialNode = YAML::Node(YAML::NodeType::Map);
-        materialsNode[update.materialIndex] = materialNode;
-    }
+    ModelImportedMaterialInfo material = update.material;
+    material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
 
-    materialNode["name"] = update.material.name;
-    materialNode["base_color_texture_path"] = update.material.baseColorTexturePath;
-    materialNode["normal_texture_path"] = update.material.normalTexturePath;
-    materialNode["metallic_texture_path"] = update.material.metallicTexturePath;
-    materialNode["roughness_texture_path"] = update.material.roughnessTexturePath;
-    materialNode["occlusion_texture_path"] = update.material.occlusionTexturePath;
-    materialNode["emissive_texture_path"] = update.material.emissiveTexturePath;
-
-    YAML::Node graphNode(YAML::NodeType::Map);
-    graphNode["enabled"] = update.material.blendGraph.enabled;
-    graphNode["blend_factor"] = clampedBlendFactor;
-    graphNode["blend_mask_texture_path"] = update.material.blendGraph.blendMaskTexturePath;
-    graphNode["secondary_base_color_texture_path"] = update.material.blendGraph.secondaryBaseColorTexturePath;
-    graphNode["secondary_normal_texture_path"] = update.material.blendGraph.secondaryNormalTexturePath;
-    graphNode["secondary_metallic_texture_path"] = update.material.blendGraph.secondaryMetallicTexturePath;
-    graphNode["secondary_roughness_texture_path"] = update.material.blendGraph.secondaryRoughnessTexturePath;
-    graphNode["secondary_occlusion_texture_path"] = update.material.blendGraph.secondaryOcclusionTexturePath;
-    graphNode["secondary_emissive_texture_path"] = update.material.blendGraph.secondaryEmissiveTexturePath;
-    materialNode["texture_graph"] = graphNode;
-    const std::string existingMaterialAssetPath =
-        materialNode["material_asset_path"] ? materialNode["material_asset_path"].as<std::string>() : std::string{};
     const std::filesystem::path materialAssetPath =
-        existingMaterialAssetPath.empty()
-            ? BuildImportedMaterialAssetPath(modelPath, update.materialIndex)
-            : NormalizePath(existingMaterialAssetPath);
-    materialNode["material_asset_path"] = materialAssetPath.string();
+        ResolveMaterialAssetPath(modelPath, update.materialIndex, materialsNode[update.materialIndex]);
+    materialsNode[update.materialIndex] = BuildImportedMaterialManifestNode(material, materialAssetPath);
 
     root["materials"] = materialsNode;
-
-    YAML::Emitter emitter;
-    emitter << root;
-    if (!emitter.good())
-    {
-        throw std::runtime_error("Failed to serialize imported material manifest: " + manifestPath.string());
-    }
-
-    std::ofstream output(manifestPath, std::ios::binary | std::ios::trunc);
-    if (!output.is_open())
-    {
-        throw std::runtime_error("Failed to open imported material manifest for writing: " + manifestPath.string());
-    }
-    output << emitter.c_str();
-    if (!output.good())
-    {
-        throw std::runtime_error("Failed to write imported material manifest: " + manifestPath.string());
-    }
-
-    WriteImportedMaterialAssetFile(materialAssetPath, modelPath, update.materialIndex, update.material);
+    WriteYamlDocument(root, manifestPath, "imported material manifest");
+    WriteImportedMaterialAssetFile(materialAssetPath, modelPath, update.materialIndex, material);
 
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
@@ -1143,29 +1197,11 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
 )
 {
     const std::filesystem::path modelPath = NormalizePath(update.modelPath);
-    if (!std::filesystem::exists(modelPath))
-    {
-        throw std::runtime_error("Material target model does not exist: " + modelPath.string());
-    }
-    if (!IsSupportedModelAssetPath(modelPath))
-    {
-        throw std::runtime_error("Material target is not a supported imported model: " + modelPath.string());
-    }
+    ValidateImportedMaterialTargetPath(modelPath);
 
     const std::filesystem::path manifestPath = BuildImportedAssetManifestPath(modelPath);
-    YAML::Node root = std::filesystem::exists(manifestPath) ? YAML::LoadFile(manifestPath.string()) : YAML::Node(YAML::NodeType::Map);
-    if (!root || !root.IsMap())
-    {
-        root = YAML::Node(YAML::NodeType::Map);
-    }
-
-    YAML::Node assetNode = root["asset"];
-    if (!assetNode || !assetNode.IsMap())
-    {
-        assetNode = YAML::Node(YAML::NodeType::Map);
-        root["asset"] = assetNode;
-    }
-    assetNode["version"] = assetNode["version"] ? assetNode["version"].as<int>(1) : 1;
+    YAML::Node root = LoadYamlMapOrEmpty(manifestPath);
+    EnsureImportedManifestVersionNode(root);
 
     const YAML::Node existingMaterialsNode = root["materials"];
     YAML::Node materialsNode(YAML::NodeType::Sequence);
@@ -1175,45 +1211,13 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
         ModelImportedMaterialInfo material = update.materials[materialIndex];
         material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
 
-        YAML::Node materialNode(YAML::NodeType::Map);
-        materialNode["name"] = material.name;
-        materialNode["base_color_texture_path"] = material.baseColorTexturePath;
-        materialNode["normal_texture_path"] = material.normalTexturePath;
-        materialNode["metallic_texture_path"] = material.metallicTexturePath;
-        materialNode["roughness_texture_path"] = material.roughnessTexturePath;
-        materialNode["occlusion_texture_path"] = material.occlusionTexturePath;
-        materialNode["emissive_texture_path"] = material.emissiveTexturePath;
-
-        YAML::Node graphNode(YAML::NodeType::Map);
-        graphNode["enabled"] = material.blendGraph.enabled;
-        graphNode["blend_factor"] = material.blendGraph.blendFactor;
-        graphNode["blend_mask_texture_path"] = material.blendGraph.blendMaskTexturePath;
-        graphNode["secondary_base_color_texture_path"] = material.blendGraph.secondaryBaseColorTexturePath;
-        graphNode["secondary_normal_texture_path"] = material.blendGraph.secondaryNormalTexturePath;
-        graphNode["secondary_metallic_texture_path"] = material.blendGraph.secondaryMetallicTexturePath;
-        graphNode["secondary_roughness_texture_path"] = material.blendGraph.secondaryRoughnessTexturePath;
-        graphNode["secondary_occlusion_texture_path"] = material.blendGraph.secondaryOcclusionTexturePath;
-        graphNode["secondary_emissive_texture_path"] = material.blendGraph.secondaryEmissiveTexturePath;
-        materialNode["texture_graph"] = graphNode;
-
-        std::string existingMaterialAssetPath;
-        if (existingMaterialsNode &&
-            existingMaterialsNode.IsSequence() &&
-            materialIndex < existingMaterialsNode.size())
-        {
-            const YAML::Node existingMaterialNode = existingMaterialsNode[materialIndex];
-            if (existingMaterialNode && existingMaterialNode.IsMap() && existingMaterialNode["material_asset_path"])
-            {
-                existingMaterialAssetPath = existingMaterialNode["material_asset_path"].as<std::string>();
-            }
-        }
-
         const std::filesystem::path materialAssetPath =
-            existingMaterialAssetPath.empty()
-            ? BuildImportedMaterialAssetPath(modelPath, static_cast<uint32_t>(materialIndex))
-            : NormalizePath(existingMaterialAssetPath);
-        materialNode["material_asset_path"] = materialAssetPath.string();
-        materialsNode.push_back(materialNode);
+            ResolveMaterialAssetPath(
+                modelPath,
+                static_cast<uint32_t>(materialIndex),
+                GetMaterialManifestNode(existingMaterialsNode, materialIndex)
+            );
+        materialsNode.push_back(BuildImportedMaterialManifestNode(material, materialAssetPath));
 
         WriteImportedMaterialAssetFile(
             materialAssetPath,
@@ -1224,24 +1228,7 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
     }
 
     root["materials"] = materialsNode;
-
-    YAML::Emitter emitter;
-    emitter << root;
-    if (!emitter.good())
-    {
-        throw std::runtime_error("Failed to serialize imported material manifest: " + manifestPath.string());
-    }
-
-    std::ofstream output(manifestPath, std::ios::binary | std::ios::trunc);
-    if (!output.is_open())
-    {
-        throw std::runtime_error("Failed to open imported material manifest for writing: " + manifestPath.string());
-    }
-    output << emitter.c_str();
-    if (!output.good())
-    {
-        throw std::runtime_error("Failed to write imported material manifest: " + manifestPath.string());
-    }
+    WriteYamlDocument(root, manifestPath, "imported material manifest");
 
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();

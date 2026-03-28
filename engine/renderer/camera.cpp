@@ -7,11 +7,6 @@
 #include <algorithm>
 #include <cmath>
 
-glm::mat4 Camera::GetModelMatrix() const
-{
-    return glm::mat4(1.0f);
-}
-
 glm::mat4 Camera::GetViewMatrix() const
 {
     return glm::lookAt(position, position + GetForward(), worldUp);
@@ -45,11 +40,6 @@ glm::vec3 Camera::GetForward() const
 glm::vec3 Camera::GetRight() const
 {
     return glm::normalize(glm::cross(GetForward(), worldUp));
-}
-
-glm::vec3 Camera::GetUp() const
-{
-    return glm::normalize(worldUp);
 }
 
 void Camera::SetFromViewMatrix(const glm::mat4& viewMatrix)

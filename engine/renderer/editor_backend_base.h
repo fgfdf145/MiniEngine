@@ -3,7 +3,7 @@
 #include "model_loader.h"
 #include "renderer_shared_state.h"
 
-#include <render_backend.h>
+#include <rhi/backend.h>
 
 #include <entt/entt.hpp>
 #include <glm/vec3.hpp>
