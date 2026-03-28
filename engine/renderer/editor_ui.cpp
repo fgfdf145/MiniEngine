@@ -348,6 +348,61 @@ void DrawTexturePathRow(const char* label, const std::string& path)
 
 size_t CountMaterialGraphSecondaryTextures(const MaterialTextureBlendGraph& blendGraph);
 
+struct MaterialTexturePathRow
+{
+    const char* label = "";
+    const std::string ModelImportedMaterialInfo::* path = nullptr;
+};
+
+struct BlendGraphTexturePathRow
+{
+    const char* label = "";
+    const std::string MaterialTextureBlendGraph::* path = nullptr;
+};
+
+constexpr std::array<MaterialTexturePathRow, 6> kPrimaryMaterialTextureRows = { {
+    { "Base Color", &ModelImportedMaterialInfo::baseColorTexturePath },
+    { "Normal", &ModelImportedMaterialInfo::normalTexturePath },
+    { "Metallic", &ModelImportedMaterialInfo::metallicTexturePath },
+    { "Roughness", &ModelImportedMaterialInfo::roughnessTexturePath },
+    { "Occlusion", &ModelImportedMaterialInfo::occlusionTexturePath },
+    { "Emissive", &ModelImportedMaterialInfo::emissiveTexturePath }
+} };
+
+constexpr std::array<BlendGraphTexturePathRow, 7> kSecondaryMaterialTextureRows = { {
+    { "Blend Mask", &MaterialTextureBlendGraph::blendMaskTexturePath },
+    { "Layer B Base", &MaterialTextureBlendGraph::secondaryBaseColorTexturePath },
+    { "Layer B Normal", &MaterialTextureBlendGraph::secondaryNormalTexturePath },
+    { "Layer B Metallic", &MaterialTextureBlendGraph::secondaryMetallicTexturePath },
+    { "Layer B Roughness", &MaterialTextureBlendGraph::secondaryRoughnessTexturePath },
+    { "Layer B Occlusion", &MaterialTextureBlendGraph::secondaryOcclusionTexturePath },
+    { "Layer B Emissive", &MaterialTextureBlendGraph::secondaryEmissiveTexturePath }
+} };
+
+template <typename TObject, typename TEntry, size_t TSize>
+void DrawTexturePathRows(const TObject& object, const std::array<TEntry, TSize>& rows)
+{
+    for (const TEntry& row : rows)
+    {
+        DrawTexturePathRow(row.label, object.*(row.path));
+    }
+}
+
+bool HasSecondaryMaterialLayer(const MaterialTextureBlendGraph& blendGraph)
+{
+    return blendGraph.enabled || CountMaterialGraphSecondaryTextures(blendGraph) > 0;
+}
+
+void DrawPrimaryMaterialTextureRows(const ModelImportedMaterialInfo& material)
+{
+    DrawTexturePathRows(material, kPrimaryMaterialTextureRows);
+}
+
+void DrawSecondaryMaterialTextureRows(const MaterialTextureBlendGraph& blendGraph)
+{
+    DrawTexturePathRows(blendGraph, kSecondaryMaterialTextureRows);
+}
+
 ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
 {
     return ModelImportedMaterialInfo{
@@ -529,8 +584,8 @@ void DrawImportedModelInspector(const ModelComponent& model)
         for (size_t materialIndex = 0; materialIndex < model.importedMaterials.size(); ++materialIndex)
         {
             const ModelImportedMaterialInfo& material = model.importedMaterials[materialIndex];
-            const bool hasProgrammableGraph =
-                material.blendGraph.enabled || CountMaterialGraphSecondaryTextures(material.blendGraph) > 0;
+            const MaterialTextureBlendGraph& blendGraph = material.blendGraph;
+            const bool hasProgrammableGraph = HasSecondaryMaterialLayer(blendGraph);
             const std::string materialName = material.name.empty()
                 ? ("Material " + std::to_string(materialIndex))
                 : material.name;
@@ -541,24 +596,13 @@ void DrawImportedModelInspector(const ModelComponent& model)
                 continue;
             }
 
-            DrawTexturePathRow("Base Color", material.baseColorTexturePath);
-            DrawTexturePathRow("Normal", material.normalTexturePath);
-            DrawTexturePathRow("Metallic", material.metallicTexturePath);
-            DrawTexturePathRow("Roughness", material.roughnessTexturePath);
-            DrawTexturePathRow("Occlusion", material.occlusionTexturePath);
-            DrawTexturePathRow("Emissive", material.emissiveTexturePath);
+            DrawPrimaryMaterialTextureRows(material);
             if (hasProgrammableGraph)
             {
                 ImGui::Separator();
-                ImGui::Text("Programmable Blend: %s", material.blendGraph.enabled ? "Enabled" : "Prepared");
-                ImGui::Text("Blend Factor: %.2f", material.blendGraph.blendFactor);
-                DrawTexturePathRow("Blend Mask", material.blendGraph.blendMaskTexturePath);
-                DrawTexturePathRow("Layer B Base", material.blendGraph.secondaryBaseColorTexturePath);
-                DrawTexturePathRow("Layer B Normal", material.blendGraph.secondaryNormalTexturePath);
-                DrawTexturePathRow("Layer B Metallic", material.blendGraph.secondaryMetallicTexturePath);
-                DrawTexturePathRow("Layer B Roughness", material.blendGraph.secondaryRoughnessTexturePath);
-                DrawTexturePathRow("Layer B Occlusion", material.blendGraph.secondaryOcclusionTexturePath);
-                DrawTexturePathRow("Layer B Emissive", material.blendGraph.secondaryEmissiveTexturePath);
+                ImGui::Text("Programmable Blend: %s", blendGraph.enabled ? "Enabled" : "Prepared");
+                ImGui::Text("Blend Factor: %.2f", blendGraph.blendFactor);
+                DrawSecondaryMaterialTextureRows(blendGraph);
             }
             ImGui::TreePop();
         }
@@ -3315,22 +3359,12 @@ EditorUiFrameResult EditorUiController::Draw(
 
                 ImGui::Spacing();
                 ImGui::SeparatorText("Resolved Preview");
-                DrawTexturePathRow("Base Color", selectedMaterial.baseColorTexturePath);
-                DrawTexturePathRow("Normal", selectedMaterial.normalTexturePath);
-                DrawTexturePathRow("Metallic", selectedMaterial.metallicTexturePath);
-                DrawTexturePathRow("Roughness", selectedMaterial.roughnessTexturePath);
-                DrawTexturePathRow("Occlusion", selectedMaterial.occlusionTexturePath);
-                DrawTexturePathRow("Emissive", selectedMaterial.emissiveTexturePath);
-                if (selectedMaterial.blendGraph.enabled || CountMaterialGraphSecondaryTextures(selectedMaterial.blendGraph) > 0)
+                const MaterialTextureBlendGraph& blendGraph = selectedMaterial.blendGraph;
+                DrawPrimaryMaterialTextureRows(selectedMaterial);
+                if (HasSecondaryMaterialLayer(blendGraph))
                 {
                     ImGui::Separator();
-                    DrawTexturePathRow("Blend Mask", selectedMaterial.blendGraph.blendMaskTexturePath);
-                    DrawTexturePathRow("Layer B Base", selectedMaterial.blendGraph.secondaryBaseColorTexturePath);
-                    DrawTexturePathRow("Layer B Normal", selectedMaterial.blendGraph.secondaryNormalTexturePath);
-                    DrawTexturePathRow("Layer B Metallic", selectedMaterial.blendGraph.secondaryMetallicTexturePath);
-                    DrawTexturePathRow("Layer B Roughness", selectedMaterial.blendGraph.secondaryRoughnessTexturePath);
-                    DrawTexturePathRow("Layer B Occlusion", selectedMaterial.blendGraph.secondaryOcclusionTexturePath);
-                    DrawTexturePathRow("Layer B Emissive", selectedMaterial.blendGraph.secondaryEmissiveTexturePath);
+                    DrawSecondaryMaterialTextureRows(blendGraph);
                 }
 
                 ImGui::Spacing();
@@ -3413,26 +3447,15 @@ EditorUiFrameResult EditorUiController::Draw(
 
             ImGui::Spacing();
             ImGui::SeparatorText("Primary PBR Textures");
-            DrawTexturePathRow("Base Color", m_materialPreviewMaterial.baseColorTexturePath);
-            DrawTexturePathRow("Normal", m_materialPreviewMaterial.normalTexturePath);
-            DrawTexturePathRow("Metallic", m_materialPreviewMaterial.metallicTexturePath);
-            DrawTexturePathRow("Roughness", m_materialPreviewMaterial.roughnessTexturePath);
-            DrawTexturePathRow("Occlusion", m_materialPreviewMaterial.occlusionTexturePath);
-            DrawTexturePathRow("Emissive", m_materialPreviewMaterial.emissiveTexturePath);
+            const MaterialTextureBlendGraph& blendGraph = m_materialPreviewMaterial.blendGraph;
+            DrawPrimaryMaterialTextureRows(m_materialPreviewMaterial);
 
-            if (m_materialPreviewMaterial.blendGraph.enabled ||
-                CountMaterialGraphSecondaryTextures(m_materialPreviewMaterial.blendGraph) > 0)
+            if (HasSecondaryMaterialLayer(blendGraph))
             {
                 ImGui::SeparatorText("Blend And Secondary Layer");
-                ImGui::Text("Blend Enabled: %s", m_materialPreviewMaterial.blendGraph.enabled ? "Yes" : "No");
-                ImGui::Text("Blend Factor: %.2f", m_materialPreviewMaterial.blendGraph.blendFactor);
-                DrawTexturePathRow("Blend Mask", m_materialPreviewMaterial.blendGraph.blendMaskTexturePath);
-                DrawTexturePathRow("Layer B Base", m_materialPreviewMaterial.blendGraph.secondaryBaseColorTexturePath);
-                DrawTexturePathRow("Layer B Normal", m_materialPreviewMaterial.blendGraph.secondaryNormalTexturePath);
-                DrawTexturePathRow("Layer B Metallic", m_materialPreviewMaterial.blendGraph.secondaryMetallicTexturePath);
-                DrawTexturePathRow("Layer B Roughness", m_materialPreviewMaterial.blendGraph.secondaryRoughnessTexturePath);
-                DrawTexturePathRow("Layer B Occlusion", m_materialPreviewMaterial.blendGraph.secondaryOcclusionTexturePath);
-                DrawTexturePathRow("Layer B Emissive", m_materialPreviewMaterial.blendGraph.secondaryEmissiveTexturePath);
+                ImGui::Text("Blend Enabled: %s", blendGraph.enabled ? "Yes" : "No");
+                ImGui::Text("Blend Factor: %.2f", blendGraph.blendFactor);
+                DrawSecondaryMaterialTextureRows(blendGraph);
             }
         }
         ImGui::End();

@@ -74,6 +74,33 @@ const char* ToString(ImGuizmo::MODE mode)
     return mode == ImGuizmo::LOCAL ? "local" : "world";
 }
 
+TransformComponent ReadTransformComponent(const YAML::Node& transformNode, const TransformComponent& fallback)
+{
+    TransformComponent transform = fallback;
+    transform.translation = ReadVec3(transformNode["translation"], transform.translation);
+    transform.rotationDegrees = ReadVec3(transformNode["rotation"], transform.rotationDegrees);
+    transform.scale = glm::max(ReadVec3(transformNode["scale"], transform.scale), WorldUnits::kMinimumScale3);
+    return transform;
+}
+
+GizmoSettings ReadGizmoSettings(const YAML::Node& gizmoNode, const GizmoSettings& fallback)
+{
+    GizmoSettings settings = fallback;
+    settings.operation = ParseOperation(gizmoNode["operation"].as<std::string>(ToString(settings.operation)));
+    settings.mode = ParseMode(gizmoNode["mode"].as<std::string>(ToString(settings.mode)));
+    settings.useSnap = gizmoNode["use_snap"].as<bool>(settings.useSnap);
+    settings.translationSnap = ReadVec3(gizmoNode["translation_snap"], settings.translationSnap);
+    settings.rotationSnap = gizmoNode["rotation_snap"].as<float>(settings.rotationSnap);
+    settings.scaleSnap = ReadVec3(gizmoNode["scale_snap"], settings.scaleSnap);
+    return settings;
+}
+
+void EmitVec3(YAML::Emitter& emitter, const char* key, const glm::vec3& value)
+{
+    emitter << YAML::Key << key << YAML::Value << YAML::Flow << YAML::BeginSeq
+            << value.x << value.y << value.z << YAML::EndSeq;
+}
+
 float UnwrapDegrees(float value, float reference)
 {
     return reference + std::remainder(value - reference, 360.0f);
@@ -122,14 +149,7 @@ TransformComponent DecomposeTransformMatrix(const glm::mat4& matrix, const Trans
 SerializedSceneData ReadSceneData(const YAML::Node& root)
 {
     SerializedSceneData sceneData{};
-
-    const YAML::Node gizmoNode = root["editor"]["gizmo"];
-    sceneData.gizmo.operation = ParseOperation(gizmoNode["operation"].as<std::string>("translate"));
-    sceneData.gizmo.mode = ParseMode(gizmoNode["mode"].as<std::string>("world"));
-    sceneData.gizmo.useSnap = gizmoNode["use_snap"].as<bool>(sceneData.gizmo.useSnap);
-    sceneData.gizmo.translationSnap = ReadVec3(gizmoNode["translation_snap"], sceneData.gizmo.translationSnap);
-    sceneData.gizmo.rotationSnap = gizmoNode["rotation_snap"].as<float>(sceneData.gizmo.rotationSnap);
-    sceneData.gizmo.scaleSnap = ReadVec3(gizmoNode["scale_snap"], sceneData.gizmo.scaleSnap);
+    sceneData.gizmo = ReadGizmoSettings(root["editor"]["gizmo"], sceneData.gizmo);
 
     const YAML::Node entitiesNode = root["entities"];
     if (entitiesNode && entitiesNode.IsSequence())
@@ -144,11 +164,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             entityData.modelSourcePath = modelNode["source_path"].as<std::string>(entityData.modelSourcePath);
             entityData.modelBaseColorTextureOverridePath =
                 modelNode["base_color_texture_override"].as<std::string>(entityData.modelBaseColorTextureOverridePath);
-
-            const YAML::Node transformNode = entityNode["transform"];
-            entityData.transform.translation = ReadVec3(transformNode["translation"], entityData.transform.translation);
-            entityData.transform.rotationDegrees = ReadVec3(transformNode["rotation"], entityData.transform.rotationDegrees);
-            entityData.transform.scale = glm::max(ReadVec3(transformNode["scale"], entityData.transform.scale), WorldUnits::kMinimumScale3);
+            entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
         }
     }
@@ -177,12 +193,9 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::Key << "base_color_texture_override" << YAML::Value << entity.modelBaseColorTextureOverridePath;
         emitter << YAML::EndMap;
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
-        emitter << YAML::Key << "translation" << YAML::Value << YAML::Flow << YAML::BeginSeq
-                << entity.transform.translation.x << entity.transform.translation.y << entity.transform.translation.z << YAML::EndSeq;
-        emitter << YAML::Key << "rotation" << YAML::Value << YAML::Flow << YAML::BeginSeq
-                << entity.transform.rotationDegrees.x << entity.transform.rotationDegrees.y << entity.transform.rotationDegrees.z << YAML::EndSeq;
-        emitter << YAML::Key << "scale" << YAML::Value << YAML::Flow << YAML::BeginSeq
-                << entity.transform.scale.x << entity.transform.scale.y << entity.transform.scale.z << YAML::EndSeq;
+        EmitVec3(emitter, "translation", entity.transform.translation);
+        EmitVec3(emitter, "rotation", entity.transform.rotationDegrees);
+        EmitVec3(emitter, "scale", entity.transform.scale);
         emitter << YAML::EndMap;
         emitter << YAML::EndMap;
     }
@@ -193,11 +206,9 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
     emitter << YAML::Key << "operation" << YAML::Value << ToString(sceneData.gizmo.operation);
     emitter << YAML::Key << "mode" << YAML::Value << ToString(sceneData.gizmo.mode);
     emitter << YAML::Key << "use_snap" << YAML::Value << sceneData.gizmo.useSnap;
-    emitter << YAML::Key << "translation_snap" << YAML::Value << YAML::Flow << YAML::BeginSeq
-            << sceneData.gizmo.translationSnap.x << sceneData.gizmo.translationSnap.y << sceneData.gizmo.translationSnap.z << YAML::EndSeq;
+    EmitVec3(emitter, "translation_snap", sceneData.gizmo.translationSnap);
     emitter << YAML::Key << "rotation_snap" << YAML::Value << sceneData.gizmo.rotationSnap;
-    emitter << YAML::Key << "scale_snap" << YAML::Value << YAML::Flow << YAML::BeginSeq
-            << sceneData.gizmo.scaleSnap.x << sceneData.gizmo.scaleSnap.y << sceneData.gizmo.scaleSnap.z << YAML::EndSeq;
+    EmitVec3(emitter, "scale_snap", sceneData.gizmo.scaleSnap);
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
@@ -218,18 +229,8 @@ void EditorScene::LoadConfig(const std::string& path)
     }
 
     const YAML::Node root = YAML::LoadFile(path);
-    const YAML::Node transformNode = root["entity"]["transform"];
-    m_defaultTransform.translation = ReadVec3(transformNode["translation"], m_defaultTransform.translation);
-    m_defaultTransform.rotationDegrees = ReadVec3(transformNode["rotation"], m_defaultTransform.rotationDegrees);
-    m_defaultTransform.scale = glm::max(ReadVec3(transformNode["scale"], m_defaultTransform.scale), WorldUnits::kMinimumScale3);
-
-    const YAML::Node gizmoNode = root["editor"]["gizmo"];
-    m_gizmoSettings.operation = ParseOperation(gizmoNode["operation"].as<std::string>("translate"));
-    m_gizmoSettings.mode = ParseMode(gizmoNode["mode"].as<std::string>("world"));
-    m_gizmoSettings.useSnap = gizmoNode["use_snap"].as<bool>(m_gizmoSettings.useSnap);
-    m_gizmoSettings.translationSnap = ReadVec3(gizmoNode["translation_snap"], m_gizmoSettings.translationSnap);
-    m_gizmoSettings.rotationSnap = gizmoNode["rotation_snap"].as<float>(m_gizmoSettings.rotationSnap);
-    m_gizmoSettings.scaleSnap = ReadVec3(gizmoNode["scale_snap"], m_gizmoSettings.scaleSnap);
+    m_defaultTransform = ReadTransformComponent(root["entity"]["transform"], m_defaultTransform);
+    m_gizmoSettings = ReadGizmoSettings(root["editor"]["gizmo"], m_gizmoSettings);
 }
 
 void EditorScene::SetSceneFilePath(const std::string& path)
@@ -582,10 +583,12 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         }
 
         SerializedEntityData entityData{};
-        entityData.tagName = GetTag(entity).name;
-        entityData.modelDisplayName = GetModel(entity).displayName;
-        entityData.modelSourcePath = GetModel(entity).sourcePath;
-        entityData.modelBaseColorTextureOverridePath = GetModel(entity).baseColorTextureOverridePath;
+        const TagComponent& tag = GetTag(entity);
+        const ModelComponent& model = GetModel(entity);
+        entityData.tagName = tag.name;
+        entityData.modelDisplayName = model.displayName;
+        entityData.modelSourcePath = model.sourcePath;
+        entityData.modelBaseColorTextureOverridePath = model.baseColorTextureOverridePath;
         entityData.transform = GetTransform(entity);
         sceneData.entities.push_back(entityData);
     }

@@ -127,18 +127,11 @@ private:
     std::string m_assetRenameTargetPath;
     std::string m_assetRenameError;
     std::string m_pendingDeleteAssetPath;
-    std::string m_materialGraphDraftModelPath;
-    std::string m_materialGraphNodeLayoutKey;
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
     std::vector<std::string> m_modelProcessorMaterialAssetPaths;
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_materialPreviewMaterialIndex = 0;
-    int m_materialGraphSelectedIndex = 0;
-    int m_materialGraphDraftIndex = -1;
-    int m_materialGraphDraggingNodeIndex = -1;
     ModelImportedMaterialInfo m_materialPreviewMaterial;
-    ModelImportedMaterialInfo m_materialGraphDraft;
-    std::array<ImVec2, 4> m_materialGraphNodeLayout{};
     std::array<char, 256> m_assetRenameBuffer{};
     bool m_openDuplicateImportPopup = false;
     bool m_openAssetRenamePopup = false;
@@ -147,8 +140,6 @@ private:
     bool m_showModelProcessorWindow = false;
     bool m_showMaterialPreviewWindow = false;
     bool m_modelProcessorDirty = false;
-    bool m_materialGraphDraftDirty = false;
-    bool m_materialGraphNodeLayoutInitialized = false;
     bool m_selectedAssetIsDirectory = false;
     bool m_showCameraWindow = true;
     bool m_showAssetManagerWindow = true;
