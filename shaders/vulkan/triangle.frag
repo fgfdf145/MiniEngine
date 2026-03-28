@@ -6,6 +6,7 @@ layout(push_constant) uniform DrawConstants
     vec4 baseColorFactor;
     vec4 emissiveFactor;
     vec4 surfaceFactors;
+    vec4 nodeGraphFactors;
 } drawData;
 
 layout(set = 0, binding = 0) uniform CameraBuffer
@@ -23,6 +24,13 @@ layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
 layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D occlusionTexture;
 layout(set = 0, binding = 6) uniform sampler2D emissiveTexture;
+layout(set = 0, binding = 7) uniform sampler2D secondaryBaseColorTexture;
+layout(set = 0, binding = 8) uniform sampler2D secondaryNormalTexture;
+layout(set = 0, binding = 9) uniform sampler2D secondaryMetallicTexture;
+layout(set = 0, binding = 10) uniform sampler2D secondaryRoughnessTexture;
+layout(set = 0, binding = 11) uniform sampler2D secondaryOcclusionTexture;
+layout(set = 0, binding = 12) uniform sampler2D secondaryEmissiveTexture;
+layout(set = 0, binding = 13) uniform sampler2D blendMaskTexture;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -68,7 +76,16 @@ vec3 FresnelSchlick(float cosineTheta, vec3 baseReflectivity)
 
 void main()
 {
-    vec4 sampledBaseColor = texture(baseColorTexture, fragTexCoord);
+    float blendMask = texture(blendMaskTexture, fragTexCoord).r;
+    float blendWeight = clamp(
+        mix(0.0, drawData.nodeGraphFactors.y, clamp(drawData.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
+        0.0,
+        1.0
+    );
+
+    vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
+    vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
+    vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
 
     vec3 geometricNormal = normalize(fragWorldNormal);
@@ -76,14 +93,32 @@ void main()
     vec3 bitangent = normalize(cross(geometricNormal, tangent) * fragWorldTangent.w);
     mat3 tbn = mat3(tangent, bitangent, geometricNormal);
 
-    vec3 sampledNormal = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 sampledNormalPrimary = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 sampledNormalSecondary = texture(secondaryNormalTexture, fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 sampledNormal = normalize(mix(sampledNormalPrimary, sampledNormalSecondary, blendWeight));
     sampledNormal.xy *= drawData.surfaceFactors.z;
     vec3 normal = normalize(tbn * sampledNormal);
 
-    float metallicSample = texture(metallicTexture, fragTexCoord).b;
-    float roughnessSample = texture(roughnessTexture, fragTexCoord).g;
-    float ambientOcclusionSample = texture(occlusionTexture, fragTexCoord).r;
-    vec3 emissiveSample = texture(emissiveTexture, fragTexCoord).rgb;
+    float metallicSample = mix(
+        texture(metallicTexture, fragTexCoord).b,
+        texture(secondaryMetallicTexture, fragTexCoord).b,
+        blendWeight
+    );
+    float roughnessSample = mix(
+        texture(roughnessTexture, fragTexCoord).g,
+        texture(secondaryRoughnessTexture, fragTexCoord).g,
+        blendWeight
+    );
+    float ambientOcclusionSample = mix(
+        texture(occlusionTexture, fragTexCoord).r,
+        texture(secondaryOcclusionTexture, fragTexCoord).r,
+        blendWeight
+    );
+    vec3 emissiveSample = mix(
+        texture(emissiveTexture, fragTexCoord).rgb,
+        texture(secondaryEmissiveTexture, fragTexCoord).rgb,
+        blendWeight
+    );
 
     float metallic = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(drawData.surfaceFactors.y * roughnessSample, 0.04, 1.0);

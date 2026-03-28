@@ -20,6 +20,13 @@ struct MaterialTextureBinding
     TextureDescriptorBinding roughness;
     TextureDescriptorBinding occlusion;
     TextureDescriptorBinding emissive;
+    TextureDescriptorBinding secondaryBaseColor;
+    TextureDescriptorBinding secondaryNormal;
+    TextureDescriptorBinding secondaryMetallic;
+    TextureDescriptorBinding secondaryRoughness;
+    TextureDescriptorBinding secondaryOcclusion;
+    TextureDescriptorBinding secondaryEmissive;
+    TextureDescriptorBinding blendMask;
 };
 
 struct alignas(16) CameraUniformData

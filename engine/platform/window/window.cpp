@@ -9,11 +9,15 @@ Window::Window(int width, int height, const char* title)
       m_height(height),
       m_title(title)
 {
+#ifdef _WIN32
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "windows");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO))
     {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
 
+    LOG_INFO("SDL video driver: {}", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "<unknown>");
     CreateNativeWindow();
 }
 
@@ -57,8 +61,7 @@ SDL_Window* Window::GetSDLWindow() const
 
 void Window::CreateNativeWindow()
 {
-    SDL_GL_ResetAttributes();
-    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
 
     m_window = SDL_CreateWindow(
         m_title.c_str(),

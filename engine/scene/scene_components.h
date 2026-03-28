@@ -1,5 +1,6 @@
 #pragma once
 
+#include "material_graph.h"
 #include "world_units.h"
 
 #include <glm/glm.hpp>
@@ -17,6 +18,7 @@ struct ModelImportedMaterialInfo
     std::string roughnessTexturePath;
     std::string occlusionTexturePath;
     std::string emissiveTexturePath;
+    MaterialTextureBlendGraph blendGraph;
 };
 
 struct ModelImportedSubmeshInfo

@@ -407,6 +407,25 @@ void ApplyImportedAssetManifestOverrides(const std::filesystem::path& modelPath,
             {
                 material.emissiveTexturePath = value.as<std::string>(material.emissiveTexturePath);
             }
+            if (const YAML::Node graphNode = materialNode["texture_graph"]; graphNode && graphNode.IsMap())
+            {
+                material.blendGraph.enabled = graphNode["enabled"].as<bool>(material.blendGraph.enabled);
+                material.blendGraph.blendFactor = graphNode["blend_factor"].as<float>(material.blendGraph.blendFactor);
+                material.blendGraph.blendMaskTexturePath =
+                    graphNode["blend_mask_texture_path"].as<std::string>(material.blendGraph.blendMaskTexturePath);
+                material.blendGraph.secondaryBaseColorTexturePath =
+                    graphNode["secondary_base_color_texture_path"].as<std::string>(material.blendGraph.secondaryBaseColorTexturePath);
+                material.blendGraph.secondaryNormalTexturePath =
+                    graphNode["secondary_normal_texture_path"].as<std::string>(material.blendGraph.secondaryNormalTexturePath);
+                material.blendGraph.secondaryMetallicTexturePath =
+                    graphNode["secondary_metallic_texture_path"].as<std::string>(material.blendGraph.secondaryMetallicTexturePath);
+                material.blendGraph.secondaryRoughnessTexturePath =
+                    graphNode["secondary_roughness_texture_path"].as<std::string>(material.blendGraph.secondaryRoughnessTexturePath);
+                material.blendGraph.secondaryOcclusionTexturePath =
+                    graphNode["secondary_occlusion_texture_path"].as<std::string>(material.blendGraph.secondaryOcclusionTexturePath);
+                material.blendGraph.secondaryEmissiveTexturePath =
+                    graphNode["secondary_emissive_texture_path"].as<std::string>(material.blendGraph.secondaryEmissiveTexturePath);
+            }
         }
     }
     catch (...)

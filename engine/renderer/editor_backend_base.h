@@ -5,6 +5,9 @@
 
 #include <render_backend.h>
 
+#include <entt/entt.hpp>
+#include <glm/vec3.hpp>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,6 +49,12 @@ private:
     std::string ImportModelIntoAssetDirectory(const std::string& sourcePath);
     void DeleteAssetPath(const std::string& path);
     void LoadSelectedModel(const std::string& path, bool resetTransform = true);
+    void PlaceModelIntoScene(const std::string& path, const glm::vec3& worldPosition);
+    void UpdateViewportModelPreview(const EditorUiActions::ViewportModelPlacement& placement);
+    void CommitViewportModelPreview(const EditorUiActions::ViewportModelPlacement& placement);
+    void ClearViewportModelPreview(bool restoreSelection = true);
+    void UpdateImportedMaterialDefinition(const EditorUiActions::ImportedMaterialUpdate& update);
+    void UpdateImportedModelMaterialDefinitions(const EditorUiActions::ImportedModelMaterialsUpdate& update);
     void ApplySelectedModelBaseColorTexture(const std::string& path);
     void ClearSelectedModelBaseColorTexture();
     void LoadScene(const std::string& path);

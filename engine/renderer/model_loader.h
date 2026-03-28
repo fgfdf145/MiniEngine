@@ -2,6 +2,7 @@
 
 #include "mesh.h"
 
+#include <material_graph.h>
 #include <glm/glm.hpp>
 
 #include <string>
@@ -24,6 +25,7 @@ struct ModelMaterialData
     float occlusionStrength = 1.0f;
     float emissiveIntensity = 1.0f;
     float opacity = 1.0f;
+    MaterialTextureBlendGraph blendGraph;
 };
 
 struct ModelSubmeshData

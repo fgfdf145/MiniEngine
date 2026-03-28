@@ -48,7 +48,14 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             { textures[slots.metallic]->GetImageView(), textures[slots.metallic]->GetSampler() },
             { textures[slots.roughness]->GetImageView(), textures[slots.roughness]->GetSampler() },
             { textures[slots.occlusion]->GetImageView(), textures[slots.occlusion]->GetSampler() },
-            { textures[slots.emissive]->GetImageView(), textures[slots.emissive]->GetSampler() }
+            { textures[slots.emissive]->GetImageView(), textures[slots.emissive]->GetSampler() },
+            { textures[slots.secondaryBaseColor]->GetImageView(), textures[slots.secondaryBaseColor]->GetSampler() },
+            { textures[slots.secondaryNormal]->GetImageView(), textures[slots.secondaryNormal]->GetSampler() },
+            { textures[slots.secondaryMetallic]->GetImageView(), textures[slots.secondaryMetallic]->GetSampler() },
+            { textures[slots.secondaryRoughness]->GetImageView(), textures[slots.secondaryRoughness]->GetSampler() },
+            { textures[slots.secondaryOcclusion]->GetImageView(), textures[slots.secondaryOcclusion]->GetSampler() },
+            { textures[slots.secondaryEmissive]->GetImageView(), textures[slots.secondaryEmissive]->GetSampler() },
+            { textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler() }
         });
     }
 
@@ -372,6 +379,11 @@ void VulkanRenderer::UploadSceneResources()
         CreateSolidTexture(255, 255, 255, 255),
         VulkanTextureFormat::SrgbColor
     );
+    const uint32_t defaultBlendMaskIndex = getOrCreateTexture(
+        "__default_blend_mask__",
+        CreateSolidTexture(255, 255, 255, 255),
+        VulkanTextureFormat::LinearData
+    );
 
     const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
     newMaterialTextureSlots.push_back(MaterialTextureSlots{
@@ -380,7 +392,14 @@ void VulkanRenderer::UploadSceneResources()
         defaultMetallicIndex,
         defaultRoughnessIndex,
         defaultOcclusionIndex,
-        defaultEmissiveIndex
+        defaultEmissiveIndex,
+        defaultBaseColorIndex,
+        defaultNormalIndex,
+        defaultMetallicIndex,
+        defaultRoughnessIndex,
+        defaultOcclusionIndex,
+        defaultEmissiveIndex,
+        defaultBlendMaskIndex
     });
 
     auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex) -> uint32_t
@@ -445,6 +464,41 @@ void VulkanRenderer::UploadSceneResources()
         slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, VulkanTextureFormat::LinearData, defaultRoughnessIndex);
         slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, VulkanTextureFormat::LinearData, defaultOcclusionIndex);
         slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex);
+        slots.secondaryBaseColor = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryBaseColor,
+            VulkanTextureFormat::SrgbColor,
+            slots.baseColor
+        );
+        slots.secondaryNormal = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryNormal,
+            VulkanTextureFormat::LinearData,
+            slots.normal
+        );
+        slots.secondaryMetallic = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryMetallic,
+            VulkanTextureFormat::LinearData,
+            slots.metallic
+        );
+        slots.secondaryRoughness = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryRoughness,
+            VulkanTextureFormat::LinearData,
+            slots.roughness
+        );
+        slots.secondaryOcclusion = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryOcclusion,
+            VulkanTextureFormat::LinearData,
+            slots.occlusion
+        );
+        slots.secondaryEmissive = loadTextureIndex(
+            cpuRenderSubmesh.textures.secondaryEmissive,
+            VulkanTextureFormat::SrgbColor,
+            slots.emissive
+        );
+        slots.blendMask = loadTextureIndex(
+            cpuRenderSubmesh.textures.blendMask,
+            VulkanTextureFormat::LinearData,
+            defaultBlendMaskIndex
+        );
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);

@@ -1,0 +1,31 @@
+# Keep Windows-facing source and config files checked out with CRLF line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.c text eol=crlf
+*.cc text eol=crlf
+*.cpp text eol=crlf
+*.cxx text eol=crlf
+*.h text eol=crlf
+*.hh text eol=crlf
+*.hpp text eol=crlf
+*.inl text eol=crlf
+*.ixx text eol=crlf
+
+*.vert text eol=crlf
+*.frag text eol=crlf
+*.comp text eol=crlf
+*.glsl text eol=crlf
+
+*.cmake text eol=crlf
+*.json text eol=crlf
+*.yaml text eol=crlf
+*.yml text eol=crlf
+*.ini text eol=crlf
+*.txt text eol=crlf
+*.md text eol=crlf
+
+CMakeLists.txt text eol=crlf
+.gitignore text eol=crlf
+.gitattributes text eol=crlf

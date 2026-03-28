@@ -97,7 +97,7 @@ void VulkanUniformBuffer::CreateDescriptorSetLayout()
     uniformBinding.descriptorCount = 1;
     uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 14> bindings{};
     bindings[0] = uniformBinding;
 
     for (uint32_t bindingIndex = 1; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
@@ -152,7 +152,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorSetCount },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 6 }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 13 }
     }};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -191,16 +191,23 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             const size_t descriptorIndex =
                 static_cast<size_t>(i) * m_materialBindings.size() + materialIndex;
 
-            const std::array<TextureDescriptorBinding, 6> textureBindings = {
+            const std::array<TextureDescriptorBinding, 13> textureBindings = {
                 materialBinding.baseColor,
                 materialBinding.normal,
                 materialBinding.metallic,
                 materialBinding.roughness,
                 materialBinding.occlusion,
-                materialBinding.emissive
+                materialBinding.emissive,
+                materialBinding.secondaryBaseColor,
+                materialBinding.secondaryNormal,
+                materialBinding.secondaryMetallic,
+                materialBinding.secondaryRoughness,
+                materialBinding.secondaryOcclusion,
+                materialBinding.secondaryEmissive,
+                materialBinding.blendMask
             };
 
-            std::array<VkDescriptorImageInfo, 6> imageInfos{};
+            std::array<VkDescriptorImageInfo, 13> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)
             {
                 imageInfos[textureBindingIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -208,7 +215,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 imageInfos[textureBindingIndex].sampler = textureBindings[textureBindingIndex].sampler;
             }
 
-            std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
+            std::array<VkWriteDescriptorSet, 14> descriptorWrites{};
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = m_descriptorSets[descriptorIndex];
             descriptorWrites[0].dstBinding = 0;

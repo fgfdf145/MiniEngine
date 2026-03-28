@@ -38,6 +38,13 @@ struct MaterialTextureSlots
     uint32_t roughness = 0;
     uint32_t occlusion = 0;
     uint32_t emissive = 0;
+    uint32_t secondaryBaseColor = 0;
+    uint32_t secondaryNormal = 0;
+    uint32_t secondaryMetallic = 0;
+    uint32_t secondaryRoughness = 0;
+    uint32_t secondaryOcclusion = 0;
+    uint32_t secondaryEmissive = 0;
+    uint32_t blendMask = 0;
 };
 
 class VulkanRenderer : public EditorRenderBackendBase

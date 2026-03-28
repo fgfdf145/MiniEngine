@@ -50,6 +50,7 @@ public:
     void CreateTwoCubeTestScene();
     void Clear();
     entt::entity CreateEntity(const SerializedEntityData& entityData);
+    void DestroyEntity(entt::entity entity);
 
     bool HasEntities() const;
     bool HasSelection() const;

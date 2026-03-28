@@ -287,6 +287,26 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     return entity;
 }
 
+void EditorScene::DestroyEntity(entt::entity entity)
+{
+    if (!IsValidEntity(entity))
+    {
+        return;
+    }
+
+    m_registry.destroy(entity);
+    m_entityOrder.erase(
+        std::remove(m_entityOrder.begin(), m_entityOrder.end(), entity),
+        m_entityOrder.end()
+    );
+
+    if (m_selectedEntity == entity)
+    {
+        m_selectedEntity = entt::null;
+        EnsureSelection();
+    }
+}
+
 bool EditorScene::HasEntities() const
 {
     return !m_entityOrder.empty();

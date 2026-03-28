@@ -6,6 +6,7 @@ layout(push_constant) uniform DrawConstants
     vec4 baseColorFactor;
     vec4 emissiveFactor;
     vec4 surfaceFactors;
+    vec4 nodeGraphFactors;
 } drawData;
 
 layout(set = 0, binding = 0) uniform CameraBuffer

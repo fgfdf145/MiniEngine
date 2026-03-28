@@ -22,6 +22,13 @@ struct MaterialTexturePaths
     std::string roughness;
     std::string occlusion;
     std::string emissive;
+    std::string secondaryBaseColor;
+    std::string secondaryNormal;
+    std::string secondaryMetallic;
+    std::string secondaryRoughness;
+    std::string secondaryOcclusion;
+    std::string secondaryEmissive;
+    std::string blendMask;
 };
 
 struct CpuRenderSubmesh
@@ -34,6 +41,14 @@ struct CpuRenderSubmesh
     std::string name;
 };
 
+struct ViewportDragPreviewState
+{
+    bool active = false;
+    entt::entity entity = entt::null;
+    entt::entity previousSelection = entt::null;
+    std::string modelPath;
+};
+
 struct RendererSharedState
 {
     bool initialized = false;
@@ -44,6 +59,7 @@ struct RendererSharedState
     EditorUiController editorUi;
     EditorScene editorScene;
     std::vector<CpuRenderSubmesh> renderSubmeshes;
+    ViewportDragPreviewState viewportDragPreview;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
     std::optional<std::string> pendingModelPath;
