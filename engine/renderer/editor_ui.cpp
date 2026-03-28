@@ -3045,18 +3045,17 @@ EditorUiFrameResult EditorUiController::Draw(
 
 void EditorUiController::ApplyUiScale()
 {
-    ImGuiIO& io = ImGui::GetIO();
     ImGuiStyle& style = ImGui::GetStyle();
     m_effectiveUiScale = std::clamp(GetWindowUiScale() * m_uiScale, 0.75f, 3.0f);
 
-    if (std::abs(io.FontGlobalScale - m_effectiveUiScale) <= 0.001f)
+    if (std::abs(style.FontScaleMain - m_effectiveUiScale) <= 0.001f)
     {
         return;
     }
 
     style = m_baseStyle;
     style.ScaleAllSizes(m_effectiveUiScale);
-    io.FontGlobalScale = m_effectiveUiScale;
+    style.FontScaleMain = m_effectiveUiScale;
 }
 
 float EditorUiController::GetWindowUiScale() const
