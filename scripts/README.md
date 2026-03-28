@@ -24,11 +24,33 @@ Linux / macOS:
 ./scripts/bootstrap-deps.sh
 ```
 
+Build after dependencies are ready:
+
+Windows PowerShell:
+
+```powershell
+.\scripts\build.ps1 x64-debug
+```
+
+Linux / macOS:
+
+```bash
+./scripts/build.sh linux-debug
+```
+
 Optional arguments:
 
 - `--vcpkg-root <path>` or `-VcpkgRoot <path>`: use a custom vcpkg checkout path.
 - `--triplet <name>` or `-Triplet <name>`: override the detected vcpkg triplet.
 - `--skip-install` or `-SkipInstall`: only clone/bootstrap vcpkg, skip `vcpkg install`.
+
+Build script options:
+
+- `.\scripts\build.ps1 <preset>` / `./scripts/build.sh <preset>`: select the CMake preset to build.
+- `-Jobs <n>` / `--jobs <n>`: override the auto-detected logical CPU count.
+- `-Target <name>` / `--target <name>`: build a specific target only.
+
+If `Jobs` is not provided, the build scripts automatically detect the machine's logical CPU count and pass it to `cmake --build --parallel`, so the build uses all available threads by default.
 
 ## Default vcpkg Location
 

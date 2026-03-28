@@ -2,6 +2,7 @@ add_library(engine_renderer
     camera.cpp
     editor_backend_base.cpp
     editor_ui.cpp
+    engine_settings.cpp
     imgui/imgui_impl_sdl3.cpp
     imgui/imgui_impl_vulkan.cpp
     mesh.cpp

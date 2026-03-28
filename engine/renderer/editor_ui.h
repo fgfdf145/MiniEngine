@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "engine_settings.h"
 
 #include <scene_components.h>
 #include <rhi/backend.h>
@@ -53,12 +54,14 @@ struct EditorUiFrameResult
 {
     EditorUiActions actions;
     RenderExtent viewportExtent{ 1, 1 };
+    bool engineSettingsChanged = false;
 };
 
 class EditorUiController
 {
 public:
-    void BeginFrame(SDL_Window* window);
+    void BeginFrame(SDL_Window* window, const EngineSettings& settings);
+    void WriteEngineSettings(EngineSettings& settings) const;
     EditorUiFrameResult Draw(
         Camera& camera,
         ViewportMatrices& matrices,
@@ -72,7 +75,12 @@ public:
     );
 
 private:
+    void ApplyEngineSettings(const EngineSettings& settings);
     void ApplyUiScale();
+    void CaptureDefaultThemeColors();
+    void SyncBaseStyleColorsFromCurrentStyle();
+    void ResetThemeColorsToDefault();
+    bool DrawThemeEditorWindow();
     float GetWindowUiScale() const;
     void OpenModelProcessorWindow(const std::string& modelPath);
     void CloseModelProcessorWindow();
@@ -81,7 +89,10 @@ private:
     float m_uiScale = 1.0f;
     float m_effectiveUiScale = 1.0f;
     ImGuiStyle m_baseStyle{};
+    std::array<ImVec4, ImGuiCol_COUNT> m_defaultThemeColors{};
     bool m_hasCapturedBaseStyle = false;
+    bool m_hasCapturedDefaultThemeColors = false;
+    bool m_hasAppliedEngineSettings = false;
     std::string m_selectedAssetPath;
     std::string m_assetBrowserDirectory;
     std::string m_pendingDuplicateImportSourcePath;
@@ -108,5 +119,6 @@ private:
     bool m_showCameraWindow = true;
     bool m_showAssetManagerWindow = true;
     bool m_showSceneWindow = true;
+    bool m_showThemeWindow = true;
     bool m_showViewportWindow = true;
 };

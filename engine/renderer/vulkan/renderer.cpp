@@ -160,7 +160,7 @@ void VulkanRenderer::DrawFrame()
     UpdateViewportMatrices(FromVkExtent(m_sceneViewportLayer->GetExtent()));
 
     m_imguiLayer->BeginFrame();
-    State().editorUi.BeginFrame(GetWindow().GetSDLWindow());
+    State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
     const EditorUiFrameResult uiFrame = DrawEditorUi(
         m_sceneViewportLayer->GetTextureId(imageIndex),
         FromVkExtent(m_sceneViewportLayer->GetExtent())

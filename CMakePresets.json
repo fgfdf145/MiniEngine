@@ -102,5 +102,48 @@
                 }
             }
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-build-base",
+            "hidden": true,
+            "environment": {
+                "CMAKE_BUILD_PARALLEL_LEVEL": "$penv{NUMBER_OF_PROCESSORS}"
+            }
+        },
+        {
+            "name": "x64-debug",
+            "displayName": "x64 Debug Build",
+            "configurePreset": "x64-debug",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "x64-release",
+            "displayName": "x64 Release Build",
+            "configurePreset": "x64-release",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "x86-debug",
+            "displayName": "x86 Debug Build",
+            "configurePreset": "x86-debug",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "x86-release",
+            "displayName": "x86 Release Build",
+            "configurePreset": "x86-release",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "linux-debug",
+            "displayName": "Linux Debug Build",
+            "configurePreset": "linux-debug"
+        },
+        {
+            "name": "macos-debug",
+            "displayName": "macOS Debug Build",
+            "configurePreset": "macos-debug"
+        }
     ]
 }

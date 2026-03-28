@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "editor_ui.h"
+#include "engine_settings.h"
 #include "material.h"
 #include "mesh.h"
 #include "render_types.h"
@@ -62,8 +63,12 @@ struct RendererSharedState
     ViewportDragPreviewState viewportDragPreview;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
+    std::string lastEngineSettingsError;
     std::optional<std::string> pendingModelPath;
     std::optional<std::string> pendingScenePath;
+    std::filesystem::path engineSettingsPath;
+    EngineSettings engineSettings;
+    bool engineSettingsNeedsBootstrapSave = false;
     RenderExtent requestedViewportExtent{};
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
 };

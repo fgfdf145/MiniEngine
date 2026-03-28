@@ -651,7 +651,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     const std::string selectedModelPath =
         State().editorScene.HasSelection() ? State().editorScene.GetSelectedModel().sourcePath : std::string{};
 
-    return State().editorUi.Draw(
+    EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,
         State().editorScene,
@@ -662,6 +662,14 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         viewportExtent,
         m_backendType
     );
+
+    if (result.engineSettingsChanged || State().engineSettingsNeedsBootstrapSave)
+    {
+        State().editorUi.WriteEngineSettings(State().engineSettings);
+        SaveEngineSettings();
+    }
+
+    return result;
 }
 
 bool EditorRenderBackendBase::HasDrawableArea() const
@@ -742,6 +750,22 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
     {
         State().lastFrameTime = std::chrono::steady_clock::now();
         return;
+    }
+
+    State().engineSettingsPath = BuildEngineSettingsPath();
+    State().engineSettingsNeedsBootstrapSave = !std::filesystem::exists(State().engineSettingsPath);
+    if (!LoadEngineSettings(State().engineSettingsPath, State().engineSettings, State().lastEngineSettingsError))
+    {
+        LOG_ERROR(
+            "Failed to load engine settings '{}': {}",
+            State().engineSettingsPath.string(),
+            State().lastEngineSettingsError
+        );
+        State().engineSettingsNeedsBootstrapSave = true;
+    }
+    else
+    {
+        State().lastEngineSettingsError.clear();
     }
 
     InitializeEditorScene();
@@ -1227,6 +1251,29 @@ void EditorRenderBackendBase::LoadScene(const std::string& path)
     State().editorScene.SetSceneFilePath(path);
     State().lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
+}
+
+void EditorRenderBackendBase::SaveEngineSettings()
+{
+    if (State().engineSettingsPath.empty())
+    {
+        State().engineSettingsPath = BuildEngineSettingsPath();
+    }
+
+    std::string errorMessage;
+    if (!::SaveEngineSettings(State().engineSettingsPath, State().engineSettings, errorMessage))
+    {
+        State().lastEngineSettingsError = errorMessage;
+        LOG_ERROR(
+            "Failed to save engine settings '{}': {}",
+            State().engineSettingsPath.string(),
+            errorMessage
+        );
+        return;
+    }
+
+    State().engineSettingsNeedsBootstrapSave = false;
+    State().lastEngineSettingsError.clear();
 }
 
 void EditorRenderBackendBase::ApplySelectedModelBaseColorTexture(const std::string& path)

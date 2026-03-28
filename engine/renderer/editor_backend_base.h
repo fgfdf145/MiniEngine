@@ -58,6 +58,7 @@ private:
     void ApplySelectedModelBaseColorTexture(const std::string& path);
     void ClearSelectedModelBaseColorTexture();
     void LoadScene(const std::string& path);
+    void SaveEngineSettings();
     void RebuildSceneRenderables();
 
     Window& m_window;

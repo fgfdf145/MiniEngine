@@ -333,7 +333,7 @@ Write-Host "  1. Set VCPKG_ROOT to '$resolvedVcpkgRoot' if you want CMake to reu
 if ($platformName -eq "windows")
 {
     Write-Host "  2. Ensure FBX_SDK_ROOT and VULKAN_SDK point to valid SDK installs."
-    Write-Host "  3. Configure/build from a Visual Studio developer shell, for example: cmake --preset x64-debug"
+    Write-Host "  3. Build with automatic full-thread parallelism, for example: .\scripts\build.ps1 x64-debug"
 }
 else
 {
