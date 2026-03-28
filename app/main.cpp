@@ -1,3 +1,4 @@
+#include <SDL3/SDL_main.h>
 #include <editor_application.h>
 #include <log/log.h>
 

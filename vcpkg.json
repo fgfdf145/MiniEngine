@@ -12,7 +12,12 @@
       ]
     },
     "imguizmo",
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
     {
       "name": "shaderc",
       "host": true

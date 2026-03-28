@@ -4,15 +4,39 @@
 
 #include <stdexcept>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 Window::Window(int width, int height, const char* title)
     : m_width(width),
       m_height(height),
       m_title(title)
 {
+    if (!SDL_SetAppMetadata("MiniEngine", "0.1.0", "com.miniengine.editor"))
+    {
+        LOG_WARN("SDL_SetAppMetadata failed: {}", SDL_GetError());
+    }
+
 #ifdef _WIN32
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "windows");
+
+    char systemDirectory[MAX_PATH + 1] = {};
+    const UINT systemDirectoryLength = GetSystemDirectoryA(systemDirectory, MAX_PATH);
+    if (systemDirectoryLength > 0 && systemDirectoryLength <= MAX_PATH)
+    {
+        std::string vulkanLoaderPath(systemDirectory, systemDirectoryLength);
+        vulkanLoaderPath += "\\vulkan-1.dll";
+        if (SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, vulkanLoaderPath.c_str()))
+        {
+            LOG_INFO("SDL Vulkan loader hint: {}", vulkanLoaderPath);
+        }
+    }
 #endif
-    if (!SDL_Init(SDL_INIT_VIDEO))
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
@@ -61,7 +85,9 @@ SDL_Window* Window::GetSDLWindow() const
 
 void Window::CreateNativeWindow()
 {
-    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE |
+        SDL_WINDOW_VULKAN |
+        SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
     m_window = SDL_CreateWindow(
         m_title.c_str(),

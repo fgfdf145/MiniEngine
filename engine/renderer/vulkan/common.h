@@ -2,13 +2,6 @@
 
 #include <SDL3/SDL.h>
 #include "../material.h"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#define VK_USE_PLATFORM_WIN32_KHR
-#include <windows.h>
-#endif
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
