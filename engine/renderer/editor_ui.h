@@ -118,6 +118,7 @@ private:
     std::string m_copiedAssetPath;
     std::string m_selectedAssetPath;
     std::string m_assetBrowserDirectory;
+    std::string m_assetDirectoryTreeExpandedPath;
     std::string m_pendingDuplicateImportSourcePath;
     std::string m_pendingDuplicateImportAssetPath;
     std::string m_modelProcessorModelPath;

@@ -1706,6 +1706,26 @@ void CollectSortedDirectoryEntries(
     });
 }
 
+void CollectSortedChildDirectories(
+    const std::filesystem::path& directory,
+    std::vector<std::filesystem::directory_entry>& directories
+)
+{
+    directories.clear();
+
+    std::vector<std::filesystem::directory_entry> entries;
+    CollectSortedDirectoryEntries(directory, entries);
+    directories.reserve(entries.size());
+    for (const std::filesystem::directory_entry& entry : entries)
+    {
+        std::error_code errorCode;
+        if (entry.is_directory(errorCode) && !errorCode)
+        {
+            directories.push_back(entry);
+        }
+    }
+}
+
 std::string BuildAssetBrowserPathLabel(const std::filesystem::path& assetRoot, const std::filesystem::path& path)
 {
     const std::string rootLabel =
@@ -1728,6 +1748,94 @@ std::string BuildAssetBrowserPathLabel(const std::filesystem::path& assetRoot, c
     }
 
     return label;
+}
+
+void DrawAssetDirectoryTreeNode(
+    const std::filesystem::path& directory,
+    const std::filesystem::path& assetRoot,
+    const std::string& currentBrowserDirectory,
+    bool autoExpandCurrentPath,
+    std::string& selectedAssetPath,
+    bool& selectedAssetIsDirectory,
+    std::string& browserDirectory
+)
+{
+    std::vector<std::filesystem::directory_entry> childDirectories;
+    CollectSortedChildDirectories(directory, childDirectories);
+
+    const std::string normalizedDirectory = NormalizeAssetPath(directory);
+    const bool isCurrentBrowserDirectory = normalizedDirectory == currentBrowserDirectory;
+    const bool isSelected = selectedAssetPath == normalizedDirectory;
+    const bool shouldOpen =
+        autoExpandCurrentPath &&
+        IsSameOrDescendantPath(std::filesystem::path(currentBrowserDirectory), directory);
+    const bool hasChildren = !childDirectories.empty();
+
+    if (shouldOpen)
+    {
+        ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    }
+
+    ImGuiTreeNodeFlags flags =
+        ImGuiTreeNodeFlags_OpenOnArrow |
+        ImGuiTreeNodeFlags_OpenOnDoubleClick |
+        ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (!hasChildren)
+    {
+        flags |= ImGuiTreeNodeFlags_Leaf;
+    }
+    if (isSelected || isCurrentBrowserDirectory)
+    {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    const std::string label = directory == assetRoot
+        ? BuildAssetBrowserPathLabel(assetRoot, directory)
+        : directory.filename().string();
+
+    ImGui::PushID(normalizedDirectory.c_str());
+    const bool isOpen = ImGui::TreeNodeEx("##AssetDirectoryTreeNode", flags, "%s", label.c_str());
+
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+
+    if (clicked)
+    {
+        selectedAssetPath = normalizedDirectory;
+        selectedAssetIsDirectory = true;
+    }
+
+    if (doubleClicked)
+    {
+        browserDirectory = normalizedDirectory;
+        selectedAssetPath = normalizedDirectory;
+        selectedAssetIsDirectory = true;
+    }
+
+    if (hovered)
+    {
+        ImGui::SetTooltip("%s", normalizedDirectory.c_str());
+    }
+
+    if (isOpen)
+    {
+        for (const std::filesystem::directory_entry& childDirectory : childDirectories)
+        {
+            DrawAssetDirectoryTreeNode(
+                childDirectory.path(),
+                assetRoot,
+                currentBrowserDirectory,
+                autoExpandCurrentPath,
+                selectedAssetPath,
+                selectedAssetIsDirectory,
+                browserDirectory
+            );
+        }
+
+        ImGui::TreePop();
+    }
+    ImGui::PopID();
 }
 
 std::string BuildAssetTypeLabel(const std::filesystem::path& path, bool isDirectory)
@@ -3314,6 +3422,35 @@ EditorUiFrameResult EditorUiController::Draw(
             const float footerReserveHeight = 56.0f * m_effectiveUiScale;
             const float browserHeight =
                 std::max(ImGui::GetContentRegionAvail().y - footerReserveHeight, 260.0f * m_effectiveUiScale);
+            const std::string normalizedBrowserDirectory = NormalizeAssetPath(browserDirectoryPath);
+            const bool autoExpandCurrentTreePath = m_assetDirectoryTreeExpandedPath != normalizedBrowserDirectory;
+            const float totalBrowserWidth = std::max(ImGui::GetContentRegionAvail().x, 360.0f * m_effectiveUiScale);
+            const float treePaneWidth = std::clamp(
+                totalBrowserWidth * 0.28f,
+                220.0f * m_effectiveUiScale,
+                320.0f * m_effectiveUiScale
+            );
+
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(kAssetPaneBackgroundColor));
+            if (ImGui::BeginChild("AssetTreePane", ImVec2(treePaneWidth, browserHeight), true))
+            {
+                ImGui::TextDisabled("Folders");
+                ImGui::Separator();
+                DrawAssetDirectoryTreeNode(
+                    assetRoot,
+                    assetRoot,
+                    normalizedBrowserDirectory,
+                    autoExpandCurrentTreePath,
+                    m_selectedAssetPath,
+                    m_selectedAssetIsDirectory,
+                    m_assetBrowserDirectory
+                );
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            m_assetDirectoryTreeExpandedPath = normalizedBrowserDirectory;
+            ImGui::SameLine();
+
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(kAssetPaneBackgroundColor));
             if (ImGui::BeginChild("AssetListPane", ImVec2(0.0f, browserHeight), true))
             {
