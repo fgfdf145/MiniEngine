@@ -1175,54 +1175,68 @@ std::string BuildAssetTypeLabel(const std::filesystem::path& path, bool isDirect
     return label;
 }
 
-void DrawAssetDirectoryTreeNode(
-    const std::filesystem::path& path,
-    std::string& browserDirectory,
-    std::string& selectedAssetPath,
-    bool& selectedAssetIsDirectory,
-    bool defaultOpen = false
-)
+std::filesystem::path MakeUniqueAssetFolderPath(const std::filesystem::path& parentDirectory, const std::string& baseName)
 {
-    const std::string normalizedPath = NormalizeAssetPath(path);
-    const std::string nodeLabel = path.filename().empty() ? path.string() : path.filename().string();
-    const bool isCurrentDirectory = browserDirectory == normalizedPath;
-    ImGuiTreeNodeFlags flags =
-        ImGuiTreeNodeFlags_OpenOnArrow |
-        ImGuiTreeNodeFlags_SpanAvailWidth |
-        ImGuiTreeNodeFlags_FramePadding;
-    if (isCurrentDirectory)
+    const std::filesystem::path desiredPath = parentDirectory / baseName;
+    if (!std::filesystem::exists(desiredPath))
     {
-        flags |= ImGuiTreeNodeFlags_Selected;
-    }
-    if (defaultOpen || (!browserDirectory.empty() && IsSameOrDescendantPath(std::filesystem::path(browserDirectory), path)))
-    {
-        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+        return desiredPath;
     }
 
-    const bool open = ImGui::TreeNodeEx(normalizedPath.c_str(), flags, "%s", nodeLabel.c_str());
-    if (ImGui::IsItemClicked())
+    for (uint32_t suffix = 1; suffix < 10000; ++suffix)
     {
-        browserDirectory = normalizedPath;
-        selectedAssetPath = normalizedPath;
-        selectedAssetIsDirectory = true;
-    }
-
-    if (!open)
-    {
-        return;
-    }
-
-    std::vector<std::filesystem::directory_entry> entries;
-    CollectSortedDirectoryEntries(path, entries);
-    for (const std::filesystem::directory_entry& entry : entries)
-    {
-        std::error_code errorCode;
-        if (entry.is_directory(errorCode) && !errorCode)
+        const std::filesystem::path candidate = parentDirectory / (baseName + " " + std::to_string(suffix));
+        if (!std::filesystem::exists(candidate))
         {
-            DrawAssetDirectoryTreeNode(entry.path(), browserDirectory, selectedAssetPath, selectedAssetIsDirectory);
+            return candidate;
         }
     }
-    ImGui::TreePop();
+
+    throw std::runtime_error("Failed to create a unique folder name inside: " + parentDirectory.string());
+}
+
+std::string TrimCopy(const std::string& value)
+{
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        return {};
+    }
+
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool ContainsPathSeparator(const std::string& value)
+{
+    return value.find('/') != std::string::npos || value.find('\\') != std::string::npos;
+}
+
+std::string RemapNormalizedPathAfterRename(
+    const std::string& currentPath,
+    const std::filesystem::path& oldPath,
+    const std::filesystem::path& newPath
+)
+{
+    if (currentPath.empty())
+    {
+        return currentPath;
+    }
+
+    const std::filesystem::path normalizedCurrent = NormalizeFilesystemPath(currentPath);
+    if (!IsSameOrDescendantPath(normalizedCurrent, oldPath))
+    {
+        return currentPath;
+    }
+
+    std::error_code errorCode;
+    const std::filesystem::path relativePath = std::filesystem::relative(normalizedCurrent, oldPath, errorCode);
+    if (errorCode || relativePath == ".")
+    {
+        return NormalizeAssetPath(newPath);
+    }
+
+    return NormalizeAssetPath(newPath / relativePath);
 }
 
 void DrawAssetBrowserTile(
@@ -1233,6 +1247,14 @@ void DrawAssetBrowserTile(
     float effectiveUiScale,
     bool hasSceneSelection,
     EditorUiFrameResult& result,
+    std::string& copiedAssetPath,
+    std::string& renameTargetPath,
+    std::array<char, 256>& renameBuffer,
+    std::string& renameError,
+    bool& openRenamePopup,
+    bool& focusRenameInput,
+    std::string& pendingDeleteAssetPath,
+    bool& openDeleteAssetPopup,
     std::string& browserDirectory,
     std::string& selectedAssetPath,
     bool& selectedAssetIsDirectory
@@ -1243,7 +1265,8 @@ void DrawAssetBrowserTile(
     const std::string normalizedPath = NormalizeAssetPath(path);
     const bool isDirectory = entry.is_directory(errorCode) && !errorCode;
     const bool isSelected = selectedAssetPath == normalizedPath;
-    const bool canLoadSelectedModel = !isDirectory && hasSceneSelection && IsSupportedModelAssetPath(path);
+    const bool isSupportedModel = !isDirectory && IsSupportedModelAssetPath(path);
+    const bool canLoadSelectedModel = isSupportedModel && hasSceneSelection;
     const std::string typeLabel = BuildAssetTypeLabel(path, isDirectory);
     const std::string displayName = path.filename().string();
     const std::string subtitle =
@@ -1332,7 +1355,73 @@ void DrawAssetBrowserTile(
         ImGui::SetTooltip("%s", path.string().c_str());
     }
 
-    if (!isDirectory && IsSupportedModelAssetPath(path) && ImGui::BeginDragDropSource())
+    if (ImGui::BeginPopupContextItem("AssetTileContext"))
+    {
+        selectedAssetPath = normalizedPath;
+        selectedAssetIsDirectory = isDirectory;
+
+        if (ImGui::MenuItem("New Folder"))
+        {
+            try
+            {
+                const std::filesystem::path targetDirectory =
+                    isDirectory
+                    ? path
+                    : path.parent_path();
+                const std::filesystem::path newFolderPath = MakeUniqueAssetFolderPath(targetDirectory, "New Folder");
+                std::filesystem::create_directory(newFolderPath);
+                browserDirectory = NormalizeAssetPath(targetDirectory);
+                selectedAssetPath = NormalizeAssetPath(newFolderPath);
+                selectedAssetIsDirectory = true;
+                renameTargetPath = selectedAssetPath;
+                renameError.clear();
+                std::snprintf(renameBuffer.data(), renameBuffer.size(), "%s", newFolderPath.filename().string().c_str());
+                openRenamePopup = true;
+                focusRenameInput = true;
+            }
+            catch (const std::exception& error)
+            {
+                renameError = error.what();
+            }
+        }
+
+        if (ImGui::MenuItem("Copy"))
+        {
+            copiedAssetPath = normalizedPath;
+        }
+
+        const bool canPaste = !copiedAssetPath.empty() && std::filesystem::exists(std::filesystem::path(copiedAssetPath));
+        if (ImGui::MenuItem("Paste", nullptr, false, canPaste))
+        {
+            result.actions.pastedAsset = EditorUiActions::AssetPasteRequest{
+                copiedAssetPath,
+                isDirectory ? normalizedPath : NormalizeAssetPath(path.parent_path())
+            };
+            if (isDirectory)
+            {
+                browserDirectory = normalizedPath;
+            }
+        }
+
+        if (ImGui::MenuItem("Delete"))
+        {
+            pendingDeleteAssetPath = normalizedPath;
+            openDeleteAssetPopup = true;
+        }
+
+        if (ImGui::MenuItem("Rename"))
+        {
+            renameTargetPath = normalizedPath;
+            renameError.clear();
+            std::snprintf(renameBuffer.data(), renameBuffer.size(), "%s", path.filename().string().c_str());
+            openRenamePopup = true;
+            focusRenameInput = true;
+        }
+
+        ImGui::EndPopup();
+    }
+
+    if (isSupportedModel && ImGui::BeginDragDropSource())
     {
         const std::string payloadPath = normalizedPath;
         ImGui::SetDragDropPayload(
@@ -2100,6 +2189,111 @@ void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
     }
 }
 
+void EditorUiController::BeginAssetRename(const std::string& assetPath)
+{
+    const std::filesystem::path normalizedPath = NormalizeFilesystemPath(assetPath);
+    m_assetRenameTargetPath = normalizedPath.string();
+    m_assetRenameError.clear();
+    m_focusAssetRenameInput = true;
+    std::snprintf(
+        m_assetRenameBuffer.data(),
+        m_assetRenameBuffer.size(),
+        "%s",
+        normalizedPath.filename().string().c_str()
+    );
+    m_openAssetRenamePopup = true;
+}
+
+bool EditorUiController::CommitAssetRename(const std::filesystem::path& assetRoot)
+{
+    const std::filesystem::path sourcePath = NormalizeFilesystemPath(m_assetRenameTargetPath);
+    const std::string requestedName = TrimCopy(m_assetRenameBuffer.data());
+    if (requestedName.empty())
+    {
+        m_assetRenameError = "Name cannot be empty.";
+        return false;
+    }
+    if (requestedName == "." || requestedName == ".." || ContainsPathSeparator(requestedName))
+    {
+        m_assetRenameError = "Name cannot contain path separators.";
+        return false;
+    }
+    if (!std::filesystem::exists(sourcePath))
+    {
+        m_assetRenameError = "The asset no longer exists.";
+        return false;
+    }
+
+    const std::filesystem::path targetPath = sourcePath.parent_path() / requestedName;
+    if (NormalizeFilesystemPath(targetPath) == sourcePath)
+    {
+        m_openAssetRenamePopup = false;
+        m_assetRenameError.clear();
+        return true;
+    }
+    if (!IsSameOrDescendantPath(targetPath.parent_path(), assetRoot))
+    {
+        m_assetRenameError = "Rename target is outside the assets directory.";
+        return false;
+    }
+    if (std::filesystem::exists(targetPath))
+    {
+        m_assetRenameError = "An asset with that name already exists.";
+        return false;
+    }
+
+    std::filesystem::rename(sourcePath, targetPath);
+
+    m_selectedAssetPath = RemapNormalizedPathAfterRename(m_selectedAssetPath, sourcePath, targetPath);
+    m_assetBrowserDirectory = RemapNormalizedPathAfterRename(m_assetBrowserDirectory, sourcePath, targetPath);
+    m_copiedAssetPath = RemapNormalizedPathAfterRename(m_copiedAssetPath, sourcePath, targetPath);
+    m_assetRenameTargetPath.clear();
+    m_assetRenameError.clear();
+    m_openAssetRenamePopup = false;
+    return true;
+}
+
+void EditorUiController::RequestAssetDelete(const std::string& assetPath)
+{
+    m_pendingDeleteAssetPath = NormalizeFilesystemPath(assetPath).string();
+    m_openDeleteAssetPopup = true;
+}
+
+void EditorUiController::ConfirmRequestedAssetDelete(
+    const std::filesystem::path& assetRoot,
+    const std::string& normalizedAssetRoot,
+    EditorUiFrameResult& result
+)
+{
+    if (m_pendingDeleteAssetPath.empty())
+    {
+        return;
+    }
+
+    result.actions.deleteAssetPath = m_pendingDeleteAssetPath;
+    const std::filesystem::path selectedAssetPath(m_pendingDeleteAssetPath);
+    if (IsSameOrDescendantPath(m_assetBrowserDirectory, selectedAssetPath))
+    {
+        const std::filesystem::path fallbackDirectory = selectedAssetPath.parent_path().empty()
+            ? assetRoot
+            : selectedAssetPath.parent_path();
+        m_assetBrowserDirectory = IsSameOrDescendantPath(fallbackDirectory, assetRoot)
+            ? NormalizeAssetPath(fallbackDirectory)
+            : normalizedAssetRoot;
+    }
+    if (m_selectedAssetPath == m_pendingDeleteAssetPath)
+    {
+        m_selectedAssetPath.clear();
+        m_selectedAssetIsDirectory = false;
+    }
+    if (m_copiedAssetPath == m_pendingDeleteAssetPath)
+    {
+        m_copiedAssetPath.clear();
+    }
+    m_pendingDeleteAssetPath.clear();
+    m_openDeleteAssetPopup = false;
+}
+
 void EditorUiController::CloseModelProcessorWindow()
 {
     m_showModelProcessorWindow = false;
@@ -2290,6 +2484,78 @@ EditorUiFrameResult EditorUiController::Draw(
                 ImGui::EndPopup();
             }
 
+            if (m_openAssetRenamePopup)
+            {
+                ImGui::OpenPopup("Rename Asset");
+                m_openAssetRenamePopup = false;
+            }
+            if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::TextWrapped("Rename: %s", m_assetRenameTargetPath.c_str());
+                ImGui::Spacing();
+                if (m_focusAssetRenameInput)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    m_focusAssetRenameInput = false;
+                }
+                const bool submitted = ImGui::InputText(
+                    "##AssetRenameInput",
+                    m_assetRenameBuffer.data(),
+                    m_assetRenameBuffer.size(),
+                    ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue
+                );
+                if (!m_assetRenameError.empty())
+                {
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", m_assetRenameError.c_str());
+                }
+                ImGui::Spacing();
+
+                if (ImGui::Button("Rename", ImVec2(120.0f * m_effectiveUiScale, 0.0f)) || submitted)
+                {
+                    if (CommitAssetRename(assetRoot))
+                    {
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120.0f * m_effectiveUiScale, 0.0f)))
+                {
+                    m_assetRenameTargetPath.clear();
+                    m_assetRenameError.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            if (m_openDeleteAssetPopup)
+            {
+                ImGui::OpenPopup("Confirm Delete Asset");
+                m_openDeleteAssetPopup = false;
+            }
+            if (ImGui::BeginPopupModal("Confirm Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::TextWrapped("Delete asset: %s", m_pendingDeleteAssetPath.c_str());
+                ImGui::Spacing();
+                ImGui::TextWrapped("This action cannot be undone.");
+                ImGui::Spacing();
+
+                if (ImGui::Button("Delete", ImVec2(120.0f * m_effectiveUiScale, 0.0f)))
+                {
+                    ConfirmRequestedAssetDelete(assetRoot, normalizedAssetRoot, result);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120.0f * m_effectiveUiScale, 0.0f)))
+                {
+                    m_pendingDeleteAssetPath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
             if (m_assetBrowserDirectory.empty())
             {
                 m_assetBrowserDirectory = normalizedAssetRoot;
@@ -2324,13 +2590,61 @@ EditorUiFrameResult EditorUiController::Draw(
             const std::filesystem::path browserDirectoryPath(m_assetBrowserDirectory);
             std::vector<std::filesystem::directory_entry> browserEntries;
             CollectSortedDirectoryEntries(browserDirectoryPath, browserEntries);
+            const bool assetWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+            const bool assetPopupOpen =
+                ImGui::IsPopupOpen("Rename Asset") ||
+                ImGui::IsPopupOpen("Confirm Delete Asset") ||
+                ImGui::IsPopupOpen("Duplicate Model Import");
+
+            if (assetWindowFocused && !assetPopupOpen)
+            {
+                const bool canPasteShortcut =
+                    !m_copiedAssetPath.empty() &&
+                    std::filesystem::exists(std::filesystem::path(m_copiedAssetPath));
+                const bool canDeleteShortcut =
+                    !m_selectedAssetPath.empty() &&
+                    NormalizeAssetPath(std::filesystem::path(m_selectedAssetPath)) != normalizedAssetRoot;
+
+                if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && !m_selectedAssetPath.empty())
+                {
+                    m_copiedAssetPath = m_selectedAssetPath;
+                }
+                if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && canPasteShortcut)
+                {
+                    result.actions.pastedAsset = EditorUiActions::AssetPasteRequest{
+                        m_copiedAssetPath,
+                        m_assetBrowserDirectory
+                    };
+                }
+                if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_N, false))
+                {
+                    try
+                    {
+                        const std::filesystem::path newFolderPath = MakeUniqueAssetFolderPath(browserDirectoryPath, "New Folder");
+                        std::filesystem::create_directory(newFolderPath);
+                        m_selectedAssetPath = NormalizeAssetPath(newFolderPath);
+                        m_selectedAssetIsDirectory = true;
+                        BeginAssetRename(m_selectedAssetPath);
+                    }
+                    catch (const std::exception& error)
+                    {
+                        m_assetRenameError = error.what();
+                    }
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_F2, false) && !m_selectedAssetPath.empty())
+                {
+                    BeginAssetRename(m_selectedAssetPath);
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && canDeleteShortcut)
+                {
+                    RequestAssetDelete(m_selectedAssetPath);
+                }
+            }
 
             ImGui::SeparatorText("Asset Browser");
             ImGui::TextWrapped("Root: %s", assetRoot.string().c_str());
             ImGui::TextWrapped("Current Folder: %s", BuildAssetBrowserPathLabel(assetRoot, browserDirectoryPath).c_str());
-            ImGui::TextWrapped("Current Model: %s", currentModelPath.empty() ? "<builtin cube>" : currentModelPath.c_str());
-            ImGui::TextWrapped("Current Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
-            ImGui::TextDisabled("Double-click folder to open, double-click model to edit, drag model row into viewport.");
+            ImGui::TextDisabled("Double-click folder to open, drag model cards into the viewport, or right-click blank space for folder actions.");
 
             const bool isAtAssetRoot = NormalizeAssetPath(browserDirectoryPath) == normalizedAssetRoot;
             ImGui::BeginDisabled(isAtAssetRoot);
@@ -2347,169 +2661,89 @@ EditorUiFrameResult EditorUiController::Draw(
             ImGui::SameLine();
             ImGui::TextDisabled("%u items", static_cast<unsigned int>(browserEntries.size()));
 
-            const float footerReserveHeight = 235.0f * m_effectiveUiScale;
+            const float footerReserveHeight = 56.0f * m_effectiveUiScale;
             const float browserHeight =
                 std::max(ImGui::GetContentRegionAvail().y - footerReserveHeight, 260.0f * m_effectiveUiScale);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(kAssetPaneBackgroundColor));
             if (ImGui::BeginChild("AssetListPane", ImVec2(0.0f, browserHeight), true))
             {
                 if (browserEntries.empty())
                 {
                     ImGui::TextDisabled("This folder is empty.");
                 }
-                else if (ImGui::BeginTable(
-                    "AssetListTable",
-                    3,
-                    ImGuiTableFlags_RowBg |
-                    ImGuiTableFlags_Borders |
-                    ImGuiTableFlags_Resizable |
-                    ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_ScrollY
-                ))
+                else
                 {
-                    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 72.0f * m_effectiveUiScale);
-                    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.55f);
-                    ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-                    ImGui::TableHeadersRow();
+                    const float tileWidth = 178.0f * m_effectiveUiScale;
+                    const float tileHeight = 126.0f * m_effectiveUiScale;
+                    const float tileSpacing = 12.0f * m_effectiveUiScale;
+                    const float availableWidth = std::max(ImGui::GetContentRegionAvail().x, tileWidth);
+                    const int columnCount = std::max(1, static_cast<int>((availableWidth + tileSpacing) / (tileWidth + tileSpacing)));
 
-                    for (const std::filesystem::directory_entry& entry : browserEntries)
+                    if (ImGui::BeginTable(
+                        "AssetTileGrid",
+                        columnCount,
+                        ImGuiTableFlags_SizingFixedFit
+                    ))
                     {
-                        std::error_code entryErrorCode;
-                        const std::filesystem::path path = entry.path();
-                        const std::string normalizedPath = NormalizeAssetPath(path);
-                        const bool isDirectory = entry.is_directory(entryErrorCode) && !entryErrorCode;
-                        const bool isSelected = m_selectedAssetPath == normalizedPath;
-                        const std::string typeLabel = BuildAssetTypeLabel(path, isDirectory);
-                        const std::string displayName = path.filename().string();
-                        const std::string locationLabel = BuildAssetBrowserPathLabel(assetRoot, path.parent_path());
-
-                        ImGui::TableNextRow();
-                        ImGui::PushID(normalizedPath.c_str());
-
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(typeLabel.c_str());
-
-                        ImGui::TableSetColumnIndex(1);
-                        if (ImGui::Selectable(displayName.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick))
+                        for (const std::filesystem::directory_entry& entry : browserEntries)
                         {
-                            m_selectedAssetPath = normalizedPath;
-                            m_selectedAssetIsDirectory = isDirectory;
-
-                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                            {
-                                if (isDirectory)
-                                {
-                                    m_assetBrowserDirectory = normalizedPath;
-                                }
-                                else if (IsSupportedModelAssetPath(path))
-                                {
-                                    OpenModelProcessorWindow(normalizedPath);
-                                }
-                            }
-                        }
-                        if (ImGui::IsItemHovered())
-                        {
-                            ImGui::SetTooltip("%s", normalizedPath.c_str());
-                        }
-                        if (!isDirectory && IsSupportedModelAssetPath(path) && ImGui::BeginDragDropSource())
-                        {
-                            ImGui::SetDragDropPayload(
-                                kAssetModelDragDropPayloadId,
-                                normalizedPath.c_str(),
-                                normalizedPath.size() + 1
+                            DrawAssetBrowserTile(
+                                entry,
+                                assetRoot,
+                                tileWidth,
+                                tileHeight,
+                                m_effectiveUiScale,
+                                scene.HasSelection(),
+                                result,
+                                m_copiedAssetPath,
+                                m_assetRenameTargetPath,
+                                m_assetRenameBuffer,
+                                m_assetRenameError,
+                                m_openAssetRenamePopup,
+                                m_focusAssetRenameInput,
+                                m_pendingDeleteAssetPath,
+                                m_openDeleteAssetPopup,
+                                m_assetBrowserDirectory,
+                                m_selectedAssetPath,
+                                m_selectedAssetIsDirectory
                             );
-                            ImGui::TextUnformatted("Place Model In Scene");
-                            ImGui::TextWrapped("%s", displayName.c_str());
-                            ImGui::EndDragDropSource();
                         }
 
-                        ImGui::TableSetColumnIndex(2);
-                        ImGui::TextWrapped("%s", locationLabel.c_str());
-
-                        ImGui::PopID();
+                        ImGui::EndTable();
+                    }
+                }
+                if (ImGui::BeginPopupContextWindow("AssetPaneContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+                {
+                    if (ImGui::MenuItem("New Folder"))
+                    {
+                        try
+                        {
+                            const std::filesystem::path newFolderPath = MakeUniqueAssetFolderPath(browserDirectoryPath, "New Folder");
+                            std::filesystem::create_directory(newFolderPath);
+                            m_selectedAssetPath = NormalizeAssetPath(newFolderPath);
+                            m_selectedAssetIsDirectory = true;
+                            BeginAssetRename(m_selectedAssetPath);
+                        }
+                        catch (const std::exception& error)
+                        {
+                            m_assetRenameError = error.what();
+                        }
                     }
 
-                    ImGui::EndTable();
+                    const bool canPaste = !m_copiedAssetPath.empty() && std::filesystem::exists(std::filesystem::path(m_copiedAssetPath));
+                    if (ImGui::MenuItem("Paste", nullptr, false, canPaste))
+                    {
+                        result.actions.pastedAsset = EditorUiActions::AssetPasteRequest{
+                            m_copiedAssetPath,
+                            m_assetBrowserDirectory
+                        };
+                    }
+                    ImGui::EndPopup();
                 }
             }
             ImGui::EndChild();
+            ImGui::PopStyleColor();
 
-            ImGui::SeparatorText("Selection");
-            if (m_selectedAssetPath.empty())
-            {
-                ImGui::TextUnformatted("Select an asset from the list above.");
-            }
-            else
-            {
-                const std::filesystem::path selectedAssetPath(m_selectedAssetPath);
-                const bool selectedIsModel = !m_selectedAssetIsDirectory && IsSupportedModelAssetPath(selectedAssetPath);
-                const bool canLoadSelectedModel = scene.HasSelection() && selectedIsModel;
-                const bool canDeleteSelectedAsset = selectedAssetPath != assetRoot;
-
-                ImGui::TextWrapped("Path: %s", m_selectedAssetPath.c_str());
-                ImGui::Text("Type: %s", m_selectedAssetIsDirectory ? "Folder" : BuildAssetTypeLabel(selectedAssetPath, false).c_str());
-
-                if (m_selectedAssetIsDirectory)
-                {
-                    ImGui::BeginDisabled(m_assetBrowserDirectory == m_selectedAssetPath);
-                    if (ImGui::Button("Open Folder"))
-                    {
-                        m_assetBrowserDirectory = m_selectedAssetPath;
-                    }
-                    ImGui::EndDisabled();
-                }
-                else
-                {
-                    if (ImGui::Button("Open Containing Folder"))
-                    {
-                        m_assetBrowserDirectory = NormalizeAssetPath(selectedAssetPath.parent_path());
-                    }
-                    ImGui::SameLine();
-                    ImGui::BeginDisabled(!selectedIsModel);
-                    if (ImGui::Button("Model Settings"))
-                    {
-                        OpenModelProcessorWindow(m_selectedAssetPath);
-                    }
-                    ImGui::EndDisabled();
-                    ImGui::SameLine();
-                    ImGui::BeginDisabled(!canLoadSelectedModel);
-                    if (ImGui::Button("Load To Selected"))
-                    {
-                        result.actions.selectedModelPath = m_selectedAssetPath;
-                    }
-                    ImGui::EndDisabled();
-                }
-
-                ImGui::SameLine();
-                ImGui::BeginDisabled(!canDeleteSelectedAsset);
-                if (ImGui::Button("Delete Selected"))
-                {
-                    result.actions.deleteAssetPath = m_selectedAssetPath;
-                    if (IsSameOrDescendantPath(browserDirectoryPath, selectedAssetPath))
-                    {
-                        const std::filesystem::path fallbackDirectory = selectedAssetPath.parent_path().empty()
-                            ? assetRoot
-                            : selectedAssetPath.parent_path();
-                        m_assetBrowserDirectory = IsSameOrDescendantPath(fallbackDirectory, assetRoot)
-                            ? NormalizeAssetPath(fallbackDirectory)
-                            : normalizedAssetRoot;
-                    }
-                    m_selectedAssetPath.clear();
-                    m_selectedAssetIsDirectory = false;
-                }
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SeparatorText("Selected Model UV");
-            if (scene.HasSelection())
-            {
-                const ModelComponent& selectedModel = scene.GetSelectedModel();
-                ImGui::TextWrapped("Target: %s", selectedModel.displayName.c_str());
-                DrawSelectedModelUvTextureControls(&selectedModel, result);
-            }
-            else
-            {
-                DrawSelectedModelUvTextureControls(nullptr, result);
-            }
             if (!lastLoadError.empty())
             {
                 ImGui::TextWrapped("Last Error: %s", lastLoadError.c_str());

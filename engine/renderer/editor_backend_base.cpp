@@ -634,6 +634,23 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR("Failed to delete asset '{}': {}", *uiFrame.actions.deleteAssetPath, error.what());
         }
     }
+    if (uiFrame.actions.pastedAsset.has_value())
+    {
+        try
+        {
+            PasteAssetPath(*uiFrame.actions.pastedAsset);
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR(
+                "Failed to paste asset '{}' into '{}': {}",
+                uiFrame.actions.pastedAsset->sourcePath,
+                uiFrame.actions.pastedAsset->destinationDirectory,
+                error.what()
+            );
+        }
+    }
 }
 
 void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
@@ -1251,6 +1268,44 @@ void EditorRenderBackendBase::LoadScene(const std::string& path)
     State().editorScene.SetSceneFilePath(path);
     State().lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
+}
+
+void EditorRenderBackendBase::PasteAssetPath(const EditorUiActions::AssetPasteRequest& request)
+{
+    const std::filesystem::path assetRoot = NormalizePath(std::filesystem::path(MINIENGINE_ASSET_DIR));
+    const std::filesystem::path sourcePath = NormalizePath(request.sourcePath);
+    const std::filesystem::path destinationDirectory = NormalizePath(request.destinationDirectory);
+
+    if (!std::filesystem::exists(sourcePath))
+    {
+        throw std::runtime_error("Copied asset no longer exists: " + sourcePath.string());
+    }
+    if (!std::filesystem::exists(destinationDirectory) || !std::filesystem::is_directory(destinationDirectory))
+    {
+        throw std::runtime_error("Paste destination is not a valid directory: " + destinationDirectory.string());
+    }
+    if (!IsPathInsideDirectory(sourcePath, assetRoot) || !IsPathInsideDirectory(destinationDirectory, assetRoot))
+    {
+        throw std::runtime_error("Copy and paste are only allowed inside the assets directory");
+    }
+    if (std::filesystem::is_directory(sourcePath) && IsPathInsideDirectory(destinationDirectory, sourcePath))
+    {
+        throw std::runtime_error("Cannot paste a folder into itself or one of its descendants");
+    }
+
+    const std::filesystem::path destinationPath =
+        std::filesystem::is_directory(sourcePath)
+        ? MakeUniqueDirectoryPath(destinationDirectory / sourcePath.filename())
+        : MakeUniquePath(destinationDirectory / sourcePath.filename());
+
+    std::filesystem::copy(
+        sourcePath,
+        destinationPath,
+        std::filesystem::copy_options::recursive
+    );
+
+    State().lastModelLoadError.clear();
+    LOG_INFO("Copied asset '{}' to '{}'", sourcePath.string(), destinationPath.string());
 }
 
 void EditorRenderBackendBase::SaveEngineSettings()

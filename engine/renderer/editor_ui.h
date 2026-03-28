@@ -37,12 +37,19 @@ struct EditorUiActions
         std::vector<ModelImportedMaterialInfo> materials;
     };
 
+    struct AssetPasteRequest
+    {
+        std::string sourcePath;
+        std::string destinationDirectory;
+    };
+
     std::optional<std::string> importedModelSourcePath;
     std::optional<std::string> selectedModelPath;
     std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
     std::optional<std::string> deleteAssetPath;
+    std::optional<AssetPasteRequest> pastedAsset;
     std::optional<ImportedMaterialUpdate> updatedImportedMaterial;
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;
@@ -76,6 +83,14 @@ public:
 
 private:
     void ApplyEngineSettings(const EngineSettings& settings);
+    void BeginAssetRename(const std::string& assetPath);
+    bool CommitAssetRename(const std::filesystem::path& assetRoot);
+    void RequestAssetDelete(const std::string& assetPath);
+    void ConfirmRequestedAssetDelete(
+        const std::filesystem::path& assetRoot,
+        const std::string& normalizedAssetRoot,
+        EditorUiFrameResult& result
+    );
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
     void SyncBaseStyleColorsFromCurrentStyle();
@@ -93,6 +108,7 @@ private:
     bool m_hasCapturedBaseStyle = false;
     bool m_hasCapturedDefaultThemeColors = false;
     bool m_hasAppliedEngineSettings = false;
+    std::string m_copiedAssetPath;
     std::string m_selectedAssetPath;
     std::string m_assetBrowserDirectory;
     std::string m_pendingDuplicateImportSourcePath;
@@ -100,6 +116,9 @@ private:
     std::string m_modelProcessorModelPath;
     std::string m_modelProcessorDisplayName;
     std::string m_modelProcessorStatusMessage;
+    std::string m_assetRenameTargetPath;
+    std::string m_assetRenameError;
+    std::string m_pendingDeleteAssetPath;
     std::string m_materialGraphDraftModelPath;
     std::string m_materialGraphNodeLayoutKey;
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
@@ -110,7 +129,11 @@ private:
     int m_materialGraphDraggingNodeIndex = -1;
     ModelImportedMaterialInfo m_materialGraphDraft;
     std::array<ImVec2, 4> m_materialGraphNodeLayout{};
+    std::array<char, 256> m_assetRenameBuffer{};
     bool m_openDuplicateImportPopup = false;
+    bool m_openAssetRenamePopup = false;
+    bool m_openDeleteAssetPopup = false;
+    bool m_focusAssetRenameInput = false;
     bool m_showModelProcessorWindow = false;
     bool m_modelProcessorDirty = false;
     bool m_materialGraphDraftDirty = false;
