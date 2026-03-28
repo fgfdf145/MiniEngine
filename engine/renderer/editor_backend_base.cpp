@@ -514,6 +514,45 @@ bool IsPathInsideDirectory(const std::filesystem::path& path, const std::filesys
     return true;
 }
 
+bool IsSceneAssetPath(const std::filesystem::path& path)
+{
+    const std::string extension = path.extension().string();
+    if (extension != ".yaml" && extension != ".yml")
+    {
+        return false;
+    }
+
+    const std::string fileName = path.filename().string();
+    if (fileName.ends_with(".material.yaml") || fileName.ends_with(".miniengine_asset.yaml"))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool SceneDataReferencesModel(SerializedSceneData& sceneData, const std::filesystem::path& modelPath)
+{
+    bool referenced = false;
+    for (SerializedEntityData& entity : sceneData.entities)
+    {
+        if (entity.modelSourcePath.empty())
+        {
+            continue;
+        }
+
+        if (NormalizePath(entity.modelSourcePath) != modelPath)
+        {
+            continue;
+        }
+
+        referenced = true;
+        entity.modelDisplayName = modelPath.filename().string();
+    }
+
+    return referenced;
+}
+
 void ResetModelToBuiltin(EditorScene& scene, entt::entity entity)
 {
     ModelComponent& model = scene.GetModel(entity);
@@ -631,6 +670,10 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
     State().requestedViewportExtent = uiFrame.viewportExtent;
+    State().input.SetViewportInteractionRegion(
+        uiFrame.viewportInteractionRect,
+        uiFrame.viewportAllowsMouseInteraction
+    );
 
     try
     {
@@ -1328,12 +1371,14 @@ void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiAct
     WriteYamlDocument(root, manifestPath, "imported material manifest");
     WriteImportedMaterialAssetFile(materialAssetPath, modelPath, update.materialIndex, material);
 
+    const size_t refreshedSceneCount = RefreshReferencedSceneFiles(modelPath);
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
     LOG_INFO(
-        "Updated programmable PBR graph for '{}' material index {}",
+        "Updated programmable PBR graph for '{}' material index {}; refreshed {} scene file(s)",
         modelPath.string(),
-        update.materialIndex
+        update.materialIndex,
+        refreshedSceneCount
     );
 }
 
@@ -1376,12 +1421,14 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
     root["materials"] = materialsNode;
     WriteYamlDocument(root, manifestPath, "imported material manifest");
 
+    const size_t refreshedSceneCount = RefreshReferencedSceneFiles(modelPath);
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
     LOG_INFO(
-        "Updated imported model materials for '{}' with {} slot(s)",
+        "Updated imported model materials for '{}' with {} slot(s); refreshed {} scene file(s)",
         modelPath.string(),
-        update.materials.size()
+        update.materials.size(),
+        refreshedSceneCount
     );
 }
 
@@ -1393,6 +1440,49 @@ void EditorRenderBackendBase::LoadScene(const std::string& path)
     State().editorScene.SetSceneFilePath(path);
     State().lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
+}
+
+size_t EditorRenderBackendBase::RefreshReferencedSceneFiles(const std::filesystem::path& modelPath)
+{
+    size_t refreshedSceneCount = 0;
+    std::error_code iteratorError;
+    const std::filesystem::path workspaceRoot = NormalizePath(std::filesystem::current_path());
+
+    for (std::filesystem::recursive_directory_iterator iterator(workspaceRoot, iteratorError), end;
+         !iteratorError && iterator != end;
+         iterator.increment(iteratorError))
+    {
+        if (!iterator->is_regular_file(iteratorError) || iteratorError)
+        {
+            continue;
+        }
+
+        const std::filesystem::path candidatePath = NormalizePath(iterator->path());
+        if (!IsSceneAssetPath(candidatePath))
+        {
+            continue;
+        }
+
+        try
+        {
+            SerializedSceneData sceneData = EditorScene::LoadSceneDataFromFile(candidatePath.string());
+            if (!SceneDataReferencesModel(sceneData, modelPath))
+            {
+                continue;
+            }
+
+            EditorScene scratchScene;
+            scratchScene.ApplySceneData(sceneData);
+            scratchScene.SaveSceneToFile(candidatePath.string());
+            ++refreshedSceneCount;
+        }
+        catch (...)
+        {
+            // Ignore non-scene YAML files and malformed sidecar data while scanning the workspace.
+        }
+    }
+
+    return refreshedSceneCount;
 }
 
 void EditorRenderBackendBase::CreateSceneEntity()

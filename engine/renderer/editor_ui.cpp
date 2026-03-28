@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
@@ -1122,6 +1123,322 @@ bool LoadMaterialPreviewAsset(
         statusMessage = error.what();
         return false;
     }
+}
+
+glm::vec3 ComputeLoadedModelCenter(const LoadedModelData& loadedModel)
+{
+    if (loadedModel.hasBounds)
+    {
+        return (loadedModel.minBounds + loadedModel.maxBounds) * 0.5f;
+    }
+
+    glm::vec3 minBounds(FLT_MAX);
+    glm::vec3 maxBounds(-FLT_MAX);
+    bool hasVertex = false;
+    for (const ModelSubmeshData& submesh : loadedModel.submeshes)
+    {
+        for (const Vertex& vertex : submesh.mesh.vertices)
+        {
+            const glm::vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
+            minBounds = glm::min(minBounds, position);
+            maxBounds = glm::max(maxBounds, position);
+            hasVertex = true;
+        }
+    }
+
+    return hasVertex ? (minBounds + maxBounds) * 0.5f : glm::vec3(0.0f);
+}
+
+float ComputeLoadedModelRadius(const LoadedModelData& loadedModel, const glm::vec3& center)
+{
+    if (loadedModel.hasBounds)
+    {
+        return std::max(glm::length(loadedModel.maxBounds - center), 0.25f);
+    }
+
+    float radius = 0.25f;
+    for (const ModelSubmeshData& submesh : loadedModel.submeshes)
+    {
+        for (const Vertex& vertex : submesh.mesh.vertices)
+        {
+            const glm::vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
+            radius = std::max(radius, glm::length(position - center));
+        }
+    }
+    return radius;
+}
+
+std::optional<ImVec2> ProjectPreviewPoint(
+    const glm::vec3& position,
+    const glm::mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasSize
+)
+{
+    const glm::vec4 clip = viewProjection * glm::vec4(position, 1.0f);
+    if (clip.w <= 0.001f)
+    {
+        return std::nullopt;
+    }
+
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    const float screenX = canvasMin.x + (ndc.x * 0.5f + 0.5f) * canvasSize.x;
+    const float screenY = canvasMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * canvasSize.y;
+    return ImVec2(screenX, screenY);
+}
+
+void DrawModelWireframePreview(
+    const LoadedModelData& loadedModel,
+    float& yaw,
+    float& pitch,
+    float& distance,
+    bool& autoFramePending,
+    float uiScale
+)
+{
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const ImVec2 canvasSize(
+        std::max(available.x, 220.0f * uiScale),
+        std::max(240.0f * uiScale, std::min(available.x * 0.62f, 360.0f * uiScale))
+    );
+
+    ImGui::InvisibleButton("ModelWireframeCanvas", canvasSize, ImGuiButtonFlags_MouseButtonLeft);
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
+    const ImVec2 canvasMin = ImGui::GetItemRectMin();
+    const ImVec2 canvasMax = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(canvasMin, canvasMax, IM_COL32(13, 18, 26, 255), 10.0f * uiScale);
+    drawList->AddRect(canvasMin, canvasMax, IM_COL32(92, 108, 132, 255), 10.0f * uiScale, 0, 1.25f);
+
+    const bool previewHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    if (previewHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    {
+        yaw += ImGui::GetIO().MouseDelta.x * 0.01f;
+        pitch = std::clamp(pitch + ImGui::GetIO().MouseDelta.y * 0.01f, -1.35f, 1.35f);
+    }
+    if (previewHovered && std::abs(ImGui::GetIO().MouseWheel) > 0.0f)
+    {
+        distance = std::max(0.2f, distance * (1.0f - ImGui::GetIO().MouseWheel * 0.12f));
+    }
+
+    const glm::vec3 center = ComputeLoadedModelCenter(loadedModel);
+    const float radius = ComputeLoadedModelRadius(loadedModel, center);
+    if (autoFramePending)
+    {
+        distance = std::max(radius * 2.75f, 0.8f);
+        autoFramePending = false;
+    }
+
+    const glm::vec3 viewDirection(
+        std::cos(pitch) * std::sin(yaw),
+        std::sin(pitch),
+        std::cos(pitch) * std::cos(yaw)
+    );
+    const glm::vec3 eye = center + viewDirection * distance;
+    const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        std::max(canvasSize.x / std::max(canvasSize.y, 1.0f), 0.1f),
+        0.01f,
+        std::max(radius * 10.0f + distance, 10.0f)
+    );
+    const glm::mat4 viewProjection = projection * view;
+
+    const ImU32 axisColor = IM_COL32(70, 88, 110, 255);
+    const ImVec2 axisCenter(canvasMin.x + 66.0f * uiScale, canvasMax.y - 54.0f * uiScale);
+    drawList->AddLine(
+        ImVec2(axisCenter.x - 18.0f * uiScale, axisCenter.y),
+        ImVec2(axisCenter.x + 18.0f * uiScale, axisCenter.y),
+        axisColor,
+        1.0f
+    );
+    drawList->AddLine(
+        ImVec2(axisCenter.x, axisCenter.y - 18.0f * uiScale),
+        ImVec2(axisCenter.x, axisCenter.y + 18.0f * uiScale),
+        axisColor,
+        1.0f
+    );
+
+    constexpr std::array<ImU32, 6> kSubmeshColors = {
+        IM_COL32(115, 196, 255, 255),
+        IM_COL32(255, 191, 107, 255),
+        IM_COL32(132, 226, 176, 255),
+        IM_COL32(255, 143, 163, 255),
+        IM_COL32(198, 171, 255, 255),
+        IM_COL32(255, 234, 130, 255)
+    };
+
+    for (size_t submeshIndex = 0; submeshIndex < loadedModel.submeshes.size(); ++submeshIndex)
+    {
+        const ModelSubmeshData& submesh = loadedModel.submeshes[submeshIndex];
+        if (!submesh.mesh.IsValid())
+        {
+            continue;
+        }
+
+        const ImU32 lineColor = kSubmeshColors[submeshIndex % kSubmeshColors.size()];
+        for (size_t index = 0; index + 2 < submesh.mesh.indices.size(); index += 3)
+        {
+            const uint32_t index0 = submesh.mesh.indices[index];
+            const uint32_t index1 = submesh.mesh.indices[index + 1];
+            const uint32_t index2 = submesh.mesh.indices[index + 2];
+            if (index0 >= submesh.mesh.vertices.size() ||
+                index1 >= submesh.mesh.vertices.size() ||
+                index2 >= submesh.mesh.vertices.size())
+            {
+                continue;
+            }
+
+            const Vertex& vertex0 = submesh.mesh.vertices[index0];
+            const Vertex& vertex1 = submesh.mesh.vertices[index1];
+            const Vertex& vertex2 = submesh.mesh.vertices[index2];
+            const auto point0 = ProjectPreviewPoint(
+                glm::vec3(vertex0.position[0], vertex0.position[1], vertex0.position[2]),
+                viewProjection,
+                canvasMin,
+                canvasSize
+            );
+            const auto point1 = ProjectPreviewPoint(
+                glm::vec3(vertex1.position[0], vertex1.position[1], vertex1.position[2]),
+                viewProjection,
+                canvasMin,
+                canvasSize
+            );
+            const auto point2 = ProjectPreviewPoint(
+                glm::vec3(vertex2.position[0], vertex2.position[1], vertex2.position[2]),
+                viewProjection,
+                canvasMin,
+                canvasSize
+            );
+            if (!point0.has_value() || !point1.has_value() || !point2.has_value())
+            {
+                continue;
+            }
+
+            drawList->AddLine(*point0, *point1, lineColor, 1.3f);
+            drawList->AddLine(*point1, *point2, lineColor, 1.3f);
+            drawList->AddLine(*point2, *point0, lineColor, 1.3f);
+        }
+    }
+
+    drawList->AddText(
+        ImVec2(canvasMin.x + 12.0f * uiScale, canvasMin.y + 12.0f * uiScale),
+        IM_COL32(210, 220, 236, 255),
+        "Drag to orbit, wheel to zoom"
+    );
+}
+
+void DrawModelUvPreview(
+    const LoadedModelData& loadedModel,
+    int& selectedUvSubmeshIndex,
+    float uiScale
+)
+{
+    std::vector<size_t> uvSubmeshIndices;
+    uvSubmeshIndices.reserve(loadedModel.submeshes.size());
+    for (size_t submeshIndex = 0; submeshIndex < loadedModel.submeshes.size(); ++submeshIndex)
+    {
+        if (loadedModel.submeshes[submeshIndex].hasTexCoords)
+        {
+            uvSubmeshIndices.push_back(submeshIndex);
+        }
+    }
+
+    if (uvSubmeshIndices.empty())
+    {
+        ImGui::TextDisabled("This model does not contain any UV-capable submeshes.");
+        return;
+    }
+
+    selectedUvSubmeshIndex = std::clamp(selectedUvSubmeshIndex, 0, static_cast<int>(uvSubmeshIndices.size()) - 1);
+    const auto buildUvLabel = [&loadedModel, &uvSubmeshIndices](size_t uvListIndex)
+    {
+        const size_t submeshIndex = uvSubmeshIndices[uvListIndex];
+        const ModelSubmeshData& submesh = loadedModel.submeshes[submeshIndex];
+        const std::string name = submesh.name.empty()
+            ? ("Submesh " + std::to_string(submeshIndex))
+            : submesh.name;
+        return name + "##uv_" + std::to_string(submeshIndex);
+    };
+
+    const std::string currentUvLabel = buildUvLabel(static_cast<size_t>(selectedUvSubmeshIndex));
+    if (ImGui::BeginCombo("UV Submesh", currentUvLabel.c_str()))
+    {
+        for (size_t uvListIndex = 0; uvListIndex < uvSubmeshIndices.size(); ++uvListIndex)
+        {
+            const bool isSelected = static_cast<int>(uvListIndex) == selectedUvSubmeshIndex;
+            const std::string label = buildUvLabel(uvListIndex);
+            if (ImGui::Selectable(label.c_str(), isSelected))
+            {
+                selectedUvSubmeshIndex = static_cast<int>(uvListIndex);
+            }
+            if (isSelected)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    const ModelSubmeshData& submesh = loadedModel.submeshes[uvSubmeshIndices[static_cast<size_t>(selectedUvSubmeshIndex)]];
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float canvasEdge = std::max(220.0f * uiScale, std::min(available.x, 360.0f * uiScale));
+    const ImVec2 canvasSize(canvasEdge, canvasEdge);
+
+    ImGui::InvisibleButton("UvPreviewCanvas", canvasSize);
+    const ImVec2 canvasMin = ImGui::GetItemRectMin();
+    const ImVec2 canvasMax = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(canvasMin, canvasMax, IM_COL32(15, 17, 24, 255), 10.0f * uiScale);
+    drawList->AddRect(canvasMin, canvasMax, IM_COL32(94, 104, 126, 255), 10.0f * uiScale, 0, 1.25f);
+
+    const float padding = 20.0f * uiScale;
+    const ImVec2 uvMin(canvasMin.x + padding, canvasMin.y + padding);
+    const ImVec2 uvMax(canvasMax.x - padding, canvasMax.y - padding);
+    const ImU32 gridColor = IM_COL32(54, 64, 84, 255);
+    for (int step = 0; step <= 4; ++step)
+    {
+        const float t = static_cast<float>(step) / 4.0f;
+        const float x = uvMin.x + (uvMax.x - uvMin.x) * t;
+        const float y = uvMin.y + (uvMax.y - uvMin.y) * t;
+        drawList->AddLine(ImVec2(x, uvMin.y), ImVec2(x, uvMax.y), gridColor, 1.0f);
+        drawList->AddLine(ImVec2(uvMin.x, y), ImVec2(uvMax.x, y), gridColor, 1.0f);
+    }
+    drawList->AddRect(uvMin, uvMax, IM_COL32(130, 146, 176, 255), 0.0f, 0, 1.3f);
+
+    const auto mapUv = [&uvMin, &uvMax](const Vertex& vertex)
+    {
+        const float x = uvMin.x + vertex.texCoord[0] * (uvMax.x - uvMin.x);
+        const float y = uvMin.y + vertex.texCoord[1] * (uvMax.y - uvMin.y);
+        return ImVec2(x, y);
+    };
+
+    for (size_t index = 0; index + 2 < submesh.mesh.indices.size(); index += 3)
+    {
+        const uint32_t index0 = submesh.mesh.indices[index];
+        const uint32_t index1 = submesh.mesh.indices[index + 1];
+        const uint32_t index2 = submesh.mesh.indices[index + 2];
+        if (index0 >= submesh.mesh.vertices.size() ||
+            index1 >= submesh.mesh.vertices.size() ||
+            index2 >= submesh.mesh.vertices.size())
+        {
+            continue;
+        }
+
+        const ImVec2 point0 = mapUv(submesh.mesh.vertices[index0]);
+        const ImVec2 point1 = mapUv(submesh.mesh.vertices[index1]);
+        const ImVec2 point2 = mapUv(submesh.mesh.vertices[index2]);
+        drawList->AddLine(point0, point1, IM_COL32(111, 212, 255, 235), 1.0f);
+        drawList->AddLine(point1, point2, IM_COL32(111, 212, 255, 235), 1.0f);
+        drawList->AddLine(point2, point0, IM_COL32(111, 212, 255, 235), 1.0f);
+    }
+
+    drawList->AddText(
+        ImVec2(canvasMin.x + 12.0f * uiScale, canvasMin.y + 12.0f * uiScale),
+        IM_COL32(214, 223, 238, 255),
+        "UV 0-1 space"
+    );
 }
 
 std::string ImportTextureIntoModelMaterialDirectory(
@@ -2458,13 +2775,20 @@ void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
     m_modelProcessorDisplayName = normalizedPath.filename().string();
     m_modelProcessorStatusMessage.clear();
     m_modelProcessorSelectedMaterialIndex = 0;
+    m_modelProcessorSelectedUvSubmeshIndex = 0;
     m_modelProcessorDirty = false;
+    m_modelProcessorLoadedModel = LoadedModelData{};
+    m_modelPreviewYaw = 0.55f;
+    m_modelPreviewPitch = 0.35f;
+    m_modelPreviewDistance = 3.0f;
+    m_modelPreviewAutoFramePending = true;
     m_modelProcessorMaterials.clear();
     m_modelProcessorMaterialAssetPaths.clear();
 
     try
     {
         const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelProcessorModelPath);
+        m_modelProcessorLoadedModel = loadedModel;
         m_modelProcessorMaterials =
             LoadEffectiveImportedModelMaterials(normalizedPath, loadedModel, &m_modelProcessorMaterialAssetPaths);
     }
@@ -3141,6 +3465,39 @@ EditorUiFrameResult EditorUiController::Draw(
                 requestCloseModelProcessorWindow = true;
             }
 
+            if (!m_modelProcessorLoadedModel.submeshes.empty())
+            {
+                uint32_t previewTriangleCount = 0;
+                for (const ModelSubmeshData& submesh : m_modelProcessorLoadedModel.submeshes)
+                {
+                    previewTriangleCount += static_cast<uint32_t>(submesh.mesh.indices.size() / 3u);
+                }
+
+                ImGui::Spacing();
+                ImGui::SeparatorText("Geometry Preview");
+                DrawModelWireframePreview(
+                    m_modelProcessorLoadedModel,
+                    m_modelPreviewYaw,
+                    m_modelPreviewPitch,
+                    m_modelPreviewDistance,
+                    m_modelPreviewAutoFramePending,
+                    m_effectiveUiScale
+                );
+                ImGui::Text(
+                    "Submeshes: %u  Triangles: %u",
+                    static_cast<unsigned int>(m_modelProcessorLoadedModel.submeshes.size()),
+                    static_cast<unsigned int>(previewTriangleCount)
+                );
+
+                ImGui::Spacing();
+                ImGui::SeparatorText("UV Preview");
+                DrawModelUvPreview(
+                    m_modelProcessorLoadedModel,
+                    m_modelProcessorSelectedUvSubmeshIndex,
+                    m_effectiveUiScale
+                );
+            }
+
             if (m_modelProcessorMaterials.empty())
             {
                 ImGui::Spacing();
@@ -3595,6 +3952,13 @@ EditorUiFrameResult EditorUiController::Draw(
             const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
             DrawViewportOverlay(viewportRect, viewportTextureId);
             result.viewportExtent = BuildViewportExtent(viewportRect);
+            result.viewportInteractionRect = SDL_FRect{
+                viewportRect.origin.x,
+                viewportRect.origin.y,
+                viewportRect.size.x,
+                viewportRect.size.y
+            };
+            result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
             HandleViewportAssetDropTarget(result, camera, viewportRect, result.viewportExtent, currentBackendType);
             HandleViewportShortcuts(scene, camera, viewportRect);
             RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);

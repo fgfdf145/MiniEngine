@@ -18,7 +18,8 @@ void InputState::HandleEvent(const SDL_Event& event)
         m_mouseDeltaY += event.motion.yrel;
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        if (event.button.button == SDL_BUTTON_RIGHT)
+        if (event.button.button == SDL_BUTTON_RIGHT &&
+            IsViewportInteractionPoint(event.button.x, event.button.y))
         {
             m_mouseLookActive = true;
             m_hasMouseLookAnchor = true;
@@ -26,7 +27,8 @@ void InputState::HandleEvent(const SDL_Event& event)
             m_mouseLookAnchorY = static_cast<int>(event.button.y);
             m_shouldRestoreMouseLookAnchor = false;
         }
-        if (event.button.button == SDL_BUTTON_MIDDLE)
+        if (event.button.button == SDL_BUTTON_MIDDLE &&
+            IsViewportInteractionPoint(event.button.x, event.button.y))
         {
             m_mousePanActive = true;
         }
@@ -51,6 +53,19 @@ void InputState::EndFrame()
 {
     m_mouseDeltaX = 0.0f;
     m_mouseDeltaY = 0.0f;
+}
+
+void InputState::SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled)
+{
+    m_viewportInteractionRect = rect;
+    m_viewportInteractionEnabled = enabled && rect.w > 0.0f && rect.h > 0.0f;
+    if (!m_viewportInteractionEnabled)
+    {
+        m_mouseLookActive = false;
+        m_mousePanActive = false;
+        m_hasMouseLookAnchor = false;
+        m_shouldRestoreMouseLookAnchor = false;
+    }
 }
 
 bool InputState::IsKeyDown(SDL_Scancode scancode) const
@@ -94,4 +109,18 @@ void InputState::ConsumeMouseLookAnchor(int& x, int& y)
     y = m_mouseLookAnchorY;
     m_hasMouseLookAnchor = false;
     m_shouldRestoreMouseLookAnchor = false;
+}
+
+bool InputState::IsViewportInteractionPoint(float x, float y) const
+{
+    if (!m_viewportInteractionEnabled)
+    {
+        return false;
+    }
+
+    return
+        x >= m_viewportInteractionRect.x &&
+        y >= m_viewportInteractionRect.y &&
+        x <= (m_viewportInteractionRect.x + m_viewportInteractionRect.w) &&
+        y <= (m_viewportInteractionRect.y + m_viewportInteractionRect.h);
 }

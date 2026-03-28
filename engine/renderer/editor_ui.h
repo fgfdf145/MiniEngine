@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "engine_settings.h"
+#include "model_loader.h"
 
 #include <scene_components.h>
 #include <rhi/backend.h>
@@ -63,6 +64,8 @@ struct EditorUiFrameResult
 {
     EditorUiActions actions;
     RenderExtent viewportExtent{ 1, 1 };
+    SDL_FRect viewportInteractionRect{ 0.0f, 0.0f, 0.0f, 0.0f };
+    bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
 };
 
@@ -127,10 +130,16 @@ private:
     std::string m_assetRenameTargetPath;
     std::string m_assetRenameError;
     std::string m_pendingDeleteAssetPath;
+    LoadedModelData m_modelProcessorLoadedModel;
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
     std::vector<std::string> m_modelProcessorMaterialAssetPaths;
     int m_modelProcessorSelectedMaterialIndex = 0;
+    int m_modelProcessorSelectedUvSubmeshIndex = 0;
     int m_materialPreviewMaterialIndex = 0;
+    float m_modelPreviewYaw = 0.55f;
+    float m_modelPreviewPitch = 0.35f;
+    float m_modelPreviewDistance = 3.0f;
+    bool m_modelPreviewAutoFramePending = false;
     ModelImportedMaterialInfo m_materialPreviewMaterial;
     std::array<char, 256> m_assetRenameBuffer{};
     bool m_openDuplicateImportPopup = false;

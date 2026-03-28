@@ -9,6 +9,7 @@ class InputState
 public:
     void HandleEvent(const SDL_Event& event);
     void EndFrame();
+    void SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled);
 
     bool IsKeyDown(SDL_Scancode scancode) const;
     bool IsMouseLookActive() const;
@@ -20,13 +21,17 @@ public:
     void ConsumeMouseLookAnchor(int& x, int& y);
 
 private:
+    bool IsViewportInteractionPoint(float x, float y) const;
+
     std::array<bool, SDL_SCANCODE_COUNT> m_keys{};
     float m_mouseDeltaX = 0.0f;
     float m_mouseDeltaY = 0.0f;
     bool m_mouseLookActive = false;
     bool m_mousePanActive = false;
+    bool m_viewportInteractionEnabled = false;
     bool m_hasMouseLookAnchor = false;
     bool m_shouldRestoreMouseLookAnchor = false;
     int m_mouseLookAnchorX = 0;
     int m_mouseLookAnchorY = 0;
+    SDL_FRect m_viewportInteractionRect{ 0.0f, 0.0f, 0.0f, 0.0f };
 };

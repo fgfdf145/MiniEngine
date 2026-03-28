@@ -60,6 +60,7 @@ private:
     void CreateSceneEntity();
     void DeleteSelectedSceneEntity();
     void LoadScene(const std::string& path);
+    size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath);
     void PasteAssetPath(const EditorUiActions::AssetPasteRequest& request);
     void SaveEngineSettings();
     void RebuildSceneRenderables();
