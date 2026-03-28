@@ -89,6 +89,150 @@ std::filesystem::path BuildImportedMaterialAssetPath(const std::filesystem::path
     return modelPath.parent_path() / "materials" / fileName.str();
 }
 
+std::string BuildImportedMaterialFolderName(uint32_t materialIndex)
+{
+    std::ostringstream folderName;
+    folderName << "material_" << std::setfill('0') << std::setw(2) << materialIndex;
+    return folderName.str();
+}
+
+std::filesystem::path BuildImportedMaterialTextureDirectory(const std::filesystem::path& modelPath, uint32_t materialIndex)
+{
+    return modelPath.parent_path() / "materials" / BuildImportedMaterialFolderName(materialIndex);
+}
+
+void RemoveImportedTextureVariants(const std::filesystem::path& directory, const std::string& slotName)
+{
+    if (!std::filesystem::exists(directory))
+    {
+        return;
+    }
+
+    std::error_code errorCode;
+    for (std::filesystem::directory_iterator iterator(directory, errorCode);
+         !errorCode && iterator != std::filesystem::directory_iterator();
+         iterator.increment(errorCode))
+    {
+        if (!iterator->is_regular_file(errorCode) || errorCode)
+        {
+            continue;
+        }
+
+        if (iterator->path().stem() == slotName)
+        {
+            std::filesystem::remove(iterator->path(), errorCode);
+            errorCode.clear();
+        }
+    }
+}
+
+std::string ImportTextureIntoMaterialDirectory(
+    const std::filesystem::path& modelPath,
+    uint32_t materialIndex,
+    const char* slotName,
+    const std::string& texturePath
+)
+{
+    if (texturePath.empty())
+    {
+        return {};
+    }
+
+    const std::filesystem::path sourceTexturePath = NormalizePath(texturePath);
+    if (!std::filesystem::exists(sourceTexturePath))
+    {
+        return texturePath;
+    }
+
+    const std::filesystem::path destinationDirectory =
+        BuildImportedMaterialTextureDirectory(modelPath, materialIndex);
+    std::filesystem::create_directories(destinationDirectory);
+
+    const std::string normalizedSlotName =
+        slotName == nullptr || std::string(slotName).empty()
+        ? "texture"
+        : std::string(slotName);
+    const std::filesystem::path destinationPath =
+        destinationDirectory / (normalizedSlotName + sourceTexturePath.extension().string());
+    if (NormalizePath(destinationPath) == sourceTexturePath)
+    {
+        return destinationPath.string();
+    }
+
+    RemoveImportedTextureVariants(destinationDirectory, normalizedSlotName);
+    std::filesystem::copy_file(
+        sourceTexturePath,
+        destinationPath,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    return destinationPath.string();
+}
+
+ModelImportedMaterialInfo CanonicalizeImportedMaterialPaths(
+    const std::filesystem::path& modelPath,
+    uint32_t materialIndex,
+    ModelImportedMaterialInfo material
+)
+{
+    material.baseColorTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "base_color", material.baseColorTexturePath);
+    material.normalTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "normal", material.normalTexturePath);
+    material.metallicTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "metallic", material.metallicTexturePath);
+    material.roughnessTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "roughness", material.roughnessTexturePath);
+    material.occlusionTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "occlusion", material.occlusionTexturePath);
+    material.emissiveTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "emissive", material.emissiveTexturePath);
+    material.blendGraph.blendMaskTexturePath =
+        ImportTextureIntoMaterialDirectory(modelPath, materialIndex, "blend_mask", material.blendGraph.blendMaskTexturePath);
+    material.blendGraph.secondaryBaseColorTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_base_color",
+            material.blendGraph.secondaryBaseColorTexturePath
+        );
+    material.blendGraph.secondaryNormalTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_normal",
+            material.blendGraph.secondaryNormalTexturePath
+        );
+    material.blendGraph.secondaryMetallicTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_metallic",
+            material.blendGraph.secondaryMetallicTexturePath
+        );
+    material.blendGraph.secondaryRoughnessTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_roughness",
+            material.blendGraph.secondaryRoughnessTexturePath
+        );
+    material.blendGraph.secondaryOcclusionTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_occlusion",
+            material.blendGraph.secondaryOcclusionTexturePath
+        );
+    material.blendGraph.secondaryEmissiveTexturePath =
+        ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            "secondary_emissive",
+            material.blendGraph.secondaryEmissiveTexturePath
+        );
+    return material;
+}
+
 void EmitImportedMaterialFields(YAML::Emitter& emitter, const ModelImportedMaterialInfo& material)
 {
     emitter << YAML::Key << "name" << YAML::Value << material.name;
@@ -509,11 +653,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            const std::string importedModelPath = ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelSourcePath);
-            if (State().editorScene.HasSelection())
-            {
-                State().pendingModelPath = importedModelPath;
-            }
+            ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelSourcePath);
             State().lastModelLoadError.clear();
         }
         catch (const std::exception& error)
@@ -525,6 +665,30 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     if (uiFrame.actions.selectedModelPath.has_value())
     {
         State().pendingModelPath = *uiFrame.actions.selectedModelPath;
+    }
+    if (uiFrame.actions.createSceneEntity)
+    {
+        try
+        {
+            CreateSceneEntity();
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to create scene entity: {}", error.what());
+        }
+    }
+    if (uiFrame.actions.deleteSelectedSceneEntity)
+    {
+        try
+        {
+            DeleteSelectedSceneEntity();
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to delete selected scene entity: {}", error.what());
+        }
     }
     if (uiFrame.actions.droppedViewportModel.has_value())
     {
@@ -827,7 +991,6 @@ std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::st
     const ImportedModelFingerprint sourceFingerprint = ComputeImportedModelFingerprint(sourceModelPath);
 
     const LoadedModelData sourceModelData = ModelLoader::LoadModel(sourceModelPath.string());
-    const std::filesystem::path texturesDirectory = bundleDirectory / "textures";
     const std::filesystem::path materialsDirectory = bundleDirectory / "materials";
 
     YAML::Emitter emitter;
@@ -842,51 +1005,11 @@ std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::st
     emitter << YAML::EndMap;
     emitter << YAML::Key << "materials" << YAML::Value << YAML::BeginSeq;
 
-    auto copyTextureForManifest = [&](const std::string& texturePath, uint32_t materialIndex, const char* slotName) -> std::string
-    {
-        if (texturePath.empty())
-        {
-            return {};
-        }
-
-        const std::filesystem::path sourceTexturePath = NormalizePath(texturePath);
-        if (!std::filesystem::exists(sourceTexturePath))
-        {
-            return texturePath;
-        }
-
-        std::filesystem::create_directories(texturesDirectory);
-        const std::string destinationName =
-            "material_" + std::to_string(materialIndex) + "_" + slotName + sourceTexturePath.extension().string();
-        const std::filesystem::path destinationPath = MakeUniquePath(texturesDirectory / destinationName);
-        std::filesystem::copy_file(sourceTexturePath, destinationPath, std::filesystem::copy_options::overwrite_existing);
-        return destinationPath.string();
-    };
-
     for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(sourceModelData.materials.size()); ++materialIndex)
     {
         const ModelMaterialData& material = sourceModelData.materials[materialIndex];
-        ModelImportedMaterialInfo importedMaterial = BuildImportedMaterialInfo(material);
-        importedMaterial.baseColorTexturePath = copyTextureForManifest(material.baseColorTexturePath, materialIndex, "base_color");
-        importedMaterial.normalTexturePath = copyTextureForManifest(material.normalTexturePath, materialIndex, "normal");
-        importedMaterial.metallicTexturePath = copyTextureForManifest(material.metallicTexturePath, materialIndex, "metallic");
-        importedMaterial.roughnessTexturePath = copyTextureForManifest(material.roughnessTexturePath, materialIndex, "roughness");
-        importedMaterial.occlusionTexturePath = copyTextureForManifest(material.occlusionTexturePath, materialIndex, "occlusion");
-        importedMaterial.emissiveTexturePath = copyTextureForManifest(material.emissiveTexturePath, materialIndex, "emissive");
-        importedMaterial.blendGraph.blendMaskTexturePath =
-            copyTextureForManifest(material.blendGraph.blendMaskTexturePath, materialIndex, "blend_mask");
-        importedMaterial.blendGraph.secondaryBaseColorTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryBaseColorTexturePath, materialIndex, "secondary_base_color");
-        importedMaterial.blendGraph.secondaryNormalTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryNormalTexturePath, materialIndex, "secondary_normal");
-        importedMaterial.blendGraph.secondaryMetallicTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryMetallicTexturePath, materialIndex, "secondary_metallic");
-        importedMaterial.blendGraph.secondaryRoughnessTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryRoughnessTexturePath, materialIndex, "secondary_roughness");
-        importedMaterial.blendGraph.secondaryOcclusionTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryOcclusionTexturePath, materialIndex, "secondary_occlusion");
-        importedMaterial.blendGraph.secondaryEmissiveTexturePath =
-            copyTextureForManifest(material.blendGraph.secondaryEmissiveTexturePath, materialIndex, "secondary_emissive");
+        ModelImportedMaterialInfo importedMaterial =
+            CanonicalizeImportedMaterialPaths(importedModelPath, materialIndex, BuildImportedMaterialInfo(material));
 
         const std::filesystem::path materialAssetPath =
             MakeUniquePath(materialsDirectory / BuildImportedMaterialAssetPath(importedModelPath, materialIndex).filename());
@@ -1195,6 +1318,7 @@ void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiAct
 
     ModelImportedMaterialInfo material = update.material;
     material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
+    material = CanonicalizeImportedMaterialPaths(modelPath, update.materialIndex, material);
 
     const std::filesystem::path materialAssetPath =
         ResolveMaterialAssetPath(modelPath, update.materialIndex, materialsNode[update.materialIndex]);
@@ -1231,6 +1355,7 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
     {
         ModelImportedMaterialInfo material = update.materials[materialIndex];
         material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
+        material = CanonicalizeImportedMaterialPaths(modelPath, static_cast<uint32_t>(materialIndex), material);
 
         const std::filesystem::path materialAssetPath =
             ResolveMaterialAssetPath(
@@ -1268,6 +1393,32 @@ void EditorRenderBackendBase::LoadScene(const std::string& path)
     State().editorScene.SetSceneFilePath(path);
     State().lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
+}
+
+void EditorRenderBackendBase::CreateSceneEntity()
+{
+    SerializedEntityData entityData{};
+    entityData.tagName = "Entity " + std::to_string(State().editorScene.GetEntityOrder().size() + 1);
+    entityData.modelDisplayName = entityData.tagName;
+    const entt::entity entity = State().editorScene.CreateEntity(entityData);
+    State().editorScene.SetSelectedEntity(entity);
+    RebuildSceneRenderables();
+    State().lastModelLoadError.clear();
+    LOG_INFO("Created scene entity '{}'", entityData.tagName);
+}
+
+void EditorRenderBackendBase::DeleteSelectedSceneEntity()
+{
+    if (!State().editorScene.HasSelection())
+    {
+        throw std::runtime_error("No selected scene entity to delete");
+    }
+
+    const std::string tagName = State().editorScene.GetSelectedTag().name;
+    State().editorScene.DestroyEntity(State().editorScene.GetSelectedEntity());
+    RebuildSceneRenderables();
+    State().lastModelLoadError.clear();
+    LOG_INFO("Deleted scene entity '{}'", tagName);
 }
 
 void EditorRenderBackendBase::PasteAssetPath(const EditorUiActions::AssetPasteRequest& request)

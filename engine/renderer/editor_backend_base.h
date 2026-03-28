@@ -57,6 +57,8 @@ private:
     void UpdateImportedModelMaterialDefinitions(const EditorUiActions::ImportedModelMaterialsUpdate& update);
     void ApplySelectedModelBaseColorTexture(const std::string& path);
     void ClearSelectedModelBaseColorTexture();
+    void CreateSceneEntity();
+    void DeleteSelectedSceneEntity();
     void LoadScene(const std::string& path);
     void PasteAssetPath(const EditorUiActions::AssetPasteRequest& request);
     void SaveEngineSettings();

@@ -54,6 +54,8 @@ struct EditorUiActions
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;
     std::optional<ViewportModelPlacement> droppedViewportModel;
+    bool createSceneEntity = false;
+    bool deleteSelectedSceneEntity = false;
     bool clearSelectedBaseColorTexture = false;
 };
 
@@ -99,6 +101,8 @@ private:
     float GetWindowUiScale() const;
     void OpenModelProcessorWindow(const std::string& modelPath);
     void CloseModelProcessorWindow();
+    void OpenMaterialPreviewWindow(const std::string& materialPath);
+    void CloseMaterialPreviewWindow();
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;
@@ -116,6 +120,10 @@ private:
     std::string m_modelProcessorModelPath;
     std::string m_modelProcessorDisplayName;
     std::string m_modelProcessorStatusMessage;
+    std::string m_materialPreviewAssetPath;
+    std::string m_materialPreviewDisplayName;
+    std::string m_materialPreviewModelPath;
+    std::string m_materialPreviewStatusMessage;
     std::string m_assetRenameTargetPath;
     std::string m_assetRenameError;
     std::string m_pendingDeleteAssetPath;
@@ -124,9 +132,11 @@ private:
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
     std::vector<std::string> m_modelProcessorMaterialAssetPaths;
     int m_modelProcessorSelectedMaterialIndex = 0;
+    int m_materialPreviewMaterialIndex = 0;
     int m_materialGraphSelectedIndex = 0;
     int m_materialGraphDraftIndex = -1;
     int m_materialGraphDraggingNodeIndex = -1;
+    ModelImportedMaterialInfo m_materialPreviewMaterial;
     ModelImportedMaterialInfo m_materialGraphDraft;
     std::array<ImVec2, 4> m_materialGraphNodeLayout{};
     std::array<char, 256> m_assetRenameBuffer{};
@@ -135,6 +145,7 @@ private:
     bool m_openDeleteAssetPopup = false;
     bool m_focusAssetRenameInput = false;
     bool m_showModelProcessorWindow = false;
+    bool m_showMaterialPreviewWindow = false;
     bool m_modelProcessorDirty = false;
     bool m_materialGraphDraftDirty = false;
     bool m_materialGraphNodeLayoutInitialized = false;

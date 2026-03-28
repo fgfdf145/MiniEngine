@@ -470,6 +470,13 @@ std::vector<std::string> LoadImportedModelMaterialAssetPaths(
     return materialAssetPaths;
 }
 
+std::string ImportTextureIntoModelMaterialDirectory(
+    const std::string& modelPath,
+    uint32_t materialIndex,
+    const char* slotName,
+    const std::string& sourceTexturePath
+);
+
 void DrawImportedModelInspector(const ModelComponent& model)
 {
     if (model.importedSubmeshes.empty() && model.importedMaterials.empty())
@@ -614,7 +621,15 @@ void DrawSelectedModelUvTextureControls(
     }
 }
 
-bool DrawGraphTextureSlotEditor(const char* label, const char* idSuffix, std::string& path)
+bool DrawGraphTextureSlotEditor(
+    const char* label,
+    const char* idSuffix,
+    const std::string& modelPath,
+    uint32_t materialIndex,
+    const char* slotName,
+    std::string& path,
+    std::string* statusMessage = nullptr
+)
 {
     bool changed = false;
     const std::string compactPathLabel = [&path]()
@@ -662,8 +677,25 @@ bool DrawGraphTextureSlotEditor(const char* label, const char* idSuffix, std::st
     {
         if (const std::optional<std::string> selectedPath = OpenTextureFileDialog(); selectedPath.has_value())
         {
-            path = *selectedPath;
-            changed = true;
+            try
+            {
+                path =
+                    !modelPath.empty() && slotName != nullptr
+                    ? ImportTextureIntoModelMaterialDirectory(modelPath, materialIndex, slotName, *selectedPath)
+                    : *selectedPath;
+                if (statusMessage != nullptr)
+                {
+                    *statusMessage = "Imported texture for " + std::string(label) + ": " + path;
+                }
+                changed = true;
+            }
+            catch (const std::exception& error)
+            {
+                if (statusMessage != nullptr)
+                {
+                    *statusMessage = error.what();
+                }
+            }
         }
     }
     ImGui::SameLine();
@@ -890,6 +922,209 @@ std::filesystem::path NormalizeFilesystemPath(const std::filesystem::path& path)
     std::error_code errorCode;
     const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
     return errorCode ? path.lexically_normal() : absolutePath.lexically_normal();
+}
+
+std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path& modelPath)
+{
+    return std::filesystem::path(modelPath.string() + ".miniengine_asset.yaml");
+}
+
+std::filesystem::path BuildImportedMaterialAssetPath(const std::filesystem::path& modelPath, uint32_t materialIndex)
+{
+    std::ostringstream fileName;
+    fileName << "material_" << std::setfill('0') << std::setw(2) << materialIndex << ".material.yaml";
+    return modelPath.parent_path() / "materials" / fileName.str();
+}
+
+std::string BuildImportedMaterialFolderName(uint32_t materialIndex)
+{
+    std::ostringstream folderName;
+    folderName << "material_" << std::setfill('0') << std::setw(2) << materialIndex;
+    return folderName.str();
+}
+
+std::filesystem::path BuildImportedMaterialTextureDirectory(const std::filesystem::path& modelPath, uint32_t materialIndex)
+{
+    return modelPath.parent_path() / "materials" / BuildImportedMaterialFolderName(materialIndex);
+}
+
+void RemoveImportedTextureVariants(const std::filesystem::path& directory, const std::string& slotName)
+{
+    if (!std::filesystem::exists(directory))
+    {
+        return;
+    }
+
+    std::error_code errorCode;
+    for (std::filesystem::directory_iterator iterator(directory, errorCode);
+         !errorCode && iterator != std::filesystem::directory_iterator();
+         iterator.increment(errorCode))
+    {
+        if (!iterator->is_regular_file(errorCode) || errorCode)
+        {
+            continue;
+        }
+
+        if (iterator->path().stem() == slotName)
+        {
+            std::filesystem::remove(iterator->path(), errorCode);
+            errorCode.clear();
+        }
+    }
+}
+
+std::vector<ModelImportedMaterialInfo> LoadEffectiveImportedModelMaterials(
+    const std::filesystem::path& modelPath,
+    const LoadedModelData& loadedModel,
+    std::vector<std::string>* materialAssetPaths
+)
+{
+    std::vector<ModelImportedMaterialInfo> materials;
+    materials.reserve(loadedModel.materials.size());
+    for (const ModelMaterialData& material : loadedModel.materials)
+    {
+        materials.push_back(BuildImportedMaterialInfo(material));
+    }
+
+    if (materials.empty())
+    {
+        materials.push_back(ModelImportedMaterialInfo{});
+    }
+
+    if (materialAssetPaths != nullptr)
+    {
+        materialAssetPaths->assign(materials.size(), std::string{});
+    }
+
+    const std::filesystem::path manifestPath = BuildImportedAssetManifestPath(modelPath);
+    if (!std::filesystem::exists(manifestPath))
+    {
+        return materials;
+    }
+
+    try
+    {
+        const YAML::Node root = YAML::LoadFile(manifestPath.string());
+        const YAML::Node materialsNode = root["materials"];
+        if (!materialsNode || !materialsNode.IsSequence())
+        {
+            return materials;
+        }
+
+        if (materialsNode.size() > materials.size())
+        {
+            materials.resize(materialsNode.size());
+            if (materialAssetPaths != nullptr)
+            {
+                materialAssetPaths->resize(materialsNode.size());
+            }
+        }
+
+        for (size_t materialIndex = 0; materialIndex < materialsNode.size(); ++materialIndex)
+        {
+            const YAML::Node materialNode = materialsNode[materialIndex];
+            if (!materialNode || !materialNode.IsMap())
+            {
+                continue;
+            }
+
+            const std::string fallbackName = BuildMaterialSlotLabel(materials[materialIndex], materialIndex);
+            materials[materialIndex] = ReadImportedMaterialInfoFromYamlNode(materialNode, fallbackName);
+
+            if (materialAssetPaths != nullptr)
+            {
+                const YAML::Node materialAssetPathNode = materialNode["material_asset_path"];
+                if (materialAssetPathNode && materialAssetPathNode.IsScalar())
+                {
+                    (*materialAssetPaths)[materialIndex] = materialAssetPathNode.as<std::string>();
+                }
+            }
+        }
+    }
+    catch (...)
+    {
+        // Keep the editor usable even if metadata is malformed.
+    }
+
+    return materials;
+}
+
+bool LoadMaterialPreviewAsset(
+    const std::filesystem::path& materialPath,
+    ModelImportedMaterialInfo& material,
+    std::string& modelPath,
+    int& materialIndex,
+    std::string& statusMessage
+)
+{
+    try
+    {
+        const YAML::Node root = YAML::LoadFile(materialPath.string());
+        const YAML::Node assetNode = root["asset"];
+        const std::string fallbackName = materialPath.stem().stem().string().empty()
+            ? "Material"
+            : materialPath.stem().stem().string();
+        material = ReadImportedMaterialInfoFromYamlNode(root["material"], fallbackName);
+        modelPath = assetNode["model_path"].as<std::string>(std::string{});
+        materialIndex = assetNode["material_index"].as<int>(0);
+        statusMessage.clear();
+        return true;
+    }
+    catch (const std::exception& error)
+    {
+        material = ModelImportedMaterialInfo{};
+        modelPath.clear();
+        materialIndex = 0;
+        statusMessage = error.what();
+        return false;
+    }
+}
+
+std::string ImportTextureIntoModelMaterialDirectory(
+    const std::string& modelPath,
+    uint32_t materialIndex,
+    const char* slotName,
+    const std::string& sourceTexturePath
+)
+{
+    if (sourceTexturePath.empty())
+    {
+        return {};
+    }
+
+    const std::filesystem::path normalizedModelPath = NormalizeFilesystemPath(modelPath);
+    const std::filesystem::path normalizedSourcePath = NormalizeFilesystemPath(sourceTexturePath);
+    if (!std::filesystem::exists(normalizedModelPath))
+    {
+        throw std::runtime_error("Material target model does not exist: " + normalizedModelPath.string());
+    }
+    if (!std::filesystem::exists(normalizedSourcePath))
+    {
+        throw std::runtime_error("Selected texture does not exist: " + normalizedSourcePath.string());
+    }
+
+    const std::filesystem::path destinationDirectory =
+        BuildImportedMaterialTextureDirectory(normalizedModelPath, materialIndex);
+    std::filesystem::create_directories(destinationDirectory);
+
+    const std::string normalizedSlotName =
+        (slotName == nullptr || std::string(slotName).empty())
+        ? "texture"
+        : std::string(slotName);
+    const std::filesystem::path destinationPath =
+        destinationDirectory / (normalizedSlotName + normalizedSourcePath.extension().string());
+    if (NormalizeFilesystemPath(destinationPath) == normalizedSourcePath)
+    {
+        return destinationPath.string();
+    }
+
+    RemoveImportedTextureVariants(destinationDirectory, normalizedSlotName);
+    std::filesystem::copy_file(
+        normalizedSourcePath,
+        destinationPath,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    return destinationPath.string();
 }
 
 bool IsSameOrDescendantPath(const std::filesystem::path& path, const std::filesystem::path& parent)
@@ -1245,7 +1480,8 @@ void DrawAssetBrowserTile(
     float tileWidth,
     float tileHeight,
     float effectiveUiScale,
-    bool hasSceneSelection,
+    std::optional<std::string>& requestedModelPreviewPath,
+    std::optional<std::string>& requestedMaterialPreviewPath,
     EditorUiFrameResult& result,
     std::string& copiedAssetPath,
     std::string& renameTargetPath,
@@ -1266,13 +1502,21 @@ void DrawAssetBrowserTile(
     const bool isDirectory = entry.is_directory(errorCode) && !errorCode;
     const bool isSelected = selectedAssetPath == normalizedPath;
     const bool isSupportedModel = !isDirectory && IsSupportedModelAssetPath(path);
-    const bool canLoadSelectedModel = isSupportedModel && hasSceneSelection;
+    const bool isMaterialAsset = !isDirectory && IsMaterialAssetPath(path);
+    const std::string extension = ToLowerCopy(path.extension().string());
+    const bool isSceneAsset = !isDirectory && !IsMaterialAssetPath(path) && (extension == ".yaml" || extension == ".yml");
     const std::string typeLabel = BuildAssetTypeLabel(path, isDirectory);
     const std::string displayName = path.filename().string();
     const std::string subtitle =
         isDirectory
         ? "Double-click to open"
-        : (canLoadSelectedModel ? "Double-click to load" : BuildAssetBrowserPathLabel(assetRoot, path.parent_path()));
+        : (isSceneAsset
+            ? "Double-click to open scene"
+            : (isSupportedModel
+                ? "Double-click to preview model"
+                : (isMaterialAsset
+                    ? "Double-click to preview material"
+                    : BuildAssetBrowserPathLabel(assetRoot, path.parent_path()))));
 
     ImGui::TableNextColumn();
     ImGui::PushID(normalizedPath.c_str());
@@ -1344,9 +1588,17 @@ void DrawAssetBrowserTile(
             selectedAssetPath = normalizedPath;
             selectedAssetIsDirectory = true;
         }
-        else if (canLoadSelectedModel)
+        else if (isSceneAsset)
         {
-            result.actions.selectedModelPath = normalizedPath;
+            result.actions.selectedSceneLoadPath = normalizedPath;
+        }
+        else if (isSupportedModel)
+        {
+            requestedModelPreviewPath = normalizedPath;
+        }
+        else if (isMaterialAsset)
+        {
+            requestedMaterialPreviewPath = normalizedPath;
         }
     }
 
@@ -2169,19 +2421,8 @@ void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
     try
     {
         const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelProcessorModelPath);
-        m_modelProcessorMaterials.reserve(loadedModel.materials.size());
-        for (const ModelMaterialData& material : loadedModel.materials)
-        {
-            m_modelProcessorMaterials.push_back(BuildImportedMaterialInfo(material));
-        }
-
-        if (m_modelProcessorMaterials.empty())
-        {
-            m_modelProcessorMaterials.push_back(ModelImportedMaterialInfo{});
-        }
-
-        m_modelProcessorMaterialAssetPaths =
-            LoadImportedModelMaterialAssetPaths(normalizedPath, m_modelProcessorMaterials.size());
+        m_modelProcessorMaterials =
+            LoadEffectiveImportedModelMaterials(normalizedPath, loadedModel, &m_modelProcessorMaterialAssetPaths);
     }
     catch (const std::exception& error)
     {
@@ -2306,6 +2547,33 @@ void EditorUiController::CloseModelProcessorWindow()
     m_modelProcessorDirty = false;
 }
 
+void EditorUiController::OpenMaterialPreviewWindow(const std::string& materialPath)
+{
+    const std::filesystem::path normalizedPath = NormalizeFilesystemPath(materialPath);
+
+    m_showMaterialPreviewWindow = true;
+    m_materialPreviewAssetPath = normalizedPath.string();
+    m_materialPreviewDisplayName = normalizedPath.filename().string();
+    LoadMaterialPreviewAsset(
+        normalizedPath,
+        m_materialPreviewMaterial,
+        m_materialPreviewModelPath,
+        m_materialPreviewMaterialIndex,
+        m_materialPreviewStatusMessage
+    );
+}
+
+void EditorUiController::CloseMaterialPreviewWindow()
+{
+    m_showMaterialPreviewWindow = false;
+    m_materialPreviewAssetPath.clear();
+    m_materialPreviewDisplayName.clear();
+    m_materialPreviewModelPath.clear();
+    m_materialPreviewStatusMessage.clear();
+    m_materialPreviewMaterial = ModelImportedMaterialInfo{};
+    m_materialPreviewMaterialIndex = 0;
+}
+
 EditorUiFrameResult EditorUiController::Draw(
     Camera& camera,
     ViewportMatrices& matrices,
@@ -2326,6 +2594,8 @@ EditorUiFrameResult EditorUiController::Draw(
     const bool previousShowSceneWindow = m_showSceneWindow;
     const bool previousShowThemeWindow = m_showThemeWindow;
     const bool previousShowViewportWindow = m_showViewportWindow;
+    std::optional<std::string> requestedModelPreviewPath;
+    std::optional<std::string> requestedMaterialPreviewPath;
 
     if (m_showModelProcessorWindow)
     {
@@ -2337,6 +2607,18 @@ EditorUiFrameResult EditorUiController::Draw(
             !IsSupportedModelAssetPath(processorModelPath))
         {
             CloseModelProcessorWindow();
+        }
+    }
+    if (m_showMaterialPreviewWindow)
+    {
+        std::error_code materialErrorCode;
+        const std::filesystem::path materialPreviewPath(m_materialPreviewAssetPath);
+        if (m_materialPreviewAssetPath.empty() ||
+            !std::filesystem::exists(materialPreviewPath, materialErrorCode) ||
+            materialErrorCode ||
+            !IsMaterialAssetPath(materialPreviewPath))
+        {
+            CloseMaterialPreviewWindow();
         }
     }
 
@@ -2693,7 +2975,8 @@ EditorUiFrameResult EditorUiController::Draw(
                                 tileWidth,
                                 tileHeight,
                                 m_effectiveUiScale,
-                                scene.HasSelection(),
+                                requestedModelPreviewPath,
+                                requestedMaterialPreviewPath,
                                 result,
                                 m_copiedAssetPath,
                                 m_assetRenameTargetPath,
@@ -2756,6 +3039,15 @@ EditorUiFrameResult EditorUiController::Draw(
         ImGui::End();
     }
 
+    if (requestedModelPreviewPath.has_value())
+    {
+        OpenModelProcessorWindow(*requestedModelPreviewPath);
+    }
+    if (requestedMaterialPreviewPath.has_value())
+    {
+        OpenMaterialPreviewWindow(*requestedMaterialPreviewPath);
+    }
+
     if (m_showModelProcessorWindow)
     {
         bool keepModelProcessorWindowOpen = m_showModelProcessorWindow;
@@ -2767,7 +3059,7 @@ EditorUiFrameResult EditorUiController::Draw(
             ImVec2(560.0f * m_effectiveUiScale, 560.0f * m_effectiveUiScale),
             ImGuiCond_FirstUseEver
         );
-        if (ImGui::Begin("Model Processor", &keepModelProcessorWindowOpen))
+        if (ImGui::Begin("Model Preview", &keepModelProcessorWindowOpen))
         {
             const bool selectedAssetIsMaterial =
                 !m_selectedAssetIsDirectory &&
@@ -2777,10 +3069,10 @@ EditorUiFrameResult EditorUiController::Draw(
             ImGui::TextWrapped("Model: %s", m_modelProcessorDisplayName.empty() ? "<unknown>" : m_modelProcessorDisplayName.c_str());
             ImGui::TextWrapped("Asset Path: %s", m_modelProcessorModelPath.c_str());
             ImGui::TextWrapped(
-                "Selected MAT Asset: %s",
-                selectedAssetIsMaterial ? m_selectedAssetPath.c_str() : "<select a MAT asset in Asset Manager>"
+                "Scene Target: %s",
+                scene.HasSelection() ? scene.GetSelectedTag().name.c_str() : "<no entity selected>"
             );
-            ImGui::TextDisabled("Save will rewrite this model asset and refresh all scene instances using it.");
+            ImGui::TextDisabled("Double-click an FBX in Asset Manager to open this editor.");
 
             if (!m_modelProcessorStatusMessage.empty())
             {
@@ -2788,19 +3080,27 @@ EditorUiFrameResult EditorUiController::Draw(
                 ImGui::TextWrapped("Status: %s", m_modelProcessorStatusMessage.c_str());
             }
 
+            ImGui::BeginDisabled(!scene.HasSelection());
+            if (ImGui::Button("Load Into Selected Entity", ImVec2(220.0f * m_effectiveUiScale, 0.0f)))
+            {
+                result.actions.selectedModelPath = m_modelProcessorModelPath;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Reload From Disk"))
+            {
+                requestReloadModelProcessorWindow = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
+            {
+                requestCloseModelProcessorWindow = true;
+            }
+
             if (m_modelProcessorMaterials.empty())
             {
                 ImGui::Spacing();
                 ImGui::TextDisabled("No material slots are available right now.");
-                if (ImGui::Button("Reload From Disk"))
-                {
-                    requestReloadModelProcessorWindow = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
-                {
-                    requestCloseModelProcessorWindow = true;
-                }
             }
             else
             {
@@ -2850,9 +3150,13 @@ EditorUiFrameResult EditorUiController::Draw(
                     slotMaterialAssetPath.empty() ? "<generated on save>" : slotMaterialAssetPath.c_str()
                 );
                 ImGui::Text("Draft State: %s", m_modelProcessorDirty ? "Modified" : "Clean");
+                ImGui::TextWrapped(
+                    "Selected MAT Asset: %s",
+                    selectedAssetIsMaterial ? m_selectedAssetPath.c_str() : "<select a MAT asset in Asset Manager>"
+                );
 
                 ImGui::BeginDisabled(!selectedAssetIsMaterial);
-                if (ImGui::Button("Apply Selected MAT To Slot"))
+                if (ImGui::Button("Apply Selected MAT To Slot", ImVec2(220.0f * m_effectiveUiScale, 0.0f)))
                 {
                     try
                     {
@@ -2872,29 +3176,154 @@ EditorUiFrameResult EditorUiController::Draw(
                     }
                 }
                 ImGui::EndDisabled();
-                ImGui::SameLine();
-                if (ImGui::Button("Reload From Disk"))
+
+                ImGui::Spacing();
+                ImGui::SeparatorText("Primary PBR Textures");
+                bool materialChanged = false;
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Base Color",
+                    "ModelPreviewBaseColor",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "base_color",
+                    selectedMaterial.baseColorTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Normal",
+                    "ModelPreviewNormal",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "normal",
+                    selectedMaterial.normalTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Metallic",
+                    "ModelPreviewMetallic",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "metallic",
+                    selectedMaterial.metallicTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Roughness",
+                    "ModelPreviewRoughness",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "roughness",
+                    selectedMaterial.roughnessTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Occlusion",
+                    "ModelPreviewOcclusion",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "occlusion",
+                    selectedMaterial.occlusionTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Emissive",
+                    "ModelPreviewEmissive",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "emissive",
+                    selectedMaterial.emissiveTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+
+                ImGui::SeparatorText("Blend And Secondary Layer");
+                materialChanged |= ImGui::Checkbox("Enable Shader Graph Blend", &selectedMaterial.blendGraph.enabled);
+                materialChanged |= ImGui::SliderFloat(
+                    "Blend Factor",
+                    &selectedMaterial.blendGraph.blendFactor,
+                    0.0f,
+                    1.0f,
+                    "%.2f"
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Blend Mask",
+                    "ModelPreviewBlendMask",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "blend_mask",
+                    selectedMaterial.blendGraph.blendMaskTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Base",
+                    "ModelPreviewLayerBBase",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_base_color",
+                    selectedMaterial.blendGraph.secondaryBaseColorTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Normal",
+                    "ModelPreviewLayerBNormal",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_normal",
+                    selectedMaterial.blendGraph.secondaryNormalTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Metallic",
+                    "ModelPreviewLayerBMetallic",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_metallic",
+                    selectedMaterial.blendGraph.secondaryMetallicTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Roughness",
+                    "ModelPreviewLayerBRoughness",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_roughness",
+                    selectedMaterial.blendGraph.secondaryRoughnessTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Occlusion",
+                    "ModelPreviewLayerBOcclusion",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_occlusion",
+                    selectedMaterial.blendGraph.secondaryOcclusionTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+                materialChanged |= DrawGraphTextureSlotEditor(
+                    "Layer B Emissive",
+                    "ModelPreviewLayerBEmissive",
+                    m_modelProcessorModelPath,
+                    static_cast<uint32_t>(selectedMaterialIndex),
+                    "secondary_emissive",
+                    selectedMaterial.blendGraph.secondaryEmissiveTexturePath,
+                    &m_modelProcessorStatusMessage
+                );
+
+                if (materialChanged)
                 {
-                    requestReloadModelProcessorWindow = true;
+                    m_modelProcessorDirty = true;
                 }
 
                 ImGui::Spacing();
-                ImGui::SeparatorText("Material Preview");
+                ImGui::SeparatorText("Resolved Preview");
                 DrawTexturePathRow("Base Color", selectedMaterial.baseColorTexturePath);
                 DrawTexturePathRow("Normal", selectedMaterial.normalTexturePath);
                 DrawTexturePathRow("Metallic", selectedMaterial.metallicTexturePath);
                 DrawTexturePathRow("Roughness", selectedMaterial.roughnessTexturePath);
                 DrawTexturePathRow("Occlusion", selectedMaterial.occlusionTexturePath);
                 DrawTexturePathRow("Emissive", selectedMaterial.emissiveTexturePath);
-
-                const bool hasProgrammableGraph =
-                    selectedMaterial.blendGraph.enabled ||
-                    CountMaterialGraphSecondaryTextures(selectedMaterial.blendGraph) > 0;
-                if (hasProgrammableGraph)
+                if (selectedMaterial.blendGraph.enabled || CountMaterialGraphSecondaryTextures(selectedMaterial.blendGraph) > 0)
                 {
                     ImGui::Separator();
-                    ImGui::Text("Programmable Blend: %s", selectedMaterial.blendGraph.enabled ? "Enabled" : "Prepared");
-                    ImGui::Text("Blend Factor: %.2f", selectedMaterial.blendGraph.blendFactor);
                     DrawTexturePathRow("Blend Mask", selectedMaterial.blendGraph.blendMaskTexturePath);
                     DrawTexturePathRow("Layer B Base", selectedMaterial.blendGraph.secondaryBaseColorTexturePath);
                     DrawTexturePathRow("Layer B Normal", selectedMaterial.blendGraph.secondaryNormalTexturePath);
@@ -2934,6 +3363,102 @@ EditorUiFrameResult EditorUiController::Draw(
         }
     }
 
+    if (m_showMaterialPreviewWindow)
+    {
+        bool keepMaterialPreviewWindowOpen = m_showMaterialPreviewWindow;
+        bool requestCloseMaterialPreviewWindow = false;
+        bool requestReloadMaterialPreviewWindow = false;
+        bool requestOpenOwningModelProcessor = false;
+        const std::string materialPreviewReloadPath = m_materialPreviewAssetPath;
+        const std::string owningModelPath = m_materialPreviewModelPath;
+        const int owningMaterialIndex = m_materialPreviewMaterialIndex;
+
+        ImGui::SetNextWindowSize(
+            ImVec2(520.0f * m_effectiveUiScale, 520.0f * m_effectiveUiScale),
+            ImGuiCond_FirstUseEver
+        );
+        if (ImGui::Begin("Material Preview", &keepMaterialPreviewWindowOpen))
+        {
+            ImGui::TextWrapped(
+                "Material: %s",
+                m_materialPreviewMaterial.name.empty() ? m_materialPreviewDisplayName.c_str() : m_materialPreviewMaterial.name.c_str()
+            );
+            ImGui::TextWrapped("Asset Path: %s", m_materialPreviewAssetPath.c_str());
+            ImGui::TextWrapped("Owning Model: %s", owningModelPath.empty() ? "<unknown>" : owningModelPath.c_str());
+            ImGui::Text("Material Slot: %d", owningMaterialIndex);
+
+            if (!m_materialPreviewStatusMessage.empty())
+            {
+                ImGui::Spacing();
+                ImGui::TextWrapped("Status: %s", m_materialPreviewStatusMessage.c_str());
+            }
+
+            if (!owningModelPath.empty())
+            {
+                if (ImGui::Button("Open Owning Model Preview", ImVec2(240.0f * m_effectiveUiScale, 0.0f)))
+                {
+                    requestOpenOwningModelProcessor = true;
+                }
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Reload From Disk"))
+            {
+                requestReloadMaterialPreviewWindow = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
+            {
+                requestCloseMaterialPreviewWindow = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("Primary PBR Textures");
+            DrawTexturePathRow("Base Color", m_materialPreviewMaterial.baseColorTexturePath);
+            DrawTexturePathRow("Normal", m_materialPreviewMaterial.normalTexturePath);
+            DrawTexturePathRow("Metallic", m_materialPreviewMaterial.metallicTexturePath);
+            DrawTexturePathRow("Roughness", m_materialPreviewMaterial.roughnessTexturePath);
+            DrawTexturePathRow("Occlusion", m_materialPreviewMaterial.occlusionTexturePath);
+            DrawTexturePathRow("Emissive", m_materialPreviewMaterial.emissiveTexturePath);
+
+            if (m_materialPreviewMaterial.blendGraph.enabled ||
+                CountMaterialGraphSecondaryTextures(m_materialPreviewMaterial.blendGraph) > 0)
+            {
+                ImGui::SeparatorText("Blend And Secondary Layer");
+                ImGui::Text("Blend Enabled: %s", m_materialPreviewMaterial.blendGraph.enabled ? "Yes" : "No");
+                ImGui::Text("Blend Factor: %.2f", m_materialPreviewMaterial.blendGraph.blendFactor);
+                DrawTexturePathRow("Blend Mask", m_materialPreviewMaterial.blendGraph.blendMaskTexturePath);
+                DrawTexturePathRow("Layer B Base", m_materialPreviewMaterial.blendGraph.secondaryBaseColorTexturePath);
+                DrawTexturePathRow("Layer B Normal", m_materialPreviewMaterial.blendGraph.secondaryNormalTexturePath);
+                DrawTexturePathRow("Layer B Metallic", m_materialPreviewMaterial.blendGraph.secondaryMetallicTexturePath);
+                DrawTexturePathRow("Layer B Roughness", m_materialPreviewMaterial.blendGraph.secondaryRoughnessTexturePath);
+                DrawTexturePathRow("Layer B Occlusion", m_materialPreviewMaterial.blendGraph.secondaryOcclusionTexturePath);
+                DrawTexturePathRow("Layer B Emissive", m_materialPreviewMaterial.blendGraph.secondaryEmissiveTexturePath);
+            }
+        }
+        ImGui::End();
+
+        if (requestReloadMaterialPreviewWindow && !requestCloseMaterialPreviewWindow && keepMaterialPreviewWindowOpen)
+        {
+            OpenMaterialPreviewWindow(materialPreviewReloadPath);
+        }
+        if (requestOpenOwningModelProcessor && !owningModelPath.empty())
+        {
+            OpenModelProcessorWindow(owningModelPath);
+            if (!m_modelProcessorMaterials.empty())
+            {
+                m_modelProcessorSelectedMaterialIndex = std::clamp(
+                    owningMaterialIndex,
+                    0,
+                    static_cast<int>(m_modelProcessorMaterials.size()) - 1
+                );
+            }
+        }
+        if (!keepMaterialPreviewWindowOpen || requestCloseMaterialPreviewWindow)
+        {
+            CloseMaterialPreviewWindow();
+        }
+    }
+
     if (m_showSceneWindow)
     {
         if (ImGui::Begin("Scene", &m_showSceneWindow))
@@ -2943,6 +3468,17 @@ EditorUiFrameResult EditorUiController::Draw(
                 scene.HasSelection() ? "Selected by model center in viewport" : "Click a model center in the viewport to select"
             );
             ImGui::Text("Entities: %u", static_cast<unsigned int>(scene.GetEntityOrder().size()));
+            if (ImGui::Button("Add Entity"))
+            {
+                result.actions.createSceneEntity = true;
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!scene.HasSelection());
+            if (ImGui::Button("Delete Entity"))
+            {
+                result.actions.deleteSelectedSceneEntity = true;
+            }
+            ImGui::EndDisabled();
             ImGui::Separator();
             for (entt::entity entity : scene.GetEntityOrder())
             {
@@ -2959,48 +3495,6 @@ EditorUiFrameResult EditorUiController::Draw(
                 TransformComponent& transform = scene.GetSelectedTransform();
                 ModelComponent& model = scene.GetSelectedModel();
                 GizmoSettings& gizmo = scene.GetGizmoSettings();
-                if (model.sourcePath.empty() || model.importedMaterials.empty())
-                {
-                    m_materialGraphDraftModelPath.clear();
-                    m_materialGraphNodeLayoutKey.clear();
-                    m_materialGraphDraftIndex = -1;
-                    m_materialGraphDraggingNodeIndex = -1;
-                    m_materialGraphSelectedIndex = 0;
-                    m_materialGraphDraftDirty = false;
-                    m_materialGraphNodeLayoutInitialized = false;
-                    m_materialGraphDraft = ModelImportedMaterialInfo{};
-                }
-                else
-                {
-                    m_materialGraphSelectedIndex = std::clamp(
-                        m_materialGraphSelectedIndex,
-                        0,
-                        static_cast<int>(model.importedMaterials.size()) - 1
-                    );
-                    const bool draftSourceChanged =
-                        m_materialGraphDraftModelPath != model.sourcePath ||
-                        m_materialGraphDraftIndex != m_materialGraphSelectedIndex;
-                    if (draftSourceChanged || !m_materialGraphDraftDirty)
-                    {
-                        m_materialGraphDraftModelPath = model.sourcePath;
-                        m_materialGraphDraftIndex = m_materialGraphSelectedIndex;
-                        m_materialGraphDraft = model.importedMaterials[static_cast<size_t>(m_materialGraphSelectedIndex)];
-                        if (draftSourceChanged)
-                        {
-                            m_materialGraphDraftDirty = false;
-                        }
-                    }
-
-                    const std::string materialGraphLayoutKey =
-                        model.sourcePath + "#" + std::to_string(m_materialGraphSelectedIndex);
-                    if (!m_materialGraphNodeLayoutInitialized || m_materialGraphNodeLayoutKey != materialGraphLayoutKey)
-                    {
-                        m_materialGraphNodeLayout = BuildDefaultMaterialGraphNodeLayout();
-                        m_materialGraphDraggingNodeIndex = -1;
-                        m_materialGraphNodeLayoutKey = materialGraphLayoutKey;
-                        m_materialGraphNodeLayoutInitialized = true;
-                    }
-                }
 
                 ImGui::Separator();
                 ImGui::TextWrapped("Controller Target: %s", model.displayName.c_str());
@@ -3027,7 +3521,6 @@ EditorUiFrameResult EditorUiController::Draw(
                     ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
                     ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
                     ImGui::Text("Submeshes: %u", model.submeshCount);
-                    DrawSelectedModelUvTextureControls(&model, result, true);
 
                     if (model.hasBounds)
                     {
@@ -3035,311 +3528,14 @@ EditorUiFrameResult EditorUiController::Draw(
                         ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
                     }
 
-                    DrawImportedModelInspector(model);
-
-                    if (!model.sourcePath.empty() &&
-                        !model.importedMaterials.empty() &&
-                        ImGui::CollapsingHeader("Programmable Material Graph", ImGuiTreeNodeFlags_DefaultOpen))
+                    if (!model.sourcePath.empty())
                     {
-                        const char* currentMaterialLabel =
-                            model.importedMaterials[static_cast<size_t>(m_materialGraphSelectedIndex)].name.empty()
-                            ? "Material"
-                            : model.importedMaterials[static_cast<size_t>(m_materialGraphSelectedIndex)].name.c_str();
-                        if (ImGui::BeginCombo("Material Slot", currentMaterialLabel))
-                        {
-                            for (size_t materialIndex = 0; materialIndex < model.importedMaterials.size(); ++materialIndex)
-                            {
-                                const bool isSelected = static_cast<int>(materialIndex) == m_materialGraphSelectedIndex;
-                                const std::string materialLabel =
-                                    model.importedMaterials[materialIndex].name.empty()
-                                    ? ("Material " + std::to_string(materialIndex))
-                                    : model.importedMaterials[materialIndex].name;
-                                if (ImGui::Selectable(materialLabel.c_str(), isSelected))
-                                {
-                                    m_materialGraphSelectedIndex = static_cast<int>(materialIndex);
-                                    m_materialGraphDraftModelPath = model.sourcePath;
-                                    m_materialGraphDraftIndex = m_materialGraphSelectedIndex;
-                                    m_materialGraphDraft = model.importedMaterials[materialIndex];
-                                    m_materialGraphDraftDirty = false;
-                                }
-                                if (isSelected)
-                                {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-
                         ImGui::TextWrapped(
-                            "This graph edits the imported asset manifest and blends two PBR texture layers directly in the shader."
+                            "Materials and PBR textures are edited from Asset Manager. Double-click the FBX to open Model Preview, or double-click a MAT asset to inspect one material."
                         );
-                        ImGui::TextDisabled("Drag a node by its colored header.");
-                        DrawMaterialGraphLegendChip("A", "Primary Layer", IM_COL32(64, 100, 164, 255), m_effectiveUiScale);
-                        DrawMaterialGraphLegendChip("B", "Secondary Layer", IM_COL32(162, 92, 60, 255), m_effectiveUiScale);
-                        DrawMaterialGraphLegendChip("MIX", "Mask Blend", IM_COL32(94, 130, 82, 255), m_effectiveUiScale);
-                        DrawMaterialGraphLegendChip("PBR", "Shader Output", IM_COL32(124, 96, 56, 255), m_effectiveUiScale);
-                        ImGui::NewLine();
-                        ImGui::TextDisabled(
-                            "Secondary graph inputs: %u",
-                            static_cast<unsigned int>(CountMaterialGraphSecondaryTextures(m_materialGraphDraft.blendGraph))
-                        );
-                        if (!model.baseColorTextureOverridePath.empty())
-                        {
-                            ImGui::TextWrapped(
-                                "Note: this entity still has a base color override, so Layer A base color may be visually overridden here."
-                            );
-                        }
-
-                        bool graphChanged = false;
-                        const ImVec2 logicalCanvasSize(960.0f, 700.0f);
-                        const float canvasHeight = 560.0f * m_effectiveUiScale;
-                        const ImVec2 virtualCanvasSize(
-                            logicalCanvasSize.x * m_effectiveUiScale,
-                            logicalCanvasSize.y * m_effectiveUiScale
-                        );
-                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.1f, 0.14f, 1.0f));
-                        if (ImGui::BeginChild(
-                            "ProgrammablePbrGraphCanvas",
-                            ImVec2(0.0f, canvasHeight),
-                            true,
-                            ImGuiWindowFlags_HorizontalScrollbar
-                        ))
-                        {
-                            const ImVec2 canvasOrigin = ImGui::GetCursorScreenPos();
-                            ImDrawList* canvasDrawList = ImGui::GetWindowDrawList();
-                            const ImU32 gridColor = IM_COL32(42, 48, 58, 110);
-                            for (float x = 0.0f; x < virtualCanvasSize.x; x += 36.0f * m_effectiveUiScale)
-                            {
-                                canvasDrawList->AddLine(
-                                    ImVec2(canvasOrigin.x + x, canvasOrigin.y),
-                                    ImVec2(canvasOrigin.x + x, canvasOrigin.y + virtualCanvasSize.y),
-                                    gridColor,
-                                    1.0f
-                                );
-                            }
-                            for (float y = 0.0f; y < virtualCanvasSize.y; y += 36.0f * m_effectiveUiScale)
-                            {
-                                canvasDrawList->AddLine(
-                                    ImVec2(canvasOrigin.x, canvasOrigin.y + y),
-                                    ImVec2(canvasOrigin.x + virtualCanvasSize.x, canvasOrigin.y + y),
-                                    gridColor,
-                                    1.0f
-                                );
-                            }
-
-                            const MaterialGraphNodeFrame layerANode = BeginMaterialGraphNode(
-                                "LayerANode",
-                                "A",
-                                "Layer A",
-                                canvasOrigin,
-                                m_materialGraphNodeLayout[0],
-                                ImVec2(310.0f, 300.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                IM_COL32(64, 100, 164, 255)
-                            );
-                            UpdateMaterialGraphNodeDrag(
-                                0,
-                                layerANode,
-                                m_materialGraphNodeLayout[0],
-                                ImVec2(310.0f, 300.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                m_materialGraphDraggingNodeIndex
-                            );
-                            ImGui::TextDisabled("Primary imported PBR textures");
-                            graphChanged |= DrawGraphTextureSlotEditor("Base Color", "LayerA_Base", m_materialGraphDraft.baseColorTexturePath);
-                            graphChanged |= DrawGraphTextureSlotEditor("Normal", "LayerA_Normal", m_materialGraphDraft.normalTexturePath);
-                            graphChanged |= DrawGraphTextureSlotEditor("Metallic", "LayerA_Metallic", m_materialGraphDraft.metallicTexturePath);
-                            graphChanged |= DrawGraphTextureSlotEditor("Roughness", "LayerA_Roughness", m_materialGraphDraft.roughnessTexturePath);
-                            graphChanged |= DrawGraphTextureSlotEditor("Occlusion", "LayerA_Occlusion", m_materialGraphDraft.occlusionTexturePath);
-                            graphChanged |= DrawGraphTextureSlotEditor("Emissive", "LayerA_Emissive", m_materialGraphDraft.emissiveTexturePath);
-                            EndMaterialGraphNode();
-
-                            const MaterialGraphNodeFrame layerBNode = BeginMaterialGraphNode(
-                                "LayerBNode",
-                                "B",
-                                "Layer B",
-                                canvasOrigin,
-                                m_materialGraphNodeLayout[1],
-                                ImVec2(310.0f, 300.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                IM_COL32(162, 92, 60, 255)
-                            );
-                            UpdateMaterialGraphNodeDrag(
-                                1,
-                                layerBNode,
-                                m_materialGraphNodeLayout[1],
-                                ImVec2(310.0f, 300.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                m_materialGraphDraggingNodeIndex
-                            );
-                            ImGui::TextDisabled("Secondary detail textures");
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Base Color",
-                                "LayerB_Base",
-                                m_materialGraphDraft.blendGraph.secondaryBaseColorTexturePath
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Normal",
-                                "LayerB_Normal",
-                                m_materialGraphDraft.blendGraph.secondaryNormalTexturePath
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Metallic",
-                                "LayerB_Metallic",
-                                m_materialGraphDraft.blendGraph.secondaryMetallicTexturePath
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Roughness",
-                                "LayerB_Roughness",
-                                m_materialGraphDraft.blendGraph.secondaryRoughnessTexturePath
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Occlusion",
-                                "LayerB_Occlusion",
-                                m_materialGraphDraft.blendGraph.secondaryOcclusionTexturePath
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Emissive",
-                                "LayerB_Emissive",
-                                m_materialGraphDraft.blendGraph.secondaryEmissiveTexturePath
-                            );
-                            EndMaterialGraphNode();
-
-                            const MaterialGraphNodeFrame blendNode = BeginMaterialGraphNode(
-                                "BlendNode",
-                                "MIX",
-                                "Blend",
-                                canvasOrigin,
-                                m_materialGraphNodeLayout[2],
-                                ImVec2(250.0f, 215.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                IM_COL32(94, 130, 82, 255)
-                            );
-                            UpdateMaterialGraphNodeDrag(
-                                2,
-                                blendNode,
-                                m_materialGraphNodeLayout[2],
-                                ImVec2(250.0f, 215.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                m_materialGraphDraggingNodeIndex
-                            );
-                            graphChanged |= ImGui::Checkbox("Enable Shader Graph Blend", &m_materialGraphDraft.blendGraph.enabled);
-                            graphChanged |= ImGui::SliderFloat(
-                                "Blend Factor",
-                                &m_materialGraphDraft.blendGraph.blendFactor,
-                                0.0f,
-                                1.0f,
-                                "%.2f"
-                            );
-                            graphChanged |= DrawGraphTextureSlotEditor(
-                                "Blend Mask",
-                                "Blend_Mask",
-                                m_materialGraphDraft.blendGraph.blendMaskTexturePath
-                            );
-                            ImGui::ProgressBar(
-                                m_materialGraphDraft.blendGraph.enabled ? m_materialGraphDraft.blendGraph.blendFactor : 0.0f,
-                                ImVec2(-FLT_MIN, 0.0f),
-                                m_materialGraphDraft.blendGraph.enabled ? "Shader blend active" : "Shader blend disabled"
-                            );
-                            ImGui::TextWrapped("Final weight = Blend Factor x Mask.r");
-                            EndMaterialGraphNode();
-
-                            const MaterialGraphNodeFrame outputNode = BeginMaterialGraphNode(
-                                "OutputNode",
-                                "PBR",
-                                "Output",
-                                canvasOrigin,
-                                m_materialGraphNodeLayout[3],
-                                ImVec2(220.0f, 185.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                IM_COL32(124, 96, 56, 255)
-                            );
-                            UpdateMaterialGraphNodeDrag(
-                                3,
-                                outputNode,
-                                m_materialGraphNodeLayout[3],
-                                ImVec2(220.0f, 185.0f),
-                                logicalCanvasSize,
-                                m_effectiveUiScale,
-                                m_materialGraphDraggingNodeIndex
-                            );
-                            ImGui::TextWrapped("Blend state: %s", m_materialGraphDraft.blendGraph.enabled ? "Enabled" : "Disabled");
-                            ImGui::Text("Primary: 6 PBR inputs");
-                            ImGui::Text(
-                                "Secondary: %u bound",
-                                static_cast<unsigned int>(CountMaterialGraphSecondaryTextures(m_materialGraphDraft.blendGraph))
-                            );
-                            ImGui::TextWrapped("Writes to asset manifest and rebuilds renderables.");
-                            ImGui::BeginDisabled(!m_materialGraphDraftDirty);
-                            if (ImGui::Button("Apply Graph"))
-                            {
-                                result.actions.updatedImportedMaterial = EditorUiActions::ImportedMaterialUpdate{
-                                    model.sourcePath,
-                                    static_cast<uint32_t>(m_materialGraphSelectedIndex),
-                                    m_materialGraphDraft
-                                };
-                                m_materialGraphDraftDirty = false;
-                            }
-                            ImGui::EndDisabled();
-                            ImGui::SameLine();
-                            if (ImGui::Button("Reset Draft"))
-                            {
-                                m_materialGraphDraft =
-                                    model.importedMaterials[static_cast<size_t>(m_materialGraphSelectedIndex)];
-                                m_materialGraphDraftDirty = false;
-                            }
-                            if (ImGui::Button("Reset Layout"))
-                            {
-                                m_materialGraphNodeLayout = BuildDefaultMaterialGraphNodeLayout();
-                            }
-                            EndMaterialGraphNode();
-
-                            DrawMaterialGraphLink(
-                                canvasDrawList,
-                                layerANode.outputPin,
-                                blendNode.inputPin,
-                                IM_COL32(112, 164, 255, 255),
-                                m_effectiveUiScale
-                            );
-                            DrawMaterialGraphLink(
-                                canvasDrawList,
-                                layerBNode.outputPin,
-                                blendNode.inputPinAlt,
-                                IM_COL32(236, 142, 96, 255),
-                                m_effectiveUiScale
-                            );
-                            DrawMaterialGraphLink(
-                                canvasDrawList,
-                                blendNode.outputPin,
-                                outputNode.inputPin,
-                                IM_COL32(164, 220, 168, 255),
-                                m_effectiveUiScale
-                            );
-
-                            ImGui::SetCursorScreenPos(
-                                ImVec2(
-                                    canvasOrigin.x + virtualCanvasSize.x - 1.0f,
-                                    canvasOrigin.y + virtualCanvasSize.y - 1.0f
-                                )
-                            );
-                            ImGui::Dummy(ImVec2(1.0f, 1.0f));
-                        }
-                        ImGui::EndChild();
-                        ImGui::PopStyleColor();
-
-                        if (graphChanged)
-                        {
-                            m_materialGraphDraftDirty = true;
-                        }
-                        ImGui::TextDisabled("Draft: %s", m_materialGraphDraftDirty ? "modified" : "in sync");
                     }
+
+                    DrawImportedModelInspector(model);
                 }
 
                 if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
