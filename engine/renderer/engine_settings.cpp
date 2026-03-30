@@ -93,6 +93,7 @@ void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVis
 
     windows.camera = ReadBoolOrDefault(windowsNode["camera"], windows.camera);
     windows.assetManager = ReadBoolOrDefault(windowsNode["asset_manager"], windows.assetManager);
+    windows.inputMonitor = ReadBoolOrDefault(windowsNode["input_monitor"], windows.inputMonitor);
     windows.scene = ReadBoolOrDefault(windowsNode["scene"], windows.scene);
     windows.theme = ReadBoolOrDefault(windowsNode["theme"], windows.theme);
     windows.viewport = ReadBoolOrDefault(windowsNode["viewport"], windows.viewport);
@@ -199,6 +200,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "    \"windows\": {\n";
         output << "      \"camera\": " << JsonBool(settings.editorUi.windows.camera) << ",\n";
         output << "      \"asset_manager\": " << JsonBool(settings.editorUi.windows.assetManager) << ",\n";
+        output << "      \"input_monitor\": " << JsonBool(settings.editorUi.windows.inputMonitor) << ",\n";
         output << "      \"scene\": " << JsonBool(settings.editorUi.windows.scene) << ",\n";
         output << "      \"theme\": " << JsonBool(settings.editorUi.windows.theme) << ",\n";
         output << "      \"viewport\": " << JsonBool(settings.editorUi.windows.viewport) << "\n";

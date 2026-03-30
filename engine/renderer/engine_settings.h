@@ -10,6 +10,7 @@ struct EditorWindowVisibilitySettings
 {
     bool camera = true;
     bool assetManager = true;
+    bool inputMonitor = false;
     bool scene = true;
     bool theme = true;
     bool viewport = true;

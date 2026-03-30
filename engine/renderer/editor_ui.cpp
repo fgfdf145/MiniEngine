@@ -3,6 +3,7 @@
 
 #include <editor_scene.h>
 #include <file_dialog/file_dialog.h>
+#include <log/log.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
@@ -2161,6 +2162,7 @@ void DrawAssetBrowserTile(
 void DrawTopToolbar(
     bool& showCameraWindow,
     bool& showAssetManagerWindow,
+    bool& showInputMonitorWindow,
     bool& showSceneWindow,
     bool& showThemeWindow,
     bool& showViewportWindow,
@@ -2212,6 +2214,14 @@ void DrawTopToolbar(
     ImGui::EndDisabled();
 
     ImGui::SameLine();
+    ImGui::BeginDisabled(showInputMonitorWindow);
+    if (ImGui::Button("Input Monitor"))
+    {
+        showInputMonitorWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
     ImGui::BeginDisabled(showSceneWindow);
     if (ImGui::Button("Scene"))
     {
@@ -2240,6 +2250,7 @@ void DrawTopToolbar(
     {
         showCameraWindow = true;
         showAssetManagerWindow = true;
+        showInputMonitorWindow = true;
         showSceneWindow = true;
         showThemeWindow = true;
         showViewportWindow = true;
@@ -3067,6 +3078,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const float previousUiScale = m_uiScale;
     const bool previousShowCameraWindow = m_showCameraWindow;
     const bool previousShowAssetManagerWindow = m_showAssetManagerWindow;
+    const bool previousShowInputMonitorWindow = m_showInputMonitorWindow;
     const bool previousShowSceneWindow = m_showSceneWindow;
     const bool previousShowThemeWindow = m_showThemeWindow;
     const bool previousShowViewportWindow = m_showViewportWindow;
@@ -3104,6 +3116,7 @@ EditorUiFrameResult EditorUiController::Draw(
     DrawTopToolbar(
         m_showCameraWindow,
         m_showAssetManagerWindow,
+        m_showInputMonitorWindow,
         m_showSceneWindow,
         m_showThemeWindow,
         m_showViewportWindow,
@@ -3976,6 +3989,45 @@ EditorUiFrameResult EditorUiController::Draw(
         }
     }
 
+    if (m_showInputMonitorWindow)
+    {
+        ImGui::SetNextWindowSize(
+            ImVec2(720.0f * m_effectiveUiScale, 360.0f * m_effectiveUiScale),
+            ImGuiCond_FirstUseEver
+        );
+        if (ImGui::Begin("Input Monitor", &m_showInputMonitorWindow))
+        {
+            const std::vector<std::string> inputMessages = Log::GetInputMessagesSnapshot();
+            ImGui::Text("Captured Events: %u", static_cast<unsigned int>(inputMessages.size()));
+            ImGui::SameLine();
+            if (ImGui::Button("Clear"))
+            {
+                Log::ClearInputMessages();
+            }
+            ImGui::SameLine();
+            ImGui::Checkbox("Auto-scroll", &m_inputMonitorAutoScroll);
+            ImGui::Separator();
+
+            if (ImGui::BeginChild("InputMonitorLog", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar))
+            {
+                const bool shouldAutoScroll =
+                    m_inputMonitorAutoScroll &&
+                    ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
+                for (const std::string& message : inputMessages)
+                {
+                    ImGui::TextUnformatted(message.c_str());
+                }
+
+                if (shouldAutoScroll)
+                {
+                    ImGui::SetScrollHereY(1.0f);
+                }
+            }
+            ImGui::EndChild();
+        }
+        ImGui::End();
+    }
+
     if (m_showSceneWindow)
     {
         if (ImGui::Begin("Scene", &m_showSceneWindow))
@@ -4122,6 +4174,7 @@ EditorUiFrameResult EditorUiController::Draw(
         std::abs(previousUiScale - m_uiScale) > 0.0001f ||
         previousShowCameraWindow != m_showCameraWindow ||
         previousShowAssetManagerWindow != m_showAssetManagerWindow ||
+        previousShowInputMonitorWindow != m_showInputMonitorWindow ||
         previousShowSceneWindow != m_showSceneWindow ||
         previousShowThemeWindow != m_showThemeWindow ||
         previousShowViewportWindow != m_showViewportWindow;
@@ -4134,6 +4187,7 @@ void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)
     m_uiScale = std::clamp(settings.editorUi.scale, 0.75f, 3.0f);
     m_showCameraWindow = settings.editorUi.windows.camera;
     m_showAssetManagerWindow = settings.editorUi.windows.assetManager;
+    m_showInputMonitorWindow = settings.editorUi.windows.inputMonitor;
     m_showSceneWindow = settings.editorUi.windows.scene;
     m_showThemeWindow = settings.editorUi.windows.theme;
     m_showViewportWindow = settings.editorUi.windows.viewport;
@@ -4159,6 +4213,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     settings.editorUi.scale = m_uiScale;
     settings.editorUi.windows.camera = m_showCameraWindow;
     settings.editorUi.windows.assetManager = m_showAssetManagerWindow;
+    settings.editorUi.windows.inputMonitor = m_showInputMonitorWindow;
     settings.editorUi.windows.scene = m_showSceneWindow;
     settings.editorUi.windows.theme = m_showThemeWindow;
     settings.editorUi.windows.viewport = m_showViewportWindow;

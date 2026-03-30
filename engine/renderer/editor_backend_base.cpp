@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -614,6 +615,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const float deltaTime = std::chrono::duration<float>(currentFrameTime - State().lastFrameTime).count();
     State().lastFrameTime = currentFrameTime;
 
+    State().input.Update();
     UpdateCameraFromInput(State().camera, State().input, deltaTime, WantsKeyboardCapture());
     State().input.EndFrame();
 
@@ -934,21 +936,46 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
 
     if (!blockKeyboardInput)
     {
-        if (input.IsKeyDown(SDL_SCANCODE_W))
+        if (input.IsKeyDown(KeyCodes::W))
         {
             camera.MoveForward(moveDistance);
         }
-        if (input.IsKeyDown(SDL_SCANCODE_S))
+        if (input.IsKeyDown(KeyCodes::S))
         {
             camera.MoveForward(-moveDistance);
         }
-        if (input.IsKeyDown(SDL_SCANCODE_A))
+        if (input.IsKeyDown(KeyCodes::A))
         {
             camera.MoveRight(-moveDistance);
         }
-        if (input.IsKeyDown(SDL_SCANCODE_D))
+        if (input.IsKeyDown(KeyCodes::D))
         {
             camera.MoveRight(moveDistance);
+        }
+
+        const int gamepadIndex = input.GetFirstConnectedGamepadIndex();
+        if (gamepadIndex >= 0)
+        {
+            const uint32_t playerIndex = static_cast<uint32_t>(gamepadIndex);
+            const float leftStickX = input.GetGamepadAxis(GamepadAxis::LeftX, playerIndex);
+            const float leftStickY = input.GetGamepadAxis(GamepadAxis::LeftY, playerIndex);
+            const float leftTrigger = input.GetGamepadAxis(GamepadAxis::LeftTrigger, playerIndex);
+            const float rightTrigger = input.GetGamepadAxis(GamepadAxis::RightTrigger, playerIndex);
+
+            camera.MoveForward(-leftStickY * moveDistance);
+            camera.MoveRight(leftStickX * moveDistance);
+            camera.MoveUp((rightTrigger - leftTrigger) * moveDistance);
+
+            const float rightStickX = input.GetGamepadAxis(GamepadAxis::RightX, playerIndex);
+            const float rightStickY = input.GetGamepadAxis(GamepadAxis::RightY, playerIndex);
+            if (std::abs(rightStickX) > 0.0f || std::abs(rightStickY) > 0.0f)
+            {
+                const float gamepadLookSpeed = 180.0f * deltaTime;
+                camera.Rotate(
+                    rightStickX * gamepadLookSpeed,
+                    -rightStickY * gamepadLookSpeed
+                );
+            }
         }
     }
 

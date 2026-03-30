@@ -153,7 +153,9 @@ private:
     bool m_selectedAssetIsDirectory = false;
     bool m_showCameraWindow = true;
     bool m_showAssetManagerWindow = true;
+    bool m_showInputMonitorWindow = false;
     bool m_showSceneWindow = true;
     bool m_showThemeWindow = true;
     bool m_showViewportWindow = true;
+    bool m_inputMonitorAutoScroll = true;
 };

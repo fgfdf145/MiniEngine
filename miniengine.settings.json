@@ -5,8 +5,9 @@
     "windows": {
       "camera": true,
       "asset_manager": true,
+      "input_monitor": true,
       "scene": true,
-      "theme": false,
+      "theme": true,
       "viewport": true
     },
     "theme": {

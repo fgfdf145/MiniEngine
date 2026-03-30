@@ -1,4 +1,5 @@
 add_library(engine_core
+    input/input.cpp
     log/log.cpp
 )
 
@@ -10,4 +11,12 @@ PUBLIC
 target_link_libraries(engine_core
 PUBLIC
     spdlog::spdlog
+    SDL3::SDL3
 )
+
+if(WIN32)
+    target_link_libraries(engine_core
+    PUBLIC
+        Xinput
+    )
+endif()
