@@ -1,15 +1,9 @@
 #include "window.h"
+#include "window_platform.h"
 
 #include <log/log.h>
 
 #include <stdexcept>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 Window::Window(int width, int height, const char* title)
     : m_width(width),
@@ -21,21 +15,7 @@ Window::Window(int width, int height, const char* title)
         LOG_WARN("SDL_SetAppMetadata failed: {}", SDL_GetError());
     }
 
-#ifdef _WIN32
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "windows");
-
-    char systemDirectory[MAX_PATH + 1] = {};
-    const UINT systemDirectoryLength = GetSystemDirectoryA(systemDirectory, MAX_PATH);
-    if (systemDirectoryLength > 0 && systemDirectoryLength <= MAX_PATH)
-    {
-        std::string vulkanLoaderPath(systemDirectory, systemDirectoryLength);
-        vulkanLoaderPath += "\\vulkan-1.dll";
-        if (SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, vulkanLoaderPath.c_str()))
-        {
-            LOG_INFO("SDL Vulkan loader hint: {}", vulkanLoaderPath);
-        }
-    }
-#endif
+    platform::window::ApplyPlatformWindowHints();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());

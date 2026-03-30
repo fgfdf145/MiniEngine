@@ -151,7 +151,7 @@ private:
     bool IsValidGamepadButton(GamepadButton button) const;
     bool IsValidGamepadAxis(GamepadAxis axis) const;
     bool IsViewportInteractionPoint(float x, float y) const;
-    void PollXInputGamepads();
+    void PollGamepads();
     void EnsureTimestampBaseInitialized();
     std::string FormatEventTimestamp(Uint64 timestampNs) const;
     void LogKeyboardEvent(Uint64 timestampNs, KeyCode key, const char* action) const;

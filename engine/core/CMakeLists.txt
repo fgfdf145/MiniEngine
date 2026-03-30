@@ -1,4 +1,5 @@
 add_library(engine_core
+    input/gamepad_backend.cpp
     input/input.cpp
     log/log.cpp
 )

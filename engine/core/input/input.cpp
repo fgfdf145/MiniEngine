@@ -1,4 +1,5 @@
 #include "input.h"
+#include "gamepad_backend.h"
 
 #include <log/log.h>
 
@@ -9,88 +10,10 @@
 #include <sstream>
 #include <string_view>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#include <Xinput.h>
-#endif
-
 namespace
 {
 constexpr float kGamepadAxisChangeEpsilon = 0.001f;
 constexpr float kGamepadAxisLogThreshold = 0.10f;
-
-#ifdef _WIN32
-float NormalizeSignedThumbAxis(short value, short deadzone)
-{
-    const float maxMagnitude = value < 0 ? 32768.0f : 32767.0f;
-    const float normalized = static_cast<float>(value) / maxMagnitude;
-    const float normalizedDeadzone = static_cast<float>(deadzone) / 32767.0f;
-
-    if (std::abs(normalized) <= normalizedDeadzone)
-    {
-        return 0.0f;
-    }
-
-    const float direction = normalized < 0.0f ? -1.0f : 1.0f;
-    const float magnitude = (std::abs(normalized) - normalizedDeadzone) / (1.0f - normalizedDeadzone);
-    return std::clamp(magnitude * direction, -1.0f, 1.0f);
-}
-
-float NormalizeTriggerAxis(unsigned char value)
-{
-    if (value <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
-    {
-        return 0.0f;
-    }
-
-    return std::clamp(
-        static_cast<float>(value - XINPUT_GAMEPAD_TRIGGER_THRESHOLD) /
-            static_cast<float>(255 - XINPUT_GAMEPAD_TRIGGER_THRESHOLD),
-        0.0f,
-        1.0f
-    );
-}
-
-WORD GetXInputButtonMask(GamepadButton button)
-{
-    switch (button)
-    {
-    case GamepadButton::South:
-        return XINPUT_GAMEPAD_A;
-    case GamepadButton::East:
-        return XINPUT_GAMEPAD_B;
-    case GamepadButton::West:
-        return XINPUT_GAMEPAD_X;
-    case GamepadButton::North:
-        return XINPUT_GAMEPAD_Y;
-    case GamepadButton::Back:
-        return XINPUT_GAMEPAD_BACK;
-    case GamepadButton::Start:
-        return XINPUT_GAMEPAD_START;
-    case GamepadButton::LeftStick:
-        return XINPUT_GAMEPAD_LEFT_THUMB;
-    case GamepadButton::RightStick:
-        return XINPUT_GAMEPAD_RIGHT_THUMB;
-    case GamepadButton::LeftShoulder:
-        return XINPUT_GAMEPAD_LEFT_SHOULDER;
-    case GamepadButton::RightShoulder:
-        return XINPUT_GAMEPAD_RIGHT_SHOULDER;
-    case GamepadButton::DpadUp:
-        return XINPUT_GAMEPAD_DPAD_UP;
-    case GamepadButton::DpadDown:
-        return XINPUT_GAMEPAD_DPAD_DOWN;
-    case GamepadButton::DpadLeft:
-        return XINPUT_GAMEPAD_DPAD_LEFT;
-    case GamepadButton::DpadRight:
-        return XINPUT_GAMEPAD_DPAD_RIGHT;
-    default:
-        return 0;
-    }
-}
-#endif
 
 bool ShouldLogAxisChange(float previousValue, float currentValue)
 {
@@ -192,7 +115,7 @@ void InputState::HandleEvent(const SDL_Event& event)
 void InputState::Update()
 {
     EnsureTimestampBaseInitialized();
-    PollXInputGamepads();
+    PollGamepads();
 }
 
 void InputState::EndFrame()
@@ -534,17 +457,16 @@ bool InputState::IsViewportInteractionPoint(float x, float y) const
         y <= (m_viewportInteractionRect.y + m_viewportInteractionRect.h);
 }
 
-void InputState::PollXInputGamepads()
+void InputState::PollGamepads()
 {
-#ifdef _WIN32
     const Uint64 timestampNs = SDL_GetTicksNS();
+    const std::array<PolledGamepadState, 4> polledGamepads = PollPlatformGamepads();
 
-    for (uint32_t playerIndex = 0; playerIndex < kMaxGamepads; ++playerIndex)
+    for (uint32_t playerIndex = 0; playerIndex < kMaxGamepads && playerIndex < polledGamepads.size(); ++playerIndex)
     {
         GamepadState& gamepad = m_gamepads[playerIndex];
-        XINPUT_STATE state{};
-        const DWORD result = XInputGetState(playerIndex, &state);
-        if (result != ERROR_SUCCESS)
+        const PolledGamepadState& polledGamepad = polledGamepads[playerIndex];
+        if (!polledGamepad.connected)
         {
             if (!gamepad.connected)
             {
@@ -580,46 +502,31 @@ void InputState::PollXInputGamepads()
         }
 
         const bool wasConnected = gamepad.connected;
-        const WORD buttons = state.Gamepad.wButtons;
-        const std::array<float, kGamepadAxisCount> updatedAxes{
-            NormalizeSignedThumbAxis(state.Gamepad.sThumbLX, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE),
-            -NormalizeSignedThumbAxis(state.Gamepad.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE),
-            NormalizeSignedThumbAxis(state.Gamepad.sThumbRX, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE),
-            -NormalizeSignedThumbAxis(state.Gamepad.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE),
-            NormalizeTriggerAxis(state.Gamepad.bLeftTrigger),
-            NormalizeTriggerAxis(state.Gamepad.bRightTrigger)
-        };
+        const std::array<float, kGamepadAxisCount>& updatedAxes = polledGamepad.axisValues;
 
         if (!wasConnected)
         {
             gamepad.connected = true;
             gamepad.connectedThisFrame = true;
-            gamepad.packetNumber = state.dwPacketNumber;
-            gamepad.buttonDown.fill(false);
-            for (size_t buttonIndex = 0; buttonIndex < kGamepadButtonCount; ++buttonIndex)
-            {
-                const GamepadButton button = static_cast<GamepadButton>(static_cast<int>(buttonIndex));
-                const WORD mask = GetXInputButtonMask(button);
-                gamepad.buttonDown[buttonIndex] = mask != 0 && (buttons & mask) != 0;
-            }
+            gamepad.packetNumber = polledGamepad.packetNumber;
+            gamepad.buttonDown = polledGamepad.buttonDown;
             gamepad.axisValues = updatedAxes;
 
             LogGamepadConnectionEvent(timestampNs, playerIndex, "connected");
             continue;
         }
 
-        if (gamepad.packetNumber == state.dwPacketNumber)
+        if (gamepad.packetNumber == polledGamepad.packetNumber)
         {
             continue;
         }
 
-        gamepad.packetNumber = state.dwPacketNumber;
+        gamepad.packetNumber = polledGamepad.packetNumber;
 
         for (size_t buttonIndex = 0; buttonIndex < kGamepadButtonCount; ++buttonIndex)
         {
             const GamepadButton button = static_cast<GamepadButton>(static_cast<int>(buttonIndex));
-            const WORD mask = GetXInputButtonMask(button);
-            const bool isDown = mask != 0 && (buttons & mask) != 0;
+            const bool isDown = polledGamepad.buttonDown[buttonIndex];
             const bool wasDown = gamepad.buttonDown[buttonIndex];
             if (isDown == wasDown)
             {
@@ -664,7 +571,6 @@ void InputState::PollXInputGamepads()
             }
         }
     }
-#endif
 }
 
 void InputState::EnsureTimestampBaseInitialized()
