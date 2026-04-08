@@ -8,6 +8,7 @@ add_library(engine_renderer
     mesh.cpp
     model_loader.cpp
     model_post_process.cpp
+    renderer_world.cpp
     rhi/factory.cpp
     texture_loader.cpp
     vulkan/fbx_model_loader.cpp

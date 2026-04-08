@@ -21,6 +21,22 @@
             }
         },
         {
+            "name": "windows-vs-base",
+            "hidden": true,
+            "generator": "Visual Studio 18 2026",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_MANIFEST_MODE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
             "name": "x64-debug",
             "displayName": "x64 Debug",
             "inherits": "windows-base",
@@ -42,6 +58,18 @@
             }
         },
         {
+            "name": "vs2026-x64",
+            "displayName": "Visual Studio 2026 x64",
+            "inherits": "windows-vs-base",
+            "architecture": {
+                "value": "x64",
+                "strategy": "set"
+            },
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-windows"
+            }
+        },
+        {
             "name": "x86-debug",
             "displayName": "x86 Debug",
             "inherits": "windows-base",
@@ -60,6 +88,18 @@
             "inherits": "x86-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "vs2026-x86",
+            "displayName": "Visual Studio 2026 x86",
+            "inherits": "windows-vs-base",
+            "architecture": {
+                "value": "Win32",
+                "strategy": "set"
+            },
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x86-windows"
             }
         },
         {
@@ -124,6 +164,20 @@
             "inherits": "windows-build-base"
         },
         {
+            "name": "vs2026-x64-debug",
+            "displayName": "Visual Studio 2026 x64 Debug Build",
+            "configurePreset": "vs2026-x64",
+            "configuration": "Debug",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "vs2026-x64-release",
+            "displayName": "Visual Studio 2026 x64 Release Build",
+            "configurePreset": "vs2026-x64",
+            "configuration": "Release",
+            "inherits": "windows-build-base"
+        },
+        {
             "name": "x86-debug",
             "displayName": "x86 Debug Build",
             "configurePreset": "x86-debug",
@@ -133,6 +187,20 @@
             "name": "x86-release",
             "displayName": "x86 Release Build",
             "configurePreset": "x86-release",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "vs2026-x86-debug",
+            "displayName": "Visual Studio 2026 x86 Debug Build",
+            "configurePreset": "vs2026-x86",
+            "configuration": "Debug",
+            "inherits": "windows-build-base"
+        },
+        {
+            "name": "vs2026-x86-release",
+            "displayName": "Visual Studio 2026 x86 Release Build",
+            "configurePreset": "vs2026-x86",
+            "configuration": "Release",
             "inherits": "windows-build-base"
         },
         {

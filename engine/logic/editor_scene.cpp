@@ -217,6 +217,31 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
 }
 }
 
+std::unique_ptr<IEditorWorld> CreateEditorWorld()
+{
+    return std::make_unique<EditorScene>();
+}
+
+SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path)
+{
+    return ReadSceneData(YAML::LoadFile(path));
+}
+
+void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output.is_open())
+    {
+        throw std::runtime_error("Failed to open scene file for writing: " + path);
+    }
+
+    output << EmitSceneYaml(sceneData);
+    if (!output.good())
+    {
+        throw std::runtime_error("Failed to write scene file: " + path);
+    }
+}
+
 EditorScene::EditorScene() = default;
 
 void EditorScene::LoadConfig(const std::string& path)
@@ -508,22 +533,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
 
 void EditorScene::SaveSceneToFile(const std::string& path) const
 {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output.is_open())
-    {
-        throw std::runtime_error("Failed to open scene file for writing: " + path);
-    }
-
-    output << EmitSceneYaml(CaptureSceneData());
-    if (!output.good())
-    {
-        throw std::runtime_error("Failed to write scene file: " + path);
-    }
-}
-
-SerializedSceneData EditorScene::LoadSceneDataFromFile(const std::string& path)
-{
-    return ReadSceneData(YAML::LoadFile(path));
+    SaveEditorSceneDataToFile(CaptureSceneData(), path);
 }
 
 std::string EditorScene::BuildSceneYamlPreview() const

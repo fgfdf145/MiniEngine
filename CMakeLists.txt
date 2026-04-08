@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMake")
+
 function(_miniengine_set_cached_path cache_var default_value docstring)
     if(DEFINED ${cache_var} AND NOT "${${cache_var}}" STREQUAL "")
         set(_miniengine_cached_value "${${cache_var}}")
@@ -176,3 +179,28 @@ add_subdirectory(engine/logic)
 add_subdirectory(engine/renderer)
 add_subdirectory(engine/application)
 add_subdirectory(app)
+
+foreach(_miniengine_engine_target IN ITEMS
+    engine_core
+    engine_platform
+    engine_scene
+    engine_logic
+    engine_renderer
+    engine_application
+)
+    if(TARGET ${_miniengine_engine_target})
+        set_target_properties(${_miniengine_engine_target} PROPERTIES FOLDER "Engine")
+    endif()
+endforeach()
+
+if(TARGET engine_renderer_shaders)
+    set_target_properties(engine_renderer_shaders PROPERTIES FOLDER "Assets")
+endif()
+
+if(TARGET miniengine_app)
+    set_target_properties(miniengine_app PROPERTIES FOLDER "App")
+endif()
+
+if(CMAKE_GENERATOR MATCHES "^Visual Studio" AND TARGET miniengine_app)
+    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT miniengine_app)
+endif()

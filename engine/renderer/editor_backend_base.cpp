@@ -554,7 +554,7 @@ bool SceneDataReferencesModel(SerializedSceneData& sceneData, const std::filesys
     return referenced;
 }
 
-void ResetModelToBuiltin(EditorScene& scene, entt::entity entity)
+void ResetModelToBuiltin(ISceneWorld& scene, entt::entity entity)
 {
     ModelComponent& model = scene.GetModel(entity);
     model.sourcePath.clear();
@@ -820,8 +820,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            State().editorScene.SaveSceneToFile(*uiFrame.actions.selectedSceneSavePath);
-            State().editorScene.SetSceneFilePath(*uiFrame.actions.selectedSceneSavePath);
+            EditorWorld().SaveSceneToFile(*uiFrame.actions.selectedSceneSavePath);
+            EditorWorld().SetSceneFilePath(*uiFrame.actions.selectedSceneSavePath);
             State().lastSceneIoError.clear();
             LOG_INFO("Saved scene successfully: {}", *uiFrame.actions.selectedSceneSavePath);
         }
@@ -869,18 +869,18 @@ void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
     State().viewportMatrices.projection = State().camera.GetProjectionMatrix(extent, false, useVulkanClipSpace);
     State().viewportMatrices.renderProjection = State().camera.GetProjectionMatrix(extent, useVulkanClipSpace, useVulkanClipSpace);
     State().viewportMatrices.model =
-        State().editorScene.HasSelection() ? State().editorScene.GetModelMatrix(State().editorScene.GetSelectedEntity()) : glm::mat4(1.0f);
+        EditorWorld().HasSelection() ? EditorWorld().GetModelMatrix(EditorWorld().GetSelectedEntity()) : glm::mat4(1.0f);
 }
 
 EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTextureId, RenderExtent viewportExtent)
 {
     const std::string selectedModelPath =
-        State().editorScene.HasSelection() ? State().editorScene.GetSelectedModel().sourcePath : std::string{};
+        EditorWorld().HasSelection() ? EditorWorld().GetSelectedModel().sourcePath : std::string{};
 
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,
-        State().editorScene,
+        EditorWorld(),
         selectedModelPath,
         State().lastModelLoadError,
         State().lastSceneIoError,
@@ -920,6 +920,26 @@ const RendererSharedState& EditorRenderBackendBase::State() const
     return *m_sharedState;
 }
 
+IEditorWorld& EditorRenderBackendBase::EditorWorld()
+{
+    return State().GetEditorWorld();
+}
+
+const IEditorWorld& EditorRenderBackendBase::EditorWorld() const
+{
+    return State().GetEditorWorld();
+}
+
+RendererWorld& EditorRenderBackendBase::RenderWorld()
+{
+    return State().rendererWorld;
+}
+
+const RendererWorld& EditorRenderBackendBase::RenderWorld() const
+{
+    return State().rendererWorld;
+}
+
 Window& EditorRenderBackendBase::GetWindow() const
 {
     return m_window;
@@ -933,8 +953,9 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
 )
 {
     const float moveDistance = camera.moveSpeed * deltaTime;
+    const bool mousePanActive = input.IsMousePanActive();
 
-    if (!blockKeyboardInput)
+    if (!blockKeyboardInput && !mousePanActive)
     {
         if (input.IsKeyDown(KeyCodes::W))
         {
@@ -952,7 +973,10 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
         {
             camera.MoveRight(moveDistance);
         }
+    }
 
+    if (!blockKeyboardInput)
+    {
         const int gamepadIndex = input.GetFirstConnectedGamepadIndex();
         if (gamepadIndex >= 0)
         {
@@ -1019,8 +1043,10 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
         State().lastEngineSettingsError.clear();
     }
 
+    State().editorWorld = CreateEditorWorld();
+    RenderWorld().SetSceneWorld(EditorWorld());
     InitializeEditorScene();
-    State().editorScene.CreateTwoCubeTestScene();
+    EditorWorld().CreateTwoCubeTestScene();
     if (startupModelPath.has_value())
     {
         State().pendingModelPath = *startupModelPath;
@@ -1034,7 +1060,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
 
 void EditorRenderBackendBase::InitializeEditorScene()
 {
-    State().editorScene.LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
+    EditorWorld().LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
 }
 
 std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::string& sourcePath)
@@ -1127,9 +1153,9 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         throw std::runtime_error("Deletion is only allowed inside the assets directory");
     }
 
-    for (entt::entity entity : State().editorScene.GetEntityOrder())
+    for (entt::entity entity : EditorWorld().GetEntityOrder())
     {
-        ModelComponent& model = State().editorScene.GetModel(entity);
+        ModelComponent& model = EditorWorld().GetModel(entity);
         if (model.sourcePath.empty())
         {
             continue;
@@ -1138,7 +1164,7 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         const std::filesystem::path modelPath = NormalizePath(model.sourcePath);
         if (modelPath == targetPath || IsPathInsideDirectory(modelPath, targetPath))
         {
-            ResetModelToBuiltin(State().editorScene, entity);
+            ResetModelToBuiltin(EditorWorld(), entity);
         }
     }
 
@@ -1156,7 +1182,7 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
         }
     }
 
-    if (State().editorScene.HasEntities())
+    if (EditorWorld().HasEntities())
     {
         RebuildSceneRenderables();
     }
@@ -1166,15 +1192,15 @@ void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
 
 void EditorRenderBackendBase::LoadSelectedModel(const std::string& path, bool resetTransform)
 {
-    if (!State().editorScene.HasSelection())
+    if (!EditorWorld().HasSelection())
     {
         throw std::runtime_error("No selected entity available to receive the model");
     }
 
-    entt::entity selectedEntity = State().editorScene.GetSelectedEntity();
-    ModelComponent previousModel = State().editorScene.GetModel(selectedEntity);
-    State().editorScene.GetModel(selectedEntity).sourcePath = path;
-    State().editorScene.GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
+    entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
+    ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
+    EditorWorld().GetModel(selectedEntity).sourcePath = path;
+    EditorWorld().GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
 
     try
     {
@@ -1182,11 +1208,11 @@ void EditorRenderBackendBase::LoadSelectedModel(const std::string& path, bool re
     }
     catch (...)
     {
-        State().editorScene.GetModel(selectedEntity) = previousModel;
+        EditorWorld().GetModel(selectedEntity) = previousModel;
         throw;
     }
 
-    const ModelComponent& model = State().editorScene.GetModel(selectedEntity);
+    const ModelComponent& model = EditorWorld().GetModel(selectedEntity);
     if (model.hasBounds)
     {
         State().camera.FrameBounds(model.minBounds, model.maxBounds);
@@ -1195,9 +1221,9 @@ void EditorRenderBackendBase::LoadSelectedModel(const std::string& path, bool re
     State().lastModelLoadError.clear();
     if (resetTransform)
     {
-        State().editorScene.ResetSelectedTransform();
+        EditorWorld().ResetSelectedTransform();
     }
-    LOG_INFO("Loaded model successfully into '{}': {}", State().editorScene.GetTag(selectedEntity).name, path);
+    LOG_INFO("Loaded model successfully into '{}': {}", EditorWorld().GetTag(selectedEntity).name, path);
 }
 
 void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const glm::vec3& worldPosition)
@@ -1219,9 +1245,9 @@ void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const
     entityData.transform.translation = worldPosition;
 
     const entt::entity previousSelection =
-        State().editorScene.HasSelection() ? State().editorScene.GetSelectedEntity() : entt::null;
-    const entt::entity placedEntity = State().editorScene.CreateEntity(entityData);
-    State().editorScene.SetSelectedEntity(placedEntity);
+        EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
+    const entt::entity placedEntity = EditorWorld().CreateEntity(entityData);
+    EditorWorld().SetSelectedEntity(placedEntity);
 
     try
     {
@@ -1229,8 +1255,8 @@ void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const
     }
     catch (...)
     {
-        State().editorScene.DestroyEntity(placedEntity);
-        State().editorScene.SetSelectedEntity(previousSelection);
+        EditorWorld().DestroyEntity(placedEntity);
+        EditorWorld().SetSelectedEntity(previousSelection);
         throw;
     }
 
@@ -1260,17 +1286,17 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
     const bool previewEntityStillExists =
         preview.active &&
         std::find(
-            State().editorScene.GetEntityOrder().begin(),
-            State().editorScene.GetEntityOrder().end(),
+            EditorWorld().GetEntityOrder().begin(),
+            EditorWorld().GetEntityOrder().end(),
             preview.entity
-        ) != State().editorScene.GetEntityOrder().end();
+        ) != EditorWorld().GetEntityOrder().end();
 
     if (!previewEntityStillExists || preview.modelPath != modelPath.string())
     {
         ClearViewportModelPreview();
 
         preview.previousSelection =
-            State().editorScene.HasSelection() ? State().editorScene.GetSelectedEntity() : entt::null;
+            EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
         preview.modelPath = modelPath.string();
 
         SerializedEntityData entityData{};
@@ -1279,7 +1305,7 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
         entityData.modelSourcePath = modelPath.string();
         entityData.transform.translation = placement.worldPosition;
 
-        const entt::entity previewEntity = State().editorScene.CreateEntity(entityData);
+        const entt::entity previewEntity = EditorWorld().CreateEntity(entityData);
 
         try
         {
@@ -1287,8 +1313,8 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
         }
         catch (...)
         {
-            State().editorScene.DestroyEntity(previewEntity);
-            State().editorScene.SetSelectedEntity(preview.previousSelection);
+            EditorWorld().DestroyEntity(previewEntity);
+            EditorWorld().SetSelectedEntity(preview.previousSelection);
             preview = {};
             throw;
         }
@@ -1297,17 +1323,17 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
         preview.entity = previewEntity;
         if (preview.previousSelection != entt::null)
         {
-            State().editorScene.SetSelectedEntity(preview.previousSelection);
+            EditorWorld().SetSelectedEntity(preview.previousSelection);
         }
         else
         {
-            State().editorScene.ClearSelection();
+            EditorWorld().ClearSelection();
         }
         State().lastModelLoadError.clear();
         return;
     }
 
-    State().editorScene.GetTransform(preview.entity).translation = placement.worldPosition;
+    EditorWorld().GetTransform(preview.entity).translation = placement.worldPosition;
 }
 
 void EditorRenderBackendBase::CommitViewportModelPreview(const EditorUiActions::ViewportModelPlacement& placement)
@@ -1318,10 +1344,10 @@ void EditorRenderBackendBase::CommitViewportModelPreview(const EditorUiActions::
         preview.active &&
         preview.modelPath == modelPath.string() &&
         std::find(
-            State().editorScene.GetEntityOrder().begin(),
-            State().editorScene.GetEntityOrder().end(),
+            EditorWorld().GetEntityOrder().begin(),
+            EditorWorld().GetEntityOrder().end(),
             preview.entity
-        ) != State().editorScene.GetEntityOrder().end();
+        ) != EditorWorld().GetEntityOrder().end();
 
     if (!previewEntityStillExists)
     {
@@ -1329,8 +1355,8 @@ void EditorRenderBackendBase::CommitViewportModelPreview(const EditorUiActions::
         return;
     }
 
-    State().editorScene.GetTransform(preview.entity).translation = placement.worldPosition;
-    State().editorScene.SetSelectedEntity(preview.entity);
+    EditorWorld().GetTransform(preview.entity).translation = placement.worldPosition;
+    EditorWorld().SetSelectedEntity(preview.entity);
     preview = {};
     State().lastModelLoadError.clear();
     LOG_INFO(
@@ -1351,16 +1377,16 @@ void EditorRenderBackendBase::ClearViewportModelPreview(bool restoreSelection)
     }
 
     State().viewportDragPreview = {};
-    State().editorScene.DestroyEntity(preview.entity);
+    EditorWorld().DestroyEntity(preview.entity);
     if (restoreSelection)
     {
         if (preview.previousSelection != entt::null)
         {
-            State().editorScene.SetSelectedEntity(preview.previousSelection);
+            EditorWorld().SetSelectedEntity(preview.previousSelection);
         }
         else
         {
-            State().editorScene.ClearSelection();
+            EditorWorld().ClearSelection();
         }
     }
 
@@ -1461,10 +1487,10 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
 
 void EditorRenderBackendBase::LoadScene(const std::string& path)
 {
-    const SerializedSceneData sceneData = EditorScene::LoadSceneDataFromFile(path);
-    State().editorScene.ApplySceneData(sceneData);
+    const SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
+    EditorWorld().ApplySceneData(sceneData);
     RebuildSceneRenderables();
-    State().editorScene.SetSceneFilePath(path);
+    EditorWorld().SetSceneFilePath(path);
     State().lastSceneIoError.clear();
     LOG_INFO("Loaded scene successfully: {}", path);
 }
@@ -1492,15 +1518,13 @@ size_t EditorRenderBackendBase::RefreshReferencedSceneFiles(const std::filesyste
 
         try
         {
-            SerializedSceneData sceneData = EditorScene::LoadSceneDataFromFile(candidatePath.string());
+            SerializedSceneData sceneData = LoadEditorSceneDataFromFile(candidatePath.string());
             if (!SceneDataReferencesModel(sceneData, modelPath))
             {
                 continue;
             }
 
-            EditorScene scratchScene;
-            scratchScene.ApplySceneData(sceneData);
-            scratchScene.SaveSceneToFile(candidatePath.string());
+            SaveEditorSceneDataToFile(sceneData, candidatePath.string());
             ++refreshedSceneCount;
         }
         catch (...)
@@ -1515,10 +1539,10 @@ size_t EditorRenderBackendBase::RefreshReferencedSceneFiles(const std::filesyste
 void EditorRenderBackendBase::CreateSceneEntity()
 {
     SerializedEntityData entityData{};
-    entityData.tagName = "Entity " + std::to_string(State().editorScene.GetEntityOrder().size() + 1);
+    entityData.tagName = "Entity " + std::to_string(EditorWorld().GetEntityOrder().size() + 1);
     entityData.modelDisplayName = entityData.tagName;
-    const entt::entity entity = State().editorScene.CreateEntity(entityData);
-    State().editorScene.SetSelectedEntity(entity);
+    const entt::entity entity = EditorWorld().CreateEntity(entityData);
+    EditorWorld().SetSelectedEntity(entity);
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
     LOG_INFO("Created scene entity '{}'", entityData.tagName);
@@ -1526,13 +1550,13 @@ void EditorRenderBackendBase::CreateSceneEntity()
 
 void EditorRenderBackendBase::DeleteSelectedSceneEntity()
 {
-    if (!State().editorScene.HasSelection())
+    if (!EditorWorld().HasSelection())
     {
         throw std::runtime_error("No selected scene entity to delete");
     }
 
-    const std::string tagName = State().editorScene.GetSelectedTag().name;
-    State().editorScene.DestroyEntity(State().editorScene.GetSelectedEntity());
+    const std::string tagName = EditorWorld().GetSelectedTag().name;
+    EditorWorld().DestroyEntity(EditorWorld().GetSelectedEntity());
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
     LOG_INFO("Deleted scene entity '{}'", tagName);
@@ -1601,14 +1625,14 @@ void EditorRenderBackendBase::SaveEngineSettings()
 
 void EditorRenderBackendBase::ApplySelectedModelBaseColorTexture(const std::string& path)
 {
-    if (!State().editorScene.HasSelection())
+    if (!EditorWorld().HasSelection())
     {
         throw std::runtime_error("No selected entity available to receive the texture");
     }
 
-    entt::entity selectedEntity = State().editorScene.GetSelectedEntity();
-    ModelComponent previousModel = State().editorScene.GetModel(selectedEntity);
-    ModelComponent& model = State().editorScene.GetModel(selectedEntity);
+    entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
+    ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
+    ModelComponent& model = EditorWorld().GetModel(selectedEntity);
     if (model.sourcePath.empty())
     {
         throw std::runtime_error("The selected entity does not reference an imported model");
@@ -1622,28 +1646,28 @@ void EditorRenderBackendBase::ApplySelectedModelBaseColorTexture(const std::stri
     }
     catch (...)
     {
-        State().editorScene.GetModel(selectedEntity) = previousModel;
+        EditorWorld().GetModel(selectedEntity) = previousModel;
         throw;
     }
 
     State().lastModelLoadError.clear();
     LOG_INFO(
         "Applied selected texture override to '{}': {}",
-        State().editorScene.GetTag(selectedEntity).name,
+        EditorWorld().GetTag(selectedEntity).name,
         path
     );
 }
 
 void EditorRenderBackendBase::ClearSelectedModelBaseColorTexture()
 {
-    if (!State().editorScene.HasSelection())
+    if (!EditorWorld().HasSelection())
     {
         throw std::runtime_error("No selected entity available to clear the texture override");
     }
 
-    entt::entity selectedEntity = State().editorScene.GetSelectedEntity();
-    ModelComponent previousModel = State().editorScene.GetModel(selectedEntity);
-    ModelComponent& model = State().editorScene.GetModel(selectedEntity);
+    entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
+    ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
+    ModelComponent& model = EditorWorld().GetModel(selectedEntity);
     if (model.sourcePath.empty())
     {
         throw std::runtime_error("The selected entity does not reference an imported model");
@@ -1657,19 +1681,19 @@ void EditorRenderBackendBase::ClearSelectedModelBaseColorTexture()
     }
     catch (...)
     {
-        State().editorScene.GetModel(selectedEntity) = previousModel;
+        EditorWorld().GetModel(selectedEntity) = previousModel;
         throw;
     }
 
     State().lastModelLoadError.clear();
-    LOG_INFO("Cleared selected texture override for '{}'", State().editorScene.GetTag(selectedEntity).name);
+    LOG_INFO("Cleared selected texture override for '{}'", EditorWorld().GetTag(selectedEntity).name);
 }
 
 void EditorRenderBackendBase::RebuildSceneRenderables()
 {
     std::vector<CpuRenderSubmesh> newRenderSubmeshes;
 
-    State().editorScene.ForEachEntity([&](
+    EditorWorld().ForEachEntity([&](
         entt::entity entity,
         const TagComponent& tag,
         const TransformComponent&,
@@ -1678,7 +1702,7 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
     {
         if (model.sourcePath.empty())
         {
-            State().editorScene.UpdateModelInfo(
+            EditorWorld().UpdateModelInfo(
                 entity,
                 tag.name,
                 std::string{},
@@ -1795,7 +1819,7 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
             newRenderSubmeshes.push_back(std::move(renderSubmesh));
         }
 
-        State().editorScene.UpdateModelInfo(
+        EditorWorld().UpdateModelInfo(
             entity,
             model.displayName,
             model.sourcePath,
@@ -1808,6 +1832,6 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
         );
     });
 
-    State().renderSubmeshes = std::move(newRenderSubmeshes);
+    RenderWorld().SetRenderSubmeshes(std::move(newRenderSubmeshes));
     State().renderablesDirty = true;
 }

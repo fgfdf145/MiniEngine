@@ -436,7 +436,7 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
-    for (const CpuRenderSubmesh& cpuRenderSubmesh : State().renderSubmeshes)
+    for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
         RenderSubmesh renderSubmesh{};
         renderSubmesh.entity = cpuRenderSubmesh.entity;
@@ -549,7 +549,7 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
     for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
     {
         ObjectPushConstants drawConstants{};
-        drawConstants.model = State().editorScene.GetModelMatrix(renderSubmesh.entity);
+        drawConstants.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);
         drawConstants.material = renderSubmesh.material;
         drawItems.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),

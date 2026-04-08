@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-class EditorScene;
+class IEditorWorld;
 
 struct EditorUiActions
 {
@@ -77,7 +77,7 @@ public:
     EditorUiFrameResult Draw(
         Camera& camera,
         ViewportMatrices& matrices,
-        EditorScene& scene,
+        IEditorWorld& scene,
         const std::string& currentModelPath,
         const std::string& lastLoadError,
         const std::string& lastSceneIoError,

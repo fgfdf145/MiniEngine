@@ -1,46 +1,8 @@
 #pragma once
 
-#include <logic_layer.h>
-#include <scene_components.h>
-#include <scene_world.h>
-#include <world_units.h>
+#include "editor_world.h"
 
-#include <imgui.h>
-#include <ImGuizmo.h>
-#include <entt/entt.hpp>
-#include <glm/glm.hpp>
-
-#include <cstdint>
-#include <string>
-#include <vector>
-
-struct GizmoSettings
-{
-    ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
-    ImGuizmo::MODE mode = ImGuizmo::WORLD;
-    bool useSnap = false;
-    glm::vec3 translationSnap = WorldUnits::kDefaultTranslationSnapMeters;
-    float rotationSnap = WorldUnits::kDefaultRotationSnapDegrees;
-    glm::vec3 scaleSnap = WorldUnits::kDefaultScaleSnap;
-};
-
-struct SerializedEntityData
-{
-    std::string tagName = "Cube";
-    std::string modelDisplayName = "Cube";
-    std::string modelSourcePath;
-    std::string modelBaseColorTextureOverridePath;
-    TransformComponent transform;
-};
-
-struct SerializedSceneData
-{
-    std::vector<SerializedEntityData> entities;
-    GizmoSettings gizmo;
-    int selectedEntityIndex = 0;
-};
-
-class EditorScene final : public IEditorLogicLayer, public ISceneWorld
+class EditorScene final : public IEditorWorld
 {
 public:
     EditorScene();
@@ -97,7 +59,6 @@ public:
 
     void ApplySceneData(const SerializedSceneData& sceneData);
     void SaveSceneToFile(const std::string& path) const;
-    static SerializedSceneData LoadSceneDataFromFile(const std::string& path);
     std::string BuildSceneYamlPreview() const;
     const std::string& GetConfigPath() const;
     const std::string& GetSceneFilePath() const;

@@ -32,6 +32,14 @@ Windows PowerShell:
 .\scripts\build.ps1 x64-debug
 ```
 
+Generate a Visual Studio solution that is split by the current CMake targets:
+
+```powershell
+.\scripts\generate-sln.ps1
+```
+
+On Visual Studio 2026 / CMake 4.3, the generated solution entry file is typically `MiniEngine.slnx`.
+
 Linux / macOS:
 
 ```bash
@@ -49,6 +57,12 @@ Build script options:
 - `.\scripts\build.ps1 <preset>` / `./scripts/build.sh <preset>`: select the CMake preset to build.
 - `-Jobs <n>` / `--jobs <n>`: override the auto-detected logical CPU count.
 - `-Target <name>` / `--target <name>`: build a specific target only.
+
+Solution generation options:
+
+- `.\scripts\generate-sln.ps1 -Preset vs2026-x64`: generate the default x64 Visual Studio 2026 solution.
+- `.\scripts\generate-sln.ps1 -Preset vs2026-x86`: generate the Win32 Visual Studio 2026 solution.
+- `.\scripts\generate-sln.ps1 -Open`: open the generated solution (`.sln` or `.slnx`) after configure finishes.
 
 If `Jobs` is not provided, the build scripts automatically detect the machine's logical CPU count and pass it to `cmake --build --parallel`, so the build uses all available threads by default.
 

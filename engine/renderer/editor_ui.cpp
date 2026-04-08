@@ -1,7 +1,7 @@
 #include "editor_ui.h"
 #include "model_loader.h"
 
-#include <editor_scene.h>
+#include <editor_world.h>
 #include <file_dialog/file_dialog.h>
 #include <log/log.h>
 #include <imgui.h>
@@ -2332,7 +2332,7 @@ bool ProjectWorldPointToViewport(
 }
 
 bool BuildProjectedSelectionBox(
-    const EditorScene& scene,
+    const IEditorWorld& scene,
     entt::entity entity,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
@@ -2361,7 +2361,7 @@ bool BuildProjectedSelectionBox(
 }
 
 bool ComputeWorldBounds(
-    const EditorScene& scene,
+    const IEditorWorld& scene,
     entt::entity entity,
     glm::vec3& minBounds,
     glm::vec3& maxBounds
@@ -2387,7 +2387,7 @@ bool ComputeWorldBounds(
 }
 
 std::vector<ProjectedEntityCenter> ProjectSceneCenters(
-    const EditorScene& scene,
+    const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect
 )
@@ -2481,7 +2481,7 @@ entt::entity PickHoveredEntity(const std::vector<ProjectedEntityCenter>& project
 }
 
 void DrawViewportSelectionOverlay(
-    const EditorScene& scene,
+    const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
     const std::vector<ProjectedEntityCenter>& projectedCenters
@@ -2589,7 +2589,7 @@ void DrawGizmoControls(GizmoSettings& gizmo)
 void RefreshViewportMatrices(
     Camera& camera,
     ViewportMatrices& matrices,
-    const EditorScene& scene,
+    const IEditorWorld& scene,
     RenderExtent viewportExtent,
     RenderBackendType currentBackendType
 )
@@ -2734,7 +2734,7 @@ void HandleViewportAssetDropTarget(
     ImGui::EndDragDropTarget();
 }
 
-void HandleViewportShortcuts(EditorScene& scene, Camera& camera, const ViewportOverlayRect& viewportRect)
+void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const ViewportOverlayRect& viewportRect)
 {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureKeyboard || !scene.HasSelection() || !viewportRect.focused)
@@ -2771,7 +2771,7 @@ void HandleViewportShortcuts(EditorScene& scene, Camera& camera, const ViewportO
 }
 
 void HandleViewportSelection(
-    EditorScene& scene,
+    IEditorWorld& scene,
     const std::vector<ProjectedEntityCenter>& projectedCenters,
     const ViewportOverlayRect& viewportRect
 )
@@ -2808,7 +2808,7 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
     matrices.view = camera.GetViewMatrix();
 }
 
-void DrawGizmoOverlay(EditorScene& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
+void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
 {
     if (!scene.HasSelection() || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
     {
@@ -3064,7 +3064,7 @@ void EditorUiController::CloseMaterialPreviewWindow()
 EditorUiFrameResult EditorUiController::Draw(
     Camera& camera,
     ViewportMatrices& matrices,
-    EditorScene& scene,
+    IEditorWorld& scene,
     const std::string& currentModelPath,
     const std::string& lastLoadError,
     const std::string& lastSceneIoError,
