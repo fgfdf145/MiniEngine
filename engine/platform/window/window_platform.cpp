@@ -58,6 +58,24 @@ void ApplyPlatformWindowHints()
     {
         LOG_INFO("SDL Vulkan loader hint: using SDL default discovery");
     }
+#elif defined(__APPLE__)
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "cocoa");
+
+#ifdef MINIENGINE_VULKAN_LOADER_PATH
+    constexpr const char* vulkanLoaderPath = MINIENGINE_VULKAN_LOADER_PATH;
+    std::error_code errorCode;
+    if (std::filesystem::exists(vulkanLoaderPath, errorCode) && !errorCode)
+    {
+        if (SDL_SetHint(SDL_HINT_VULKAN_LIBRARY, vulkanLoaderPath))
+        {
+            LOG_INFO("SDL Vulkan loader hint: {}", vulkanLoaderPath);
+        }
+    }
+    else
+#endif
+    {
+        LOG_INFO("SDL Vulkan loader hint: using SDL default discovery");
+    }
 #endif
 }
 }

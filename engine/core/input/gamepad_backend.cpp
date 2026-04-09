@@ -60,6 +60,50 @@ void SetButtonState(
 
     gamepad.buttonDown[buttonIndex] = (buttons & mask) != 0;
 }
+#else
+struct SdlGamepadSlot
+{
+    bool assigned = false;
+    SDL_JoystickID joystickId = 0;
+    SDL_Gamepad* handle = nullptr;
+    uint32_t packetNumber = 0;
+    std::array<bool, PolledGamepadState::kButtonCount> buttonDown{};
+    std::array<float, PolledGamepadState::kAxisCount> axisValues{};
+};
+
+std::array<SdlGamepadSlot, 4>& GetSdlGamepadSlots()
+{
+    static std::array<SdlGamepadSlot, 4> slots{};
+    return slots;
+}
+
+void ResetSdlGamepadSlot(SdlGamepadSlot& slot)
+{
+    if (slot.handle != nullptr)
+    {
+        SDL_CloseGamepad(slot.handle);
+    }
+
+    slot = SdlGamepadSlot{};
+}
+
+float NormalizeSdlGamepadAxis(SDL_GamepadAxis axis, Sint16 value)
+{
+    if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
+    {
+        return std::clamp(static_cast<float>(std::max<Sint16>(value, 0)) / 32767.0f, 0.0f, 1.0f);
+    }
+
+    const float maxMagnitude = value < 0 ? 32768.0f : 32767.0f;
+    float normalized = maxMagnitude > 0.0f ? static_cast<float>(value) / maxMagnitude : 0.0f;
+
+    if (axis == SDL_GAMEPAD_AXIS_LEFTY || axis == SDL_GAMEPAD_AXIS_RIGHTY)
+    {
+        normalized = -normalized;
+    }
+
+    return std::clamp(normalized, -1.0f, 1.0f);
+}
 #endif
 }
 
@@ -109,6 +153,98 @@ std::array<PolledGamepadState, 4> PollPlatformGamepads()
             NormalizeTriggerAxis(xinputGamepad.bLeftTrigger);
         gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)] =
             NormalizeTriggerAxis(xinputGamepad.bRightTrigger);
+    }
+#else
+    std::array<SdlGamepadSlot, 4>& slots = GetSdlGamepadSlots();
+    std::array<bool, 4> slotSeen{};
+
+    int connectedGamepadCount = 0;
+    SDL_JoystickID* connectedGamepads = SDL_GetGamepads(&connectedGamepadCount);
+
+    for (int connectedIndex = 0; connectedIndex < connectedGamepadCount; ++connectedIndex)
+    {
+        const SDL_JoystickID joystickId = connectedGamepads[connectedIndex];
+
+        size_t slotIndex = slots.size();
+        for (size_t existingSlotIndex = 0; existingSlotIndex < slots.size(); ++existingSlotIndex)
+        {
+            if (slots[existingSlotIndex].assigned && slots[existingSlotIndex].joystickId == joystickId)
+            {
+                slotIndex = existingSlotIndex;
+                break;
+            }
+        }
+
+        if (slotIndex == slots.size())
+        {
+            for (size_t freeSlotIndex = 0; freeSlotIndex < slots.size(); ++freeSlotIndex)
+            {
+                if (!slots[freeSlotIndex].assigned)
+                {
+                    slots[freeSlotIndex].assigned = true;
+                    slots[freeSlotIndex].joystickId = joystickId;
+                    slots[freeSlotIndex].handle = SDL_OpenGamepad(joystickId);
+                    slotIndex = freeSlotIndex;
+                    break;
+                }
+            }
+        }
+
+        if (slotIndex == slots.size())
+        {
+            continue;
+        }
+
+        SdlGamepadSlot& slot = slots[slotIndex];
+        if (slot.handle == nullptr)
+        {
+            slot.handle = SDL_OpenGamepad(joystickId);
+        }
+
+        if (slot.handle == nullptr)
+        {
+            ResetSdlGamepadSlot(slot);
+            continue;
+        }
+
+        slotSeen[slotIndex] = true;
+
+        PolledGamepadState& gamepad = gamepads[slotIndex];
+        gamepad.connected = true;
+
+        for (size_t buttonIndex = 0; buttonIndex < gamepad.buttonDown.size(); ++buttonIndex)
+        {
+            gamepad.buttonDown[buttonIndex] =
+                SDL_GetGamepadButton(slot.handle, static_cast<SDL_GamepadButton>(buttonIndex)) != 0;
+        }
+
+        for (size_t axisIndex = 0; axisIndex < gamepad.axisValues.size(); ++axisIndex)
+        {
+            const SDL_GamepadAxis axis = static_cast<SDL_GamepadAxis>(axisIndex);
+            gamepad.axisValues[axisIndex] = NormalizeSdlGamepadAxis(axis, SDL_GetGamepadAxis(slot.handle, axis));
+        }
+
+        if (gamepad.buttonDown != slot.buttonDown || gamepad.axisValues != slot.axisValues)
+        {
+            ++slot.packetNumber;
+            slot.buttonDown = gamepad.buttonDown;
+            slot.axisValues = gamepad.axisValues;
+        }
+
+        gamepad.packetNumber = slot.packetNumber;
+    }
+
+    if (connectedGamepads != nullptr)
+    {
+        SDL_free(connectedGamepads);
+    }
+
+    for (size_t slotIndex = 0; slotIndex < slots.size(); ++slotIndex)
+    {
+        if (!slotSeen[slotIndex])
+        {
+            ResetSdlGamepadSlot(slots[slotIndex]);
+        }
     }
 #endif
 

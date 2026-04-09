@@ -166,6 +166,11 @@ void VulkanRenderer::DrawFrame()
         FromVkExtent(m_sceneViewportLayer->GetExtent())
     );
     ApplyUiActions(uiFrame);
+    if (State().renderablesDirty)
+    {
+        UploadSceneResources();
+        State().renderablesDirty = false;
+    }
     ImGui::Render();
 
     m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position);

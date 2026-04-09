@@ -41,11 +41,33 @@ uint32_t ParsePositiveFrameCount(std::string_view value)
 
     return frameCount;
 }
+
+RenderBackendType ParseRenderBackend(std::string_view value)
+{
+    RenderBackendType backendType = GetPreferredRenderBackendType();
+    if (!TryParseRenderBackendType(value, backendType))
+    {
+        throw std::runtime_error(
+            "Unknown backend: " + std::string(value) + ". Supported values: vulkan, metal"
+        );
+    }
+
+    if (const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(backendType); runtimeError.has_value())
+    {
+        throw std::runtime_error(
+            "Requested backend '" + std::string(value) + "' is unavailable: " +
+            *runtimeError
+        );
+    }
+
+    return backendType;
+}
 }
 
 EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
 {
     EditorApplicationOptions options{};
+    options.renderBackend = GetPreferredRenderBackendType();
 
     for (int i = 1; i < argc; ++i)
     {
@@ -59,6 +81,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--frames")
         {
             options.maxFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--backend")
+        {
+            options.renderBackend = ParseRenderBackend(ReadRequiredArgument(i, argc, argv, argument));
             continue;
         }
 
@@ -89,8 +117,20 @@ EditorApplication::EditorApplication(EditorApplicationOptions options)
 int EditorApplication::Run()
 {
     auto sharedState = std::make_shared<RendererSharedState>();
-    Window window(1920, 1080, "MiniEngine");
-    std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(window, sharedState, m_options.startupModelPath);
+    LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
+#if defined(__APPLE__)
+    if (m_options.renderBackend == RenderBackendType::Metal)
+    {
+        LOG_INFO("Metal backend is active with the editor viewport PBR pipeline");
+    }
+#endif
+    Window window(1920, 1080, "MiniEngine", m_options.renderBackend);
+    std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(
+        window,
+        sharedState,
+        m_options.renderBackend,
+        m_options.startupModelPath
+    );
     uint32_t renderedFrameCount = 0;
 
     while (!window.ShouldClose())

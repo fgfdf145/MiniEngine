@@ -2,12 +2,15 @@
 
 #include "application.h"
 
+#include <render_backend_type.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
 struct EditorApplicationOptions
 {
+    RenderBackendType renderBackend = GetDefaultRenderBackendType();
     std::optional<std::string> startupModelPath;
     uint32_t maxFrames = 0;
 };

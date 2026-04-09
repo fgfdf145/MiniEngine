@@ -8,7 +8,7 @@ This folder contains the repository bootstrap scripts that fetch and restore the
 - Bootstrap the local `vcpkg` executable for the current host platform.
 - Run `vcpkg install` against the repository `vcpkg.json` manifest.
 - Detect the default triplet automatically from the host OS and architecture.
-- On Windows, warn when `FBX_SDK_ROOT` or `VULKAN_SDK` cannot be detected.
+- On Windows, warn when `VULKAN_SDK` cannot be detected.
 
 ## Usage
 
@@ -43,7 +43,13 @@ On Visual Studio 2026 / CMake 4.3, the generated solution entry file is typicall
 Linux / macOS:
 
 ```bash
-./scripts/build.sh linux-debug
+./scripts/build.sh
+```
+
+Generate an Xcode project on macOS:
+
+```bash
+./scripts/generate-xcode.sh --open
 ```
 
 Optional arguments:
@@ -57,6 +63,11 @@ Build script options:
 - `.\scripts\build.ps1 <preset>` / `./scripts/build.sh <preset>`: select the CMake preset to build.
 - `-Jobs <n>` / `--jobs <n>`: override the auto-detected logical CPU count.
 - `-Target <name>` / `--target <name>`: build a specific target only.
+
+Runtime options:
+
+- `--backend metal`: prefer the native Metal 3 backend on macOS.
+- `--backend vulkan`: force the Vulkan backend when that backend is compiled into the build.
 
 Solution generation options:
 
@@ -75,9 +86,6 @@ The scripts resolve `VCPKG_ROOT` in this order:
 
 If you prefer a shared/global checkout such as `C:\vcpkg`, pass it explicitly with `--vcpkg-root` / `-VcpkgRoot` or export `VCPKG_ROOT` before running the script.
 
-## Current Build Limitation
+## Model Import
 
-The bootstrap flow is cross-platform, but the current FBX build integration in this repository still depends on the Autodesk FBX SDK configuration used by the Windows build path. That means:
-
-- Windows: bootstrap plus SDK detection is fully supported.
-- Linux / macOS: package dependencies are restored, but a full configure/build still needs a non-Windows FBX SDK integration path in the project.
+The bootstrap flow is cross-platform, and model import now uses `tinygltf` for glTF 2.0 assets (`.gltf`, `.glb`) on every supported desktop platform.

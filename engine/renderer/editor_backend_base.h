@@ -50,7 +50,7 @@ private:
     static void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaTime, bool blockKeyboardInput);
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();
-    std::string ImportModelIntoAssetDirectory(const std::string& sourcePath);
+    std::string ImportModelIntoAssetDirectory(const EditorUiActions::ImportedModelRequest& request);
     void DeleteAssetPath(const std::string& path);
     void LoadSelectedModel(const std::string& path, bool resetTransform = true);
     void PlaceModelIntoScene(const std::string& path, const glm::vec3& worldPosition);

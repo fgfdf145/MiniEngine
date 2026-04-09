@@ -219,17 +219,6 @@ function Find-LatestDirectory([string]$RootPath, [string]$HeaderRelativePath)
     return $null
 }
 
-function Get-FbxSdkRootHint()
-{
-    $fromEnvironment = Find-FirstExistingPath @($env:FBX_SDK_ROOT)
-    if ($null -ne $fromEnvironment)
-    {
-        return $fromEnvironment
-    }
-
-    return (Find-LatestDirectory "C:\Program Files\Autodesk\FBX\FBX SDK" "include\fbxsdk.h")
-}
-
 function Get-VulkanSdkRootHint()
 {
     $fromEnvironment = Find-FirstExistingPath @($env:VULKAN_SDK)
@@ -298,16 +287,6 @@ if (-not $SkipSdkCheck)
 {
     if ($platformName -eq "windows")
     {
-        $fbxSdkRoot = Get-FbxSdkRootHint
-        if ($null -ne $fbxSdkRoot)
-        {
-            Write-Info("Detected FBX SDK root: $fbxSdkRoot")
-        }
-        else
-        {
-            Write-Warning("Autodesk FBX SDK was not detected. MiniEngine builds still require FBX_SDK_ROOT on Windows.")
-        }
-
         $vulkanSdkRoot = Get-VulkanSdkRootHint
         if ($null -ne $vulkanSdkRoot)
         {
@@ -320,9 +299,7 @@ if (-not $SkipSdkCheck)
     }
     else
     {
-        Write-Warning(
-            "Open-source dependencies were bootstrapped for $platformName, but the current MiniEngine FBX build path still targets Autodesk FBX SDK integration on Windows."
-        )
+        Write-Info("Open-source dependencies were bootstrapped for $platformName.")
     }
 }
 
@@ -332,10 +309,10 @@ Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Set VCPKG_ROOT to '$resolvedVcpkgRoot' if you want CMake to reuse this checkout."
 if ($platformName -eq "windows")
 {
-    Write-Host "  2. Ensure FBX_SDK_ROOT and VULKAN_SDK point to valid SDK installs."
+    Write-Host "  2. Ensure VULKAN_SDK points to a valid SDK install if glslc is not on PATH."
     Write-Host "  3. Build with automatic full-thread parallelism, for example: .\scripts\build.ps1 x64-debug"
 }
 else
 {
-    Write-Host "  2. This script prepared the package dependencies, but the current FBX configure path still needs Windows-oriented SDK integration before a full build can succeed."
+    Write-Host "  2. Configure and build normally on $platformName."
 }

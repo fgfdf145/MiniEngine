@@ -169,4 +169,4 @@ step "Dependency bootstrap completed"
 printf '\n'
 printf 'Next steps:\n'
 printf '  1. Export VCPKG_ROOT="%s" if you want CMake to reuse this checkout.\n' "$vcpkg_root"
-printf '  2. Open-source dependencies are ready on %s, but the current MiniEngine FBX configure path still needs Windows-oriented Autodesk FBX SDK integration before a full build can succeed.\n' "$platform_name"
+printf '  2. Configure and build normally on %s.\n' "$platform_name"

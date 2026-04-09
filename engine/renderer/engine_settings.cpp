@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -82,6 +83,40 @@ bool ReadBoolOrDefault(const YAML::Node& node, bool defaultValue)
         return defaultValue;
     }
     return node.as<bool>(defaultValue);
+}
+
+void LoadOptionalUiScale(const YAML::Node& node, std::optional<float>& value)
+{
+    if (!node || !node.IsScalar())
+    {
+        return;
+    }
+
+    value = platform::ui::ClampUiScale(node.as<float>(value.value_or(1.0f)));
+}
+
+void LoadUiScaleSettings(const YAML::Node& scaleNode, platform::ui::UiScaleConfiguration& scale)
+{
+    if (!scaleNode)
+    {
+        return;
+    }
+
+    if (scaleNode.IsScalar())
+    {
+        scale.fallback = platform::ui::ClampUiScale(scaleNode.as<float>(scale.fallback));
+        return;
+    }
+
+    if (!scaleNode.IsMap())
+    {
+        return;
+    }
+
+    scale.fallback = platform::ui::ClampUiScale(ReadFloatOrDefault(scaleNode["default"], scale.fallback));
+    LoadOptionalUiScale(scaleNode["windows"], scale.windows);
+    LoadOptionalUiScale(scaleNode["macos"], scale.macos);
+    LoadOptionalUiScale(scaleNode["linux"], scale.linux);
 }
 
 void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVisibilitySettings& windows)
@@ -164,7 +199,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
         const YAML::Node uiNode = root["ui"];
         if (uiNode && uiNode.IsMap())
         {
-            settings.editorUi.scale = std::clamp(ReadFloatOrDefault(uiNode["scale"], settings.editorUi.scale), 0.75f, 3.0f);
+            LoadUiScaleSettings(uiNode["scale"], settings.editorUi.scale);
             LoadWindowVisibilitySettings(uiNode["windows"], settings.editorUi.windows);
             LoadThemeSettings(uiNode["theme"], settings.editorUi.theme);
         }
@@ -196,7 +231,29 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "{\n";
         output << "  \"version\": " << settings.version << ",\n";
         output << "  \"ui\": {\n";
-        output << "    \"scale\": " << std::fixed << std::setprecision(3) << settings.editorUi.scale << ",\n";
+        output << "    \"scale\": {\n";
+        std::vector<std::pair<std::string_view, float>> configuredScales;
+        configuredScales.emplace_back("default", platform::ui::ClampUiScale(settings.editorUi.scale.fallback));
+        if (settings.editorUi.scale.windows.has_value())
+        {
+            configuredScales.emplace_back("windows", platform::ui::ClampUiScale(*settings.editorUi.scale.windows));
+        }
+        if (settings.editorUi.scale.macos.has_value())
+        {
+            configuredScales.emplace_back("macos", platform::ui::ClampUiScale(*settings.editorUi.scale.macos));
+        }
+        if (settings.editorUi.scale.linux.has_value())
+        {
+            configuredScales.emplace_back("linux", platform::ui::ClampUiScale(*settings.editorUi.scale.linux));
+        }
+
+        for (size_t scaleIndex = 0; scaleIndex < configuredScales.size(); ++scaleIndex)
+        {
+            const auto& [key, value] = configuredScales[scaleIndex];
+            output << "      \"" << key << "\": " << std::fixed << std::setprecision(3) << value;
+            output << (scaleIndex + 1 < configuredScales.size() ? ",\n" : "\n");
+        }
+        output << "    },\n";
         output << "    \"windows\": {\n";
         output << "      \"camera\": " << JsonBool(settings.editorUi.windows.camera) << ",\n";
         output << "      \"asset_manager\": " << JsonBool(settings.editorUi.windows.assetManager) << ",\n";

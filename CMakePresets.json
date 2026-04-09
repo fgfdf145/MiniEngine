@@ -141,6 +141,18 @@
                     "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
                 }
             }
+        },
+        {
+            "name": "macos-xcode",
+            "displayName": "macOS Xcode",
+            "generator": "Xcode",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
         }
     ],
     "buildPresets": [
@@ -212,6 +224,18 @@
             "name": "macos-debug",
             "displayName": "macOS Debug Build",
             "configurePreset": "macos-debug"
+        },
+        {
+            "name": "macos-xcode",
+            "displayName": "macOS Xcode Debug Build",
+            "configurePreset": "macos-xcode",
+            "configuration": "Debug"
+        },
+        {
+            "name": "macos-xcode-release",
+            "displayName": "macOS Xcode Release Build",
+            "configurePreset": "macos-xcode",
+            "configuration": "Release"
         }
     ]
 }

@@ -26,7 +26,9 @@ struct ModelMaterialData
     float occlusionStrength = 1.0f;
     float emissiveIntensity = 1.0f;
     float opacity = 1.0f;
+    MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
+    MaterialShaderGraph shaderGraph;
 };
 
 struct ModelSubmeshData
@@ -56,11 +58,8 @@ struct LoadedModelData
 class ModelLoader
 {
 public:
+    static bool IsImportAvailable();
     static bool IsSupportedModelPath(const std::filesystem::path& path);
-    static constexpr const char* GetImporterName()
-    {
-        return "FBX SDK";
-    }
-
+    static const char* GetImporterName();
     static LoadedModelData LoadModel(const std::string& path);
 };

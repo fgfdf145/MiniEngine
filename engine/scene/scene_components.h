@@ -18,7 +18,9 @@ struct ModelImportedMaterialInfo
     std::string roughnessTexturePath;
     std::string occlusionTexturePath;
     std::string emissiveTexturePath;
+    MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
+    MaterialShaderGraph shaderGraph;
 };
 
 struct ModelImportedSubmeshInfo

@@ -1,7 +1,10 @@
 {
   "version": 1,
   "ui": {
-    "scale": 0.750,
+    "scale": {
+      "default": 1.000,
+      "macos": 0.750
+    },
     "windows": {
       "camera": true,
       "asset_manager": true,

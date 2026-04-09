@@ -1,22 +1,15 @@
 #pragma once
 
+#include <render_backend_type.h>
 #include <SDL3/SDL_events.h>
 
-enum class RenderBackendType
+struct RenderBackendDescriptor
 {
-    Vulkan
+    RenderBackendType type = RenderBackendType::Vulkan;
+    const char* name = "Unknown";
+    bool isSupported = false;
+    const char* unsupportedReason = nullptr;
 };
-
-inline const char* ToString(RenderBackendType backendType)
-{
-    switch (backendType)
-    {
-    case RenderBackendType::Vulkan:
-        return "Vulkan";
-    default:
-        return "Unknown";
-    }
-}
 
 class IRenderBackend
 {

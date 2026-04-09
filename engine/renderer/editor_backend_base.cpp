@@ -1,4 +1,5 @@
 #include "editor_backend_base.h"
+#include "material_graph_runtime.h"
 
 #include <log/log.h>
 #include <window/window.h>
@@ -43,9 +44,13 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.roughnessTexturePath,
         material.occlusionTexturePath,
         material.emissiveTexturePath,
-        material.blendGraph
+        material.pbr,
+        material.blendGraph,
+        material.shaderGraph
     };
 }
+
+ModelImportedMaterialInfo SanitizeImportedMaterial(ModelImportedMaterialInfo material);
 
 ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submesh)
 {
@@ -76,6 +81,42 @@ void EmitMaterialBlendGraph(YAML::Emitter& emitter, const MaterialTextureBlendGr
     emitter << YAML::EndMap;
 }
 
+void EmitFloatArray(YAML::Emitter& emitter, const float* values, size_t count)
+{
+    emitter << YAML::Flow << YAML::BeginSeq;
+    for (size_t index = 0; index < count; ++index)
+    {
+        emitter << values[index];
+    }
+    emitter << YAML::EndSeq;
+}
+
+void EmitMaterialPbrSettings(YAML::Emitter& emitter, const MaterialPbrSurfaceSettings& pbr)
+{
+    emitter << YAML::Key << "pbr" << YAML::Value << YAML::BeginMap;
+    emitter << YAML::Key << "base_color_factor" << YAML::Value;
+    EmitFloatArray(emitter, pbr.baseColorFactor, 4);
+    emitter << YAML::Key << "emissive_color" << YAML::Value;
+    EmitFloatArray(emitter, pbr.emissiveColor, 3);
+    emitter << YAML::Key << "metallic_factor" << YAML::Value << pbr.metallicFactor;
+    emitter << YAML::Key << "roughness_factor" << YAML::Value << pbr.roughnessFactor;
+    emitter << YAML::Key << "normal_scale" << YAML::Value << pbr.normalScale;
+    emitter << YAML::Key << "occlusion_strength" << YAML::Value << pbr.occlusionStrength;
+    emitter << YAML::Key << "emissive_intensity" << YAML::Value << pbr.emissiveIntensity;
+    emitter << YAML::Key << "opacity" << YAML::Value << pbr.opacity;
+    emitter << YAML::EndMap;
+}
+
+YAML::Node BuildFloatArrayNode(const float* values, size_t count)
+{
+    YAML::Node node(YAML::NodeType::Sequence);
+    for (size_t index = 0; index < count; ++index)
+    {
+        node.push_back(values[index]);
+    }
+    return node;
+}
+
 std::filesystem::path NormalizePath(const std::filesystem::path& path);
 
 std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path& modelPath)
@@ -83,23 +124,29 @@ std::filesystem::path BuildImportedAssetManifestPath(const std::filesystem::path
     return std::filesystem::path(modelPath.string() + ".miniengine_asset.yaml");
 }
 
-std::filesystem::path BuildImportedMaterialAssetPath(const std::filesystem::path& modelPath, uint32_t materialIndex)
+std::string BuildImportedMaterialFilePrefix(const std::filesystem::path& modelPath, uint32_t materialIndex)
 {
-    std::ostringstream fileName;
-    fileName << "material_" << std::setfill('0') << std::setw(2) << materialIndex << ".material.yaml";
-    return modelPath.parent_path() / "materials" / fileName.str();
+    std::ostringstream prefix;
+    prefix << modelPath.stem().string() << "_material_" << std::setfill('0') << std::setw(2) << materialIndex;
+    return prefix.str();
 }
 
-std::string BuildImportedMaterialFolderName(uint32_t materialIndex)
+std::filesystem::path BuildImportedMaterialAssetPath(const std::filesystem::path& modelPath, uint32_t materialIndex)
 {
-    std::ostringstream folderName;
-    folderName << "material_" << std::setfill('0') << std::setw(2) << materialIndex;
-    return folderName.str();
+    return modelPath.parent_path() / (BuildImportedMaterialFilePrefix(modelPath, materialIndex) + ".material.yaml");
+}
+
+std::string BuildImportedMaterialGraphTextureSlotName(uint32_t nodeId)
+{
+    std::ostringstream slotName;
+    slotName << "graph_node_" << nodeId << "_texture";
+    return slotName.str();
 }
 
 std::filesystem::path BuildImportedMaterialTextureDirectory(const std::filesystem::path& modelPath, uint32_t materialIndex)
 {
-    return modelPath.parent_path() / "materials" / BuildImportedMaterialFolderName(materialIndex);
+    static_cast<void>(materialIndex);
+    return modelPath.parent_path();
 }
 
 void RemoveImportedTextureVariants(const std::filesystem::path& directory, const std::string& slotName)
@@ -152,7 +199,7 @@ std::string ImportTextureIntoMaterialDirectory(
     const std::string normalizedSlotName =
         slotName == nullptr || std::string(slotName).empty()
         ? "texture"
-        : std::string(slotName);
+        : BuildImportedMaterialFilePrefix(modelPath, materialIndex) + "_" + std::string(slotName);
     const std::filesystem::path destinationPath =
         destinationDirectory / (normalizedSlotName + sourceTexturePath.extension().string());
     if (NormalizePath(destinationPath) == sourceTexturePath)
@@ -231,6 +278,60 @@ ModelImportedMaterialInfo CanonicalizeImportedMaterialPaths(
             "secondary_emissive",
             material.blendGraph.secondaryEmissiveTexturePath
         );
+    for (MaterialShaderNode& node : material.shaderGraph.nodes)
+    {
+        if (node.type != MaterialShaderNodeType::Texture || node.texturePath.empty())
+        {
+            continue;
+        }
+
+        const std::string slotName = BuildImportedMaterialGraphTextureSlotName(node.id);
+        node.texturePath = ImportTextureIntoMaterialDirectory(
+            modelPath,
+            materialIndex,
+            slotName.c_str(),
+            node.texturePath
+        );
+    }
+    return material;
+}
+
+ModelImportedMaterialInfo PrepareImportedMaterialForAsset(
+    const std::filesystem::path& modelPath,
+    uint32_t materialIndex,
+    ModelImportedMaterialInfo material,
+    std::string* compileMessage = nullptr
+)
+{
+    EnsureMaterialShaderGraph(material.name, std::nullopt, material);
+    MaterialGraphCompileResult compileResult = CompileMaterialShaderGraph(material);
+    material = SanitizeImportedMaterial(material);
+    material = CanonicalizeImportedMaterialPaths(modelPath, materialIndex, material);
+    compileResult = CompileMaterialShaderGraph(material);
+    material = SanitizeImportedMaterial(material);
+    if (compileMessage != nullptr)
+    {
+        *compileMessage = compileResult.message;
+    }
+    return material;
+}
+
+ModelImportedMaterialInfo SanitizeImportedMaterial(ModelImportedMaterialInfo material)
+{
+    material.pbr.baseColorFactor[0] = std::clamp(material.pbr.baseColorFactor[0], 0.0f, 4.0f);
+    material.pbr.baseColorFactor[1] = std::clamp(material.pbr.baseColorFactor[1], 0.0f, 4.0f);
+    material.pbr.baseColorFactor[2] = std::clamp(material.pbr.baseColorFactor[2], 0.0f, 4.0f);
+    material.pbr.baseColorFactor[3] = std::clamp(material.pbr.baseColorFactor[3], 0.0f, 1.0f);
+    material.pbr.emissiveColor[0] = std::max(material.pbr.emissiveColor[0], 0.0f);
+    material.pbr.emissiveColor[1] = std::max(material.pbr.emissiveColor[1], 0.0f);
+    material.pbr.emissiveColor[2] = std::max(material.pbr.emissiveColor[2], 0.0f);
+    material.pbr.metallicFactor = std::clamp(material.pbr.metallicFactor, 0.0f, 1.0f);
+    material.pbr.roughnessFactor = std::clamp(material.pbr.roughnessFactor, 0.0f, 1.0f);
+    material.pbr.normalScale = std::clamp(material.pbr.normalScale, 0.0f, 4.0f);
+    material.pbr.occlusionStrength = std::clamp(material.pbr.occlusionStrength, 0.0f, 1.0f);
+    material.pbr.emissiveIntensity = std::max(material.pbr.emissiveIntensity, 0.0f);
+    material.pbr.opacity = std::clamp(material.pbr.opacity, 0.0f, 1.0f);
+    material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
     return material;
 }
 
@@ -243,7 +344,9 @@ void EmitImportedMaterialFields(YAML::Emitter& emitter, const ModelImportedMater
     emitter << YAML::Key << "roughness_texture_path" << YAML::Value << material.roughnessTexturePath;
     emitter << YAML::Key << "occlusion_texture_path" << YAML::Value << material.occlusionTexturePath;
     emitter << YAML::Key << "emissive_texture_path" << YAML::Value << material.emissiveTexturePath;
+    EmitMaterialPbrSettings(emitter, material.pbr);
     EmitMaterialBlendGraph(emitter, material.blendGraph);
+    emitter << YAML::Key << "shader_graph" << YAML::Value << SerializeMaterialShaderGraph(material.shaderGraph);
 }
 
 void WriteImportedMaterialAssetFile(
@@ -314,7 +417,7 @@ void ValidateImportedMaterialTargetPath(const std::filesystem::path& modelPath)
     }
     if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Material target is not a supported FBX model: " + modelPath.string());
+        throw std::runtime_error("Material target is not a supported glTF model: " + modelPath.string());
     }
 }
 
@@ -346,7 +449,18 @@ YAML::Node BuildImportedMaterialManifestNode(
     materialNode["roughness_texture_path"] = material.roughnessTexturePath;
     materialNode["occlusion_texture_path"] = material.occlusionTexturePath;
     materialNode["emissive_texture_path"] = material.emissiveTexturePath;
+    YAML::Node pbrNode(YAML::NodeType::Map);
+    pbrNode["base_color_factor"] = BuildFloatArrayNode(material.pbr.baseColorFactor, 4);
+    pbrNode["emissive_color"] = BuildFloatArrayNode(material.pbr.emissiveColor, 3);
+    pbrNode["metallic_factor"] = material.pbr.metallicFactor;
+    pbrNode["roughness_factor"] = material.pbr.roughnessFactor;
+    pbrNode["normal_scale"] = material.pbr.normalScale;
+    pbrNode["occlusion_strength"] = material.pbr.occlusionStrength;
+    pbrNode["emissive_intensity"] = material.pbr.emissiveIntensity;
+    pbrNode["opacity"] = material.pbr.opacity;
+    materialNode["pbr"] = pbrNode;
     materialNode["texture_graph"] = BuildMaterialBlendGraphNode(material.blendGraph);
+    materialNode["shader_graph"] = SerializeMaterialShaderGraph(material.shaderGraph);
     materialNode["material_asset_path"] = materialAssetPath.string();
     return materialNode;
 }
@@ -694,17 +808,22 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         LOG_ERROR("Failed to update viewport model preview: {}", error.what());
     }
 
-    if (uiFrame.actions.importedModelSourcePath.has_value())
+    if (uiFrame.actions.importedModelRequest.has_value())
     {
         try
         {
-            ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelSourcePath);
+            ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelRequest);
             State().lastModelLoadError.clear();
         }
         catch (const std::exception& error)
         {
             State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to import model into assets '{}': {}", *uiFrame.actions.importedModelSourcePath, error.what());
+            LOG_ERROR(
+                "Failed to import model '{}' into '{}': {}",
+                uiFrame.actions.importedModelRequest->sourcePath,
+                uiFrame.actions.importedModelRequest->destinationDirectory,
+                error.what()
+            );
         }
     }
     if (uiFrame.actions.selectedModelPath.has_value())
@@ -864,10 +983,12 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 
 void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
 {
-    const bool useVulkanClipSpace = m_backendType == RenderBackendType::Vulkan;
+    const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
+    const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
     State().viewportMatrices.view = State().camera.GetViewMatrix();
-    State().viewportMatrices.projection = State().camera.GetProjectionMatrix(extent, false, useVulkanClipSpace);
-    State().viewportMatrices.renderProjection = State().camera.GetProjectionMatrix(extent, useVulkanClipSpace, useVulkanClipSpace);
+    State().viewportMatrices.projection = State().camera.GetProjectionMatrix(extent, false, useZeroToOneDepth);
+    State().viewportMatrices.renderProjection =
+        State().camera.GetProjectionMatrix(extent, invertRenderYAxis, useZeroToOneDepth);
     State().viewportMatrices.model =
         EditorWorld().HasSelection() ? EditorWorld().GetModelMatrix(EditorWorld().GetSelectedEntity()) : glm::mat4(1.0f);
 }
@@ -1063,31 +1184,34 @@ void EditorRenderBackendBase::InitializeEditorScene()
     EditorWorld().LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
 }
 
-std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::string& sourcePath)
+std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const EditorUiActions::ImportedModelRequest& request)
 {
-    const std::filesystem::path sourceModelPath = NormalizePath(sourcePath);
+    const std::filesystem::path sourceModelPath = NormalizePath(request.sourcePath);
     if (!std::filesystem::exists(sourceModelPath))
     {
         throw std::runtime_error("Model source file does not exist: " + sourceModelPath.string());
     }
     if (!ModelLoader::IsSupportedModelPath(sourceModelPath))
     {
-        throw std::runtime_error("MiniEngine only imports FBX models (*.fbx): " + sourceModelPath.string());
+        throw std::runtime_error("MiniEngine only imports glTF 2.0 models (*.gltf, *.glb): " + sourceModelPath.string());
     }
 
-    const std::filesystem::path assetModelsRoot = std::filesystem::path(MINIENGINE_ASSET_DIR) / "models";
-    std::filesystem::create_directories(assetModelsRoot);
+    const std::filesystem::path assetRoot = NormalizePath(std::filesystem::path(MINIENGINE_ASSET_DIR));
+    const std::filesystem::path destinationDirectory =
+        request.destinationDirectory.empty()
+        ? assetRoot
+        : NormalizePath(request.destinationDirectory);
+    if (!IsPathInsideDirectory(destinationDirectory, assetRoot))
+    {
+        throw std::runtime_error("Model import destination must stay inside the assets directory: " + destinationDirectory.string());
+    }
+    std::filesystem::create_directories(destinationDirectory);
 
-    const std::filesystem::path bundleDirectory =
-        MakeUniqueDirectoryPath(assetModelsRoot / sourceModelPath.stem());
-    std::filesystem::create_directories(bundleDirectory);
-
-    const std::filesystem::path importedModelPath = bundleDirectory / sourceModelPath.filename();
+    const std::filesystem::path importedModelPath = MakeUniquePath(destinationDirectory / sourceModelPath.filename());
     std::filesystem::copy_file(sourceModelPath, importedModelPath, std::filesystem::copy_options::overwrite_existing);
     const ImportedModelFingerprint sourceFingerprint = ComputeImportedModelFingerprint(sourceModelPath);
 
     const LoadedModelData sourceModelData = ModelLoader::LoadModel(sourceModelPath.string());
-    const std::filesystem::path materialsDirectory = bundleDirectory / "materials";
 
     YAML::Emitter emitter;
     emitter << YAML::BeginMap;
@@ -1104,11 +1228,14 @@ std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::st
     for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(sourceModelData.materials.size()); ++materialIndex)
     {
         const ModelMaterialData& material = sourceModelData.materials[materialIndex];
-        ModelImportedMaterialInfo importedMaterial =
-            CanonicalizeImportedMaterialPaths(importedModelPath, materialIndex, BuildImportedMaterialInfo(material));
+        ModelImportedMaterialInfo importedMaterial = PrepareImportedMaterialForAsset(
+            importedModelPath,
+            materialIndex,
+            BuildImportedMaterialInfo(material)
+        );
 
         const std::filesystem::path materialAssetPath =
-            MakeUniquePath(materialsDirectory / BuildImportedMaterialAssetPath(importedModelPath, materialIndex).filename());
+            MakeUniquePath(BuildImportedMaterialAssetPath(importedModelPath, materialIndex));
         WriteImportedMaterialAssetFile(materialAssetPath, importedModelPath, materialIndex, importedMaterial);
 
         emitter << YAML::BeginMap;
@@ -1131,7 +1258,12 @@ std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const std::st
         throw std::runtime_error("Failed to write imported asset manifest for: " + importedModelPath.string());
     }
 
-    LOG_INFO("Imported model asset: {} -> {}", sourceModelPath.string(), importedModelPath.string());
+    LOG_INFO(
+        "Imported model asset into '{}': {} -> {}",
+        destinationDirectory.string(),
+        sourceModelPath.string(),
+        importedModelPath.string()
+    );
     return importedModelPath.string();
 }
 
@@ -1235,7 +1367,7 @@ void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const
     }
     if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Dropped asset is not a supported FBX model: " + modelPath.string());
+        throw std::runtime_error("Dropped asset is not a supported glTF model: " + modelPath.string());
     }
 
     SerializedEntityData entityData{};
@@ -1279,7 +1411,7 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
     }
     if (!ModelLoader::IsSupportedModelPath(modelPath))
     {
-        throw std::runtime_error("Preview asset is not a supported FBX model: " + modelPath.string());
+        throw std::runtime_error("Preview asset is not a supported glTF model: " + modelPath.string());
     }
 
     ViewportDragPreviewState& preview = State().viewportDragPreview;
@@ -1412,9 +1544,13 @@ void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiAct
         materialsNode.push_back(YAML::Node(YAML::NodeType::Map));
     }
 
-    ModelImportedMaterialInfo material = update.material;
-    material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
-    material = CanonicalizeImportedMaterialPaths(modelPath, update.materialIndex, material);
+    std::string compileMessage;
+    ModelImportedMaterialInfo material = PrepareImportedMaterialForAsset(
+        modelPath,
+        update.materialIndex,
+        update.material,
+        &compileMessage
+    );
 
     const std::filesystem::path materialAssetPath =
         ResolveMaterialAssetPath(modelPath, update.materialIndex, materialsNode[update.materialIndex]);
@@ -1428,10 +1564,11 @@ void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiAct
     RebuildSceneRenderables();
     State().lastModelLoadError.clear();
     LOG_INFO(
-        "Updated programmable PBR graph for '{}' material index {}; refreshed {} scene file(s)",
+        "Updated programmable PBR graph for '{}' material index {}; refreshed {} scene file(s). {}",
         modelPath.string(),
         update.materialIndex,
-        refreshedSceneCount
+        refreshedSceneCount,
+        compileMessage
     );
 }
 
@@ -1451,9 +1588,11 @@ void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
 
     for (size_t materialIndex = 0; materialIndex < update.materials.size(); ++materialIndex)
     {
-        ModelImportedMaterialInfo material = update.materials[materialIndex];
-        material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
-        material = CanonicalizeImportedMaterialPaths(modelPath, static_cast<uint32_t>(materialIndex), material);
+        ModelImportedMaterialInfo material = PrepareImportedMaterialForAsset(
+            modelPath,
+            static_cast<uint32_t>(materialIndex),
+            update.materials[materialIndex]
+        );
 
         const std::filesystem::path materialAssetPath =
             ResolveMaterialAssetPath(
@@ -1765,7 +1904,7 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
             renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
             renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
             renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];
-            renderSubmesh.material.baseColorFactor[3] = material.baseColor[3];
+            renderSubmesh.material.baseColorFactor[3] = material.baseColor[3] * material.opacity;
             renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
             renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
             renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;

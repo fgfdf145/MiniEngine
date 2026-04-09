@@ -1,6 +1,28 @@
 cmake_minimum_required(VERSION 3.25)
 
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE
+            "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            CACHE FILEPATH
+            "Path to the vcpkg toolchain file"
+        )
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE
+            "${CMAKE_CURRENT_SOURCE_DIR}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            CACHE FILEPATH
+            "Path to the vcpkg toolchain file"
+        )
+    endif()
+endif()
+
 project(MiniEngine LANGUAGES CXX)
+
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,19 +79,6 @@ if(MSVC)
 endif()
 
 if(WIN32)
-    set(_miniengine_default_fbx_sdk_root "")
-    if(DEFINED ENV{FBX_SDK_ROOT} AND NOT "$ENV{FBX_SDK_ROOT}" STREQUAL "")
-        set(_miniengine_default_fbx_sdk_root "$ENV{FBX_SDK_ROOT}")
-    elseif(EXISTS "C:/Program Files/Autodesk/FBX/FBX SDK/2020.3.9")
-        set(_miniengine_default_fbx_sdk_root "C:/Program Files/Autodesk/FBX/FBX SDK/2020.3.9")
-    endif()
-
-    _miniengine_set_cached_path(
-        MINIENGINE_FBX_SDK_ROOT
-        "${_miniengine_default_fbx_sdk_root}"
-        "Path to the Autodesk FBX SDK installation root"
-    )
-    
     set(_miniengine_default_vulkan_sdk_root "")
     if(DEFINED ENV{VULKAN_SDK} AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")
         set(_miniengine_default_vulkan_sdk_root "$ENV{VULKAN_SDK}")
@@ -115,12 +124,14 @@ elseif(DEFINED ENV{VULKAN_SDK} AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")
     set(Vulkan_ROOT "$ENV{VULKAN_SDK}")
 endif()
 
-include(cmake/AddFbxSdk.cmake)
-
 find_package(spdlog CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 if(NOT TARGET Vulkan::Vulkan)
-    find_package(Vulkan REQUIRED)
+    if(APPLE)
+        find_package(Vulkan QUIET)
+    else()
+        find_package(Vulkan REQUIRED)
+    endif()
 endif()
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
@@ -128,8 +139,47 @@ find_package(imguizmo CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
+find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
 
-if(NOT Vulkan_GLSLC_EXECUTABLE)
+set(MINIENGINE_HAS_VULKAN_BACKEND OFF)
+if(TARGET Vulkan::Vulkan)
+    set(MINIENGINE_HAS_VULKAN_BACKEND ON)
+endif()
+
+set(MINIENGINE_APPLE_FRAMEWORKS "")
+set(MINIENGINE_VULKAN_LOADER_PATH "")
+if(APPLE)
+    foreach(_miniengine_framework IN ITEMS Cocoa Foundation IOKit CoreVideo QuartzCore Metal)
+        find_library(_miniengine_${_miniengine_framework}_framework ${_miniengine_framework})
+        if(_miniengine_${_miniengine_framework}_framework)
+            list(APPEND MINIENGINE_APPLE_FRAMEWORKS "${_miniengine_${_miniengine_framework}_framework}")
+        endif()
+    endforeach()
+
+    if(DEFINED Vulkan_LIBRARY AND NOT "${Vulkan_LIBRARY}" STREQUAL "")
+        set(MINIENGINE_VULKAN_LOADER_PATH "${Vulkan_LIBRARY}")
+    elseif(TARGET Vulkan::Vulkan)
+        foreach(_miniengine_vulkan_location_property IN ITEMS
+            IMPORTED_LOCATION
+            IMPORTED_LOCATION_DEBUG
+            IMPORTED_LOCATION_RELEASE
+            IMPORTED_LOCATION_RELWITHDEBINFO
+            IMPORTED_LOCATION_MINSIZEREL
+        )
+            get_target_property(
+                _miniengine_vulkan_loader_candidate
+                Vulkan::Vulkan
+                ${_miniengine_vulkan_location_property}
+            )
+            if(_miniengine_vulkan_loader_candidate AND EXISTS "${_miniengine_vulkan_loader_candidate}")
+                set(MINIENGINE_VULKAN_LOADER_PATH "${_miniengine_vulkan_loader_candidate}")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(MINIENGINE_HAS_VULKAN_BACKEND AND NOT Vulkan_GLSLC_EXECUTABLE)
     set(_miniengine_glslc_hints "")
 
     if(DEFINED MINIENGINE_VULKAN_SDK_ROOT AND NOT "${MINIENGINE_VULKAN_SDK_ROOT}" STREQUAL "")
@@ -166,7 +216,7 @@ if(NOT Vulkan_GLSLC_EXECUTABLE)
     )
 endif()
 
-if(NOT Vulkan_GLSLC_EXECUTABLE)
+if(MINIENGINE_HAS_VULKAN_BACKEND AND NOT Vulkan_GLSLC_EXECUTABLE)
     message(FATAL_ERROR
         "glslc was not found. Install the Vulkan SDK or restore the vcpkg shaderc host dependency."
     )
@@ -203,4 +253,8 @@ endif()
 
 if(CMAKE_GENERATOR MATCHES "^Visual Studio" AND TARGET miniengine_app)
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT miniengine_app)
+endif()
+
+if(CMAKE_GENERATOR STREQUAL "Xcode" AND TARGET miniengine_app)
+    set_target_properties(miniengine_app PROPERTIES XCODE_GENERATE_SCHEME YES)
 endif()

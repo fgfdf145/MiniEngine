@@ -631,7 +631,7 @@ void InputState::LogKeyboardEvent(Uint64 timestampNs, KeyCode key, const char* a
 void InputState::LogGamepadConnectionEvent(Uint64 timestampNs, uint32_t playerIndex, const char* action) const
 {
     LOG_INPUT_INFO(
-        "[input][{}][{:.3f} ms] gamepad[{}] {} via XInput",
+        "[input][{}][{:.3f} ms] gamepad[{}] {}",
         FormatEventTimestamp(timestampNs),
         static_cast<double>(timestampNs) / 1'000'000.0,
         playerIndex,

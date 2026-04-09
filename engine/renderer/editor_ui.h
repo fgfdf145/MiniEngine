@@ -44,7 +44,13 @@ struct EditorUiActions
         std::string destinationDirectory;
     };
 
-    std::optional<std::string> importedModelSourcePath;
+    struct ImportedModelRequest
+    {
+        std::string sourcePath;
+        std::string destinationDirectory;
+    };
+
+    std::optional<ImportedModelRequest> importedModelRequest;
     std::optional<std::string> selectedModelPath;
     std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
@@ -101,7 +107,6 @@ private:
     void SyncBaseStyleColorsFromCurrentStyle();
     void ResetThemeColorsToDefault();
     bool DrawThemeEditorWindow();
-    float GetWindowUiScale() const;
     void OpenModelProcessorWindow(const std::string& modelPath);
     void CloseModelProcessorWindow();
     void OpenMaterialPreviewWindow(const std::string& materialPath);
@@ -137,20 +142,31 @@ private:
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_modelProcessorSelectedUvSubmeshIndex = 0;
     int m_materialPreviewMaterialIndex = 0;
+    uint32_t m_materialGraphSelectedNodeId = 0;
+    uint32_t m_materialGraphSelectedLinkId = 0;
     float m_modelPreviewYaw = 0.55f;
     float m_modelPreviewPitch = 0.35f;
     float m_modelPreviewDistance = 3.0f;
+    float m_assetBrowserTreePaneRatio = 0.34f;
+    MaterialGraphNodePosition m_materialGraphContextSpawnPosition{};
+    MaterialGraphNodePosition m_materialGraphViewOrigin{};
+    float m_materialGraphZoom = 1.0f;
     bool m_modelPreviewAutoFramePending = false;
+    bool m_materialGraphLinkDragActive = false;
+    bool m_materialGraphPanningActive = false;
     ModelImportedMaterialInfo m_materialPreviewMaterial;
     std::array<char, 256> m_assetRenameBuffer{};
+    std::string m_materialGraphLinkDragFromSlot;
     bool m_openDuplicateImportPopup = false;
     bool m_openAssetRenamePopup = false;
     bool m_openDeleteAssetPopup = false;
+    bool m_openMaterialGraphAddNodePopup = false;
     bool m_focusAssetRenameInput = false;
     bool m_showModelProcessorWindow = false;
     bool m_showMaterialPreviewWindow = false;
     bool m_modelProcessorDirty = false;
     bool m_selectedAssetIsDirectory = false;
+    uint32_t m_materialGraphLinkDragFromNodeId = 0;
     bool m_showCameraWindow = true;
     bool m_showAssetManagerWindow = true;
     bool m_showInputMonitorWindow = false;

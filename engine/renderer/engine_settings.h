@@ -1,9 +1,11 @@
 #pragma once
 
 #include <imgui.h>
+#include <ui/ui_scale.h>
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 struct EditorWindowVisibilitySettings
@@ -25,7 +27,7 @@ struct EditorThemeSettings
 
 struct EditorUiSettings
 {
-    float scale = 1.0f;
+    platform::ui::UiScaleConfiguration scale = platform::ui::BuildDefaultUiScaleConfiguration();
     EditorWindowVisibilitySettings windows;
     EditorThemeSettings theme;
 };
