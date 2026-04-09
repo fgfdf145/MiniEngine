@@ -1,0 +1,2643 @@
+asset:
+  version: 1
+  source:
+    original_path: /Users/sam/Downloads/free_1975_porsche_911_930_turbo.glb
+    file_size: 74151648
+    content_hash: d8a0471ba2a38172
+materials:
+  - name: material_0
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.00066472153, 0.00066472153, 0.00066472153, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 1
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 4
+      next_link_id: 3
+      nodes:
+        - id: 1
+          type: output
+          name: material_0 Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.00066472153
+              - 0.00066472153
+              - 0.00066472153
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_00_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_00.material.yaml
+  - name: 930_plastics
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.39444196, 0.39444196, 0.39444196, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0.40051496
+      roughness_factor: 1
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 6
+      next_link_id: 5
+      nodes:
+        - id: 1
+          type: output
+          name: 930_plastics Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.39444196
+              - 0.39444196
+              - 0.39444196
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0.40051496
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_01_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_01_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_01_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 4
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_01.material.yaml
+  - name: 930_stickers
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.47596356, 0.47596356, 0.47596356, 0.99]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0.8225334
+      roughness_factor: 0.45164287
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 0.99
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 4
+      next_link_id: 3
+      nodes:
+        - id: 1
+          type: output
+          name: 930_stickers Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.47596356
+              - 0.47596356
+              - 0.47596356
+              - 0.99
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0.8225334
+            roughness_factor: 0.45164287
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 0.99
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_02_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_02.material.yaml
+  - name: plate
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.16587472, 0.16587472, 0.16587472, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0.26391006
+      roughness_factor: 0.14195885
+      normal_scale: 0.32
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 5
+      next_link_id: 4
+      nodes:
+        - id: 1
+          type: output
+          name: plate Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.16587472
+              - 0.16587472
+              - 0.16587472
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0.26391006
+            roughness_factor: 0.14195885
+            normal_scale: 0.32
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_03_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_03_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: normal
+        - id: 3
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_03.material.yaml
+  - name: 930_rim
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [1, 1, 1, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0.94101286
+      roughness_factor: 0.8620637
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 8
+      next_link_id: 7
+      nodes:
+        - id: 1
+          type: output
+          name: 930_rim Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0.94101286
+            roughness_factor: 0.8620637
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 6
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04_graph_node_6_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 7
+          type: texture
+          name: Occlusion Texture
+          position:
+            - -248
+            - 388
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04_graph_node_7_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: normal
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 4
+          from_node_id: 6
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 5
+          from_node_id: 7
+          from_slot: texture
+          to_node_id: 0
+          to_slot: occlusion
+        - id: 6
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_04.material.yaml
+  - name: 930_tire
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.3580039, 0.3580039, 0.3580039, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0.18188663
+      roughness_factor: 0.7406035
+      normal_scale: 1
+      occlusion_strength: 0.55049545
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 8
+      next_link_id: 7
+      nodes:
+        - id: 1
+          type: output
+          name: 930_tire Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.3580039
+              - 0.3580039
+              - 0.3580039
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0.18188663
+            roughness_factor: 0.7406035
+            normal_scale: 1
+            occlusion_strength: 0.55049545
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 6
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05_graph_node_6_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 7
+          type: texture
+          name: Occlusion Texture
+          position:
+            - -248
+            - 388
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05_graph_node_7_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: normal
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 4
+          from_node_id: 6
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 5
+          from_node_id: 7
+          from_slot: texture
+          to_node_id: 0
+          to_slot: occlusion
+        - id: 6
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_05.material.yaml
+  - name: 930_lights
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [1, 1, 1, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 0.17581362
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 7
+      next_link_id: 6
+      nodes:
+        - id: 1
+          type: output
+          name: 930_lights Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 0.17581362
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_06_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_06_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_06_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 6
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_06_graph_node_6_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: normal
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 4
+          from_node_id: 6
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 5
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_06.material.yaml
+  - name: glass
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.26083574, 0.26083574, 0.26083574, 0.8042929]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 1
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 0.8042929
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 6
+      next_link_id: 5
+      nodes:
+        - id: 1
+          type: output
+          name: glass Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.26083574
+              - 0.26083574
+              - 0.26083574
+              - 0.8042929
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 0.8042929
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_07_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_07_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_07_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 4
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_07.material.yaml
+  - name: 930_chromes
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [1, 1, 1, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 0.63128936
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 6
+      next_link_id: 5
+      nodes:
+        - id: 1
+          type: output
+          name: 930_chromes Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 0.63128936
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_08_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_08_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_08_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 4
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_08.material.yaml
+  - name: paint
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.09587154, 0.08885756, 0.08620801, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 0.424807
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 6
+      next_link_id: 5
+      nodes:
+        - id: 1
+          type: output
+          name: paint Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.09587154
+              - 0.08885756
+              - 0.08620801
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 0.424807
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_09_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_09_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Occlusion Texture
+          position:
+            - -248
+            - 388
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_09_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: metallic
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: occlusion
+        - id: 4
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_09.material.yaml
+  - name: coat
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.6798734, 0.6798734, 0.6798734, 0.24261671]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 0.71631145
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 0.24261671
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 7
+      next_link_id: 6
+      nodes:
+        - id: 1
+          type: output
+          name: coat Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.6798734
+              - 0.6798734
+              - 0.6798734
+              - 0.24261671
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 0.71631145
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 0.24261671
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_10_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_10_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_10_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 6
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_10_graph_node_6_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: normal
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 4
+          from_node_id: 6
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 5
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_10.material.yaml
+  - name: black
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.0014208306, 0.0014088752, 0.0014088752, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 1
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 3
+      next_link_id: 2
+      nodes:
+        - id: 1
+          type: output
+          name: black Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.0014208306
+              - 0.0014088752
+              - 0.0014088752
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 2
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_11.material.yaml
+  - name: 930_lights_refraction
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0, 0, 0, 0.25]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 1
+      roughness_factor: 0.18188663
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 0.25
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 4
+      next_link_id: 3
+      nodes:
+        - id: 1
+          type: output
+          name: 930_lights_refraction Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0
+              - 0
+              - 0
+              - 0.25
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 1
+            roughness_factor: 0.18188663
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 0.25
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Normal Texture
+          position:
+            - -248
+            - 112
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_12_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: normal
+        - id: 2
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_12.material.yaml
+  - name: 930_wunderbaum
+    base_color_texture_path: ""
+    normal_texture_path: ""
+    metallic_texture_path: ""
+    roughness_texture_path: ""
+    occlusion_texture_path: ""
+    emissive_texture_path: ""
+    pbr:
+      base_color_factor: [0.5, 0.5, 0.5, 1]
+      emissive_color: [0, 0, 0]
+      metallic_factor: 0
+      roughness_factor: 1
+      normal_scale: 1
+      occlusion_strength: 1
+      emissive_intensity: 1
+      opacity: 1
+    texture_graph:
+      enabled: false
+      blend_factor: 0
+      blend_mask_texture_path: ""
+      secondary_base_color_texture_path: ""
+      secondary_normal_texture_path: ""
+      secondary_metallic_texture_path: ""
+      secondary_roughness_texture_path: ""
+      secondary_occlusion_texture_path: ""
+      secondary_emissive_texture_path: ""
+    shader_graph:
+      version: 2
+      next_node_id: 6
+      next_link_id: 5
+      nodes:
+        - id: 1
+          type: output
+          name: 930_wunderbaum Output
+          position:
+            - 1120
+            - 240
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 0.5
+              - 0.5
+              - 0.5
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 2
+          type: surface
+          name: Primary Surface
+          position:
+            - 72
+            - 80
+          texture_path: ""
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 3
+          type: texture
+          name: Base Color Texture
+          position:
+            - -248
+            - 20
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_13_graph_node_3_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 4
+          type: texture
+          name: Metallic Texture
+          position:
+            - -248
+            - 204
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_13_graph_node_4_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+        - id: 5
+          type: texture
+          name: Roughness Texture
+          position:
+            - -248
+            - 296
+          texture_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_13_graph_node_5_texture.png
+          scalar_value: 1
+          color_value:
+            - 1
+            - 1
+            - 1
+            - 1
+          pbr:
+            base_color_factor:
+              - 1
+              - 1
+              - 1
+              - 1
+            emissive_color:
+              - 0
+              - 0
+              - 0
+            metallic_factor: 0
+            roughness_factor: 1
+            normal_scale: 1
+            occlusion_strength: 1
+            emissive_intensity: 1
+            opacity: 1
+      links:
+        - id: 1
+          from_node_id: 3
+          from_slot: texture
+          to_node_id: 2
+          to_slot: base_color
+        - id: 2
+          from_node_id: 4
+          from_slot: texture
+          to_node_id: 0
+          to_slot: metallic
+        - id: 3
+          from_node_id: 5
+          from_slot: texture
+          to_node_id: 0
+          to_slot: roughness
+        - id: 4
+          from_node_id: 0
+          from_slot: surface
+          to_node_id: 3208943994
+          to_slot: surface
+    material_asset_path: /Users/sam/Documents/MiniEngine/assets/New Folder/free_1975_porsche_911_930_turbo_material_13.material.yaml
