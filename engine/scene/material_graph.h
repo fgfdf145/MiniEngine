@@ -46,6 +46,8 @@ struct MaterialShaderNode
     MaterialShaderNodeType type = MaterialShaderNodeType::Texture;
     std::string name;
     MaterialGraphNodePosition position;
+    float width = 0.0f;
+    float height = 0.0f;
     std::string texturePath;
     float scalarValue = 1.0f;
     float colorValue[4] = { 1.0f, 1.0f, 1.0f, 1.0f };

@@ -475,6 +475,13 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         position.push_back(node.position.x);
         position.push_back(node.position.y);
         nodeMap["position"] = position;
+        if (node.width > 0.0f || node.height > 0.0f)
+        {
+            YAML::Node size(YAML::NodeType::Sequence);
+            size.push_back(node.width);
+            size.push_back(node.height);
+            nodeMap["size"] = size;
+        }
         nodeMap["texture_path"] = node.texturePath;
         nodeMap["scalar_value"] = node.scalarValue;
         YAML::Node colorValue(YAML::NodeType::Sequence);
@@ -579,6 +586,12 @@ bool DeserializeMaterialShaderGraph(
         {
             node.position.x = positionNode[0].as<float>(node.position.x);
             node.position.y = positionNode[1].as<float>(node.position.y);
+        }
+        const YAML::Node sizeNode = nodeMap["size"];
+        if (sizeNode && sizeNode.IsSequence() && sizeNode.size() == 2)
+        {
+            node.width = std::max(sizeNode[0].as<float>(node.width), 0.0f);
+            node.height = std::max(sizeNode[1].as<float>(node.height), 0.0f);
         }
         node.texturePath = nodeMap["texture_path"].as<std::string>(std::string{});
         node.scalarValue = nodeMap["scalar_value"].as<float>(node.scalarValue);
