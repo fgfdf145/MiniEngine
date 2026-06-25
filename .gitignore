@@ -9,8 +9,16 @@ build/
 out/
 bin/
 obj/
-.deps/
 vcpkg_installed/
+
+# vcpkg installed packages (persisted outside build dir, but not committed)
+.deps/vcpkg_installed/
+
+# vcpkg internal build artifacts (inside the submodule, ignored at repo level)
+.deps/vcpkg/buildtrees/
+.deps/vcpkg/packages/
+.deps/vcpkg/downloads/
+.deps/vcpkg/vcpkg.exe
 
 # CMake
 CMakeFiles/

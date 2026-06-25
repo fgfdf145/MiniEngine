@@ -76,16 +76,26 @@ VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint3
     return m_descriptorSets[descriptorIndex];
 }
 
-void VulkanUniformBuffer::Update(uint32_t imageIndex, const ViewportMatrices& matrices, const glm::vec3& cameraPosition)
+void VulkanUniformBuffer::Update(
+    uint32_t imageIndex,
+    const ViewportMatrices& matrices,
+    const glm::vec3& cameraPosition,
+    const std::vector<GpuLightData>& lights
+)
 {
     CameraUniformData data{};
     data.view = matrices.view;
     data.proj = matrices.renderProjection;
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
+    data.ambientColorAndIntensity = glm::vec4(0.05f, 0.05f, 0.08f, 1.0f);
 
-    const glm::vec3 lightDirection = glm::normalize(glm::vec3(-0.6f, -1.0f, -0.35f));
-    data.lightDirectionAndIntensity = glm::vec4(lightDirection, 2.25f);
-    data.lightColorAndAmbient = glm::vec4(1.0f, 0.98f, 0.95f, 0.2f);
+    const uint32_t lightCount = std::min(static_cast<uint32_t>(lights.size()), kMaxSceneLights);
+    data.sceneLightCount = glm::uvec4(lightCount, 0u, 0u, 0u);
+    for (uint32_t i = 0; i < lightCount; ++i)
+    {
+        data.lights[i] = lights[i];
+    }
+
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }
 

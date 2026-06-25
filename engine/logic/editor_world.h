@@ -34,9 +34,23 @@ struct SerializedEntityData
     TransformComponent transform;
 };
 
+struct SerializedLightData
+{
+    std::string tagName = "Light";
+    LightType lightType = LightType::Point;
+    glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+    float intensity = 1000.0f;
+    float range = 10.0f;
+    float spotInnerAngle = 15.0f;
+    float spotOuterAngle = 30.0f;
+    glm::vec2 areaSize{ 1.0f, 1.0f };
+    TransformComponent transform;
+};
+
 struct SerializedSceneData
 {
     std::vector<SerializedEntityData> entities;
+    std::vector<SerializedLightData> lights;
     GizmoSettings gizmo;
     int selectedEntityIndex = 0;
 };
@@ -88,6 +102,17 @@ public:
     virtual std::string BuildSceneYamlPreview() const = 0;
     virtual const std::string& GetConfigPath() const = 0;
     virtual const std::string& GetSceneFilePath() const = 0;
+
+    // Light entity management
+    virtual entt::entity CreateLightEntity(const SerializedLightData& lightData) = 0;
+    virtual void DestroyLightEntity(entt::entity entity) = 0;
+    virtual bool HasLightComponent(entt::entity entity) const = 0;
+    virtual LightComponent& GetLightComponent(entt::entity entity) = 0;
+    virtual const LightComponent& GetLightComponent(entt::entity entity) const = 0;
+    virtual const std::vector<entt::entity>& GetLightOrder() const = 0;
+    virtual void ForEachLight(
+        const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
+    ) const = 0;
 };
 
 std::unique_ptr<IEditorWorld> CreateEditorWorld();

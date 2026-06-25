@@ -48,7 +48,7 @@ RenderBackendType ParseRenderBackend(std::string_view value)
     if (!TryParseRenderBackendType(value, backendType))
     {
         throw std::runtime_error(
-            "Unknown backend: " + std::string(value) + ". Supported values: vulkan, metal"
+            "Unknown backend: " + std::string(value) + ". Supported values: vulkan"
         );
     }
 
@@ -118,12 +118,6 @@ int EditorApplication::Run()
 {
     auto sharedState = std::make_shared<RendererSharedState>();
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
-#if defined(__APPLE__)
-    if (m_options.renderBackend == RenderBackendType::Metal)
-    {
-        LOG_INFO("Metal backend is active with the editor viewport PBR pipeline");
-    }
-#endif
     Window window(1920, 1080, "MiniEngine", m_options.renderBackend);
     std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(
         window,

@@ -1,5 +1,19 @@
 #version 450
 
+// Light type constants — must match C++ LightType enum
+#define LIGHT_DIRECTIONAL 0
+#define LIGHT_POINT       1
+#define LIGHT_SPOT        2
+#define LIGHT_AREA        3
+#define LIGHT_AMBIENT     4
+
+struct SceneLightData {
+    vec4 positionAndRange;     // xyz = world position, w = range (metres)
+    vec4 colorAndIntensity;    // xyz = linear RGB color, w = intensity (lumens or lux)
+    vec4 directionAndType;     // xyz = world direction (toward light), w = LightType
+    vec4 spotAndArea;          // x = cos(inner), y = cos(outer), z = areaW, w = areaH
+};
+
 layout(push_constant) uniform DrawConstants
 {
     mat4 model;
@@ -14,19 +28,20 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
-    vec4 lightDirectionAndIntensity;
-    vec4 lightColorAndAmbient;
+    vec4 ambientColorAndIntensity; // xyz = color, w = intensity multiplier
+    SceneLightData lights[8];
+    uvec4 sceneLightCount;         // x = active light count
 } ubo;
 
-layout(set = 0, binding = 1) uniform sampler2D baseColorTexture;
-layout(set = 0, binding = 2) uniform sampler2D normalTexture;
-layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
-layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
-layout(set = 0, binding = 5) uniform sampler2D occlusionTexture;
-layout(set = 0, binding = 6) uniform sampler2D emissiveTexture;
-layout(set = 0, binding = 7) uniform sampler2D secondaryBaseColorTexture;
-layout(set = 0, binding = 8) uniform sampler2D secondaryNormalTexture;
-layout(set = 0, binding = 9) uniform sampler2D secondaryMetallicTexture;
+layout(set = 0, binding = 1)  uniform sampler2D baseColorTexture;
+layout(set = 0, binding = 2)  uniform sampler2D normalTexture;
+layout(set = 0, binding = 3)  uniform sampler2D metallicTexture;
+layout(set = 0, binding = 4)  uniform sampler2D roughnessTexture;
+layout(set = 0, binding = 5)  uniform sampler2D occlusionTexture;
+layout(set = 0, binding = 6)  uniform sampler2D emissiveTexture;
+layout(set = 0, binding = 7)  uniform sampler2D secondaryBaseColorTexture;
+layout(set = 0, binding = 8)  uniform sampler2D secondaryNormalTexture;
+layout(set = 0, binding = 9)  uniform sampler2D secondaryMetallicTexture;
 layout(set = 0, binding = 10) uniform sampler2D secondaryRoughnessTexture;
 layout(set = 0, binding = 11) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 0, binding = 12) uniform sampler2D secondaryEmissiveTexture;
@@ -37,120 +52,258 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 fragWorldNormal;
 layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 4) in vec3 fragWorldPosition;
+
 layout(location = 0) out vec4 outColor;
 
 const float PI = 3.14159265359;
 
-float DistributionGGX(vec3 normal, vec3 halfVector, float roughness)
-{
-    float alpha = roughness * roughness;
-    float alphaSquared = alpha * alpha;
-    float nDotH = max(dot(normal, halfVector), 0.0);
-    float nDotHSquared = nDotH * nDotH;
+// ---------------------------------------------------------------------------
+// PBR microfacet BRDF helpers
+// ---------------------------------------------------------------------------
 
-    float denominator = nDotHSquared * (alphaSquared - 1.0) + 1.0;
-    return alphaSquared / max(PI * denominator * denominator, 0.0001);
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float NdH  = max(dot(N, H), 0.0);
+    float NdH2 = NdH * NdH;
+    float denom = NdH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 0.0001);
 }
 
-float GeometrySchlickGGX(float nDotV, float roughness)
+float GeometrySchlickGGX(float NdV, float roughness)
 {
-    float remappedRoughness = roughness + 1.0;
-    float k = (remappedRoughness * remappedRoughness) / 8.0;
-    float denominator = nDotV * (1.0 - k) + k;
-    return nDotV / max(denominator, 0.0001);
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdV / max(NdV * (1.0 - k) + k, 0.0001);
 }
 
-float GeometrySmith(vec3 normal, vec3 viewDirection, vec3 lightDirection, float roughness)
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 {
-    float nDotV = max(dot(normal, viewDirection), 0.0);
-    float nDotL = max(dot(normal, lightDirection), 0.0);
-    float ggxView = GeometrySchlickGGX(nDotV, roughness);
-    float ggxLight = GeometrySchlickGGX(nDotL, roughness);
-    return ggxView * ggxLight;
+    float NdV = max(dot(N, V), 0.0);
+    float NdL = max(dot(N, L), 0.0);
+    return GeometrySchlickGGX(NdV, roughness) * GeometrySchlickGGX(NdL, roughness);
 }
 
-vec3 FresnelSchlick(float cosineTheta, vec3 baseReflectivity)
+vec3 FresnelSchlick(float cosTheta, vec3 F0)
 {
-    return baseReflectivity + (1.0 - baseReflectivity) * pow(1.0 - cosineTheta, 5.0);
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// ---------------------------------------------------------------------------
+// Cook-Torrance BRDF contribution for one light sample
+// Returns outgoing radiance.
+// ---------------------------------------------------------------------------
+vec3 EvaluateBRDF(
+    vec3 N, vec3 V, vec3 L,
+    vec3 albedo, float metallic, float roughness,
+    vec3 radiance
+)
+{
+    float NdL = max(dot(N, L), 0.0);
+    if (NdL <= 0.0)
+        return vec3(0.0);
+
+    vec3 H = normalize(V + L);
+    float NdV = max(dot(N, V), 0.0);
+    float HdV = max(dot(H, V), 0.0);
+
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F  = FresnelSchlick(HdV, F0);
+    float D = DistributionGGX(N, H, roughness);
+    float G = GeometrySmith(N, V, L, roughness);
+
+    vec3 specular = (D * G * F) / max(4.0 * NdV * NdL, 0.0001);
+
+    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+
+    return (diffuse + specular) * radiance * NdL;
+}
+
+// ---------------------------------------------------------------------------
+// UE4-style smooth distance attenuation
+// ---------------------------------------------------------------------------
+float SmoothDistanceAttenuation(float distance, float range)
+{
+    float ratio = distance / max(range, 0.001);
+    float ratio4 = ratio * ratio * ratio * ratio;
+    float num = clamp(1.0 - ratio4, 0.0, 1.0);
+    return (num * num) / (distance * distance + 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Per-light contribution
+// ---------------------------------------------------------------------------
+vec3 EvaluateSceneLight(
+    SceneLightData light,
+    vec3 worldPos,
+    vec3 N, vec3 V,
+    vec3 albedo, float metallic, float roughness
+)
+{
+    int lightType = int(light.directionAndType.w);
+
+    if (lightType == LIGHT_AMBIENT)
+        return vec3(0.0); // handled as ambient term below
+
+    vec3 L;
+    vec3 radiance;
+
+    if (lightType == LIGHT_DIRECTIONAL)
+    {
+        // Direction stored is the world direction the light travels; negate for L.
+        L = normalize(-light.directionAndType.xyz);
+        // Intensity is in lux (irradiance on a surface).
+        radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w;
+    }
+    else if (lightType == LIGHT_POINT)
+    {
+        vec3 toLight = light.positionAndRange.xyz - worldPos;
+        float dist   = length(toLight);
+        L = toLight / max(dist, 0.0001);
+        float att = SmoothDistanceAttenuation(dist, light.positionAndRange.w);
+        // Lumens → lux at surface: I / (4π), then attenuate.
+        radiance = light.colorAndIntensity.rgb
+                 * (light.colorAndIntensity.w / (4.0 * PI))
+                 * att;
+    }
+    else if (lightType == LIGHT_SPOT)
+    {
+        vec3 toLight = light.positionAndRange.xyz - worldPos;
+        float dist   = length(toLight);
+        L = toLight / max(dist, 0.0001);
+
+        float att = SmoothDistanceAttenuation(dist, light.positionAndRange.w);
+
+        vec3  spotDir   = normalize(light.directionAndType.xyz);
+        float cosAngle  = dot(-L, spotDir);
+        float innerCos  = light.spotAndArea.x;
+        float outerCos  = light.spotAndArea.y;
+        float spotAtt   = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.0001), 0.0, 1.0);
+        spotAtt *= spotAtt;
+
+        // Approximate solid angle of the spot cone.
+        float coneOmega = max(2.0 * PI * (1.0 - innerCos), 0.0001);
+        radiance = light.colorAndIntensity.rgb
+                 * (light.colorAndIntensity.w / coneOmega)
+                 * att * spotAtt;
+    }
+    else if (lightType == LIGHT_AREA)
+    {
+        // Treat the area light as a point at its centre (representative point).
+        vec3 toLight = light.positionAndRange.xyz - worldPos;
+        float dist   = length(toLight);
+        L = toLight / max(dist, 0.0001);
+
+        float att  = SmoothDistanceAttenuation(dist, light.positionAndRange.w);
+        float area = max(light.spotAndArea.z * light.spotAndArea.w, 0.0001);
+        // Lumens → luminance: I / (π × area), then attenuate.
+        radiance = light.colorAndIntensity.rgb
+                 * (light.colorAndIntensity.w / (PI * area))
+                 * att;
+    }
+    else
+    {
+        return vec3(0.0);
+    }
+
+    return EvaluateBRDF(N, V, L, albedo, metallic, roughness, radiance);
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 void main()
 {
-    float blendMask = texture(blendMaskTexture, fragTexCoord).r;
+    // ---- Blend mask & blend weight ----------------------------------------
+    float blendMask   = texture(blendMaskTexture, fragTexCoord).r;
     float blendWeight = clamp(
         mix(0.0, drawData.nodeGraphFactors.y, clamp(drawData.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
-        0.0,
-        1.0
+        0.0, 1.0
     );
 
-    vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
-    vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
-    vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
-    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
+    // ---- Albedo -----------------------------------------------------------
+    vec4 primaryBaseColor   = texture(baseColorTexture,          fragTexCoord);
+    vec4 secondaryBaseColor = texture(secondaryBaseColorTexture,  fragTexCoord);
+    vec4 sampledBaseColor   = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
+    vec4 albedo             = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
 
-    vec3 geometricNormal = normalize(fragWorldNormal);
-    vec3 tangent = normalize(fragWorldTangent.xyz - geometricNormal * dot(geometricNormal, fragWorldTangent.xyz));
-    vec3 bitangent = normalize(cross(geometricNormal, tangent) * fragWorldTangent.w);
-    mat3 tbn = mat3(tangent, bitangent, geometricNormal);
+    float alphaCutoff = drawData.emissiveFactor.a;
+    if (alphaCutoff > 0.0 && albedo.a < alphaCutoff)
+        discard;
 
-    vec3 sampledNormalPrimary = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;
-    vec3 sampledNormalSecondary = texture(secondaryNormalTexture, fragTexCoord).xyz * 2.0 - 1.0;
-    vec3 sampledNormal = normalize(mix(sampledNormalPrimary, sampledNormalSecondary, blendWeight));
-    sampledNormal.xy *= drawData.surfaceFactors.z;
-    vec3 normal = normalize(tbn * sampledNormal);
+    // ---- Normal -----------------------------------------------------------
+    vec3 geoNormal = normalize(fragWorldNormal);
+    vec3 tangent   = normalize(fragWorldTangent.xyz - geoNormal * dot(geoNormal, fragWorldTangent.xyz));
+    vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w);
+    mat3 TBN       = mat3(tangent, bitangent, geoNormal);
 
+    vec3 nrmPrimary   = texture(normalTexture,          fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 nrmSecondary = texture(secondaryNormalTexture,  fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 nrmSample    = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
+    nrmSample.xy     *= drawData.surfaceFactors.z; // normal scale
+    vec3 N            = normalize(TBN * nrmSample);
+
+    // ---- PBR factors ------------------------------------------------------
     float metallicSample = mix(
-        texture(metallicTexture, fragTexCoord).b,
-        texture(secondaryMetallicTexture, fragTexCoord).b,
+        texture(metallicTexture,          fragTexCoord).b,
+        texture(secondaryMetallicTexture,  fragTexCoord).b,
         blendWeight
     );
     float roughnessSample = mix(
-        texture(roughnessTexture, fragTexCoord).g,
-        texture(secondaryRoughnessTexture, fragTexCoord).g,
+        texture(roughnessTexture,          fragTexCoord).g,
+        texture(secondaryRoughnessTexture,  fragTexCoord).g,
         blendWeight
     );
-    float ambientOcclusionSample = mix(
-        texture(occlusionTexture, fragTexCoord).r,
-        texture(secondaryOcclusionTexture, fragTexCoord).r,
+    float aoSample = mix(
+        texture(occlusionTexture,          fragTexCoord).r,
+        texture(secondaryOcclusionTexture,  fragTexCoord).r,
         blendWeight
     );
     vec3 emissiveSample = mix(
-        texture(emissiveTexture, fragTexCoord).rgb,
-        texture(secondaryEmissiveTexture, fragTexCoord).rgb,
+        texture(emissiveTexture,          fragTexCoord).rgb,
+        texture(secondaryEmissiveTexture,  fragTexCoord).rgb,
         blendWeight
     );
 
-    float metallic = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
+    float metallic  = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(drawData.surfaceFactors.y * roughnessSample, 0.04, 1.0);
-    float ambientOcclusion = mix(1.0, ambientOcclusionSample, clamp(drawData.surfaceFactors.w, 0.0, 1.0));
+    float ao        = mix(1.0, aoSample, clamp(drawData.surfaceFactors.w, 0.0, 1.0));
 
-    vec3 viewDirection = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
-    vec3 lightDirection = normalize(-ubo.lightDirectionAndIntensity.xyz);
-    vec3 halfVector = normalize(viewDirection + lightDirection);
-    vec3 radiance = ubo.lightColorAndAmbient.rgb * ubo.lightDirectionAndIntensity.w;
+    vec3 V = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
 
-    float nDotL = max(dot(normal, lightDirection), 0.0);
-    float nDotV = max(dot(normal, viewDirection), 0.0);
-    float hDotV = max(dot(halfVector, viewDirection), 0.0);
+    // ---- Ambient ----------------------------------------------------------
+    // Start from the UBO fallback ambient, accumulate ambient-type lights.
+    vec3 ambientAccum = ubo.ambientColorAndIntensity.rgb * ubo.ambientColorAndIntensity.w;
+    uint lightCount = ubo.sceneLightCount.x;
+    for (uint i = 0u; i < lightCount; ++i)
+    {
+        if (int(ubo.lights[i].directionAndType.w) == LIGHT_AMBIENT)
+        {
+            ambientAccum += ubo.lights[i].colorAndIntensity.rgb
+                          * ubo.lights[i].colorAndIntensity.w;
+        }
+    }
 
-    vec3 baseReflectivity = mix(vec3(0.04), albedo.rgb, metallic);
-    vec3 fresnel = FresnelSchlick(hDotV, baseReflectivity);
-    float distribution = DistributionGGX(normal, halfVector, roughness);
-    float geometry = GeometrySmith(normal, viewDirection, lightDirection, roughness);
+    // ---- Direct lighting --------------------------------------------------
+    vec3 directAccum = vec3(0.0);
+    for (uint i = 0u; i < lightCount; ++i)
+    {
+        directAccum += EvaluateSceneLight(
+            ubo.lights[i],
+            fragWorldPosition,
+            N, V,
+            albedo.rgb, metallic, roughness
+        );
+    }
 
-    vec3 numerator = distribution * geometry * fresnel;
-    float denominator = max(4.0 * nDotV * nDotL, 0.0001);
-    vec3 specular = numerator / denominator;
-
-    vec3 specularRatio = fresnel;
-    vec3 diffuseRatio = (vec3(1.0) - specularRatio) * (1.0 - metallic);
-    vec3 diffuse = diffuseRatio * albedo.rgb / PI;
-
-    vec3 ambient = albedo.rgb * ubo.lightColorAndAmbient.w * ambientOcclusion;
-    vec3 directLighting = (diffuse + specular) * radiance * nDotL;
+    // ---- Combine ----------------------------------------------------------
+    vec3 ambient  = albedo.rgb * ambientAccum * ao;
     vec3 emissive = emissiveSample * drawData.emissiveFactor.rgb;
+    vec3 color    = ambient + directAccum + emissive;
 
-    vec3 color = ambient + directLighting + emissive;
+    // Reinhard tonemapping
     color = color / (color + vec3(1.0));
 
     outColor = vec4(color, albedo.a);

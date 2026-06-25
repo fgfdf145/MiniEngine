@@ -3,12 +3,12 @@
   "ui": {
     "scale": {
       "default": 1.000,
-      "macos": 0.750
+      "windows": 1.000
     },
     "windows": {
       "camera": true,
       "asset_manager": true,
-      "input_monitor": false,
+      "input_monitor": true,
       "scene": true,
       "theme": false,
       "viewport": true

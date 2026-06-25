@@ -18,6 +18,28 @@
 
 namespace
 {
+const char* LightTypeToString(LightType type)
+{
+    switch (type)
+    {
+    case LightType::Directional: return "directional";
+    case LightType::Point:       return "point";
+    case LightType::Spot:        return "spot";
+    case LightType::Area:        return "area";
+    case LightType::Ambient:     return "ambient";
+    default:                     return "point";
+    }
+}
+
+LightType LightTypeFromString(const std::string& value)
+{
+    if (value == "directional") return LightType::Directional;
+    if (value == "spot")        return LightType::Spot;
+    if (value == "area")        return LightType::Area;
+    if (value == "ambient")     return LightType::Ambient;
+    return LightType::Point;
+}
+
 glm::vec3 ReadVec3(const YAML::Node& node, const glm::vec3& fallback)
 {
     if (!node || !node.IsSequence() || node.size() != 3)
@@ -169,6 +191,29 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
         }
     }
 
+    const YAML::Node lightsNode = root["lights"];
+    if (lightsNode && lightsNode.IsSequence())
+    {
+        for (const YAML::Node& lightNode : lightsNode)
+        {
+            SerializedLightData lightData{};
+            lightData.tagName = lightNode["tag"].as<std::string>(lightData.tagName);
+            lightData.lightType = LightTypeFromString(lightNode["light_type"].as<std::string>("point"));
+            lightData.color = ReadVec3(lightNode["color"], lightData.color);
+            lightData.intensity = lightNode["intensity"].as<float>(lightData.intensity);
+            lightData.range = lightNode["range"].as<float>(lightData.range);
+            lightData.spotInnerAngle = lightNode["spot_inner_angle"].as<float>(lightData.spotInnerAngle);
+            lightData.spotOuterAngle = lightNode["spot_outer_angle"].as<float>(lightData.spotOuterAngle);
+            if (lightNode["area_size"] && lightNode["area_size"].IsSequence() && lightNode["area_size"].size() == 2)
+            {
+                lightData.areaSize.x = lightNode["area_size"][0].as<float>(lightData.areaSize.x);
+                lightData.areaSize.y = lightNode["area_size"][1].as<float>(lightData.areaSize.y);
+            }
+            lightData.transform = ReadTransformComponent(lightNode["transform"], lightData.transform);
+            sceneData.lights.push_back(lightData);
+        }
+    }
+
     sceneData.selectedEntityIndex = root["scene"]["selected_entity"].as<int>(0);
     return sceneData;
 }
@@ -196,6 +241,28 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         EmitVec3(emitter, "translation", entity.transform.translation);
         EmitVec3(emitter, "rotation", entity.transform.rotationDegrees);
         EmitVec3(emitter, "scale", entity.transform.scale);
+        emitter << YAML::EndMap;
+        emitter << YAML::EndMap;
+    }
+    emitter << YAML::EndSeq;
+
+    emitter << YAML::Key << "lights" << YAML::Value << YAML::BeginSeq;
+    for (const SerializedLightData& light : sceneData.lights)
+    {
+        emitter << YAML::BeginMap;
+        emitter << YAML::Key << "tag" << YAML::Value << light.tagName;
+        emitter << YAML::Key << "light_type" << YAML::Value << LightTypeToString(light.lightType);
+        EmitVec3(emitter, "color", light.color);
+        emitter << YAML::Key << "intensity" << YAML::Value << light.intensity;
+        emitter << YAML::Key << "range" << YAML::Value << light.range;
+        emitter << YAML::Key << "spot_inner_angle" << YAML::Value << light.spotInnerAngle;
+        emitter << YAML::Key << "spot_outer_angle" << YAML::Value << light.spotOuterAngle;
+        emitter << YAML::Key << "area_size" << YAML::Value << YAML::Flow << YAML::BeginSeq
+                << light.areaSize.x << light.areaSize.y << YAML::EndSeq;
+        emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
+        EmitVec3(emitter, "translation", light.transform.translation);
+        EmitVec3(emitter, "rotation", light.transform.rotationDegrees);
+        EmitVec3(emitter, "scale", light.transform.scale);
         emitter << YAML::EndMap;
         emitter << YAML::EndMap;
     }
@@ -286,6 +353,7 @@ void EditorScene::Clear()
 {
     m_registry.clear();
     m_entityOrder.clear();
+    m_lightOrder.clear();
     m_selectedEntity = entt::null;
 }
 
@@ -497,6 +565,10 @@ void EditorScene::ApplyTransformMatrix(entt::entity entity, const glm::mat4& mat
 
 glm::vec3 EditorScene::GetBoundsCenter(entt::entity entity) const
 {
+    if (m_registry.all_of<LightComponent>(entity))
+    {
+        return glm::vec3(0.0f);
+    }
     const ModelComponent& model = GetModel(entity);
     return (model.minBounds + model.maxBounds) * 0.5f;
 }
@@ -522,6 +594,11 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
     for (const SerializedEntityData& entityData : sceneData.entities)
     {
         CreateEntity(entityData);
+    }
+
+    for (const SerializedLightData& lightData : sceneData.lights)
+    {
+        CreateLightEntity(lightData);
     }
 
     if (!m_entityOrder.empty())
@@ -569,6 +646,78 @@ void EditorScene::EnsureSelection()
     }
 }
 
+entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData)
+{
+    entt::entity entity = m_registry.create();
+    m_registry.emplace<TagComponent>(entity, TagComponent{ lightData.tagName });
+    m_registry.emplace<TransformComponent>(entity, lightData.transform);
+    LightComponent light{};
+    light.type = lightData.lightType;
+    light.color = lightData.color;
+    light.intensity = lightData.intensity;
+    light.range = lightData.range;
+    light.spotInnerAngleDegrees = lightData.spotInnerAngle;
+    light.spotOuterAngleDegrees = lightData.spotOuterAngle;
+    light.areaSize = lightData.areaSize;
+    m_registry.emplace<LightComponent>(entity, light);
+    m_lightOrder.push_back(entity);
+    return entity;
+}
+
+void EditorScene::DestroyLightEntity(entt::entity entity)
+{
+    if (!IsValidEntity(entity) || !m_registry.all_of<LightComponent>(entity))
+    {
+        return;
+    }
+
+    m_registry.destroy(entity);
+    m_lightOrder.erase(
+        std::remove(m_lightOrder.begin(), m_lightOrder.end(), entity),
+        m_lightOrder.end()
+    );
+
+    if (m_selectedEntity == entity)
+    {
+        m_selectedEntity = entt::null;
+        EnsureSelection();
+    }
+}
+
+bool EditorScene::HasLightComponent(entt::entity entity) const
+{
+    return IsValidEntity(entity) && m_registry.all_of<LightComponent>(entity);
+}
+
+LightComponent& EditorScene::GetLightComponent(entt::entity entity)
+{
+    return m_registry.get<LightComponent>(entity);
+}
+
+const LightComponent& EditorScene::GetLightComponent(entt::entity entity) const
+{
+    return m_registry.get<LightComponent>(entity);
+}
+
+const std::vector<entt::entity>& EditorScene::GetLightOrder() const
+{
+    return m_lightOrder;
+}
+
+void EditorScene::ForEachLight(
+    const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
+) const
+{
+    for (entt::entity entity : m_lightOrder)
+    {
+        if (!IsValidEntity(entity))
+        {
+            continue;
+        }
+        visitor(entity, GetTag(entity), GetTransform(entity), GetLightComponent(entity));
+    }
+}
+
 glm::mat4 EditorScene::BuildTransformMatrix(const TransformComponent& transform)
 {
     glm::mat4 matrix(1.0f);
@@ -601,6 +750,28 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelBaseColorTextureOverridePath = model.baseColorTextureOverridePath;
         entityData.transform = GetTransform(entity);
         sceneData.entities.push_back(entityData);
+    }
+
+    for (entt::entity entity : m_lightOrder)
+    {
+        if (!IsValidEntity(entity))
+        {
+            continue;
+        }
+
+        SerializedLightData lightData{};
+        const TagComponent& tag = GetTag(entity);
+        const LightComponent& light = GetLightComponent(entity);
+        lightData.tagName = tag.name;
+        lightData.lightType = light.type;
+        lightData.color = light.color;
+        lightData.intensity = light.intensity;
+        lightData.range = light.range;
+        lightData.spotInnerAngle = light.spotInnerAngleDegrees;
+        lightData.spotOuterAngle = light.spotOuterAngleDegrees;
+        lightData.areaSize = light.areaSize;
+        lightData.transform = GetTransform(entity);
+        sceneData.lights.push_back(lightData);
     }
 
     if (HasSelection())

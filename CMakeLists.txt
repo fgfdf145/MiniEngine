@@ -18,12 +18,6 @@ endif()
 
 project(MiniEngine LANGUAGES CXX)
 
-if(APPLE)
-    enable_language(OBJCXX)
-    set(CMAKE_OBJCXX_STANDARD 20)
-    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
-endif()
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -74,8 +68,15 @@ function(_miniengine_find_latest_sdk_dir out_var root_dir header_relative_path l
     set(${out_var} "${_miniengine_sdk_dir}" PARENT_SCOPE)
 endfunction()
 
+cmake_host_system_information(RESULT MINIENGINE_CPU_COUNT QUERY NUMBER_OF_LOGICAL_CORES)
+message(STATUS "Parallel compilation: ${MINIENGINE_CPU_COUNT} logical cores")
+
 if(MSVC)
     add_compile_options(/EHsc)
+    # /MP is only needed for VS generator; Ninja manages its own parallelism
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        add_compile_options(/MP${MINIENGINE_CPU_COUNT})
+    endif()
 endif()
 
 if(WIN32)
@@ -127,11 +128,7 @@ endif()
 find_package(spdlog CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
 if(NOT TARGET Vulkan::Vulkan)
-    if(APPLE)
-        find_package(Vulkan QUIET)
-    else()
-        find_package(Vulkan REQUIRED)
-    endif()
+    find_package(Vulkan REQUIRED)
 endif()
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
@@ -141,45 +138,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
 
-set(MINIENGINE_HAS_VULKAN_BACKEND OFF)
-if(TARGET Vulkan::Vulkan)
-    set(MINIENGINE_HAS_VULKAN_BACKEND ON)
-endif()
-
-set(MINIENGINE_APPLE_FRAMEWORKS "")
-set(MINIENGINE_VULKAN_LOADER_PATH "")
-if(APPLE)
-    foreach(_miniengine_framework IN ITEMS Cocoa Foundation IOKit CoreVideo QuartzCore Metal)
-        find_library(_miniengine_${_miniengine_framework}_framework ${_miniengine_framework})
-        if(_miniengine_${_miniengine_framework}_framework)
-            list(APPEND MINIENGINE_APPLE_FRAMEWORKS "${_miniengine_${_miniengine_framework}_framework}")
-        endif()
-    endforeach()
-
-    if(DEFINED Vulkan_LIBRARY AND NOT "${Vulkan_LIBRARY}" STREQUAL "")
-        set(MINIENGINE_VULKAN_LOADER_PATH "${Vulkan_LIBRARY}")
-    elseif(TARGET Vulkan::Vulkan)
-        foreach(_miniengine_vulkan_location_property IN ITEMS
-            IMPORTED_LOCATION
-            IMPORTED_LOCATION_DEBUG
-            IMPORTED_LOCATION_RELEASE
-            IMPORTED_LOCATION_RELWITHDEBINFO
-            IMPORTED_LOCATION_MINSIZEREL
-        )
-            get_target_property(
-                _miniengine_vulkan_loader_candidate
-                Vulkan::Vulkan
-                ${_miniengine_vulkan_location_property}
-            )
-            if(_miniengine_vulkan_loader_candidate AND EXISTS "${_miniengine_vulkan_loader_candidate}")
-                set(MINIENGINE_VULKAN_LOADER_PATH "${_miniengine_vulkan_loader_candidate}")
-                break()
-            endif()
-        endforeach()
-    endif()
-endif()
-
-if(MINIENGINE_HAS_VULKAN_BACKEND AND NOT Vulkan_GLSLC_EXECUTABLE)
+if(NOT Vulkan_GLSLC_EXECUTABLE)
     set(_miniengine_glslc_hints "")
 
     if(DEFINED MINIENGINE_VULKAN_SDK_ROOT AND NOT "${MINIENGINE_VULKAN_SDK_ROOT}" STREQUAL "")
@@ -216,7 +175,7 @@ if(MINIENGINE_HAS_VULKAN_BACKEND AND NOT Vulkan_GLSLC_EXECUTABLE)
     )
 endif()
 
-if(MINIENGINE_HAS_VULKAN_BACKEND AND NOT Vulkan_GLSLC_EXECUTABLE)
+if(NOT Vulkan_GLSLC_EXECUTABLE)
     message(FATAL_ERROR
         "glslc was not found. Install the Vulkan SDK or restore the vcpkg shaderc host dependency."
     )
@@ -225,6 +184,7 @@ endif()
 add_subdirectory(engine/core)
 add_subdirectory(engine/platform)
 add_subdirectory(engine/scene)
+add_subdirectory(engine/asset)
 add_subdirectory(engine/logic)
 add_subdirectory(engine/renderer)
 add_subdirectory(engine/application)
@@ -234,6 +194,7 @@ foreach(_miniengine_engine_target IN ITEMS
     engine_core
     engine_platform
     engine_scene
+    engine_asset
     engine_logic
     engine_renderer
     engine_application
@@ -253,8 +214,4 @@ endif()
 
 if(CMAKE_GENERATOR MATCHES "^Visual Studio" AND TARGET miniengine_app)
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT miniengine_app)
-endif()
-
-if(CMAKE_GENERATOR STREQUAL "Xcode" AND TARGET miniengine_app)
-    set_target_properties(miniengine_app PROPERTIES XCODE_GENERATE_SCHEME YES)
 endif()

@@ -8,10 +8,6 @@ UiScaleConfiguration BuildDefaultUiScaleConfiguration()
 {
     UiScaleConfiguration configuration{};
 
-#if defined(__APPLE__)
-    configuration.macos = kMinimumUiScale;
-#endif
-
     return configuration;
 }
 
@@ -24,8 +20,6 @@ OperatingSystem GetCurrentOperatingSystem()
 {
 #if defined(_WIN32)
     return OperatingSystem::Windows;
-#elif defined(__APPLE__)
-    return OperatingSystem::MacOS;
 #elif defined(__linux__)
     return OperatingSystem::Linux;
 #else
@@ -39,8 +33,6 @@ const char* GetCurrentOperatingSystemName()
     {
     case OperatingSystem::Windows:
         return "Windows";
-    case OperatingSystem::MacOS:
-        return "macOS";
     case OperatingSystem::Linux:
         return "Linux";
     default:
@@ -55,12 +47,6 @@ float ResolveWindowUiScale(SDL_Window* window)
         return 1.0f;
     }
 
-#if defined(__APPLE__)
-    // SDL + ImGui already render in logical points on macOS and apply the
-    // framebuffer scale separately for Retina backbuffers. Multiplying the UI
-    // sizes by the display scale again makes the entire editor oversized.
-    return 1.0f;
-#else
     const float displayScale = SDL_GetWindowDisplayScale(window);
     if (displayScale > 0.0f)
     {
@@ -69,7 +55,6 @@ float ResolveWindowUiScale(SDL_Window* window)
 
     const float pixelDensity = SDL_GetWindowPixelDensity(window);
     return pixelDensity > 0.0f ? pixelDensity : 1.0f;
-#endif
 }
 
 float ResolveConfiguredUiScale(const UiScaleConfiguration& configuration)
@@ -80,12 +65,6 @@ float ResolveConfiguredUiScale(const UiScaleConfiguration& configuration)
         if (configuration.windows.has_value())
         {
             return ClampUiScale(*configuration.windows);
-        }
-        break;
-    case OperatingSystem::MacOS:
-        if (configuration.macos.has_value())
-        {
-            return ClampUiScale(*configuration.macos);
         }
         break;
     case OperatingSystem::Linux:
@@ -109,9 +88,6 @@ void SetConfiguredUiScaleForCurrentPlatform(UiScaleConfiguration& configuration,
     {
     case OperatingSystem::Windows:
         configuration.windows = clampedValue;
-        return;
-    case OperatingSystem::MacOS:
-        configuration.macos = clampedValue;
         return;
     case OperatingSystem::Linux:
         configuration.linux = clampedValue;

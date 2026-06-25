@@ -1,17 +1,61 @@
 #include "renderer.h"
 
 #include "../imgui/imgui_impl_vulkan.h"
+#include "../renderer_shared_state.h"
 
+#include <editor_world.h>
+#include <scene_components.h>
 #include <imgui.h>
 #include <log/log.h>
 #include <window/window.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/euler_angles.hpp>
+#include <glm/ext/matrix_transform.hpp>
+
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <unordered_map>
 
 namespace
 {
+// Build a direction vector from a transform's Euler rotation (XYZ order, same as BuildTransformMatrix).
+glm::vec3 BuildLightDirection(const TransformComponent& transform)
+{
+    glm::mat4 rotMat(1.0f);
+    rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
+    rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
+    rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
+    return glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)));
+}
+
+std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
+{
+    std::vector<GpuLightData> gpuLights;
+    world.ForEachLight([&](
+        entt::entity,
+        const TagComponent&,
+        const TransformComponent& transform,
+        const LightComponent& light
+    )
+    {
+        GpuLightData gpu{};
+        gpu.positionAndRange = glm::vec4(transform.translation, light.range);
+        gpu.colorAndIntensity = glm::vec4(light.color, light.intensity);
+
+        const glm::vec3 direction = BuildLightDirection(transform);
+        gpu.directionAndType = glm::vec4(direction, static_cast<float>(light.type));
+
+        const float innerCos = std::cos(glm::radians(light.spotInnerAngleDegrees));
+        const float outerCos = std::cos(glm::radians(light.spotOuterAngleDegrees));
+        gpu.spotAndArea = glm::vec4(innerCos, outerCos, light.areaSize.x, light.areaSize.y);
+
+        gpuLights.push_back(gpu);
+    });
+    return gpuLights;
+}
+
 TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha)
 {
     TextureData texture{};
@@ -173,7 +217,9 @@ void VulkanRenderer::DrawFrame()
     }
     ImGui::Render();
 
-    m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position);
+    const std::vector<GpuLightData> gpuLights =
+        State().editorWorld ? CollectSceneLights(*State().editorWorld) : std::vector<GpuLightData>{};
+    m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position, gpuLights);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
     {

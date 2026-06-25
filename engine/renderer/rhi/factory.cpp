@@ -6,16 +6,9 @@
 #include <SDL3/SDL_vulkan.h>
 #include <window/window_platform.h>
 
-#include <array>
-#if defined(MINIENGINE_HAS_VULKAN_BACKEND)
 #include <vulkan/renderer.h>
-#endif
 
 #include <stdexcept>
-
-#if defined(__APPLE__)
-#include <metal/renderer.h>
-#endif
 
 namespace
 {
@@ -59,40 +52,12 @@ std::optional<std::string> ProbeVulkanRuntimeSupport()
 
 RenderBackendDescriptor DescribeVulkanBackend()
 {
-#if defined(MINIENGINE_HAS_VULKAN_BACKEND)
     return RenderBackendDescriptor{
         RenderBackendType::Vulkan,
         ToString(RenderBackendType::Vulkan),
         true,
         nullptr
     };
-#else
-    return RenderBackendDescriptor{
-        RenderBackendType::Vulkan,
-        ToString(RenderBackendType::Vulkan),
-        false,
-        "Vulkan backend is not built in this configuration"
-    };
-#endif
-}
-
-RenderBackendDescriptor DescribeMetalBackend()
-{
-#if defined(__APPLE__)
-    return RenderBackendDescriptor{
-        RenderBackendType::Metal,
-        ToString(RenderBackendType::Metal),
-        true,
-        nullptr
-    };
-#else
-    return RenderBackendDescriptor{
-        RenderBackendType::Metal,
-        ToString(RenderBackendType::Metal),
-        false,
-        "Metal backend is only available on Apple platforms"
-    };
-#endif
 }
 }
 
@@ -102,8 +67,6 @@ RenderBackendDescriptor GetRenderBackendDescriptor(RenderBackendType backendType
     {
     case RenderBackendType::Vulkan:
         return DescribeVulkanBackend();
-    case RenderBackendType::Metal:
-        return DescribeMetalBackend();
     default:
         return RenderBackendDescriptor{
             backendType,
@@ -133,7 +96,6 @@ std::optional<std::string> GetRenderBackendRuntimeError(RenderBackendType backen
     {
     case RenderBackendType::Vulkan:
         return ProbeVulkanRuntimeSupport();
-    case RenderBackendType::Metal:
     default:
         return std::nullopt;
     }
@@ -141,38 +103,13 @@ std::optional<std::string> GetRenderBackendRuntimeError(RenderBackendType backen
 
 RenderBackendType GetPreferredRenderBackendType()
 {
-#if defined(__APPLE__)
     if (IsRenderBackendSupported(RenderBackendType::Vulkan) &&
         !GetRenderBackendRuntimeError(RenderBackendType::Vulkan).has_value())
     {
         return RenderBackendType::Vulkan;
     }
 
-    if (IsRenderBackendSupported(RenderBackendType::Metal))
-    {
-        return RenderBackendType::Metal;
-    }
-#else
-    if (IsRenderBackendSupported(RenderBackendType::Vulkan))
-    {
-        return RenderBackendType::Vulkan;
-    }
-#endif
-
-    constexpr std::array<RenderBackendType, 2> kFallbackOrder = {
-        RenderBackendType::Vulkan,
-        RenderBackendType::Metal
-    };
-    for (RenderBackendType backendType : kFallbackOrder)
-    {
-        if (IsRenderBackendSupported(backendType) &&
-            !GetRenderBackendRuntimeError(backendType).has_value())
-        {
-            return backendType;
-        }
-    }
-
-    throw std::runtime_error("No supported render backend is available in this build");
+    throw std::runtime_error("Vulkan backend is not available at runtime");
 }
 
 std::unique_ptr<IRenderBackend> CreateRenderBackend(
@@ -190,17 +127,7 @@ std::unique_ptr<IRenderBackend> CreateRenderBackend(
     switch (backendType)
     {
     case RenderBackendType::Vulkan:
-#if defined(MINIENGINE_HAS_VULKAN_BACKEND)
         return std::make_unique<VulkanRenderer>(window, std::move(sharedState), std::move(startupModelPath));
-#else
-        throw std::runtime_error("Vulkan backend is not built in this configuration");
-#endif
-    case RenderBackendType::Metal:
-#if defined(__APPLE__)
-        return std::make_unique<MetalRenderer>(window, std::move(sharedState), std::move(startupModelPath));
-#else
-        throw std::runtime_error("Metal backend is only available on Apple platforms");
-#endif
     default:
         throw std::runtime_error("Unsupported render backend");
     }

@@ -2,10 +2,13 @@
 
 #include "camera.h"
 #include "engine_settings.h"
-#include "model_loader.h"
+#include <asset_manager.h>
+#include <model_loader.h>
+#include <optional>
 
 #include <scene_components.h>
 #include <rhi/backend.h>
+#include <entt/entt.hpp>
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -50,17 +53,24 @@ struct EditorUiActions
         std::string destinationDirectory;
     };
 
+    struct LightCreate
+    {
+        std::string name;
+        LightType type = LightType::Point;
+    };
+
     std::optional<ImportedModelRequest> importedModelRequest;
     std::optional<std::string> selectedModelPath;
     std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
-    std::optional<std::string> deleteAssetPath;
+    std::vector<std::string> deleteAssetPaths;
     std::optional<AssetPasteRequest> pastedAsset;
     std::optional<ImportedMaterialUpdate> updatedImportedMaterial;
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;
     std::optional<ViewportModelPlacement> droppedViewportModel;
+    std::optional<LightCreate> createLightEntity;
     bool createSceneEntity = false;
     bool deleteSelectedSceneEntity = false;
     bool clearSelectedBaseColorTexture = false;
@@ -94,14 +104,6 @@ public:
 
 private:
     void ApplyEngineSettings(const EngineSettings& settings);
-    void BeginAssetRename(const std::string& assetPath);
-    bool CommitAssetRename(const std::filesystem::path& assetRoot);
-    void RequestAssetDelete(const std::string& assetPath);
-    void ConfirmRequestedAssetDelete(
-        const std::filesystem::path& assetRoot,
-        const std::string& normalizedAssetRoot,
-        EditorUiFrameResult& result
-    );
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
     void SyncBaseStyleColorsFromCurrentStyle();
@@ -120,12 +122,6 @@ private:
     bool m_hasCapturedBaseStyle = false;
     bool m_hasCapturedDefaultThemeColors = false;
     bool m_hasAppliedEngineSettings = false;
-    std::string m_copiedAssetPath;
-    std::string m_selectedAssetPath;
-    std::string m_assetBrowserDirectory;
-    std::string m_assetDirectoryTreeExpandedPath;
-    std::string m_pendingDuplicateImportSourcePath;
-    std::string m_pendingDuplicateImportAssetPath;
     std::string m_modelProcessorModelPath;
     std::string m_modelProcessorDisplayName;
     std::string m_modelProcessorStatusMessage;
@@ -133,12 +129,8 @@ private:
     std::string m_materialPreviewDisplayName;
     std::string m_materialPreviewModelPath;
     std::string m_materialPreviewStatusMessage;
-    std::string m_assetRenameTargetPath;
-    std::string m_assetRenameError;
-    std::string m_pendingDeleteAssetPath;
     LoadedModelData m_modelProcessorLoadedModel;
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
-    std::vector<std::string> m_modelProcessorMaterialAssetPaths;
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_modelProcessorSelectedUvSubmeshIndex = 0;
     int m_materialPreviewMaterialIndex = 0;
@@ -148,7 +140,6 @@ private:
     float m_modelPreviewYaw = 0.55f;
     float m_modelPreviewPitch = 0.35f;
     float m_modelPreviewDistance = 3.0f;
-    float m_assetBrowserTreePaneRatio = 0.34f;
     MaterialGraphNodePosition m_materialGraphContextSpawnPosition{};
     MaterialGraphNodePosition m_materialGraphViewOrigin{};
     MaterialGraphNodePosition m_materialGraphResizeStartPosition{};
@@ -161,21 +152,16 @@ private:
     bool m_materialGraphNodeResizeActive = false;
     bool m_materialGraphPanningActive = false;
     ModelImportedMaterialInfo m_materialPreviewMaterial;
-    std::array<char, 256> m_assetRenameBuffer{};
     std::string m_materialGraphLinkDragFromSlot;
-    bool m_openDuplicateImportPopup = false;
-    bool m_openAssetRenamePopup = false;
-    bool m_openDeleteAssetPopup = false;
     bool m_openMaterialGraphAddNodePopup = false;
-    bool m_focusAssetRenameInput = false;
     bool m_showModelProcessorWindow = false;
     bool m_showMaterialPreviewWindow = false;
     bool m_modelProcessorDirty = false;
-    bool m_selectedAssetIsDirectory = false;
     uint32_t m_materialGraphLinkDragFromNodeId = 0;
     uint8_t m_materialGraphResizeEdges = 0;
+    std::optional<AssetManager> m_assetManager;
     bool m_showCameraWindow = true;
-    bool m_showAssetManagerWindow = true;
+    bool m_showAssetManagerWindow = false;
     bool m_showInputMonitorWindow = false;
     bool m_showSceneWindow = true;
     bool m_showThemeWindow = true;

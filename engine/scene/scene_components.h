@@ -9,6 +9,26 @@
 #include <string>
 #include <vector>
 
+enum class LightType : uint32_t
+{
+    Directional = 0, // Global sun-like light, uses transform rotation for direction
+    Point       = 1, // Omnidirectional point light
+    Spot        = 2, // Cone spotlight
+    Area        = 3, // Rectangular area light (approximate)
+    Ambient     = 4  // Global ambient (no position or direction)
+};
+
+struct LightComponent
+{
+    LightType type = LightType::Point;
+    glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+    float intensity = 1000.0f;                // Lumens (point/spot/area) or lux (directional)
+    float range = 10.0f;                      // Effective range in meters
+    float spotInnerAngleDegrees = 15.0f;     // Spot inner cone half-angle
+    float spotOuterAngleDegrees = 30.0f;     // Spot outer cone half-angle
+    glm::vec2 areaSize{ 1.0f, 1.0f };        // Area light width x height in meters
+};
+
 struct ModelImportedMaterialInfo
 {
     std::string name;

@@ -1,5 +1,12 @@
 #version 450
 
+struct SceneLightData {
+    vec4 positionAndRange;
+    vec4 colorAndIntensity;
+    vec4 directionAndType;
+    vec4 spotAndArea;
+};
+
 layout(push_constant) uniform DrawConstants
 {
     mat4 model;
@@ -14,8 +21,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
-    vec4 lightDirectionAndIntensity;
-    vec4 lightColorAndAmbient;
+    vec4 ambientColorAndIntensity;
+    SceneLightData lights[8];
+    uvec4 sceneLightCount;
 } ubo;
 
 layout(location = 0) in vec3 inPosition;
@@ -34,7 +42,7 @@ void main()
 {
     vec4 worldPosition = drawData.model * vec4(inPosition, 1.0);
     mat3 normalMatrix = transpose(inverse(mat3(drawData.model)));
-    vec3 worldTangent = normalize(normalMatrix * inTangent.xyz);
+    vec3 worldTangent = normalize(mat3(drawData.model) * inTangent.xyz);
 
     gl_Position = ubo.proj * ubo.view * worldPosition;
     fragColor = inColor;

@@ -47,9 +47,6 @@ case "$(uname -s)" in
   Linux)
     platform_name="linux"
     ;;
-  Darwin)
-    platform_name="macos"
-    ;;
   MINGW*|MSYS*|CYGWIN*)
     die "Use scripts/bootstrap-deps.ps1 on Windows."
     ;;
@@ -78,12 +75,6 @@ default_triplet() {
       ;;
     linux/arm64)
       printf 'arm64-linux'
-      ;;
-    macos/x64)
-      printf 'x64-osx'
-      ;;
-    macos/arm64)
-      printf 'arm64-osx'
       ;;
     *)
       die "No default vcpkg triplet mapping for '$platform_name/$architecture_name'."

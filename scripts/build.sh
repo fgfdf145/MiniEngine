@@ -14,9 +14,6 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
 default_preset="linux-debug"
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  default_preset="macos-debug"
-fi
 
 preset="${1:-$default_preset}"
 target=""

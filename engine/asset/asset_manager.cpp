@@ -67,7 +67,8 @@ void AssetManager::Refresh()
 void AssetManager::NavigateTo(const std::filesystem::path& dir)
 {
     m_currentDir = dir;
-    m_selectedIdx = -1;
+    m_selectedIndices.clear();
+    m_anchorIdx = -1;
     m_needsScan = true;
 }
 
@@ -89,6 +90,7 @@ AssetManagerResult AssetManager::Draw()
     DrawBreadcrumb();
     ImGui::Separator();
     DrawEntryList(result);
+    DrawPreviewPanel(result);
 
     return result;
 }
@@ -99,7 +101,8 @@ AssetManagerResult AssetManager::Draw()
 void AssetManager::ScanCurrentDir()
 {
     m_entries.clear();
-    m_selectedIdx = -1;
+    m_selectedIndices.clear();
+    m_anchorIdx = -1;
 
     std::error_code ec;
     if (!std::filesystem::exists(m_currentDir, ec) || !std::filesystem::is_directory(m_currentDir, ec))
@@ -277,7 +280,11 @@ void AssetManager::DrawBreadcrumb()
 
 void AssetManager::DrawEntryList(AssetManagerResult& result)
 {
-    const float listHeight = ImGui::GetContentRegionAvail().y;
+    constexpr float kPreviewPanelHeight = 100.0f;
+    const float listHeight = std::max(
+        ImGui::GetContentRegionAvail().y - kPreviewPanelHeight - ImGui::GetStyle().ItemSpacing.y,
+        60.0f
+    );
     if (ImGui::BeginChild("##asset_list", ImVec2(0.0f, listHeight), false))
     {
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
@@ -290,35 +297,69 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
 
 void AssetManager::DrawEntryRow(const Entry& entry, int index, AssetManagerResult& result)
 {
-    const bool selected = (m_selectedIdx == index);
+    const bool isSelected = m_selectedIndices.count(index) > 0;
 
-    // Type tag with color
     PushTypeColor(entry.type);
     ImGui::TextUnformatted(TypeTag(entry.type));
     ImGui::PopStyleColor();
-
     ImGui::SameLine();
 
-    // Selectable row
     const std::string selId = entry.name + "##" + std::to_string(index);
-    if (ImGui::Selectable(selId.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+    if (ImGui::Selectable(selId.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick))
     {
-        m_selectedIdx = index;
-
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        // ".." always navigates, never participates in multi-select
+        if (entry.name == "..")
         {
-            if (entry.isDir)
+            NavigateTo(entry.path);
+            return;
+        }
+
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.isDir)
+        {
+            NavigateTo(entry.path);
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+
+        if (io.KeyShift && m_anchorIdx >= 0)
+        {
+            // Range select: fill from anchor to current, optionally merging with existing
+            if (!io.KeyCtrl)
             {
-                NavigateTo(entry.path);
+                m_selectedIndices.clear();
             }
-            else if (entry.type == AssetType::Model)
+            const int lo = std::min(m_anchorIdx, index);
+            const int hi = std::max(m_anchorIdx, index);
+            for (int i = lo; i <= hi; ++i)
             {
-                result.selectedModelPath = entry.path.string();
+                m_selectedIndices.insert(i);
             }
+            // anchor stays unchanged during shift-extend
+        }
+        else if (io.KeyCtrl)
+        {
+            // Toggle this item
+            if (m_selectedIndices.count(index))
+            {
+                m_selectedIndices.erase(index);
+            }
+            else
+            {
+                m_selectedIndices.insert(index);
+            }
+            m_anchorIdx = index;
+        }
+        else
+        {
+            // Plain click: select only this item
+            m_selectedIndices.clear();
+            m_selectedIndices.insert(index);
+            m_anchorIdx = index;
         }
     }
 
-    // Drag source for model files
+    // Drag source (only for model files, drag the specific entry)
     if (entry.type == AssetType::Model && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
     {
         const std::string pathStr = entry.path.string();
@@ -331,9 +372,176 @@ void AssetManager::DrawEntryRow(const Entry& entry, int index, AssetManagerResul
     // Right-click context menu
     if (ImGui::BeginPopupContextItem(selId.c_str()))
     {
-        m_selectedIdx = index;
-        DrawEntryContextMenu(entry, result);
+        // Right-clicking an unselected item switches selection to just that item
+        if (!isSelected)
+        {
+            m_selectedIndices.clear();
+            m_selectedIndices.insert(index);
+            m_anchorIdx = index;
+        }
+
+        if (m_selectedIndices.size() > 1)
+        {
+            DrawBatchContextMenu(result);
+        }
+        else
+        {
+            DrawEntryContextMenu(entry, result);
+        }
         ImGui::EndPopup();
+    }
+}
+
+void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
+{
+    ImGui::Separator();
+
+    if (m_selectedIndices.empty())
+    {
+        ImGui::TextDisabled("No file selected");
+        return;
+    }
+
+    // Multi-selection summary
+    if (m_selectedIndices.size() > 1)
+    {
+        size_t modelCount = 0;
+        size_t dirCount = 0;
+        size_t otherCount = 0;
+        for (const int idx : m_selectedIndices)
+        {
+            if (idx < 0 || idx >= static_cast<int>(m_entries.size()))
+            {
+                continue;
+            }
+            const Entry& e = m_entries[static_cast<size_t>(idx)];
+            if (e.name == "..")
+            {
+                continue;
+            }
+            if (e.isDir)      { ++dirCount; }
+            else if (e.type == AssetType::Model) { ++modelCount; }
+            else              { ++otherCount; }
+        }
+        ImGui::Text("%zu items selected", m_selectedIndices.size());
+        if (modelCount > 0) { ImGui::Text("  Models:  %zu", modelCount); }
+        if (dirCount   > 0) { ImGui::Text("  Folders: %zu", dirCount); }
+        if (otherCount > 0) { ImGui::Text("  Other:   %zu", otherCount); }
+        ImGui::TextDisabled("Shift+click to extend range, Ctrl+click to toggle");
+        return;
+    }
+
+    // Single selection: use anchor as the focused item
+    const int focusIdx = (m_anchorIdx >= 0 && m_anchorIdx < static_cast<int>(m_entries.size()))
+        ? m_anchorIdx
+        : *m_selectedIndices.begin();
+
+    const Entry& entry = m_entries[static_cast<size_t>(focusIdx)];
+
+    PushTypeColor(entry.type);
+    ImGui::TextUnformatted(entry.name.c_str());
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", TypeTag(entry.type));
+
+    if (!entry.isDir)
+    {
+        std::error_code ec;
+        const std::uintmax_t bytes = std::filesystem::file_size(entry.path, ec);
+        if (!ec)
+        {
+            if (bytes < 1024u)
+                ImGui::Text("Size: %llu B", static_cast<unsigned long long>(bytes));
+            else if (bytes < 1024u * 1024u)
+                ImGui::Text("Size: %.1f KB", static_cast<double>(bytes) / 1024.0);
+            else
+                ImGui::Text("Size: %.2f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+        }
+    }
+
+    ImGui::TextDisabled("%s", entry.path.string().c_str());
+
+    if (entry.type == AssetType::Model)
+    {
+        if (ImGui::SmallButton("Load into Scene"))
+        {
+            result.selectedModelPath = entry.path.string();
+        }
+    }
+}
+
+void AssetManager::DrawBatchContextMenu(AssetManagerResult& result)
+{
+    // Gather valid selected entries, skipping ".."
+    std::vector<const Entry*> selected;
+    size_t modelCount = 0;
+    for (const int idx : m_selectedIndices)
+    {
+        if (idx < 0 || idx >= static_cast<int>(m_entries.size()))
+        {
+            continue;
+        }
+        const Entry& e = m_entries[static_cast<size_t>(idx)];
+        if (e.name == "..")
+        {
+            continue;
+        }
+        selected.push_back(&e);
+        if (e.type == AssetType::Model)
+        {
+            ++modelCount;
+        }
+    }
+
+    if (selected.empty())
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("%zu items selected", selected.size());
+    ImGui::Separator();
+
+    if (modelCount > 0)
+    {
+        const std::string loadLabel = "Load " + std::to_string(modelCount) + " Model(s) into Scene";
+        if (ImGui::MenuItem(loadLabel.c_str()))
+        {
+            // Load the first selected model (subsequent ones require async queue support)
+            for (const Entry* e : selected)
+            {
+                if (e->type == AssetType::Model)
+                {
+                    result.selectedModelPath = e->path.string();
+                    break;
+                }
+            }
+        }
+        ImGui::Separator();
+    }
+
+    if (ImGui::MenuItem("Copy Paths to Clipboard"))
+    {
+        std::string combined;
+        for (const Entry* e : selected)
+        {
+            if (!combined.empty())
+            {
+                combined += '\n';
+            }
+            combined += e->path.string();
+        }
+        ImGui::SetClipboardText(combined.c_str());
+    }
+
+    ImGui::Separator();
+
+    const std::string deleteLabel = "Delete " + std::to_string(selected.size()) + " Items";
+    if (ImGui::MenuItem(deleteLabel.c_str()))
+    {
+        for (const Entry* e : selected)
+        {
+            result.deleteRequests.push_back(e->path.string());
+        }
     }
 }
 
@@ -353,18 +561,28 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, AssetManagerResult& 
         ImGui::SetClipboardText(entry.path.string().c_str());
     }
 
-    if (ImGui::MenuItem("Copy"))
+    if (entry.name != ".." && ImGui::MenuItem("Copy"))
     {
         m_clipboard = entry.path.string();
+    }
+
+    if (!m_clipboard.empty() && entry.name != "..")
+    {
+        if (ImGui::MenuItem("Paste Copy Here"))
+        {
+            result.pasteRequest = AssetManagerResult::PasteRequest{
+                m_clipboard,
+                m_currentDir.string()
+            };
+        }
     }
 
     if (entry.name != "..")
     {
         ImGui::Separator();
-
         if (ImGui::MenuItem("Delete"))
         {
-            result.deleteRequest = entry.path.string();
+            result.deleteRequests.push_back(entry.path.string());
         }
     }
 }

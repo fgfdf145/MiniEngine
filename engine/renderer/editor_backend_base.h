@@ -1,6 +1,6 @@
 #pragma once
 
-#include "model_loader.h"
+#include <model_loader.h>
 #include "renderer_shared_state.h"
 
 #include <rhi/backend.h>
@@ -63,6 +63,8 @@ private:
     void ClearSelectedModelBaseColorTexture();
     void CreateSceneEntity();
     void DeleteSelectedSceneEntity();
+    void CreateSceneLightEntity(const EditorUiActions::LightCreate& create);
+    void DeleteSelectedLightEntity();
     void LoadScene(const std::string& path);
     size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath);
     void PasteAssetPath(const EditorUiActions::AssetPasteRequest& request);

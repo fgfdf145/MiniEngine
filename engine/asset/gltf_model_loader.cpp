@@ -241,6 +241,71 @@ const unsigned char* GetAccessorDataPointer(
     return buffer.data.data() + elementOffset;
 }
 
+const unsigned char* GetBufferViewDataPointer(
+    const tinygltf::Model& model,
+    const tinygltf::BufferView& bufferView,
+    size_t byteOffset,
+    size_t byteSize
+)
+{
+    EnsureIndexInRange(static_cast<size_t>(bufferView.buffer), model.buffers.size(), "buffer");
+    const tinygltf::Buffer& buffer = model.buffers[static_cast<size_t>(bufferView.buffer)];
+    const size_t absoluteOffset = bufferView.byteOffset + byteOffset;
+    const size_t bufferViewEnd = bufferView.byteOffset + bufferView.byteLength;
+    if (absoluteOffset + byteSize > buffer.data.size() || absoluteOffset + byteSize > bufferViewEnd)
+    {
+        throw std::runtime_error("glTF sparse accessor points outside the underlying buffer");
+    }
+
+    return buffer.data.data() + absoluteOffset;
+}
+
+std::vector<uint32_t> ReadSparseAccessorIndices(
+    const tinygltf::Model& model,
+    const tinygltf::Accessor& accessor
+)
+{
+    if (!accessor.sparse.isSparse)
+    {
+        return {};
+    }
+
+    EnsureIndexInRange(static_cast<size_t>(accessor.sparse.indices.bufferView), model.bufferViews.size(), "buffer view");
+    const tinygltf::BufferView& indicesBufferView =
+        model.bufferViews[static_cast<size_t>(accessor.sparse.indices.bufferView)];
+    const int componentSize = tinygltf::GetComponentSizeInBytes(
+        static_cast<uint32_t>(accessor.sparse.indices.componentType)
+    );
+    if (componentSize <= 0)
+    {
+        throw std::runtime_error("glTF sparse accessor index component has an invalid size");
+    }
+
+    if (accessor.sparse.count < 0 || static_cast<size_t>(accessor.sparse.count) > accessor.count)
+    {
+        throw std::runtime_error("glTF sparse accessor count is out of bounds");
+    }
+
+    std::vector<uint32_t> indices(static_cast<size_t>(accessor.sparse.count), 0);
+    for (int sparseIndex = 0; sparseIndex < accessor.sparse.count; ++sparseIndex)
+    {
+        const unsigned char* indexData = GetBufferViewDataPointer(
+            model,
+            indicesBufferView,
+            accessor.sparse.indices.byteOffset + static_cast<size_t>(sparseIndex) * static_cast<size_t>(componentSize),
+            static_cast<size_t>(componentSize)
+        );
+        const uint32_t targetIndex = ReadIndexComponent(indexData, accessor.sparse.indices.componentType);
+        if (targetIndex >= accessor.count)
+        {
+            throw std::runtime_error("glTF sparse accessor index is out of bounds");
+        }
+        indices[static_cast<size_t>(sparseIndex)] = targetIndex;
+    }
+
+    return indices;
+}
+
 std::vector<float> ReadAccessorFloatComponents(
     const tinygltf::Model& model,
     int accessorIndex,
@@ -249,8 +314,6 @@ std::vector<float> ReadAccessorFloatComponents(
 {
     EnsureIndexInRange(static_cast<size_t>(accessorIndex), model.accessors.size(), "accessor");
     const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIndex)];
-    EnsureIndexInRange(static_cast<size_t>(accessor.bufferView), model.bufferViews.size(), "buffer view");
-    const tinygltf::BufferView& bufferView = model.bufferViews[static_cast<size_t>(accessor.bufferView)];
     const int actualComponents = tinygltf::GetNumComponentsInType(static_cast<uint32_t>(accessor.type));
     if (actualComponents <= 0)
     {
@@ -258,6 +321,18 @@ std::vector<float> ReadAccessorFloatComponents(
     }
 
     std::vector<float> values(accessor.count * expectedComponents, 0.0f);
+    if (static_cast<size_t>(actualComponents) < expectedComponents)
+    {
+        for (size_t elementIndex = 0; elementIndex < accessor.count; ++elementIndex)
+        {
+            for (size_t componentIndex = static_cast<size_t>(actualComponents); componentIndex < expectedComponents; ++componentIndex)
+            {
+                values[elementIndex * expectedComponents + componentIndex] =
+                    componentIndex == 3 ? 1.0f : 0.0f;
+            }
+        }
+    }
+
     const int componentSize = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(accessor.componentType));
     if (componentSize <= 0)
     {
@@ -265,25 +340,71 @@ std::vector<float> ReadAccessorFloatComponents(
     }
     const size_t elementByteSize = static_cast<size_t>(componentSize) * static_cast<size_t>(actualComponents);
 
-    for (size_t elementIndex = 0; elementIndex < accessor.count; ++elementIndex)
+    if (accessor.bufferView >= 0)
     {
-        const unsigned char* elementData = GetAccessorDataPointer(model, accessor, bufferView, elementIndex, elementByteSize);
-        for (size_t componentIndex = 0; componentIndex < expectedComponents; ++componentIndex)
+        EnsureIndexInRange(static_cast<size_t>(accessor.bufferView), model.bufferViews.size(), "buffer view");
+        const tinygltf::BufferView& bufferView = model.bufferViews[static_cast<size_t>(accessor.bufferView)];
+        for (size_t elementIndex = 0; elementIndex < accessor.count; ++elementIndex)
         {
-            if (static_cast<int>(componentIndex) >= actualComponents)
+            const unsigned char* elementData = GetAccessorDataPointer(model, accessor, bufferView, elementIndex, elementByteSize);
+            for (size_t componentIndex = 0; componentIndex < expectedComponents; ++componentIndex)
             {
-                values[elementIndex * expectedComponents + componentIndex] =
-                    componentIndex == 3 ? 1.0f : 0.0f;
-                continue;
-            }
+                if (static_cast<int>(componentIndex) >= actualComponents)
+                {
+                    values[elementIndex * expectedComponents + componentIndex] =
+                        componentIndex == 3 ? 1.0f : 0.0f;
+                    continue;
+                }
 
-            values[elementIndex * expectedComponents + componentIndex] = static_cast<float>(
-                ReadComponentAsDouble(
-                    elementData + componentIndex * static_cast<size_t>(componentSize),
-                    accessor.componentType,
-                    accessor.normalized
-                )
+                values[elementIndex * expectedComponents + componentIndex] = static_cast<float>(
+                    ReadComponentAsDouble(
+                        elementData + componentIndex * static_cast<size_t>(componentSize),
+                        accessor.componentType,
+                        accessor.normalized
+                    )
+                );
+            }
+        }
+    }
+    else if (!accessor.sparse.isSparse)
+    {
+        throw std::runtime_error("glTF accessor is missing buffer view data");
+    }
+
+    if (accessor.sparse.isSparse)
+    {
+        const std::vector<uint32_t> sparseIndices = ReadSparseAccessorIndices(model, accessor);
+        EnsureIndexInRange(static_cast<size_t>(accessor.sparse.values.bufferView), model.bufferViews.size(), "buffer view");
+        const tinygltf::BufferView& valuesBufferView =
+            model.bufferViews[static_cast<size_t>(accessor.sparse.values.bufferView)];
+
+        for (size_t sparseIndex = 0; sparseIndex < sparseIndices.size(); ++sparseIndex)
+        {
+            const unsigned char* elementData = GetBufferViewDataPointer(
+                model,
+                valuesBufferView,
+                accessor.sparse.values.byteOffset + sparseIndex * elementByteSize,
+                elementByteSize
             );
+            const size_t targetElementIndex = sparseIndices[sparseIndex];
+
+            for (size_t componentIndex = 0; componentIndex < expectedComponents; ++componentIndex)
+            {
+                if (static_cast<int>(componentIndex) >= actualComponents)
+                {
+                    values[targetElementIndex * expectedComponents + componentIndex] =
+                        componentIndex == 3 ? 1.0f : 0.0f;
+                    continue;
+                }
+
+                values[targetElementIndex * expectedComponents + componentIndex] = static_cast<float>(
+                    ReadComponentAsDouble(
+                        elementData + componentIndex * static_cast<size_t>(componentSize),
+                        accessor.componentType,
+                        accessor.normalized
+                    )
+                );
+            }
         }
     }
 
@@ -294,8 +415,6 @@ std::vector<uint32_t> ReadIndices(const tinygltf::Model& model, int accessorInde
 {
     EnsureIndexInRange(static_cast<size_t>(accessorIndex), model.accessors.size(), "accessor");
     const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIndex)];
-    EnsureIndexInRange(static_cast<size_t>(accessor.bufferView), model.bufferViews.size(), "buffer view");
-    const tinygltf::BufferView& bufferView = model.bufferViews[static_cast<size_t>(accessor.bufferView)];
 
     std::vector<uint32_t> indices(accessor.count, 0);
     const int componentSize = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(accessor.componentType));
@@ -305,10 +424,38 @@ std::vector<uint32_t> ReadIndices(const tinygltf::Model& model, int accessorInde
     }
     const size_t elementByteSize = static_cast<size_t>(componentSize);
 
-    for (size_t elementIndex = 0; elementIndex < accessor.count; ++elementIndex)
+    if (accessor.bufferView >= 0)
     {
-        const unsigned char* elementData = GetAccessorDataPointer(model, accessor, bufferView, elementIndex, elementByteSize);
-        indices[elementIndex] = ReadIndexComponent(elementData, accessor.componentType);
+        EnsureIndexInRange(static_cast<size_t>(accessor.bufferView), model.bufferViews.size(), "buffer view");
+        const tinygltf::BufferView& bufferView = model.bufferViews[static_cast<size_t>(accessor.bufferView)];
+        for (size_t elementIndex = 0; elementIndex < accessor.count; ++elementIndex)
+        {
+            const unsigned char* elementData = GetAccessorDataPointer(model, accessor, bufferView, elementIndex, elementByteSize);
+            indices[elementIndex] = ReadIndexComponent(elementData, accessor.componentType);
+        }
+    }
+    else if (!accessor.sparse.isSparse)
+    {
+        throw std::runtime_error("glTF index accessor is missing buffer view data");
+    }
+
+    if (accessor.sparse.isSparse)
+    {
+        const std::vector<uint32_t> sparseIndices = ReadSparseAccessorIndices(model, accessor);
+        EnsureIndexInRange(static_cast<size_t>(accessor.sparse.values.bufferView), model.bufferViews.size(), "buffer view");
+        const tinygltf::BufferView& valuesBufferView =
+            model.bufferViews[static_cast<size_t>(accessor.sparse.values.bufferView)];
+
+        for (size_t sparseIndex = 0; sparseIndex < sparseIndices.size(); ++sparseIndex)
+        {
+            const unsigned char* elementData = GetBufferViewDataPointer(
+                model,
+                valuesBufferView,
+                accessor.sparse.values.byteOffset + sparseIndex * elementByteSize,
+                elementByteSize
+            );
+            indices[sparseIndices[sparseIndex]] = ReadIndexComponent(elementData, accessor.componentType);
+        }
     }
 
     return indices;
@@ -381,7 +528,10 @@ void ExpandBounds(const glm::vec3& position, LoadedModelData& modelData)
     modelData.maxBounds = glm::max(modelData.maxBounds, position);
 }
 
-std::string ResolveExternalImagePath(const std::filesystem::path& modelPath, const tinygltf::Image& image)
+// Returns the texture path relative to the model file's directory, or an
+// absolute path if the URI was already absolute. Callers are responsible for
+// resolving relative paths against the model's current location at load time.
+std::string ResolveExternalImagePath(const std::filesystem::path& /*modelPath*/, const tinygltf::Image& image)
 {
     if (image.uri.empty() || image.uri.starts_with("data:"))
     {
@@ -392,13 +542,7 @@ std::string ResolveExternalImagePath(const std::filesystem::path& modelPath, con
         return {};
     }
 
-    const std::filesystem::path decodedPath = std::filesystem::path(DecodeUriPath(image.uri));
-    if (decodedPath.is_absolute())
-    {
-        return decodedPath.lexically_normal().string();
-    }
-
-    return (modelPath.parent_path() / decodedPath).lexically_normal().string();
+    return std::filesystem::path(DecodeUriPath(image.uri)).lexically_normal().string();
 }
 
 std::string ExportEmbeddedImage(
@@ -528,6 +672,10 @@ ModelMaterialData BuildMaterialData(
         ? materialData.baseColor[3]
         : 1.0f;
     materialData.baseColor[3] = materialData.opacity;
+    if (material.alphaMode == "MASK")
+    {
+        materialData.alphaCutoff = static_cast<float>(material.alphaCutoff);
+    }
     return materialData;
 }
 
@@ -853,8 +1001,6 @@ void TraverseNode(
     {
         TraverseNode(model, childIndex, worldTransform, modelData, visitedNodes);
     }
-
-    visitedNodes.erase(nodeIndex);
 }
 
 LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std::filesystem::path& modelPath)

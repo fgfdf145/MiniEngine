@@ -3,7 +3,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -11,6 +14,14 @@
 
 namespace
 {
+bool IsPortableMapExtension(const std::string& path)
+{
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+        [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+    return ext == ".ppm" || ext == ".pgm" || ext == ".pbm";
+}
+
 std::string ReadNextPortableMapToken(std::istream& input)
 {
     std::string token;
@@ -85,6 +96,15 @@ TextureData TextureLoader::LoadRGBA8(const std::string& path, bool flipVerticall
     stbi_uc* rawPixels = stbi_load(path.c_str(), &width, &height, &channelCount, STBI_rgb_alpha);
     if (rawPixels == nullptr)
     {
+        if (!IsPortableMapExtension(path))
+        {
+            const char* reason = stbi_failure_reason();
+            throw std::runtime_error(
+                "Failed to load texture '" + path + "': " +
+                (reason ? reason : "unknown error")
+            );
+        }
+
         TextureData texture = LoadPortablePixmap(path);
         if (flipVertically)
         {

@@ -26,6 +26,7 @@ struct ModelMaterialData
     float occlusionStrength = 1.0f;
     float emissiveIntensity = 1.0f;
     float opacity = 1.0f;
+    float alphaCutoff = 0.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

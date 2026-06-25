@@ -2,7 +2,7 @@
 
 #include "common.h"
 
-#include "../mesh.h"
+#include <mesh.h>
 
 #include <array>
 #include <vector>

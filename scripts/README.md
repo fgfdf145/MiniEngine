@@ -18,7 +18,7 @@ Windows PowerShell:
 .\scripts\bootstrap-deps.ps1
 ```
 
-Linux / macOS:
+Linux:
 
 ```bash
 ./scripts/bootstrap-deps.sh
@@ -40,16 +40,10 @@ Generate a Visual Studio solution that is split by the current CMake targets:
 
 On Visual Studio 2026 / CMake 4.3, the generated solution entry file is typically `MiniEngine.slnx`.
 
-Linux / macOS:
+Linux:
 
 ```bash
 ./scripts/build.sh
-```
-
-Generate an Xcode project on macOS:
-
-```bash
-./scripts/generate-xcode.sh --open
 ```
 
 Optional arguments:
@@ -66,8 +60,7 @@ Build script options:
 
 Runtime options:
 
-- `--backend metal`: prefer the native Metal 3 backend on macOS.
-- `--backend vulkan`: force the Vulkan backend when that backend is compiled into the build.
+- `--backend vulkan`: use the Vulkan backend.
 
 Solution generation options:
 

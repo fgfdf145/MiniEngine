@@ -469,14 +469,7 @@ Asset Manager 已经具备：
 
 虽然有 `rhi/backend.h` 和 `rhi/factory.cpp`，但目前实际还是 Vulkan 直连式实现。
 
-如果未来要支持：
-
-- DirectX 12
-- Metal
-- OpenGL 兼容层
-- Headless/offscreen 渲染
-
-当前抽象还不够。
+项目当前只适配 Vulkan，因此 RHI 目前更像一个薄工厂层，而不是多后端抽象。
 
 ### 5.3 `EditorScene` 仍是编辑器专用场景
 
@@ -523,7 +516,7 @@ Asset Manager 已经具备：
 
 结合代码现状，可以把项目描述为：
 
-> 一个基于 SDL3、Vulkan、Metal、ImGui、EnTT、yaml-cpp 与 tinygltf 构建的 3D 编辑器原型。
+> 一个基于 SDL3、Vulkan、ImGui、EnTT、yaml-cpp 与 tinygltf 构建的 3D 编辑器原型。
 > 它已经完成模型导入、场景编辑、材质 sidecar、视口交互和 Vulkan 渲染闭环，
 > 当前重点在编辑器工作流和资源组织，而不是完整游戏运行时。
 

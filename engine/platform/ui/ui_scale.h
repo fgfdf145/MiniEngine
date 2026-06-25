@@ -9,7 +9,6 @@ namespace platform::ui
 enum class OperatingSystem
 {
     Windows,
-    MacOS,
     Linux,
     Unknown
 };
@@ -18,7 +17,6 @@ struct UiScaleConfiguration
 {
     float fallback = 1.0f;
     std::optional<float> windows;
-    std::optional<float> macos;
     std::optional<float> linux;
 };
 

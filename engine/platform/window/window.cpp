@@ -108,9 +108,6 @@ void Window::CreateNativeWindow()
     case RenderBackendType::Vulkan:
         flags |= SDL_WINDOW_VULKAN;
         break;
-    case RenderBackendType::Metal:
-        flags |= SDL_WINDOW_METAL;
-        break;
     default:
         throw std::runtime_error("Unsupported window backend type");
     }

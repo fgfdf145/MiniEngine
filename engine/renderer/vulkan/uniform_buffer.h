@@ -6,6 +6,8 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 
+#include <vector>
+
 struct TextureDescriptorBinding
 {
     VkImageView imageView = VK_NULL_HANDLE;
@@ -29,13 +31,29 @@ struct MaterialTextureBinding
     TextureDescriptorBinding blendMask;
 };
 
+// Per-light GPU data — 4 × vec4 = 64 bytes, matches GLSL std140 struct layout.
+// positionAndRange : xyz = world position, w = effective range (metres)
+// colorAndIntensity: xyz = linear RGB color, w = intensity (lumens or lux)
+// directionAndType : xyz = world direction (normalized), w = LightType enum cast to float
+// spotAndArea      : x = cos(innerAngle), y = cos(outerAngle), z = areaWidth, w = areaHeight
+struct GpuLightData
+{
+    glm::vec4 positionAndRange{ 0.0f, 0.0f, 0.0f, 10.0f };
+    glm::vec4 colorAndIntensity{ 1.0f, 1.0f, 1.0f, 1000.0f };
+    glm::vec4 directionAndType{ 0.0f, -1.0f, 0.0f, 1.0f }; // type 1 = point
+    glm::vec4 spotAndArea{ 0.97f, 0.87f, 1.0f, 1.0f };
+};
+
+static constexpr uint32_t kMaxSceneLights = 8;
+
 struct alignas(16) CameraUniformData
 {
     glm::mat4 view{ 1.0f };
     glm::mat4 proj{ 1.0f };
     glm::vec4 cameraWorldPosition{ 0.0f, 0.0f, 0.0f, 1.0f };
-    glm::vec4 lightDirectionAndIntensity{ -0.6f, -1.0f, -0.35f, 2.25f };
-    glm::vec4 lightColorAndAmbient{ 1.0f, 0.98f, 0.95f, 0.2f };
+    glm::vec4 ambientColorAndIntensity{ 0.05f, 0.05f, 0.08f, 1.0f };
+    GpuLightData lights[kMaxSceneLights];
+    glm::uvec4 sceneLightCount{ 0u, 0u, 0u, 0u };
 };
 
 class VulkanUniformBuffer
@@ -54,7 +72,12 @@ public:
 
     VkDescriptorSetLayout GetDescriptorSetLayout() const;
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
-    void Update(uint32_t imageIndex, const ViewportMatrices& matrices, const glm::vec3& cameraPosition);
+    void Update(
+        uint32_t imageIndex,
+        const ViewportMatrices& matrices,
+        const glm::vec3& cameraPosition,
+        const std::vector<GpuLightData>& lights
+    );
 
 private:
     void CreateDescriptorSetLayout();

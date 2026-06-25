@@ -4,8 +4,7 @@
 
 enum class RenderBackendType
 {
-    Vulkan,
-    Metal
+    Vulkan
 };
 
 inline const char* ToString(RenderBackendType backendType)
@@ -14,8 +13,6 @@ inline const char* ToString(RenderBackendType backendType)
     {
     case RenderBackendType::Vulkan:
         return "Vulkan";
-    case RenderBackendType::Metal:
-        return "Metal";
     default:
         return "Unknown";
     }
@@ -23,11 +20,7 @@ inline const char* ToString(RenderBackendType backendType)
 
 inline RenderBackendType GetDefaultRenderBackendType()
 {
-#if defined(__APPLE__)
-    return RenderBackendType::Metal;
-#else
     return RenderBackendType::Vulkan;
-#endif
 }
 
 inline bool UsesZeroToOneDepth(RenderBackendType backendType)
@@ -35,7 +28,6 @@ inline bool UsesZeroToOneDepth(RenderBackendType backendType)
     switch (backendType)
     {
     case RenderBackendType::Vulkan:
-    case RenderBackendType::Metal:
         return true;
     default:
         return false;
@@ -52,12 +44,6 @@ inline bool TryParseRenderBackendType(std::string_view value, RenderBackendType&
     if (value == "vulkan")
     {
         backendType = RenderBackendType::Vulkan;
-        return true;
-    }
-
-    if (value == "metal")
-    {
-        backendType = RenderBackendType::Metal;
         return true;
     }
 

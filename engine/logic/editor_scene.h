@@ -63,6 +63,17 @@ public:
     const std::string& GetConfigPath() const;
     const std::string& GetSceneFilePath() const;
 
+    // Light entity management
+    entt::entity CreateLightEntity(const SerializedLightData& lightData) override;
+    void DestroyLightEntity(entt::entity entity) override;
+    bool HasLightComponent(entt::entity entity) const override;
+    LightComponent& GetLightComponent(entt::entity entity) override;
+    const LightComponent& GetLightComponent(entt::entity entity) const override;
+    const std::vector<entt::entity>& GetLightOrder() const override;
+    void ForEachLight(
+        const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
+    ) const override;
+
 private:
     bool IsValidEntity(entt::entity entity) const;
     void EnsureSelection();
@@ -71,6 +82,7 @@ private:
 
     entt::registry m_registry;
     std::vector<entt::entity> m_entityOrder;
+    std::vector<entt::entity> m_lightOrder;
     entt::entity m_selectedEntity = entt::null;
     TransformComponent m_defaultTransform;
     GizmoSettings m_gizmoSettings;

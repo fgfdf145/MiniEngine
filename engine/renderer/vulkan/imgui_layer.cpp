@@ -26,13 +26,6 @@ std::filesystem::path FindPreferredUiFontPath()
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/tahoma.ttf"
     };
-#elif defined(__APPLE__)
-    constexpr std::array<const char*, 4> kCandidates = {
-        "/System/Library/Fonts/Supplemental/SFNS.ttf",
-        "/System/Library/Fonts/Supplemental/Helvetica.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Supplemental/Verdana.ttf"
-    };
 #else
     constexpr std::array<const char*, 4> kCandidates = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
