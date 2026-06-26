@@ -5896,21 +5896,46 @@ EditorUiFrameResult EditorUiController::Draw(
                     }
                 }
 
-                ImGui::Separator();
-                ImGui::TextWrapped("Config: %s", scene.GetConfigPath().empty() ? "<none>" : scene.GetConfigPath().c_str());
-                ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
-                const std::string yamlPreview = scene.BuildSceneYamlPreview();
-                ImGui::InputTextMultiline(
-                    "Scene YAML",
-                    const_cast<char*>(yamlPreview.c_str()),
-                    yamlPreview.size() + 1,
-                    ImVec2(-FLT_MIN, 180.0f),
-                    ImGuiInputTextFlags_ReadOnly
-                );
             }
             else
             {
                 ImGui::TextUnformatted("No entity selected.");
+            }
+
+            // Scene I/O — always visible
+            ImGui::Separator();
+            ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+            if (!lastSceneIoError.empty())
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", lastSceneIoError.c_str());
+            }
+            if (ImGui::Button("Save Scene"))
+            {
+                // Save to current path if already set, otherwise open dialog
+                if (!scene.GetSceneFilePath().empty())
+                {
+                    result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
+                }
+                else if (const std::optional<std::string> savePath = SaveSceneFileDialog(); savePath.has_value())
+                {
+                    result.actions.selectedSceneSavePath = *savePath;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save As..."))
+            {
+                if (const std::optional<std::string> savePath = SaveSceneFileDialog(); savePath.has_value())
+                {
+                    result.actions.selectedSceneSavePath = *savePath;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Scene"))
+            {
+                if (const std::optional<std::string> loadPath = OpenSceneFileDialog(); loadPath.has_value())
+                {
+                    result.actions.selectedSceneLoadPath = *loadPath;
+                }
             }
         }
         ImGui::End();

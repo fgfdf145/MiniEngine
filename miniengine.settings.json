@@ -8,7 +8,7 @@
     "windows": {
       "camera": true,
       "asset_manager": true,
-      "input_monitor": true,
+      "input_monitor": false,
       "scene": true,
       "theme": false,
       "viewport": true

@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Window;
@@ -87,6 +88,11 @@ private:
     std::unique_ptr<VulkanDevice> m_device;
     std::vector<RenderSubmesh> m_renderSubmeshes;
     std::vector<std::unique_ptr<VulkanTexture>> m_textures;
+    // Parallel to m_textures: the cache key ("path|srgb" or "__id__|linear") for each slot.
+    // Used to move live textures into the pool before a rebuild so they can be reused without
+    // re-uploading them to the GPU.
+    std::vector<std::string> m_textureCacheKeys;
+    std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_texturePool;
     std::vector<MaterialTextureSlots> m_materialTextureSlots;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;

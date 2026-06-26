@@ -328,6 +328,10 @@ void VulkanRenderer::DestroyPipelineResources()
 {
     m_graphicsPipeline.reset();
     m_uniformBuffer.reset();
+    // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever
+    // the pipeline is torn down so nothing outlives the logical device.
+    m_texturePool.clear();
+    m_textureCacheKeys.clear();
 }
 
 void VulkanRenderer::RecreateSwapchain()
@@ -375,110 +379,82 @@ void VulkanRenderer::SyncSceneViewportLayer()
 
 void VulkanRenderer::UploadSceneResources()
 {
-    std::vector<std::unique_ptr<VulkanTexture>> newTextures;
-    std::vector<MaterialTextureSlots> newMaterialTextureSlots;
-    std::vector<RenderSubmesh> newRenderSubmeshes;
-    std::unordered_map<std::string, uint32_t> textureCache;
-
-    auto getOrCreateTexture = [&](const std::string& cacheKey, const TextureData& textureData, VulkanTextureFormat textureFormat) -> uint32_t
+    // Move live textures into the pool so they can be reused without re-uploading.
+    // This prevents 2× peak VRAM usage when rebuilding an unchanged texture set.
+    for (size_t i = 0; i < m_textures.size() && i < m_textureCacheKeys.size(); ++i)
     {
-        if (const auto iterator = textureCache.find(cacheKey); iterator != textureCache.end())
+        if (!m_textureCacheKeys[i].empty() && m_textures[i])
         {
-            return iterator->second;
+            m_texturePool.emplace(m_textureCacheKeys[i], std::move(m_textures[i]));
         }
+    }
+    m_textures.clear();
+    m_textureCacheKeys.clear();
 
-        const uint32_t textureIndex = static_cast<uint32_t>(newTextures.size());
-        newTextures.push_back(std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(),
-            m_device->GetGraphicsQueue(),
-            textureData,
-            textureFormat
-        ));
-        textureCache.emplace(cacheKey, textureIndex);
-        return textureIndex;
+    std::vector<std::unique_ptr<VulkanTexture>> newTextures;
+    std::vector<std::string>                    newCacheKeys;
+    std::vector<MaterialTextureSlots>           newMaterialTextureSlots;
+    std::vector<RenderSubmesh>                  newRenderSubmeshes;
+    std::unordered_map<std::string, uint32_t>   keyToIndex;
+
+    // Acquire a texture by cache key: reuse from pool when available, else use createFn().
+    // Returns UINT32_MAX on failure (createFn threw), caller should use fallback.
+    auto acquireDefault = [&](const std::string& id, const TextureData& data, VulkanTextureFormat fmt) -> uint32_t
+    {
+        const std::string key = id + (fmt == VulkanTextureFormat::SrgbColor ? "|srgb" : "|linear");
+        if (auto it = keyToIndex.find(key); it != keyToIndex.end())
+            return it->second;
+
+        const uint32_t idx = static_cast<uint32_t>(newTextures.size());
+        if (auto poolIt = m_texturePool.find(key); poolIt != m_texturePool.end())
+        {
+            newTextures.push_back(std::move(poolIt->second));
+            m_texturePool.erase(poolIt);
+        }
+        else
+        {
+            newTextures.push_back(std::make_unique<VulkanTexture>(
+                m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
+                data, fmt
+            ));
+        }
+        newCacheKeys.push_back(key);
+        keyToIndex.emplace(key, idx);
+        return idx;
     };
-
-    const uint32_t defaultBaseColorIndex = getOrCreateTexture(
-        "__default_base_color__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::SrgbColor
-    );
-    const uint32_t defaultNormalIndex = getOrCreateTexture(
-        "__default_normal__",
-        CreateFlatNormalTexture(),
-        VulkanTextureFormat::LinearData
-    );
-    const uint32_t defaultMetallicIndex = getOrCreateTexture(
-        "__default_metallic__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::LinearData
-    );
-    const uint32_t defaultRoughnessIndex = getOrCreateTexture(
-        "__default_roughness__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::LinearData
-    );
-    const uint32_t defaultOcclusionIndex = getOrCreateTexture(
-        "__default_occlusion__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::LinearData
-    );
-    const uint32_t defaultEmissiveIndex = getOrCreateTexture(
-        "__default_emissive__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::SrgbColor
-    );
-    const uint32_t defaultBlendMaskIndex = getOrCreateTexture(
-        "__default_blend_mask__",
-        CreateSolidTexture(255, 255, 255, 255),
-        VulkanTextureFormat::LinearData
-    );
-
-    const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
-    newMaterialTextureSlots.push_back(MaterialTextureSlots{
-        defaultBaseColorIndex,
-        defaultNormalIndex,
-        defaultMetallicIndex,
-        defaultRoughnessIndex,
-        defaultOcclusionIndex,
-        defaultEmissiveIndex,
-        defaultBaseColorIndex,
-        defaultNormalIndex,
-        defaultMetallicIndex,
-        defaultRoughnessIndex,
-        defaultOcclusionIndex,
-        defaultEmissiveIndex,
-        defaultBlendMaskIndex
-    });
 
     auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex) -> uint32_t
     {
-        if (texturePath.empty())
+        if (texturePath.empty()) return fallbackIndex;
+
+        const std::string key = BuildTextureCacheKey(texturePath, textureFormat);
+        if (auto it = keyToIndex.find(key); it != keyToIndex.end())
+            return it->second;
+
+        // Pool hit: reuse existing GPU texture — no disk I/O, no upload, no extra VRAM.
+        if (auto poolIt = m_texturePool.find(key); poolIt != m_texturePool.end())
         {
-            return fallbackIndex;
+            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
+            newTextures.push_back(std::move(poolIt->second));
+            m_texturePool.erase(poolIt);
+            newCacheKeys.push_back(key);
+            keyToIndex.emplace(key, idx);
+            return idx;
         }
 
-        const std::string cacheKey = BuildTextureCacheKey(texturePath, textureFormat);
-        if (const auto iterator = textureCache.find(cacheKey); iterator != textureCache.end())
-        {
-            return iterator->second;
-        }
-
+        // Pool miss: load from disk and upload.
         try
         {
-            const uint32_t textureIndex = static_cast<uint32_t>(newTextures.size());
+            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
             newTextures.push_back(std::make_unique<VulkanTexture>(
-                m_device->GetPhysicalDevice(),
-                m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(),
-                m_device->GetGraphicsQueue(),
-                texturePath,
-                textureFormat
+                m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
+                texturePath, textureFormat
             ));
-            textureCache.emplace(cacheKey, textureIndex);
-            return textureIndex;
+            newCacheKeys.push_back(key);
+            keyToIndex.emplace(key, idx);
+            return idx;
         }
         catch (const std::exception& error)
         {
@@ -487,19 +463,33 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
+    const uint32_t defaultBaseColorIndex  = acquireDefault("__default_base_color__",  CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+    const uint32_t defaultNormalIndex     = acquireDefault("__default_normal__",       CreateFlatNormalTexture(),               VulkanTextureFormat::LinearData);
+    const uint32_t defaultMetallicIndex   = acquireDefault("__default_metallic__",     CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultRoughnessIndex  = acquireDefault("__default_roughness__",    CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultOcclusionIndex  = acquireDefault("__default_occlusion__",    CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultEmissiveIndex   = acquireDefault("__default_emissive__",     CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+    const uint32_t defaultBlendMaskIndex  = acquireDefault("__default_blend_mask__",   CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+
+    const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
+    newMaterialTextureSlots.push_back(MaterialTextureSlots{
+        defaultBaseColorIndex, defaultNormalIndex,   defaultMetallicIndex,  defaultRoughnessIndex,
+        defaultOcclusionIndex, defaultEmissiveIndex,
+        defaultBaseColorIndex, defaultNormalIndex,   defaultMetallicIndex,  defaultRoughnessIndex,
+        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex
+    });
+
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
         RenderSubmesh renderSubmesh{};
-        renderSubmesh.entity = cpuRenderSubmesh.entity;
-        renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(),
-            m_device->GetGraphicsQueue(),
+        renderSubmesh.entity   = cpuRenderSubmesh.entity;
+        renderSubmesh.buffer   = std::make_unique<VulkanBuffer>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
             cpuRenderSubmesh.mesh
         );
         renderSubmesh.material = cpuRenderSubmesh.material;
-        renderSubmesh.name = cpuRenderSubmesh.name;
+        renderSubmesh.name     = cpuRenderSubmesh.name;
 
         if (!cpuRenderSubmesh.hasTexCoords)
         {
@@ -509,54 +499,32 @@ void VulkanRenderer::UploadSceneResources()
         }
 
         MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
-        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, VulkanTextureFormat::SrgbColor, defaultBaseColorIndex);
-        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, VulkanTextureFormat::LinearData, defaultNormalIndex);
-        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, VulkanTextureFormat::LinearData, defaultMetallicIndex);
-        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, VulkanTextureFormat::LinearData, defaultRoughnessIndex);
-        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, VulkanTextureFormat::LinearData, defaultOcclusionIndex);
-        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex);
-        slots.secondaryBaseColor = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryBaseColor,
-            VulkanTextureFormat::SrgbColor,
-            slots.baseColor
-        );
-        slots.secondaryNormal = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryNormal,
-            VulkanTextureFormat::LinearData,
-            slots.normal
-        );
-        slots.secondaryMetallic = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryMetallic,
-            VulkanTextureFormat::LinearData,
-            slots.metallic
-        );
-        slots.secondaryRoughness = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryRoughness,
-            VulkanTextureFormat::LinearData,
-            slots.roughness
-        );
-        slots.secondaryOcclusion = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryOcclusion,
-            VulkanTextureFormat::LinearData,
-            slots.occlusion
-        );
-        slots.secondaryEmissive = loadTextureIndex(
-            cpuRenderSubmesh.textures.secondaryEmissive,
-            VulkanTextureFormat::SrgbColor,
-            slots.emissive
-        );
-        slots.blendMask = loadTextureIndex(
-            cpuRenderSubmesh.textures.blendMask,
-            VulkanTextureFormat::LinearData,
-            defaultBlendMaskIndex
-        );
+        slots.baseColor        = loadTextureIndex(cpuRenderSubmesh.textures.baseColor,        VulkanTextureFormat::SrgbColor,  defaultBaseColorIndex);
+        slots.normal           = loadTextureIndex(cpuRenderSubmesh.textures.normal,           VulkanTextureFormat::LinearData, defaultNormalIndex);
+        slots.metallic         = loadTextureIndex(cpuRenderSubmesh.textures.metallic,         VulkanTextureFormat::LinearData, defaultMetallicIndex);
+        slots.roughness        = loadTextureIndex(cpuRenderSubmesh.textures.roughness,        VulkanTextureFormat::LinearData, defaultRoughnessIndex);
+        slots.occlusion        = loadTextureIndex(cpuRenderSubmesh.textures.occlusion,        VulkanTextureFormat::LinearData, defaultOcclusionIndex);
+        slots.emissive         = loadTextureIndex(cpuRenderSubmesh.textures.emissive,         VulkanTextureFormat::SrgbColor,  defaultEmissiveIndex);
+        slots.secondaryBaseColor  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor,  VulkanTextureFormat::SrgbColor,  slots.baseColor);
+        slots.secondaryNormal     = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal,     VulkanTextureFormat::LinearData, slots.normal);
+        slots.secondaryMetallic   = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic,   VulkanTextureFormat::LinearData, slots.metallic);
+        slots.secondaryRoughness  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness,  VulkanTextureFormat::LinearData, slots.roughness);
+        slots.secondaryOcclusion  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion,  VulkanTextureFormat::LinearData, slots.occlusion);
+        slots.secondaryEmissive   = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive,   VulkanTextureFormat::SrgbColor,  slots.emissive);
+        slots.blendMask           = loadTextureIndex(cpuRenderSubmesh.textures.blendMask,           VulkanTextureFormat::LinearData, defaultBlendMaskIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
         newRenderSubmeshes.push_back(std::move(renderSubmesh));
     }
 
+    // Textures remaining in the pool are no longer referenced; destroy them now.
+    m_texturePool.clear();
+
     ApplyRenderContent(std::move(newTextures), std::move(newMaterialTextureSlots), std::move(newRenderSubmeshes));
+
+    // Track the cache keys for the textures now in m_textures, so the next upload can pool them.
+    m_textureCacheKeys = std::move(newCacheKeys);
 }
 
 void VulkanRenderer::ApplyRenderContent(

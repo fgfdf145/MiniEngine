@@ -1440,6 +1440,14 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
         std::shared_ptr<LoadedModelData> modelDataPtr = GetCachedModel(model.sourcePath);
         if (!modelDataPtr)
         {
+            // Don't do a synchronous load while the async loader is running on another thread:
+            // the model loader is not thread-safe and concurrent access to the same file crashes.
+            // ProcessPendingOperations will call RebuildSceneRenderables() again once the
+            // async load completes and the data is in the cache.
+            if (State().asyncLoad.IsLoading())
+            {
+                return;
+            }
             modelDataPtr = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
             CacheModel(model.sourcePath, modelDataPtr);
         }
