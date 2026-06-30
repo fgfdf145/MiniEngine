@@ -23,3 +23,9 @@ vcpkg_installed/
 # CMake
 CMakeFiles/
 CMakeCache.txt
+
+# Large local-only sample assets (kept on disk, not version controlled)
+assets/textures/
+assets/NewSponza_Main_glTF_003.bin
+assets/NewSponza_Main_glTF_003.gltf
+assets/Render_Main_*.png
