@@ -41,7 +41,19 @@ layout(location = 4) out vec3 fragWorldPosition;
 void main()
 {
     vec4 worldPosition = drawData.model * vec4(inPosition, 1.0);
-    mat3 normalMatrix = transpose(inverse(mat3(drawData.model)));
+
+    // Compute the normal matrix analytically from the TRS model columns.
+    // For M = R*S, the normal matrix (transpose of inverse) equals R*S^{-1},
+    // which is each column divided by its squared length. This avoids inverse().
+    vec3 mc0 = drawData.model[0].xyz;
+    vec3 mc1 = drawData.model[1].xyz;
+    vec3 mc2 = drawData.model[2].xyz;
+    mat3 normalMatrix = mat3(
+        mc0 / max(dot(mc0, mc0), 1e-6),
+        mc1 / max(dot(mc1, mc1), 1e-6),
+        mc2 / max(dot(mc2, mc2), 1e-6)
+    );
+
     vec3 worldTangent = normalize(mat3(drawData.model) * inTangent.xyz);
 
     gl_Position = ubo.proj * ubo.view * worldPosition;

@@ -120,6 +120,23 @@ VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swap
     return presentResult;
 }
 
+void VulkanCommandContext::WaitForAllFrames()
+{
+    std::vector<VkFence> fences;
+    fences.reserve(m_frameSyncObjects.size());
+    for (const VulkanFrameSyncObjects& syncObjects : m_frameSyncObjects)
+    {
+        fences.push_back(syncObjects.inFlightFence);
+    }
+    if (!fences.empty())
+    {
+        CheckVulkan(
+            vkWaitForFences(m_device, static_cast<uint32_t>(fences.size()), fences.data(), VK_TRUE, UINT64_MAX),
+            "Failed waiting for in-flight render fences"
+        );
+    }
+}
+
 void VulkanCommandContext::CreateCommandPool(const QueueFamilyIndices& queueFamilies)
 {
     VkCommandPoolCreateInfo poolInfo{};

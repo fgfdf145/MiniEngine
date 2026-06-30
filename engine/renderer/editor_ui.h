@@ -111,8 +111,6 @@ private:
     bool DrawThemeEditorWindow();
     void OpenModelProcessorWindow(const std::string& modelPath);
     void CloseModelProcessorWindow();
-    void OpenMaterialPreviewWindow(const std::string& materialPath);
-    void CloseMaterialPreviewWindow();
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;
@@ -125,15 +123,10 @@ private:
     std::string m_modelProcessorModelPath;
     std::string m_modelProcessorDisplayName;
     std::string m_modelProcessorStatusMessage;
-    std::string m_materialPreviewAssetPath;
-    std::string m_materialPreviewDisplayName;
-    std::string m_materialPreviewModelPath;
-    std::string m_materialPreviewStatusMessage;
     LoadedModelData m_modelProcessorLoadedModel;
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_modelProcessorSelectedUvSubmeshIndex = 0;
-    int m_materialPreviewMaterialIndex = 0;
     uint32_t m_materialGraphSelectedNodeId = 0;
     uint32_t m_materialGraphSelectedLinkId = 0;
     uint32_t m_materialGraphResizeNodeId = 0;
@@ -151,11 +144,9 @@ private:
     bool m_materialGraphLinkDragActive = false;
     bool m_materialGraphNodeResizeActive = false;
     bool m_materialGraphPanningActive = false;
-    ModelImportedMaterialInfo m_materialPreviewMaterial;
     std::string m_materialGraphLinkDragFromSlot;
     bool m_openMaterialGraphAddNodePopup = false;
     bool m_showModelProcessorWindow = false;
-    bool m_showMaterialPreviewWindow = false;
     bool m_modelProcessorDirty = false;
     uint32_t m_materialGraphLinkDragFromNodeId = 0;
     uint8_t m_materialGraphResizeEdges = 0;

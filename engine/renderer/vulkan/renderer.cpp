@@ -550,7 +550,11 @@ void VulkanRenderer::ApplyRenderContent(
             m_sceneViewportLayer->GetRenderPass(),
             newUniformBuffer->GetDescriptorSetLayout()
         );
-        vkDeviceWaitIdle(m_device->GetHandle());
+        // Wait only for our in-flight render frames to finish before destroying old resources.
+        // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
+        // present or transfer queues, and new UBO/pipeline above are built while the GPU
+        // may still be executing the previous frame (overlapping CPU and GPU work).
+        m_commandContext->WaitForAllFrames();
         m_uniformBuffer = std::move(newUniformBuffer);
         m_graphicsPipeline = std::move(newGraphicsPipeline);
     }

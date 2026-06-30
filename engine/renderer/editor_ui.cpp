@@ -421,80 +421,6 @@ std::string BuildMaterialSlotLabel(const ModelImportedMaterialInfo& material, si
         : material.name;
 }
 
-ModelImportedMaterialInfo ReadImportedMaterialInfoFromYamlNode(
-    const YAML::Node& materialNode,
-    const std::string& fallbackName
-)
-{
-    if (!materialNode || !materialNode.IsMap())
-    {
-        throw std::runtime_error("The selected material asset does not contain a valid 'material' map.");
-    }
-
-    ModelImportedMaterialInfo material{};
-    material.name = materialNode["name"].as<std::string>(fallbackName);
-    material.baseColorTexturePath = materialNode["base_color_texture_path"].as<std::string>(material.baseColorTexturePath);
-    material.normalTexturePath = materialNode["normal_texture_path"].as<std::string>(material.normalTexturePath);
-    material.metallicTexturePath = materialNode["metallic_texture_path"].as<std::string>(material.metallicTexturePath);
-    material.roughnessTexturePath = materialNode["roughness_texture_path"].as<std::string>(material.roughnessTexturePath);
-    material.occlusionTexturePath = materialNode["occlusion_texture_path"].as<std::string>(material.occlusionTexturePath);
-    material.emissiveTexturePath = materialNode["emissive_texture_path"].as<std::string>(material.emissiveTexturePath);
-    if (const YAML::Node pbrNode = materialNode["pbr"]; pbrNode && pbrNode.IsMap())
-    {
-        if (pbrNode["base_color_factor"] && pbrNode["base_color_factor"].IsSequence() && pbrNode["base_color_factor"].size() == 4)
-        {
-            for (size_t index = 0; index < 4; ++index)
-            {
-                material.pbr.baseColorFactor[index] = pbrNode["base_color_factor"][index].as<float>(material.pbr.baseColorFactor[index]);
-            }
-        }
-        if (pbrNode["emissive_color"] && pbrNode["emissive_color"].IsSequence() && pbrNode["emissive_color"].size() == 3)
-        {
-            for (size_t index = 0; index < 3; ++index)
-            {
-                material.pbr.emissiveColor[index] = pbrNode["emissive_color"][index].as<float>(material.pbr.emissiveColor[index]);
-            }
-        }
-        material.pbr.metallicFactor = pbrNode["metallic_factor"].as<float>(material.pbr.metallicFactor);
-        material.pbr.roughnessFactor = pbrNode["roughness_factor"].as<float>(material.pbr.roughnessFactor);
-        material.pbr.normalScale = pbrNode["normal_scale"].as<float>(material.pbr.normalScale);
-        material.pbr.occlusionStrength = pbrNode["occlusion_strength"].as<float>(material.pbr.occlusionStrength);
-        material.pbr.emissiveIntensity = pbrNode["emissive_intensity"].as<float>(material.pbr.emissiveIntensity);
-        material.pbr.opacity = pbrNode["opacity"].as<float>(material.pbr.opacity);
-    }
-    if (const YAML::Node graphNode = materialNode["texture_graph"]; graphNode && graphNode.IsMap())
-    {
-        material.blendGraph.enabled = graphNode["enabled"].as<bool>(material.blendGraph.enabled);
-        material.blendGraph.blendFactor = graphNode["blend_factor"].as<float>(material.blendGraph.blendFactor);
-        material.blendGraph.blendMaskTexturePath = graphNode["blend_mask_texture_path"].as<std::string>(material.blendGraph.blendMaskTexturePath);
-        material.blendGraph.secondaryBaseColorTexturePath = graphNode["secondary_base_color_texture_path"].as<std::string>(material.blendGraph.secondaryBaseColorTexturePath);
-        material.blendGraph.secondaryNormalTexturePath = graphNode["secondary_normal_texture_path"].as<std::string>(material.blendGraph.secondaryNormalTexturePath);
-        material.blendGraph.secondaryMetallicTexturePath = graphNode["secondary_metallic_texture_path"].as<std::string>(material.blendGraph.secondaryMetallicTexturePath);
-        material.blendGraph.secondaryRoughnessTexturePath = graphNode["secondary_roughness_texture_path"].as<std::string>(material.blendGraph.secondaryRoughnessTexturePath);
-        material.blendGraph.secondaryOcclusionTexturePath = graphNode["secondary_occlusion_texture_path"].as<std::string>(material.blendGraph.secondaryOcclusionTexturePath);
-        material.blendGraph.secondaryEmissiveTexturePath = graphNode["secondary_emissive_texture_path"].as<std::string>(material.blendGraph.secondaryEmissiveTexturePath);
-    }
-    DeserializeMaterialShaderGraph(materialNode["shader_graph"], material.name, std::nullopt, material);
-    CompileMaterialShaderGraph(material);
-
-    material.blendGraph.blendFactor = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
-    material.pbr.baseColorFactor[0] = std::clamp(material.pbr.baseColorFactor[0], 0.0f, 4.0f);
-    material.pbr.baseColorFactor[1] = std::clamp(material.pbr.baseColorFactor[1], 0.0f, 4.0f);
-    material.pbr.baseColorFactor[2] = std::clamp(material.pbr.baseColorFactor[2], 0.0f, 4.0f);
-    material.pbr.baseColorFactor[3] = std::clamp(material.pbr.baseColorFactor[3], 0.0f, 1.0f);
-    material.pbr.metallicFactor = std::clamp(material.pbr.metallicFactor, 0.0f, 1.0f);
-    material.pbr.roughnessFactor = std::clamp(material.pbr.roughnessFactor, 0.0f, 1.0f);
-    material.pbr.normalScale = std::clamp(material.pbr.normalScale, 0.0f, 4.0f);
-    material.pbr.occlusionStrength = std::clamp(material.pbr.occlusionStrength, 0.0f, 1.0f);
-    material.pbr.emissiveIntensity = std::max(material.pbr.emissiveIntensity, 0.0f);
-    material.pbr.opacity = std::clamp(material.pbr.opacity, 0.0f, 1.0f);
-    if (material.name.empty())
-    {
-        material.name = fallbackName;
-    }
-    return material;
-}
-
 std::string ImportTextureIntoModelMaterialDirectory(
     const std::string& modelPath,
     uint32_t materialIndex,
@@ -918,14 +844,6 @@ bool IsSupportedModelAssetPath(const std::filesystem::path& path)
     return ModelLoader::IsSupportedModelPath(path);
 }
 
-bool IsMaterialAssetPath(const std::filesystem::path& path)
-{
-    const std::string fileName = ToLowerCopy(path.filename().string());
-    return
-        fileName.size() >= std::string(".material.yaml").size() &&
-        fileName.ends_with(".material.yaml");
-}
-
 std::string NormalizeAssetPath(const std::filesystem::path& path)
 {
     return path.lexically_normal().string();
@@ -962,22 +880,6 @@ std::vector<ModelImportedMaterialInfo> LoadEffectiveImportedModelMaterials(
         materialAssetPaths->assign(materials.size(), std::string{});
     }
     return materials;
-}
-
-bool LoadMaterialPreviewAsset(
-    const std::filesystem::path& materialPath,
-    ModelImportedMaterialInfo& material,
-    std::string& modelPath,
-    int& materialIndex,
-    std::string& statusMessage
-)
-{
-    static_cast<void>(materialPath);
-    material = ModelImportedMaterialInfo{};
-    modelPath.clear();
-    materialIndex = 0;
-    statusMessage = "Material asset preview is disabled while asset management is being rebuilt.";
-    return false;
 }
 
 glm::vec3 ComputeLoadedModelCenter(const LoadedModelData& loadedModel)
@@ -4076,6 +3978,7 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
     }
 
     ImGuizmo::SetDrawlist(viewportRect.drawList);
+    const glm::mat4 viewBefore = matrices.view;
     ImGuizmo::ViewManipulate(
         glm::value_ptr(matrices.view),
         7.5f,
@@ -4083,8 +3986,11 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
         ImVec2(128.0f, 128.0f),
         IM_COL32(32, 32, 32, 180)
     );
-    camera.SetFromViewMatrix(matrices.view);
-    matrices.view = camera.GetViewMatrix();
+    if (matrices.view != viewBefore)
+    {
+        camera.SetFromViewMatrix(matrices.view);
+        matrices.view = camera.GetViewMatrix();
+    }
 }
 
 void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
@@ -4102,16 +4008,24 @@ void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const Vie
     const glm::mat4 inversePivotOffset = glm::translate(glm::mat4(1.0f), -localCenter);
     glm::mat4 gizmoMatrix = matrices.model * pivotOffset;
 
+    // Point and Ambient lights have no meaningful orientation — restrict to translate
+    // without mutating gizmo.operation so the user's preference is preserved for other entities.
+    const bool isTranslateOnly =
+        scene.HasLightComponent(selectedEntity) &&
+        (scene.GetLightComponent(selectedEntity).type == LightType::Point ||
+         scene.GetLightComponent(selectedEntity).type == LightType::Ambient);
+    const ImGuizmo::OPERATION effectiveOperation = isTranslateOnly ? ImGuizmo::TRANSLATE : gizmo.operation;
+
     std::array<float, 3> snapValues = {
         gizmo.translationSnap.x,
         gizmo.translationSnap.y,
         gizmo.translationSnap.z
     };
-    if (gizmo.operation == ImGuizmo::ROTATE)
+    if (effectiveOperation == ImGuizmo::ROTATE)
     {
         snapValues = { gizmo.rotationSnap, 0.0f, 0.0f };
     }
-    else if (gizmo.operation == ImGuizmo::SCALE)
+    else if (effectiveOperation == ImGuizmo::SCALE)
     {
         snapValues = { gizmo.scaleSnap.x, gizmo.scaleSnap.y, gizmo.scaleSnap.z };
     }
@@ -4123,7 +4037,7 @@ void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const Vie
     ImGuizmo::Manipulate(
         glm::value_ptr(matrices.view),
         glm::value_ptr(matrices.projection),
-        gizmo.operation,
+        effectiveOperation,
         gizmo.mode,
         glm::value_ptr(gizmoMatrix),
         nullptr,
@@ -4637,33 +4551,6 @@ void EditorUiController::CloseModelProcessorWindow()
     m_openMaterialGraphAddNodePopup = false;
 }
 
-void EditorUiController::OpenMaterialPreviewWindow(const std::string& materialPath)
-{
-    const std::filesystem::path normalizedPath = NormalizeFilesystemPath(materialPath);
-
-    m_showMaterialPreviewWindow = true;
-    m_materialPreviewAssetPath = normalizedPath.string();
-    m_materialPreviewDisplayName = normalizedPath.filename().string();
-    LoadMaterialPreviewAsset(
-        normalizedPath,
-        m_materialPreviewMaterial,
-        m_materialPreviewModelPath,
-        m_materialPreviewMaterialIndex,
-        m_materialPreviewStatusMessage
-    );
-}
-
-void EditorUiController::CloseMaterialPreviewWindow()
-{
-    m_showMaterialPreviewWindow = false;
-    m_materialPreviewAssetPath.clear();
-    m_materialPreviewDisplayName.clear();
-    m_materialPreviewModelPath.clear();
-    m_materialPreviewStatusMessage.clear();
-    m_materialPreviewMaterial = ModelImportedMaterialInfo{};
-    m_materialPreviewMaterialIndex = 0;
-}
-
 EditorUiFrameResult EditorUiController::Draw(
     Camera& camera,
     ViewportMatrices& matrices,
@@ -4685,8 +4572,6 @@ EditorUiFrameResult EditorUiController::Draw(
     const bool previousShowSceneWindow = m_showSceneWindow;
     const bool previousShowThemeWindow = m_showThemeWindow;
     const bool previousShowViewportWindow = m_showViewportWindow;
-    std::optional<std::string> requestedModelPreviewPath;
-    std::optional<std::string> requestedMaterialPreviewPath;
 
     if (m_showModelProcessorWindow)
     {
@@ -4698,18 +4583,6 @@ EditorUiFrameResult EditorUiController::Draw(
             !IsSupportedModelAssetPath(processorModelPath))
         {
             CloseModelProcessorWindow();
-        }
-    }
-    if (m_showMaterialPreviewWindow)
-    {
-        std::error_code materialErrorCode;
-        const std::filesystem::path materialPreviewPath(m_materialPreviewAssetPath);
-        if (m_materialPreviewAssetPath.empty() ||
-            !std::filesystem::exists(materialPreviewPath, materialErrorCode) ||
-            materialErrorCode ||
-            !IsMaterialAssetPath(materialPreviewPath))
-        {
-            CloseMaterialPreviewWindow();
         }
     }
 
@@ -4783,15 +4656,6 @@ EditorUiFrameResult EditorUiController::Draw(
     if (m_showThemeWindow)
     {
         themeChanged = DrawThemeEditorWindow();
-    }
-
-    if (requestedModelPreviewPath.has_value())
-    {
-        OpenModelProcessorWindow(*requestedModelPreviewPath);
-    }
-    if (requestedMaterialPreviewPath.has_value())
-    {
-        OpenMaterialPreviewWindow(*requestedMaterialPreviewPath);
     }
 
     if (m_showModelProcessorWindow)
@@ -5578,115 +5442,6 @@ EditorUiFrameResult EditorUiController::Draw(
         }
     }
 
-    if (m_showMaterialPreviewWindow)
-    {
-        bool keepMaterialPreviewWindowOpen = m_showMaterialPreviewWindow;
-        bool requestCloseMaterialPreviewWindow = false;
-        bool requestReloadMaterialPreviewWindow = false;
-        bool requestOpenOwningModelProcessor = false;
-        const std::string materialPreviewReloadPath = m_materialPreviewAssetPath;
-        const std::string owningModelPath = m_materialPreviewModelPath;
-        const int owningMaterialIndex = m_materialPreviewMaterialIndex;
-
-        ImGui::SetNextWindowSize(
-            ImVec2(520.0f * m_effectiveUiScale, 520.0f * m_effectiveUiScale),
-            ImGuiCond_FirstUseEver
-        );
-        if (ImGui::Begin("Material Preview", &keepMaterialPreviewWindowOpen))
-        {
-            ImGui::TextWrapped(
-                "Material: %s",
-                m_materialPreviewMaterial.name.empty() ? m_materialPreviewDisplayName.c_str() : m_materialPreviewMaterial.name.c_str()
-            );
-            ImGui::TextWrapped("Asset Path: %s", m_materialPreviewAssetPath.c_str());
-            ImGui::TextWrapped("Owning Model: %s", owningModelPath.empty() ? "<unknown>" : owningModelPath.c_str());
-            ImGui::Text("Material Slot: %d", owningMaterialIndex);
-
-            if (!m_materialPreviewStatusMessage.empty())
-            {
-                ImGui::Spacing();
-                ImGui::TextWrapped("Status: %s", m_materialPreviewStatusMessage.c_str());
-            }
-
-            if (!owningModelPath.empty())
-            {
-                if (ImGui::Button("Open Owning Model Preview", ImVec2(240.0f * m_effectiveUiScale, 0.0f)))
-                {
-                    requestOpenOwningModelProcessor = true;
-                }
-                ImGui::SameLine();
-            }
-            if (ImGui::Button("Reload From Disk"))
-            {
-                requestReloadMaterialPreviewWindow = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
-            {
-                requestCloseMaterialPreviewWindow = true;
-            }
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("Primary PBR Textures");
-            const MaterialTextureBlendGraph& blendGraph = m_materialPreviewMaterial.blendGraph;
-            DrawPrimaryMaterialTextureRows(m_materialPreviewMaterial);
-
-            ImGui::SeparatorText("PBR Factors");
-            ImGui::Text(
-                "Base Factor: %.2f %.2f %.2f %.2f",
-                m_materialPreviewMaterial.pbr.baseColorFactor[0],
-                m_materialPreviewMaterial.pbr.baseColorFactor[1],
-                m_materialPreviewMaterial.pbr.baseColorFactor[2],
-                m_materialPreviewMaterial.pbr.baseColorFactor[3]
-            );
-            ImGui::Text(
-                "Emissive: %.2f %.2f %.2f  Intensity: %.2f",
-                m_materialPreviewMaterial.pbr.emissiveColor[0],
-                m_materialPreviewMaterial.pbr.emissiveColor[1],
-                m_materialPreviewMaterial.pbr.emissiveColor[2],
-                m_materialPreviewMaterial.pbr.emissiveIntensity
-            );
-            ImGui::Text(
-                "Metallic: %.2f  Roughness: %.2f  Normal: %.2f  AO: %.2f  Opacity: %.2f",
-                m_materialPreviewMaterial.pbr.metallicFactor,
-                m_materialPreviewMaterial.pbr.roughnessFactor,
-                m_materialPreviewMaterial.pbr.normalScale,
-                m_materialPreviewMaterial.pbr.occlusionStrength,
-                m_materialPreviewMaterial.pbr.opacity
-            );
-
-            if (HasSecondaryMaterialLayer(blendGraph))
-            {
-                ImGui::SeparatorText("Blend And Secondary Layer");
-                ImGui::Text("Blend Enabled: %s", blendGraph.enabled ? "Yes" : "No");
-                ImGui::Text("Blend Factor: %.2f", blendGraph.blendFactor);
-                DrawSecondaryMaterialTextureRows(blendGraph);
-            }
-        }
-        ImGui::End();
-
-        if (requestReloadMaterialPreviewWindow && !requestCloseMaterialPreviewWindow && keepMaterialPreviewWindowOpen)
-        {
-            OpenMaterialPreviewWindow(materialPreviewReloadPath);
-        }
-        if (requestOpenOwningModelProcessor && !owningModelPath.empty())
-        {
-            OpenModelProcessorWindow(owningModelPath);
-            if (!m_modelProcessorMaterials.empty())
-            {
-                m_modelProcessorSelectedMaterialIndex = std::clamp(
-                    owningMaterialIndex,
-                    0,
-                    static_cast<int>(m_modelProcessorMaterials.size()) - 1
-                );
-            }
-        }
-        if (!keepMaterialPreviewWindowOpen || requestCloseMaterialPreviewWindow)
-        {
-            CloseMaterialPreviewWindow();
-        }
-    }
-
     if (m_showInputMonitorWindow)
     {
         ImGui::SetNextWindowSize(
@@ -5854,8 +5609,6 @@ EditorUiFrameResult EditorUiController::Draw(
                     {
                         if (light.type == LightType::Point || light.type == LightType::Ambient)
                         {
-                            // Force translate-only for these types
-                            gizmo.operation = ImGuizmo::TRANSLATE;
                             ImGui::TextDisabled("Translate only (no orientation for this light type)");
                         }
                         else

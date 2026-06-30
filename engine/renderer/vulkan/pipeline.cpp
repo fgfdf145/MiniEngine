@@ -64,8 +64,11 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // Y-axis is flipped in the render projection matrix (invertRenderYAxis=true for Vulkan),
+    // which reverses winding as seen in clip space. Front faces of right-handed glTF models
+    // (CCW in world space) appear CW in Vulkan NDC, so declare them as VK_FRONT_FACE_CLOCKWISE.
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;

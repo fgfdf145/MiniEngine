@@ -1,12 +1,16 @@
 #include "editor_backend_base.h"
 
 #include <log/log.h>
+#include <material_graph_runtime.h>
 #include <window/window.h>
+
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -152,6 +156,123 @@ void ResetModelToBuiltin(ISceneWorld& scene, entt::entity entity)
     model.hasBounds = true;
     model.importedMaterials.clear();
     model.importedSubmeshes.clear();
+}
+
+// Copies user-edited material data (blendGraph, shaderGraph, pbr, texture paths) from an
+// ImportedMaterialInfo into the raw ModelMaterialData held by the model cache.
+// ModelMaterialData has redundant flat fields alongside a pbr struct; both must stay in sync.
+void ApplyImportedMaterialToModelData(const ModelImportedMaterialInfo& src, ModelMaterialData& dst)
+{
+    dst.name                  = src.name;
+    dst.baseColorTexturePath  = src.baseColorTexturePath;
+    dst.normalTexturePath     = src.normalTexturePath;
+    dst.metallicTexturePath   = src.metallicTexturePath;
+    dst.roughnessTexturePath  = src.roughnessTexturePath;
+    dst.occlusionTexturePath  = src.occlusionTexturePath;
+    dst.emissiveTexturePath   = src.emissiveTexturePath;
+    dst.pbr                   = src.pbr;
+    dst.blendGraph            = src.blendGraph;
+    dst.shaderGraph           = src.shaderGraph;
+    // Mirror pbr fields into the flat copies used by RebuildSceneRenderables.
+    dst.baseColor[0]      = src.pbr.baseColorFactor[0];
+    dst.baseColor[1]      = src.pbr.baseColorFactor[1];
+    dst.baseColor[2]      = src.pbr.baseColorFactor[2];
+    dst.baseColor[3]      = src.pbr.baseColorFactor[3];
+    dst.emissiveColor[0]  = src.pbr.emissiveColor[0];
+    dst.emissiveColor[1]  = src.pbr.emissiveColor[1];
+    dst.emissiveColor[2]  = src.pbr.emissiveColor[2];
+    dst.metallicFactor    = src.pbr.metallicFactor;
+    dst.roughnessFactor   = src.pbr.roughnessFactor;
+    dst.normalScale       = src.pbr.normalScale;
+    dst.occlusionStrength = src.pbr.occlusionStrength;
+    dst.emissiveIntensity = src.pbr.emissiveIntensity;
+    dst.opacity           = src.pbr.opacity;
+}
+
+// Serializes one material to a YAML node under a "material:" root map, with
+// name/texture paths, a "pbr:" block, an optional "texture_graph:" blend block,
+// and an optional "shader_graph:" block.
+YAML::Node SerializeMaterialToYaml(const ModelImportedMaterialInfo& material)
+{
+    YAML::Node node(YAML::NodeType::Map);
+    node["name"]                   = material.name;
+    node["base_color_texture_path"]= material.baseColorTexturePath;
+    node["normal_texture_path"]    = material.normalTexturePath;
+    node["metallic_texture_path"]  = material.metallicTexturePath;
+    node["roughness_texture_path"] = material.roughnessTexturePath;
+    node["occlusion_texture_path"] = material.occlusionTexturePath;
+    node["emissive_texture_path"]  = material.emissiveTexturePath;
+
+    YAML::Node pbr(YAML::NodeType::Map);
+    YAML::Node bcf(YAML::NodeType::Sequence);
+    for (float v : material.pbr.baseColorFactor) bcf.push_back(v);
+    pbr["base_color_factor"] = bcf;
+    YAML::Node ec(YAML::NodeType::Sequence);
+    for (float v : material.pbr.emissiveColor) ec.push_back(v);
+    pbr["emissive_color"]      = ec;
+    pbr["metallic_factor"]     = material.pbr.metallicFactor;
+    pbr["roughness_factor"]    = material.pbr.roughnessFactor;
+    pbr["normal_scale"]        = material.pbr.normalScale;
+    pbr["occlusion_strength"]  = material.pbr.occlusionStrength;
+    pbr["emissive_intensity"]  = material.pbr.emissiveIntensity;
+    pbr["opacity"]             = material.pbr.opacity;
+    node["pbr"] = pbr;
+
+    const MaterialTextureBlendGraph& bg = material.blendGraph;
+    const bool hasBlendData =
+        bg.enabled ||
+        !bg.blendMaskTexturePath.empty() ||
+        !bg.secondaryBaseColorTexturePath.empty() ||
+        !bg.secondaryNormalTexturePath.empty() ||
+        !bg.secondaryMetallicTexturePath.empty() ||
+        !bg.secondaryRoughnessTexturePath.empty() ||
+        !bg.secondaryOcclusionTexturePath.empty() ||
+        !bg.secondaryEmissiveTexturePath.empty();
+    if (hasBlendData)
+    {
+        YAML::Node graph(YAML::NodeType::Map);
+        graph["enabled"]                          = bg.enabled;
+        graph["blend_factor"]                     = bg.blendFactor;
+        graph["blend_mask_texture_path"]          = bg.blendMaskTexturePath;
+        graph["secondary_base_color_texture_path"]= bg.secondaryBaseColorTexturePath;
+        graph["secondary_normal_texture_path"]    = bg.secondaryNormalTexturePath;
+        graph["secondary_metallic_texture_path"]  = bg.secondaryMetallicTexturePath;
+        graph["secondary_roughness_texture_path"] = bg.secondaryRoughnessTexturePath;
+        graph["secondary_occlusion_texture_path"] = bg.secondaryOcclusionTexturePath;
+        graph["secondary_emissive_texture_path"]  = bg.secondaryEmissiveTexturePath;
+        node["texture_graph"] = graph;
+    }
+
+    if (!material.shaderGraph.IsEmpty())
+    {
+        node["shader_graph"] = SerializeMaterialShaderGraph(material.shaderGraph);
+    }
+
+    return node;
+}
+
+// Writes a single material's YAML to disk. Returns the output path on success.
+std::optional<std::filesystem::path> WriteMaterialYamlFile(
+    const std::filesystem::path& modelPath,
+    uint32_t materialIndex,
+    const ModelImportedMaterialInfo& material
+)
+{
+    const std::filesystem::path outPath =
+        modelPath.parent_path() /
+        (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
+
+    YAML::Node root(YAML::NodeType::Map);
+    root["material"] = SerializeMaterialToYaml(material);
+
+    std::ofstream outFile(outPath);
+    if (!outFile)
+    {
+        LOG_ERROR("Failed to open material file for writing: '{}'", outPath.string());
+        return std::nullopt;
+    }
+    outFile << root;
+    return outPath;
 }
 }
 
@@ -1154,14 +1275,73 @@ void EditorRenderBackendBase::ClearViewportModelPreview(bool restoreSelection)
 
 void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiActions::ImportedMaterialUpdate& update)
 {
-    static_cast<void>(update);
+    if (update.modelPath.empty())
+    {
+        return;
+    }
+
+    // Update the single material at the given index in the model cache.
+    std::shared_ptr<LoadedModelData> cached = GetCachedModel(update.modelPath);
+    if (cached && update.materialIndex < cached->materials.size())
+    {
+        ApplyImportedMaterialToModelData(update.material, cached->materials[update.materialIndex]);
+    }
+
+    WriteMaterialYamlFile(
+        std::filesystem::path(update.modelPath),
+        update.materialIndex,
+        update.material
+    );
+
+    RebuildSceneRenderables();
+    State().renderablesDirty = true;
+    LOG_INFO(
+        "Updated material {} for model '{}'",
+        update.materialIndex,
+        update.modelPath
+    );
 }
 
 void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
     const EditorUiActions::ImportedModelMaterialsUpdate& update
 )
 {
-    static_cast<void>(update);
+    if (update.modelPath.empty() || update.materials.empty())
+    {
+        return;
+    }
+
+    const std::filesystem::path modelPath(update.modelPath);
+
+    // Propagate user edits into the cached raw model data so that
+    // RebuildSceneRenderables picks up the new blend graphs and pbr factors.
+    std::shared_ptr<LoadedModelData> cached = GetCachedModel(update.modelPath);
+    if (cached)
+    {
+        const size_t count = std::min(update.materials.size(), cached->materials.size());
+        for (size_t i = 0; i < count; ++i)
+        {
+            ApplyImportedMaterialToModelData(update.materials[i], cached->materials[i]);
+        }
+    }
+
+    // Persist each material as a sidecar .material.yaml file alongside the model.
+    for (size_t i = 0; i < update.materials.size(); ++i)
+    {
+        const auto outPath = WriteMaterialYamlFile(modelPath, static_cast<uint32_t>(i), update.materials[i]);
+        if (outPath.has_value())
+        {
+            LOG_INFO("Saved material '{}' -> '{}'", update.materials[i].name, outPath->string());
+        }
+    }
+
+    RebuildSceneRenderables();
+    State().renderablesDirty = true;
+    LOG_INFO(
+        "Saved {} material(s) for model '{}'",
+        update.materials.size(),
+        update.modelPath
+    );
 }
 
 void EditorRenderBackendBase::LoadScene(const std::string& path)
@@ -1367,11 +1547,7 @@ void EditorRenderBackendBase::CreateSceneLightEntity(const EditorUiActions::Ligh
     SerializedLightData lightData{};
     lightData.lightType = create.type;
     lightData.tagName = create.name;
-    // Place the new light slightly in front of the camera
-    lightData.transform.translation = State().camera.position +
-        glm::vec3(State().viewportMatrices.view[0][2],
-                  State().viewportMatrices.view[1][2],
-                  State().viewportMatrices.view[2][2]) * -5.0f;
+    lightData.transform.translation = State().camera.position + State().camera.GetForward() * 5.0f;
     const entt::entity entity = EditorWorld().CreateLightEntity(lightData);
     EditorWorld().SetSelectedEntity(entity);
     LOG_INFO("Created light entity '{}'", lightData.tagName);

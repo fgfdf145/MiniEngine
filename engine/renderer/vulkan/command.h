@@ -33,6 +33,7 @@ public:
     void RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder);
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
+    void WaitForAllFrames();
 
 private:
     void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
