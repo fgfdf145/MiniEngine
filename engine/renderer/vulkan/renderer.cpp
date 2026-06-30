@@ -13,10 +13,14 @@
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <execution>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -322,10 +326,18 @@ void VulkanRenderer::CreatePipelineResources()
         m_sceneViewportLayer->GetRenderPass(),
         m_uniformBuffer->GetDescriptorSetLayout()
     );
+    m_graphicsPipelineDoubleSided = std::make_unique<VulkanPipeline>(
+        m_device->GetHandle(),
+        m_sceneViewportLayer->GetExtent(),
+        m_sceneViewportLayer->GetRenderPass(),
+        m_uniformBuffer->GetDescriptorSetLayout(),
+        true
+    );
 }
 
 void VulkanRenderer::DestroyPipelineResources()
 {
+    m_graphicsPipelineDoubleSided.reset();
     m_graphicsPipeline.reset();
     m_uniformBuffer.reset();
     // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever
@@ -397,6 +409,28 @@ void VulkanRenderer::UploadSceneResources()
     std::vector<RenderSubmesh>                  newRenderSubmeshes;
     std::unordered_map<std::string, uint32_t>   keyToIndex;
 
+    // Batch every texture and submesh-buffer upload below into a handful of submit+wait
+    // rounds instead of one per resource: VulkanTexture/VulkanBuffer used to each own their
+    // upload (command pool, submit, vkQueueWaitIdle), which serializes hundreds of GPU
+    // round-trips in a row for models with many submeshes/textures (e.g. Sponza: 405 submeshes,
+    // up to ~170 unique textures). Flushing periodically bounds how much staging memory is held
+    // at once while still cutting the number of GPU stalls by roughly two orders of magnitude.
+    constexpr size_t kResourcesPerUploadFlush = 64;
+    VulkanUploadBatch uploadBatch(
+        m_device->GetHandle(),
+        m_device->GetQueueFamilies().graphicsFamily.value(),
+        m_device->GetGraphicsQueue()
+    );
+    size_t resourcesSinceFlush = 0;
+    auto flushUploadBatchIfNeeded = [&]()
+    {
+        if (++resourcesSinceFlush >= kResourcesPerUploadFlush)
+        {
+            uploadBatch.Flush();
+            resourcesSinceFlush = 0;
+        }
+    };
+
     // Acquire a texture by cache key: reuse from pool when available, else use createFn().
     // Returns UINT32_MAX on failure (createFn threw), caller should use fallback.
     auto acquireDefault = [&](const std::string& id, const TextureData& data, VulkanTextureFormat fmt) -> uint32_t
@@ -415,9 +449,9 @@ void VulkanRenderer::UploadSceneResources()
         {
             newTextures.push_back(std::make_unique<VulkanTexture>(
                 m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
-                data, fmt
+                data, uploadBatch, fmt
             ));
+            flushUploadBatchIfNeeded();
         }
         newCacheKeys.push_back(key);
         keyToIndex.emplace(key, idx);
@@ -449,9 +483,9 @@ void VulkanRenderer::UploadSceneResources()
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
             newTextures.push_back(std::make_unique<VulkanTexture>(
                 m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
-                texturePath, textureFormat
+                texturePath, uploadBatch, textureFormat
             ));
+            flushUploadBatchIfNeeded();
             newCacheKeys.push_back(key);
             keyToIndex.emplace(key, idx);
             return idx;
@@ -479,16 +513,132 @@ void VulkanRenderer::UploadSceneResources()
         defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex
     });
 
+    // Prefetch: decode every not-yet-cached material texture file in parallel before the main
+    // loop below loads them one at a time on this thread. Some source assets (e.g. Sponza) ship
+    // 40+ MB source PNGs that take real CPU time to decode, and stb_image's per-call state is
+    // thread_local in this build, so concurrent decodes from different threads are safe. This
+    // only warms keyToIndex/newTextures; the main loop's loadTextureIndex() below is unchanged
+    // and transparently picks up the prefetched entries via its existing cache-hit check, so any
+    // texture this pass misses (or fails to decode) just falls back to loading inline as before.
+    {
+        struct PendingTextureLoad
+        {
+            std::string cacheKey;
+            std::string path;
+            VulkanTextureFormat format;
+            TextureData decoded;
+            bool decodeFailed = false;
+            std::string decodeError;
+        };
+
+        std::vector<PendingTextureLoad> pendingLoads;
+        std::unordered_set<std::string> seenKeys;
+        auto considerPath = [&](const std::string& path, VulkanTextureFormat format)
+        {
+            if (path.empty())
+            {
+                return;
+            }
+            const std::string key = BuildTextureCacheKey(path, format);
+            if (m_texturePool.count(key) != 0 || !seenKeys.insert(key).second)
+            {
+                return;
+            }
+            pendingLoads.push_back(PendingTextureLoad{ key, path, format, {}, false, {} });
+        };
+
+        for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
+        {
+            if (!cpuRenderSubmesh.hasTexCoords)
+            {
+                continue;
+            }
+            const MaterialTexturePaths& textures = cpuRenderSubmesh.textures;
+            considerPath(textures.baseColor,          VulkanTextureFormat::SrgbColor);
+            considerPath(textures.normal,             VulkanTextureFormat::LinearData);
+            considerPath(textures.metallic,           VulkanTextureFormat::LinearData);
+            considerPath(textures.roughness,          VulkanTextureFormat::LinearData);
+            considerPath(textures.occlusion,          VulkanTextureFormat::LinearData);
+            considerPath(textures.emissive,           VulkanTextureFormat::SrgbColor);
+            considerPath(textures.secondaryBaseColor, VulkanTextureFormat::SrgbColor);
+            considerPath(textures.secondaryNormal,    VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryMetallic,  VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryRoughness, VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryOcclusion, VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryEmissive,  VulkanTextureFormat::SrgbColor);
+            considerPath(textures.blendMask,          VulkanTextureFormat::LinearData);
+        }
+
+        // Decode in bounded chunks rather than all at once, so we don't hold dozens of huge
+        // decoded RGBA8 buffers in host memory simultaneously (a 40 MB source PNG can decode to
+        // 100+ MB of raw pixels).
+        const size_t chunkSize = std::max<size_t>(8, static_cast<size_t>(std::thread::hardware_concurrency()) * 2);
+        for (size_t chunkStart = 0; chunkStart < pendingLoads.size(); chunkStart += chunkSize)
+        {
+            const size_t chunkEnd = std::min(chunkStart + chunkSize, pendingLoads.size());
+
+            std::for_each(
+                std::execution::par,
+                pendingLoads.begin() + static_cast<std::ptrdiff_t>(chunkStart),
+                pendingLoads.begin() + static_cast<std::ptrdiff_t>(chunkEnd),
+                [](PendingTextureLoad& pending)
+                {
+                    try
+                    {
+                        pending.decoded = TextureLoader::LoadRGBA8(pending.path);
+                    }
+                    catch (const std::exception& error)
+                    {
+                        pending.decodeFailed = true;
+                        pending.decodeError = error.what();
+                    }
+                }
+            );
+
+            for (size_t i = chunkStart; i < chunkEnd; ++i)
+            {
+                PendingTextureLoad& pending = pendingLoads[i];
+                if (pending.decodeFailed)
+                {
+                    LOG_ERROR("Failed to prefetch model texture '{}': {}", pending.path, pending.decodeError);
+                    continue;
+                }
+
+                try
+                {
+                    const uint32_t idx = static_cast<uint32_t>(newTextures.size());
+                    newTextures.push_back(std::make_unique<VulkanTexture>(
+                        m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                        pending.decoded, uploadBatch, pending.format
+                    ));
+                    flushUploadBatchIfNeeded();
+                    newCacheKeys.push_back(pending.cacheKey);
+                    keyToIndex.emplace(pending.cacheKey, idx);
+                }
+                catch (const std::exception& error)
+                {
+                    LOG_ERROR("Failed to upload prefetched model texture '{}': {}", pending.path, error.what());
+                }
+
+                // Release the decoded pixels promptly instead of waiting for pendingLoads itself
+                // to go out of scope at the end of the prefetch block.
+                pending.decoded.pixels.clear();
+                pending.decoded.pixels.shrink_to_fit();
+            }
+        }
+    }
+
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
         RenderSubmesh renderSubmesh{};
         renderSubmesh.entity   = cpuRenderSubmesh.entity;
         renderSubmesh.buffer   = std::make_unique<VulkanBuffer>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue(),
-            cpuRenderSubmesh.mesh
+            cpuRenderSubmesh.mesh, uploadBatch
         );
+        flushUploadBatchIfNeeded();
         renderSubmesh.material = cpuRenderSubmesh.material;
+        renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
         renderSubmesh.name     = cpuRenderSubmesh.name;
 
         if (!cpuRenderSubmesh.hasTexCoords)
@@ -517,6 +667,8 @@ void VulkanRenderer::UploadSceneResources()
         newMaterialTextureSlots.push_back(slots);
         newRenderSubmeshes.push_back(std::move(renderSubmesh));
     }
+    uploadBatch.Flush();
+    LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
 
     // Textures remaining in the pool are no longer referenced; destroy them now.
     m_texturePool.clear();
@@ -535,6 +687,7 @@ void VulkanRenderer::ApplyRenderContent(
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
     std::unique_ptr<VulkanPipeline> newGraphicsPipeline;
+    std::unique_ptr<VulkanPipeline> newGraphicsPipelineDoubleSided;
 
     if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
@@ -550,6 +703,13 @@ void VulkanRenderer::ApplyRenderContent(
             m_sceneViewportLayer->GetRenderPass(),
             newUniformBuffer->GetDescriptorSetLayout()
         );
+        newGraphicsPipelineDoubleSided = std::make_unique<VulkanPipeline>(
+            m_device->GetHandle(),
+            m_sceneViewportLayer->GetExtent(),
+            m_sceneViewportLayer->GetRenderPass(),
+            newUniformBuffer->GetDescriptorSetLayout(),
+            true
+        );
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and new UBO/pipeline above are built while the GPU
@@ -557,6 +717,7 @@ void VulkanRenderer::ApplyRenderContent(
         m_commandContext->WaitForAllFrames();
         m_uniformBuffer = std::move(newUniformBuffer);
         m_graphicsPipeline = std::move(newGraphicsPipeline);
+        m_graphicsPipelineDoubleSided = std::move(newGraphicsPipelineDoubleSided);
     }
 
     m_textures = std::move(newTextures);
@@ -579,7 +740,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
             renderSubmesh.buffer->GetIndexHandle(),
             renderSubmesh.buffer->GetIndexCount(),
             m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
-            drawConstants
+            drawConstants,
+            renderSubmesh.doubleSided
         });
     }
 
@@ -606,10 +768,22 @@ void VulkanRenderer::RecordSceneLayer(
     renderPassInfo.pClearValues = clearValues.data();
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline->GetHandle());
+
+    // Double-sided materials (e.g. glTF doubleSided=true glass/foliage) get a dedicated
+    // no-cull pipeline instead of the default backface-culled one; switch between the two
+    // as needed rather than rebinding for every draw item.
+    const VulkanPipeline* boundPipeline = nullptr;
 
     for (const VulkanDrawItem& drawItem : drawItems)
     {
+        const VulkanPipeline* requiredPipeline =
+            drawItem.doubleSided ? m_graphicsPipelineDoubleSided.get() : m_graphicsPipeline.get();
+        if (requiredPipeline != boundPipeline)
+        {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline->GetHandle());
+            boundPipeline = requiredPipeline;
+        }
+
         const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };
         const VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
@@ -617,7 +791,7 @@ void VulkanRenderer::RecordSceneLayer(
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_graphicsPipeline->GetLayout(),
+            boundPipeline->GetLayout(),
             0,
             1,
             &drawItem.descriptorSet,
@@ -626,7 +800,7 @@ void VulkanRenderer::RecordSceneLayer(
         );
         vkCmdPushConstants(
             commandBuffer,
-            m_graphicsPipeline->GetLayout(),
+            boundPipeline->GetLayout(),
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
             sizeof(ObjectPushConstants),

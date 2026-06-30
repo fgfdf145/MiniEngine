@@ -1175,6 +1175,18 @@ void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::
     {
         ClearViewportModelPreview();
 
+        // Hover fires every frame the drag stays over the viewport, well before the user
+        // commits to dropping. Only materialize a live preview once the model is already
+        // parsed and cached (cheap, synchronous): otherwise RebuildSceneRenderables() below
+        // would call ModelLoader::LoadModel() synchronously on the UI thread for a model that
+        // may be huge (e.g. NewSponza), blocking the app and spiking memory for the whole
+        // parse just from hovering. The actual drop still works correctly via
+        // CommitViewportModelPreview -> PlaceModelIntoScene, which uses the async loader.
+        if (!IsModelCached(modelPath.string()))
+        {
+            return;
+        }
+
         preview.previousSelection =
             EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
         preview.modelPath = modelPath.string();
@@ -1687,6 +1699,7 @@ void EditorRenderBackendBase::RebuildSceneRenderables()
             renderSubmesh.hasTexCoords = submesh.hasTexCoords;
 
             const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
+            renderSubmesh.doubleSided = material.doubleSided;
             renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
             renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
             renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];

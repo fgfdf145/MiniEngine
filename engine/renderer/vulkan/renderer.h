@@ -28,6 +28,7 @@ struct RenderSubmesh
     std::unique_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
     MaterialPushConstants material;
+    bool doubleSided = false;
     std::string name;
 };
 
@@ -99,6 +100,7 @@ private:
     std::unique_ptr<VulkanRenderPass> m_renderPass;
     std::unique_ptr<VulkanSceneViewport> m_sceneViewportLayer;
     std::unique_ptr<VulkanPipeline> m_graphicsPipeline;
+    std::unique_ptr<VulkanPipeline> m_graphicsPipelineDoubleSided;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
 };

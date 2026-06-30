@@ -5,38 +5,32 @@
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
-    uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue,
     const std::string& path,
+    VulkanUploadBatch& uploadBatch,
     VulkanTextureFormat textureFormat
 )
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue),
       m_textureFormat(textureFormat)
 {
-    UploadTexture(TextureLoader::LoadRGBA8(path));
+    UploadTexture(TextureLoader::LoadRGBA8(path), uploadBatch);
 }
 
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
-    uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue,
     const TextureData& textureData,
+    VulkanUploadBatch& uploadBatch,
     VulkanTextureFormat textureFormat
 )
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue),
       m_textureFormat(textureFormat)
 {
-    UploadTexture(textureData);
+    UploadTexture(textureData, uploadBatch);
 }
 
-void VulkanTexture::UploadTexture(const TextureData& textureData)
+void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch)
 {
     if (!textureData.IsValid())
     {
@@ -73,12 +67,16 @@ void VulkanTexture::UploadTexture(const TextureData& textureData)
         m_memory
     );
 
-    TransitionImageLayout(m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    CopyBufferToImage(stagingBuffer, m_image, static_cast<uint32_t>(textureData.width), static_cast<uint32_t>(textureData.height));
-    TransitionImageLayout(m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // All three commands below go into the caller's shared batch command buffer, in this same
+    // order, so the transition -> copy -> transition sequence for this image is preserved
+    // exactly as before even though many other textures' sequences are interleaved in the same
+    // command buffer. Each barrier only touches this image, so that's safe.
+    const VkCommandBuffer commandBuffer = uploadBatch.GetCommandBuffer();
+    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, static_cast<uint32_t>(textureData.width), static_cast<uint32_t>(textureData.height));
+    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-    vkFreeMemory(m_device, stagingMemory, nullptr);
-    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -211,18 +209,8 @@ void VulkanTexture::CreateImage(
     CheckVulkan(vkBindImageMemory(m_device, image, memory, 0), "Failed to bind texture image memory");
 }
 
-void VulkanTexture::TransitionImageLayout(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout) const
+void VulkanTexture::TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout) const
 {
-    VkCommandPool commandPool = VK_NULL_HANDLE;
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    poolInfo.queueFamilyIndex = m_graphicsQueueFamily;
-    CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &commandPool), "Failed to create texture command pool");
-
-    const VkCommandBuffer commandBuffer = BeginSingleUseCommandBuffer(commandPool);
-
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = oldLayout;
@@ -253,7 +241,6 @@ void VulkanTexture::TransitionImageLayout(VkImage image, VkImageLayout oldLayout
     }
     else
     {
-        vkDestroyCommandPool(m_device, commandPool, nullptr);
         throw std::runtime_error("Unsupported texture image layout transition");
     }
 
@@ -269,23 +256,10 @@ void VulkanTexture::TransitionImageLayout(VkImage image, VkImageLayout oldLayout
         1,
         &barrier
     );
-
-    EndSingleUseCommandBuffer(commandPool, commandBuffer);
-    vkDestroyCommandPool(m_device, commandPool, nullptr);
 }
 
-void VulkanTexture::CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) const
+void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) const
 {
-    VkCommandPool commandPool = VK_NULL_HANDLE;
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    poolInfo.queueFamilyIndex = m_graphicsQueueFamily;
-    CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &commandPool), "Failed to create texture copy command pool");
-
-    const VkCommandBuffer commandBuffer = BeginSingleUseCommandBuffer(commandPool);
-
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.mipLevel = 0;
@@ -294,42 +268,6 @@ void VulkanTexture::CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t w
     region.imageExtent = { width, height, 1 };
 
     vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    EndSingleUseCommandBuffer(commandPool, commandBuffer);
-    vkDestroyCommandPool(m_device, commandPool, nullptr);
-}
-
-VkCommandBuffer VulkanTexture::BeginSingleUseCommandBuffer(VkCommandPool commandPool) const
-{
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-
-    VkCommandBufferAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocateInfo.commandPool = commandPool;
-    allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocateInfo.commandBufferCount = 1;
-    CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, &commandBuffer), "Failed to allocate texture command buffer");
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    CheckVulkan(vkBeginCommandBuffer(commandBuffer, &beginInfo), "Failed to begin texture command buffer");
-
-    return commandBuffer;
-}
-
-void VulkanTexture::EndSingleUseCommandBuffer(VkCommandPool commandPool, VkCommandBuffer commandBuffer) const
-{
-    CheckVulkan(vkEndCommandBuffer(commandBuffer), "Failed to end texture command buffer");
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-    CheckVulkan(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE), "Failed to submit texture command buffer");
-    CheckVulkan(vkQueueWaitIdle(m_graphicsQueue), "Failed waiting for texture command buffer");
-
-    vkFreeCommandBuffers(m_device, commandPool, 1, &commandBuffer);
 }
 
 uint32_t VulkanTexture::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const

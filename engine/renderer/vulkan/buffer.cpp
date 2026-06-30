@@ -53,35 +53,32 @@ VulkanBuffer::VulkanBuffer(
     VkQueue graphicsQueue
 )
     : m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue)
+      m_device(device)
 {
     const MeshData defaultMesh = CreateDefaultCubeMesh();
     m_vertices = defaultMesh.vertices;
     m_indices = defaultMesh.indices;
-    UploadVertices();
-    UploadIndices();
+
+    VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
+    UploadVertices(uploadBatch);
+    UploadIndices(uploadBatch);
+    uploadBatch.Flush();
     LOG_INFO("Vertex buffer created successfully");
 }
 
 VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
-    uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue,
-    const MeshData& meshData
+    const MeshData& meshData,
+    VulkanUploadBatch& uploadBatch
 )
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue),
       m_vertices(meshData.vertices),
       m_indices(meshData.indices)
 {
-    UploadVertices();
-    UploadIndices();
-    LOG_INFO("Vertex buffer created successfully");
+    UploadVertices(uploadBatch);
+    UploadIndices(uploadBatch);
 }
 
 VulkanBuffer::~VulkanBuffer()
@@ -152,46 +149,6 @@ void VulkanBuffer::CreateBuffer(
     CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind Vulkan buffer memory");
 }
 
-void VulkanBuffer::CopyBuffer(VkBuffer sourceBuffer, VkBuffer destinationBuffer, VkDeviceSize size) const
-{
-    VkCommandPool commandPool = VK_NULL_HANDLE;
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    poolInfo.queueFamilyIndex = m_graphicsQueueFamily;
-    CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &commandPool), "Failed to create staging command pool");
-
-    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-
-    VkCommandBufferAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocateInfo.commandPool = commandPool;
-    allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocateInfo.commandBufferCount = 1;
-    CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, &commandBuffer), "Failed to allocate staging command buffer");
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    CheckVulkan(vkBeginCommandBuffer(commandBuffer, &beginInfo), "Failed to begin staging command buffer");
-
-    VkBufferCopy copyRegion{};
-    copyRegion.size = size;
-    vkCmdCopyBuffer(commandBuffer, sourceBuffer, destinationBuffer, 1, &copyRegion);
-
-    CheckVulkan(vkEndCommandBuffer(commandBuffer), "Failed to end staging command buffer");
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-    CheckVulkan(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE), "Failed to submit staging copy");
-    CheckVulkan(vkQueueWaitIdle(m_graphicsQueue), "Failed to wait for staging copy");
-
-    vkDestroyCommandPool(m_device, commandPool, nullptr);
-}
-
 uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
 {
     VkPhysicalDeviceMemoryProperties memoryProperties{};
@@ -210,7 +167,7 @@ uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
     throw std::runtime_error("Failed to find suitable vertex buffer memory type");
 }
 
-void VulkanBuffer::UploadVertices()
+void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
 {
     const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(Vertex) * m_vertices.size());
 
@@ -237,13 +194,14 @@ void VulkanBuffer::UploadVertices()
         m_vertexMemory
     );
 
-    CopyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_vertexBuffer, 1, &copyRegion);
 
-    vkFreeMemory(m_device, stagingMemory, nullptr);
-    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 }
 
-void VulkanBuffer::UploadIndices()
+void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
 {
     const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(uint32_t) * m_indices.size());
 
@@ -270,8 +228,9 @@ void VulkanBuffer::UploadIndices()
         m_indexMemory
     );
 
-    CopyBuffer(stagingBuffer, m_indexBuffer, bufferSize);
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_indexBuffer, 1, &copyRegion);
 
-    vkFreeMemory(m_device, stagingMemory, nullptr);
-    vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 }

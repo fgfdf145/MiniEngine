@@ -27,6 +27,7 @@ struct ModelMaterialData
     float emissiveIntensity = 1.0f;
     float opacity = 1.0f;
     float alphaCutoff = 0.0f;
+    bool doubleSided = false;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

@@ -22,6 +22,7 @@ list(APPEND _miniengine_renderer_sources
     vulkan/swapchain.cpp
     vulkan/texture.cpp
     vulkan/uniform_buffer.cpp
+    vulkan/upload_batch.cpp
 )
 
 add_library(engine_renderer

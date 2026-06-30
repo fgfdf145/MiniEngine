@@ -625,6 +625,7 @@ ModelMaterialData BuildMaterialData(
 {
     ModelMaterialData materialData{};
     materialData.name = material.name;
+    materialData.doubleSided = material.doubleSided;
 
     const auto& pbr = material.pbrMetallicRoughness;
     if (pbr.baseColorFactor.size() >= 4)
@@ -946,6 +947,18 @@ void AppendPrimitive(
         primitiveIndices,
         primitive.mode >= 0 ? primitive.mode : kGltfModeTriangles
     );
+
+    if (tangentHandednessScale < 0.0f)
+    {
+        // The node's world transform mirrors the geometry (negative determinant), which already
+        // got baked into the vertex positions above. That mirroring reverses the apparent winding
+        // of every triangle, so flip it back to CCW here to match the engine's backface-culling
+        // convention (see VulkanPipeline's frontFace/cullMode setup).
+        for (size_t index = 0; index + 2 < submeshData.mesh.indices.size(); index += 3)
+        {
+            std::swap(submeshData.mesh.indices[index + 1], submeshData.mesh.indices[index + 2]);
+        }
+    }
 
     for (uint32_t index : submeshData.mesh.indices)
     {

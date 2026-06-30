@@ -11,6 +11,7 @@ struct VulkanDrawItem
     uint32_t indexCount = 0;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     ObjectPushConstants drawConstants;
+    bool doubleSided = false;
 };
 
 struct VulkanFrameSyncObjects

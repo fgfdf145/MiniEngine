@@ -6,7 +6,13 @@
 
 #include <fstream>
 
-VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass renderPass, VkDescriptorSetLayout descriptorSetLayout)
+VulkanPipeline::VulkanPipeline(
+    VkDevice device,
+    VkExtent2D extent,
+    VkRenderPass renderPass,
+    VkDescriptorSetLayout descriptorSetLayout,
+    bool doubleSided
+)
     : m_device(device)
 {
     const std::string shaderDir = MINIENGINE_SHADER_DIR;
@@ -64,10 +70,11 @@ VulkanPipeline::VulkanPipeline(VkDevice device, VkExtent2D extent, VkRenderPass 
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    // Y-axis is flipped in the render projection matrix (invertRenderYAxis=true for Vulkan),
-    // which reverses winding as seen in clip space. Front faces of right-handed glTF models
-    // (CCW in world space) appear CW in Vulkan NDC, so declare them as VK_FRONT_FACE_CLOCKWISE.
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    // Backface culling disabled for now (was VK_CULL_MODE_BACK_BIT with VK_FRONT_FACE_CLOCKWISE
+    // to compensate for the render projection's Y-flip; see git history). The `doubleSided`
+    // parameter is kept so callers/pipeline variants still compile, but it's currently a no-op.
+    (void)doubleSided;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};

@@ -33,6 +33,7 @@ struct CpuRenderSubmesh
     MaterialPushConstants material;
     MaterialTexturePaths textures;
     bool hasTexCoords = false;
+    bool doubleSided = false;
     std::string name;
 };
 
