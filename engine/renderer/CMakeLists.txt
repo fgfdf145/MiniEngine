@@ -1,15 +1,37 @@
-set(_miniengine_renderer_sources
+# ----------------------------------------------------------------------------
+# engine_render_core: backend-agnostic render data types shared by the editor
+# and the render backends (camera, CPU render world, RHI interface headers).
+# Keep this target free of ImGui editor code and Vulkan.
+# ----------------------------------------------------------------------------
+add_library(engine_render_core
     camera.cpp
-    editor_backend_base.cpp
-    editor_ui.cpp
-    engine_settings.cpp
-    imgui/imgui_impl_sdl3.cpp
     renderer_world.cpp
-    rhi/factory.cpp
 )
 
-list(APPEND _miniengine_renderer_sources
+target_include_directories(engine_render_core
+PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(engine_render_core
+PUBLIC
+    engine_core
+    engine_scene
+    engine_asset
+    SDL3::SDL3
+    glm::glm
+    EnTT::EnTT
+)
+
+# ----------------------------------------------------------------------------
+# engine_renderer: render backend implementations (Vulkan) plus the backend
+# factory. Depends on engine_editor because the editor frame loop is currently
+# driven from EditorRenderBackendBase, which backends derive from.
+# ----------------------------------------------------------------------------
+add_library(engine_renderer
+    imgui/imgui_impl_sdl3.cpp
     imgui/imgui_impl_vulkan.cpp
+    rhi/factory.cpp
     vulkan/buffer.cpp
     vulkan/command.cpp
     vulkan/device.cpp
@@ -23,10 +45,6 @@ list(APPEND _miniengine_renderer_sources
     vulkan/texture.cpp
     vulkan/uniform_buffer.cpp
     vulkan/upload_batch.cpp
-)
-
-add_library(engine_renderer
-    ${_miniengine_renderer_sources}
 )
 
 set(MINIENGINE_SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/shaders")
@@ -57,24 +75,16 @@ add_custom_target(engine_renderer_shaders
         ${MINIENGINE_FRAGMENT_SPV}
 )
 
-target_include_directories(engine_renderer
-PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
 target_compile_definitions(engine_renderer
 PRIVATE
-    MINIENGINE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     MINIENGINE_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
     MINIENGINE_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
 )
 
 target_link_libraries(engine_renderer
 PUBLIC
-    engine_core
-    engine_platform
-    engine_scene
-    engine_asset
+    engine_render_core
+    engine_editor
     Vulkan::Vulkan
     SDL3::SDL3
     glm::glm
@@ -82,8 +92,6 @@ PUBLIC
     EnTT::EnTT
 PRIVATE
     engine_logic
-    imguizmo::imguizmo
-    yaml-cpp::yaml-cpp
 )
 
 if(TARGET engine_renderer_shaders)

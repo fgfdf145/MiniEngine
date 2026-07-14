@@ -20,5 +20,9 @@ struct TextureData
 class TextureLoader
 {
 public:
-    static TextureData LoadRGBA8(const std::string& path, bool flipVertically = true);
+    // Pixels are returned top-down (row 0 = top of the image), matching the
+    // glTF UV convention (origin at top-left) and Vulkan texel addressing, so
+    // no flip is needed anywhere in the engine. flipVertically exists only for
+    // sources that store rows bottom-up.
+    static TextureData LoadRGBA8(const std::string& path, bool flipVertically = false);
 };

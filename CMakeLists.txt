@@ -187,6 +187,7 @@ add_subdirectory(engine/scene)
 add_subdirectory(engine/asset)
 add_subdirectory(engine/logic)
 add_subdirectory(engine/renderer)
+add_subdirectory(engine/editor)
 add_subdirectory(engine/application)
 add_subdirectory(app)
 
@@ -196,6 +197,8 @@ foreach(_miniengine_engine_target IN ITEMS
     engine_scene
     engine_asset
     engine_logic
+    engine_render_core
+    engine_editor
     engine_renderer
     engine_application
 )

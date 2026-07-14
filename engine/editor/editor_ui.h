@@ -1,7 +1,8 @@
 #pragma once
 
-#include "camera.h"
 #include "engine_settings.h"
+
+#include <camera.h>
 #include <asset_manager.h>
 #include <model_loader.h>
 #include <optional>
@@ -111,6 +112,21 @@ private:
     bool DrawThemeEditorWindow();
     void OpenModelProcessorWindow(const std::string& modelPath);
     void CloseModelProcessorWindow();
+
+    // Per-panel draw methods, one translation unit each under ui/.
+    void DrawCameraPanel(Camera& camera);
+    void DrawInputMonitorPanel();
+    void DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result);
+    void DrawScenePanel(IEditorWorld& scene, const std::string& lastSceneIoError, EditorUiFrameResult& result);
+    void DrawViewportPanel(
+        Camera& camera,
+        ViewportMatrices& matrices,
+        IEditorWorld& scene,
+        ImTextureID viewportTextureId,
+        RenderBackendType currentBackendType,
+        EditorUiFrameResult& result
+    );
+    void DrawAssetBrowserPanel(EditorUiFrameResult& result);
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;

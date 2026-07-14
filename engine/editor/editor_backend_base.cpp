@@ -1,280 +1,18 @@
-#include "editor_backend_base.h"
+﻿#include "editor_backend_base.h"
+
+#include "services/entity_edit_service.h"
+#include "services/model_import_service.h"
+#include "services/scene_io_service.h"
+#include "services/scene_renderables.h"
 
 #include <log/log.h>
-#include <material_graph_runtime.h>
 #include <window/window.h>
 
-#include <yaml-cpp/yaml.h>
-
-#include <algorithm>
-#include <cctype>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
-#include <fstream>
-#include <mutex>
 #include <stdexcept>
-#include <string_view>
-#include <unordered_map>
-
-// =============================================================================
-// [ASSET] Helper utilities — data conversion between scene/model types
-// These helpers belong to the asset→render conversion boundary and will move
-// to engine/asset/ once the SceneToRenderData pass is extracted.
-// =============================================================================
-namespace
-{
-// ---------------------------------------------------------------------------
-// Model parse cache: path → parsed data.
-// Written by background thread under lock; read by main thread under lock.
-std::mutex s_modelCacheMutex;
-std::unordered_map<std::string, std::shared_ptr<LoadedModelData>> s_modelCache;
-
-bool IsModelCached(const std::string& path)
-{
-    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
-    return s_modelCache.count(path) > 0;
-}
-
-std::shared_ptr<LoadedModelData> GetCachedModel(const std::string& path)
-{
-    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
-    const auto it = s_modelCache.find(path);
-    return it != s_modelCache.end() ? it->second : nullptr;
-}
-
-void CacheModel(const std::string& path, std::shared_ptr<LoadedModelData> data)
-{
-    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
-    s_modelCache[path] = std::move(data);
-}
-// ---------------------------------------------------------------------------
-
-MaterialPushConstants BuildDefaultMaterialForTag(const std::string& tagName)
-{
-    MaterialPushConstants material{};
-    if (tagName == "Cube A")
-    {
-        material.baseColorFactor[0] = 1.0f;
-        material.baseColorFactor[1] = 0.55f;
-        material.baseColorFactor[2] = 0.35f;
-    }
-    else if (tagName == "Cube B")
-    {
-        material.baseColorFactor[0] = 0.35f;
-        material.baseColorFactor[1] = 0.75f;
-        material.baseColorFactor[2] = 1.0f;
-    }
-    return material;
-}
-
-ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
-{
-    return ModelImportedMaterialInfo{
-        material.name,
-        material.baseColorTexturePath,
-        material.normalTexturePath,
-        material.metallicTexturePath,
-        material.roughnessTexturePath,
-        material.occlusionTexturePath,
-        material.emissiveTexturePath,
-        material.pbr,
-        material.blendGraph,
-        material.shaderGraph
-    };
-}
-
-ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submesh)
-{
-    return ModelImportedSubmeshInfo{
-        submesh.name,
-        static_cast<uint32_t>(submesh.mesh.vertices.size()),
-        static_cast<uint32_t>(submesh.mesh.indices.size()),
-        submesh.materialIndex,
-        submesh.hasTexCoords,
-        submesh.hasNormals,
-        submesh.hasTangents
-    };
-}
-
-std::filesystem::path NormalizePath(const std::filesystem::path& path);
-
-std::filesystem::path NormalizePath(const std::filesystem::path& path)
-{
-    std::error_code errorCode;
-    const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
-    return errorCode ? path.lexically_normal() : absolutePath.lexically_normal();
-}
-
-bool IsSceneAssetPath(const std::filesystem::path& path)
-{
-    const std::string extension = path.extension().string();
-    if (extension != ".yaml" && extension != ".yml")
-    {
-        return false;
-    }
-
-    const std::string fileName = path.filename().string();
-    if (fileName.ends_with(".material.yaml") || fileName.ends_with(".miniengine_asset.yaml"))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool SceneDataReferencesModel(SerializedSceneData& sceneData, const std::filesystem::path& modelPath)
-{
-    bool referenced = false;
-    for (SerializedEntityData& entity : sceneData.entities)
-    {
-        if (entity.modelSourcePath.empty())
-        {
-            continue;
-        }
-
-        if (NormalizePath(entity.modelSourcePath) != modelPath)
-        {
-            continue;
-        }
-
-        referenced = true;
-        entity.modelDisplayName = modelPath.filename().string();
-    }
-
-    return referenced;
-}
-
-void ResetModelToBuiltin(ISceneWorld& scene, entt::entity entity)
-{
-    ModelComponent& model = scene.GetModel(entity);
-    model.sourcePath.clear();
-    model.displayName = scene.GetTag(entity).name;
-    model.baseColorTextureOverridePath.clear();
-    model.submeshCount = 1;
-    model.minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
-    model.maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
-    model.hasBounds = true;
-    model.importedMaterials.clear();
-    model.importedSubmeshes.clear();
-}
-
-// Copies user-edited material data (blendGraph, shaderGraph, pbr, texture paths) from an
-// ImportedMaterialInfo into the raw ModelMaterialData held by the model cache.
-// ModelMaterialData has redundant flat fields alongside a pbr struct; both must stay in sync.
-void ApplyImportedMaterialToModelData(const ModelImportedMaterialInfo& src, ModelMaterialData& dst)
-{
-    dst.name                  = src.name;
-    dst.baseColorTexturePath  = src.baseColorTexturePath;
-    dst.normalTexturePath     = src.normalTexturePath;
-    dst.metallicTexturePath   = src.metallicTexturePath;
-    dst.roughnessTexturePath  = src.roughnessTexturePath;
-    dst.occlusionTexturePath  = src.occlusionTexturePath;
-    dst.emissiveTexturePath   = src.emissiveTexturePath;
-    dst.pbr                   = src.pbr;
-    dst.blendGraph            = src.blendGraph;
-    dst.shaderGraph           = src.shaderGraph;
-    // Mirror pbr fields into the flat copies used by RebuildSceneRenderables.
-    dst.baseColor[0]      = src.pbr.baseColorFactor[0];
-    dst.baseColor[1]      = src.pbr.baseColorFactor[1];
-    dst.baseColor[2]      = src.pbr.baseColorFactor[2];
-    dst.baseColor[3]      = src.pbr.baseColorFactor[3];
-    dst.emissiveColor[0]  = src.pbr.emissiveColor[0];
-    dst.emissiveColor[1]  = src.pbr.emissiveColor[1];
-    dst.emissiveColor[2]  = src.pbr.emissiveColor[2];
-    dst.metallicFactor    = src.pbr.metallicFactor;
-    dst.roughnessFactor   = src.pbr.roughnessFactor;
-    dst.normalScale       = src.pbr.normalScale;
-    dst.occlusionStrength = src.pbr.occlusionStrength;
-    dst.emissiveIntensity = src.pbr.emissiveIntensity;
-    dst.opacity           = src.pbr.opacity;
-}
-
-// Serializes one material to a YAML node under a "material:" root map, with
-// name/texture paths, a "pbr:" block, an optional "texture_graph:" blend block,
-// and an optional "shader_graph:" block.
-YAML::Node SerializeMaterialToYaml(const ModelImportedMaterialInfo& material)
-{
-    YAML::Node node(YAML::NodeType::Map);
-    node["name"]                   = material.name;
-    node["base_color_texture_path"]= material.baseColorTexturePath;
-    node["normal_texture_path"]    = material.normalTexturePath;
-    node["metallic_texture_path"]  = material.metallicTexturePath;
-    node["roughness_texture_path"] = material.roughnessTexturePath;
-    node["occlusion_texture_path"] = material.occlusionTexturePath;
-    node["emissive_texture_path"]  = material.emissiveTexturePath;
-
-    YAML::Node pbr(YAML::NodeType::Map);
-    YAML::Node bcf(YAML::NodeType::Sequence);
-    for (float v : material.pbr.baseColorFactor) bcf.push_back(v);
-    pbr["base_color_factor"] = bcf;
-    YAML::Node ec(YAML::NodeType::Sequence);
-    for (float v : material.pbr.emissiveColor) ec.push_back(v);
-    pbr["emissive_color"]      = ec;
-    pbr["metallic_factor"]     = material.pbr.metallicFactor;
-    pbr["roughness_factor"]    = material.pbr.roughnessFactor;
-    pbr["normal_scale"]        = material.pbr.normalScale;
-    pbr["occlusion_strength"]  = material.pbr.occlusionStrength;
-    pbr["emissive_intensity"]  = material.pbr.emissiveIntensity;
-    pbr["opacity"]             = material.pbr.opacity;
-    node["pbr"] = pbr;
-
-    const MaterialTextureBlendGraph& bg = material.blendGraph;
-    const bool hasBlendData =
-        bg.enabled ||
-        !bg.blendMaskTexturePath.empty() ||
-        !bg.secondaryBaseColorTexturePath.empty() ||
-        !bg.secondaryNormalTexturePath.empty() ||
-        !bg.secondaryMetallicTexturePath.empty() ||
-        !bg.secondaryRoughnessTexturePath.empty() ||
-        !bg.secondaryOcclusionTexturePath.empty() ||
-        !bg.secondaryEmissiveTexturePath.empty();
-    if (hasBlendData)
-    {
-        YAML::Node graph(YAML::NodeType::Map);
-        graph["enabled"]                          = bg.enabled;
-        graph["blend_factor"]                     = bg.blendFactor;
-        graph["blend_mask_texture_path"]          = bg.blendMaskTexturePath;
-        graph["secondary_base_color_texture_path"]= bg.secondaryBaseColorTexturePath;
-        graph["secondary_normal_texture_path"]    = bg.secondaryNormalTexturePath;
-        graph["secondary_metallic_texture_path"]  = bg.secondaryMetallicTexturePath;
-        graph["secondary_roughness_texture_path"] = bg.secondaryRoughnessTexturePath;
-        graph["secondary_occlusion_texture_path"] = bg.secondaryOcclusionTexturePath;
-        graph["secondary_emissive_texture_path"]  = bg.secondaryEmissiveTexturePath;
-        node["texture_graph"] = graph;
-    }
-
-    if (!material.shaderGraph.IsEmpty())
-    {
-        node["shader_graph"] = SerializeMaterialShaderGraph(material.shaderGraph);
-    }
-
-    return node;
-}
-
-// Writes a single material's YAML to disk. Returns the output path on success.
-std::optional<std::filesystem::path> WriteMaterialYamlFile(
-    const std::filesystem::path& modelPath,
-    uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material
-)
-{
-    const std::filesystem::path outPath =
-        modelPath.parent_path() /
-        (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
-
-    YAML::Node root(YAML::NodeType::Map);
-    root["material"] = SerializeMaterialToYaml(material);
-
-    std::ofstream outFile(outPath);
-    if (!outFile)
-    {
-        LOG_ERROR("Failed to open material file for writing: '{}'", outPath.string());
-        return std::nullopt;
-    }
-    outFile << root;
-    return outPath;
-}
-}
+#include <string>
 
 EditorRenderBackendBase::EditorRenderBackendBase(
     Window& window,
@@ -340,13 +78,12 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 
         try
         {
-            LoadScene(path);
-            renderablesDirty = true;
+            SceneIoService::StartAsyncSceneLoad(State(), path);
         }
         catch (const std::exception& error)
         {
             State().lastSceneIoError = error.what();
-            LOG_ERROR("Failed to load scene '{}': {}", path, error.what());
+            LOG_ERROR("Failed to start loading scene '{}': {}", path, error.what());
         }
 
         State().lastFrameTime = std::chrono::steady_clock::now();
@@ -362,11 +99,11 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
             LOG_INFO("Loading model: {}", path);
             if (EditorWorld().HasSelection())
             {
-                LoadSelectedModel(path);
+                EntityEditService::LoadSelectedModel(State(), path);
             }
             else
             {
-                PlaceModelIntoScene(path, glm::vec3(0.0f));
+                EntityEditService::PlaceModelIntoScene(State(), path, glm::vec3(0.0f));
             }
             renderablesDirty = true;
         }
@@ -379,74 +116,8 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
         State().lastFrameTime = std::chrono::steady_clock::now();
     }
 
-    // --------------------------------------------------------------------------
-    // Async model load completion
-    // --------------------------------------------------------------------------
-    AsyncModelLoad& load = State().asyncLoad;
-    if (load.future.valid() &&
-        load.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-    {
-        const auto IsValid = [&](entt::entity e) -> bool
-        {
-            if (e == entt::null)
-            {
-                return false;
-            }
-            const auto& order = EditorWorld().GetEntityOrder();
-            return std::find(order.begin(), order.end(), e) != order.end();
-        };
-
-        try
-        {
-            load.future.get(); // re-throws if the background parse failed
-
-            RebuildSceneRenderables();
-
-            if (IsValid(load.trackedEntity))
-            {
-                const ModelComponent& model = EditorWorld().GetModel(load.trackedEntity);
-                if (model.hasBounds)
-                {
-                    State().camera.FrameBounds(model.minBounds, model.maxBounds);
-                }
-                if (load.resetTransformOnComplete)
-                {
-                    EditorWorld().SetSelectedEntity(load.trackedEntity);
-                    EditorWorld().ResetSelectedTransform();
-                }
-            }
-
-            State().lastModelLoadError.clear();
-            renderablesDirty = true;
-            LOG_INFO("Async model load complete: {}", load.path);
-        }
-        catch (const std::exception& error)
-        {
-            if (IsValid(load.trackedEntity))
-            {
-                if (load.isReplacement)
-                {
-                    EditorWorld().GetModel(load.trackedEntity).sourcePath = load.previousSourcePath;
-                    EditorWorld().GetModel(load.trackedEntity).displayName = load.previousDisplayName;
-                }
-                else
-                {
-                    EditorWorld().DestroyEntity(load.trackedEntity);
-                    if (IsValid(load.previousSelection))
-                    {
-                        EditorWorld().SetSelectedEntity(load.previousSelection);
-                    }
-                }
-            }
-
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Async model load failed for '{}': {}", load.path, error.what());
-        }
-
-        load.future = std::future<void>{}; // consume / reset
-        State().lastFrameTime = std::chrono::steady_clock::now();
-    }
-    // --------------------------------------------------------------------------
+    renderablesDirty |= EntityEditService::PumpAsyncModelLoad(State());
+    renderablesDirty |= SceneIoService::PumpAsyncSceneLoad(State());
 
     State().renderablesDirty = false;
     return renderablesDirty;
@@ -464,11 +135,15 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         if (uiFrame.actions.hoveredViewportModel.has_value())
         {
-            UpdateViewportModelPreview(*uiFrame.actions.hoveredViewportModel);
+            EntityEditService::UpdateViewportModelPreview(
+                State(),
+                uiFrame.actions.hoveredViewportModel->modelPath,
+                uiFrame.actions.hoveredViewportModel->worldPosition
+            );
         }
         else
         {
-            ClearViewportModelPreview();
+            EntityEditService::ClearViewportModelPreview(State());
         }
     }
     catch (const std::exception& error)
@@ -481,7 +156,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            ImportModelIntoAssetDirectory(*uiFrame.actions.importedModelRequest);
+            ModelImportService::ImportModelIntoAssetDirectory(
+                uiFrame.actions.importedModelRequest->sourcePath,
+                uiFrame.actions.importedModelRequest->destinationDirectory
+            );
             State().lastModelLoadError.clear();
         }
         catch (const std::exception& error)
@@ -503,7 +181,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            CreateSceneEntity();
+            EntityEditService::CreateSceneEntity(State());
         }
         catch (const std::exception& error)
         {
@@ -515,7 +193,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            CreateSceneLightEntity(*uiFrame.actions.createLightEntity);
+            EntityEditService::CreateSceneLightEntity(
+                State(),
+                uiFrame.actions.createLightEntity->name,
+                uiFrame.actions.createLightEntity->type
+            );
         }
         catch (const std::exception& error)
         {
@@ -530,11 +212,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             if (EditorWorld().HasSelection() &&
                 EditorWorld().HasLightComponent(EditorWorld().GetSelectedEntity()))
             {
-                DeleteSelectedLightEntity();
+                EntityEditService::DeleteSelectedLightEntity(State());
             }
             else
             {
-                DeleteSelectedSceneEntity();
+                EntityEditService::DeleteSelectedSceneEntity(State());
             }
         }
         catch (const std::exception& error)
@@ -547,7 +229,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            CommitViewportModelPreview(*uiFrame.actions.droppedViewportModel);
+            EntityEditService::CommitViewportModelPreview(
+                State(),
+                uiFrame.actions.droppedViewportModel->modelPath,
+                uiFrame.actions.droppedViewportModel->worldPosition
+            );
         }
         catch (const std::exception& error)
         {
@@ -563,7 +249,12 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            UpdateImportedMaterialDefinition(*uiFrame.actions.updatedImportedMaterial);
+            ModelImportService::UpdateImportedMaterialDefinition(
+                State(),
+                uiFrame.actions.updatedImportedMaterial->modelPath,
+                uiFrame.actions.updatedImportedMaterial->materialIndex,
+                uiFrame.actions.updatedImportedMaterial->material
+            );
         }
         catch (const std::exception& error)
         {
@@ -580,7 +271,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            UpdateImportedModelMaterialDefinitions(*uiFrame.actions.updatedImportedModelMaterials);
+            ModelImportService::UpdateImportedModelMaterialDefinitions(
+                State(),
+                uiFrame.actions.updatedImportedModelMaterials->modelPath,
+                uiFrame.actions.updatedImportedModelMaterials->materials
+            );
         }
         catch (const std::exception& error)
         {
@@ -596,7 +291,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            ApplySelectedModelBaseColorTexture(*uiFrame.actions.selectedBaseColorTexturePath);
+            EntityEditService::ApplySelectedModelBaseColorTexture(
+                State(),
+                *uiFrame.actions.selectedBaseColorTexturePath
+            );
         }
         catch (const std::exception& error)
         {
@@ -612,7 +310,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            ClearSelectedModelBaseColorTexture();
+            EntityEditService::ClearSelectedModelBaseColorTexture(State());
         }
         catch (const std::exception& error)
         {
@@ -628,10 +326,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            EditorWorld().SaveSceneToFile(*uiFrame.actions.selectedSceneSavePath);
-            EditorWorld().SetSceneFilePath(*uiFrame.actions.selectedSceneSavePath);
-            State().lastSceneIoError.clear();
-            LOG_INFO("Saved scene successfully: {}", *uiFrame.actions.selectedSceneSavePath);
+            SceneIoService::SaveScene(State(), *uiFrame.actions.selectedSceneSavePath);
         }
         catch (const std::exception& error)
         {
@@ -643,7 +338,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            DeleteAssetPath(deletePath);
+            ModelImportService::DeleteAssetPath(deletePath);
         }
         catch (const std::exception& error)
         {
@@ -655,7 +350,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            PasteAssetPath(*uiFrame.actions.pastedAsset);
+            ModelImportService::PasteAsset(
+                uiFrame.actions.pastedAsset->sourcePath,
+                uiFrame.actions.pastedAsset->destinationDirectory
+            );
         }
         catch (const std::exception& error)
         {
@@ -709,8 +407,12 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     }
 
     // Loading overlay — drawn on top of all other windows.
-    if (State().asyncLoad.IsLoading())
+    if (State().asyncLoad.IsLoading() || State().asyncSceneLoad.IsLoading())
     {
+        const bool loadingScene = State().asyncSceneLoad.IsLoading();
+        const std::string& activePath = loadingScene ? State().asyncSceneLoad.path : State().asyncLoad.path;
+        const char* label = loadingScene ? "Loading Scene" : "Loading";
+
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowBgAlpha(0.88f);
@@ -720,12 +422,11 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
             ImGuiWindowFlags_NoMove        | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoNav         | ImGuiWindowFlags_AlwaysAutoResize))
         {
-            const std::string filename =
-                std::filesystem::path(State().asyncLoad.path).filename().string();
+            const std::string filename = std::filesystem::path(activePath).filename().string();
 
             const char* kSpinner = "|/-\\";
             const int spinFrame = static_cast<int>(ImGui::GetTime() * 10.0) & 3;
-            ImGui::Text("%c  Loading: %s", kSpinner[spinFrame], filename.c_str());
+            ImGui::Text("%c  %s: %s", kSpinner[spinFrame], label, filename.c_str());
 
             ImGui::Spacing();
             const float pulse =
@@ -899,7 +600,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
         State().pendingModelPath = *startupModelPath;
     }
 
-    RebuildSceneRenderables();
+    RebuildSceneRenderables(State());
     State().initialized = true;
     State().renderablesDirty = true;
     State().lastFrameTime = std::chrono::steady_clock::now();
@@ -908,559 +609,6 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
 void EditorRenderBackendBase::InitializeEditorScene()
 {
     EditorWorld().LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
-}
-
-// =============================================================================
-// [ASSET] Model import & file operations
-// Will move to AssetManager / asset pipeline service.
-// =============================================================================
-
-std::string EditorRenderBackendBase::ImportModelIntoAssetDirectory(const EditorUiActions::ImportedModelRequest& request)
-{
-    const std::filesystem::path src = std::filesystem::path(request.sourcePath);
-    if (!std::filesystem::exists(src))
-    {
-        throw std::runtime_error("Source file does not exist: " + request.sourcePath);
-    }
-
-    const std::filesystem::path dstDir = std::filesystem::path(request.destinationDirectory);
-    const std::filesystem::path dst = dstDir / src.filename();
-
-    std::error_code ec;
-    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::skip_existing, ec);
-    if (ec)
-    {
-        throw std::runtime_error("Failed to import '" + src.string() + "': " + ec.message());
-    }
-
-    // For .gltf (ASCII), also copy companion .bin and texture files from the same directory.
-    const std::string ext = [&src]()
-    {
-        std::string e = src.extension().string();
-        std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-        return e;
-    }();
-
-    if (ext == ".gltf")
-    {
-        // Recursively copy all texture / binary companion files from the source
-        // directory tree into the same relative sub-path under dstDir.
-        // This preserves the relative layout that the .gltf URIs rely on, so
-        // moving the imported asset folder as a unit keeps all references valid.
-        static constexpr std::array<std::string_view, 8> kAssetExts = {
-            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr", ".dds", ".bin"
-        };
-
-        const std::filesystem::path srcDir = src.parent_path();
-        for (const auto& item : std::filesystem::recursive_directory_iterator(srcDir, ec))
-        {
-            if (ec)
-            {
-                break;
-            }
-            if (!item.is_regular_file(ec) || ec)
-            {
-                continue;
-            }
-
-            std::string itemExt = item.path().extension().string();
-            std::transform(itemExt.begin(), itemExt.end(), itemExt.begin(),
-                [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-
-            const bool isAsset = std::any_of(
-                kAssetExts.begin(), kAssetExts.end(),
-                [&itemExt](std::string_view e){ return itemExt == e; }
-            );
-            if (!isAsset)
-            {
-                continue;
-            }
-
-            // Compute the relative path from the source model directory and
-            // mirror it under the destination directory.
-            const std::filesystem::path relPath =
-                item.path().lexically_relative(srcDir);
-            const std::filesystem::path companionDst = dstDir / relPath;
-
-            std::error_code mkdirEc;
-            std::filesystem::create_directories(companionDst.parent_path(), mkdirEc);
-
-            std::error_code copyEc;
-            std::filesystem::copy_file(item.path(), companionDst,
-                std::filesystem::copy_options::skip_existing, copyEc);
-            if (copyEc)
-            {
-                LOG_WARN("Could not copy companion file '{}': {}",
-                    item.path().string(), copyEc.message());
-            }
-            else
-            {
-                LOG_INFO("Copied companion: {} -> {}", item.path().string(), companionDst.string());
-            }
-        }
-    }
-
-    LOG_INFO("Imported model '{}' -> '{}'", src.string(), dst.string());
-    return dst.string();
-}
-
-void EditorRenderBackendBase::DeleteAssetPath(const std::string& path)
-{
-    std::error_code ec;
-    std::filesystem::remove_all(std::filesystem::path(path), ec);
-    if (ec)
-    {
-        throw std::runtime_error("Failed to delete '" + path + "': " + ec.message());
-    }
-    LOG_INFO("Deleted asset: {}", path);
-}
-
-void EditorRenderBackendBase::LoadSelectedModel(const std::string& path, bool resetTransform)
-{
-    if (State().asyncLoad.IsLoading())
-    {
-        throw std::runtime_error("Another model is currently loading. Please wait.");
-    }
-
-    if (!EditorWorld().HasSelection())
-    {
-        throw std::runtime_error("No selected entity available to receive the model");
-    }
-
-    const entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
-    const ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
-    EditorWorld().GetModel(selectedEntity).sourcePath = path;
-    EditorWorld().GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
-
-    // Fast path: already cached.
-    if (IsModelCached(path))
-    {
-        try
-        {
-            RebuildSceneRenderables();
-            const ModelComponent& model = EditorWorld().GetModel(selectedEntity);
-            if (model.hasBounds)
-            {
-                State().camera.FrameBounds(model.minBounds, model.maxBounds);
-            }
-        }
-        catch (...)
-        {
-            EditorWorld().GetModel(selectedEntity) = previousModel;
-            throw;
-        }
-        State().lastModelLoadError.clear();
-        if (resetTransform)
-        {
-            EditorWorld().ResetSelectedTransform();
-        }
-        LOG_INFO("Loaded model (cached) into '{}': {}", EditorWorld().GetTag(selectedEntity).name, path);
-        return;
-    }
-
-    // Async path: parse in background, rebuild when done.
-    AsyncModelLoad& load = State().asyncLoad;
-    load.path = path;
-    load.isReplacement = true;
-    load.worldPosition = glm::vec3(0.0f);
-    load.trackedEntity = selectedEntity;
-    load.previousSelection = entt::null;
-    load.resetTransformOnComplete = resetTransform;
-    load.previousSourcePath = previousModel.sourcePath;
-    load.previousDisplayName = previousModel.displayName;
-
-    load.future = std::async(std::launch::async, [p = path]()
-    {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p));
-        CacheModel(p, std::move(data));
-    });
-
-    LOG_INFO("Started async load for: {}", path);
-}
-
-void EditorRenderBackendBase::PlaceModelIntoScene(const std::string& path, const glm::vec3& worldPosition)
-{
-    if (State().asyncLoad.IsLoading())
-    {
-        throw std::runtime_error("Another model is currently loading. Please wait.");
-    }
-
-    const std::filesystem::path modelPath = NormalizePath(path);
-    if (!std::filesystem::exists(modelPath))
-    {
-        throw std::runtime_error("Dropped model asset does not exist: " + modelPath.string());
-    }
-    if (!ModelLoader::IsSupportedModelPath(modelPath))
-    {
-        throw std::runtime_error("Dropped asset is not a supported glTF model: " + modelPath.string());
-    }
-
-    SerializedEntityData entityData{};
-    entityData.tagName = modelPath.stem().string().empty() ? "Model" : modelPath.stem().string();
-    entityData.modelDisplayName = modelPath.filename().string();
-    entityData.modelSourcePath = modelPath.string();
-    entityData.transform.translation = worldPosition;
-
-    const entt::entity previousSelection =
-        EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
-    const entt::entity placedEntity = EditorWorld().CreateEntity(entityData);
-    EditorWorld().SetSelectedEntity(placedEntity);
-
-    // If already cached, rebuild synchronously (fast path).
-    if (IsModelCached(modelPath.string()))
-    {
-        try
-        {
-            RebuildSceneRenderables();
-            const ModelComponent& model = EditorWorld().GetModel(placedEntity);
-            if (model.hasBounds)
-            {
-                State().camera.FrameBounds(model.minBounds, model.maxBounds);
-            }
-        }
-        catch (...)
-        {
-            EditorWorld().DestroyEntity(placedEntity);
-            EditorWorld().SetSelectedEntity(previousSelection);
-            throw;
-        }
-        State().lastModelLoadError.clear();
-        LOG_INFO("Placed model (cached) at ({:.3f}, {:.3f}, {:.3f}): {}",
-            worldPosition.x, worldPosition.y, worldPosition.z, modelPath.string());
-        return;
-    }
-
-    // Not cached: parse in background, rebuild when done.
-    AsyncModelLoad& load = State().asyncLoad;
-    load.path = modelPath.string();
-    load.isReplacement = false;
-    load.worldPosition = worldPosition;
-    load.trackedEntity = placedEntity;
-    load.previousSelection = previousSelection;
-    load.resetTransformOnComplete = false;
-    load.previousSourcePath.clear();
-    load.previousDisplayName.clear();
-
-    load.future = std::async(std::launch::async, [p = modelPath.string()]()
-    {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p));
-        CacheModel(p, std::move(data));
-    });
-
-    LOG_INFO("Started async load for: {}", modelPath.string());
-}
-
-void EditorRenderBackendBase::UpdateViewportModelPreview(const EditorUiActions::ViewportModelPlacement& placement)
-{
-    const std::filesystem::path modelPath = NormalizePath(placement.modelPath);
-    if (!std::filesystem::exists(modelPath))
-    {
-        throw std::runtime_error("Preview model asset does not exist: " + modelPath.string());
-    }
-    if (!ModelLoader::IsSupportedModelPath(modelPath))
-    {
-        throw std::runtime_error("Preview asset is not a supported glTF model: " + modelPath.string());
-    }
-
-    ViewportDragPreviewState& preview = State().viewportDragPreview;
-    const bool previewEntityStillExists =
-        preview.active &&
-        std::find(
-            EditorWorld().GetEntityOrder().begin(),
-            EditorWorld().GetEntityOrder().end(),
-            preview.entity
-        ) != EditorWorld().GetEntityOrder().end();
-
-    if (!previewEntityStillExists || preview.modelPath != modelPath.string())
-    {
-        ClearViewportModelPreview();
-
-        // Hover fires every frame the drag stays over the viewport, well before the user
-        // commits to dropping. Only materialize a live preview once the model is already
-        // parsed and cached (cheap, synchronous): otherwise RebuildSceneRenderables() below
-        // would call ModelLoader::LoadModel() synchronously on the UI thread for a model that
-        // may be huge (e.g. NewSponza), blocking the app and spiking memory for the whole
-        // parse just from hovering. The actual drop still works correctly via
-        // CommitViewportModelPreview -> PlaceModelIntoScene, which uses the async loader.
-        if (!IsModelCached(modelPath.string()))
-        {
-            return;
-        }
-
-        preview.previousSelection =
-            EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
-        preview.modelPath = modelPath.string();
-
-        SerializedEntityData entityData{};
-        entityData.tagName = modelPath.stem().string().empty() ? "Model" : modelPath.stem().string();
-        entityData.modelDisplayName = modelPath.filename().string();
-        entityData.modelSourcePath = modelPath.string();
-        entityData.transform.translation = placement.worldPosition;
-
-        const entt::entity previewEntity = EditorWorld().CreateEntity(entityData);
-
-        try
-        {
-            RebuildSceneRenderables();
-        }
-        catch (...)
-        {
-            EditorWorld().DestroyEntity(previewEntity);
-            EditorWorld().SetSelectedEntity(preview.previousSelection);
-            preview = {};
-            throw;
-        }
-
-        preview.active = true;
-        preview.entity = previewEntity;
-        if (preview.previousSelection != entt::null)
-        {
-            EditorWorld().SetSelectedEntity(preview.previousSelection);
-        }
-        else
-        {
-            EditorWorld().ClearSelection();
-        }
-        State().lastModelLoadError.clear();
-        return;
-    }
-
-    EditorWorld().GetTransform(preview.entity).translation = placement.worldPosition;
-}
-
-void EditorRenderBackendBase::CommitViewportModelPreview(const EditorUiActions::ViewportModelPlacement& placement)
-{
-    ViewportDragPreviewState& preview = State().viewportDragPreview;
-    const std::filesystem::path modelPath = NormalizePath(placement.modelPath);
-    const bool previewEntityStillExists =
-        preview.active &&
-        preview.modelPath == modelPath.string() &&
-        std::find(
-            EditorWorld().GetEntityOrder().begin(),
-            EditorWorld().GetEntityOrder().end(),
-            preview.entity
-        ) != EditorWorld().GetEntityOrder().end();
-
-    if (!previewEntityStillExists)
-    {
-        PlaceModelIntoScene(modelPath.string(), placement.worldPosition);
-        return;
-    }
-
-    EditorWorld().GetTransform(preview.entity).translation = placement.worldPosition;
-    EditorWorld().SetSelectedEntity(preview.entity);
-    preview = {};
-    State().lastModelLoadError.clear();
-    LOG_INFO(
-        "Placed model asset into scene at ({:.3f}, {:.3f}, {:.3f}): {}",
-        placement.worldPosition.x,
-        placement.worldPosition.y,
-        placement.worldPosition.z,
-        modelPath.string()
-    );
-}
-
-void EditorRenderBackendBase::ClearViewportModelPreview(bool restoreSelection)
-{
-    ViewportDragPreviewState preview = State().viewportDragPreview;
-    if (!preview.active)
-    {
-        return;
-    }
-
-    State().viewportDragPreview = {};
-    EditorWorld().DestroyEntity(preview.entity);
-    if (restoreSelection)
-    {
-        if (preview.previousSelection != entt::null)
-        {
-            EditorWorld().SetSelectedEntity(preview.previousSelection);
-        }
-        else
-        {
-            EditorWorld().ClearSelection();
-        }
-    }
-
-    RebuildSceneRenderables();
-}
-
-void EditorRenderBackendBase::UpdateImportedMaterialDefinition(const EditorUiActions::ImportedMaterialUpdate& update)
-{
-    if (update.modelPath.empty())
-    {
-        return;
-    }
-
-    // Update the single material at the given index in the model cache.
-    std::shared_ptr<LoadedModelData> cached = GetCachedModel(update.modelPath);
-    if (cached && update.materialIndex < cached->materials.size())
-    {
-        ApplyImportedMaterialToModelData(update.material, cached->materials[update.materialIndex]);
-    }
-
-    WriteMaterialYamlFile(
-        std::filesystem::path(update.modelPath),
-        update.materialIndex,
-        update.material
-    );
-
-    RebuildSceneRenderables();
-    State().renderablesDirty = true;
-    LOG_INFO(
-        "Updated material {} for model '{}'",
-        update.materialIndex,
-        update.modelPath
-    );
-}
-
-void EditorRenderBackendBase::UpdateImportedModelMaterialDefinitions(
-    const EditorUiActions::ImportedModelMaterialsUpdate& update
-)
-{
-    if (update.modelPath.empty() || update.materials.empty())
-    {
-        return;
-    }
-
-    const std::filesystem::path modelPath(update.modelPath);
-
-    // Propagate user edits into the cached raw model data so that
-    // RebuildSceneRenderables picks up the new blend graphs and pbr factors.
-    std::shared_ptr<LoadedModelData> cached = GetCachedModel(update.modelPath);
-    if (cached)
-    {
-        const size_t count = std::min(update.materials.size(), cached->materials.size());
-        for (size_t i = 0; i < count; ++i)
-        {
-            ApplyImportedMaterialToModelData(update.materials[i], cached->materials[i]);
-        }
-    }
-
-    // Persist each material as a sidecar .material.yaml file alongside the model.
-    for (size_t i = 0; i < update.materials.size(); ++i)
-    {
-        const auto outPath = WriteMaterialYamlFile(modelPath, static_cast<uint32_t>(i), update.materials[i]);
-        if (outPath.has_value())
-        {
-            LOG_INFO("Saved material '{}' -> '{}'", update.materials[i].name, outPath->string());
-        }
-    }
-
-    RebuildSceneRenderables();
-    State().renderablesDirty = true;
-    LOG_INFO(
-        "Saved {} material(s) for model '{}'",
-        update.materials.size(),
-        update.modelPath
-    );
-}
-
-void EditorRenderBackendBase::LoadScene(const std::string& path)
-{
-    const SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
-    EditorWorld().ApplySceneData(sceneData);
-    RebuildSceneRenderables();
-    EditorWorld().SetSceneFilePath(path);
-    State().lastSceneIoError.clear();
-    LOG_INFO("Loaded scene successfully: {}", path);
-}
-
-size_t EditorRenderBackendBase::RefreshReferencedSceneFiles(const std::filesystem::path& modelPath)
-{
-    size_t refreshedSceneCount = 0;
-    std::error_code iteratorError;
-    const std::filesystem::path workspaceRoot = NormalizePath(std::filesystem::current_path());
-
-    for (std::filesystem::recursive_directory_iterator iterator(workspaceRoot, iteratorError), end;
-         !iteratorError && iterator != end;
-         iterator.increment(iteratorError))
-    {
-        if (!iterator->is_regular_file(iteratorError) || iteratorError)
-        {
-            continue;
-        }
-
-        const std::filesystem::path candidatePath = NormalizePath(iterator->path());
-        if (!IsSceneAssetPath(candidatePath))
-        {
-            continue;
-        }
-
-        try
-        {
-            SerializedSceneData sceneData = LoadEditorSceneDataFromFile(candidatePath.string());
-            if (!SceneDataReferencesModel(sceneData, modelPath))
-            {
-                continue;
-            }
-
-            SaveEditorSceneDataToFile(sceneData, candidatePath.string());
-            ++refreshedSceneCount;
-        }
-        catch (...)
-        {
-            // Ignore non-scene YAML files and malformed sidecar data while scanning the workspace.
-        }
-    }
-
-    return refreshedSceneCount;
-}
-
-// =============================================================================
-// [EDITOR] Scene entity operations
-// =============================================================================
-
-void EditorRenderBackendBase::CreateSceneEntity()
-{
-    SerializedEntityData entityData{};
-    entityData.tagName = "Entity " + std::to_string(EditorWorld().GetEntityOrder().size() + 1);
-    entityData.modelDisplayName = entityData.tagName;
-    const entt::entity entity = EditorWorld().CreateEntity(entityData);
-    EditorWorld().SetSelectedEntity(entity);
-    RebuildSceneRenderables();
-    State().lastModelLoadError.clear();
-    LOG_INFO("Created scene entity '{}'", entityData.tagName);
-}
-
-void EditorRenderBackendBase::DeleteSelectedSceneEntity()
-{
-    if (!EditorWorld().HasSelection())
-    {
-        throw std::runtime_error("No selected scene entity to delete");
-    }
-
-    const std::string tagName = EditorWorld().GetSelectedTag().name;
-    EditorWorld().DestroyEntity(EditorWorld().GetSelectedEntity());
-    RebuildSceneRenderables();
-    State().lastModelLoadError.clear();
-    LOG_INFO("Deleted scene entity '{}'", tagName);
-}
-
-// =============================================================================
-// [ASSET] Asset file operations (paste / copy)
-// =============================================================================
-
-void EditorRenderBackendBase::PasteAssetPath(const EditorUiActions::AssetPasteRequest& request)
-{
-    const std::filesystem::path src = std::filesystem::path(request.sourcePath);
-    const std::filesystem::path dst = std::filesystem::path(request.destinationDirectory) / src.filename();
-    std::error_code eqEc;
-    if (std::filesystem::equivalent(src, dst, eqEc) && !eqEc)
-    {
-        return;
-    }
-    std::error_code ec;
-    std::filesystem::copy(src, dst,
-        std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
-        ec);
-    if (ec)
-    {
-        throw std::runtime_error(
-            "Failed to copy '" + request.sourcePath + "' to '" + request.destinationDirectory + "': " + ec.message()
-        );
-    }
-    LOG_INFO("Copied asset '{}' -> '{}'", request.sourcePath, dst.string());
 }
 
 void EditorRenderBackendBase::SaveEngineSettings()
@@ -1484,292 +632,4 @@ void EditorRenderBackendBase::SaveEngineSettings()
 
     State().engineSettingsNeedsBootstrapSave = false;
     State().lastEngineSettingsError.clear();
-}
-
-void EditorRenderBackendBase::ApplySelectedModelBaseColorTexture(const std::string& path)
-{
-    if (!EditorWorld().HasSelection() ||
-        EditorWorld().HasLightComponent(EditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to receive the texture");
-    }
-
-    entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
-    ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
-    ModelComponent& model = EditorWorld().GetModel(selectedEntity);
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.baseColorTextureOverridePath = path;
-
-    try
-    {
-        RebuildSceneRenderables();
-    }
-    catch (...)
-    {
-        EditorWorld().GetModel(selectedEntity) = previousModel;
-        throw;
-    }
-
-    State().lastModelLoadError.clear();
-    LOG_INFO(
-        "Applied selected texture override to '{}': {}",
-        EditorWorld().GetTag(selectedEntity).name,
-        path
-    );
-}
-
-void EditorRenderBackendBase::ClearSelectedModelBaseColorTexture()
-{
-    if (!EditorWorld().HasSelection() ||
-        EditorWorld().HasLightComponent(EditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to clear the texture override");
-    }
-
-    entt::entity selectedEntity = EditorWorld().GetSelectedEntity();
-    ModelComponent previousModel = EditorWorld().GetModel(selectedEntity);
-    ModelComponent& model = EditorWorld().GetModel(selectedEntity);
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.baseColorTextureOverridePath.clear();
-
-    try
-    {
-        RebuildSceneRenderables();
-    }
-    catch (...)
-    {
-        EditorWorld().GetModel(selectedEntity) = previousModel;
-        throw;
-    }
-
-    State().lastModelLoadError.clear();
-    LOG_INFO("Cleared selected texture override for '{}'", EditorWorld().GetTag(selectedEntity).name);
-}
-
-void EditorRenderBackendBase::CreateSceneLightEntity(const EditorUiActions::LightCreate& create)
-{
-    SerializedLightData lightData{};
-    lightData.lightType = create.type;
-    lightData.tagName = create.name;
-    lightData.transform.translation = State().camera.position + State().camera.GetForward() * 5.0f;
-    const entt::entity entity = EditorWorld().CreateLightEntity(lightData);
-    EditorWorld().SetSelectedEntity(entity);
-    LOG_INFO("Created light entity '{}'", lightData.tagName);
-}
-
-void EditorRenderBackendBase::DeleteSelectedLightEntity()
-{
-    if (!EditorWorld().HasSelection())
-    {
-        throw std::runtime_error("No selected entity to delete");
-    }
-
-    const entt::entity selected = EditorWorld().GetSelectedEntity();
-    if (!EditorWorld().HasLightComponent(selected))
-    {
-        throw std::runtime_error("Selected entity is not a light");
-    }
-
-    const std::string tagName = EditorWorld().GetTag(selected).name;
-    EditorWorld().DestroyLightEntity(selected);
-    LOG_INFO("Deleted light entity '{}'", tagName);
-}
-
-// =============================================================================
-// [ASSET→RENDERER] Scene → CPU render submesh conversion
-// Reads ModelLoader output, builds CpuRenderSubmesh list for Vulkan renderer.
-// The model-loading half will move to engine/asset/; the renderer submission
-// half stays here until a SceneToRenderData pass is introduced.
-// =============================================================================
-
-void EditorRenderBackendBase::RebuildSceneRenderables()
-{
-    std::vector<CpuRenderSubmesh> newRenderSubmeshes;
-
-    EditorWorld().ForEachEntity([&](
-        entt::entity entity,
-        const TagComponent& tag,
-        const TransformComponent&,
-        const ModelComponent& model
-    )
-    {
-        if (model.sourcePath.empty())
-        {
-            EditorWorld().UpdateModelInfo(
-                entity,
-                tag.name,
-                std::string{},
-                1,
-                WorldUnits::kDefaultCubeMinBoundsMeters,
-                WorldUnits::kDefaultCubeMaxBoundsMeters,
-                true,
-                {},
-                {}
-            );
-
-            CpuRenderSubmesh renderSubmesh{};
-            renderSubmesh.entity = entity;
-            renderSubmesh.mesh = CreateDefaultCubeMesh();
-            renderSubmesh.material = BuildDefaultMaterialForTag(tag.name);
-            renderSubmesh.hasTexCoords = true;
-            renderSubmesh.name = tag.name;
-            newRenderSubmeshes.push_back(std::move(renderSubmesh));
-            return;
-        }
-
-        std::shared_ptr<LoadedModelData> modelDataPtr = GetCachedModel(model.sourcePath);
-        if (!modelDataPtr)
-        {
-            // Don't do a synchronous load while the async loader is running on another thread:
-            // the model loader is not thread-safe and concurrent access to the same file crashes.
-            // ProcessPendingOperations will call RebuildSceneRenderables() again once the
-            // async load completes and the data is in the cache.
-            if (State().asyncLoad.IsLoading())
-            {
-                return;
-            }
-            modelDataPtr = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
-            CacheModel(model.sourcePath, modelDataPtr);
-        }
-        const LoadedModelData& modelData = *modelDataPtr;
-
-        // Resolve texture paths relative to the model file's current directory.
-        // This makes asset packages portable: moving model + textures together keeps
-        // all relative references valid.
-        const std::filesystem::path modelDir =
-            std::filesystem::path(model.sourcePath).parent_path();
-        const auto resolveTex = [&modelDir](const std::string& p) -> std::string
-        {
-            if (p.empty() || std::filesystem::path(p).is_absolute())
-            {
-                return p;
-            }
-            return (modelDir / p).lexically_normal().string();
-        };
-
-        std::vector<ModelImportedMaterialInfo> importedMaterials;
-        importedMaterials.reserve(modelData.materials.size());
-        for (const ModelMaterialData& rawMat : modelData.materials)
-        {
-            ModelMaterialData mat = rawMat;
-            mat.baseColorTexturePath  = resolveTex(rawMat.baseColorTexturePath);
-            mat.normalTexturePath     = resolveTex(rawMat.normalTexturePath);
-            mat.metallicTexturePath   = resolveTex(rawMat.metallicTexturePath);
-            mat.roughnessTexturePath  = resolveTex(rawMat.roughnessTexturePath);
-            mat.occlusionTexturePath  = resolveTex(rawMat.occlusionTexturePath);
-            mat.emissiveTexturePath   = resolveTex(rawMat.emissiveTexturePath);
-            importedMaterials.push_back(BuildImportedMaterialInfo(mat));
-        }
-
-        std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
-        importedSubmeshes.reserve(modelData.submeshes.size());
-        std::vector<bool> materialUsesUv(importedMaterials.size(), false);
-        for (const ModelSubmeshData& submesh : modelData.submeshes)
-        {
-            importedSubmeshes.push_back(BuildImportedSubmeshInfo(submesh));
-            if (submesh.hasTexCoords && submesh.materialIndex < materialUsesUv.size())
-            {
-                materialUsesUv[submesh.materialIndex] = true;
-            }
-        }
-        if (!model.baseColorTextureOverridePath.empty())
-        {
-            for (size_t materialIndex = 0; materialIndex < importedMaterials.size(); ++materialIndex)
-            {
-                if (materialUsesUv[materialIndex])
-                {
-                    importedMaterials[materialIndex].baseColorTexturePath = model.baseColorTextureOverridePath;
-                }
-            }
-        }
-
-        for (const ModelSubmeshData& submesh : modelData.submeshes)
-        {
-            CpuRenderSubmesh renderSubmesh{};
-            renderSubmesh.entity = entity;
-            renderSubmesh.mesh = submesh.mesh;
-            renderSubmesh.hasTexCoords = submesh.hasTexCoords;
-
-            const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
-            renderSubmesh.doubleSided = material.doubleSided;
-            renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
-            renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
-            renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];
-            renderSubmesh.material.baseColorFactor[3] = material.baseColor[3] * material.opacity;
-            renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
-            renderSubmesh.material.emissiveFactor[3] = material.alphaCutoff;
-            renderSubmesh.material.surfaceFactors[0] = material.metallicFactor;
-            renderSubmesh.material.surfaceFactors[1] = material.roughnessFactor;
-            renderSubmesh.material.surfaceFactors[2] = material.normalScale;
-            renderSubmesh.material.surfaceFactors[3] = material.occlusionStrength;
-            renderSubmesh.material.nodeGraphFactors[0] = material.blendGraph.enabled ? 1.0f : 0.0f;
-            renderSubmesh.material.nodeGraphFactors[1] = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
-            renderSubmesh.material.nodeGraphFactors[2] = 1.0f;
-            renderSubmesh.material.nodeGraphFactors[3] = 0.0f;
-            renderSubmesh.name = submesh.name;
-            if (submesh.hasTexCoords)
-            {
-                renderSubmesh.textures.baseColor =
-                    model.baseColorTextureOverridePath.empty()
-                    ? resolveTex(material.baseColorTexturePath)
-                    : model.baseColorTextureOverridePath;
-                renderSubmesh.textures.normal    = resolveTex(material.normalTexturePath);
-                renderSubmesh.textures.metallic  = resolveTex(material.metallicTexturePath);
-                renderSubmesh.textures.roughness = resolveTex(material.roughnessTexturePath);
-                renderSubmesh.textures.occlusion = resolveTex(material.occlusionTexturePath);
-                renderSubmesh.textures.emissive  = resolveTex(material.emissiveTexturePath);
-                renderSubmesh.textures.secondaryBaseColor =
-                    material.blendGraph.secondaryBaseColorTexturePath.empty()
-                    ? renderSubmesh.textures.baseColor
-                    : material.blendGraph.secondaryBaseColorTexturePath;
-                renderSubmesh.textures.secondaryNormal =
-                    material.blendGraph.secondaryNormalTexturePath.empty()
-                    ? renderSubmesh.textures.normal
-                    : material.blendGraph.secondaryNormalTexturePath;
-                renderSubmesh.textures.secondaryMetallic =
-                    material.blendGraph.secondaryMetallicTexturePath.empty()
-                    ? renderSubmesh.textures.metallic
-                    : material.blendGraph.secondaryMetallicTexturePath;
-                renderSubmesh.textures.secondaryRoughness =
-                    material.blendGraph.secondaryRoughnessTexturePath.empty()
-                    ? renderSubmesh.textures.roughness
-                    : material.blendGraph.secondaryRoughnessTexturePath;
-                renderSubmesh.textures.secondaryOcclusion =
-                    material.blendGraph.secondaryOcclusionTexturePath.empty()
-                    ? renderSubmesh.textures.occlusion
-                    : material.blendGraph.secondaryOcclusionTexturePath;
-                renderSubmesh.textures.secondaryEmissive =
-                    material.blendGraph.secondaryEmissiveTexturePath.empty()
-                    ? renderSubmesh.textures.emissive
-                    : material.blendGraph.secondaryEmissiveTexturePath;
-                renderSubmesh.textures.blendMask = material.blendGraph.blendMaskTexturePath;
-            }
-            newRenderSubmeshes.push_back(std::move(renderSubmesh));
-        }
-
-        EditorWorld().UpdateModelInfo(
-            entity,
-            model.displayName,
-            model.sourcePath,
-            static_cast<uint32_t>(modelData.submeshes.size()),
-            modelData.minBounds,
-            modelData.maxBounds,
-            modelData.hasBounds,
-            importedMaterials,
-            importedSubmeshes
-        );
-    });
-
-    RenderWorld().SetRenderSubmeshes(std::move(newRenderSubmeshes));
-    State().renderablesDirty = true;
 }

@@ -1,6 +1,6 @@
 #include "factory.h"
 
-#include "../renderer_shared_state.h"
+#include <renderer_shared_state.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>

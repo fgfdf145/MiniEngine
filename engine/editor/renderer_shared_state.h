@@ -1,10 +1,11 @@
 #pragma once
 
-#include "camera.h"
 #include "editor_ui.h"
 #include "engine_settings.h"
-#include "render_types.h"
-#include "renderer_world.h"
+
+#include <camera.h>
+#include <render_types.h>
+#include <renderer_world.h>
 
 #include <editor_world.h>
 #include <input/input.h>
@@ -51,6 +52,22 @@ struct AsyncModelLoad
     }
 };
 
+// State for a single in-flight async scene load.
+// The background thread parses the scene file and pre-warms the model cache
+// for every referenced model; the main thread applies the parsed data once ready.
+struct AsyncSceneLoad
+{
+    std::string path;
+    std::future<SerializedSceneData> future;
+
+    bool IsActive() const { return future.valid(); }
+    bool IsLoading() const
+    {
+        return future.valid() &&
+               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
+    }
+};
+
 struct RendererSharedState
 {
     IEditorWorld& GetEditorWorld()
@@ -83,6 +100,7 @@ struct RendererSharedState
     RendererWorld rendererWorld;
     ViewportDragPreviewState viewportDragPreview;
     AsyncModelLoad asyncLoad;
+    AsyncSceneLoad asyncSceneLoad;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
     std::string lastEngineSettingsError;

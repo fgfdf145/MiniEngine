@@ -1,7 +1,7 @@
-#include "renderer.h"
+﻿#include "renderer.h"
 
 #include "../imgui/imgui_impl_vulkan.h"
-#include "../renderer_shared_state.h"
+#include <renderer_shared_state.h>
 
 #include <editor_world.h>
 #include <scene_components.h>
@@ -392,7 +392,7 @@ void VulkanRenderer::SyncSceneViewportLayer()
 void VulkanRenderer::UploadSceneResources()
 {
     // Move live textures into the pool so they can be reused without re-uploading.
-    // This prevents 2× peak VRAM usage when rebuilding an unchanged texture set.
+    // This prevents 2脳 peak VRAM usage when rebuilding an unchanged texture set.
     for (size_t i = 0; i < m_textures.size() && i < m_textureCacheKeys.size(); ++i)
     {
         if (!m_textureCacheKeys[i].empty() && m_textures[i])
@@ -466,7 +466,7 @@ void VulkanRenderer::UploadSceneResources()
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
             return it->second;
 
-        // Pool hit: reuse existing GPU texture — no disk I/O, no upload, no extra VRAM.
+        // Pool hit: reuse existing GPU texture 鈥?no disk I/O, no upload, no extra VRAM.
         if (auto poolIt = m_texturePool.find(key); poolIt != m_texturePool.end())
         {
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
