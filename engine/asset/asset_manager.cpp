@@ -1,12 +1,16 @@
 #include "asset_manager.h"
 
+#include "asset_registry.h"
+
 #include <imgui.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
 
@@ -53,6 +57,55 @@ bool IsHiddenAsset(const std::filesystem::path& p)
 {
     return p.filename().string().ends_with(".miniengine_asset.yaml");
 }
+
+// A renamed model keeps its "<stem>_<index>.material.yaml" sidecars attached
+// by renaming them to the new stem.
+void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, const std::filesystem::path& newModelPath)
+{
+    if (!IsModelExt(oldModelPath))
+    {
+        return;
+    }
+
+    const std::string oldPrefix = oldModelPath.stem().string() + "_";
+    const std::string newPrefix = newModelPath.stem().string() + "_";
+    constexpr std::string_view kSuffix = ".material.yaml";
+
+    std::error_code iterEc;
+    for (const auto& item : std::filesystem::directory_iterator(oldModelPath.parent_path(), iterEc))
+    {
+        if (iterEc)
+        {
+            break;
+        }
+        const std::string name = item.path().filename().string();
+        if (!name.starts_with(oldPrefix) || !name.ends_with(kSuffix))
+        {
+            continue;
+        }
+        const std::string indexPart =
+            name.substr(oldPrefix.size(), name.size() - oldPrefix.size() - kSuffix.size());
+        const bool isMaterialIndex =
+            !indexPart.empty() &&
+            std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (!isMaterialIndex)
+        {
+            continue;
+        }
+
+        std::error_code renameEc;
+        std::filesystem::rename(
+            item.path(),
+            item.path().parent_path() / (newPrefix + indexPart + std::string(kSuffix)),
+            renameEc
+        );
+    }
+}
+
+// Square tile layout (Unreal-style content browser)
+constexpr float kTileWidth = 96.0f;
+constexpr float kTileIconHeight = 64.0f;
+constexpr float kTileHeight = 100.0f;   // icon area + ~2 lines of label
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +126,7 @@ void AssetManager::NavigateTo(const std::filesystem::path& dir)
     m_currentDir = dir;
     m_selectedIndices.clear();
     m_anchorIdx = -1;
+    m_renamingIndex = -1;
     m_needsScan = true;
 }
 
@@ -87,6 +141,20 @@ AssetManagerResult AssetManager::Draw()
     {
         ScanCurrentDir();
         m_needsScan = false;
+    }
+
+    // A freshly created folder starts in rename mode once it shows up in the scan.
+    if (!m_pendingRenameName.empty())
+    {
+        for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
+        {
+            if (m_entries[static_cast<size_t>(i)].name == m_pendingRenameName)
+            {
+                BeginRename(i);
+                break;
+            }
+        }
+        m_pendingRenameName.clear();
     }
 
     DrawToolbar(result);
@@ -108,6 +176,7 @@ void AssetManager::ScanCurrentDir()
     m_entries.clear();
     m_selectedIndices.clear();
     m_anchorIdx = -1;
+    m_renamingIndex = -1;
 
     std::error_code ec;
     if (!std::filesystem::exists(m_currentDir, ec) || !std::filesystem::is_directory(m_currentDir, ec))
@@ -210,6 +279,32 @@ void AssetManager::PushTypeColor(AssetType t)
     }
 }
 
+const char* AssetManager::ShortTag(AssetType t)
+{
+    switch (t)
+    {
+    case AssetType::Dir:      return "DIR";
+    case AssetType::Model:    return "MDL";
+    case AssetType::Material: return "MAT";
+    case AssetType::Scene:    return "SCN";
+    case AssetType::Texture:  return "TEX";
+    default:                  return "FILE";
+    }
+}
+
+unsigned int AssetManager::TypeColorU32(AssetType t)
+{
+    switch (t)
+    {
+    case AssetType::Dir:      return IM_COL32(255, 204,  77, 255);
+    case AssetType::Model:    return IM_COL32(115, 191, 255, 255);
+    case AssetType::Material: return IM_COL32(204, 140, 255, 255);
+    case AssetType::Scene:    return IM_COL32(128, 255, 153, 255);
+    case AssetType::Texture:  return IM_COL32(102, 230, 217, 255);
+    default:                  return IM_COL32(153, 153, 158, 255);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // UI sections
 
@@ -224,7 +319,16 @@ void AssetManager::DrawToolbar(AssetManagerResult& result)
 
     if (ImGui::Button("Refresh"))
     {
+        // Also pick up files changed outside the editor (new/copied/moved assets).
+        AssetRegistry::RescanAssetTree();
         m_needsScan = true;
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("New Folder"))
+    {
+        CreateNewFolder();
     }
 
     ImGui::SameLine();
@@ -292,109 +396,232 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
     );
     if (ImGui::BeginChild("##asset_list", ImVec2(0.0f, listHeight), false))
     {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const int columns = std::max(
+            1,
+            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (kTileWidth + style.ItemSpacing.x))
+        );
+
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
         {
-            DrawEntryRow(m_entries[static_cast<size_t>(i)], i, result);
+            if (i % columns != 0)
+            {
+                ImGui::SameLine();
+            }
+            DrawEntryTile(m_entries[static_cast<size_t>(i)], i, result);
+        }
+
+        // F2 renames the single selected entry
+        if (m_renamingIndex < 0 && m_selectedIndices.size() == 1 &&
+            ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+            ImGui::IsKeyPressed(ImGuiKey_F2, false))
+        {
+            BeginRename(*m_selectedIndices.begin());
+        }
+
+        // Right-click on empty space
+        if (ImGui::BeginPopupContextWindow("##asset_list_ctx",
+                ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+        {
+            if (ImGui::MenuItem("New Folder"))
+            {
+                CreateNewFolder();
+            }
+            if (!m_clipboard.empty() && ImGui::MenuItem("Paste Copy Here"))
+            {
+                result.pasteRequest = AssetManagerResult::PasteRequest{
+                    m_clipboard,
+                    m_currentDir.string()
+                };
+            }
+            ImGui::EndPopup();
         }
     }
     ImGui::EndChild();
 }
 
-void AssetManager::DrawEntryRow(const Entry& entry, int index, AssetManagerResult& result)
+void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResult& result)
 {
     const bool isSelected = m_selectedIndices.count(index) > 0;
+    const bool isRenaming = (index == m_renamingIndex);
 
-    PushTypeColor(entry.type);
-    ImGui::TextUnformatted(TypeTag(entry.type));
-    ImGui::PopStyleColor();
-    ImGui::SameLine();
+    ImGui::PushID(index);
+    ImGui::BeginGroup();
+    const ImVec2 tileMin = ImGui::GetCursorScreenPos();
 
-    const std::string selId = entry.name + "##" + std::to_string(index);
-    if (ImGui::Selectable(selId.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick))
+    bool navigated = false;
+    if (!isRenaming)
     {
-        // ".." always navigates, never participates in multi-select
-        if (entry.name == "..")
+        if (ImGui::Selectable("##tile", isSelected, ImGuiSelectableFlags_AllowDoubleClick,
+                              ImVec2(kTileWidth, kTileHeight)))
         {
-            NavigateTo(entry.path);
-            return;
-        }
-
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.isDir)
-        {
-            NavigateTo(entry.path);
-            return;
-        }
-
-        const ImGuiIO& io = ImGui::GetIO();
-
-        if (io.KeyShift && m_anchorIdx >= 0)
-        {
-            // Range select: fill from anchor to current, optionally merging with existing
-            if (!io.KeyCtrl)
+            // ".." always navigates, never participates in multi-select
+            if (entry.name == "..")
             {
-                m_selectedIndices.clear();
+                NavigateTo(entry.path);
+                navigated = true;
             }
-            const int lo = std::min(m_anchorIdx, index);
-            const int hi = std::max(m_anchorIdx, index);
-            for (int i = lo; i <= hi; ++i)
+            else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.isDir)
             {
-                m_selectedIndices.insert(i);
-            }
-            // anchor stays unchanged during shift-extend
-        }
-        else if (io.KeyCtrl)
-        {
-            // Toggle this item
-            if (m_selectedIndices.count(index))
-            {
-                m_selectedIndices.erase(index);
+                NavigateTo(entry.path);
+                navigated = true;
             }
             else
             {
-                m_selectedIndices.insert(index);
+                const ImGuiIO& io = ImGui::GetIO();
+
+                if (io.KeyShift && m_anchorIdx >= 0)
+                {
+                    // Range select: fill from anchor to current, optionally merging with existing
+                    if (!io.KeyCtrl)
+                    {
+                        m_selectedIndices.clear();
+                    }
+                    const int lo = std::min(m_anchorIdx, index);
+                    const int hi = std::max(m_anchorIdx, index);
+                    for (int i = lo; i <= hi; ++i)
+                    {
+                        m_selectedIndices.insert(i);
+                    }
+                    // anchor stays unchanged during shift-extend
+                }
+                else if (io.KeyCtrl)
+                {
+                    // Toggle this item
+                    if (m_selectedIndices.count(index))
+                    {
+                        m_selectedIndices.erase(index);
+                    }
+                    else
+                    {
+                        m_selectedIndices.insert(index);
+                    }
+                    m_anchorIdx = index;
+                }
+                else
+                {
+                    // Plain click: select only this item
+                    m_selectedIndices.clear();
+                    m_selectedIndices.insert(index);
+                    m_anchorIdx = index;
+                }
             }
-            m_anchorIdx = index;
         }
-        else
+
+        if (!navigated)
         {
-            // Plain click: select only this item
-            m_selectedIndices.clear();
-            m_selectedIndices.insert(index);
-            m_anchorIdx = index;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            {
+                ImGui::SetTooltip("%s", entry.name.c_str());
+            }
+
+            // Drag source (only for model files, drag the specific entry)
+            if (entry.type == AssetType::Model && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+            {
+                const std::string pathStr = entry.path.string();
+                ImGui::SetDragDropPayload("ASSET_MODEL_PATH", pathStr.c_str(), pathStr.size() + 1);
+                ImGui::TextUnformatted(entry.name.c_str());
+                result.draggedModelPath = pathStr;
+                ImGui::EndDragDropSource();
+            }
+
+            // Right-click context menu
+            if (ImGui::BeginPopupContextItem("##tile_ctx"))
+            {
+                // Right-clicking an unselected item switches selection to just that item
+                if (!isSelected)
+                {
+                    m_selectedIndices.clear();
+                    m_selectedIndices.insert(index);
+                    m_anchorIdx = index;
+                }
+
+                if (m_selectedIndices.size() > 1)
+                {
+                    DrawBatchContextMenu(result);
+                }
+                else
+                {
+                    DrawEntryContextMenu(entry, index, result);
+                }
+                ImGui::EndPopup();
+            }
         }
     }
-
-    // Drag source (only for model files, drag the specific entry)
-    if (entry.type == AssetType::Model && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+    else
     {
-        const std::string pathStr = entry.path.string();
-        ImGui::SetDragDropPayload("ASSET_MODEL_PATH", pathStr.c_str(), pathStr.size() + 1);
-        ImGui::TextUnformatted(entry.name.c_str());
-        result.draggedModelPath = pathStr;
-        ImGui::EndDragDropSource();
+        // Icon area stays; the label line becomes an inline rename field.
+        ImGui::Dummy(ImVec2(kTileWidth, kTileIconHeight));
+        if (m_renameFocusPending)
+        {
+            ImGui::SetKeyboardFocusHere();
+            m_renameFocusPending = false;
+        }
+        ImGui::SetNextItemWidth(kTileWidth);
+        const bool committed = ImGui::InputText("##rename", m_renameBuffer, sizeof(m_renameBuffer),
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        if (committed)
+        {
+            CommitRename();
+        }
+        else if (ImGui::IsItemDeactivated())
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+            {
+                CancelRename();
+            }
+            else
+            {
+                CommitRename();   // focus lost commits, like Unreal / Explorer
+            }
+        }
     }
 
-    // Right-click context menu
-    if (ImGui::BeginPopupContextItem(selId.c_str()))
+    // --- tile decorations (drawn over the invisible selectable) ---
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImU32 typeCol = TypeColorU32(entry.type);
+
+    const ImVec2 iconMin(tileMin.x + 16.0f, tileMin.y + 8.0f);
+    const ImVec2 iconMax(tileMin.x + kTileWidth - 16.0f, tileMin.y + kTileIconHeight - 6.0f);
+
+    if (entry.isDir)
     {
-        // Right-clicking an unselected item switches selection to just that item
-        if (!isSelected)
-        {
-            m_selectedIndices.clear();
-            m_selectedIndices.insert(index);
-            m_anchorIdx = index;
-        }
-
-        if (m_selectedIndices.size() > 1)
-        {
-            DrawBatchContextMenu(result);
-        }
-        else
-        {
-            DrawEntryContextMenu(entry, result);
-        }
-        ImGui::EndPopup();
+        // Folder glyph: tab + body
+        const float tabWidth = (iconMax.x - iconMin.x) * 0.45f;
+        drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + tabWidth, iconMin.y + 10.0f), typeCol, 3.0f);
+        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f), iconMax, typeCol, 4.0f);
+        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f), ImVec2(iconMax.x, iconMin.y + 14.0f),
+                                IM_COL32(255, 255, 255, 40), 4.0f);
     }
+    else
+    {
+        drawList->AddRectFilled(iconMin, iconMax, IM_COL32(52, 54, 60, 255), 4.0f);
+        drawList->AddRect(iconMin, iconMax, typeCol, 4.0f, 0, 2.0f);
+        const char* tag = ShortTag(entry.type);
+        const ImVec2 tagSize = ImGui::CalcTextSize(tag);
+        drawList->AddText(ImVec2((iconMin.x + iconMax.x - tagSize.x) * 0.5f,
+                                 (iconMin.y + iconMax.y - tagSize.y) * 0.5f),
+                          typeCol, tag);
+    }
+
+    if (!isRenaming)
+    {
+        // Name label: wrapped to the tile width, clipped to two lines,
+        // centered when it fits on one line
+        const float labelTop = tileMin.y + kTileIconHeight;
+        const float wrapWidth = kTileWidth - 6.0f;
+        const ImVec2 textSize = ImGui::CalcTextSize(entry.name.c_str(), nullptr, false, wrapWidth);
+        const float textX = (textSize.x < wrapWidth)
+            ? tileMin.x + (kTileWidth - textSize.x) * 0.5f
+            : tileMin.x + 3.0f;
+        const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + kTileWidth, tileMin.y + kTileHeight);
+        drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(textX, labelTop),
+                          ImGui::GetColorU32(ImGuiCol_Text), entry.name.c_str(), nullptr,
+                          wrapWidth, &clipRect);
+    }
+
+    ImGui::EndGroup();
+    ImGui::PopID();
 }
 
 void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
@@ -465,6 +692,15 @@ void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
     }
 
     ImGui::TextDisabled("%s", entry.path.string().c_str());
+
+    if (!entry.isDir && AssetRegistry::IsRegistrableAsset(entry.path))
+    {
+        const std::string uuid = AssetRegistry::GetOrCreateUuid(entry.path);
+        if (!uuid.empty())
+        {
+            ImGui::TextDisabled("UUID: %s", uuid.c_str());
+        }
+    }
 
     if (entry.type == AssetType::Model)
     {
@@ -553,7 +789,7 @@ void AssetManager::DrawBatchContextMenu(AssetManagerResult& result)
     }
 }
 
-void AssetManager::DrawEntryContextMenu(const Entry& entry, AssetManagerResult& result)
+void AssetManager::DrawEntryContextMenu(const Entry& entry, int index, AssetManagerResult& result)
 {
     if (entry.type == AssetType::Model)
     {
@@ -562,6 +798,11 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, AssetManagerResult& 
             result.selectedModelPath = entry.path.string();
         }
         ImGui::Separator();
+    }
+
+    if (entry.name != ".." && ImGui::MenuItem("Rename", "F2"))
+    {
+        BeginRename(index);
     }
 
     if (ImGui::MenuItem("Copy Path"))
@@ -596,6 +837,93 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, AssetManagerResult& 
             BuildPendingDeleteWarnings();
             m_openDeleteModal = true;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rename / new folder
+
+void AssetManager::BeginRename(int index)
+{
+    if (index < 0 || index >= static_cast<int>(m_entries.size()))
+    {
+        return;
+    }
+    const Entry& entry = m_entries[static_cast<size_t>(index)];
+    if (entry.name == "..")
+    {
+        return;
+    }
+
+    m_renamingIndex = index;
+    m_renameFocusPending = true;
+    std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", entry.name.c_str());
+
+    m_selectedIndices.clear();
+    m_selectedIndices.insert(index);
+    m_anchorIdx = index;
+}
+
+void AssetManager::CommitRename()
+{
+    const int index = m_renamingIndex;
+    m_renamingIndex = -1;
+    if (index < 0 || index >= static_cast<int>(m_entries.size()))
+    {
+        return;
+    }
+    const Entry& entry = m_entries[static_cast<size_t>(index)];
+
+    std::string newName(m_renameBuffer);
+    const size_t first = newName.find_first_not_of(" \t");
+    const size_t last = newName.find_last_not_of(" \t");
+    newName = (first == std::string::npos) ? std::string{} : newName.substr(first, last - first + 1);
+
+    if (newName.empty() || newName == entry.name ||
+        newName.find_first_of("\\/:*?\"<>|") != std::string::npos)
+    {
+        return;
+    }
+
+    const std::filesystem::path target = entry.path.parent_path() / newName;
+    std::error_code ec;
+    if (std::filesystem::exists(target, ec))
+    {
+        return;   // never clobber an existing file/folder
+    }
+    std::filesystem::rename(entry.path, target, ec);
+    if (!ec)
+    {
+        // Keep the uuid registry and companion sidecars pointing at the new name.
+        AssetRegistry::OnAssetRenamed(entry.path, target);
+        if (!entry.isDir)
+        {
+            RenameModelMaterialSidecars(entry.path, target);
+        }
+    }
+    m_needsScan = true;
+}
+
+void AssetManager::CancelRename()
+{
+    m_renamingIndex = -1;
+}
+
+void AssetManager::CreateNewFolder()
+{
+    std::error_code ec;
+    std::filesystem::path target = m_currentDir / "NewFolder";
+    int suffix = 1;
+    while (std::filesystem::exists(target, ec))
+    {
+        target = m_currentDir / ("NewFolder" + std::to_string(suffix++));
+    }
+
+    std::filesystem::create_directory(target, ec);
+    if (!ec)
+    {
+        m_pendingRenameName = target.filename().string();
+        m_needsScan = true;
     }
 }
 
@@ -665,6 +993,11 @@ void AssetManager::BuildPendingDeleteWarnings()
         }
         const std::string ext = ToLower(item.path().extension().string());
         if (ext != ".gltf" && ext != ".yaml" && ext != ".yml")
+        {
+            continue;
+        }
+        // Uuid sidecars name their own asset by design; they are not references.
+        if (IsHiddenAsset(item.path()))
         {
             continue;
         }

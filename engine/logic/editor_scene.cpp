@@ -184,8 +184,11 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             const YAML::Node modelNode = entityNode["model"];
             entityData.modelDisplayName = modelNode["display_name"].as<std::string>(entityData.modelDisplayName);
             entityData.modelSourcePath = modelNode["source_path"].as<std::string>(entityData.modelSourcePath);
+            entityData.modelSourceUuid = modelNode["source_uuid"].as<std::string>(entityData.modelSourceUuid);
             entityData.modelBaseColorTextureOverridePath =
                 modelNode["base_color_texture_override"].as<std::string>(entityData.modelBaseColorTextureOverridePath);
+            entityData.modelBaseColorTextureOverrideUuid =
+                modelNode["base_color_texture_override_uuid"].as<std::string>(entityData.modelBaseColorTextureOverrideUuid);
             entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
         }
@@ -235,7 +238,9 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::Key << "model" << YAML::Value << YAML::BeginMap;
         emitter << YAML::Key << "display_name" << YAML::Value << entity.modelDisplayName;
         emitter << YAML::Key << "source_path" << YAML::Value << entity.modelSourcePath;
+        emitter << YAML::Key << "source_uuid" << YAML::Value << entity.modelSourceUuid;
         emitter << YAML::Key << "base_color_texture_override" << YAML::Value << entity.modelBaseColorTextureOverridePath;
+        emitter << YAML::Key << "base_color_texture_override_uuid" << YAML::Value << entity.modelBaseColorTextureOverrideUuid;
         emitter << YAML::EndMap;
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
         EmitVec3(emitter, "translation", entity.transform.translation);
@@ -362,7 +367,7 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     entt::entity entity = m_registry.create();
     m_registry.emplace<TagComponent>(entity, TagComponent{ entityData.tagName });
     m_registry.emplace<TransformComponent>(entity, entityData.transform);
-    m_registry.emplace<ModelComponent>(entity, ModelComponent{
+    ModelComponent& model = m_registry.emplace<ModelComponent>(entity, ModelComponent{
         entityData.modelSourcePath,
         entityData.modelDisplayName,
         entityData.modelBaseColorTextureOverridePath,
@@ -373,6 +378,8 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
         {},
         {}
     });
+    model.sourceUuid = entityData.modelSourceUuid;
+    model.baseColorTextureOverrideUuid = entityData.modelBaseColorTextureOverrideUuid;
     m_entityOrder.push_back(entity);
     if (m_selectedEntity == entt::null)
     {
@@ -747,7 +754,9 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.tagName = tag.name;
         entityData.modelDisplayName = model.displayName;
         entityData.modelSourcePath = model.sourcePath;
+        entityData.modelSourceUuid = model.sourceUuid;
         entityData.modelBaseColorTextureOverridePath = model.baseColorTextureOverridePath;
+        entityData.modelBaseColorTextureOverrideUuid = model.baseColorTextureOverrideUuid;
         entityData.transform = GetTransform(entity);
         sceneData.entities.push_back(entityData);
     }

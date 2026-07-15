@@ -30,7 +30,9 @@ struct SerializedEntityData
     std::string tagName = "Cube";
     std::string modelDisplayName = "Cube";
     std::string modelSourcePath;
+    std::string modelSourceUuid;   // stable asset id; survives renames/moves of the path
     std::string modelBaseColorTextureOverridePath;
+    std::string modelBaseColorTextureOverrideUuid;
     TransformComponent transform;
 };
 
@@ -98,6 +100,7 @@ public:
     ) = 0;
 
     virtual void ApplySceneData(const SerializedSceneData& sceneData) = 0;
+    virtual SerializedSceneData CaptureSceneData() const = 0;
     virtual void SaveSceneToFile(const std::string& path) const = 0;
     virtual std::string BuildSceneYamlPreview() const = 0;
     virtual const std::string& GetConfigPath() const = 0;

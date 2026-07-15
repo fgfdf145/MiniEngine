@@ -4,6 +4,7 @@
 
 #include <renderer_shared_state.h>
 
+#include <asset_registry.h>
 #include <log/log.h>
 #include <material_graph_runtime.h>
 #include <model_cache.h>
@@ -171,6 +172,10 @@ std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const s
 
     const std::filesystem::path dst = ModelLoader::CopyModelWithSortedReferences(src, modelFolder);
 
+    // Register the freshly imported bundle (model + copied textures) so it has
+    // stable uuids from the very first reference.
+    AssetRegistry::RescanAssetTree();
+
     LOG_INFO("Imported model '{}' -> '{}'", src.string(), dst.string());
     return dst.string();
 }
@@ -277,6 +282,10 @@ void DeleteAssetPath(const std::string& path)
     {
         throw std::runtime_error("Failed to delete '" + path + "': " + ec.message());
     }
+
+    // Drop registry entries and the now-orphaned uuid sidecar.
+    AssetRegistry::OnAssetRemoved(target);
+
     LOG_INFO("Deleted asset: {}", path);
 }
 
@@ -299,6 +308,29 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
             "Failed to copy '" + sourcePath + "' to '" + destinationDirectory + "': " + ec.message()
         );
     }
+
+    // Copied uuid sidecars would duplicate their source's identity, and rescan
+    // order must not decide who keeps the uuid: strip the sidecars from the
+    // copy so the originals stay authoritative and the copies get fresh uuids.
+    std::error_code sidecarEc;
+    if (std::filesystem::is_directory(dst, sidecarEc))
+    {
+        for (std::filesystem::recursive_directory_iterator
+                 it(dst, std::filesystem::directory_options::skip_permission_denied, sidecarEc), end;
+             !sidecarEc && it != end;
+             it.increment(sidecarEc))
+        {
+            std::error_code fileEc;
+            if (it->is_regular_file(fileEc) &&
+                it->path().filename().string().ends_with(".miniengine_asset.yaml"))
+            {
+                std::error_code removeEc;
+                std::filesystem::remove(it->path(), removeEc);
+            }
+        }
+    }
+    AssetRegistry::RescanAssetTree();
+
     LOG_INFO("Copied asset '{}' -> '{}'", sourcePath, dst.string());
 }
 

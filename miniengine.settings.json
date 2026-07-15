@@ -7,7 +7,7 @@
       "macos": 0.750
     },
     "windows": {
-      "camera": true,
+      "camera": false,
       "asset_manager": true,
       "input_monitor": false,
       "scene": true,

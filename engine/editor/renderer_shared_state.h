@@ -41,6 +41,7 @@ struct AsyncModelLoad
     entt::entity previousSelection = entt::null;
     bool resetTransformOnComplete = false;
     std::string previousSourcePath;
+    std::string previousSourceUuid;
     std::string previousDisplayName;
 
     // The async task. Valid while a load is in flight or completed but not yet consumed.

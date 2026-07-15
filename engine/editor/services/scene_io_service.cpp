@@ -4,6 +4,7 @@
 
 #include <renderer_shared_state.h>
 
+#include <asset_registry.h>
 #include <log/log.h>
 #include <model_cache.h>
 #include <model_loader.h>
@@ -39,6 +40,79 @@ bool IsSceneAssetPath(const std::filesystem::path& path)
     }
 
     return true;
+}
+
+// Load side: the uuid recorded in the scene file wins over the stored path,
+// so references survive asset renames/moves done since the scene was saved.
+void ResolveSerializedReference(std::string& path, std::string& uuid, const char* what)
+{
+    if (path.empty() && uuid.empty())
+    {
+        return;
+    }
+
+    const ResolvedAssetReference resolved = AssetRegistry::ResolveReference(uuid, path);
+    if (resolved.resolved)
+    {
+        if (resolved.healed)
+        {
+            LOG_INFO("Healed {} reference via asset registry: '{}' -> '{}'", what, path, resolved.path);
+        }
+        path = resolved.path;
+        uuid = resolved.uuid;
+    }
+    else if (!path.empty())
+    {
+        LOG_WARN("Unresolved {} reference: '{}' (uuid '{}')", what, path, uuid);
+    }
+}
+
+// Save side: a live path is the source of truth, so its uuid is refreshed from
+// the registry; a path that went stale while the scene was open (e.g. the
+// asset was renamed) is recovered from the uuid recorded at load time.
+void EnrichReferenceForSave(std::string& path, std::string& uuid, const char* what)
+{
+    if (path.empty())
+    {
+        uuid.clear();
+        return;
+    }
+
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) && !ec)
+    {
+        const std::string freshUuid = AssetRegistry::GetOrCreateUuid(path);
+        if (!freshUuid.empty())
+        {
+            uuid = freshUuid;
+        }
+        return;
+    }
+
+    if (!uuid.empty())
+    {
+        if (const std::optional<std::filesystem::path> healedPath = AssetRegistry::ResolveUuid(uuid))
+        {
+            LOG_INFO("Healed stale {} path on save: '{}' -> '{}'", what, path, healedPath->string());
+            path = healedPath->string();
+            return;
+        }
+    }
+
+    LOG_WARN("Saving scene with missing {} asset: '{}'", what, path);
+}
+
+void ResolveSceneAssetReferences(SerializedSceneData& sceneData)
+{
+    for (SerializedEntityData& entity : sceneData.entities)
+    {
+        ResolveSerializedReference(entity.modelSourcePath, entity.modelSourceUuid, "model");
+        ResolveSerializedReference(
+            entity.modelBaseColorTextureOverridePath,
+            entity.modelBaseColorTextureOverrideUuid,
+            "texture override"
+        );
+    }
 }
 
 bool SceneDataReferencesModel(SerializedSceneData& sceneData, const std::filesystem::path& modelPath)
@@ -85,6 +159,7 @@ void StartAsyncSceneLoad(RendererSharedState& state, const std::string& path)
         constexpr float kSceneFileParsedFraction = 0.1f;
 
         SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
+        ResolveSceneAssetReferences(sceneData);
         progress->store(kSceneFileParsedFraction);
 
         std::vector<std::string> modelPathsToLoad;
@@ -157,7 +232,18 @@ bool PumpAsyncSceneLoad(RendererSharedState& state)
 
 void SaveScene(RendererSharedState& state, const std::string& path)
 {
-    state.GetEditorWorld().SaveSceneToFile(path);
+    SerializedSceneData sceneData = state.GetEditorWorld().CaptureSceneData();
+    for (SerializedEntityData& entity : sceneData.entities)
+    {
+        EnrichReferenceForSave(entity.modelSourcePath, entity.modelSourceUuid, "model");
+        EnrichReferenceForSave(
+            entity.modelBaseColorTextureOverridePath,
+            entity.modelBaseColorTextureOverrideUuid,
+            "texture override"
+        );
+    }
+
+    SaveEditorSceneDataToFile(sceneData, path);
     state.GetEditorWorld().SetSceneFilePath(path);
     state.lastSceneIoError.clear();
     LOG_INFO("Saved scene successfully: {}", path);

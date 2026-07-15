@@ -49,16 +49,23 @@ private:
     void DrawToolbar(AssetManagerResult& result);
     void DrawBreadcrumb();
     void DrawEntryList(AssetManagerResult& result);
-    void DrawEntryRow(const Entry& entry, int index, AssetManagerResult& result);
-    void DrawEntryContextMenu(const Entry& entry, AssetManagerResult& result);
+    void DrawEntryTile(const Entry& entry, int index, AssetManagerResult& result);
+    void DrawEntryContextMenu(const Entry& entry, int index, AssetManagerResult& result);
     void DrawBatchContextMenu(AssetManagerResult& result);
     void DrawPreviewPanel(AssetManagerResult& result);
     void DrawDeleteConfirmModal(AssetManagerResult& result);
     void BuildPendingDeleteWarnings();
 
+    void BeginRename(int index);
+    void CommitRename();
+    void CancelRename();
+    void CreateNewFolder();
+
     static AssetType ClassifyPath(const std::filesystem::path& p);
     static const char* TypeTag(AssetType t);
+    static const char* ShortTag(AssetType t);
     static void PushTypeColor(AssetType t);
+    static unsigned int TypeColorU32(AssetType t);
 
     std::filesystem::path m_root;
     std::filesystem::path m_currentDir;
@@ -67,6 +74,13 @@ private:
     int m_anchorIdx = -1;         // anchor for shift-range, also the focused preview item
     std::string m_clipboard;
     bool m_needsScan = true;
+
+    // Inline rename (context menu "Rename" or F2). A newly created folder is
+    // renamed immediately: its name is parked here until the next scan.
+    int m_renamingIndex = -1;
+    bool m_renameFocusPending = false;
+    char m_renameBuffer[256] = {};
+    std::string m_pendingRenameName;
 
     // Delete requests are staged here until the user confirms them in a modal;
     // only confirmed paths are emitted as AssetManagerResult::deleteRequests.

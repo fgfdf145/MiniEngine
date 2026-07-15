@@ -1,5 +1,6 @@
 ﻿add_library(engine_asset
     asset_manager.cpp
+    asset_registry.cpp
     model_cache.cpp
     gltf_model_loader.cpp
     material_graph_runtime.cpp

@@ -77,4 +77,8 @@ struct ModelComponent
     bool hasBounds = true;
     std::vector<ModelImportedMaterialInfo> importedMaterials;
     std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
+    // Stable asset ids matching sourcePath / baseColorTextureOverridePath;
+    // they let serialized references survive asset renames and moves.
+    std::string sourceUuid;
+    std::string baseColorTextureOverrideUuid;
 };

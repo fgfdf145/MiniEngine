@@ -58,6 +58,7 @@ public:
     void ForEachEntity(const SceneEntityVisitor& visitor) const override;
 
     void ApplySceneData(const SerializedSceneData& sceneData);
+    SerializedSceneData CaptureSceneData() const override;
     void SaveSceneToFile(const std::string& path) const;
     std::string BuildSceneYamlPreview() const;
     const std::string& GetConfigPath() const;
@@ -78,7 +79,6 @@ private:
     bool IsValidEntity(entt::entity entity) const;
     void EnsureSelection();
     static glm::mat4 BuildTransformMatrix(const TransformComponent& transform);
-    SerializedSceneData CaptureSceneData() const;
 
     entt::registry m_registry;
     std::vector<entt::entity> m_entityOrder;

@@ -4,6 +4,7 @@
 
 #include <renderer_shared_state.h>
 
+#include <asset_registry.h>
 #include <log/log.h>
 #include <model_cache.h>
 #include <model_loader.h>
@@ -42,6 +43,7 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     const entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
     const ModelComponent previousModel = state.GetEditorWorld().GetModel(selectedEntity);
     state.GetEditorWorld().GetModel(selectedEntity).sourcePath = path;
+    state.GetEditorWorld().GetModel(selectedEntity).sourceUuid = AssetRegistry::GetOrCreateUuid(path);
     state.GetEditorWorld().GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
 
     // Fast path: already cached.
@@ -79,6 +81,7 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     load.previousSelection = entt::null;
     load.resetTransformOnComplete = resetTransform;
     load.previousSourcePath = previousModel.sourcePath;
+    load.previousSourceUuid = previousModel.sourceUuid;
     load.previousDisplayName = previousModel.displayName;
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
@@ -116,6 +119,7 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     entityData.tagName = modelPath.stem().string().empty() ? "Model" : modelPath.stem().string();
     entityData.modelDisplayName = modelPath.filename().string();
     entityData.modelSourcePath = modelPath.string();
+    entityData.modelSourceUuid = AssetRegistry::GetOrCreateUuid(modelPath);
     entityData.transform.translation = worldPosition;
 
     const entt::entity previousSelection =
@@ -156,6 +160,7 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     load.previousSelection = previousSelection;
     load.resetTransformOnComplete = false;
     load.previousSourcePath.clear();
+    load.previousSourceUuid.clear();
     load.previousDisplayName.clear();
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
@@ -217,6 +222,7 @@ void UpdateViewportModelPreview(RendererSharedState& state, const std::string& r
         entityData.tagName = modelPath.stem().string().empty() ? "Model" : modelPath.stem().string();
         entityData.modelDisplayName = modelPath.filename().string();
         entityData.modelSourcePath = modelPath.string();
+        entityData.modelSourceUuid = AssetRegistry::GetOrCreateUuid(modelPath);
         entityData.transform.translation = worldPosition;
 
         const entt::entity previewEntity = state.GetEditorWorld().CreateEntity(entityData);
@@ -379,6 +385,7 @@ void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::s
     }
 
     model.baseColorTextureOverridePath = path;
+    model.baseColorTextureOverrideUuid = AssetRegistry::GetOrCreateUuid(path);
 
     try
     {
@@ -415,6 +422,7 @@ void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
     }
 
     model.baseColorTextureOverridePath.clear();
+    model.baseColorTextureOverrideUuid.clear();
 
     try
     {
@@ -482,6 +490,7 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
             if (load.isReplacement)
             {
                 world.GetModel(load.trackedEntity).sourcePath = load.previousSourcePath;
+                world.GetModel(load.trackedEntity).sourceUuid = load.previousSourceUuid;
                 world.GetModel(load.trackedEntity).displayName = load.previousDisplayName;
             }
             else

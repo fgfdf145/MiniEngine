@@ -5,6 +5,7 @@
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 
+#include <asset_registry.h>
 #include <log/log.h>
 #include <window/window.h>
 #include <world_units.h>
@@ -627,6 +628,10 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
     {
         State().lastEngineSettingsError.clear();
     }
+
+    // Deterministic first scan of the asset tree (uuid sidecars, duplicate
+    // cleanup) before anything resolves asset references.
+    AssetRegistry::Initialize(MINIENGINE_ASSET_DIR);
 
     State().editorWorld = CreateEditorWorld();
     RenderWorld().SetSceneWorld(EditorWorld());
