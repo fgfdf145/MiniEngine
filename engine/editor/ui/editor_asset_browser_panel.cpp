@@ -50,16 +50,21 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         {
             if (const std::optional<std::string> sourcePath = OpenModelFileDialog(); sourcePath.has_value())
             {
+                // The import runs on a background thread; the backend calls
+                // RequestAssetBrowserRefresh() once the files are on disk.
                 result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
                     *sourcePath,
                     m_assetManager->GetCurrentDirectory().string()
                 };
-                m_assetManager->Refresh();
             }
         }
         if (assetResult.selectedModelPath.has_value())
         {
             result.actions.selectedModelPath = assetResult.selectedModelPath;
+        }
+        for (const std::string& path : assetResult.batchLoadModelPaths)
+        {
+            result.actions.batchLoadModelPaths.push_back(path);
         }
         if (!assetResult.deleteRequests.empty())
         {

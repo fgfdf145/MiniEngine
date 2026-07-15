@@ -35,6 +35,8 @@ constexpr glm::vec3 kDefaultScaleSnap(0.1f, 0.1f, 0.1f);
 constexpr float kUiCameraPositionRangeMeters = 100.0f;
 constexpr float kUiCameraMoveSpeedMinMetersPerSecond = 0.1f;
 constexpr float kUiCameraMoveSpeedMaxMetersPerSecond = 50.0f;
+constexpr float kUiCameraFovMinDegrees = 20.0f;
+constexpr float kUiCameraFovMaxDegrees = 90.0f;
 constexpr float kUiCameraNearMinMeters = 0.01f;
 constexpr float kUiCameraNearMaxMeters = 10.0f;
 constexpr float kUiCameraFarMinMeters = 1.0f;

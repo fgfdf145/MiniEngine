@@ -96,6 +96,15 @@ void InputState::HandleEvent(const SDL_Event& event)
             m_mousePanActive = true;
         }
         break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (m_mouseLookActive || m_mousePanActive ||
+            IsViewportInteractionPoint(event.wheel.mouse_x, event.wheel.mouse_y))
+        {
+            const float direction =
+                event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
+            m_mouseWheelDelta += event.wheel.y * direction;
+        }
+        break;
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (event.button.button == SDL_BUTTON_RIGHT)
         {
@@ -122,6 +131,7 @@ void InputState::EndFrame()
 {
     m_mouseDeltaX = 0.0f;
     m_mouseDeltaY = 0.0f;
+    m_mouseWheelDelta = 0.0f;
 
     m_keyPressed.fill(false);
     m_keyReleased.fill(false);
@@ -146,6 +156,7 @@ void InputState::SetViewportInteractionRegion(const SDL_FRect& rect, bool enable
     {
         m_mouseLookActive = false;
         m_mousePanActive = false;
+        m_mouseWheelDelta = 0.0f;
         m_hasMouseLookAnchor = false;
         m_shouldRestoreMouseLookAnchor = false;
     }
@@ -290,6 +301,11 @@ float InputState::GetMouseDeltaX() const
 float InputState::GetMouseDeltaY() const
 {
     return m_mouseDeltaY;
+}
+
+float InputState::GetMouseWheelDelta() const
+{
+    return m_mouseWheelDelta;
 }
 
 bool InputState::ShouldRestoreMouseLookAnchor() const

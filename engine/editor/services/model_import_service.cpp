@@ -16,6 +16,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -150,91 +151,128 @@ std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const s
         throw std::runtime_error("Source file does not exist: " + sourcePath);
     }
 
+    // Each import gets its own folder named after the model; a .gltf's
+    // companion files are sorted into subfolders (buffers/, textures/) with
+    // the glTF's URIs rewritten to match. Importing directly into a folder
+    // that already carries the model's name reuses it instead of nesting
+    // another level.
     const std::filesystem::path dstDir = std::filesystem::path(destinationDirectory);
-    const std::filesystem::path dst = dstDir / src.filename();
+    const std::filesystem::path modelFolder =
+        dstDir.filename() == src.stem() ? dstDir : dstDir / src.stem();
 
-    std::error_code ec;
-    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::skip_existing, ec);
-    if (ec)
+    std::error_code mkdirEc;
+    std::filesystem::create_directories(modelFolder, mkdirEc);
+    if (mkdirEc)
     {
-        throw std::runtime_error("Failed to import '" + src.string() + "': " + ec.message());
+        throw std::runtime_error(
+            "Failed to create model folder '" + modelFolder.string() + "': " + mkdirEc.message()
+        );
     }
 
-    // For .gltf (ASCII), also copy companion .bin and texture files from the same directory.
-    const std::string ext = [&src]()
-    {
-        std::string e = src.extension().string();
-        std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-        return e;
-    }();
-
-    if (ext == ".gltf")
-    {
-        // Recursively copy all texture / binary companion files from the source
-        // directory tree into the same relative sub-path under dstDir.
-        // This preserves the relative layout that the .gltf URIs rely on, so
-        // moving the imported asset folder as a unit keeps all references valid.
-        static constexpr std::array<std::string_view, 8> kAssetExts = {
-            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr", ".dds", ".bin"
-        };
-
-        const std::filesystem::path srcDir = src.parent_path();
-        for (const auto& item : std::filesystem::recursive_directory_iterator(srcDir, ec))
-        {
-            if (ec)
-            {
-                break;
-            }
-            if (!item.is_regular_file(ec) || ec)
-            {
-                continue;
-            }
-
-            std::string itemExt = item.path().extension().string();
-            std::transform(itemExt.begin(), itemExt.end(), itemExt.begin(),
-                [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-
-            const bool isAsset = std::any_of(
-                kAssetExts.begin(), kAssetExts.end(),
-                [&itemExt](std::string_view e){ return itemExt == e; }
-            );
-            if (!isAsset)
-            {
-                continue;
-            }
-
-            // Compute the relative path from the source model directory and
-            // mirror it under the destination directory.
-            const std::filesystem::path relPath =
-                item.path().lexically_relative(srcDir);
-            const std::filesystem::path companionDst = dstDir / relPath;
-
-            std::error_code mkdirEc;
-            std::filesystem::create_directories(companionDst.parent_path(), mkdirEc);
-
-            std::error_code copyEc;
-            std::filesystem::copy_file(item.path(), companionDst,
-                std::filesystem::copy_options::skip_existing, copyEc);
-            if (copyEc)
-            {
-                LOG_WARN("Could not copy companion file '{}': {}",
-                    item.path().string(), copyEc.message());
-            }
-            else
-            {
-                LOG_INFO("Copied companion: {} -> {}", item.path().string(), companionDst.string());
-            }
-        }
-    }
+    const std::filesystem::path dst = ModelLoader::CopyModelWithSortedReferences(src, modelFolder);
 
     LOG_INFO("Imported model '{}' -> '{}'", src.string(), dst.string());
     return dst.string();
 }
 
+void StartAsyncImport(RendererSharedState& state, const std::string& sourcePath, const std::string& destinationDirectory)
+{
+    if (state.asyncImport.IsLoading())
+    {
+        throw std::runtime_error("Another asset import is in progress. Please wait.");
+    }
+
+    state.asyncImport.sourcePath = sourcePath;
+    state.asyncImport.destinationDirectory = destinationDirectory;
+    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory]()
+    {
+        return ImportModelIntoAssetDirectory(sourcePath, destinationDirectory);
+    });
+
+    LOG_INFO("Started async import: {} -> {}", sourcePath, destinationDirectory);
+}
+
+void PumpAsyncImport(RendererSharedState& state)
+{
+    if (!state.asyncImport.IsActive() || state.asyncImport.IsLoading())
+    {
+        return;
+    }
+
+    try
+    {
+        state.asyncImport.future.get();
+        state.lastModelLoadError.clear();
+    }
+    catch (const std::exception& error)
+    {
+        state.lastModelLoadError = error.what();
+        LOG_ERROR(
+            "Failed to import model '{}' into '{}': {}",
+            state.asyncImport.sourcePath,
+            state.asyncImport.destinationDirectory,
+            error.what()
+        );
+    }
+
+    // Whether it succeeded or failed, rescan so the browser reflects whatever
+    // ended up on disk.
+    state.editorUi.RequestAssetBrowserRefresh();
+}
+
 void DeleteAssetPath(const std::string& path)
 {
+    // Drop cached model data first, while the on-disk path still exists and
+    // canonicalizes to the same key the cache was populated with.
+    ModelCache::Invalidate(path);
+
+    const std::filesystem::path target(path);
     std::error_code ec;
-    std::filesystem::remove_all(std::filesystem::path(path), ec);
+
+    // Deleting a model also removes its "<stem>_<index>.material.yaml"
+    // sidecars: they are meaningless without the model and would otherwise be
+    // left behind as orphans.
+    if (!std::filesystem::is_directory(target, ec) && ModelLoader::IsSupportedModelPath(target))
+    {
+        const std::string sidecarPrefix = target.stem().string() + "_";
+        constexpr std::string_view kSidecarSuffix = ".material.yaml";
+
+        std::error_code iterEc;
+        for (const auto& item : std::filesystem::directory_iterator(target.parent_path(), iterEc))
+        {
+            if (iterEc)
+            {
+                break;
+            }
+            const std::string name = item.path().filename().string();
+            if (!name.starts_with(sidecarPrefix) || !name.ends_with(kSidecarSuffix))
+            {
+                continue;
+            }
+            const std::string indexPart =
+                name.substr(sidecarPrefix.size(), name.size() - sidecarPrefix.size() - kSidecarSuffix.size());
+            const bool isMaterialIndex =
+                !indexPart.empty() &&
+                std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            if (!isMaterialIndex)
+            {
+                continue;
+            }
+
+            std::error_code removeEc;
+            std::filesystem::remove(item.path(), removeEc);
+            if (removeEc)
+            {
+                LOG_WARN("Could not delete material sidecar '{}': {}", item.path().string(), removeEc.message());
+            }
+            else
+            {
+                LOG_INFO("Deleted material sidecar: {}", item.path().string());
+            }
+        }
+    }
+
+    std::filesystem::remove_all(target, ec);
     if (ec)
     {
         throw std::runtime_error("Failed to delete '" + path + "': " + ec.message());

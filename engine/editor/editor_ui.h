@@ -62,6 +62,7 @@ struct EditorUiActions
 
     std::optional<ImportedModelRequest> importedModelRequest;
     std::optional<std::string> selectedModelPath;
+    std::vector<std::string> batchLoadModelPaths;   // each placed as a new scene entity
     std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
@@ -102,6 +103,16 @@ public:
         RenderExtent viewportExtent,
         RenderBackendType currentBackendType
     );
+
+    // Rescans the asset browser on its next draw. Called by the backend when a
+    // background operation (e.g. async import) changes files on disk.
+    void RequestAssetBrowserRefresh()
+    {
+        if (m_assetManager.has_value())
+        {
+            m_assetManager->Refresh();
+        }
+    }
 
 private:
     void ApplyEngineSettings(const EngineSettings& settings);

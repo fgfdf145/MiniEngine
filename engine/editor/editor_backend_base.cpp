@@ -7,7 +7,9 @@
 
 #include <log/log.h>
 #include <window/window.h>
+#include <world_units.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -90,28 +92,32 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
         State().lastFrameTime = std::chrono::steady_clock::now();
     }
 
-    if (State().pendingModelPath.has_value())
+    // Start at most one queued model load per frame, and only while the async
+    // loader is idle, so batch requests drain one after another.
+    if (!State().pendingModelLoads.empty() &&
+        !State().asyncLoad.IsLoading() &&
+        !State().asyncSceneLoad.IsLoading())
     {
-        const std::string path = *State().pendingModelPath;
-        State().pendingModelPath.reset();
+        const PendingModelLoad request = State().pendingModelLoads.front();
+        State().pendingModelLoads.pop_front();
 
         try
         {
-            LOG_INFO("Loading model: {}", path);
-            if (EditorWorld().HasSelection())
+            LOG_INFO("Loading model: {}", request.path);
+            if (!request.placeAsNewEntity && EditorWorld().HasSelection())
             {
-                EntityEditService::LoadSelectedModel(State(), path);
+                EntityEditService::LoadSelectedModel(State(), request.path);
             }
             else
             {
-                EntityEditService::PlaceModelIntoScene(State(), path, glm::vec3(0.0f));
+                EntityEditService::PlaceModelIntoScene(State(), request.path, glm::vec3(0.0f));
             }
             renderablesDirty = true;
         }
         catch (const std::exception& error)
         {
             State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to load model '{}': {}", path, error.what());
+            LOG_ERROR("Failed to load model '{}': {}", request.path, error.what());
         }
 
         State().lastFrameTime = std::chrono::steady_clock::now();
@@ -119,6 +125,7 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 
     renderablesDirty |= EntityEditService::PumpAsyncModelLoad(State());
     renderablesDirty |= SceneIoService::PumpAsyncSceneLoad(State());
+    ModelImportService::PumpAsyncImport(State());
 
     State().renderablesDirty = false;
     return renderablesDirty;
@@ -157,17 +164,17 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         try
         {
-            ModelImportService::ImportModelIntoAssetDirectory(
+            ModelImportService::StartAsyncImport(
+                State(),
                 uiFrame.actions.importedModelRequest->sourcePath,
                 uiFrame.actions.importedModelRequest->destinationDirectory
             );
-            State().lastModelLoadError.clear();
         }
         catch (const std::exception& error)
         {
             State().lastModelLoadError = error.what();
             LOG_ERROR(
-                "Failed to import model '{}' into '{}': {}",
+                "Failed to start import of '{}' into '{}': {}",
                 uiFrame.actions.importedModelRequest->sourcePath,
                 uiFrame.actions.importedModelRequest->destinationDirectory,
                 error.what()
@@ -176,7 +183,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     }
     if (uiFrame.actions.selectedModelPath.has_value())
     {
-        State().pendingModelPath = *uiFrame.actions.selectedModelPath;
+        State().pendingModelLoads.push_back({ *uiFrame.actions.selectedModelPath, false });
+    }
+    for (const std::string& path : uiFrame.actions.batchLoadModelPaths)
+    {
+        State().pendingModelLoads.push_back({ path, true });
     }
     if (uiFrame.actions.createSceneEntity)
     {
@@ -564,6 +575,29 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
         camera.MoveRight(-input.GetMouseDeltaX() * panDistancePerPixel);
         camera.MoveUp(input.GetMouseDeltaY() * panDistancePerPixel);
     }
+
+    const float wheelDelta = input.GetMouseWheelDelta();
+    if (wheelDelta != 0.0f)
+    {
+        if (input.IsMouseLookActive())
+        {
+            const float speedScalePerNotch = 1.2f;
+            camera.moveSpeed = std::clamp(
+                camera.moveSpeed * std::pow(speedScalePerNotch, wheelDelta),
+                WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
+                WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond
+            );
+        }
+        else
+        {
+            const float fovDegreesPerNotch = 2.0f;
+            camera.fovDegrees = std::clamp(
+                camera.fovDegrees - wheelDelta * fovDegreesPerNotch,
+                WorldUnits::kUiCameraFovMinDegrees,
+                WorldUnits::kUiCameraFovMaxDegrees
+            );
+        }
+    }
 }
 
 // =============================================================================
@@ -600,7 +634,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
     EditorWorld().CreateTwoCubeTestScene();
     if (startupModelPath.has_value())
     {
-        State().pendingModelPath = *startupModelPath;
+        State().pendingModelLoads.push_back({ *startupModelPath, false });
     }
 
     RebuildSceneRenderables(State());

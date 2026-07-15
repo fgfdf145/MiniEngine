@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <system_error>
 
 namespace
 {
@@ -71,6 +72,30 @@ bool ModelLoader::IsImportAvailable()
 const char* ModelLoader::GetImporterName()
 {
     return "tinygltf";
+}
+
+std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
+    const std::filesystem::path& modelPath,
+    const std::filesystem::path& targetDirectory
+)
+{
+    const std::string extension = ToLowerCopy(modelPath.extension().string());
+    if (extension == ".gltf")
+    {
+        return GltfModelLoader::CopyWithSortedReferences(modelPath, targetDirectory);
+    }
+
+    // .glb (and anything else) is self-contained: plain copy into the folder.
+    const std::filesystem::path dst = targetDirectory / modelPath.filename();
+    std::error_code ec;
+    std::filesystem::copy_file(modelPath, dst, std::filesystem::copy_options::skip_existing, ec);
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Failed to copy '" + modelPath.string() + "' to '" + dst.string() + "': " + ec.message()
+        );
+    }
+    return dst;
 }
 
 LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)

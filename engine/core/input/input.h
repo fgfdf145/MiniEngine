@@ -119,6 +119,7 @@ public:
     bool WantsRelativeMouseMode() const;
     float GetMouseDeltaX() const;
     float GetMouseDeltaY() const;
+    float GetMouseWheelDelta() const;
     bool ShouldRestoreMouseLookAnchor() const;
     void ConsumeMouseLookAnchor(int& x, int& y);
 
@@ -166,6 +167,7 @@ private:
     std::array<GamepadState, kMaxGamepads> m_gamepads{};
     float m_mouseDeltaX = 0.0f;
     float m_mouseDeltaY = 0.0f;
+    float m_mouseWheelDelta = 0.0f;
     bool m_mouseLookActive = false;
     bool m_mousePanActive = false;
     bool m_viewportInteractionEnabled = false;

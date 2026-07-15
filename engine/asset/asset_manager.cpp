@@ -4,7 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <system_error>
+#include <unordered_set>
 
 namespace
 {
@@ -91,6 +95,7 @@ AssetManagerResult AssetManager::Draw()
     ImGui::Separator();
     DrawEntryList(result);
     DrawPreviewPanel(result);
+    DrawDeleteConfirmModal(result);
 
     return result;
 }
@@ -506,13 +511,11 @@ void AssetManager::DrawBatchContextMenu(AssetManagerResult& result)
         const std::string loadLabel = "Load " + std::to_string(modelCount) + " Model(s) into Scene";
         if (ImGui::MenuItem(loadLabel.c_str()))
         {
-            // Load the first selected model (subsequent ones require async queue support)
             for (const Entry* e : selected)
             {
                 if (e->type == AssetType::Model)
                 {
-                    result.selectedModelPath = e->path.string();
-                    break;
+                    result.batchLoadModelPaths.push_back(e->path.string());
                 }
             }
         }
@@ -538,10 +541,15 @@ void AssetManager::DrawBatchContextMenu(AssetManagerResult& result)
     const std::string deleteLabel = "Delete " + std::to_string(selected.size()) + " Items";
     if (ImGui::MenuItem(deleteLabel.c_str()))
     {
+        m_pendingDeletePaths.clear();
+        m_pendingDeleteHasDir = false;
         for (const Entry* e : selected)
         {
-            result.deleteRequests.push_back(e->path.string());
+            m_pendingDeletePaths.push_back(e->path.string());
+            m_pendingDeleteHasDir = m_pendingDeleteHasDir || e->isDir;
         }
+        BuildPendingDeleteWarnings();
+        m_openDeleteModal = true;
     }
 }
 
@@ -582,7 +590,186 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, AssetManagerResult& 
         ImGui::Separator();
         if (ImGui::MenuItem("Delete"))
         {
-            result.deleteRequests.push_back(entry.path.string());
+            m_pendingDeletePaths.clear();
+            m_pendingDeletePaths.push_back(entry.path.string());
+            m_pendingDeleteHasDir = entry.isDir;
+            BuildPendingDeleteWarnings();
+            m_openDeleteModal = true;
         }
+    }
+}
+
+void AssetManager::BuildPendingDeleteWarnings()
+{
+    m_pendingDeleteWarnings.clear();
+
+    // Names of every file that would disappear, including files inside
+    // folders staged for deletion, plus the set of their paths so the files
+    // being deleted are not counted as referencing each other.
+    std::vector<std::string> deletedNames;
+    std::unordered_set<std::string> deletedPaths;
+    constexpr size_t kMaxNames = 256;
+    std::error_code ec;
+    for (const std::string& pendingPath : m_pendingDeletePaths)
+    {
+        const std::filesystem::path p(pendingPath);
+        deletedPaths.insert(p.lexically_normal().string());
+        if (std::filesystem::is_directory(p, ec))
+        {
+            for (const auto& item : std::filesystem::recursive_directory_iterator(
+                     p, std::filesystem::directory_options::skip_permission_denied, ec))
+            {
+                if (ec || deletedNames.size() >= kMaxNames)
+                {
+                    break;
+                }
+                if (!item.is_regular_file(ec))
+                {
+                    continue;
+                }
+                deletedPaths.insert(item.path().lexically_normal().string());
+                deletedNames.push_back(item.path().filename().string());
+            }
+        }
+        else
+        {
+            deletedNames.push_back(p.filename().string());
+        }
+        if (deletedNames.size() >= kMaxNames)
+        {
+            break;
+        }
+    }
+    if (deletedNames.empty())
+    {
+        return;
+    }
+
+    // Look through the files that can hold references (.gltf URIs, material /
+    // scene YAML paths) for mentions of any doomed file name. Substring search
+    // on the filename is a heuristic — it can flag a same-named file in another
+    // folder — but a spurious warning is cheap next to a silently broken
+    // reference.
+    constexpr std::uintmax_t kMaxScanFileBytes = 64ull * 1024 * 1024;
+    constexpr size_t kMaxWarnings = 6;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(
+             m_root, std::filesystem::directory_options::skip_permission_denied, ec))
+    {
+        if (ec || m_pendingDeleteWarnings.size() >= kMaxWarnings)
+        {
+            break;
+        }
+        if (!item.is_regular_file(ec))
+        {
+            continue;
+        }
+        const std::string ext = ToLower(item.path().extension().string());
+        if (ext != ".gltf" && ext != ".yaml" && ext != ".yml")
+        {
+            continue;
+        }
+        if (deletedPaths.count(item.path().lexically_normal().string()) > 0)
+        {
+            continue;
+        }
+        std::error_code sizeEc;
+        if (std::filesystem::file_size(item.path(), sizeEc) > kMaxScanFileBytes || sizeEc)
+        {
+            continue;
+        }
+
+        std::ifstream file(item.path(), std::ios::binary);
+        if (!file)
+        {
+            continue;
+        }
+        const std::string content(
+            (std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>()
+        );
+        for (const std::string& name : deletedNames)
+        {
+            if (content.find(name) == std::string::npos)
+            {
+                continue;
+            }
+            m_pendingDeleteWarnings.push_back(
+                "'" + name + "' is referenced by " + item.path().filename().string()
+            );
+            if (m_pendingDeleteWarnings.size() >= kMaxWarnings)
+            {
+                break;
+            }
+        }
+    }
+}
+
+void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
+{
+    constexpr const char* kTitle = "Delete Assets?";
+
+    if (m_openDeleteModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openDeleteModal = false;
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("Permanently delete %zu item(s)?", m_pendingDeletePaths.size());
+        ImGui::Spacing();
+
+        constexpr size_t kMaxListed = 8;
+        for (size_t i = 0; i < m_pendingDeletePaths.size() && i < kMaxListed; ++i)
+        {
+            const std::filesystem::path p(m_pendingDeletePaths[i]);
+            ImGui::BulletText("%s", p.filename().string().c_str());
+        }
+        if (m_pendingDeletePaths.size() > kMaxListed)
+        {
+            ImGui::TextDisabled("...and %zu more", m_pendingDeletePaths.size() - kMaxListed);
+        }
+
+        ImGui::Spacing();
+        if (m_pendingDeleteHasDir)
+        {
+            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "Folders are deleted recursively.");
+        }
+        for (const std::string& warning : m_pendingDeleteWarnings)
+        {
+            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "%s", warning.c_str());
+        }
+        ImGui::TextDisabled("This cannot be undone.");
+        ImGui::Separator();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+        if (ImGui::Button("Delete", ImVec2(120.0f, 0.0f)))
+        {
+            for (std::string& path : m_pendingDeletePaths)
+            {
+                result.deleteRequests.push_back(std::move(path));
+            }
+            m_pendingDeletePaths.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+        {
+            m_pendingDeletePaths.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+
+        ImGui::EndPopup();
+    }
+    else if (!m_pendingDeletePaths.empty())
+    {
+        // Modal was dismissed without an explicit choice (e.g. Escape): treat as cancel.
+        m_pendingDeletePaths.clear();
     }
 }

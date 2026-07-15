@@ -15,6 +15,7 @@ struct AssetManagerResult
     };
 
     std::optional<std::string> selectedModelPath;   // explicit "Load Model" action
+    std::vector<std::string> batchLoadModelPaths;    // "Load N Models": each placed as a new entity
     bool wantsImportModel = false;
     std::vector<std::string> deleteRequests;         // one or more paths to delete
     std::optional<std::string> draggedModelPath;
@@ -52,6 +53,8 @@ private:
     void DrawEntryContextMenu(const Entry& entry, AssetManagerResult& result);
     void DrawBatchContextMenu(AssetManagerResult& result);
     void DrawPreviewPanel(AssetManagerResult& result);
+    void DrawDeleteConfirmModal(AssetManagerResult& result);
+    void BuildPendingDeleteWarnings();
 
     static AssetType ClassifyPath(const std::filesystem::path& p);
     static const char* TypeTag(AssetType t);
@@ -64,4 +67,11 @@ private:
     int m_anchorIdx = -1;         // anchor for shift-range, also the focused preview item
     std::string m_clipboard;
     bool m_needsScan = true;
+
+    // Delete requests are staged here until the user confirms them in a modal;
+    // only confirmed paths are emitted as AssetManagerResult::deleteRequests.
+    std::vector<std::string> m_pendingDeletePaths;
+    std::vector<std::string> m_pendingDeleteWarnings;   // "'x.png' is referenced by ..." lines
+    bool m_pendingDeleteHasDir = false;
+    bool m_openDeleteModal = false;
 };

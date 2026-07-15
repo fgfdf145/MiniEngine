@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <future>
 #include <memory>
 #include <optional>
@@ -77,6 +78,34 @@ struct AsyncSceneLoad
     float Progress() const { return progress ? progress->load() : 0.0f; }
 };
 
+// State for a single in-flight asset import: the file copies run on a
+// background thread so large models don't stall the UI frame.
+struct AsyncAssetImport
+{
+    std::string sourcePath;
+    std::string destinationDirectory;
+
+    // Resolves to the imported model path; throws on failure.
+    std::future<std::string> future;
+
+    bool IsActive() const { return future.valid(); }
+    bool IsLoading() const
+    {
+        return future.valid() &&
+               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
+    }
+};
+
+// A model load queued from the UI. Loads are started one at a time as the
+// async loader frees up, so batch requests don't get dropped.
+struct PendingModelLoad
+{
+    std::string path;
+    // Batch loads always create new entities; single loads keep the historical
+    // behavior of replacing the current selection's model when there is one.
+    bool placeAsNewEntity = false;
+};
+
 struct RendererSharedState
 {
     IEditorWorld& GetEditorWorld()
@@ -110,10 +139,11 @@ struct RendererSharedState
     ViewportDragPreviewState viewportDragPreview;
     AsyncModelLoad asyncLoad;
     AsyncSceneLoad asyncSceneLoad;
+    AsyncAssetImport asyncImport;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
     std::string lastEngineSettingsError;
-    std::optional<std::string> pendingModelPath;
+    std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;
     EngineSettings engineSettings;

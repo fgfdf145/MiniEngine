@@ -17,17 +17,22 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <log/log.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -115,6 +120,37 @@ std::string DecodeUriPath(std::string_view uri)
     }
 
     return decoded;
+}
+
+// Inverse of DecodeUriPath for URIs we write back into a .gltf: keeps RFC 3986
+// unreserved characters and '/' as-is, percent-encodes everything else.
+std::string EncodeUriPath(std::string_view path)
+{
+    constexpr char kHexDigits[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(path.size());
+
+    for (const char character : path)
+    {
+        const auto value = static_cast<unsigned char>(character);
+        const bool unreserved =
+            std::isalnum(value) != 0 ||
+            character == '-' || character == '_' ||
+            character == '.' || character == '~' ||
+            character == '/';
+        if (unreserved)
+        {
+            encoded.push_back(character);
+        }
+        else
+        {
+            encoded.push_back('%');
+            encoded.push_back(kHexDigits[value >> 4]);
+            encoded.push_back(kHexDigits[value & 0x0F]);
+        }
+    }
+
+    return encoded;
 }
 
 std::string BuildCacheKey(const std::filesystem::path& modelPath)
@@ -1229,4 +1265,119 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     }
 
     return BuildLoadedModelData(tinyModel, modelPath, progress);
+}
+
+std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
+    const std::filesystem::path& gltfPath,
+    const std::filesystem::path& targetDirectory
+)
+{
+    std::ifstream file(gltfPath, std::ios::binary);
+    if (!file)
+    {
+        throw std::runtime_error("Failed to open glTF file: " + gltfPath.string());
+    }
+
+    // ordered_json keeps the original key order so the rewritten file stays
+    // diffable against its source.
+    nlohmann::ordered_json document = nlohmann::ordered_json::parse(file);
+
+    const std::filesystem::path sourceDir = gltfPath.parent_path();
+    std::unordered_map<std::string, std::string> rewrittenUris; // decoded source URI -> new encoded URI
+    std::unordered_set<std::string> claimedRelPaths;            // destination-relative paths already assigned
+
+    const auto processArray = [&](const char* arrayName, const char* subdirName)
+    {
+        const auto arrayIt = document.find(arrayName);
+        if (arrayIt == document.end() || !arrayIt->is_array())
+        {
+            return;
+        }
+        for (nlohmann::ordered_json& element : *arrayIt)
+        {
+            const auto uriIt = element.find("uri");
+            if (uriIt == element.end() || !uriIt->is_string())
+            {
+                continue;
+            }
+            const std::string uri = uriIt->get<std::string>();
+            if (uri.starts_with("data:"))
+            {
+                continue;
+            }
+
+            const std::string decoded = DecodeUriPath(uri);
+            if (const auto rewrittenIt = rewrittenUris.find(decoded); rewrittenIt != rewrittenUris.end())
+            {
+                *uriIt = rewrittenIt->second;
+                continue;
+            }
+
+            const std::filesystem::path relPath = std::filesystem::path(decoded).lexically_normal();
+            if (relPath.empty() || relPath.is_absolute() || relPath.begin()->string() == "..")
+            {
+                LOG_WARN(
+                    "Reference '{}' in '{}' escapes the model folder; left as-is and not copied",
+                    uri, gltfPath.string()
+                );
+                continue;
+            }
+
+            const std::filesystem::path companionSrc = sourceDir / relPath;
+            std::error_code fileEc;
+            if (!std::filesystem::is_regular_file(companionSrc, fileEc) || fileEc)
+            {
+                LOG_WARN("Referenced file does not exist, not copied: {}", companionSrc.string());
+                continue;
+            }
+
+            // Claim a flat name inside the sorting subfolder; distinct source
+            // files that share a filename get a numeric suffix.
+            const std::string stem = companionSrc.stem().string();
+            const std::string extension = companionSrc.extension().string();
+            std::string newRel = std::string(subdirName) + "/" + stem + extension;
+            for (int suffix = 1; claimedRelPaths.count(newRel) > 0; ++suffix)
+            {
+                newRel = std::string(subdirName) + "/" + stem + "_" + std::to_string(suffix) + extension;
+            }
+            claimedRelPaths.insert(newRel);
+
+            const std::filesystem::path companionDst = targetDirectory / std::filesystem::path(newRel);
+            std::error_code mkdirEc;
+            std::filesystem::create_directories(companionDst.parent_path(), mkdirEc);
+            std::error_code copyEc;
+            std::filesystem::copy_file(companionSrc, companionDst,
+                std::filesystem::copy_options::skip_existing, copyEc);
+            if (copyEc)
+            {
+                LOG_WARN("Could not copy companion file '{}': {}", companionSrc.string(), copyEc.message());
+                continue; // keep the original URI: the copy did not happen
+            }
+            LOG_INFO("Copied companion: {} -> {}", companionSrc.string(), companionDst.string());
+
+            const std::string newUri = EncodeUriPath(newRel);
+            *uriIt = newUri;
+            rewrittenUris.emplace(decoded, newUri);
+        }
+    };
+
+    processArray("buffers", "buffers");
+    processArray("images", "textures");
+
+    const std::filesystem::path outPath = targetDirectory / gltfPath.filename();
+    std::error_code existsEc;
+    if (std::filesystem::exists(outPath, existsEc))
+    {
+        // Same skip-existing policy as the companion copies: never clobber.
+        LOG_WARN("Import target already exists, keeping it: {}", outPath.string());
+        return outPath;
+    }
+
+    std::ofstream out(outPath, std::ios::binary);
+    if (!out)
+    {
+        throw std::runtime_error("Failed to write imported glTF: " + outPath.string());
+    }
+    out << document.dump(2);
+    return outPath;
 }

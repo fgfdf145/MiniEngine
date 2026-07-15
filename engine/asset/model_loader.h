@@ -69,4 +69,14 @@ public:
     static bool IsSupportedModelPath(const std::filesystem::path& path);
     static const char* GetImporterName();
     static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
+
+    // Copies a model into targetDirectory. For an ASCII .gltf the referenced
+    // companion files are copied too, sorted into subfolders (buffers/,
+    // textures/) with the glTF's URIs rewritten to match; .glb is copied
+    // as-is. Existing destination files are kept, never overwritten. Returns
+    // the copied model's path.
+    static std::filesystem::path CopyModelWithSortedReferences(
+        const std::filesystem::path& modelPath,
+        const std::filesystem::path& targetDirectory
+    );
 };

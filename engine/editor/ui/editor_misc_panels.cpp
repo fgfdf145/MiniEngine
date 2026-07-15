@@ -53,6 +53,7 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         ImGui::Text("Move: WASD");
         ImGui::Text("Look: Hold Right Mouse");
         ImGui::Text("Pan: Hold Middle Mouse");
+        ImGui::Text("Wheel: Fov (Speed while Right Mouse held)");
         ImGui::SliderFloat3(
             "Position (m)",
             &camera.position.x,
@@ -70,7 +71,12 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
             "%.2f"
         );
         ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
-        ImGui::SliderFloat("Fov", &camera.fovDegrees, 20.0f, 90.0f);
+        ImGui::SliderFloat(
+            "Fov",
+            &camera.fovDegrees,
+            WorldUnits::kUiCameraFovMinDegrees,
+            WorldUnits::kUiCameraFovMaxDegrees
+        );
         ImGui::SliderFloat(
             "Near (m)",
             &camera.nearPlane,
