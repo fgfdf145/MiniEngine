@@ -80,11 +80,16 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     load.resetTransformOnComplete = resetTransform;
     load.previousSourcePath = previousModel.sourcePath;
     load.previousDisplayName = previousModel.displayName;
+    load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
-    load.future = std::async(std::launch::async, [p = path]()
+    load.future = std::async(std::launch::async, [p = path, progress = load.progress]()
     {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p));
+        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+        {
+            progress->store(fraction);
+        }));
         ModelCache::Store(p, std::move(data));
+        progress->store(1.0f);
     });
 
     LOG_INFO("Started async load for: {}", path);
@@ -152,11 +157,16 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     load.resetTransformOnComplete = false;
     load.previousSourcePath.clear();
     load.previousDisplayName.clear();
+    load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
-    load.future = std::async(std::launch::async, [p = modelPath.string()]()
+    load.future = std::async(std::launch::async, [p = modelPath.string(), progress = load.progress]()
     {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p));
+        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+        {
+            progress->store(fraction);
+        }));
         ModelCache::Store(p, std::move(data));
+        progress->store(1.0f);
     });
 
     LOG_INFO("Started async load for: {}", modelPath.string());

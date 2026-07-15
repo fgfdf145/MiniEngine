@@ -73,7 +73,7 @@ const char* ModelLoader::GetImporterName()
     return "tinygltf";
 }
 
-LoadedModelData ModelLoader::LoadModel(const std::string& path)
+LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)
 {
     const std::filesystem::path modelPath(path);
     if (!IsSupportedModelPath(modelPath))
@@ -83,7 +83,7 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path)
         );
     }
 
-    LoadedModelData modelData = GltfModelLoader::LoadModel(modelPath.string());
+    LoadedModelData modelData = GltfModelLoader::LoadModel(modelPath.string(), progress);
     for (ModelMaterialData& material : modelData.materials)
     {
         ApplyPbrSettings(material, BuildPbrSettingsFromMaterial(material));

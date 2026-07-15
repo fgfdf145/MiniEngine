@@ -17,7 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <execution>
+#include <future>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -577,11 +577,14 @@ void VulkanRenderer::UploadSceneResources()
         {
             const size_t chunkEnd = std::min(chunkStart + chunkSize, pendingLoads.size());
 
-            std::for_each(
-                std::execution::par,
-                pendingLoads.begin() + static_cast<std::ptrdiff_t>(chunkStart),
-                pendingLoads.begin() + static_cast<std::ptrdiff_t>(chunkEnd),
-                [](PendingTextureLoad& pending)
+            // std::async instead of std::execution::par: libc++ on macOS has no
+            // parallel algorithm support, and the chunk size already bounds the
+            // number of concurrent decode threads.
+            std::vector<std::future<void>> decodeTasks;
+            decodeTasks.reserve(chunkEnd - chunkStart);
+            for (size_t i = chunkStart; i < chunkEnd; ++i)
+            {
+                decodeTasks.push_back(std::async(std::launch::async, [&pending = pendingLoads[i]]()
                 {
                     try
                     {
@@ -592,8 +595,12 @@ void VulkanRenderer::UploadSceneResources()
                         pending.decodeFailed = true;
                         pending.decodeError = error.what();
                     }
-                }
-            );
+                }));
+            }
+            for (std::future<void>& decodeTask : decodeTasks)
+            {
+                decodeTask.wait();
+            }
 
             for (size_t i = chunkStart; i < chunkEnd; ++i)
             {

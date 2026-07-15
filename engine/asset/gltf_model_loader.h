@@ -7,5 +7,5 @@
 class GltfModelLoader
 {
 public:
-    static LoadedModelData LoadModel(const std::string& path);
+    static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
 };

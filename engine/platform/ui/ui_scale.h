@@ -10,6 +10,7 @@ enum class OperatingSystem
 {
     Windows,
     Linux,
+    MacOS,
     Unknown
 };
 
@@ -18,6 +19,7 @@ struct UiScaleConfiguration
     float fallback = 1.0f;
     std::optional<float> windows;
     std::optional<float> linux;
+    std::optional<float> macos;
 };
 
 constexpr float kMinimumUiScale = 0.75f;

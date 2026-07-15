@@ -116,6 +116,7 @@ void LoadUiScaleSettings(const YAML::Node& scaleNode, platform::ui::UiScaleConfi
     scale.fallback = platform::ui::ClampUiScale(ReadFloatOrDefault(scaleNode["default"], scale.fallback));
     LoadOptionalUiScale(scaleNode["windows"], scale.windows);
     LoadOptionalUiScale(scaleNode["linux"], scale.linux);
+    LoadOptionalUiScale(scaleNode["macos"], scale.macos);
 }
 
 void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVisibilitySettings& windows)
@@ -240,6 +241,10 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         if (settings.editorUi.scale.linux.has_value())
         {
             configuredScales.emplace_back("linux", platform::ui::ClampUiScale(*settings.editorUi.scale.linux));
+        }
+        if (settings.editorUi.scale.macos.has_value())
+        {
+            configuredScales.emplace_back("macos", platform::ui::ClampUiScale(*settings.editorUi.scale.macos));
         }
 
         for (size_t scaleIndex = 0; scaleIndex < configuredScales.size(); ++scaleIndex)

@@ -31,6 +31,9 @@ VulkanInstance::VulkanInstance(SDL_Window* window)
     createInfo.pApplicationInfo = &applicationInfo;
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
+#if defined(__APPLE__)
+    createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
 
     CheckVulkan(vkCreateInstance(&createInfo, nullptr, &m_instance), "Failed to create Vulkan instance");
 
@@ -77,5 +80,13 @@ std::vector<const char*> VulkanInstance::GetRequiredExtensions() const
         throw std::runtime_error(std::string("SDL_Vulkan_GetInstanceExtensions failed: ") + SDL_GetError());
     }
 
-    return std::vector<const char*>(extensionNames, extensionNames + extensionCount);
+    std::vector<const char*> extensions(extensionNames, extensionNames + extensionCount);
+
+#if defined(__APPLE__)
+    // MoltenVK is a portability-conformant implementation; the loader only
+    // enumerates it when portability enumeration is requested.
+    extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
+
+    return extensions;
 }

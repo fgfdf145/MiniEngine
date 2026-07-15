@@ -14,6 +14,16 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
             "Path to the vcpkg toolchain file"
         )
     endif()
+
+    # Share one vcpkg install tree across build directories (IDE default profiles
+    # included) instead of re-installing the manifest per build dir.
+    if(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT DEFINED VCPKG_INSTALLED_DIR)
+        set(VCPKG_INSTALLED_DIR
+            "${CMAKE_CURRENT_SOURCE_DIR}/.deps/vcpkg_installed"
+            CACHE PATH
+            "Shared vcpkg installed-packages directory"
+        )
+    endif()
 endif()
 
 project(MiniEngine LANGUAGES CXX)

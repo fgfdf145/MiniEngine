@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -429,9 +430,11 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
             ImGui::Text("%c  %s: %s", kSpinner[spinFrame], label, filename.c_str());
 
             ImGui::Spacing();
-            const float pulse =
-                0.5f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f);
-            ImGui::ProgressBar(pulse, ImVec2(-1.0f, 6.0f), "");
+            const float fraction =
+                loadingScene ? State().asyncSceneLoad.Progress() : State().asyncLoad.Progress();
+            char progressText[16];
+            std::snprintf(progressText, sizeof(progressText), "%.0f%%", fraction * 100.0f);
+            ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), progressText);
             ImGui::Spacing();
 
             ImGui::TextDisabled("Editor remains interactive during loading...");

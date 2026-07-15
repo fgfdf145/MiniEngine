@@ -975,12 +975,91 @@ void AppendPrimitive(
     }
 }
 
+// Load-fraction milestones for the overall progress reported to the UI.
+constexpr float kProgressParseStarted = 0.02f;
+constexpr float kProgressParseDone = 0.55f;
+constexpr float kProgressMaterialsDone = 0.60f;
+
+// tinygltf decodes every referenced image inside its single parse call, which is
+// where most of the time goes for textured models. The image-loader hook lets us
+// keep the bar moving during that phase; the total image count is unknown
+// mid-parse, so the fraction approaches the parse-done milestone asymptotically.
+struct GltfParseProgressContext
+{
+    const ModelLoadProgressCallback& callback;
+    int imagesLoaded = 0;
+};
+
+bool LoadImageDataWithProgress(
+    tinygltf::Image* image,
+    const int imageIndex,
+    std::string* error,
+    std::string* warning,
+    int requestedWidth,
+    int requestedHeight,
+    const unsigned char* bytes,
+    int size,
+    void* userData
+)
+{
+    auto* context = static_cast<GltfParseProgressContext*>(userData);
+    if (context != nullptr && context->callback)
+    {
+        ++context->imagesLoaded;
+        const float imageCount = static_cast<float>(context->imagesLoaded);
+        const float asymptoticFraction = imageCount / (imageCount + 4.0f);
+        context->callback(
+            kProgressParseStarted + (kProgressParseDone - kProgressParseStarted) * asymptoticFraction
+        );
+    }
+
+    // Installing a custom image loader bypasses TinyGLTF::SetPreserveImageChannels,
+    // so the equivalent option must be forwarded to the default decoder here.
+    tinygltf::LoadImageDataOption imageDataOption;
+    imageDataOption.preserve_channels = true;
+    return tinygltf::LoadImageData(
+        image, imageIndex, error, warning, requestedWidth, requestedHeight, bytes, size, &imageDataOption
+    );
+}
+
+struct GltfLoadProgressTracker
+{
+    const ModelLoadProgressCallback& callback;
+    size_t processedPrimitives = 0;
+    size_t estimatedTotalPrimitives = 0;
+
+    void Report(float fraction) const
+    {
+        if (callback)
+        {
+            callback(std::clamp(fraction, 0.0f, 1.0f));
+        }
+    }
+
+    void ReportPrimitiveProcessed()
+    {
+        ++processedPrimitives;
+        if (!callback || estimatedTotalPrimitives == 0)
+        {
+            return;
+        }
+
+        // Instanced meshes can make the processed count exceed the estimate; clamp.
+        const float primitiveFraction = std::min(
+            1.0f,
+            static_cast<float>(processedPrimitives) / static_cast<float>(estimatedTotalPrimitives)
+        );
+        Report(kProgressMaterialsDone + (1.0f - kProgressMaterialsDone) * primitiveFraction);
+    }
+};
+
 void TraverseNode(
     const tinygltf::Model& model,
     int nodeIndex,
     const glm::mat4& parentTransform,
     LoadedModelData& modelData,
-    std::unordered_set<int>& visitedNodes
+    std::unordered_set<int>& visitedNodes,
+    GltfLoadProgressTracker& progressTracker
 )
 {
     if (!visitedNodes.insert(nodeIndex).second)
@@ -1007,23 +1086,35 @@ void TraverseNode(
                 worldTransform,
                 modelData
             );
+            progressTracker.ReportPrimitiveProcessed();
         }
     }
 
     for (int childIndex : node.children)
     {
-        TraverseNode(model, childIndex, worldTransform, modelData, visitedNodes);
+        TraverseNode(model, childIndex, worldTransform, modelData, visitedNodes, progressTracker);
     }
 }
 
-LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std::filesystem::path& modelPath)
+LoadedModelData BuildLoadedModelData(
+    const tinygltf::Model& tinyModel,
+    const std::filesystem::path& modelPath,
+    const ModelLoadProgressCallback& progress
+)
 {
+    GltfLoadProgressTracker progressTracker{progress};
+    for (const tinygltf::Mesh& mesh : tinyModel.meshes)
+    {
+        progressTracker.estimatedTotalPrimitives += mesh.primitives.size();
+    }
+
     LoadedModelData modelData{};
     modelData.materials.reserve(tinyModel.materials.size());
     for (const tinygltf::Material& material : tinyModel.materials)
     {
         modelData.materials.push_back(BuildMaterialData(tinyModel, material, modelPath));
     }
+    progressTracker.Report(kProgressMaterialsDone);
 
     std::unordered_set<int> visitedNodes;
     if (!tinyModel.scenes.empty())
@@ -1033,7 +1124,7 @@ LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std
         const tinygltf::Scene& scene = tinyModel.scenes[static_cast<size_t>(sceneIndex)];
         for (int rootNodeIndex : scene.nodes)
         {
-            TraverseNode(tinyModel, rootNodeIndex, glm::mat4(1.0f), modelData, visitedNodes);
+            TraverseNode(tinyModel, rootNodeIndex, glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
         }
     }
     else
@@ -1056,7 +1147,7 @@ LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std
                 continue;
             }
 
-            TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes);
+            TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
             traversedAnyRoot = true;
         }
 
@@ -1064,7 +1155,7 @@ LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std
         {
             for (size_t nodeIndex = 0; nodeIndex < tinyModel.nodes.size(); ++nodeIndex)
             {
-                TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes);
+                TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
             }
         }
     }
@@ -1083,13 +1174,24 @@ LoadedModelData BuildLoadedModelData(const tinygltf::Model& tinyModel, const std
 }
 }
 
-LoadedModelData GltfModelLoader::LoadModel(const std::string& path)
+LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)
 {
     const std::filesystem::path modelPath = std::filesystem::path(path).lexically_normal();
     const std::string extension = ToLowerCopy(modelPath.extension().string());
 
+    if (progress)
+    {
+        progress(kProgressParseStarted);
+    }
+
     tinygltf::TinyGLTF loader;
     loader.SetPreserveImageChannels(true);
+
+    GltfParseProgressContext parseProgressContext{progress};
+    if (progress)
+    {
+        loader.SetImageLoader(&LoadImageDataWithProgress, &parseProgressContext);
+    }
 
     tinygltf::Model tinyModel;
     std::string warnings;
@@ -1121,5 +1223,10 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path)
         );
     }
 
-    return BuildLoadedModelData(tinyModel, modelPath);
+    if (progress)
+    {
+        progress(kProgressParseDone);
+    }
+
+    return BuildLoadedModelData(tinyModel, modelPath, progress);
 }

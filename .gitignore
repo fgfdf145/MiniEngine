@@ -4,6 +4,10 @@
 *.VC.opendb
 *.ipch
 
+# JetBrains CLion
+.idea/
+cmake-build-*/
+
 # Build
 build/
 out/

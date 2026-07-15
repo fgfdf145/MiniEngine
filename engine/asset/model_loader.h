@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -57,11 +58,15 @@ struct LoadedModelData
     }
 };
 
+// Invoked from the loading thread with the overall load fraction in [0, 1].
+// Implementations must be cheap and thread-safe (typically an atomic store).
+using ModelLoadProgressCallback = std::function<void(float)>;
+
 class ModelLoader
 {
 public:
     static bool IsImportAvailable();
     static bool IsSupportedModelPath(const std::filesystem::path& path);
     static const char* GetImporterName();
-    static LoadedModelData LoadModel(const std::string& path);
+    static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
 };

@@ -8,6 +8,7 @@
 #include <model_cache.h>
 #include <model_loader.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <future>
@@ -74,24 +75,49 @@ void StartAsyncSceneLoad(RendererSharedState& state, const std::string& path)
 
     AsyncSceneLoad& load = state.asyncSceneLoad;
     load.path = path;
+    load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
     // Parse the scene file and pre-warm the model cache for every referenced model
     // in the background; ApplySceneData/RebuildSceneRenderables still run on the main
     // thread once this is ready, but they'll hit the cache instead of parsing on the UI thread.
-    load.future = std::async(std::launch::async, [path]() -> SerializedSceneData
+    load.future = std::async(std::launch::async, [path, progress = load.progress]() -> SerializedSceneData
     {
-        SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
+        constexpr float kSceneFileParsedFraction = 0.1f;
 
+        SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
+        progress->store(kSceneFileParsedFraction);
+
+        std::vector<std::string> modelPathsToLoad;
         for (const SerializedEntityData& entity : sceneData.entities)
         {
-            if (entity.modelSourcePath.empty() || ModelCache::IsCached(entity.modelSourcePath))
+            const std::string& modelPath = entity.modelSourcePath;
+            const bool alreadyQueued =
+                std::find(modelPathsToLoad.begin(), modelPathsToLoad.end(), modelPath) != modelPathsToLoad.end();
+            if (!modelPath.empty() && !alreadyQueued && !ModelCache::IsCached(modelPath))
             {
-                continue;
+                modelPathsToLoad.push_back(modelPath);
             }
-            auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(entity.modelSourcePath));
-            ModelCache::Store(entity.modelSourcePath, std::move(data));
         }
 
+        // Each pending model gets an equal slice of the remaining progress range.
+        const float modelSlice = modelPathsToLoad.empty()
+            ? 0.0f
+            : (1.0f - kSceneFileParsedFraction) / static_cast<float>(modelPathsToLoad.size());
+        for (size_t modelIndex = 0; modelIndex < modelPathsToLoad.size(); ++modelIndex)
+        {
+            const std::string& modelPath = modelPathsToLoad[modelIndex];
+            const float sliceStart = kSceneFileParsedFraction + modelSlice * static_cast<float>(modelIndex);
+            auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(
+                modelPath,
+                [&progress, sliceStart, modelSlice](float fraction)
+                {
+                    progress->store(sliceStart + modelSlice * fraction);
+                }
+            ));
+            ModelCache::Store(modelPath, std::move(data));
+        }
+
+        progress->store(1.0f);
         return sceneData;
     });
 

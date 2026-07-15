@@ -10,6 +10,7 @@
 #include <editor_world.h>
 #include <input/input.h>
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -44,12 +45,16 @@ struct AsyncModelLoad
     // The async task. Valid while a load is in flight or completed but not yet consumed.
     std::future<void> future;
 
+    // Overall load fraction in [0, 1], written by the loading thread.
+    std::shared_ptr<std::atomic<float>> progress;
+
     bool IsActive() const { return future.valid(); }
     bool IsLoading() const
     {
         return future.valid() &&
                future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
     }
+    float Progress() const { return progress ? progress->load() : 0.0f; }
 };
 
 // State for a single in-flight async scene load.
@@ -60,12 +65,16 @@ struct AsyncSceneLoad
     std::string path;
     std::future<SerializedSceneData> future;
 
+    // Overall load fraction in [0, 1], written by the loading thread.
+    std::shared_ptr<std::atomic<float>> progress;
+
     bool IsActive() const { return future.valid(); }
     bool IsLoading() const
     {
         return future.valid() &&
                future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
     }
+    float Progress() const { return progress ? progress->load() : 0.0f; }
 };
 
 struct RendererSharedState

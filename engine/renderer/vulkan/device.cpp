@@ -9,6 +9,21 @@ namespace
 const std::vector<const char*> kRequiredExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
+
+// Defined in vulkan_beta.h; spelled out here so no VK_ENABLE_BETA_EXTENSIONS is needed.
+// The spec requires enabling this extension whenever the device advertises it (MoltenVK does).
+constexpr const char* kPortabilitySubsetExtensionName = "VK_KHR_portability_subset";
+
+std::vector<VkExtensionProperties> EnumerateDeviceExtensions(VkPhysicalDevice device)
+{
+    uint32_t extensionCount = 0;
+    CheckVulkan(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr), "Failed to enumerate device extensions");
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    CheckVulkan(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data()), "Failed to enumerate device extensions");
+
+    return availableExtensions;
+}
 }
 
 VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
@@ -66,13 +81,24 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
 
+    std::vector<const char*> enabledExtensions = kRequiredExtensions;
+    for (const auto& extension : EnumerateDeviceExtensions(m_physicalDevice))
+    {
+        if (std::string(extension.extensionName) == kPortabilitySubsetExtensionName)
+        {
+            enabledExtensions.push_back(kPortabilitySubsetExtensionName);
+            LOG_INFO("Enabling device extension: {}", kPortabilitySubsetExtensionName);
+            break;
+        }
+    }
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(kRequiredExtensions.size());
-    createInfo.ppEnabledExtensionNames = kRequiredExtensions.data();
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
+    createInfo.ppEnabledExtensionNames = enabledExtensions.data();
 
     CheckVulkan(vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device), "Failed to create logical device");
     vkGetDeviceQueue(m_device, m_queueFamilies.graphicsFamily.value(), 0, &m_graphicsQueue);
@@ -205,14 +231,8 @@ SwapchainSupportDetails VulkanDevice::QuerySwapchainSupport(VkPhysicalDevice dev
 
 bool VulkanDevice::HasRequiredExtensions(VkPhysicalDevice device) const
 {
-    uint32_t extensionCount = 0;
-    CheckVulkan(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr), "Failed to enumerate device extensions");
-
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-    CheckVulkan(vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data()), "Failed to enumerate device extensions");
-
     std::set<std::string> requiredExtensions(kRequiredExtensions.begin(), kRequiredExtensions.end());
-    for (const auto& extension : availableExtensions)
+    for (const auto& extension : EnumerateDeviceExtensions(device))
     {
         requiredExtensions.erase(extension.extensionName);
     }
