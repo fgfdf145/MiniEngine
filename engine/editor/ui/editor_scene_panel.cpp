@@ -50,11 +50,11 @@ bool MaterialHasAnyTexture(const ModelImportedMaterialInfo& material)
         !material.emissiveTexturePath.empty();
 }
 
-uint32_t CountUvReadySubmeshes(const ModelComponent& model)
+uint32_t CountUvReadySubmeshes(const EditorModelMetadataComponent& metadata)
 {
     return static_cast<uint32_t>(std::count_if(
-        model.importedSubmeshes.begin(),
-        model.importedSubmeshes.end(),
+        metadata.importedSubmeshes.begin(),
+        metadata.importedSubmeshes.end(),
         [](const ModelImportedSubmeshInfo& submesh)
         {
             return submesh.hasTexCoords;
@@ -62,11 +62,11 @@ uint32_t CountUvReadySubmeshes(const ModelComponent& model)
     ));
 }
 
-uint32_t CountTexturedMaterials(const ModelComponent& model)
+uint32_t CountTexturedMaterials(const EditorModelMetadataComponent& metadata)
 {
     return static_cast<uint32_t>(std::count_if(
-        model.importedMaterials.begin(),
-        model.importedMaterials.end(),
+        metadata.importedMaterials.begin(),
+        metadata.importedMaterials.end(),
         [](const ModelImportedMaterialInfo& material)
         {
             return MaterialHasAnyTexture(material);
@@ -74,9 +74,9 @@ uint32_t CountTexturedMaterials(const ModelComponent& model)
     ));
 }
 
-void DrawImportedModelInspector(const ModelComponent& model)
+void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
 {
-    if (model.importedSubmeshes.empty() && model.importedMaterials.empty())
+    if (metadata.importedSubmeshes.empty() && metadata.importedMaterials.empty())
     {
         return;
     }
@@ -85,21 +85,21 @@ void DrawImportedModelInspector(const ModelComponent& model)
     ImGui::Text("Importer: %s", ModelLoader::GetImporterName());
     ImGui::Text(
         "UV Submeshes: %u / %u",
-        CountUvReadySubmeshes(model),
-        static_cast<unsigned int>(model.importedSubmeshes.size())
+        CountUvReadySubmeshes(metadata),
+        static_cast<unsigned int>(metadata.importedSubmeshes.size())
     );
     ImGui::Text(
         "Textured Materials: %u / %u",
-        CountTexturedMaterials(model),
-        static_cast<unsigned int>(model.importedMaterials.size())
+        CountTexturedMaterials(metadata),
+        static_cast<unsigned int>(metadata.importedMaterials.size())
     );
     ImGui::TextWrapped("Texture bindings are applied only when the imported submesh carries valid UVs.");
 
     if (ImGui::TreeNode("Imported Submeshes"))
     {
-        for (size_t submeshIndex = 0; submeshIndex < model.importedSubmeshes.size(); ++submeshIndex)
+        for (size_t submeshIndex = 0; submeshIndex < metadata.importedSubmeshes.size(); ++submeshIndex)
         {
-            const ModelImportedSubmeshInfo& submesh = model.importedSubmeshes[submeshIndex];
+            const ModelImportedSubmeshInfo& submesh = metadata.importedSubmeshes[submeshIndex];
             const std::string treeLabel =
                 submesh.name.empty()
                 ? ("Submesh " + std::to_string(submeshIndex))
@@ -123,9 +123,9 @@ void DrawImportedModelInspector(const ModelComponent& model)
 
     if (ImGui::TreeNode("Imported Materials"))
     {
-        for (size_t materialIndex = 0; materialIndex < model.importedMaterials.size(); ++materialIndex)
+        for (size_t materialIndex = 0; materialIndex < metadata.importedMaterials.size(); ++materialIndex)
         {
-            const ModelImportedMaterialInfo& material = model.importedMaterials[materialIndex];
+            const ModelImportedMaterialInfo& material = metadata.importedMaterials[materialIndex];
             const MaterialTextureBlendGraph& blendGraph = material.blendGraph;
             const bool hasProgrammableGraph = HasSecondaryMaterialLayer(blendGraph);
             const std::string materialName = material.name.empty()
@@ -164,9 +164,9 @@ bool DrawOperationButton(const char* label, ImGuizmo::OPERATION value, ImGuizmo:
     return false;
 }
 
-void DrawTransformComponent(TransformComponent& transform)
+bool DrawTransformComponent(TransformComponent& transform)
 {
-    ImGui::DragFloat3(
+    bool changed = ImGui::DragFloat3(
         "Translation (m)",
         glm::value_ptr(transform.translation),
         0.05f,
@@ -174,8 +174,8 @@ void DrawTransformComponent(TransformComponent& transform)
         WorldUnits::kUiTransformTranslationRangeMeters,
         "%.3f"
     );
-    ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
-    ImGui::DragFloat3(
+    changed |= ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
+    changed |= ImGui::DragFloat3(
         "Scale (1 = source meters)",
         glm::value_ptr(transform.scale),
         0.02f,
@@ -183,7 +183,10 @@ void DrawTransformComponent(TransformComponent& transform)
         WorldUnits::kUiTransformScaleMax,
         "%.3f"
     );
-    transform.scale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
+    const glm::vec3 clampedScale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
+    changed |= glm::any(glm::notEqual(clampedScale, transform.scale));
+    transform.scale = clampedScale;
+    return changed;
 }
 
 void DrawGizmoControls(GizmoSettings& gizmo)
@@ -286,8 +289,8 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
 {
     if (ImGui::Begin("Scene", &m_showSceneWindow))
     {
-        const size_t modelCount = scene.GetEntityOrder().size();
-        const size_t lightCount = scene.GetLightOrder().size();
+        const size_t modelCount = scene.Registry().view<const ModelComponent>().size();
+        const size_t lightCount = scene.Registry().view<const LightComponent>().size();
         ImGui::Text("Models: %u  Lights: %u",
             static_cast<unsigned int>(modelCount),
             static_cast<unsigned int>(lightCount));
@@ -334,12 +337,16 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
         ImGui::Separator();
 
         // --- Model entity list ---
-        if (!scene.GetEntityOrder().empty())
+        if (modelCount != 0u)
         {
             ImGui::TextDisabled("Models");
         }
-        for (entt::entity entity : scene.GetEntityOrder())
+        for (entt::entity entity : scene.GetSceneOrder())
         {
+            if (!scene.HasModelComponent(entity))
+            {
+                continue;
+            }
             const TagComponent& tag = scene.GetTag(entity);
             const std::string label = tag.name + "##model_" +
                 std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
@@ -350,13 +357,19 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
         }
 
         // --- Light entity list ---
-        if (!scene.GetLightOrder().empty())
+        if (lightCount != 0u)
         {
-            if (!scene.GetEntityOrder().empty()) ImGui::Spacing();
+            if (modelCount != 0u) ImGui::Spacing();
             ImGui::TextDisabled("Lights");
         }
-        scene.ForEachLight([&](entt::entity entity, const TagComponent& tag, const TransformComponent&, const LightComponent& light)
+        for (entt::entity entity : scene.GetSceneOrder())
         {
+            if (!scene.HasLightComponent(entity))
+            {
+                continue;
+            }
+            const TagComponent& tag = scene.GetTag(entity);
+            const LightComponent& light = scene.GetLightComponent(entity);
             const ImVec4 typeColor = ImGui::ColorConvertU32ToFloat4(GetLightTypeColor(light.type));
             ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
             const std::string label = std::string("[") + GetLightTypeLabel(light.type)[0] + "] " +
@@ -367,7 +380,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             {
                 scene.SetSelectedEntity(entity);
             }
-        });
+        }
 
         // --- Selected entity inspector ---
         if (scene.HasSelection())
@@ -375,8 +388,8 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             const entt::entity selectedEntity = scene.GetSelectedEntity();
             const bool isLight = scene.HasLightComponent(selectedEntity);
 
-            TagComponent& tag          = scene.GetTag(selectedEntity);
-            TransformComponent& transform = scene.GetTransform(selectedEntity);
+            TagComponent& tag = scene.EditTag(selectedEntity);
+            TransformComponent& transform = scene.EditTransform(selectedEntity);
 
             ImGui::Separator();
 
@@ -386,10 +399,14 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             {
                 tag.name = tagBuffer;
             }
+            ImGui::TextDisabled("Entity UUID: %s", scene.GetEntityUuid(selectedEntity).c_str());
 
             if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                DrawTransformComponent(transform);
+                if (DrawTransformComponent(transform))
+                {
+                    scene.MarkTransformDirty(selectedEntity);
+                }
                 if (ImGui::Button("Reset Transform"))
                 {
                     scene.ResetSelectedTransform();
@@ -398,7 +415,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
 
             if (isLight)
             {
-                LightComponent& light = scene.GetLightComponent(selectedEntity);
+                LightComponent& light = scene.EditLightComponent(selectedEntity);
                 if (ImGui::CollapsingHeader("LightComponent", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     DrawLightComponentEditor(light, m_effectiveUiScale);
@@ -420,7 +437,9 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             }
             else
             {
-                ModelComponent& model = scene.GetSelectedModel();
+                const ModelComponent& model = scene.GetSelectedModel();
+                const ModelBoundsComponent& bounds = scene.GetSelectedModelBounds();
+                const EditorModelMetadataComponent& metadata = scene.GetSelectedModelMetadata();
                 GizmoSettings& gizmo  = scene.GetGizmoSettings();
 
                 if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
@@ -428,12 +447,12 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                     ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
                     ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
                     ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
-                    ImGui::Text("Submeshes: %u", model.submeshCount);
+                    ImGui::Text("Submeshes: %u", metadata.submeshCount);
 
-                    if (model.hasBounds)
+                    if (bounds.hasBounds)
                     {
-                        ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", model.minBounds.x, model.minBounds.y, model.minBounds.z);
-                        ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", model.maxBounds.x, model.maxBounds.y, model.maxBounds.z);
+                        ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", bounds.minBounds.x, bounds.minBounds.y, bounds.minBounds.z);
+                        ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", bounds.maxBounds.x, bounds.maxBounds.y, bounds.maxBounds.z);
                     }
 
                     if (!model.sourcePath.empty())
@@ -441,7 +460,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                         ImGui::TextWrapped("Asset management is disabled while it is being rebuilt.");
                     }
 
-                    DrawImportedModelInspector(model);
+                    DrawImportedModelInspector(metadata);
                 }
 
                 if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))

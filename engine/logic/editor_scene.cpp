@@ -1,5 +1,7 @@
 #include "editor_scene.h"
 
+#include <log/log.h>
+#include <uuid/uuid.h>
 #include <yaml-cpp/yaml.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -179,6 +181,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
         for (const YAML::Node& entityNode : entitiesNode)
         {
             SerializedEntityData entityData{};
+            entityData.entityUuid = entityNode["entity_uuid"].as<std::string>(entityData.entityUuid);
             entityData.tagName = entityNode["tag"].as<std::string>(entityData.tagName);
 
             const YAML::Node modelNode = entityNode["model"];
@@ -200,6 +203,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
         for (const YAML::Node& lightNode : lightsNode)
         {
             SerializedLightData lightData{};
+            lightData.entityUuid = lightNode["entity_uuid"].as<std::string>(lightData.entityUuid);
             lightData.tagName = lightNode["tag"].as<std::string>(lightData.tagName);
             lightData.lightType = LightTypeFromString(lightNode["light_type"].as<std::string>("point"));
             lightData.color = ReadVec3(lightNode["color"], lightData.color);
@@ -217,6 +221,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
         }
     }
 
+    sceneData.selectedEntityUuid = root["scene"]["selected_entity_uuid"].as<std::string>(sceneData.selectedEntityUuid);
     sceneData.selectedEntityIndex = root["scene"]["selected_entity"].as<int>(0);
     return sceneData;
 }
@@ -226,7 +231,8 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
     YAML::Emitter emitter;
     emitter << YAML::BeginMap;
     emitter << YAML::Key << "scene" << YAML::Value << YAML::BeginMap;
-    emitter << YAML::Key << "version" << YAML::Value << 2;
+    emitter << YAML::Key << "version" << YAML::Value << 3;
+    emitter << YAML::Key << "selected_entity_uuid" << YAML::Value << sceneData.selectedEntityUuid;
     emitter << YAML::Key << "selected_entity" << YAML::Value << sceneData.selectedEntityIndex;
     emitter << YAML::EndMap;
 
@@ -234,6 +240,7 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
     for (const SerializedEntityData& entity : sceneData.entities)
     {
         emitter << YAML::BeginMap;
+        emitter << YAML::Key << "entity_uuid" << YAML::Value << entity.entityUuid;
         emitter << YAML::Key << "tag" << YAML::Value << entity.tagName;
         emitter << YAML::Key << "model" << YAML::Value << YAML::BeginMap;
         emitter << YAML::Key << "display_name" << YAML::Value << entity.modelDisplayName;
@@ -255,6 +262,7 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
     for (const SerializedLightData& light : sceneData.lights)
     {
         emitter << YAML::BeginMap;
+        emitter << YAML::Key << "entity_uuid" << YAML::Value << light.entityUuid;
         emitter << YAML::Key << "tag" << YAML::Value << light.tagName;
         emitter << YAML::Key << "light_type" << YAML::Value << LightTypeToString(light.lightType);
         EmitVec3(emitter, "color", light.color);
@@ -314,7 +322,14 @@ void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::
     }
 }
 
-EditorScene::EditorScene() = default;
+EditorScene::EditorScene()
+{
+    // Every scene entity carries a TagComponent, so its on_destroy signal fires
+    // for any destruction path (DestroyEntity, Clear, future systems) and keeps
+    // the scene order and selection in sync without per-call-site bookkeeping.
+    m_registry.on_destroy<TagComponent>().connect<&EditorScene::OnEntityDestroyed>(this);
+    m_registry.on_destroy<SceneEntityIdComponent>().connect<&EditorScene::OnSceneEntityIdDestroyed>(this);
+}
 
 void EditorScene::LoadConfig(const std::string& path)
 {
@@ -356,31 +371,33 @@ void EditorScene::CreateTwoCubeTestScene()
 
 void EditorScene::Clear()
 {
-    m_registry.clear();
-    m_entityOrder.clear();
-    m_lightOrder.clear();
+    // Clear editor-side state first so on_destroy callbacks remain O(1) while
+    // registry.clear() destroys every component pool entry.
+    m_sceneOrder.clear();
+    m_entityByUuid.clear();
     m_selectedEntity = entt::null;
+    m_registry.clear();
 }
 
 entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
 {
     entt::entity entity = m_registry.create();
+    const std::string entityUuid = AdoptOrCreateEntityUuid(entityData.entityUuid);
+    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{ entityUuid });
+    m_entityByUuid.emplace(entityUuid, entity);
     m_registry.emplace<TagComponent>(entity, TagComponent{ entityData.tagName });
     m_registry.emplace<TransformComponent>(entity, entityData.transform);
-    ModelComponent& model = m_registry.emplace<ModelComponent>(entity, ModelComponent{
-        entityData.modelSourcePath,
-        entityData.modelDisplayName,
-        entityData.modelBaseColorTextureOverridePath,
-        1,
-        WorldUnits::kDefaultCubeMinBoundsMeters,
-        WorldUnits::kDefaultCubeMaxBoundsMeters,
-        true,
-        {},
-        {}
-    });
+    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{ BuildTransformMatrix(entityData.transform) });
+    ModelComponent& model = m_registry.emplace<ModelComponent>(entity);
+    model.sourcePath = entityData.modelSourcePath;
+    model.displayName = entityData.modelDisplayName;
+    model.baseColorTextureOverridePath = entityData.modelBaseColorTextureOverridePath;
     model.sourceUuid = entityData.modelSourceUuid;
     model.baseColorTextureOverrideUuid = entityData.modelBaseColorTextureOverrideUuid;
-    m_entityOrder.push_back(entity);
+    m_registry.emplace<ModelBoundsComponent>(entity);
+    m_registry.emplace<EditorModelMetadataComponent>(entity);
+    m_registry.emplace<ModelRenderableDirty>(entity);
+    m_sceneOrder.push_back(entity);
     if (m_selectedEntity == entt::null)
     {
         m_selectedEntity = entity;
@@ -396,9 +413,13 @@ void EditorScene::DestroyEntity(entt::entity entity)
     }
 
     m_registry.destroy(entity);
-    m_entityOrder.erase(
-        std::remove(m_entityOrder.begin(), m_entityOrder.end(), entity),
-        m_entityOrder.end()
+}
+
+void EditorScene::OnEntityDestroyed(entt::registry&, entt::entity entity)
+{
+    m_sceneOrder.erase(
+        std::remove(m_sceneOrder.begin(), m_sceneOrder.end(), entity),
+        m_sceneOrder.end()
     );
 
     if (m_selectedEntity == entity)
@@ -410,7 +431,7 @@ void EditorScene::DestroyEntity(entt::entity entity)
 
 bool EditorScene::HasEntities() const
 {
-    return !m_entityOrder.empty();
+    return !m_sceneOrder.empty();
 }
 
 bool EditorScene::HasSelection() const
@@ -438,72 +459,100 @@ void EditorScene::ClearSelection()
     m_selectedEntity = entt::null;
 }
 
-const std::vector<entt::entity>& EditorScene::GetEntityOrder() const
+const std::vector<entt::entity>& EditorScene::GetSceneOrder() const
 {
-    return m_entityOrder;
+    return m_sceneOrder;
 }
 
-TagComponent& EditorScene::GetTag(entt::entity entity)
+TagComponent& EditorScene::EditTag(entt::entity entity)
 {
     return m_registry.get<TagComponent>(entity);
 }
 
-const TagComponent& EditorScene::GetTag(entt::entity entity) const
-{
-    return m_registry.get<TagComponent>(entity);
-}
-
-TransformComponent& EditorScene::GetTransform(entt::entity entity)
+TransformComponent& EditorScene::EditTransform(entt::entity entity)
 {
     return m_registry.get<TransformComponent>(entity);
 }
 
-const TransformComponent& EditorScene::GetTransform(entt::entity entity) const
-{
-    return m_registry.get<TransformComponent>(entity);
-}
-
-ModelComponent& EditorScene::GetModel(entt::entity entity)
+ModelComponent& EditorScene::EditModel(entt::entity entity)
 {
     return m_registry.get<ModelComponent>(entity);
 }
 
-const ModelComponent& EditorScene::GetModel(entt::entity entity) const
+LightComponent& EditorScene::EditLightComponent(entt::entity entity)
 {
-    return m_registry.get<ModelComponent>(entity);
+    return m_registry.get<LightComponent>(entity);
 }
 
-TagComponent& EditorScene::GetSelectedTag()
+void EditorScene::MarkTransformDirty(entt::entity entity)
 {
-    EnsureSelection();
-    return GetTag(m_selectedEntity);
+    if (IsValidEntity(entity) && m_registry.all_of<TransformComponent>(entity))
+    {
+        m_registry.emplace_or_replace<TransformDirty>(entity);
+    }
 }
 
-const TagComponent& EditorScene::GetSelectedTag() const
+void EditorScene::OnSceneEntityIdDestroyed(entt::registry& registry, entt::entity entity)
 {
-    return m_registry.get<TagComponent>(m_selectedEntity);
+    const std::string& uuid = registry.get<SceneEntityIdComponent>(entity).value;
+    if (const auto it = m_entityByUuid.find(uuid); it != m_entityByUuid.end() && it->second == entity)
+    {
+        m_entityByUuid.erase(it);
+    }
 }
 
-TransformComponent& EditorScene::GetSelectedTransform()
+std::string EditorScene::AdoptOrCreateEntityUuid(const std::string& requestedUuid)
 {
-    EnsureSelection();
-    return GetTransform(m_selectedEntity);
+    if (!requestedUuid.empty() && !m_entityByUuid.contains(requestedUuid))
+    {
+        return requestedUuid;
+    }
+
+    std::string uuid;
+    do
+    {
+        uuid = Uuid::GenerateV4();
+    }
+    while (m_entityByUuid.contains(uuid));
+
+    if (!requestedUuid.empty())
+    {
+        LOG_WARN("Duplicate scene entity uuid {}; assigned replacement {}", requestedUuid, uuid);
+    }
+    return uuid;
 }
 
-const TransformComponent& EditorScene::GetSelectedTransform() const
+void EditorScene::MarkModelRenderableDirty(entt::entity entity)
 {
-    return m_registry.get<TransformComponent>(m_selectedEntity);
+    if (HasModelComponent(entity))
+    {
+        m_registry.emplace_or_replace<ModelRenderableDirty>(entity);
+    }
 }
 
-ModelComponent& EditorScene::GetSelectedModel()
+void EditorScene::ClearModelRenderableDirty(entt::entity entity)
 {
-    EnsureSelection();
-    return GetModel(m_selectedEntity);
+    if (IsValidEntity(entity))
+    {
+        m_registry.remove<ModelRenderableDirty>(entity);
+    }
 }
 
-const ModelComponent& EditorScene::GetSelectedModel() const
+void EditorScene::ClearAllModelRenderableDirty()
 {
-    return m_registry.get<ModelComponent>(m_selectedEntity);
+    m_registry.clear<ModelRenderableDirty>();
+}
+
+std::vector<entt::entity> EditorScene::GetDirtyModelRenderableEntities() const
+{
+    std::vector<entt::entity> entities;
+    const auto dirty = m_registry.view<const ModelComponent, const ModelRenderableDirty>();
+    entities.reserve(dirty.size_hint());
+    for (entt::entity entity : dirty)
+    {
+        entities.push_back(entity);
+    }
+    return entities;
 }
 
 GizmoSettings& EditorScene::GetGizmoSettings()
@@ -523,7 +572,8 @@ void EditorScene::ResetSelectedTransform()
         return;
     }
 
-    GetSelectedTransform() = m_defaultTransform;
+    EditSelectedTransform() = m_defaultTransform;
+    MarkTransformDirty(m_selectedEntity);
 }
 
 void EditorScene::UpdateModelInfo(
@@ -538,59 +588,56 @@ void EditorScene::UpdateModelInfo(
     const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes
 )
 {
-    ModelComponent& model = GetModel(entity);
+    auto [model, bounds, metadata, tag] = m_registry.get<
+        ModelComponent,
+        ModelBoundsComponent,
+        EditorModelMetadataComponent,
+        TagComponent
+    >(entity);
     model.displayName = SanitizeName(displayName, model.displayName);
     model.sourcePath = sourcePath;
-    model.submeshCount = std::max(submeshCount, 1u);
-    model.minBounds = minBounds;
-    model.maxBounds = maxBounds;
-    model.hasBounds = hasBounds;
-    model.importedMaterials = importedMaterials;
-    model.importedSubmeshes = importedSubmeshes;
+    bounds.minBounds = minBounds;
+    bounds.maxBounds = maxBounds;
+    bounds.hasBounds = hasBounds;
+    metadata.submeshCount = std::max(submeshCount, 1u);
+    metadata.importedMaterials = importedMaterials;
+    metadata.importedSubmeshes = importedSubmeshes;
 
     if (sourcePath.empty())
     {
-        GetTag(entity).name = model.displayName;
+        tag.name = model.displayName;
     }
     else
     {
         const std::filesystem::path modelPath(sourcePath);
-        GetTag(entity).name = SanitizeName(modelPath.stem().string(), model.displayName);
+        tag.name = SanitizeName(modelPath.stem().string(), model.displayName);
     }
 }
 
 glm::mat4 EditorScene::GetModelMatrix(entt::entity entity) const
 {
-    return BuildTransformMatrix(GetTransform(entity));
+    if (m_registry.all_of<TransformDirty>(entity))
+    {
+        return BuildTransformMatrix(GetTransform(entity));
+    }
+    return m_registry.get<WorldTransformComponent>(entity).matrix;
 }
 
 void EditorScene::ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix)
 {
-    TransformComponent& transform = GetTransform(entity);
+    TransformComponent& transform = EditTransform(entity);
     transform = DecomposeTransformMatrix(matrix, transform);
+    MarkTransformDirty(entity);
 }
 
 glm::vec3 EditorScene::GetBoundsCenter(entt::entity entity) const
 {
-    if (m_registry.all_of<LightComponent>(entity))
+    const ModelBoundsComponent* bounds = m_registry.try_get<ModelBoundsComponent>(entity);
+    if (bounds == nullptr)
     {
         return glm::vec3(0.0f);
     }
-    const ModelComponent& model = GetModel(entity);
-    return (model.minBounds + model.maxBounds) * 0.5f;
-}
-
-void EditorScene::ForEachEntity(const SceneEntityVisitor& visitor) const
-{
-    for (entt::entity entity : m_entityOrder)
-    {
-        if (!IsValidEntity(entity))
-        {
-            continue;
-        }
-
-        visitor(entity, GetTag(entity), GetTransform(entity), GetModel(entity));
-    }
+    return (bounds->minBounds + bounds->maxBounds) * 0.5f;
 }
 
 void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
@@ -608,11 +655,39 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
         CreateLightEntity(lightData);
     }
 
-    if (!m_entityOrder.empty())
+    m_selectedEntity = entt::null;
+    if (!sceneData.selectedEntityUuid.empty())
     {
-        const int clampedIndex = std::clamp(sceneData.selectedEntityIndex, 0, static_cast<int>(m_entityOrder.size()) - 1);
-        m_selectedEntity = m_entityOrder[static_cast<size_t>(clampedIndex)];
+        if (const auto it = m_entityByUuid.find(sceneData.selectedEntityUuid); it != m_entityByUuid.end())
+        {
+            m_selectedEntity = it->second;
+        }
     }
+
+    const size_t modelCount = m_registry.view<const ModelComponent>().size();
+    if (m_selectedEntity == entt::null && modelCount != 0u)
+    {
+        const size_t selectedModelIndex = static_cast<size_t>(std::clamp(
+            sceneData.selectedEntityIndex,
+            0,
+            static_cast<int>(modelCount) - 1
+        ));
+        size_t modelIndex = 0;
+        for (entt::entity entity : m_sceneOrder)
+        {
+            if (!m_registry.all_of<ModelComponent>(entity))
+            {
+                continue;
+            }
+            if (modelIndex == selectedModelIndex)
+            {
+                m_selectedEntity = entity;
+                break;
+            }
+            ++modelIndex;
+        }
+    }
+    EnsureSelection();
 }
 
 void EditorScene::SaveSceneToFile(const std::string& path) const
@@ -635,9 +710,21 @@ const std::string& EditorScene::GetSceneFilePath() const
     return m_sceneFilePath;
 }
 
+void EditorScene::FlushDirtyTransforms()
+{
+    auto dirtyTransforms = m_registry.view<TransformComponent, WorldTransformComponent, TransformDirty>();
+    for (entt::entity entity : dirtyTransforms)
+    {
+        auto [transform, worldTransform] =
+            m_registry.get<TransformComponent, WorldTransformComponent>(entity);
+        worldTransform.matrix = BuildTransformMatrix(transform);
+    }
+    m_registry.clear<TransformDirty>();
+}
+
 bool EditorScene::IsValidEntity(entt::entity entity) const
 {
-    return entity != entt::null && m_registry.valid(entity);
+    return m_registry.valid(entity);
 }
 
 void EditorScene::EnsureSelection()
@@ -647,17 +734,21 @@ void EditorScene::EnsureSelection()
         return;
     }
 
-    if (!m_entityOrder.empty())
+    if (!m_sceneOrder.empty())
     {
-        m_selectedEntity = m_entityOrder.front();
+        m_selectedEntity = m_sceneOrder.front();
     }
 }
 
 entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData)
 {
     entt::entity entity = m_registry.create();
+    const std::string entityUuid = AdoptOrCreateEntityUuid(lightData.entityUuid);
+    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{ entityUuid });
+    m_entityByUuid.emplace(entityUuid, entity);
     m_registry.emplace<TagComponent>(entity, TagComponent{ lightData.tagName });
     m_registry.emplace<TransformComponent>(entity, lightData.transform);
+    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{ BuildTransformMatrix(lightData.transform) });
     LightComponent light{};
     light.type = lightData.lightType;
     light.color = lightData.color;
@@ -667,62 +758,8 @@ entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData
     light.spotOuterAngleDegrees = lightData.spotOuterAngle;
     light.areaSize = lightData.areaSize;
     m_registry.emplace<LightComponent>(entity, light);
-    m_lightOrder.push_back(entity);
+    m_sceneOrder.push_back(entity);
     return entity;
-}
-
-void EditorScene::DestroyLightEntity(entt::entity entity)
-{
-    if (!IsValidEntity(entity) || !m_registry.all_of<LightComponent>(entity))
-    {
-        return;
-    }
-
-    m_registry.destroy(entity);
-    m_lightOrder.erase(
-        std::remove(m_lightOrder.begin(), m_lightOrder.end(), entity),
-        m_lightOrder.end()
-    );
-
-    if (m_selectedEntity == entity)
-    {
-        m_selectedEntity = entt::null;
-        EnsureSelection();
-    }
-}
-
-bool EditorScene::HasLightComponent(entt::entity entity) const
-{
-    return IsValidEntity(entity) && m_registry.all_of<LightComponent>(entity);
-}
-
-LightComponent& EditorScene::GetLightComponent(entt::entity entity)
-{
-    return m_registry.get<LightComponent>(entity);
-}
-
-const LightComponent& EditorScene::GetLightComponent(entt::entity entity) const
-{
-    return m_registry.get<LightComponent>(entity);
-}
-
-const std::vector<entt::entity>& EditorScene::GetLightOrder() const
-{
-    return m_lightOrder;
-}
-
-void EditorScene::ForEachLight(
-    const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
-) const
-{
-    for (entt::entity entity : m_lightOrder)
-    {
-        if (!IsValidEntity(entity))
-        {
-            continue;
-        }
-        visitor(entity, GetTag(entity), GetTransform(entity), GetLightComponent(entity));
-    }
 }
 
 glm::mat4 EditorScene::BuildTransformMatrix(const TransformComponent& transform)
@@ -741,36 +778,40 @@ SerializedSceneData EditorScene::CaptureSceneData() const
     SerializedSceneData sceneData{};
     sceneData.gizmo = m_gizmoSettings;
 
-    for (entt::entity entity : m_entityOrder)
+    // The on_destroy listener keeps scene order free of stale handles,
+    // so entries can be read without per-entity validity checks.
+    for (entt::entity entity : m_sceneOrder)
     {
-        if (!IsValidEntity(entity))
+        if (!m_registry.all_of<ModelComponent>(entity))
         {
             continue;
         }
+        const auto [tag, transform, model] =
+            m_registry.get<TagComponent, TransformComponent, ModelComponent>(entity);
 
         SerializedEntityData entityData{};
-        const TagComponent& tag = GetTag(entity);
-        const ModelComponent& model = GetModel(entity);
+        entityData.entityUuid = GetEntityUuid(entity);
         entityData.tagName = tag.name;
         entityData.modelDisplayName = model.displayName;
         entityData.modelSourcePath = model.sourcePath;
         entityData.modelSourceUuid = model.sourceUuid;
         entityData.modelBaseColorTextureOverridePath = model.baseColorTextureOverridePath;
         entityData.modelBaseColorTextureOverrideUuid = model.baseColorTextureOverrideUuid;
-        entityData.transform = GetTransform(entity);
+        entityData.transform = transform;
         sceneData.entities.push_back(entityData);
     }
 
-    for (entt::entity entity : m_lightOrder)
+    for (entt::entity entity : m_sceneOrder)
     {
-        if (!IsValidEntity(entity))
+        if (!m_registry.all_of<LightComponent>(entity))
         {
             continue;
         }
+        const auto [tag, transform, light] =
+            m_registry.get<TagComponent, TransformComponent, LightComponent>(entity);
 
         SerializedLightData lightData{};
-        const TagComponent& tag = GetTag(entity);
-        const LightComponent& light = GetLightComponent(entity);
+        lightData.entityUuid = GetEntityUuid(entity);
         lightData.tagName = tag.name;
         lightData.lightType = light.type;
         lightData.color = light.color;
@@ -779,19 +820,26 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         lightData.spotInnerAngle = light.spotInnerAngleDegrees;
         lightData.spotOuterAngle = light.spotOuterAngleDegrees;
         lightData.areaSize = light.areaSize;
-        lightData.transform = GetTransform(entity);
+        lightData.transform = transform;
         sceneData.lights.push_back(lightData);
     }
 
     if (HasSelection())
     {
-        for (size_t index = 0; index < m_entityOrder.size(); ++index)
+        sceneData.selectedEntityUuid = GetEntityUuid(m_selectedEntity);
+        size_t modelIndex = 0;
+        for (entt::entity entity : m_sceneOrder)
         {
-            if (m_entityOrder[index] == m_selectedEntity)
+            if (!m_registry.all_of<ModelComponent>(entity))
             {
-                sceneData.selectedEntityIndex = static_cast<int>(index);
+                continue;
+            }
+            if (entity == m_selectedEntity)
+            {
+                sceneData.selectedEntityIndex = static_cast<int>(modelIndex);
                 break;
             }
+            ++modelIndex;
         }
     }
 

@@ -1,16 +1,14 @@
 #include "asset_registry.h"
 
 #include <log/log.h>
+#include <uuid/uuid.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <mutex>
-#include <random>
 #include <system_error>
 #include <unordered_map>
 #include <vector>
@@ -90,36 +88,6 @@ bool IsUnderRootLocked(const std::string& normalizedKey)
 std::filesystem::path SidecarPathForInternal(const std::filesystem::path& assetPath)
 {
     return assetPath.parent_path() / (assetPath.filename().string() + kSidecarSuffix);
-}
-
-// UUID v4 as "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx". Call sites hold the
-// registry lock, so the shared engine needs no extra synchronization.
-std::string GenerateUuidV4()
-{
-    static std::mt19937_64 rng = [] {
-        std::random_device device;
-        std::seed_seq seed{
-            device(), device(), device(), device(),
-            static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count())
-        };
-        return std::mt19937_64(seed);
-    }();
-
-    uint64_t hi = rng();
-    uint64_t lo = rng();
-    hi = (hi & 0xFFFFFFFFFFFF0FFFull) | 0x0000000000004000ull; // version 4
-    lo = (lo & 0x3FFFFFFFFFFFFFFFull) | 0x8000000000000000ull; // variant 10xx
-
-    char buffer[37];
-    std::snprintf(
-        buffer, sizeof(buffer), "%08llx-%04llx-%04llx-%04llx-%012llx",
-        static_cast<unsigned long long>(hi >> 32),
-        static_cast<unsigned long long>((hi >> 16) & 0xFFFFull),
-        static_cast<unsigned long long>(hi & 0xFFFFull),
-        static_cast<unsigned long long>(lo >> 48),
-        static_cast<unsigned long long>(lo & 0xFFFFFFFFFFFFull)
-    );
-    return std::string(buffer);
 }
 
 struct SidecarData
@@ -218,7 +186,7 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
                     // The already-registered file is the copy: it gets the
                     // fresh identity and this file keeps the uuid.
                     const std::string ownerDisplay = owner->second;
-                    const std::string ownerNewUuid = GenerateUuidV4();
+                    const std::string ownerNewUuid = Uuid::GenerateV4();
                     WriteSidecar(SidecarPathForInternal(ownerPath), ownerNewUuid, ownerPath);
                     state.uuidToPath.erase(uuid);
                     state.pathToUuid[NormalizeKey(ownerPath)] = ownerNewUuid;
@@ -249,7 +217,7 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
 
     if (uuid.empty())
     {
-        uuid = GenerateUuidV4();
+        uuid = Uuid::GenerateV4();
         WriteSidecar(sidecarPath, uuid, file);
     }
 

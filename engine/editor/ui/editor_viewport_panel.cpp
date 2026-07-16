@@ -181,15 +181,15 @@ bool BuildProjectedSelectionBox(
     std::array<ImVec2, 8>& projectedCorners
 )
 {
-    const ModelComponent& model = scene.GetModel(entity);
-    if (!model.hasBounds || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+    const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
+    if (!bounds.hasBounds || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
     {
         return false;
     }
 
     const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
     const glm::mat4 viewProjection = matrices.projection * matrices.view;
-    const auto localCorners = BuildBoundsCorners(model.minBounds, model.maxBounds);
+    const auto localCorners = BuildBoundsCorners(bounds.minBounds, bounds.maxBounds);
     for (size_t index = 0; index < localCorners.size(); ++index)
     {
         const glm::vec3 worldPoint = glm::vec3(modelMatrix * glm::vec4(localCorners[index], 1.0f));
@@ -209,8 +209,8 @@ bool ComputeWorldBounds(
     glm::vec3& maxBounds
 )
 {
-    const ModelComponent& model = scene.GetModel(entity);
-    if (!model.hasBounds)
+    const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
+    if (!bounds.hasBounds)
     {
         return false;
     }
@@ -218,7 +218,7 @@ bool ComputeWorldBounds(
     minBounds = glm::vec3(std::numeric_limits<float>::max());
     maxBounds = glm::vec3(std::numeric_limits<float>::lowest());
     const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
-    for (const glm::vec3& corner : BuildBoundsCorners(model.minBounds, model.maxBounds))
+    for (const glm::vec3& corner : BuildBoundsCorners(bounds.minBounds, bounds.maxBounds))
     {
         const glm::vec3 worldPoint = glm::vec3(modelMatrix * glm::vec4(corner, 1.0f));
         minBounds = glm::min(minBounds, worldPoint);
@@ -241,13 +241,14 @@ std::vector<ProjectedEntityCenter> ProjectSceneCenters(
     }
 
     const glm::mat4 viewProjection = matrices.projection * matrices.view;
-    projectedCenters.reserve(scene.GetEntityOrder().size());
+    projectedCenters.reserve(scene.Registry().view<const ModelComponent>().size());
 
-    scene.ForEachEntity([&](entt::entity entity, const TagComponent&, const TransformComponent&, const ModelComponent& model)
+    for (entt::entity entity : scene.Registry().view<const ModelBoundsComponent>())
     {
-        if (!model.hasBounds)
+        const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
+        if (!bounds.hasBounds)
         {
-            return;
+            continue;
         }
 
         ProjectedEntityCenter projected{};
@@ -255,7 +256,7 @@ std::vector<ProjectedEntityCenter> ProjectSceneCenters(
         std::array<ImVec2, 8> projectedCorners{};
         if (!BuildProjectedSelectionBox(scene, entity, matrices, viewportRect, projectedCorners))
         {
-            return;
+            continue;
         }
 
         projected.min = projectedCorners.front();
@@ -272,13 +273,13 @@ std::vector<ProjectedEntityCenter> ProjectSceneCenters(
         const glm::vec4 clip = viewProjection * scene.GetModelMatrix(entity) * glm::vec4(localCenter, 1.0f);
         if (clip.w <= 0.0f)
         {
-            return;
+            continue;
         }
 
         const glm::vec3 ndc = glm::vec3(clip) / clip.w;
         if (ndc.x < -1.0f || ndc.x > 1.0f || ndc.y < -1.0f || ndc.y > 1.0f || ndc.z < 0.0f || ndc.z > 1.0f)
         {
-            return;
+            continue;
         }
 
         projected.center = ImVec2(
@@ -287,7 +288,7 @@ std::vector<ProjectedEntityCenter> ProjectSceneCenters(
         );
         projected.depth = ndc.z;
         projectedCenters.push_back(projected);
-    });
+    }
 
     return projectedCenters;
 }
@@ -531,10 +532,10 @@ void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const Vie
 
     // Point and Ambient lights have no meaningful orientation — restrict to translate
     // without mutating gizmo.operation so the user's preference is preserved for other entities.
+    const LightComponent* selectedLight = scene.Registry().try_get<LightComponent>(selectedEntity);
     const bool isTranslateOnly =
-        scene.HasLightComponent(selectedEntity) &&
-        (scene.GetLightComponent(selectedEntity).type == LightType::Point ||
-         scene.GetLightComponent(selectedEntity).type == LightType::Ambient);
+        selectedLight != nullptr &&
+        (selectedLight->type == LightType::Point || selectedLight->type == LightType::Ambient);
     const ImGuizmo::OPERATION effectiveOperation = isTranslateOnly ? ImGuizmo::TRANSLATE : gizmo.operation;
 
     std::array<float, 3> snapValues = {

@@ -41,26 +41,29 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     }
 
     const entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    const ModelComponent previousModel = state.GetEditorWorld().GetModel(selectedEntity);
-    state.GetEditorWorld().GetModel(selectedEntity).sourcePath = path;
-    state.GetEditorWorld().GetModel(selectedEntity).sourceUuid = AssetRegistry::GetOrCreateUuid(path);
-    state.GetEditorWorld().GetModel(selectedEntity).displayName = std::filesystem::path(path).filename().string();
+    ModelComponent& selectedModel = state.GetEditorWorld().EditModel(selectedEntity);
+    const ModelComponent previousModel = selectedModel;
+    selectedModel.sourcePath = path;
+    selectedModel.sourceUuid = AssetRegistry::GetOrCreateUuid(path);
+    selectedModel.displayName = std::filesystem::path(path).filename().string();
 
     // Fast path: already cached.
     if (ModelCache::IsCached(path))
     {
         try
         {
-            RebuildSceneRenderables(state);
-            const ModelComponent& model = state.GetEditorWorld().GetModel(selectedEntity);
-            if (model.hasBounds)
+            state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
+            RefreshDirtySceneRenderables(state);
+            const ModelBoundsComponent& bounds = state.GetEditorWorld().GetModelBounds(selectedEntity);
+            if (bounds.hasBounds)
             {
-                state.camera.FrameBounds(model.minBounds, model.maxBounds);
+                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
             }
         }
         catch (...)
         {
-            state.GetEditorWorld().GetModel(selectedEntity) = previousModel;
+            selectedModel = previousModel;
+            state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
             throw;
         }
         state.lastModelLoadError.clear();
@@ -132,11 +135,11 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     {
         try
         {
-            RebuildSceneRenderables(state);
-            const ModelComponent& model = state.GetEditorWorld().GetModel(placedEntity);
-            if (model.hasBounds)
+            RefreshDirtySceneRenderables(state);
+            const ModelBoundsComponent& bounds = state.GetEditorWorld().GetModelBounds(placedEntity);
+            if (bounds.hasBounds)
             {
-                state.camera.FrameBounds(model.minBounds, model.maxBounds);
+                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
             }
         }
         catch (...)
@@ -192,11 +195,7 @@ void UpdateViewportModelPreview(RendererSharedState& state, const std::string& r
     ViewportDragPreviewState& preview = state.viewportDragPreview;
     const bool previewEntityStillExists =
         preview.active &&
-        std::find(
-            state.GetEditorWorld().GetEntityOrder().begin(),
-            state.GetEditorWorld().GetEntityOrder().end(),
-            preview.entity
-        ) != state.GetEditorWorld().GetEntityOrder().end();
+        state.GetEditorWorld().HasModelComponent(preview.entity);
 
     if (!previewEntityStillExists || preview.modelPath != modelPath.string())
     {
@@ -204,7 +203,7 @@ void UpdateViewportModelPreview(RendererSharedState& state, const std::string& r
 
         // Hover fires every frame the drag stays over the viewport, well before the user
         // commits to dropping. Only materialize a live preview once the model is already
-        // parsed and cached (cheap, synchronous): otherwise RebuildSceneRenderables() below
+        // parsed and cached (cheap, synchronous): otherwise the dirty refresh below
         // would call ModelLoader::LoadModel() synchronously on the UI thread for a model that
         // may be huge (e.g. NewSponza), blocking the app and spiking memory for the whole
         // parse just from hovering. The actual drop still works correctly via
@@ -229,7 +228,7 @@ void UpdateViewportModelPreview(RendererSharedState& state, const std::string& r
 
         try
         {
-            RebuildSceneRenderables(state);
+            RefreshDirtySceneRenderables(state);
         }
         catch (...)
         {
@@ -253,7 +252,8 @@ void UpdateViewportModelPreview(RendererSharedState& state, const std::string& r
         return;
     }
 
-    state.GetEditorWorld().GetTransform(preview.entity).translation = worldPosition;
+    state.GetEditorWorld().EditTransform(preview.entity).translation = worldPosition;
+    state.GetEditorWorld().MarkTransformDirty(preview.entity);
 }
 
 void CommitViewportModelPreview(RendererSharedState& state, const std::string& requestedModelPath, const glm::vec3& worldPosition)
@@ -263,11 +263,7 @@ void CommitViewportModelPreview(RendererSharedState& state, const std::string& r
     const bool previewEntityStillExists =
         preview.active &&
         preview.modelPath == modelPath.string() &&
-        std::find(
-            state.GetEditorWorld().GetEntityOrder().begin(),
-            state.GetEditorWorld().GetEntityOrder().end(),
-            preview.entity
-        ) != state.GetEditorWorld().GetEntityOrder().end();
+        state.GetEditorWorld().HasModelComponent(preview.entity);
 
     if (!previewEntityStillExists)
     {
@@ -275,7 +271,8 @@ void CommitViewportModelPreview(RendererSharedState& state, const std::string& r
         return;
     }
 
-    state.GetEditorWorld().GetTransform(preview.entity).translation = worldPosition;
+    state.GetEditorWorld().EditTransform(preview.entity).translation = worldPosition;
+    state.GetEditorWorld().MarkTransformDirty(preview.entity);
     state.GetEditorWorld().SetSelectedEntity(preview.entity);
     preview = {};
     state.lastModelLoadError.clear();
@@ -310,17 +307,18 @@ void ClearViewportModelPreview(RendererSharedState& state, bool restoreSelection
         }
     }
 
-    RebuildSceneRenderables(state);
+    RefreshDirtySceneRenderables(state);
 }
 
 void CreateSceneEntity(RendererSharedState& state)
 {
     SerializedEntityData entityData{};
-    entityData.tagName = "Entity " + std::to_string(state.GetEditorWorld().GetEntityOrder().size() + 1);
+    const size_t modelCount = state.GetEditorWorld().Registry().view<const ModelComponent>().size();
+    entityData.tagName = "Entity " + std::to_string(modelCount + 1);
     entityData.modelDisplayName = entityData.tagName;
     const entt::entity entity = state.GetEditorWorld().CreateEntity(entityData);
     state.GetEditorWorld().SetSelectedEntity(entity);
-    RebuildSceneRenderables(state);
+    RefreshDirtySceneRenderables(state);
     state.lastModelLoadError.clear();
     LOG_INFO("Created scene entity '{}'", entityData.tagName);
 }
@@ -334,7 +332,7 @@ void DeleteSelectedSceneEntity(RendererSharedState& state)
 
     const std::string tagName = state.GetEditorWorld().GetSelectedTag().name;
     state.GetEditorWorld().DestroyEntity(state.GetEditorWorld().GetSelectedEntity());
-    RebuildSceneRenderables(state);
+    RefreshDirtySceneRenderables(state);
     state.lastModelLoadError.clear();
     LOG_INFO("Deleted scene entity '{}'", tagName);
 }
@@ -364,7 +362,7 @@ void DeleteSelectedLightEntity(RendererSharedState& state)
     }
 
     const std::string tagName = state.GetEditorWorld().GetTag(selected).name;
-    state.GetEditorWorld().DestroyLightEntity(selected);
+    state.GetEditorWorld().DestroyEntity(selected);
     LOG_INFO("Deleted light entity '{}'", tagName);
 }
 
@@ -377,8 +375,8 @@ void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::s
     }
 
     entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent previousModel = state.GetEditorWorld().GetModel(selectedEntity);
-    ModelComponent& model = state.GetEditorWorld().GetModel(selectedEntity);
+    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
+    const ModelComponent previousModel = model;
     if (model.sourcePath.empty())
     {
         throw std::runtime_error("The selected entity does not reference an imported model");
@@ -389,11 +387,13 @@ void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::s
 
     try
     {
-        RebuildSceneRenderables(state);
+        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
+        RefreshDirtySceneRenderables(state);
     }
     catch (...)
     {
-        state.GetEditorWorld().GetModel(selectedEntity) = previousModel;
+        model = previousModel;
+        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
         throw;
     }
 
@@ -414,8 +414,8 @@ void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
     }
 
     entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent previousModel = state.GetEditorWorld().GetModel(selectedEntity);
-    ModelComponent& model = state.GetEditorWorld().GetModel(selectedEntity);
+    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
+    const ModelComponent previousModel = model;
     if (model.sourcePath.empty())
     {
         throw std::runtime_error("The selected entity does not reference an imported model");
@@ -426,11 +426,13 @@ void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 
     try
     {
-        RebuildSceneRenderables(state);
+        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
+        RefreshDirtySceneRenderables(state);
     }
     catch (...)
     {
-        state.GetEditorWorld().GetModel(selectedEntity) = previousModel;
+        model = previousModel;
+        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
         throw;
     }
 
@@ -448,14 +450,15 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
     }
 
     IEditorWorld& world = state.GetEditorWorld();
-    const auto IsValid = [&world](entt::entity e) -> bool
+    const auto IsValidSceneEntity = [&world](entt::entity e) -> bool
     {
-        if (e == entt::null)
-        {
-            return false;
-        }
-        const auto& order = world.GetEntityOrder();
-        return std::find(order.begin(), order.end(), e) != order.end();
+        return
+            world.IsValidEntity(e) &&
+            world.Registry().all_of<TagComponent, TransformComponent>(e);
+    };
+    const auto IsValidModelEntity = [&world](entt::entity e) -> bool
+    {
+        return world.HasModelComponent(e);
     };
 
     bool renderablesDirty = false;
@@ -463,14 +466,18 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
     {
         load.future.get(); // re-throws if the background parse failed
 
-        RebuildSceneRenderables(state);
-
-        if (IsValid(load.trackedEntity))
+        if (IsValidModelEntity(load.trackedEntity))
         {
-            const ModelComponent& model = world.GetModel(load.trackedEntity);
-            if (model.hasBounds)
+            world.MarkModelRenderableDirty(load.trackedEntity);
+        }
+        RefreshDirtySceneRenderables(state);
+
+        if (IsValidModelEntity(load.trackedEntity))
+        {
+            const ModelBoundsComponent& bounds = world.GetModelBounds(load.trackedEntity);
+            if (bounds.hasBounds)
             {
-                state.camera.FrameBounds(model.minBounds, model.maxBounds);
+                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
             }
             if (load.resetTransformOnComplete)
             {
@@ -485,18 +492,20 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
     }
     catch (const std::exception& error)
     {
-        if (IsValid(load.trackedEntity))
+        if (IsValidModelEntity(load.trackedEntity))
         {
             if (load.isReplacement)
             {
-                world.GetModel(load.trackedEntity).sourcePath = load.previousSourcePath;
-                world.GetModel(load.trackedEntity).sourceUuid = load.previousSourceUuid;
-                world.GetModel(load.trackedEntity).displayName = load.previousDisplayName;
+                ModelComponent& model = world.EditModel(load.trackedEntity);
+                model.sourcePath = load.previousSourcePath;
+                model.sourceUuid = load.previousSourceUuid;
+                model.displayName = load.previousDisplayName;
+                world.ClearModelRenderableDirty(load.trackedEntity);
             }
             else
             {
                 world.DestroyEntity(load.trackedEntity);
-                if (IsValid(load.previousSelection))
+                if (IsValidSceneEntity(load.previousSelection))
                 {
                     world.SetSelectedEntity(load.previousSelection);
                 }

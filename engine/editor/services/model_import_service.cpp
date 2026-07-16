@@ -359,8 +359,8 @@ void UpdateImportedMaterialDefinition(
         material
     );
 
-    RebuildSceneRenderables(state);
-    state.renderablesDirty = true;
+    MarkModelRenderablesDirtyForSourcePath(state, modelPath);
+    RefreshDirtySceneRenderables(state);
     LOG_INFO(
         "Updated material {} for model '{}'",
         materialIndex,
@@ -382,7 +382,7 @@ void UpdateImportedModelMaterialDefinitions(
     const std::filesystem::path modelPath(modelPathString);
 
     // Propagate user edits into the cached raw model data so that
-    // RebuildSceneRenderables picks up the new blend graphs and pbr factors.
+    // Dirty renderable refresh picks up the new blend graphs and PBR factors.
     std::shared_ptr<LoadedModelData> cached = ModelCache::Get(modelPathString);
     if (cached)
     {
@@ -403,8 +403,8 @@ void UpdateImportedModelMaterialDefinitions(
         }
     }
 
-    RebuildSceneRenderables(state);
-    state.renderablesDirty = true;
+    MarkModelRenderablesDirtyForSourcePath(state, modelPathString);
+    RefreshDirtySceneRenderables(state);
     LOG_INFO(
         "Saved {} material(s) for model '{}'",
         materials.size(),

@@ -28,6 +28,8 @@ endif()
 
 project(MiniEngine LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -200,6 +202,9 @@ add_subdirectory(engine/renderer)
 add_subdirectory(engine/editor)
 add_subdirectory(engine/application)
 add_subdirectory(app)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 foreach(_miniengine_engine_target IN ITEMS
     engine_core

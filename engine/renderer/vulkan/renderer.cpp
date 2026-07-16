@@ -190,6 +190,8 @@ void VulkanRenderer::DrawFrame()
         UploadSceneResources();
     }
 
+    EditorWorld().FlushDirtyTransforms();
+
     SyncSceneViewportLayer();
 
     uint32_t imageIndex = 0;
@@ -214,6 +216,7 @@ void VulkanRenderer::DrawFrame()
         FromVkExtent(m_sceneViewportLayer->GetExtent())
     );
     ApplyUiActions(uiFrame);
+    EditorWorld().FlushDirtyTransforms();
     if (State().renderablesDirty)
     {
         UploadSceneResources();

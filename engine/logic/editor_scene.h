@@ -2,44 +2,46 @@
 
 #include "editor_world.h"
 
+#include <unordered_map>
+
 class EditorScene final : public IEditorWorld
 {
 public:
     EditorScene();
 
-    void LoadConfig(const std::string& path);
-    void SetSceneFilePath(const std::string& path);
-    void CreateTwoCubeTestScene();
-    void Clear();
-    entt::entity CreateEntity(const SerializedEntityData& entityData);
-    void DestroyEntity(entt::entity entity);
+    void LoadConfig(const std::string& path) override;
+    void SetSceneFilePath(const std::string& path) override;
+    void CreateTwoCubeTestScene() override;
+    void Clear() override;
+    entt::entity CreateEntity(const SerializedEntityData& entityData) override;
+    entt::entity CreateLightEntity(const SerializedLightData& lightData) override;
+    void DestroyEntity(entt::entity entity) override;
 
-    bool HasEntities() const;
-    bool HasSelection() const;
-    bool IsSelected(entt::entity entity) const;
-    entt::entity GetSelectedEntity() const;
-    void SetSelectedEntity(entt::entity entity);
-    void ClearSelection();
-    const std::vector<entt::entity>& GetEntityOrder() const override;
+    bool HasEntities() const override;
+    bool HasSelection() const override;
+    bool IsSelected(entt::entity entity) const override;
+    entt::entity GetSelectedEntity() const override;
+    void SetSelectedEntity(entt::entity entity) override;
+    void ClearSelection() override;
 
-    TagComponent& GetTag(entt::entity entity) override;
-    const TagComponent& GetTag(entt::entity entity) const override;
-    TransformComponent& GetTransform(entt::entity entity) override;
-    const TransformComponent& GetTransform(entt::entity entity) const override;
-    ModelComponent& GetModel(entt::entity entity) override;
-    const ModelComponent& GetModel(entt::entity entity) const override;
+    const entt::registry& Registry() const override { return m_registry; }
+    const std::vector<entt::entity>& GetSceneOrder() const override;
+    bool IsValidEntity(entt::entity entity) const override;
+    TagComponent& EditTag(entt::entity entity) override;
+    TransformComponent& EditTransform(entt::entity entity) override;
+    ModelComponent& EditModel(entt::entity entity) override;
+    LightComponent& EditLightComponent(entt::entity entity) override;
+    void MarkTransformDirty(entt::entity entity) override;
+    void MarkModelRenderableDirty(entt::entity entity) override;
+    void ClearModelRenderableDirty(entt::entity entity) override;
+    void ClearAllModelRenderableDirty() override;
+    std::vector<entt::entity> GetDirtyModelRenderableEntities() const override;
+    void FlushDirtyTransforms() override;
 
-    TagComponent& GetSelectedTag();
-    const TagComponent& GetSelectedTag() const;
-    TransformComponent& GetSelectedTransform();
-    const TransformComponent& GetSelectedTransform() const;
-    ModelComponent& GetSelectedModel();
-    const ModelComponent& GetSelectedModel() const;
+    GizmoSettings& GetGizmoSettings() override;
+    const GizmoSettings& GetGizmoSettings() const override;
 
-    GizmoSettings& GetGizmoSettings();
-    const GizmoSettings& GetGizmoSettings() const;
-
-    void ResetSelectedTransform();
+    void ResetSelectedTransform() override;
     void UpdateModelInfo(
         entt::entity entity,
         const std::string& displayName,
@@ -50,42 +52,34 @@ public:
         bool hasBounds,
         const std::vector<ModelImportedMaterialInfo>& importedMaterials,
         const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes
-    );
+    ) override;
 
     glm::mat4 GetModelMatrix(entt::entity entity) const override;
     void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix) override;
     glm::vec3 GetBoundsCenter(entt::entity entity) const override;
-    void ForEachEntity(const SceneEntityVisitor& visitor) const override;
 
-    void ApplySceneData(const SerializedSceneData& sceneData);
+    void ApplySceneData(const SerializedSceneData& sceneData) override;
     SerializedSceneData CaptureSceneData() const override;
-    void SaveSceneToFile(const std::string& path) const;
-    std::string BuildSceneYamlPreview() const;
-    const std::string& GetConfigPath() const;
-    const std::string& GetSceneFilePath() const;
-
-    // Light entity management
-    entt::entity CreateLightEntity(const SerializedLightData& lightData) override;
-    void DestroyLightEntity(entt::entity entity) override;
-    bool HasLightComponent(entt::entity entity) const override;
-    LightComponent& GetLightComponent(entt::entity entity) override;
-    const LightComponent& GetLightComponent(entt::entity entity) const override;
-    const std::vector<entt::entity>& GetLightOrder() const override;
-    void ForEachLight(
-        const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
-    ) const override;
+    void SaveSceneToFile(const std::string& path) const override;
+    std::string BuildSceneYamlPreview() const override;
+    const std::string& GetConfigPath() const override;
+    const std::string& GetSceneFilePath() const override;
 
 private:
-    bool IsValidEntity(entt::entity entity) const;
     void EnsureSelection();
+    void OnEntityDestroyed(entt::registry& registry, entt::entity entity);
+    void OnSceneEntityIdDestroyed(entt::registry& registry, entt::entity entity);
+    std::string AdoptOrCreateEntityUuid(const std::string& requestedUuid);
     static glm::mat4 BuildTransformMatrix(const TransformComponent& transform);
 
-    entt::registry m_registry;
-    std::vector<entt::entity> m_entityOrder;
-    std::vector<entt::entity> m_lightOrder;
+    std::vector<entt::entity> m_sceneOrder;
     entt::entity m_selectedEntity = entt::null;
     TransformComponent m_defaultTransform;
     GizmoSettings m_gizmoSettings;
     std::string m_configPath;
     std::string m_sceneFilePath;
+    std::unordered_map<std::string, entt::entity> m_entityByUuid;
+    // Declared last: the registry is destroyed first, so its on_destroy
+    // listeners can never observe already-destroyed members above.
+    entt::registry m_registry;
 };

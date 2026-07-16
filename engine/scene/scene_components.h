@@ -54,6 +54,11 @@ struct ModelImportedSubmeshInfo
     bool hasTangents = false;
 };
 
+struct SceneEntityIdComponent
+{
+    std::string value;
+};
+
 struct TagComponent
 {
     std::string name = "Cube";
@@ -66,19 +71,38 @@ struct TransformComponent
     glm::vec3 scale{ 1.0f, 1.0f, 1.0f };
 };
 
+struct WorldTransformComponent
+{
+    glm::mat4 matrix{ 1.0f };
+};
+
+// Empty tags consumed in batches by scene/render systems.
+struct TransformDirty {};
+struct ModelRenderableDirty {};
+
 struct ModelComponent
 {
     std::string sourcePath;
     std::string displayName = "Cube";
     std::string baseColorTextureOverridePath;
-    uint32_t submeshCount = 1;
-    glm::vec3 minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
-    glm::vec3 maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
-    bool hasBounds = true;
-    std::vector<ModelImportedMaterialInfo> importedMaterials;
-    std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
     // Stable asset ids matching sourcePath / baseColorTextureOverridePath;
     // they let serialized references survive asset renames and moves.
     std::string sourceUuid;
     std::string baseColorTextureOverrideUuid;
+};
+
+struct ModelBoundsComponent
+{
+    glm::vec3 minBounds = WorldUnits::kDefaultCubeMinBoundsMeters;
+    glm::vec3 maxBounds = WorldUnits::kDefaultCubeMaxBoundsMeters;
+    bool hasBounds = true;
+};
+
+// Editor-only import details are kept out of the runtime-facing model and
+// bounds components so hot ECS views do not pull this cold, variable data.
+struct EditorModelMetadataComponent
+{
+    uint32_t submeshCount = 1;
+    std::vector<ModelImportedMaterialInfo> importedMaterials;
+    std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
 };

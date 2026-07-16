@@ -46,6 +46,8 @@ public:
     const ISceneWorld& GetSceneWorld() const;
 
     void SetRenderSubmeshes(std::vector<CpuRenderSubmesh> renderSubmeshes);
+    void ReplaceEntityRenderSubmeshes(entt::entity entity, std::vector<CpuRenderSubmesh> renderSubmeshes);
+    bool RemoveEntityRenderSubmeshes(entt::entity entity);
     void ClearRenderSubmeshes();
     const std::vector<CpuRenderSubmesh>& GetRenderSubmeshes() const;
     glm::mat4 GetModelMatrix(entt::entity entity) const;

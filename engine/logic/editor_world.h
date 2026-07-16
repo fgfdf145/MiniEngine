@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct GizmoSettings
@@ -27,6 +28,7 @@ struct GizmoSettings
 
 struct SerializedEntityData
 {
+    std::string entityUuid;
     std::string tagName = "Cube";
     std::string modelDisplayName = "Cube";
     std::string modelSourcePath;
@@ -38,6 +40,7 @@ struct SerializedEntityData
 
 struct SerializedLightData
 {
+    std::string entityUuid;
     std::string tagName = "Light";
     LightType lightType = LightType::Point;
     glm::vec3 color{ 1.0f, 1.0f, 1.0f };
@@ -54,6 +57,8 @@ struct SerializedSceneData
     std::vector<SerializedEntityData> entities;
     std::vector<SerializedLightData> lights;
     GizmoSettings gizmo;
+    std::string selectedEntityUuid;
+    // Legacy v1/v2 model-list index, retained for backward-compatible loads.
     int selectedEntityIndex = 0;
 };
 
@@ -67,6 +72,9 @@ public:
     virtual void CreateTwoCubeTestScene() = 0;
     virtual void Clear() = 0;
     virtual entt::entity CreateEntity(const SerializedEntityData& entityData) = 0;
+    virtual entt::entity CreateLightEntity(const SerializedLightData& lightData) = 0;
+    // Destroys any scene entity (model or light); scene order and selection
+    // are kept in sync by the implementation regardless of entity kind.
     virtual void DestroyEntity(entt::entity entity) = 0;
 
     virtual bool HasEntities() const = 0;
@@ -75,13 +83,6 @@ public:
     virtual entt::entity GetSelectedEntity() const = 0;
     virtual void SetSelectedEntity(entt::entity entity) = 0;
     virtual void ClearSelection() = 0;
-
-    virtual TagComponent& GetSelectedTag() = 0;
-    virtual const TagComponent& GetSelectedTag() const = 0;
-    virtual TransformComponent& GetSelectedTransform() = 0;
-    virtual const TransformComponent& GetSelectedTransform() const = 0;
-    virtual ModelComponent& GetSelectedModel() = 0;
-    virtual const ModelComponent& GetSelectedModel() const = 0;
 
     virtual GizmoSettings& GetGizmoSettings() = 0;
     virtual const GizmoSettings& GetGizmoSettings() const = 0;
@@ -106,16 +107,30 @@ public:
     virtual const std::string& GetConfigPath() const = 0;
     virtual const std::string& GetSceneFilePath() const = 0;
 
-    // Light entity management
-    virtual entt::entity CreateLightEntity(const SerializedLightData& lightData) = 0;
-    virtual void DestroyLightEntity(entt::entity entity) = 0;
-    virtual bool HasLightComponent(entt::entity entity) const = 0;
-    virtual LightComponent& GetLightComponent(entt::entity entity) = 0;
-    virtual const LightComponent& GetLightComponent(entt::entity entity) const = 0;
-    virtual const std::vector<entt::entity>& GetLightOrder() const = 0;
-    virtual void ForEachLight(
-        const std::function<void(entt::entity, const TagComponent&, const TransformComponent&, const LightComponent&)>& visitor
-    ) const = 0;
+    // Convenience accessors; callers must hold a valid selection (HasSelection()).
+    TagComponent& EditSelectedTag() { return EditTag(GetSelectedEntity()); }
+    const TagComponent& GetSelectedTag() const { return GetTag(GetSelectedEntity()); }
+    TransformComponent& EditSelectedTransform() { return EditTransform(GetSelectedEntity()); }
+    const TransformComponent& GetSelectedTransform() const { return GetTransform(GetSelectedEntity()); }
+    ModelComponent& EditSelectedModel() { return EditModel(GetSelectedEntity()); }
+    const ModelComponent& GetSelectedModel() const { return GetModel(GetSelectedEntity()); }
+    const ModelBoundsComponent& GetSelectedModelBounds() const { return GetModelBounds(GetSelectedEntity()); }
+    const EditorModelMetadataComponent& GetSelectedModelMetadata() const { return GetModelMetadata(GetSelectedEntity()); }
+
+    bool HasLightComponent(entt::entity entity) const
+    {
+        return IsValidEntity(entity) && Registry().all_of<LightComponent>(entity);
+    }
+    virtual LightComponent& EditLightComponent(entt::entity entity) = 0;
+    const LightComponent& GetLightComponent(entt::entity entity) const { return Registry().get<LightComponent>(entity); }
+
+    template<typename Visitor>
+    void ForEachLight(Visitor&& visitor) const
+    {
+        const entt::registry& registry = Registry();
+        registry.view<const TagComponent, const TransformComponent, const LightComponent>()
+            .each(std::forward<Visitor>(visitor));
+    }
 };
 
 std::unique_ptr<IEditorWorld> CreateEditorWorld();
