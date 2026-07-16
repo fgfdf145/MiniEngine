@@ -3,7 +3,6 @@
 #include "../camera.h"
 #include "common.h"
 
-#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 
 #include <vector>
@@ -55,6 +54,16 @@ struct alignas(16) CameraUniformData
     GpuLightData lights[kMaxSceneLights];
     glm::uvec4 sceneLightCount{ 0u, 0u, 0u, 0u };
 };
+
+// This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
+// the shader's std140 CameraBuffer block exactly. Every member is a 16-byte multiple (mat4/vec4
+// only — never add vec3/scalars without manual padding), which keeps the C++ layout identical
+// to std140 without relying on GLM alignment macros.
+static_assert(sizeof(GpuLightData) == 64, "GpuLightData must stay 4 x vec4 to match std140");
+static_assert(
+    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
+    "CameraUniformData layout drifted from the shader CameraBuffer std140 block"
+);
 
 class VulkanUniformBuffer
 {

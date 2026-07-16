@@ -17,7 +17,6 @@ struct VulkanDrawItem
 struct VulkanFrameSyncObjects
 {
     VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore renderFinishedSemaphore = VK_NULL_HANDLE;
     VkFence inFlightFence = VK_NULL_HANDLE;
 };
 
@@ -45,6 +44,11 @@ private:
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;
     std::vector<VulkanFrameSyncObjects> m_frameSyncObjects;
+    // Signaled by Submit and waited on by Present. Indexed by swapchain image (not by frame in
+    // flight): the presentation engine may still be waiting on the semaphore after the frame's
+    // fence has signaled, so a per-frame semaphore could be reused while still in use. Reuse per
+    // image is safe because reacquiring an image implies its previous present consumed the wait.
+    std::vector<VkSemaphore> m_renderFinishedSemaphores;
     std::vector<VkFence> m_imagesInFlight;
     uint32_t m_currentFrame = 0;
 

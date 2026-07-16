@@ -15,3 +15,8 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{ 1.0f };
     MaterialPushConstants material;
 };
+
+// Push constants are limited to 128 bytes by the Vulkan minimum guarantee
+// (maxPushConstantsSize); this struct sits exactly at that limit.
+static_assert(sizeof(MaterialPushConstants) == 64, "MaterialPushConstants must stay 4 x vec4");
+static_assert(sizeof(ObjectPushConstants) == 128, "ObjectPushConstants must not exceed the 128-byte push constant guarantee");

@@ -70,12 +70,14 @@ VulkanPipeline::VulkanPipeline(
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    // Backface culling disabled for now (was VK_CULL_MODE_BACK_BIT with VK_FRONT_FACE_CLOCKWISE
-    // to compensate for the render projection's Y-flip; see git history). The `doubleSided`
-    // parameter is kept so callers/pipeline variants still compile, but it's currently a no-op.
-    (void)doubleSided;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    // Winding: Vulkan framebuffer Y points down, which alone would flip glTF's CCW front faces
+    // to CW — but the render projection's Y-flip (proj[1][1] *= -1, see UpdateViewportMatrices)
+    // flips them back, so front faces arrive COUNTER_CLOCKWISE in framebuffer space (same
+    // combination as the classic Vulkan tutorial). Declaring CLOCKWISE here culls the camera-
+    // facing side of every model. Materials flagged doubleSided (glTF doubleSided=true, e.g.
+    // foliage/glass) use the no-cull pipeline variant instead.
+    rasterizer.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;

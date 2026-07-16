@@ -16,13 +16,16 @@ VulkanCommandContext::~VulkanCommandContext()
         {
             vkDestroyFence(m_device, frameSyncObjects.inFlightFence, nullptr);
         }
-        if (frameSyncObjects.renderFinishedSemaphore != VK_NULL_HANDLE)
-        {
-            vkDestroySemaphore(m_device, frameSyncObjects.renderFinishedSemaphore, nullptr);
-        }
         if (frameSyncObjects.imageAvailableSemaphore != VK_NULL_HANDLE)
         {
             vkDestroySemaphore(m_device, frameSyncObjects.imageAvailableSemaphore, nullptr);
+        }
+    }
+    for (VkSemaphore renderFinishedSemaphore : m_renderFinishedSemaphores)
+    {
+        if (renderFinishedSemaphore != VK_NULL_HANDLE)
+        {
+            vkDestroySemaphore(m_device, renderFinishedSemaphore, nullptr);
         }
     }
     if (m_commandPool != VK_NULL_HANDLE)
@@ -85,7 +88,7 @@ void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
 
     const VkSemaphore waitSemaphores[] = { currentFrameSyncObjects.imageAvailableSemaphore };
     const VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    const VkSemaphore signalSemaphores[] = { currentFrameSyncObjects.renderFinishedSemaphore };
+    const VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphores[imageIndex] };
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -105,7 +108,7 @@ void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
 
 VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex)
 {
-    const VkSemaphore signalSemaphores[] = { m_frameSyncObjects[m_currentFrame].renderFinishedSemaphore };
+    const VkSemaphore signalSemaphores[] = { m_renderFinishedSemaphores[imageIndex] };
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -177,12 +180,17 @@ void VulkanCommandContext::CreateSyncObjects(size_t swapchainImageCount)
             "Failed to create image available semaphore"
         );
         CheckVulkan(
-            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &frameSyncObjects.renderFinishedSemaphore),
-            "Failed to create render finished semaphore"
-        );
-        CheckVulkan(
             vkCreateFence(m_device, &fenceInfo, nullptr, &frameSyncObjects.inFlightFence),
             "Failed to create in-flight fence"
+        );
+    }
+
+    m_renderFinishedSemaphores.resize(swapchainImageCount, VK_NULL_HANDLE);
+    for (VkSemaphore& renderFinishedSemaphore : m_renderFinishedSemaphores)
+    {
+        CheckVulkan(
+            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &renderFinishedSemaphore),
+            "Failed to create render finished semaphore"
         );
     }
 

@@ -344,9 +344,11 @@ void VulkanRenderer::DestroyPipelineResources()
     m_graphicsPipeline.reset();
     m_uniformBuffer.reset();
     // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever
-    // the pipeline is torn down so nothing outlives the logical device.
+    // the pipeline is torn down so nothing outlives the logical device. m_textureCacheKeys must
+    // NOT be cleared here: it stays index-paired with m_textures (which survives pipeline
+    // teardown), and wiping it makes the next UploadSceneResources destroy every live texture
+    // instead of pooling it — while in-flight frames may still be sampling them.
     m_texturePool.clear();
-    m_textureCacheKeys.clear();
 }
 
 void VulkanRenderer::RecreateSwapchain()
@@ -395,13 +397,23 @@ void VulkanRenderer::SyncSceneViewportLayer()
 void VulkanRenderer::UploadSceneResources()
 {
     // Move live textures into the pool so they can be reused without re-uploading.
-    // This prevents 2脳 peak VRAM usage when rebuilding an unchanged texture set.
-    for (size_t i = 0; i < m_textures.size() && i < m_textureCacheKeys.size(); ++i)
+    // This prevents 2x peak VRAM usage when rebuilding an unchanged texture set.
+    // Anything that can't be pooled is parked in retiredTextures instead of being destroyed
+    // here: the GPU may still be sampling it through the old descriptor sets, so its
+    // destruction must wait until after ApplyRenderContent has waited for in-flight frames.
+    std::vector<std::unique_ptr<VulkanTexture>> retiredTextures;
+    for (size_t i = 0; i < m_textures.size(); ++i)
     {
-        if (!m_textureCacheKeys[i].empty() && m_textures[i])
+        if (!m_textures[i])
         {
-            m_texturePool.emplace(m_textureCacheKeys[i], std::move(m_textures[i]));
+            continue;
         }
+        if (i < m_textureCacheKeys.size() && !m_textureCacheKeys[i].empty() &&
+            m_texturePool.emplace(m_textureCacheKeys[i], std::move(m_textures[i])).second)
+        {
+            continue;
+        }
+        retiredTextures.push_back(std::move(m_textures[i]));
     }
     m_textures.clear();
     m_textureCacheKeys.clear();
@@ -680,10 +692,15 @@ void VulkanRenderer::UploadSceneResources()
     uploadBatch.Flush();
     LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
 
-    // Textures remaining in the pool are no longer referenced; destroy them now.
-    m_texturePool.clear();
-
     ApplyRenderContent(std::move(newTextures), std::move(newMaterialTextureSlots), std::move(newRenderSubmeshes));
+
+    // Textures remaining in the pool (and the retired ones) are no longer referenced; destroy
+    // them only now that ApplyRenderContent has waited for the in-flight frames and destroyed
+    // the old descriptor sets. Clearing earlier destroys samplers/image views the GPU may still
+    // be reading through the old descriptor sets (caught by validation as
+    // vkDestroySampler-while-in-use).
+    m_texturePool.clear();
+    retiredTextures.clear();
 
     // Track the cache keys for the textures now in m_textures, so the next upload can pool them.
     m_textureCacheKeys = std::move(newCacheKeys);

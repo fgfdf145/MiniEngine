@@ -154,6 +154,20 @@ ctest --test-dir ./out/build/vs2026-x64 -C Debug --output-on-failure
 
 > 倒序记录。每条：日期 + 做了什么 + 关键决定/坑。细节多的可以链到 docs/ 下的专项文档。
 
+### 2026-07-16 — 渲染管线欠账清理(审查遗留"第 0 步")
+- **恢复背面剔除**:默认管线 `CULL_MODE_BACK` + `FRONT_FACE_COUNTER_CLOCKWISE`,`doubleSided` 材质继续走 no-cull 管线变体。坑:历史代码(及其注释)声明的 `CLOCKWISE` 是错的——Vulkan 帧缓冲 Y 朝下本会把 glTF 的 CCW 正面翻成 CW,但渲染投影的 Y 翻转(`proj[1][1] *= -1`)又翻了回来,正面实际是 CCW(与经典 vulkan-tutorial 组合一致);声明 CW 会把所有模型朝向相机的面剔掉,这大概就是当年(`c2643f4`)模型缺面后干脆全局关掉剔除的根因。注意:若未来支持负缩放镜像变换,绕向会逐对象翻转,需动态翻转 cullMode。
+- **Debug 构建集成 Khronos 验证层 + debug messenger**(`instance.cpp`):Vulkan 错误/警告直接进引擎日志,`--frames 60` 冒烟的"日志无 error"检查从此自动覆盖 Vulkan 误用;运行时探测层可用性,缺失则警告并继续。坑:本机 OBS 类隐式层会向 swapchain 注入 `MUTABLE_FORMAT` 位触发验证误报(引擎从不设置该 flags),callback 里按 message id 识别并降级为 warning。
+- **验证层当场抓到一个真实既有 bug**(60 帧冒烟从未触发):`UploadSceneResources` 在等待在途帧之前就销毁旧贴图——① `m_texturePool.clear()` 在 `ApplyRenderContent`(内含 `WaitForAllFrames` + 旧描述符集销毁)之前执行;② `DestroyPipelineResources` 清掉 `m_textureCacheKeys` 但保留 `m_textures`,键值失配导致下次上传时全部活贴图被直接销毁而非入池。修复:贴图销毁(池 + retired 列表)统一推迟到 `ApplyRenderContent` 之后;`DestroyPipelineResources` 不再清 cache keys。
+- `renderFinishedSemaphore` 改为按交换链镜像分配(原按 frame-in-flight,present 引擎可能仍占用时被复用)。
+- 移除 `uniform_buffer.h` 里的 `GLM_FORCE_DEFAULT_ALIGNED_GENTYPES`(include 顺序敏感的 ODR 隐患),改用 `static_assert` 锁死 UBO(688 字节)与推送常量(128 字节)布局;约定:UBO 结构体只允许 16 字节倍数成员(mat4/vec4),不要加 vec3/标量。
+- 验证:60 帧冒烟 + Sponza(406 submesh / 79 贴图)后台运行 30s+,验证层全程零错误;ctest 通过。**剔除正确性建议再人眼确认一次**(验证层无法发现"模型内外翻"类视觉问题)。
+
+### 2026-07-16 — 渲染管线正确性审查(阶段四前置检查)
+- 静态审查 + 运行时验证均通过:60 帧冒烟退出码 0;注入 Khronos 验证层(`VK_LOADER_LAYERS_ENABLE=*validation*`)零错误零警告;ctest 回归通过。
+- 核对无误的关键点:UBO std140 布局(C++ `CameraUniformData` 688 字节与 GLSL 逐字段对齐)、推送常量恰好 128 字节(Vulkan 保证上限)、顶点属性 5 个 location 一致、渲染投影 `perspectiveRH_ZO` + Y 翻转(拾取用不翻转投影)、sRGB 格式分配(baseColor/emissive 走 SRGB,数据贴图走 UNORM)、贴图上传/mip 生成屏障序列、帧同步(per-frame fence + imagesInFlight)。
+- 坑:本机验证层报的唯一错误(`vkCreateSwapchainKHR` 带 `MUTABLE_FORMAT` 位)来自第三方隐式层(OBS 类钩子)注入,`VK_LOADER_LAYERS_DISABLE=~implicit~` 后消失,与引擎无关。
+- 遗留小问题(不阻塞,留给 RHI 阶段):① 双面管线目前是空操作(两条管线都 CULL_MODE_NONE,`renderer.cpp` 中"default backface-culled"注释已过时);② `renderFinishedSemaphore` 按帧而非按交换链镜像分配,present 复用有理论风险;③ 代码未集成验证层/debug messenger,建议 Debug 构建默认启用并接入引擎日志;④ `GLM_FORCE_DEFAULT_ALIGNED_GENTYPES` 只在 `uniform_buffer.h` 定义,include 顺序敏感(当前结构体全是 vec4/mat4 故无实害)。
+
 ### 2026-07-16 — EnTT P2 边界收口 + 稳定场景实体 ID
 - 移除公共可变 Registry：外部系统仍可使用 const view 高效查询，但实体生命周期、组件写入与脏标记必须走场景接口，避免绕过顺序、选择和缓存不变量。
 - 新增 `SceneEntityIdComponent` 与场景 UUID 索引；模型、灯光和临时预览实体创建时都会获得 UUID，销毁信号同步清理索引。
