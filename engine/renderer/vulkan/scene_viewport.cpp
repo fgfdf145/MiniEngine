@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 
 namespace
 {
@@ -17,6 +19,19 @@ const std::array<VkFormat, 3> kDepthFormats = {
 bool HasStencilComponent(VkFormat format)
 {
     return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+template<typename Handle>
+ImTextureID ToImTextureId(Handle handle)
+{
+    if constexpr(std::is_pointer_v<Handle>)
+    {
+        return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(handle));
+    }
+    else
+    {
+        return static_cast<ImTextureID>(handle);
+    }
 }
 }
 
@@ -106,7 +121,7 @@ VkExtent2D VulkanSceneViewport::GetExtent() const
 
 ImTextureID VulkanSceneViewport::GetTextureId(uint32_t frameIndex) const
 {
-    return reinterpret_cast<ImTextureID>(m_frames.at(frameIndex).textureDescriptorSet);
+    return ToImTextureId(m_frames.at(frameIndex).textureDescriptorSet);
 }
 
 bool VulkanSceneViewport::MatchesExtent(VkExtent2D extent) const

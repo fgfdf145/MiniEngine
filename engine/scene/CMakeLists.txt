@@ -5,14 +5,15 @@ add_library(engine_scene
     scene_world.h
     world_units.h
 )
+miniengine_group_target_sources(engine_scene)
 
 target_include_directories(engine_scene
-PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 target_link_libraries(engine_scene
-PUBLIC
-    glm::glm
-    EnTT::EnTT
+    PUBLIC
+        glm::glm
+        EnTT::EnTT
 )

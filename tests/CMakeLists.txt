@@ -1,10 +1,11 @@
 add_executable(miniengine_scene_identity_tests
     editor_scene_identity_tests.cpp
 )
+miniengine_group_target_sources(miniengine_scene_identity_tests)
 
 target_link_libraries(miniengine_scene_identity_tests
-PRIVATE
-    engine_logic
+    PRIVATE
+        engine_logic
 )
 
 add_test(

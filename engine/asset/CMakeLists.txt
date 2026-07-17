@@ -1,34 +1,44 @@
 ﻿add_library(engine_asset
     asset_manager.cpp
+    asset_manager.h
     asset_registry.cpp
-    model_cache.cpp
+    asset_registry.h
     gltf_model_loader.cpp
+    gltf_model_loader.h
     material_graph_runtime.cpp
+    material_graph_runtime.h
     mesh.cpp
+    mesh.h
+    model_cache.cpp
+    model_cache.h
     model_loader.cpp
+    model_loader.h
     model_post_process.cpp
+    model_post_process.h
     texture_loader.cpp
+    texture_loader.h
 )
+miniengine_group_target_sources(engine_asset)
 
 target_include_directories(engine_asset
-PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-PRIVATE
-    ${Stb_INCLUDE_DIR}
-    ${MINIENGINE_TINYGLTF_INCLUDE_DIR}
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE
+        "${Stb_INCLUDE_DIR}"
+        "${MINIENGINE_TINYGLTF_INCLUDE_DIR}"
 )
 
 target_compile_definitions(engine_asset
-PRIVATE
-    MINIENGINE_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
-    MINIENGINE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
+    PRIVATE
+        MINIENGINE_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
+        MINIENGINE_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
 )
 
 target_link_libraries(engine_asset
-PUBLIC
-    engine_scene
-    engine_core
-    glm::glm
-    yaml-cpp::yaml-cpp
-    imgui::imgui
+    PUBLIC
+        engine_core
+        engine_scene
+        glm::glm
+        imgui::imgui
+        yaml-cpp::yaml-cpp
 )

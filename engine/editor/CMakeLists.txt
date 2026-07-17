@@ -1,47 +1,59 @@
 add_library(engine_editor
     editor_backend_base.cpp
+    editor_backend_base.h
     editor_ui.cpp
+    editor_ui.h
     engine_settings.cpp
+    engine_settings.h
+    renderer_shared_state.h
     services/entity_edit_service.cpp
+    services/entity_edit_service.h
     services/model_import_service.cpp
+    services/model_import_service.h
     services/scene_io_service.cpp
+    services/scene_io_service.h
     services/scene_renderables.cpp
+    services/scene_renderables.h
     ui/editor_asset_browser_panel.cpp
     ui/editor_dock_toolbar.cpp
     ui/editor_material_graph.cpp
+    ui/editor_material_graph.h
     ui/editor_misc_panels.cpp
     ui/editor_model_preview.cpp
+    ui/editor_model_preview.h
     ui/editor_model_processor_panel.cpp
     ui/editor_scene_panel.cpp
     ui/editor_theme_panel.cpp
+    ui/editor_ui_internal.h
     ui/editor_ui_shared.cpp
     ui/editor_viewport_panel.cpp
 )
+miniengine_group_target_sources(engine_editor)
 
 target_include_directories(engine_editor
-PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 target_compile_definitions(engine_editor
-PRIVATE
-    MINIENGINE_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
-    MINIENGINE_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
+    PRIVATE
+        MINIENGINE_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
+        MINIENGINE_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
 )
 
 target_link_libraries(engine_editor
-PUBLIC
-    engine_render_core
-    engine_logic
-    engine_asset
-    engine_platform
-    engine_scene
-    engine_core
-    SDL3::SDL3
-    glm::glm
-    imgui::imgui
-    imguizmo::imguizmo
-    EnTT::EnTT
-PRIVATE
-    yaml-cpp::yaml-cpp
+    PUBLIC
+        engine_render_core
+        engine_logic
+        engine_asset
+        engine_platform
+        engine_scene
+        engine_core
+        SDL3::SDL3
+        glm::glm
+        imgui::imgui
+        imguizmo::imguizmo
+        EnTT::EnTT
+    PRIVATE
+        yaml-cpp::yaml-cpp
 )

@@ -1,10 +1,11 @@
 add_executable(miniengine_app
     main.cpp
 )
+miniengine_group_target_sources(miniengine_app)
 
 target_link_libraries(miniengine_app
-PRIVATE
-    engine_application
+    PRIVATE
+        engine_application
 )
 
 if(WIN32)

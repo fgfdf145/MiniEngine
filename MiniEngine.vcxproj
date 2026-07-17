@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Visual Studio entry point only. CMakePresets.json remains the source of truth
+  for configure, build, dependencies, compiler flags, and output locations.
+-->
+<Project DefaultTargets="Build" ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <ProjectGuid>{31E47B70-C251-4D04-BD46-9F64177984AD}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+    <RootNamespace>MiniEngine</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
+            Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
+            Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+    <IntDir>$(ProjectDir)out\build\vs-wrapper\$(Platform)\$(Configuration)\</IntDir>
+    <NMakePreprocessorDefinitions>WIN32;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;MINIENGINE_PROJECT_DIR=&quot;$(ProjectDir).&quot;;MINIENGINE_ASSET_DIR=&quot;$(ProjectDir)assets&quot;;MINIENGINE_SHADER_DIR=&quot;$(ProjectDir)shaders&quot;</NMakePreprocessorDefinitions>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='x64'">
+    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir).deps\vcpkg_installed\x64\x64-windows\include;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)'=='Win32'">
+    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir).deps\vcpkg_installed\x86\x86-windows\include;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <NMakeBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-debug --parallel</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-debug --clean-first --parallel</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-debug --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)out\build\vs2026-x64\app\Debug\miniengine_app.exe</NMakeOutput>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <NMakeBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-release --parallel</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-release --clean-first --parallel</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x64 &amp;&amp; cmake --build --preset vs2026-x64-release --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)out\build\vs2026-x64\app\Release\miniengine_app.exe</NMakeOutput>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <NMakeBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-debug --parallel</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-debug --clean-first --parallel</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-debug --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)out\build\vs2026-x86\app\Debug\miniengine_app.exe</NMakeOutput>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <NMakeBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-release --parallel</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-release --clean-first --parallel</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; cmake --preset vs2026-x86 &amp;&amp; cmake --build --preset vs2026-x86-release --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)out\build\vs2026-x86\app\Release\miniengine_app.exe</NMakeOutput>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- These globs populate Solution Explorer only; CMake owns the build graph. -->
+  <ItemGroup>
+    <ClCompile Include="app\**\*.c;app\**\*.cc;app\**\*.cpp;app\**\*.cxx;engine\**\*.c;engine\**\*.cc;engine\**\*.cpp;engine\**\*.cxx;tests\**\*.c;tests\**\*.cc;tests\**\*.cpp;tests\**\*.cxx" />
+    <ClInclude Include="app\**\*.h;app\**\*.hh;app\**\*.hpp;app\**\*.hxx;app\**\*.inl;engine\**\*.h;engine\**\*.hh;engine\**\*.hpp;engine\**\*.hxx;engine\**\*.inl;tests\**\*.h;tests\**\*.hh;tests\**\*.hpp;tests\**\*.hxx;tests\**\*.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt" />
+    <None Include="README.md;docs\**\*.md" />
+    <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md" />
+    <None Include="vcpkg.json;miniengine.settings.json" />
+    <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

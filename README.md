@@ -62,6 +62,7 @@ MiniEngine 是一个基于 **SDL3 + Vulkan + ImGui** 的 3D 场景编辑器原�
 
 ```
 app/                    程序入口（main.cpp，最薄的启动层）
+cmake/                  vcpkg 引导、编译选项、依赖发现和 IDE 组织等公共 CMake 配置
 engine/
   application/          应用生命周期与主循环（EditorApplication）
   core/                 日志、输入系统、共享 UUID v4 生成器
@@ -99,6 +100,12 @@ miniengine.settings.json  编辑器设置持久化（UI 缩放、窗口显隐、
 cmake --preset vs2026-x64
 cmake --build --preset vs2026-x64-debug
 ```
+
+**Visual Studio 2026 `.slnx` 入口**：
+
+- 直接打开仓库根目录的 `MiniEngine.slnx`。解决方案提供 `Debug/Release × x64/Win32` 四种组合；VS 的“生成/重新生成/清理”和 F5 启动分别映射到现有 `vs2026-*` CMake presets 与 `miniengine_app`，无需先手动配置构建目录。生成和重新生成命令显式传入 `cmake --build --parallel`。
+- 根目录的 `MiniEngine.vcxproj` 只是 Makefile/IDE 包装层，`CMakePresets.json` 仍是编译参数、依赖与输出路径的唯一事实来源。
+- 如需查看 CMake 按引擎模块拆分的完整目标解决方案，运行 `./scripts/generate-sln.ps1 -Open`；它会打开 `out/build/<preset>/MiniEngine.slnx`。
 
 ⚠️ 已知问题：`x64-debug`（Ninja）preset 的缓存可能损坏（找不到 ninja），优先使用 `vs2026-x64`。
 
@@ -153,6 +160,13 @@ ctest --test-dir ./out/build/vs2026-x64 -C Debug --output-on-failure
 ## 6. 开发日志
 
 > 倒序记录。每条：日期 + 做了什么 + 关键决定/坑。细节多的可以链到 docs/ 下的专项文档。
+
+### 2026-07-17 — Visual Studio 2026 `.slnx` 根入口
+- 新增根目录 `MiniEngine.slnx` 与 Makefile `.vcxproj` 包装层，可从未配置的 checkout 直接在 VS 中使用 Debug/Release、x64/Win32，并将生成、清理和 F5 启动映射到现有 CMake presets。
+- 解决方案生成命令显式使用 `--parallel`，CMake 的 VS 生成器继续按逻辑核心数加入 `/MP`，同时覆盖项目级和单项目内的并行编译；包装项目里的源码 glob 仅用于 Solution Explorer 浏览，不参与编译。
+- 根 CMake 拆分为 `cmake/` 下的 vcpkg、编译选项、依赖发现和 IDE 组织四个职责文件；各模块统一列出源码/头文件并按目录生成 VS filters，`engine_platform` 移除了未使用的 renderer include。x64/x86 使用隔离的 vcpkg 安装根目录，避免切换平台时互相卸载依赖；Win32 依赖发现会选择 `Lib32`，SDK 未提供 32 位 loader 时回退到 vcpkg x86 包，避免误链 x64 Vulkan 库。
+- Win32 实编译同时修正了 `VkDescriptorSet` 到 64 位 `ImTextureID` 的跨位宽转换：64 位指针句柄经 `uintptr_t`，32 位环境的整型 Vulkan 句柄直接转换。
+- 构建配置仍只维护在 `CMakePresets.json`；需要逐目标工程时继续使用 CMake 在 `out/build/<preset>` 生成的原生 `.slnx`。
 
 ### 2026-07-16 — 渲染管线欠账清理(审查遗留"第 0 步")
 - **恢复背面剔除**:默认管线 `CULL_MODE_BACK` + `FRONT_FACE_COUNTER_CLOCKWISE`,`doubleSided` 材质继续走 no-cull 管线变体。坑:历史代码(及其注释)声明的 `CLOCKWISE` 是错的——Vulkan 帧缓冲 Y 朝下本会把 glTF 的 CCW 正面翻成 CW,但渲染投影的 Y 翻转(`proj[1][1] *= -1`)又翻了回来,正面实际是 CCW(与经典 vulkan-tutorial 组合一致);声明 CW 会把所有模型朝向相机的面剔掉,这大概就是当年(`c2643f4`)模型缺面后干脆全局关掉剔除的根因。注意:若未来支持负缩放镜像变换,绕向会逐对象翻转,需动态翻转 cullMode。

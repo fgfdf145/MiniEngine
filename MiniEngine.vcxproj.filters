@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{91C09E64-1776-4B77-B6E8-7D0D17D3C687}</UniqueIdentifier>
+      <Extensions>c;cc;cpp;cxx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{70640D87-3101-4F21-882A-E3D5650DB0AE}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;inl</Extensions>
+    </Filter>
+    <Filter Include="CMake">
+      <UniqueIdentifier>{63F4F0CE-B472-4360-9EA1-7023D842C273}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Documentation">
+      <UniqueIdentifier>{B629F597-C02D-4B82-B5BB-839A9D3DF7B0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{933D00BB-01BE-4F9C-8579-E39003B64705}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Configuration">
+      <UniqueIdentifier>{91924350-A632-4707-B944-65F21F92046F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{911BFDA5-F958-43A4-AEBA-CC7B60A368F2}</UniqueIdentifier>
+      <Extensions>vert;frag;comp;glsl</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="app\**\*.c;app\**\*.cc;app\**\*.cpp;app\**\*.cxx;engine\**\*.c;engine\**\*.cc;engine\**\*.cpp;engine\**\*.cxx;tests\**\*.c;tests\**\*.cc;tests\**\*.cpp;tests\**\*.cxx">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClInclude Include="app\**\*.h;app\**\*.hh;app\**\*.hpp;app\**\*.hxx;app\**\*.inl;engine\**\*.h;engine\**\*.hh;engine\**\*.hpp;engine\**\*.hxx;engine\**\*.inl;tests\**\*.h;tests\**\*.hh;tests\**\*.hpp;tests\**\*.hxx;tests\**\*.inl">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt">
+      <Filter>CMake</Filter>
+    </None>
+    <None Include="README.md;docs\**\*.md">
+      <Filter>Documentation</Filter>
+    </None>
+    <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="vcpkg.json;miniengine.settings.json">
+      <Filter>Configuration</Filter>
+    </None>
+    <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl">
+      <Filter>Shaders</Filter>
+    </None>
+  </ItemGroup>
+</Project>

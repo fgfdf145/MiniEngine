@@ -11,8 +11,7 @@
                 "CMAKE_C_COMPILER": "cl.exe",
                 "CMAKE_CXX_COMPILER": "cl.exe",
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_MANIFEST_MODE": "ON",
-                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed"
+                "VCPKG_MANIFEST_MODE": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -28,8 +27,7 @@
             "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_MANIFEST_MODE": "ON",
-                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed"
+                "VCPKG_MANIFEST_MODE": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -47,7 +45,8 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "VCPKG_TARGET_TRIPLET": "x64-windows"
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x64"
             }
         },
         {
@@ -67,7 +66,8 @@
                 "strategy": "set"
             },
             "cacheVariables": {
-                "VCPKG_TARGET_TRIPLET": "x64-windows"
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x64"
             }
         },
         {
@@ -80,7 +80,8 @@
             },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "VCPKG_TARGET_TRIPLET": "x86-windows"
+                "VCPKG_TARGET_TRIPLET": "x86-windows",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x86"
             }
         },
         {
@@ -100,7 +101,8 @@
                 "strategy": "set"
             },
             "cacheVariables": {
-                "VCPKG_TARGET_TRIPLET": "x86-windows"
+                "VCPKG_TARGET_TRIPLET": "x86-windows",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x86"
             }
         },
         {

@@ -3,6 +3,7 @@
 *.VC.db
 *.VC.opendb
 *.ipch
+*.vcxproj.user
 
 # JetBrains CLion
 .idea/

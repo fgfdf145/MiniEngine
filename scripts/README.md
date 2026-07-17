@@ -38,7 +38,7 @@ Generate a Visual Studio solution that is split by the current CMake targets:
 .\scripts\generate-sln.ps1
 ```
 
-On Visual Studio 2026 / CMake 4.3, the generated solution entry file is typically `MiniEngine.slnx`.
+For a stable entry point that can configure its build directory automatically, open the repository-root `MiniEngine.slnx` directly. It delegates all four `Debug/Release` and `x64/Win32` combinations to the existing CMake presets and passes `--parallel` on every build/rebuild. The generation script remains useful when you want the complete CMake target graph; on Visual Studio 2026 / CMake 4.3 its generated entry file is `out/build/<preset>/MiniEngine.slnx`.
 
 Linux:
 

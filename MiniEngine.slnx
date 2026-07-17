@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Solution>
+  <Configurations>
+    <BuildType Name="Debug"/>
+    <BuildType Name="Release"/>
+    <Platform Name="x64"/>
+    <Platform Name="Win32"/>
+  </Configurations>
+  <Project Path="MiniEngine.vcxproj"
+           Type="8bc9ceb8-8b4a-11d0-8d11-00a0c91bc942"
+           Id="31e47b70-c251-4d04-bd46-9f64177984ad"
+           DefaultStartup="true"/>
+</Solution>
