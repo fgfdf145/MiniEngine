@@ -60,6 +60,10 @@ run_layout_case(
     "${REPO_ROOT}/cmake-build-debug/vcpkg_installed" FALSE
 )
 run_layout_case(
+    unsupported_prefix foo-windows
+    "${REPO_ROOT}/.deps/vcpkg_installed/foo" FALSE
+)
+run_layout_case(
     wrong_bucket x64-windows
     "${REPO_ROOT}/.deps/vcpkg_installed/x86" FALSE
 )
