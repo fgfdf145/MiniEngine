@@ -72,6 +72,8 @@ If `Jobs` is not provided, the build scripts automatically detect the machine's 
 
 ## Default vcpkg Location
 
+Both bootstrap scripts derive `x64`, `x86`, or `arm64` from the selected triplet and pass `--x-install-root=.deps/vcpkg_installed/<architecture>` to `vcpkg install`. An unknown triplet prefix is an error. `.deps/vcpkg/{downloads,packages,buildtrees}` is rebuild cache only; it is not another installed root.
+
 The scripts resolve `VCPKG_ROOT` in this order:
 
 1. Existing `VCPKG_ROOT` environment variable.

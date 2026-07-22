@@ -1,3 +1,6 @@
+# Ignored build directories are not valid vcpkg install roots; CMake enforces
+# .deps/vcpkg_installed/<architecture> for repository-local dependencies.
+
 # Visual Studio
 .vs/
 .worktrees/

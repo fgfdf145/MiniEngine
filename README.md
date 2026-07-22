@@ -97,6 +97,10 @@ engine_platform -> engine_core
 
 前提：C++20 工具链、CMake、Vulkan SDK/运行环境，以及可用的 vcpkg。依赖版本和 feature 以 [vcpkg.json](vcpkg.json) 为准；首次配置前先引导本地依赖。
 
+### vcpkg 磁盘布局
+
+仓库内依赖只允许安装到 `.deps/vcpkg_installed/<architecture>/`；当前 Windows preset 分别使用 `x64/` 和 `x86/`。不要把 `VCPKG_INSTALLED_DIR` 指向 `out/`、`cmake-build-*`、仓库根 `vcpkg_installed/` 或其他仓库内目录。确需共享依赖时，使用仓库外的绝对路径。CMake 会在安装依赖前拒绝不符合约束的路径。
+
 ```powershell
 # Windows：引导 vcpkg manifest 依赖
 .\scripts\bootstrap-deps.ps1
@@ -159,6 +163,13 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-07-22 — vcpkg 磁盘布局边界
+
+- 两个依赖引导脚本都显式推导 triplet 的架构前缀，并把 manifest 安装根传给 `.deps/vcpkg_installed/<architecture>/`。
+- CMake 在安装依赖前拒绝仓库内错误的 `VCPKG_INSTALLED_DIR`，避免构建目录或仓库根目录成为安装根。
+- `tests/vcpkg_layout_contract.cmake` 覆盖 x64、x86、arm64、本仓库外共享根、错误目录和未知架构前缀的契约。
+- 已一次性移除过时的依赖副本；`.deps/vcpkg/{downloads,packages,buildtrees}` 仅保留为可重建缓存，不再作为安装根。
 
 ### 2026-07-17 — Visual Studio 2026 `.slnx` 与并行构建
 
