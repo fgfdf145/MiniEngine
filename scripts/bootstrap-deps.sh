@@ -121,6 +121,16 @@ if [[ -z "$triplet" ]]; then
   triplet="$(default_triplet)"
 fi
 
+triplet_architecture="${triplet%%-*}"
+case "$triplet_architecture" in
+  x64|x86|arm64)
+    ;;
+  *)
+    die "Unsupported vcpkg triplet architecture: '$triplet'."
+    ;;
+esac
+installed_root="$repo_root/.deps/vcpkg_installed/$triplet_architecture"
+
 require_command git "Install Git and retry."
 require_command cmake "Install CMake 3.25+ and retry."
 
@@ -132,6 +142,7 @@ log "Repository root: $repo_root"
 log "Host platform: $platform_name ($architecture_name)"
 log "vcpkg root: $vcpkg_root"
 log "Selected triplet: $triplet"
+log "vcpkg installed root: $installed_root"
 
 if [[ -d "$vcpkg_root/.git" ]]; then
   log "Using existing vcpkg checkout at '$vcpkg_root'."
@@ -160,6 +171,7 @@ if [[ "$skip_install" -eq 0 ]]; then
   step "Installing manifest dependencies for triplet '$triplet'"
   "$vcpkg_root/vcpkg" install \
     "--x-manifest-root=$repo_root" \
+    "--x-install-root=$installed_root" \
     "--triplet=$triplet"
 else
   log "Skipping 'vcpkg install' because --skip-install was provided."

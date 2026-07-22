@@ -92,6 +92,16 @@ function Get-DefaultTriplet([string]$PlatformName, [string]$ArchitectureName)
     return ""
 }
 
+function Get-TripletArchitecture([string]$TripletName)
+{
+    if ($TripletName -match '^(x64|x86|arm64)-')
+    {
+        return $Matches[1]
+    }
+    Fail("Unsupported vcpkg triplet architecture: '$TripletName'.")
+    return ""
+}
+
 function Resolve-AbsolutePath([string]$PathValue)
 {
     return [System.IO.Path]::GetFullPath($PathValue)
@@ -251,6 +261,8 @@ $selectedTriplet =
     {
         Get-DefaultTriplet $platformName $architectureName
     }
+$tripletArchitecture = Get-TripletArchitecture $selectedTriplet
+$installedRoot = Join-Path $repoRoot ".deps\vcpkg_installed\$tripletArchitecture"
 
 Require-Command "git" "Install Git and retry."
 Require-Command "cmake" "Install CMake 3.25+ and retry."
@@ -259,6 +271,7 @@ Write-Info("Repository root: $repoRoot")
 Write-Info("Host platform: $platformName ($architectureName)")
 Write-Info("vcpkg root: $resolvedVcpkgRoot")
 Write-Info("Selected triplet: $selectedTriplet")
+Write-Info("vcpkg installed root: $installedRoot")
 
 Ensure-VcpkgRepository $resolvedVcpkgRoot
 Bootstrap-Vcpkg $resolvedVcpkgRoot $platformName
@@ -275,6 +288,7 @@ if (-not $SkipInstall)
     Invoke-NativeCommand $vcpkgExecutable @(
         "install",
         "--x-manifest-root=$repoRoot",
+        "--x-install-root=$installedRoot",
         "--triplet=$selectedTriplet"
     )
 }

@@ -4,6 +4,15 @@ include(cmake/MiniEngineVcpkg.cmake)
 
 project(MiniEngine LANGUAGES CXX)
 
+if(DEFINED CMAKE_TOOLCHAIN_FILE)
+    miniengine_validate_vcpkg_installed_dir(
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}"
+        "${VCPKG_TARGET_TRIPLET}"
+        "${VCPKG_INSTALLED_DIR}"
+    )
+endif()
+
 include(CTest)
 include(cmake/MiniEngineBuildOptions.cmake)
 include(cmake/MiniEngineDependencies.cmake)
