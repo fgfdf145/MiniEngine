@@ -1,5 +1,6 @@
 # Visual Studio
 .vs/
+.worktrees/
 *.VC.db
 *.VC.opendb
 *.ipch
