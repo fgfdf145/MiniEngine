@@ -25,51 +25,37 @@ require_command() {
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
-for arg in "$@"; do
-  case "$arg" in
-    -h|--help)
-      cat <<'EOF'
-Usage: ./scripts/bootstrap-deps.sh [options]
+platform_name=""
+architecture_name=""
 
-Options:
-  --vcpkg-root <path>  Override the vcpkg checkout path.
-  --triplet <name>     Override the detected vcpkg triplet.
-  --skip-install       Only clone/bootstrap vcpkg, do not run `vcpkg install`.
-  -h, --help           Show this help message.
-EOF
-      exit 0
+detect_host() {
+  case "$(uname -s)" in
+    Linux)
+      platform_name="linux"
+      ;;
+    Darwin)
+      platform_name="osx"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      die "Use scripts/bootstrap-deps.ps1 on Windows."
+      ;;
+    *)
+      die "Unsupported operating system for dependency bootstrap."
       ;;
   esac
-done
 
-platform_name=""
-case "$(uname -s)" in
-  Linux)
-    platform_name="linux"
-    ;;
-  Darwin)
-    platform_name="osx"
-    ;;
-  MINGW*|MSYS*|CYGWIN*)
-    die "Use scripts/bootstrap-deps.ps1 on Windows."
-    ;;
-  *)
-    die "Unsupported operating system for dependency bootstrap."
-    ;;
-esac
-
-architecture_name=""
-case "$(uname -m)" in
-  x86_64|amd64)
-    architecture_name="x64"
-    ;;
-  arm64|aarch64)
-    architecture_name="arm64"
-    ;;
-  *)
-    die "Unsupported architecture '$(uname -m)'."
-    ;;
-esac
+  case "$(uname -m)" in
+    x86_64|amd64)
+      architecture_name="x64"
+      ;;
+    arm64|aarch64)
+      architecture_name="arm64"
+      ;;
+    *)
+      die "Unsupported architecture '$(uname -m)'."
+      ;;
+  esac
+}
 
 default_triplet() {
   case "$platform_name/$architecture_name" in
@@ -94,6 +80,7 @@ default_triplet() {
 vcpkg_root="${VCPKG_ROOT:-$repo_root/.deps/vcpkg}"
 triplet=""
 skip_install=0
+print_install_root=0
 
 while (($# > 0)); do
   case "$1" in
@@ -111,6 +98,23 @@ while (($# > 0)); do
       skip_install=1
       shift
       ;;
+    --print-install-root)
+      print_install_root=1
+      shift
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ./scripts/bootstrap-deps.sh [options]
+
+Options:
+  --vcpkg-root <path>    Override the vcpkg checkout path.
+  --triplet <name>       Override the detected vcpkg triplet.
+  --skip-install         Only clone/bootstrap vcpkg, do not run `vcpkg install`.
+  --print-install-root   Print the selected install root without side effects.
+  -h, --help             Show this help message.
+EOF
+      exit 0
+      ;;
     *)
       die "Unknown argument: $1"
       ;;
@@ -118,6 +122,7 @@ while (($# > 0)); do
 done
 
 if [[ -z "$triplet" ]]; then
+  detect_host
   triplet="$(default_triplet)"
 fi
 
@@ -130,6 +135,15 @@ case "$triplet_architecture" in
     ;;
 esac
 installed_root="$repo_root/.deps/vcpkg_installed/$triplet_architecture"
+
+if [[ "$print_install_root" -eq 1 ]]; then
+  printf '%s\n' "$installed_root"
+  exit 0
+fi
+
+if [[ -z "$platform_name" ]]; then
+  detect_host
+fi
 
 require_command git "Install Git and retry."
 require_command cmake "Install CMake 3.25+ and retry."

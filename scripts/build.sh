@@ -13,9 +13,32 @@ die() {
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
-default_preset="linux-debug"
+default_preset() {
+  local host_system
+  local host_architecture
+  host_system="$(uname -s)"
+  host_architecture="$(uname -m)"
 
-preset="${1:-$default_preset}"
+  case "$host_system/$host_architecture" in
+    Linux/x86_64|Linux/amd64)
+      printf 'linux-debug'
+      ;;
+    Linux/arm64|Linux/aarch64)
+      printf 'linux-arm64-debug'
+      ;;
+    Darwin/arm64|Darwin/aarch64)
+      printf 'macos-debug'
+      ;;
+    Darwin/x86_64|Darwin/amd64)
+      printf 'macos-x64-debug'
+      ;;
+    *)
+      die "No default CMake preset for '$host_system/$host_architecture'."
+      ;;
+  esac
+}
+
+preset="${1:-$(default_preset)}"
 target=""
 config=""
 jobs="${JOBS:-0}"

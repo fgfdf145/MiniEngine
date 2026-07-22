@@ -3,7 +3,8 @@ param(
     [string]$VcpkgRoot,
     [string]$Triplet,
     [switch]$SkipInstall,
-    [switch]$SkipSdkCheck
+    [switch]$SkipSdkCheck,
+    [switch]$PrintInstallRoot
 )
 
 Set-StrictMode -Version Latest
@@ -94,7 +95,7 @@ function Get-DefaultTriplet([string]$PlatformName, [string]$ArchitectureName)
 
 function Get-TripletArchitecture([string]$TripletName)
 {
-    if ($TripletName -match '^(x64|x86|arm64)-')
+    if ($TripletName -cmatch '^(x64|x86|arm64)-')
     {
         return $Matches[1]
     }
@@ -263,6 +264,12 @@ $selectedTriplet =
     }
 $tripletArchitecture = Get-TripletArchitecture $selectedTriplet
 $installedRoot = Join-Path $repoRoot ".deps\vcpkg_installed\$tripletArchitecture"
+
+if ($PrintInstallRoot)
+{
+    Write-Output ([System.IO.Path]::GetFullPath($installedRoot))
+    return
+}
 
 Require-Command "git" "Install Git and retry."
 Require-Command "cmake" "Install CMake 3.25+ and retry."

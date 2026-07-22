@@ -5,6 +5,13 @@ include(cmake/MiniEngineVcpkg.cmake)
 project(MiniEngine LANGUAGES CXX)
 
 if(DEFINED CMAKE_TOOLCHAIN_FILE)
+    miniengine_is_vcpkg_toolchain(
+        miniengine_vcpkg_active "${CMAKE_TOOLCHAIN_FILE}")
+else()
+    set(miniengine_vcpkg_active FALSE)
+endif()
+
+if(miniengine_vcpkg_active)
     miniengine_validate_vcpkg_installed_dir(
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_BINARY_DIR}"

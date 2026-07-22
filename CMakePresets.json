@@ -125,7 +125,7 @@
         },
         {
             "name": "macos-debug",
-            "displayName": "macOS Debug",
+            "displayName": "macOS arm64 Debug",
             "inherits": "macos-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
@@ -133,15 +133,32 @@
         },
         {
             "name": "macos-release",
-            "displayName": "macOS Release",
+            "displayName": "macOS arm64 Release",
             "inherits": "macos-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
         },
         {
+            "name": "macos-x64-debug",
+            "displayName": "macOS x64 Debug",
+            "inherits": "macos-debug",
+            "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x64",
+                "VCPKG_TARGET_TRIPLET": "x64-osx"
+            }
+        },
+        {
+            "name": "macos-x64-release",
+            "displayName": "macOS x64 Release",
+            "inherits": "macos-x64-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
             "name": "linux-debug",
-            "displayName": "Linux Debug",
+            "displayName": "Linux x64 Debug",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "installDir": "${sourceDir}/out/install/${presetName}",
@@ -161,6 +178,15 @@
                 "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
                     "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
                 }
+            }
+        },
+        {
+            "name": "linux-arm64-debug",
+            "displayName": "Linux arm64 Debug",
+            "inherits": "linux-debug",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "arm64-linux",
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/arm64"
             }
         }
     ],
@@ -226,18 +252,33 @@
         },
         {
             "name": "linux-debug",
-            "displayName": "Linux Debug Build",
+            "displayName": "Linux x64 Debug Build",
             "configurePreset": "linux-debug"
         },
         {
+            "name": "linux-arm64-debug",
+            "displayName": "Linux arm64 Debug Build",
+            "configurePreset": "linux-arm64-debug"
+        },
+        {
             "name": "macos-debug",
-            "displayName": "macOS Debug Build",
+            "displayName": "macOS arm64 Debug Build",
             "configurePreset": "macos-debug"
         },
         {
             "name": "macos-release",
-            "displayName": "macOS Release Build",
+            "displayName": "macOS arm64 Release Build",
             "configurePreset": "macos-release"
+        },
+        {
+            "name": "macos-x64-debug",
+            "displayName": "macOS x64 Debug Build",
+            "configurePreset": "macos-x64-debug"
+        },
+        {
+            "name": "macos-x64-release",
+            "displayName": "macOS x64 Release Build",
+            "configurePreset": "macos-x64-release"
         }
     ]
 }

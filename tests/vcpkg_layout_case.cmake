@@ -13,6 +13,10 @@ endforeach()
 
 set(VCPKG_TARGET_TRIPLET "${CASE_TRIPLET}")
 set(VCPKG_INSTALLED_DIR "${CASE_INSTALL_DIR}")
+# Keep direct function cases independent from any repository-local vcpkg
+# checkout discovered by the module in script mode.
+set(CMAKE_TOOLCHAIN_FILE
+    "${REPO_ROOT}/tests/fixtures/toolchains/dummy.cmake")
 include("${REPO_ROOT}/cmake/MiniEngineVcpkg.cmake")
 miniengine_validate_vcpkg_installed_dir(
     "${CASE_SOURCE_ROOT}"
