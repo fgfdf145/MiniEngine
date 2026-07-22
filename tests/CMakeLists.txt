@@ -23,3 +23,10 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_scene_identity_tests PROPERTIES FOLDER "Tests")
+
+add_test(
+    NAME miniengine.vcpkg_layout_contract
+    COMMAND ${CMAKE_COMMAND}
+        "-DREPO_ROOT=${CMAKE_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_layout_contract.cmake"
+)
