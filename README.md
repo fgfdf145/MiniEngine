@@ -169,7 +169,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - 两个依赖引导脚本都显式推导 triplet 的架构前缀，并把 manifest 安装根传给 `.deps/vcpkg_installed/<architecture>/`。
 - CMake 在安装依赖前拒绝仓库内错误的 `VCPKG_INSTALLED_DIR`，避免构建目录或仓库根目录成为安装根。
 - `tests/vcpkg_layout_contract.cmake` 覆盖 x64、x86、arm64、本仓库外共享根、错误目录和未知架构前缀的契约。
-- 已一次性移除过时的依赖副本；`.deps/vcpkg/{downloads,packages,buildtrees}` 仅保留为可重建缓存，不再作为安装根。
+- 已定义一次性清理过时依赖副本的范围；`.deps/vcpkg/{downloads,packages,buildtrees}` 仅保留为可重建缓存，不再作为安装根。实际回收将在验证后记录。
 
 ### 2026-07-17 — Visual Studio 2026 `.slnx` 与并行构建
 
