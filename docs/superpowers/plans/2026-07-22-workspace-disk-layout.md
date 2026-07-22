@@ -433,6 +433,8 @@ git commit -m "docs: define vcpkg disk layout boundary"
 
 ### Task 4: Remove only confirmed obsolete copies
 
+> **Completed one-time operation — do not rerun mechanically.** The seven approved targets were removed and verified absent. Any future cleanup requires a newly approved literal target list and a fresh expected-repository-root check. In one PowerShell process, prove targets are unique and do not overlap protected roots; fail closed if the repository-to-target path, the target itself, or any descendant is a reparse point, without following it. Immediately repeat those checks before deleting each literal target, stop on the first exception, and never infer a broader parent from this historical list.
+
 **Files:**
 - Delete generated directories only; do not stage generated-file deletion because every target is ignored.
 

@@ -18,11 +18,23 @@ Windows PowerShell:
 .\scripts\bootstrap-deps.ps1
 ```
 
-Linux:
+Linux/macOS:
 
 ```bash
 ./scripts/bootstrap-deps.sh
 ```
+
+Inspect the architecture bucket without checking commands or creating anything:
+
+```powershell
+.\scripts\bootstrap-deps.ps1 -Triplet x64-windows -PrintInstallRoot
+```
+
+```bash
+./scripts/bootstrap-deps.sh --triplet arm64-linux --print-install-root
+```
+
+Each print-only mode writes the derived absolute install root and exits before command checks, directory creation, clone, bootstrap, download, or install work.
 
 Build after dependencies are ready:
 
@@ -40,7 +52,7 @@ Generate a Visual Studio solution that is split by the current CMake targets:
 
 For a stable entry point that can configure its build directory automatically, open the repository-root `MiniEngine.slnx` directly. It delegates all four `Debug/Release` and `x64/Win32` combinations to the existing CMake presets and passes `--parallel` on every build/rebuild. The generation script remains useful when you want the complete CMake target graph; on Visual Studio 2026 / CMake 4.3 its generated entry file is `out/build/<preset>/MiniEngine.slnx`.
 
-Linux:
+Linux/macOS:
 
 ```bash
 ./scripts/build.sh
@@ -51,6 +63,7 @@ Optional arguments:
 - `--vcpkg-root <path>` or `-VcpkgRoot <path>`: use a custom vcpkg checkout path.
 - `--triplet <name>` or `-Triplet <name>`: override the detected vcpkg triplet.
 - `--skip-install` or `-SkipInstall`: only clone/bootstrap vcpkg, skip `vcpkg install`.
+- `--print-install-root` or `-PrintInstallRoot`: print the selected architecture install root and exit without side effects.
 
 Build script options:
 
@@ -70,9 +83,11 @@ Solution generation options:
 
 If `Jobs` is not provided, the build scripts automatically detect the machine's logical CPU count and pass it to `cmake --build --parallel`, so the build uses all available threads by default.
 
+When `./scripts/build.sh` is called without a preset, it selects one from the host pair: Linux x64 → `linux-debug`, Linux ARM64 → `linux-arm64-debug`, macOS ARM64 → `macos-debug`, and macOS x64 → `macos-x64-debug`. The compatible macOS release names are `macos-release` for ARM64 and `macos-x64-release` for Intel.
+
 ## Default vcpkg Location
 
-Both bootstrap scripts derive `x64`, `x86`, or `arm64` from the selected triplet and pass `--x-install-root=.deps/vcpkg_installed/<architecture>` to `vcpkg install`. An unknown triplet prefix is an error. `.deps/vcpkg/{downloads,packages,buildtrees}` is rebuild cache only; it is not another installed root.
+Both bootstrap scripts derive `x64`, `x86`, or `arm64` from the selected triplet and pass `--x-install-root=.deps/vcpkg_installed/<architecture>` to `vcpkg install`. Prefix matching is case-sensitive, so unknown or mixed-case forms such as `X64-windows` fail instead of creating a second bucket. `.deps/vcpkg/{downloads,packages,buildtrees}` is rebuild cache only; it is not another installed root.
 
 The scripts resolve `VCPKG_ROOT` in this order:
 

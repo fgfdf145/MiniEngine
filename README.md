@@ -99,7 +99,7 @@ engine_platform -> engine_core
 
 ### vcpkg 磁盘布局
 
-仓库内依赖只允许安装到 `.deps/vcpkg_installed/<architecture>/`；当前 Windows preset 分别使用 `x64/` 和 `x86/`。不要把 `VCPKG_INSTALLED_DIR` 指向 `out/`、`cmake-build-*`、仓库根 `vcpkg_installed/` 或其他仓库内目录。确需共享依赖时，使用仓库外的绝对路径。CMake 会在安装依赖前拒绝不符合约束的路径。
+仓库内依赖只允许安装到 `.deps/vcpkg_installed/<architecture>/`；当前 Windows preset 分别使用 `x64/` 和 `x86/`。不要把 `VCPKG_INSTALLED_DIR` 指向 `out/`、`cmake-build-*`、仓库根 `vcpkg_installed/` 或其他仓库内目录，也不要使用相对路径。确需共享依赖时，使用同时位于源码树和当前 CMake 二进制树之外的绝对路径。该门禁只在实际 vcpkg toolchain 生效，并会在 `project()` 安装依赖前拒绝不符合约束的路径；无关的自定义 toolchain 不需要 vcpkg 变量。
 
 ```powershell
 # Windows：引导 vcpkg manifest 依赖
@@ -118,7 +118,7 @@ cmake --build --preset vs2026-x64-debug --parallel
 
 Windows 的根 [MiniEngine.slnx](MiniEngine.slnx) 对应 Debug/Release × x64/Win32，并委托 `vs2026-x64` 或 `vs2026-x86` preset。不要在 `.vcxproj` 中复制 CMake 的编译选项或依赖逻辑。Ninja 的 `x64-debug`/`x64-release`、`x86-debug`/`x86-release` 仍可用于直接 CMake 工作流；x64 与 x86 的 vcpkg 安装根目录隔离。
 
-macOS 使用 `macos-debug` 或 `macos-release`，Linux 使用 `linux-debug`。这些 preset 是当前配置入口，不代表本轮在对应平台完成了构建或 GUI 验收。
+macOS ARM64 沿用 `macos-debug`/`macos-release`（`arm64-osx` → `arm64/`），Intel macOS 使用 `macos-x64-debug`/`macos-x64-release`（`x64-osx` → `x64/`）。Linux x64 沿用 `linux-debug`（`x64-linux` → `x64/`），Linux ARM64 使用 `linux-arm64-debug`（`arm64-linux` → `arm64/`）。省略 Bash 构建脚本的 preset 时，会按这四种主机组合选择对应 Debug 入口。上述名称是当前配置入口，不代表本轮在对应平台完成了构建或 GUI 验收。
 
 运行参数由 `EditorApplication::ParseArgs()` 提供：
 
@@ -156,7 +156,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 1. 改动前阅读本 README，并继续阅读所涉模块的 CMake 和实现文件；当前源码优先于历史资料。
 2. 遵守 UV、米制单位、模型不改源文件、UUID/场景序列化和模块依赖方向等硬性约定。
-3. 保留工作区中与任务无关的未提交修改，尤其不要覆盖、暂存或混入用户的 `imgui.ini`。
+3. 保留工作区中与任务无关的未提交修改，尤其不要覆盖、暂存或混入用户的 `imgui.ini` 和既有 `docs/superpowers/plans/` 内容。
 4. 实质性代码变更后，同步 README 的当前状态和开发记录；大型专项材料放入 `docs/`，README 保留可检索的结论和约束。
 5. 区分验证类型：构建和 CTest 证明编译/自动化回归，60 帧冒烟验证基本启动路径，GUI 和视觉效果仍需人工确认。没有实际执行的项目不得写成已验证。
 
@@ -166,10 +166,10 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 ### 2026-07-22 — vcpkg 磁盘布局边界
 
-- 两个依赖引导脚本都显式推导 triplet 的架构前缀，并把 manifest 安装根传给 `.deps/vcpkg_installed/<architecture>/`。
-- CMake 在安装依赖前拒绝仓库内错误的 `VCPKG_INSTALLED_DIR`，避免构建目录或仓库根目录成为安装根。
-- `tests/vcpkg_layout_contract.cmake` 覆盖 x64、x86、arm64、本仓库外共享根、错误目录和未知架构前缀的契约。
-- 已定义一次性清理过时依赖副本的范围；`.deps/vcpkg/{downloads,packages,buildtrees}` 仅保留为可重建缓存，不再作为安装根。实际回收将在验证后记录。
+- 两个依赖引导脚本都显式推导大小写敏感的 triplet 架构前缀，并把 manifest 安装根传给 `.deps/vcpkg_installed/<architecture>/`；只打印安装根的模式不会检查命令、克隆、引导、下载或安装。
+- CMake 在 `project()` 前拒绝相对安装根、仓库内错误目录和当前二进制树内目录；门禁只作用于实际 vcpkg toolchain，Windows 路径比较忽略大小写。
+- `tests/vcpkg_layout_contract.cmake` 解析 preset JSON 并执行隔离的配置与脚本探针，覆盖 x64、x86、arm64、外部共享根、错误目录、未知/混合大小写前缀及非 vcpkg toolchain。
+- 一次性清理已经完成：7 个禁用路径全部不存在；排除临时 `.worktrees` 后，可比逻辑大小为 `21.335 GiB`，基线为 `43.230 GiB`，逻辑减少 `21.895 GiB`（50.6%）。x64/x86 Debug 构建均通过，每个架构的 CTest 均为 `2/2`；逻辑文件长度不等于精确的物理空间回收量。`.deps/vcpkg/{downloads,packages,buildtrees}` 仅保留为可重建缓存，不作为安装根。
 
 ### 2026-07-17 — Visual Studio 2026 `.slnx` 与并行构建
 
