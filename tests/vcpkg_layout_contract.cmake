@@ -35,6 +35,14 @@ function(require_file_contains relative_path expected_text)
     endif()
 endfunction()
 
+function(require_file_not_contains relative_path unexpected_text)
+    file(READ "${REPO_ROOT}/${relative_path}" contents)
+    string(FIND "${contents}" "${unexpected_text}" match_index)
+    if(NOT match_index EQUAL -1)
+        message(FATAL_ERROR "${relative_path} unexpectedly contains: ${unexpected_text}")
+    endif()
+endfunction()
+
 run_layout_case(
     x64_bucket x64-windows
     "${REPO_ROOT}/.deps/vcpkg_installed/x64" TRUE
@@ -42,6 +50,10 @@ run_layout_case(
 run_layout_case(
     x86_bucket x86-windows
     "${REPO_ROOT}/.deps/vcpkg_installed/x86" TRUE
+)
+run_layout_case(
+    arm64_bucket arm64-osx
+    "${REPO_ROOT}/.deps/vcpkg_installed/arm64" TRUE
 )
 run_layout_case(
     external_root x64-windows
@@ -70,6 +82,12 @@ run_layout_case(
 
 require_file_contains("CMakePresets.json" ".deps/vcpkg_installed/x64")
 require_file_contains("CMakePresets.json" ".deps/vcpkg_installed/x86")
+require_file_contains("CMakePresets.json" ".deps/vcpkg_installed/arm64")
+require_file_contains("CMakePresets.json" "\"VCPKG_TARGET_TRIPLET\": \"x64-linux\"")
+require_file_not_contains(
+    "CMakePresets.json"
+    "\"VCPKG_INSTALLED_DIR\": \"\${sourceDir}/.deps/vcpkg_installed\""
+)
 require_file_contains("scripts/bootstrap-deps.ps1" "--x-install-root=")
 require_file_contains("scripts/bootstrap-deps.sh" "--x-install-root=")
 

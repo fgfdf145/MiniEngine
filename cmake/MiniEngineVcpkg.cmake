@@ -42,8 +42,12 @@ function(miniengine_validate_vcpkg_installed_dir source_root binary_root triplet
         return()
     endif()
 
-    string(TOLOWER "${source_dir}/" source_prefix)
-    string(TOLOWER "${resolved_install_dir}/" install_prefix)
+    set(source_prefix "${source_dir}/")
+    set(install_prefix "${resolved_install_dir}/")
+    if(WIN32)
+        string(TOLOWER "${source_prefix}" source_prefix)
+        string(TOLOWER "${install_prefix}" install_prefix)
+    endif()
     string(FIND "${install_prefix}" "${source_prefix}" source_prefix_index)
     if(source_prefix_index EQUAL 0)
         message(FATAL_ERROR
