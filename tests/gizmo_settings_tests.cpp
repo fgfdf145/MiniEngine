@@ -1,9 +1,13 @@
 #include <gizmo_settings.h>
+#include <editor_world.h>
 
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 namespace
 {
@@ -18,6 +22,44 @@ void Require(bool condition, const char* message)
 bool NearlyEqual(float lhs, float rhs)
 {
     return std::abs(lhs - rhs) < 0.0001f;
+}
+
+ImGuizmo::OPERATION LoadStoredOperation(const std::string& storedValue)
+{
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / ("miniengine_gizmo_" + storedValue + ".yaml");
+    {
+        std::ofstream file(path);
+        file
+            << "scene:\n"
+            << "  version: 3\n"
+            << "  selected_entity: 0\n"
+            << "entities: []\n"
+            << "lights: []\n"
+            << "editor:\n"
+            << "  gizmo:\n"
+            << "    operation: " << storedValue << "\n";
+    }
+
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::error_code removeError;
+    std::filesystem::remove(path, removeError);
+    return loaded.gizmo.operation;
+}
+
+std::string SaveStoredOperation(ImGuizmo::OPERATION operation, const char* suffix)
+{
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / (std::string("miniengine_gizmo_save_") + suffix + ".yaml");
+    SerializedSceneData scene{};
+    scene.gizmo.operation = operation;
+    SaveEditorSceneDataToFile(scene, path.string());
+
+    std::ifstream file(path);
+    const std::string yaml((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::error_code removeError;
+    std::filesystem::remove(path, removeError);
+    return yaml;
 }
 }
 
@@ -90,6 +132,34 @@ int main()
                 NearlyEqual(scale[1], 0.2f) &&
                 NearlyEqual(scale[2], 0.3f),
             "scale snap values changed"
+        );
+        Require(
+            LoadStoredOperation("combined") == kCombinedGizmoOperation,
+            "combined yaml did not load as combined"
+        );
+        Require(
+            LoadStoredOperation("translate") == kCombinedGizmoOperation,
+            "legacy translate yaml did not upgrade to combined"
+        );
+        Require(
+            LoadStoredOperation("rotate") == kCombinedGizmoOperation,
+            "legacy rotate yaml did not upgrade to combined"
+        );
+        Require(
+            LoadStoredOperation("scale") == ImGuizmo::SCALE,
+            "scale yaml did not remain scale"
+        );
+        Require(
+            LoadStoredOperation("unexpected") == kCombinedGizmoOperation,
+            "unknown yaml did not use the combined fallback"
+        );
+        Require(
+            SaveStoredOperation(kCombinedGizmoOperation, "combined").find("operation: combined") != std::string::npos,
+            "combined mode did not serialize canonically"
+        );
+        Require(
+            SaveStoredOperation(ImGuizmo::SCALE, "scale").find("operation: scale") != std::string::npos,
+            "scale mode did not serialize canonically"
         );
 
         std::cout << "gizmo settings tests passed\n";

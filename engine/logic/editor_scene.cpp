@@ -57,17 +57,20 @@ std::string SanitizeName(const std::string& value, const std::string& fallback)
     return value.empty() ? fallback : value;
 }
 
-ImGuizmo::OPERATION ParseOperation(const std::string& value)
+ImGuizmo::OPERATION ParseOperation(
+    const std::string& value,
+    ImGuizmo::OPERATION fallback
+)
 {
-    if (value == "rotate")
-    {
-        return ImGuizmo::ROTATE;
-    }
     if (value == "scale")
     {
         return ImGuizmo::SCALE;
     }
-    return ImGuizmo::TRANSLATE;
+    if (value == "combined" || value == "translate" || value == "rotate")
+    {
+        return kCombinedGizmoOperation;
+    }
+    return fallback;
 }
 
 ImGuizmo::MODE ParseMode(const std::string& value)
@@ -81,16 +84,7 @@ ImGuizmo::MODE ParseMode(const std::string& value)
 
 const char* ToString(ImGuizmo::OPERATION operation)
 {
-    switch (operation)
-    {
-    case ImGuizmo::ROTATE:
-        return "rotate";
-    case ImGuizmo::SCALE:
-        return "scale";
-    case ImGuizmo::TRANSLATE:
-    default:
-        return "translate";
-    }
+    return operation == ImGuizmo::SCALE ? "scale" : "combined";
 }
 
 const char* ToString(ImGuizmo::MODE mode)
@@ -110,7 +104,10 @@ TransformComponent ReadTransformComponent(const YAML::Node& transformNode, const
 GizmoSettings ReadGizmoSettings(const YAML::Node& gizmoNode, const GizmoSettings& fallback)
 {
     GizmoSettings settings = fallback;
-    settings.operation = ParseOperation(gizmoNode["operation"].as<std::string>(ToString(settings.operation)));
+    settings.operation = ParseOperation(
+        gizmoNode["operation"].as<std::string>(ToString(settings.operation)),
+        settings.operation
+    );
     settings.mode = ParseMode(gizmoNode["mode"].as<std::string>(ToString(settings.mode)));
     settings.useSnap = gizmoNode["use_snap"].as<bool>(settings.useSnap);
     settings.translationSnap = ReadVec3(gizmoNode["translation_snap"], settings.translationSnap);
