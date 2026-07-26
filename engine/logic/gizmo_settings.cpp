@@ -37,6 +37,7 @@ std::array<float, 3> BuildGizmoSnapValues(const GizmoSettings& settings, GizmoSn
 void GizmoDragSnapState::PrepareForManipulate(
     ImGuizmo::OPERATION operation,
     bool gizmoIsUsing,
+    bool translationHandleHovered,
     bool rotationHandleHovered
 )
 {
@@ -53,7 +54,17 @@ void GizmoDragSnapState::PrepareForManipulate(
 
     const bool hasRotation = ContainsOperation(operation, ImGuizmo::ROTATE);
     const bool hasTranslation = ContainsOperation(operation, ImGuizmo::TRANSLATE);
-    if (hasRotation && (!hasTranslation || rotationHandleHovered))
+    if (hasRotation && !hasTranslation)
+    {
+        m_family = GizmoSnapFamily::Rotation;
+        return;
+    }
+    if (hasTranslation && translationHandleHovered)
+    {
+        m_family = GizmoSnapFamily::Translation;
+        return;
+    }
+    if (hasRotation && rotationHandleHovered)
     {
         m_family = GizmoSnapFamily::Rotation;
         return;

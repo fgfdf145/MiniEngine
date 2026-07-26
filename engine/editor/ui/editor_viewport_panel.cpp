@@ -545,6 +545,10 @@ void DrawGizmoOverlay(
     ImGuizmo::SetRect(viewportRect.origin.x, viewportRect.origin.y, viewportRect.size.x, viewportRect.size.y);
 
     const bool gizmoWasUsing = ImGuizmo::IsUsing();
+    const bool translationHandleHovered =
+        !gizmoWasUsing &&
+        effectiveOperation != ImGuizmo::SCALE &&
+        ImGuizmo::IsOver(ImGuizmo::TRANSLATE);
     const bool rotationHandleHovered =
         !gizmoWasUsing &&
         effectiveOperation != ImGuizmo::SCALE &&
@@ -552,6 +556,7 @@ void DrawGizmoOverlay(
     dragSnapState.PrepareForManipulate(
         effectiveOperation,
         gizmoWasUsing,
+        translationHandleHovered,
         rotationHandleHovered
     );
     const std::array<float, 3> snapValues =

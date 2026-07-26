@@ -41,6 +41,7 @@ public:
     void PrepareForManipulate(
         ImGuizmo::OPERATION operation,
         bool gizmoIsUsing,
+        bool translationHandleHovered,
         bool rotationHandleHovered
     );
     void FinishManipulate(bool gizmoIsUsing);

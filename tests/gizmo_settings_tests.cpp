@@ -95,18 +95,24 @@ int main()
         );
 
         GizmoDragSnapState dragState;
-        dragState.PrepareForManipulate(kCombinedGizmoOperation, false, true);
+        dragState.PrepareForManipulate(kCombinedGizmoOperation, false, false, true);
         Require(dragState.Family() == GizmoSnapFamily::Rotation, "rotation hover did not select rotation snap");
         dragState.FinishManipulate(true);
-        dragState.PrepareForManipulate(kCombinedGizmoOperation, true, false);
+        dragState.PrepareForManipulate(kCombinedGizmoOperation, true, true, false);
         Require(dragState.Family() == GizmoSnapFamily::Rotation, "snap family changed during rotation drag");
         dragState.FinishManipulate(false);
         Require(dragState.Family() == GizmoSnapFamily::None, "snap family did not clear after drag");
 
-        dragState.PrepareForManipulate(kCombinedGizmoOperation, false, false);
+        dragState.PrepareForManipulate(kCombinedGizmoOperation, false, true, true);
+        Require(
+            dragState.Family() == GizmoSnapFamily::Translation,
+            "translation did not win overlapping handle precedence"
+        );
+        dragState.FinishManipulate(false);
+        dragState.PrepareForManipulate(kCombinedGizmoOperation, false, true, false);
         Require(dragState.Family() == GizmoSnapFamily::Translation, "axis or plane did not select translation snap");
         dragState.FinishManipulate(false);
-        dragState.PrepareForManipulate(ImGuizmo::SCALE, false, false);
+        dragState.PrepareForManipulate(ImGuizmo::SCALE, false, false, false);
         Require(dragState.Family() == GizmoSnapFamily::Scale, "scale mode did not select scale snap");
 
         settings.translationSnap = { 1.0f, 2.0f, 3.0f };
