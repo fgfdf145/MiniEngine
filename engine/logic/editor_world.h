@@ -1,12 +1,11 @@
 #pragma once
 
 #include <logic_layer.h>
+#include <gizmo_settings.h>
 #include <scene_components.h>
 #include <scene_world.h>
-#include <world_units.h>
 
 #include <imgui.h>
-#include <ImGuizmo.h>
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
@@ -15,16 +14,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-struct GizmoSettings
-{
-    ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
-    ImGuizmo::MODE mode = ImGuizmo::WORLD;
-    bool useSnap = false;
-    glm::vec3 translationSnap = WorldUnits::kDefaultTranslationSnapMeters;
-    float rotationSnap = WorldUnits::kDefaultRotationSnapDegrees;
-    glm::vec3 scaleSnap = WorldUnits::kDefaultScaleSnap;
-};
 
 struct SerializedEntityData
 {

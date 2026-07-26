@@ -2,6 +2,8 @@ add_library(engine_logic
     editor_scene.cpp
     editor_scene.h
     editor_world.h
+    gizmo_settings.cpp
+    gizmo_settings.h
     logic_layer.h
 )
 miniengine_group_target_sources(engine_logic)
