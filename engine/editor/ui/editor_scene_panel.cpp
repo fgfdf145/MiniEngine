@@ -191,9 +191,7 @@ bool DrawTransformComponent(TransformComponent& transform)
 
 void DrawGizmoControls(GizmoSettings& gizmo)
 {
-    DrawOperationButton("Translate", ImGuizmo::TRANSLATE, gizmo.operation);
-    ImGui::SameLine();
-    DrawOperationButton("Rotate", ImGuizmo::ROTATE, gizmo.operation);
+    DrawOperationButton("Combined", kCombinedGizmoOperation, gizmo.operation);
     ImGui::SameLine();
     DrawOperationButton("Scale", ImGuizmo::SCALE, gizmo.operation);
 
@@ -421,7 +419,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                     DrawLightComponentEditor(light, m_effectiveUiScale);
                 }
 
-                // Gizmo controls (translate + rotate for lights that have direction)
+                // Directional lights use the combined move/rotate gizmo.
                 GizmoSettings& gizmo = scene.GetGizmoSettings();
                 if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
                 {

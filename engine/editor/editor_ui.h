@@ -4,6 +4,7 @@
 
 #include <camera.h>
 #include <asset_manager.h>
+#include <gizmo_settings.h>
 #include <model_loader.h>
 #include <optional>
 
@@ -160,6 +161,7 @@ private:
     float m_modelPreviewYaw = 0.55f;
     float m_modelPreviewPitch = 0.35f;
     float m_modelPreviewDistance = 3.0f;
+    GizmoDragSnapState m_gizmoDragSnapState;
     MaterialGraphNodePosition m_materialGraphContextSpawnPosition{};
     MaterialGraphNodePosition m_materialGraphViewOrigin{};
     MaterialGraphNodePosition m_materialGraphResizeStartPosition{};

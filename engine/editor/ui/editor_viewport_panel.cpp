@@ -450,17 +450,9 @@ void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const Viewport
     }
 
     GizmoSettings& gizmo = scene.GetGizmoSettings();
-    if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+    if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !ImGuizmo::IsUsing())
     {
-        gizmo.operation = ImGuizmo::TRANSLATE;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-    {
-        gizmo.operation = ImGuizmo::ROTATE;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_R, false))
-    {
-        gizmo.operation = ImGuizmo::SCALE;
+        gizmo.operation = ToggleGizmoOperation(gizmo.operation);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false))
     {
@@ -515,10 +507,19 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
     }
 }
 
-void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const ViewportOverlayRect& viewportRect)
+void DrawGizmoOverlay(
+    IEditorWorld& scene,
+    ViewportMatrices& matrices,
+    const ViewportOverlayRect& viewportRect,
+    GizmoDragSnapState& dragSnapState
+)
 {
-    if (!scene.HasSelection() || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
+    if (!scene.HasSelection() ||
+        viewportRect.size.x <= 0.0f ||
+        viewportRect.size.y <= 0.0f ||
+        viewportRect.drawList == nullptr)
     {
+        dragSnapState.FinishManipulate(false);
         return;
     }
 
@@ -538,24 +539,24 @@ void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const Vie
         (selectedLight->type == LightType::Point || selectedLight->type == LightType::Ambient);
     const ImGuizmo::OPERATION effectiveOperation = isTranslateOnly ? ImGuizmo::TRANSLATE : gizmo.operation;
 
-    std::array<float, 3> snapValues = {
-        gizmo.translationSnap.x,
-        gizmo.translationSnap.y,
-        gizmo.translationSnap.z
-    };
-    if (effectiveOperation == ImGuizmo::ROTATE)
-    {
-        snapValues = { gizmo.rotationSnap, 0.0f, 0.0f };
-    }
-    else if (effectiveOperation == ImGuizmo::SCALE)
-    {
-        snapValues = { gizmo.scaleSnap.x, gizmo.scaleSnap.y, gizmo.scaleSnap.z };
-    }
-
     ImGuizmo::SetOrthographic(false);
     ImGuizmo::SetID(static_cast<int>(entt::to_integral(selectedEntity)));
     ImGuizmo::SetDrawlist(viewportRect.drawList);
     ImGuizmo::SetRect(viewportRect.origin.x, viewportRect.origin.y, viewportRect.size.x, viewportRect.size.y);
+
+    const bool gizmoWasUsing = ImGuizmo::IsUsing();
+    const bool rotationHandleHovered =
+        !gizmoWasUsing &&
+        effectiveOperation != ImGuizmo::SCALE &&
+        ImGuizmo::IsOver(ImGuizmo::ROTATE);
+    dragSnapState.PrepareForManipulate(
+        effectiveOperation,
+        gizmoWasUsing,
+        rotationHandleHovered
+    );
+    const std::array<float, 3> snapValues =
+        BuildGizmoSnapValues(gizmo, dragSnapState.Family());
+
     ImGuizmo::Manipulate(
         glm::value_ptr(matrices.view),
         glm::value_ptr(matrices.projection),
@@ -566,7 +567,9 @@ void DrawGizmoOverlay(IEditorWorld& scene, ViewportMatrices& matrices, const Vie
         gizmo.useSnap ? snapValues.data() : nullptr
     );
 
-    if (!ImGuizmo::IsUsing())
+    const bool gizmoIsUsing = ImGuizmo::IsUsing();
+    dragSnapState.FinishManipulate(gizmoIsUsing);
+    if (!gizmoIsUsing)
     {
         return;
     }
@@ -968,7 +971,7 @@ void EditorUiController::DrawViewportPanel(
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
         DrawViewManipulator(camera, matrices, viewportRect);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-        DrawGizmoOverlay(scene, matrices, viewportRect);
+        DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState);
         DrawLightGizmos(scene, matrices, viewportRect);
         std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
         AppendLightProjectedCenters(scene, matrices, viewportRect, projectedCenters);
@@ -977,7 +980,7 @@ void EditorUiController::DrawViewportPanel(
         ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + 12.0f, viewportRect.origin.y + 12.0f));
         ImGui::BeginGroup();
         ImGui::TextUnformatted("Viewport");
-        ImGui::TextUnformatted("F to frame, W/E/R to switch gizmo, drag assets here to place");
+        ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, drag assets here to place");
         ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
         ImGui::Text("Viewport FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::EndGroup();
