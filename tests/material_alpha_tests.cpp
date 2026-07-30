@@ -2,11 +2,13 @@
 #include <model_loader.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -25,10 +27,51 @@ bool NearlyEqual(float lhs, float rhs)
     return std::abs(lhs - rhs) < 0.0001f;
 }
 
-std::filesystem::path WriteAlphaModeFixture()
+std::filesystem::path CreateFixtureDirectory()
 {
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "miniengine_material_alpha_modes.gltf";
+    const std::filesystem::path temporaryDirectory = std::filesystem::temp_directory_path();
+    std::random_device randomDevice;
+    for (size_t attempt = 0; attempt < 100; ++attempt)
+    {
+        const std::filesystem::path path = temporaryDirectory / (
+            "miniengine_material_alpha_" +
+            std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + "_" +
+            std::to_string(randomDevice())
+        );
+        std::error_code error;
+        if (std::filesystem::create_directory(path, error))
+        {
+            return path;
+        }
+        if (error && error != std::errc::file_exists)
+        {
+            throw std::runtime_error("Failed to create material alpha fixture directory: " + error.message());
+        }
+    }
+
+    throw std::runtime_error("Failed to create a unique material alpha fixture directory");
+}
+
+class ScopedFixtureDirectory
+{
+public:
+    ScopedFixtureDirectory()
+        : path(CreateFixtureDirectory())
+    {
+    }
+
+    ~ScopedFixtureDirectory()
+    {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+
+    const std::filesystem::path path;
+};
+
+std::filesystem::path WriteAlphaModeFixture(const std::filesystem::path& fixtureDirectory)
+{
+    const std::filesystem::path path = fixtureDirectory / "miniengine_material_alpha_modes.gltf";
     std::ofstream file(path);
     file << R"({
       "asset": { "version": "2.0" },
@@ -55,7 +98,7 @@ std::filesystem::path WriteAlphaModeFixture()
     })";
     file.close();
 
-    const std::filesystem::path bufferPath = path.parent_path() / "miniengine_material_alpha_modes.bin";
+    const std::filesystem::path bufferPath = fixtureDirectory / "miniengine_material_alpha_modes.bin";
     std::ofstream buffer(bufferPath, std::ios::binary);
     const std::array<float, 9> positions = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f };
     const std::array<uint16_t, 3> indices = { 0, 1, 2 };
@@ -96,16 +139,21 @@ int main()
             0.25f
         ), "Blend did not preserve alpha");
 
-        const std::filesystem::path fixture = WriteAlphaModeFixture();
+        const ScopedFixtureDirectory fixtureDirectory;
+        const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);
         const LoadedModelData loaded = ModelLoader::LoadModel(fixture.string());
-        std::error_code removeError;
-        std::filesystem::remove(fixture, removeError);
-        std::filesystem::remove(fixture.parent_path() / "miniengine_material_alpha_modes.bin", removeError);
         Require(loaded.materials.size() == 3, "glTF material count mismatch");
         Require(loaded.materials[0].alphaMode == MaterialAlphaMode::Opaque, "default Opaque was lost");
         Require(loaded.materials[1].alphaMode == MaterialAlphaMode::Mask, "MASK was lost");
         Require(NearlyEqual(loaded.materials[1].alphaCutoff, 0.4f), "MASK cutoff was lost");
+        Require(loaded.materials[1].pbr.alphaMode == MaterialAlphaMode::Mask, "MASK PBR mode was lost");
+        Require(NearlyEqual(loaded.materials[1].pbr.alphaCutoff, 0.4f), "MASK PBR cutoff was lost");
+        Require(NearlyEqual(loaded.materials[1].pbr.opacity, 1.0f), "MASK PBR opacity changed");
         Require(loaded.materials[2].alphaMode == MaterialAlphaMode::Blend, "BLEND was lost");
+        Require(NearlyEqual(loaded.materials[2].alphaCutoff, 0.5f), "BLEND cutoff default changed");
+        Require(loaded.materials[2].pbr.alphaMode == MaterialAlphaMode::Blend, "BLEND PBR mode was lost");
+        Require(NearlyEqual(loaded.materials[2].pbr.alphaCutoff, 0.5f), "BLEND PBR cutoff default changed");
+        Require(NearlyEqual(loaded.materials[2].pbr.opacity, 1.0f), "BLEND PBR opacity changed");
         Require(NearlyEqual(loaded.materials[2].baseColor[3], 0.75f), "base alpha changed");
         Require(NearlyEqual(loaded.materials[2].opacity, 1.0f), "imported alpha was duplicated into opacity");
 
