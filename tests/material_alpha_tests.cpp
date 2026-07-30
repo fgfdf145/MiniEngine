@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -176,6 +177,21 @@ int main()
         } };
         const std::vector<size_t> order = BuildMaterialDrawOrder(sortKeys);
         Require(order == std::vector<size_t>({ 1, 3, 2, 4, 5, 0 }), "draw order mismatch");
+
+        const float nanDepth = std::numeric_limits<float>::quiet_NaN();
+        const std::array<MaterialDrawSortKey, 6> nanSortKeys{ {
+            { { MaterialAlphaMode::Blend, false }, nanDepth },
+            { { MaterialAlphaMode::Blend, false }, 2.0f },
+            { { MaterialAlphaMode::Blend, true }, nanDepth },
+            { { MaterialAlphaMode::Blend, false }, std::numeric_limits<float>::infinity() },
+            { { MaterialAlphaMode::Blend, false }, -std::numeric_limits<float>::infinity() },
+            { { MaterialAlphaMode::Blend, true }, 2.0f }
+        } };
+        const std::vector<size_t> nanOrder = BuildMaterialDrawOrder(nanSortKeys);
+        Require(
+            nanOrder == std::vector<size_t>({ 3, 1, 5, 4, 0, 2 }),
+            "NaN blend draw order mismatch"
+        );
 
         MeshData boundsMesh{};
         boundsMesh.vertices = {

@@ -1,6 +1,7 @@
 #include "material_pipeline.h"
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 
 MaterialPipelineState GetMaterialPipelineState(MaterialPipelineKey key)
@@ -28,6 +29,16 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
     });
     std::stable_sort(blendBegin, order.end(), [&](size_t lhs, size_t rhs)
     {
+        const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);
+        const bool rhsIsNaN = std::isnan(keys[rhs].viewDepth);
+        if (lhsIsNaN != rhsIsNaN)
+        {
+            return !lhsIsNaN;
+        }
+        if (lhsIsNaN)
+        {
+            return false;
+        }
         return keys[lhs].viewDepth > keys[rhs].viewDepth;
     });
     return order;
