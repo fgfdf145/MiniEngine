@@ -151,6 +151,7 @@ int main()
         Require(opaqueState.depthWriteEnabled, "Opaque depth writes were disabled");
         Require(!opaqueState.alphaMaskEnabled, "Opaque mask discard was enabled");
         Require(opaqueState.cullBackFaces, "single-sided Opaque stopped culling");
+        Require(!opaqueState.writeAttachmentAlpha, "Opaque wrote fractional viewport alpha");
 
         const MaterialPipelineState maskState = GetMaterialPipelineState({
             MaterialAlphaMode::Mask, true
@@ -159,6 +160,7 @@ int main()
         Require(maskState.depthWriteEnabled, "Mask depth writes were disabled");
         Require(maskState.alphaMaskEnabled, "Mask discard was disabled");
         Require(!maskState.cullBackFaces, "double-sided Mask still culled");
+        Require(!maskState.writeAttachmentAlpha, "Mask wrote fractional viewport alpha");
 
         const MaterialPipelineState blendState = GetMaterialPipelineState({
             MaterialAlphaMode::Blend, false
@@ -166,6 +168,7 @@ int main()
         Require(blendState.blendEnabled, "Blend blending was disabled");
         Require(!blendState.depthWriteEnabled, "Blend depth writes were enabled");
         Require(!blendState.alphaMaskEnabled, "Blend mask discard was enabled");
+        Require(blendState.writeAttachmentAlpha, "Blend did not write attachment alpha");
 
         const std::array<MaterialDrawSortKey, 6> sortKeys{ {
             { { MaterialAlphaMode::Blend, false }, 2.0f },

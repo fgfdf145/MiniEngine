@@ -11,6 +11,7 @@ MaterialPipelineState GetMaterialPipelineState(MaterialPipelineKey key)
     state.alphaMaskEnabled = key.alphaMode == MaterialAlphaMode::Mask;
     state.blendEnabled = key.alphaMode == MaterialAlphaMode::Blend;
     state.depthWriteEnabled = key.alphaMode != MaterialAlphaMode::Blend;
+    state.writeAttachmentAlpha = key.alphaMode == MaterialAlphaMode::Blend;
     return state;
 }
 
