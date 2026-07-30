@@ -483,7 +483,7 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
             nodeMap["size"] = size;
         }
         nodeMap["texture_path"] = node.texturePath;
-        nodeMap["scalar_value"] = node.scalarValue;
+        nodeMap["scalar_value"] = ClampMaterialAlphaValue(node.scalarValue, 1.0f);
         YAML::Node colorValue(YAML::NodeType::Sequence);
         for (float value : node.colorValue)
         {
@@ -596,7 +596,10 @@ bool DeserializeMaterialShaderGraph(
             node.height = std::max(sizeNode[1].as<float>(node.height), 0.0f);
         }
         node.texturePath = nodeMap["texture_path"].as<std::string>(std::string{});
-        node.scalarValue = nodeMap["scalar_value"].as<float>(node.scalarValue);
+        node.scalarValue = ClampMaterialAlphaValue(
+            nodeMap["scalar_value"].as<float>(node.scalarValue),
+            1.0f
+        );
         ReadFloatSequence(nodeMap["color_value"], node.colorValue, 4);
         if (const YAML::Node pbrNode = nodeMap["pbr"]; pbrNode && pbrNode.IsMap())
         {
@@ -718,6 +721,7 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
     applyScalarInput("ao_strength", material.pbr.occlusionStrength);
     applyScalarInput("emissive_intensity", material.pbr.emissiveIntensity);
     applyScalarInput("opacity", material.pbr.opacity);
+    material.pbr.opacity = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
 
     const MaterialShaderNode* surfaceSource =
         ResolveUpstreamNode(material.shaderGraph, outputNode.id, "surface", kSurfaceOutputSlot);

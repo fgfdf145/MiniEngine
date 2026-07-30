@@ -417,6 +417,96 @@ int main()
             "legacy shader graph lost canonical alpha cutoff"
         );
 
+        const ScopedFixtureDirectory scalarGraphFixtureDirectory;
+        const std::filesystem::path scalarGraphSidecar =
+            scalarGraphFixtureDirectory.path / "nan_scalar.material.yaml";
+        {
+            std::ofstream file(scalarGraphSidecar);
+            file << "material:\n"
+                    "  name: nan scalar graph\n"
+                    "  pbr:\n"
+                    "    alpha_mode: blend\n"
+                    "    opacity: 0.6\n"
+                    "  shader_graph:\n"
+                    "    version: 2\n"
+                    "    next_node_id: 3\n"
+                    "    next_link_id: 2\n"
+                    "    nodes:\n"
+                    "      - id: 1\n"
+                    "        type: output\n"
+                    "        name: Output\n"
+                    "      - id: 2\n"
+                    "        type: scalar\n"
+                    "        name: Invalid Opacity\n"
+                    "        scalar_value: .nan\n"
+                    "    links:\n"
+                    "      - id: 1\n"
+                    "        from_node_id: 2\n"
+                    "        from_slot: value\n"
+                    "        to_node_id: 1\n"
+                    "        to_slot: opacity\n";
+        }
+        ModelImportedMaterialInfo scalarGraphMaterial{};
+        warning.clear();
+        Require(
+            LoadMaterialDefinition(scalarGraphSidecar, scalarGraphMaterial, warning),
+            "NaN scalar graph sidecar did not load"
+        );
+        Require(CompileMaterialShaderGraph(scalarGraphMaterial).success, "NaN scalar graph did not compile");
+        Require(
+            std::isfinite(scalarGraphMaterial.pbr.opacity) &&
+                scalarGraphMaterial.pbr.opacity >= 0.0f && scalarGraphMaterial.pbr.opacity <= 1.0f,
+            "connected scalar produced non-finite compiled opacity"
+        );
+
+        YAML::Node scalarGraphRoot(YAML::NodeType::Map);
+        scalarGraphRoot["material"] = SerializeMaterialDefinition(scalarGraphMaterial);
+        const YAML::Node scalarGraphSerialized = scalarGraphRoot["material"];
+        const float serializedRootOpacity = scalarGraphSerialized["pbr"]["opacity"].as<float>();
+        Require(
+            std::isfinite(serializedRootOpacity) &&
+                serializedRootOpacity >= 0.0f && serializedRootOpacity <= 1.0f,
+            "serialized root opacity was non-finite"
+        );
+        bool foundFiniteScalar = false;
+        for (const YAML::Node& shaderNode : scalarGraphSerialized["shader_graph"]["nodes"])
+        {
+            if (shaderNode["type"].as<std::string>("") == "scalar")
+            {
+                const float scalarValue = shaderNode["scalar_value"].as<float>();
+                foundFiniteScalar = std::isfinite(scalarValue) && scalarValue >= 0.0f && scalarValue <= 1.0f;
+                break;
+            }
+        }
+        Require(foundFiniteScalar, "serialized scalar remained non-finite");
+        Require(YAML::Dump(scalarGraphRoot).find(".nan") == std::string::npos, "saved scalar graph emitted .nan");
+
+        const std::filesystem::path savedScalarGraphSidecar =
+            scalarGraphFixtureDirectory.path / "saved_nan_scalar.material.yaml";
+        {
+            std::ofstream file(savedScalarGraphSidecar);
+            file << scalarGraphRoot;
+        }
+        ModelImportedMaterialInfo savedScalarGraphMaterial{};
+        warning.clear();
+        Require(
+            LoadMaterialDefinition(savedScalarGraphSidecar, savedScalarGraphMaterial, warning),
+            "saved scalar graph sidecar did not reload"
+        );
+        Require(CompileMaterialShaderGraph(savedScalarGraphMaterial).success, "saved scalar graph did not compile");
+        Require(
+            std::isfinite(savedScalarGraphMaterial.pbr.opacity) &&
+                savedScalarGraphMaterial.pbr.opacity >= 0.0f && savedScalarGraphMaterial.pbr.opacity <= 1.0f,
+            "reloaded scalar graph opacity was non-finite"
+        );
+        for (const MaterialShaderNode& shaderNode : savedScalarGraphMaterial.shaderGraph.nodes)
+        {
+            if (shaderNode.type == MaterialShaderNodeType::Scalar)
+            {
+                Require(std::isfinite(shaderNode.scalarValue), "reloaded scalar remained non-finite");
+            }
+        }
+
         const ScopedFixtureDirectory fixtureDirectory;
         const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);
         const LoadedModelData loaded = ModelLoader::LoadModel(fixture.string());
