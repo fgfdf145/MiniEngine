@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include <material_pipeline.h>
 
 #include <functional>
 
@@ -11,7 +12,7 @@ struct VulkanDrawItem
     uint32_t indexCount = 0;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     ObjectPushConstants drawConstants;
-    bool doubleSided = false;
+    MaterialPipelineKey pipelineKey;
 };
 
 struct VulkanFrameSyncObjects

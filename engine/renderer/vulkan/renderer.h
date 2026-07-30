@@ -5,7 +5,7 @@
 #include "device.h"
 #include "imgui_layer.h"
 #include "instance.h"
-#include "pipeline.h"
+#include "pipeline_set.h"
 #include "render_pass.h"
 #include "scene_viewport.h"
 #include "swapchain.h"
@@ -29,6 +29,8 @@ struct RenderSubmesh
     uint32_t materialBindingIndex = 0;
     MaterialPushConstants material;
     bool doubleSided = false;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    glm::vec3 localBoundsCenter{ 0.0f };
     std::string name;
 };
 
@@ -99,8 +101,7 @@ private:
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;
     std::unique_ptr<VulkanSceneViewport> m_sceneViewportLayer;
-    std::unique_ptr<VulkanPipeline> m_graphicsPipeline;
-    std::unique_ptr<VulkanPipeline> m_graphicsPipelineDoubleSided;
+    std::unique_ptr<VulkanPipelineSet> m_graphicsPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
 };

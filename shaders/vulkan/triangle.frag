@@ -1,5 +1,7 @@
 #version 450
 
+layout(constant_id = 0) const bool kAlphaMask = false;
+
 // Light type constants — must match C++ LightType enum
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT       1
@@ -230,7 +232,7 @@ void main()
     vec4 albedo             = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
 
     float alphaCutoff = drawData.emissiveFactor.a;
-    if (alphaCutoff > 0.0 && albedo.a < alphaCutoff)
+    if (kAlphaMask && albedo.a < alphaCutoff)
         discard;
 
     // ---- Normal -----------------------------------------------------------

@@ -323,25 +323,17 @@ void VulkanRenderer::CreatePipelineResources()
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         BuildMaterialTextureBindings(m_textures, m_materialTextureSlots)
     );
-    m_graphicsPipeline = std::make_unique<VulkanPipeline>(
+    m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_sceneViewportLayer->GetExtent(),
         m_sceneViewportLayer->GetRenderPass(),
         m_uniformBuffer->GetDescriptorSetLayout()
     );
-    m_graphicsPipelineDoubleSided = std::make_unique<VulkanPipeline>(
-        m_device->GetHandle(),
-        m_sceneViewportLayer->GetExtent(),
-        m_sceneViewportLayer->GetRenderPass(),
-        m_uniformBuffer->GetDescriptorSetLayout(),
-        true
-    );
 }
 
 void VulkanRenderer::DestroyPipelineResources()
 {
-    m_graphicsPipelineDoubleSided.reset();
-    m_graphicsPipeline.reset();
+    m_graphicsPipelines.reset();
     m_uniformBuffer.reset();
     // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever
     // the pipeline is torn down so nothing outlives the logical device. m_textureCacheKeys must
@@ -661,6 +653,8 @@ void VulkanRenderer::UploadSceneResources()
         flushUploadBatchIfNeeded();
         renderSubmesh.material = cpuRenderSubmesh.material;
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
+        renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
+        renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
         renderSubmesh.name     = cpuRenderSubmesh.name;
 
         if (!cpuRenderSubmesh.hasTexCoords)
@@ -713,8 +707,7 @@ void VulkanRenderer::ApplyRenderContent(
 )
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
-    std::unique_ptr<VulkanPipeline> newGraphicsPipeline;
-    std::unique_ptr<VulkanPipeline> newGraphicsPipelineDoubleSided;
+    std::unique_ptr<VulkanPipelineSet> newGraphicsPipelines;
 
     if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
@@ -724,27 +717,19 @@ void VulkanRenderer::ApplyRenderContent(
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
             BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots)
         );
-        newGraphicsPipeline = std::make_unique<VulkanPipeline>(
+        newGraphicsPipelines = std::make_unique<VulkanPipelineSet>(
             m_device->GetHandle(),
             m_sceneViewportLayer->GetExtent(),
             m_sceneViewportLayer->GetRenderPass(),
             newUniformBuffer->GetDescriptorSetLayout()
-        );
-        newGraphicsPipelineDoubleSided = std::make_unique<VulkanPipeline>(
-            m_device->GetHandle(),
-            m_sceneViewportLayer->GetExtent(),
-            m_sceneViewportLayer->GetRenderPass(),
-            newUniformBuffer->GetDescriptorSetLayout(),
-            true
         );
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and new UBO/pipeline above are built while the GPU
         // may still be executing the previous frame (overlapping CPU and GPU work).
         m_commandContext->WaitForAllFrames();
+        m_graphicsPipelines = std::move(newGraphicsPipelines);
         m_uniformBuffer = std::move(newUniformBuffer);
-        m_graphicsPipeline = std::move(newGraphicsPipeline);
-        m_graphicsPipelineDoubleSided = std::move(newGraphicsPipelineDoubleSided);
     }
 
     m_textures = std::move(newTextures);
@@ -754,25 +739,42 @@ void VulkanRenderer::ApplyRenderContent(
 
 std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) const
 {
-    std::vector<VulkanDrawItem> drawItems;
-    drawItems.reserve(m_renderSubmeshes.size());
+    std::vector<VulkanDrawItem> unsorted;
+    std::vector<MaterialDrawSortKey> sortKeys;
+    unsorted.reserve(m_renderSubmeshes.size());
+    sortKeys.reserve(m_renderSubmeshes.size());
 
     for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
     {
         ObjectPushConstants drawConstants{};
         drawConstants.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);
         drawConstants.material = renderSubmesh.material;
-        drawItems.push_back(VulkanDrawItem{
+        const MaterialPipelineKey pipelineKey{
+            renderSubmesh.alphaMode,
+            renderSubmesh.doubleSided
+        };
+        const glm::vec4 viewCenter =
+            State().viewportMatrices.view *
+            drawConstants.model *
+            glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
+        sortKeys.push_back({ pipelineKey, -viewCenter.z });
+        unsorted.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),
             renderSubmesh.buffer->GetIndexHandle(),
             renderSubmesh.buffer->GetIndexCount(),
             m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
             drawConstants,
-            renderSubmesh.doubleSided
+            pipelineKey
         });
     }
 
-    return drawItems;
+    std::vector<VulkanDrawItem> ordered;
+    ordered.reserve(unsorted.size());
+    for (size_t index : BuildMaterialDrawOrder(sortKeys))
+    {
+        ordered.push_back(std::move(unsorted[index]));
+    }
+    return ordered;
 }
 
 void VulkanRenderer::RecordSceneLayer(
@@ -796,19 +798,16 @@ void VulkanRenderer::RecordSceneLayer(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Double-sided materials (e.g. glTF doubleSided=true glass/foliage) get a dedicated
-    // no-cull pipeline instead of the default backface-culled one; switch between the two
-    // as needed rather than rebinding for every draw item.
     const VulkanPipeline* boundPipeline = nullptr;
 
     for (const VulkanDrawItem& drawItem : drawItems)
     {
-        const VulkanPipeline* requiredPipeline =
-            drawItem.doubleSided ? m_graphicsPipelineDoubleSided.get() : m_graphicsPipeline.get();
-        if (requiredPipeline != boundPipeline)
+        const VulkanPipeline& requiredPipeline =
+            m_graphicsPipelines->Get(drawItem.pipelineKey);
+        if (&requiredPipeline != boundPipeline)
         {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline->GetHandle());
-            boundPipeline = requiredPipeline;
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline.GetHandle());
+            boundPipeline = &requiredPipeline;
         }
 
         const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };

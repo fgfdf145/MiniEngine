@@ -56,6 +56,8 @@ add_library(engine_renderer
     vulkan/instance.h
     vulkan/pipeline.cpp
     vulkan/pipeline.h
+    vulkan/pipeline_set.cpp
+    vulkan/pipeline_set.h
     vulkan/render_pass.cpp
     vulkan/render_pass.h
     vulkan/renderer.cpp

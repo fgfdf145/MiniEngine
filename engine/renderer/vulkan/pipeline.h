@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include <material_pipeline.h>
 
 class VulkanPipeline
 {
@@ -10,7 +11,7 @@ public:
         VkExtent2D extent,
         VkRenderPass renderPass,
         VkDescriptorSetLayout descriptorSetLayout,
-        bool doubleSided = false
+        MaterialPipelineKey key
     );
     ~VulkanPipeline();
 

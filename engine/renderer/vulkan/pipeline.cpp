@@ -11,16 +11,21 @@ VulkanPipeline::VulkanPipeline(
     VkExtent2D extent,
     VkRenderPass renderPass,
     VkDescriptorSetLayout descriptorSetLayout,
-    bool doubleSided
+    MaterialPipelineKey key
 )
     : m_device(device)
 {
+    const MaterialPipelineState state = GetMaterialPipelineState(key);
+    VkShaderModule vertexShaderModule = VK_NULL_HANDLE;
+    VkShaderModule fragmentShaderModule = VK_NULL_HANDLE;
+    try
+    {
     const std::string shaderDir = MINIENGINE_SHADER_DIR;
     const auto vertexShaderCode = ReadFile(shaderDir + "/triangle.vert.spv");
     const auto fragmentShaderCode = ReadFile(shaderDir + "/triangle.frag.spv");
 
-    const VkShaderModule vertexShaderModule = CreateShaderModule(vertexShaderCode);
-    const VkShaderModule fragmentShaderModule = CreateShaderModule(fragmentShaderCode);
+    vertexShaderModule = CreateShaderModule(vertexShaderCode);
+    fragmentShaderModule = CreateShaderModule(fragmentShaderCode);
 
     VkPipelineShaderStageCreateInfo vertexShaderStageInfo{};
     vertexShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -33,6 +38,16 @@ VulkanPipeline::VulkanPipeline(
     fragmentShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragmentShaderStageInfo.module = fragmentShaderModule;
     fragmentShaderStageInfo.pName = "main";
+
+    const VkBool32 alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
+    const VkSpecializationMapEntry alphaMaskEntry{ 0, 0, sizeof(alphaMaskEnabled) };
+    const VkSpecializationInfo alphaMaskSpecialization{
+        1,
+        &alphaMaskEntry,
+        sizeof(alphaMaskEnabled),
+        &alphaMaskEnabled
+    };
+    fragmentShaderStageInfo.pSpecializationInfo = &alphaMaskSpecialization;
 
     const VkPipelineShaderStageCreateInfo shaderStages[] = { vertexShaderStageInfo, fragmentShaderStageInfo };
 
@@ -76,7 +91,7 @@ VulkanPipeline::VulkanPipeline(
     // combination as the classic Vulkan tutorial). Declaring CLOCKWISE here culls the camera-
     // facing side of every model. Materials flagged doubleSided (glTF doubleSided=true, e.g.
     // foliage/glass) use the no-cull pipeline variant instead.
-    rasterizer.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = state.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -86,13 +101,13 @@ VulkanPipeline::VulkanPipeline(
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = state.depthWriteEnabled ? VK_TRUE : VK_FALSE;
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.blendEnable = state.blendEnabled ? VK_TRUE : VK_FALSE;
     colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
@@ -142,8 +157,33 @@ VulkanPipeline::VulkanPipeline(
     CheckVulkan(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline), "Failed to create graphics pipeline");
 
     vkDestroyShaderModule(m_device, fragmentShaderModule, nullptr);
+    fragmentShaderModule = VK_NULL_HANDLE;
     vkDestroyShaderModule(m_device, vertexShaderModule, nullptr);
+    vertexShaderModule = VK_NULL_HANDLE;
     LOG_INFO("Graphics pipeline created successfully");
+    }
+    catch (...)
+    {
+        if (fragmentShaderModule != VK_NULL_HANDLE)
+        {
+            vkDestroyShaderModule(m_device, fragmentShaderModule, nullptr);
+        }
+        if (vertexShaderModule != VK_NULL_HANDLE)
+        {
+            vkDestroyShaderModule(m_device, vertexShaderModule, nullptr);
+        }
+        if (m_pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device, m_pipeline, nullptr);
+            m_pipeline = VK_NULL_HANDLE;
+        }
+        if (m_layout != VK_NULL_HANDLE)
+        {
+            vkDestroyPipelineLayout(m_device, m_layout, nullptr);
+            m_layout = VK_NULL_HANDLE;
+        }
+        throw;
+    }
 }
 
 VulkanPipeline::~VulkanPipeline()
