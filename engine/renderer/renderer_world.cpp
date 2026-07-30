@@ -1,7 +1,25 @@
 #include "renderer_world.h"
 
 #include <algorithm>
+#include <glm/common.hpp>
 #include <iterator>
+
+glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
+{
+    if (mesh.vertices.empty())
+    {
+        return glm::vec3(0.0f);
+    }
+    glm::vec3 minimum(mesh.vertices.front().position[0], mesh.vertices.front().position[1], mesh.vertices.front().position[2]);
+    glm::vec3 maximum = minimum;
+    for (const Vertex& vertex : mesh.vertices)
+    {
+        const glm::vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
+        minimum = glm::min(minimum, position);
+        maximum = glm::max(maximum, position);
+    }
+    return (minimum + maximum) * 0.5f;
+}
 
 void RendererWorld::SetSceneWorld(ISceneWorld& sceneWorld)
 {

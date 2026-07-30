@@ -26,6 +26,8 @@ struct MaterialTexturePaths
     std::string blendMask;
 };
 
+glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh);
+
 struct CpuRenderSubmesh
 {
     entt::entity entity = entt::null;
@@ -34,6 +36,8 @@ struct CpuRenderSubmesh
     MaterialTexturePaths textures;
     bool hasTexCoords = false;
     bool doubleSided = false;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    glm::vec3 localBoundsCenter{ 0.0f };
     std::string name;
 };
 

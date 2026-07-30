@@ -7,6 +7,8 @@ add_library(engine_render_core
     camera.cpp
     camera.h
     material.h
+    material_pipeline.cpp
+    material_pipeline.h
     render_types.h
     renderer_world.cpp
     renderer_world.h

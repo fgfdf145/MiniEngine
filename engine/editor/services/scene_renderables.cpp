@@ -68,10 +68,15 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             {}
         );
 
+        const ModelMaterialData material{};
         CpuRenderSubmesh renderSubmesh{};
         renderSubmesh.entity = entity;
         renderSubmesh.mesh = CreateDefaultCubeMesh();
         renderSubmesh.material = BuildDefaultMaterialForTag(tag.name);
+        renderSubmesh.alphaMode = material.alphaMode;
+        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(renderSubmesh.mesh);
+        renderSubmesh.material.emissiveFactor[3] =
+            ClampMaterialAlphaValue(material.alphaCutoff);
         renderSubmesh.hasTexCoords = true;
         renderSubmesh.name = tag.name;
         renderSubmeshes.push_back(std::move(renderSubmesh));
@@ -148,6 +153,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
 
         const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
         renderSubmesh.doubleSided = material.doubleSided;
+        renderSubmesh.alphaMode = material.alphaMode;
+        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(renderSubmesh.mesh);
         renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
         renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
         renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];
@@ -155,7 +162,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
         renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
         renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
-        renderSubmesh.material.emissiveFactor[3] = material.alphaCutoff;
+        renderSubmesh.material.emissiveFactor[3] = ClampMaterialAlphaValue(material.alphaCutoff);
         renderSubmesh.material.surfaceFactors[0] = material.metallicFactor;
         renderSubmesh.material.surfaceFactors[1] = material.roughnessFactor;
         renderSubmesh.material.surfaceFactors[2] = material.normalScale;

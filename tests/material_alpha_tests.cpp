@@ -1,6 +1,8 @@
 #include <material_graph.h>
 #include <material_definition.h>
+#include <material_pipeline.h>
 #include <model_loader.h>
+#include <renderer_world.h>
 
 #include <array>
 #include <chrono>
@@ -12,6 +14,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -139,6 +142,54 @@ int main()
             ResolveMaterialCoverageAlpha(MaterialAlphaMode::Blend, 0.25f, 0.5f),
             0.25f
         ), "Blend did not preserve alpha");
+
+        const MaterialPipelineState opaqueState = GetMaterialPipelineState({
+            MaterialAlphaMode::Opaque, false
+        });
+        Require(!opaqueState.blendEnabled, "Opaque blending was enabled");
+        Require(opaqueState.depthWriteEnabled, "Opaque depth writes were disabled");
+        Require(!opaqueState.alphaMaskEnabled, "Opaque mask discard was enabled");
+        Require(opaqueState.cullBackFaces, "single-sided Opaque stopped culling");
+
+        const MaterialPipelineState maskState = GetMaterialPipelineState({
+            MaterialAlphaMode::Mask, true
+        });
+        Require(!maskState.blendEnabled, "Mask blending was enabled");
+        Require(maskState.depthWriteEnabled, "Mask depth writes were disabled");
+        Require(maskState.alphaMaskEnabled, "Mask discard was disabled");
+        Require(!maskState.cullBackFaces, "double-sided Mask still culled");
+
+        const MaterialPipelineState blendState = GetMaterialPipelineState({
+            MaterialAlphaMode::Blend, false
+        });
+        Require(blendState.blendEnabled, "Blend blending was disabled");
+        Require(!blendState.depthWriteEnabled, "Blend depth writes were enabled");
+        Require(!blendState.alphaMaskEnabled, "Blend mask discard was enabled");
+
+        const std::array<MaterialDrawSortKey, 6> sortKeys{ {
+            { { MaterialAlphaMode::Blend, false }, 2.0f },
+            { { MaterialAlphaMode::Mask, false }, 8.0f },
+            { { MaterialAlphaMode::Blend, true }, 9.0f },
+            { { MaterialAlphaMode::Opaque, true }, 1.0f },
+            { { MaterialAlphaMode::Blend, false }, 9.0f },
+            { { MaterialAlphaMode::Blend, false }, 4.0f }
+        } };
+        const std::vector<size_t> order = BuildMaterialDrawOrder(sortKeys);
+        Require(order == std::vector<size_t>({ 1, 3, 2, 4, 5, 0 }), "draw order mismatch");
+
+        MeshData boundsMesh{};
+        boundsMesh.vertices = {
+            { { -2.0f, -4.0f, -6.0f } },
+            { { 6.0f, 8.0f, 10.0f } }
+        };
+        Require(
+            glm::length(ComputeMeshBoundsCenter(boundsMesh) - glm::vec3(2.0f, 2.0f, 2.0f)) < 0.0001f,
+            "mesh bounds center mismatch"
+        );
+        Require(
+            ComputeMeshBoundsCenter(MeshData{}) == glm::vec3(0.0f),
+            "empty mesh did not use local origin"
+        );
 
         ModelImportedMaterialInfo source{};
         source.name = "masked foliage";
