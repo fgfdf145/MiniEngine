@@ -334,6 +334,8 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
     HashQuantizedFloat(seed, pbr.occlusionStrength);
     HashQuantizedFloat(seed, pbr.emissiveIntensity);
     HashQuantizedFloat(seed, pbr.opacity);
+    HashCombine(seed, static_cast<uint32_t>(pbr.alphaMode));
+    HashQuantizedFloat(seed, pbr.alphaCutoff);
 }
 
 void HashPreviewBlendGraph(size_t& seed, const MaterialTextureBlendGraph& blendGraph)
@@ -732,7 +734,12 @@ glm::vec4 EvaluatePreviewMaterial(
     color = color / (color + glm::vec3(1.0f));
     color = LinearToSrgb(color);
 
-    return glm::vec4(color, glm::clamp(albedo.a, 0.0f, 1.0f));
+    const float previewAlpha = ResolveMaterialCoverageAlpha(
+        material.pbr.alphaMode,
+        albedo.a,
+        material.pbr.alphaCutoff
+    );
+    return glm::vec4(color, previewAlpha);
 }
 
 ImU32 PackPreviewColor(const glm::vec4& color)

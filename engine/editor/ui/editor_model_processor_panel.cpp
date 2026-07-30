@@ -4,6 +4,7 @@
 #include "editor_model_preview.h"
 
 #include <material_graph_runtime.h>
+#include <material_definition.h>
 #include <model_loader.h>
 #include <texture_loader.h>
 
@@ -41,25 +42,6 @@
 
 namespace
 {
-ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
-{
-    ModelImportedMaterialInfo importedMaterial{
-        material.name,
-        material.baseColorTexturePath,
-        material.normalTexturePath,
-        material.metallicTexturePath,
-        material.roughnessTexturePath,
-        material.occlusionTexturePath,
-        material.emissiveTexturePath,
-        material.pbr,
-        material.blendGraph,
-        material.shaderGraph
-    };
-    EnsureMaterialShaderGraph(importedMaterial.name, std::nullopt, importedMaterial);
-    CompileMaterialShaderGraph(importedMaterial);
-    return importedMaterial;
-}
-
 std::string BuildMaterialSlotLabel(const ModelImportedMaterialInfo& material, size_t materialIndex)
 {
     return material.name.empty()
@@ -78,7 +60,10 @@ std::vector<ModelImportedMaterialInfo> LoadEffectiveImportedModelMaterials(
     materials.reserve(loadedModel.materials.size());
     for (const ModelMaterialData& material : loadedModel.materials)
     {
-        materials.push_back(BuildImportedMaterialInfo(material));
+        ModelImportedMaterialInfo importedMaterial = BuildImportedMaterialInfo(material);
+        EnsureMaterialShaderGraph(importedMaterial.name, std::nullopt, importedMaterial);
+        CompileMaterialShaderGraph(importedMaterial);
+        materials.push_back(std::move(importedMaterial));
     }
 
     if (materials.empty())
@@ -915,6 +900,11 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.emissiveIntensity,
                 selectedMaterial.pbr.opacity
             );
+            ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
+            if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
+            {
+                ImGui::Text("Alpha Cutoff: %.2f", selectedMaterial.pbr.alphaCutoff);
+            }
             if (HasSecondaryMaterialLayer(blendGraph))
             {
                 ImGui::Separator();

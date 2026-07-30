@@ -1,6 +1,9 @@
 #include "model_loader.h"
 
 #include "gltf_model_loader.h"
+#include "material_definition.h"
+
+#include <log/log.h>
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
@@ -116,6 +119,25 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     for (ModelMaterialData& material : modelData.materials)
     {
         ApplyPbrSettings(material, BuildPbrSettingsFromMaterial(material));
+    }
+    for (size_t materialIndex = 0; materialIndex < modelData.materials.size(); ++materialIndex)
+    {
+        ModelMaterialData& rawMaterial = modelData.materials[materialIndex];
+        ModelImportedMaterialInfo editable = BuildImportedMaterialInfo(rawMaterial);
+        const std::filesystem::path sidecar =
+            BuildMaterialDefinitionPath(modelPath, static_cast<uint32_t>(materialIndex));
+        if (std::filesystem::exists(sidecar))
+        {
+            std::string warning;
+            if (LoadMaterialDefinition(sidecar, editable, warning))
+            {
+                ApplyImportedMaterialInfo(editable, rawMaterial);
+            }
+            if (!warning.empty())
+            {
+                LOG_WARN("{}: {}", sidecar.string(), warning);
+            }
+        }
     }
     return modelData;
 }

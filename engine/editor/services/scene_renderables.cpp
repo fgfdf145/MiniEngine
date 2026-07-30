@@ -3,6 +3,7 @@
 #include <renderer_shared_state.h>
 
 #include <mesh.h>
+#include <material_definition.h>
 #include <model_cache.h>
 #include <model_loader.h>
 
@@ -31,22 +32,6 @@ MaterialPushConstants BuildDefaultMaterialForTag(const std::string& tagName)
         material.baseColorFactor[2] = 1.0f;
     }
     return material;
-}
-
-ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
-{
-    return ModelImportedMaterialInfo{
-        material.name,
-        material.baseColorTexturePath,
-        material.normalTexturePath,
-        material.metallicTexturePath,
-        material.roughnessTexturePath,
-        material.occlusionTexturePath,
-        material.emissiveTexturePath,
-        material.pbr,
-        material.blendGraph,
-        material.shaderGraph
-    };
 }
 
 ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submesh)

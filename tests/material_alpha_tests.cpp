@@ -1,4 +1,5 @@
 #include <material_graph.h>
+#include <material_definition.h>
 #include <model_loader.h>
 
 #include <array>
@@ -138,6 +139,66 @@ int main()
             ResolveMaterialCoverageAlpha(MaterialAlphaMode::Blend, 0.25f, 0.5f),
             0.25f
         ), "Blend did not preserve alpha");
+
+        ModelImportedMaterialInfo source{};
+        source.name = "masked foliage";
+        source.pbr.alphaMode = MaterialAlphaMode::Mask;
+        source.pbr.alphaCutoff = 0.37f;
+        source.pbr.baseColorFactor[3] = 0.6f;
+        source.pbr.opacity = 0.8f;
+
+        const YAML::Node serialized = SerializeMaterialDefinition(source);
+        Require(
+            serialized["pbr"]["alpha_mode"].as<std::string>() == "mask",
+            "sidecar alpha mode was not canonical"
+        );
+        Require(
+            NearlyEqual(serialized["pbr"]["alpha_cutoff"].as<float>(), 0.37f),
+            "sidecar cutoff was not serialized"
+        );
+
+        const std::filesystem::path sidecar =
+            std::filesystem::temp_directory_path() / "miniengine_material_alpha.material.yaml";
+        {
+            std::ofstream file(sidecar);
+            file << "material:\n"
+                    "  name: restored\n"
+                    "  pbr:\n"
+                    "    alpha_mode: blend\n"
+                    "    alpha_cutoff: 2.0\n"
+                    "    base_color_factor: [1, 1, 1, 0.4]\n"
+                    "    opacity: -1.0\n";
+        }
+        ModelImportedMaterialInfo restored{};
+        std::string warning;
+        Require(LoadMaterialDefinition(sidecar, restored, warning), "sidecar did not load");
+        Require(restored.pbr.alphaMode == MaterialAlphaMode::Blend, "sidecar mode did not load");
+        Require(NearlyEqual(restored.pbr.alphaCutoff, 1.0f), "sidecar cutoff was not clamped");
+        Require(NearlyEqual(restored.pbr.opacity, 0.0f), "sidecar opacity was not clamped");
+
+        {
+            std::ofstream file(sidecar);
+            file << "material:\n  pbr:\n    alpha_mode: invalid\n";
+        }
+        restored = {};
+        warning.clear();
+        Require(LoadMaterialDefinition(sidecar, restored, warning), "invalid-mode sidecar did not load");
+        Require(restored.pbr.alphaMode == MaterialAlphaMode::Opaque, "invalid mode did not fall back");
+        Require(!warning.empty(), "invalid mode did not report a warning");
+        std::error_code removeError;
+        std::filesystem::remove(sidecar, removeError);
+
+        const ScopedFixtureDirectory reloadFixtureDirectory;
+        const std::filesystem::path reloadModel = WriteAlphaModeFixture(reloadFixtureDirectory.path);
+        const std::filesystem::path reloadSidecar = BuildMaterialDefinitionPath(reloadModel, 0);
+        {
+            std::ofstream file(reloadSidecar);
+            file << "material:\n  pbr:\n    alpha_mode: mask\n    alpha_cutoff: 0.42\n";
+        }
+        const LoadedModelData reloaded = ModelLoader::LoadModel(reloadModel.string());
+        Require(reloaded.materials[0].pbr.alphaMode == MaterialAlphaMode::Mask, "restart lost alpha mode");
+        Require(NearlyEqual(reloaded.materials[0].pbr.alphaCutoff, 0.42f), "restart lost cutoff");
+        std::filesystem::remove(reloadSidecar, removeError);
 
         const ScopedFixtureDirectory fixtureDirectory;
         const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);

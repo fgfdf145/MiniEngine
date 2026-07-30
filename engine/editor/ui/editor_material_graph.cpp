@@ -878,6 +878,17 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
 {
     bool changed = false;
     changed |= ImGui::ColorEdit4("Base Factor", pbr.baseColorFactor);
+    const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
+    int alphaModeIndex = static_cast<int>(pbr.alphaMode);
+    if (ImGui::Combo("Alpha Mode", &alphaModeIndex, alphaModes, 3))
+    {
+        pbr.alphaMode = static_cast<MaterialAlphaMode>(alphaModeIndex);
+        changed = true;
+    }
+    if (pbr.alphaMode == MaterialAlphaMode::Mask)
+    {
+        changed |= ImGui::SliderFloat("Alpha Cutoff", &pbr.alphaCutoff, 0.0f, 1.0f, "%.2f");
+    }
     changed |= ImGui::SliderFloat("Metallic", &pbr.metallicFactor, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::SliderFloat("Roughness", &pbr.roughnessFactor, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::SliderFloat("Normal Scale", &pbr.normalScale, 0.0f, 4.0f, "%.2f");

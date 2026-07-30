@@ -6,6 +6,7 @@
 
 #include <asset_registry.h>
 #include <log/log.h>
+#include <material_definition.h>
 #include <material_graph_runtime.h>
 #include <model_cache.h>
 #include <model_loader.h>
@@ -24,99 +25,6 @@
 
 namespace
 {
-// Copies user-edited material data (blendGraph, shaderGraph, pbr, texture paths) from an
-// ImportedMaterialInfo into the raw ModelMaterialData held by the model cache.
-// ModelMaterialData has redundant flat fields alongside a pbr struct; both must stay in sync.
-void ApplyImportedMaterialToModelData(const ModelImportedMaterialInfo& src, ModelMaterialData& dst)
-{
-    dst.name                  = src.name;
-    dst.baseColorTexturePath  = src.baseColorTexturePath;
-    dst.normalTexturePath     = src.normalTexturePath;
-    dst.metallicTexturePath   = src.metallicTexturePath;
-    dst.roughnessTexturePath  = src.roughnessTexturePath;
-    dst.occlusionTexturePath  = src.occlusionTexturePath;
-    dst.emissiveTexturePath   = src.emissiveTexturePath;
-    dst.pbr                   = src.pbr;
-    dst.blendGraph            = src.blendGraph;
-    dst.shaderGraph           = src.shaderGraph;
-    // Mirror pbr fields into the flat copies used by RebuildSceneRenderables.
-    dst.baseColor[0]      = src.pbr.baseColorFactor[0];
-    dst.baseColor[1]      = src.pbr.baseColorFactor[1];
-    dst.baseColor[2]      = src.pbr.baseColorFactor[2];
-    dst.baseColor[3]      = src.pbr.baseColorFactor[3];
-    dst.emissiveColor[0]  = src.pbr.emissiveColor[0];
-    dst.emissiveColor[1]  = src.pbr.emissiveColor[1];
-    dst.emissiveColor[2]  = src.pbr.emissiveColor[2];
-    dst.metallicFactor    = src.pbr.metallicFactor;
-    dst.roughnessFactor   = src.pbr.roughnessFactor;
-    dst.normalScale       = src.pbr.normalScale;
-    dst.occlusionStrength = src.pbr.occlusionStrength;
-    dst.emissiveIntensity = src.pbr.emissiveIntensity;
-    dst.opacity           = src.pbr.opacity;
-}
-
-// Serializes one material to a YAML node under a "material:" root map, with
-// name/texture paths, a "pbr:" block, an optional "texture_graph:" blend block,
-// and an optional "shader_graph:" block.
-YAML::Node SerializeMaterialToYaml(const ModelImportedMaterialInfo& material)
-{
-    YAML::Node node(YAML::NodeType::Map);
-    node["name"]                   = material.name;
-    node["base_color_texture_path"]= material.baseColorTexturePath;
-    node["normal_texture_path"]    = material.normalTexturePath;
-    node["metallic_texture_path"]  = material.metallicTexturePath;
-    node["roughness_texture_path"] = material.roughnessTexturePath;
-    node["occlusion_texture_path"] = material.occlusionTexturePath;
-    node["emissive_texture_path"]  = material.emissiveTexturePath;
-
-    YAML::Node pbr(YAML::NodeType::Map);
-    YAML::Node bcf(YAML::NodeType::Sequence);
-    for (float v : material.pbr.baseColorFactor) bcf.push_back(v);
-    pbr["base_color_factor"] = bcf;
-    YAML::Node ec(YAML::NodeType::Sequence);
-    for (float v : material.pbr.emissiveColor) ec.push_back(v);
-    pbr["emissive_color"]      = ec;
-    pbr["metallic_factor"]     = material.pbr.metallicFactor;
-    pbr["roughness_factor"]    = material.pbr.roughnessFactor;
-    pbr["normal_scale"]        = material.pbr.normalScale;
-    pbr["occlusion_strength"]  = material.pbr.occlusionStrength;
-    pbr["emissive_intensity"]  = material.pbr.emissiveIntensity;
-    pbr["opacity"]             = material.pbr.opacity;
-    node["pbr"] = pbr;
-
-    const MaterialTextureBlendGraph& bg = material.blendGraph;
-    const bool hasBlendData =
-        bg.enabled ||
-        !bg.blendMaskTexturePath.empty() ||
-        !bg.secondaryBaseColorTexturePath.empty() ||
-        !bg.secondaryNormalTexturePath.empty() ||
-        !bg.secondaryMetallicTexturePath.empty() ||
-        !bg.secondaryRoughnessTexturePath.empty() ||
-        !bg.secondaryOcclusionTexturePath.empty() ||
-        !bg.secondaryEmissiveTexturePath.empty();
-    if (hasBlendData)
-    {
-        YAML::Node graph(YAML::NodeType::Map);
-        graph["enabled"]                          = bg.enabled;
-        graph["blend_factor"]                     = bg.blendFactor;
-        graph["blend_mask_texture_path"]          = bg.blendMaskTexturePath;
-        graph["secondary_base_color_texture_path"]= bg.secondaryBaseColorTexturePath;
-        graph["secondary_normal_texture_path"]    = bg.secondaryNormalTexturePath;
-        graph["secondary_metallic_texture_path"]  = bg.secondaryMetallicTexturePath;
-        graph["secondary_roughness_texture_path"] = bg.secondaryRoughnessTexturePath;
-        graph["secondary_occlusion_texture_path"] = bg.secondaryOcclusionTexturePath;
-        graph["secondary_emissive_texture_path"]  = bg.secondaryEmissiveTexturePath;
-        node["texture_graph"] = graph;
-    }
-
-    if (!material.shaderGraph.IsEmpty())
-    {
-        node["shader_graph"] = SerializeMaterialShaderGraph(material.shaderGraph);
-    }
-
-    return node;
-}
-
 // Writes a single material's YAML to disk. Returns the output path on success.
 std::optional<std::filesystem::path> WriteMaterialYamlFile(
     const std::filesystem::path& modelPath,
@@ -124,12 +32,10 @@ std::optional<std::filesystem::path> WriteMaterialYamlFile(
     const ModelImportedMaterialInfo& material
 )
 {
-    const std::filesystem::path outPath =
-        modelPath.parent_path() /
-        (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
+    const std::filesystem::path outPath = BuildMaterialDefinitionPath(modelPath, materialIndex);
 
     YAML::Node root(YAML::NodeType::Map);
-    root["material"] = SerializeMaterialToYaml(material);
+    root["material"] = SerializeMaterialDefinition(material);
 
     std::ofstream outFile(outPath);
     if (!outFile)
@@ -350,7 +256,7 @@ void UpdateImportedMaterialDefinition(
     std::shared_ptr<LoadedModelData> cached = ModelCache::Get(modelPath);
     if (cached && materialIndex < cached->materials.size())
     {
-        ApplyImportedMaterialToModelData(material, cached->materials[materialIndex]);
+        ApplyImportedMaterialInfo(material, cached->materials[materialIndex]);
     }
 
     WriteMaterialYamlFile(
@@ -389,7 +295,7 @@ void UpdateImportedModelMaterialDefinitions(
         const size_t count = std::min(materials.size(), cached->materials.size());
         for (size_t i = 0; i < count; ++i)
         {
-            ApplyImportedMaterialToModelData(materials[i], cached->materials[i]);
+            ApplyImportedMaterialInfo(materials[i], cached->materials[i]);
         }
     }
 

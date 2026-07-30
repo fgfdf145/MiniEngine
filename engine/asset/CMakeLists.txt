@@ -5,6 +5,8 @@
     asset_registry.h
     gltf_model_loader.cpp
     gltf_model_loader.h
+    material_definition.cpp
+    material_definition.h
     material_graph_runtime.cpp
     material_graph_runtime.h
     mesh.cpp
