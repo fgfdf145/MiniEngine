@@ -33,7 +33,9 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.normalScale = material.normalScale;
     pbr.occlusionStrength = material.occlusionStrength;
     pbr.emissiveIntensity = material.emissiveIntensity;
-    pbr.opacity = material.opacity;
+    pbr.alphaMode = material.alphaMode;
+    pbr.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff);
+    pbr.opacity = ClampMaterialAlphaValue(material.opacity);
     return pbr;
 }
 
@@ -53,7 +55,9 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.normalScale = pbr.normalScale;
     material.occlusionStrength = pbr.occlusionStrength;
     material.emissiveIntensity = pbr.emissiveIntensity;
-    material.opacity = pbr.opacity;
+    material.alphaMode = pbr.alphaMode;
+    material.alphaCutoff = ClampMaterialAlphaValue(pbr.alphaCutoff);
+    material.opacity = ClampMaterialAlphaValue(pbr.opacity);
 }
 
 }

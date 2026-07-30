@@ -1,8 +1,22 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
+
+enum class MaterialAlphaMode
+{
+    Opaque,
+    Mask,
+    Blend
+};
+
+std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value);
+const char* ToString(MaterialAlphaMode mode);
+float ClampMaterialAlphaValue(float value);
+float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cutoff);
 
 struct MaterialPbrSurfaceSettings
 {
@@ -14,6 +28,8 @@ struct MaterialPbrSurfaceSettings
     float occlusionStrength = 1.0f;
     float emissiveIntensity = 1.0f;
     float opacity = 1.0f;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
 };
 
 struct MaterialGraphNodePosition

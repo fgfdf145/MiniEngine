@@ -705,14 +705,13 @@ ModelMaterialData BuildMaterialData(
         materialData.emissiveIntensity = 1.0f;
     }
 
-    materialData.opacity = material.alphaMode == "BLEND" || material.alphaMode == "MASK"
-        ? materialData.baseColor[3]
-        : 1.0f;
-    materialData.baseColor[3] = materialData.opacity;
-    if (material.alphaMode == "MASK")
-    {
-        materialData.alphaCutoff = static_cast<float>(material.alphaCutoff);
-    }
+    const std::optional<MaterialAlphaMode> parsedAlphaMode =
+        ParseMaterialAlphaMode(material.alphaMode);
+    materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
+    materialData.alphaCutoff = materialData.alphaMode == MaterialAlphaMode::Mask
+        ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff))
+        : 0.5f;
+    materialData.opacity = 1.0f;
     return materialData;
 }
 

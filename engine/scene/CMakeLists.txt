@@ -1,4 +1,5 @@
 add_library(engine_scene
+    material_alpha.cpp
     material_graph.h
     scene_components.h
     scene_module.cpp
