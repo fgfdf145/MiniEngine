@@ -186,7 +186,7 @@ bool LoadMaterialDefinition(
             material.pbr.normalScale = pbrNode["normal_scale"].as<float>(material.pbr.normalScale);
             material.pbr.occlusionStrength = pbrNode["occlusion_strength"].as<float>(material.pbr.occlusionStrength);
             material.pbr.emissiveIntensity = pbrNode["emissive_intensity"].as<float>(material.pbr.emissiveIntensity);
-            const std::string storedMode = pbrNode["alpha_mode"].as<std::string>("opaque");
+            const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {
                 material.pbr.alphaMode = *parsed;
@@ -197,7 +197,7 @@ bool LoadMaterialDefinition(
                 warning = "Unknown material alpha_mode '" + storedMode + "'; using opaque";
             }
             material.pbr.alphaCutoff = ClampMaterialAlphaValue(
-                pbrNode["alpha_cutoff"].as<float>(0.5f)
+                pbrNode["alpha_cutoff"].as<float>(material.pbr.alphaCutoff)
             );
             material.pbr.opacity = ClampMaterialAlphaValue(
                 pbrNode["opacity"].as<float>(material.pbr.opacity)

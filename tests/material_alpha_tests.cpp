@@ -200,6 +200,24 @@ int main()
         Require(NearlyEqual(reloaded.materials[0].pbr.alphaCutoff, 0.42f), "restart lost cutoff");
         std::filesystem::remove(reloadSidecar, removeError);
 
+        const ScopedFixtureDirectory legacyFixtureDirectory;
+        const std::filesystem::path legacyModel = WriteAlphaModeFixture(legacyFixtureDirectory.path);
+        const std::filesystem::path legacySidecar = BuildMaterialDefinitionPath(legacyModel, 1);
+        {
+            std::ofstream file(legacySidecar);
+            file << "material:\n  pbr:\n    metallic_factor: 0.7\n";
+        }
+        const LoadedModelData legacyReloaded = ModelLoader::LoadModel(legacyModel.string());
+        Require(
+            legacyReloaded.materials[1].pbr.alphaMode == MaterialAlphaMode::Mask,
+            "legacy sidecar lost alpha mode"
+        );
+        Require(
+            NearlyEqual(legacyReloaded.materials[1].pbr.alphaCutoff, 0.4f),
+            "legacy sidecar lost alpha cutoff"
+        );
+        std::filesystem::remove(legacySidecar, removeError);
+
         const ScopedFixtureDirectory fixtureDirectory;
         const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);
         const LoadedModelData loaded = ModelLoader::LoadModel(fixture.string());
