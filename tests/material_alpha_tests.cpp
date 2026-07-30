@@ -429,8 +429,8 @@ int main()
                     "    opacity: 0.6\n"
                     "  shader_graph:\n"
                     "    version: 2\n"
-                    "    next_node_id: 3\n"
-                    "    next_link_id: 2\n"
+                    "    next_node_id: 4\n"
+                    "    next_link_id: 3\n"
                     "    nodes:\n"
                     "      - id: 1\n"
                     "        type: output\n"
@@ -439,12 +439,21 @@ int main()
                     "        type: scalar\n"
                     "        name: Invalid Opacity\n"
                     "        scalar_value: .nan\n"
+                    "      - id: 3\n"
+                    "        type: scalar\n"
+                    "        name: High Emissive\n"
+                    "        scalar_value: 4.0\n"
                     "    links:\n"
                     "      - id: 1\n"
                     "        from_node_id: 2\n"
                     "        from_slot: value\n"
                     "        to_node_id: 1\n"
-                    "        to_slot: opacity\n";
+                    "        to_slot: opacity\n"
+                    "      - id: 2\n"
+                    "        from_node_id: 3\n"
+                    "        from_slot: value\n"
+                    "        to_node_id: 1\n"
+                    "        to_slot: emissive_intensity\n";
         }
         ModelImportedMaterialInfo scalarGraphMaterial{};
         warning.clear();
@@ -458,6 +467,10 @@ int main()
                 scalarGraphMaterial.pbr.opacity >= 0.0f && scalarGraphMaterial.pbr.opacity <= 1.0f,
             "connected scalar produced non-finite compiled opacity"
         );
+        Require(
+            NearlyEqual(scalarGraphMaterial.pbr.emissiveIntensity, 4.0f),
+            "finite generic scalar was saturated during compile"
+        );
 
         YAML::Node scalarGraphRoot(YAML::NodeType::Map);
         scalarGraphRoot["material"] = SerializeMaterialDefinition(scalarGraphMaterial);
@@ -468,17 +481,24 @@ int main()
                 serializedRootOpacity >= 0.0f && serializedRootOpacity <= 1.0f,
             "serialized root opacity was non-finite"
         );
-        bool foundFiniteScalar = false;
+        bool foundScalar = false;
+        bool allScalarsFinite = true;
+        bool preservedHighScalar = false;
         for (const YAML::Node& shaderNode : scalarGraphSerialized["shader_graph"]["nodes"])
         {
             if (shaderNode["type"].as<std::string>("") == "scalar")
             {
                 const float scalarValue = shaderNode["scalar_value"].as<float>();
-                foundFiniteScalar = std::isfinite(scalarValue) && scalarValue >= 0.0f && scalarValue <= 1.0f;
-                break;
+                foundScalar = true;
+                allScalarsFinite &= std::isfinite(scalarValue);
+                if (shaderNode["name"].as<std::string>("") == "High Emissive")
+                {
+                    preservedHighScalar = NearlyEqual(scalarValue, 4.0f);
+                }
             }
         }
-        Require(foundFiniteScalar, "serialized scalar remained non-finite");
+        Require(foundScalar && allScalarsFinite, "serialized scalar remained non-finite");
+        Require(preservedHighScalar, "serializer saturated finite generic scalar");
         Require(YAML::Dump(scalarGraphRoot).find(".nan") == std::string::npos, "saved scalar graph emitted .nan");
 
         const std::filesystem::path savedScalarGraphSidecar =
@@ -499,13 +519,23 @@ int main()
                 savedScalarGraphMaterial.pbr.opacity >= 0.0f && savedScalarGraphMaterial.pbr.opacity <= 1.0f,
             "reloaded scalar graph opacity was non-finite"
         );
+        Require(
+            NearlyEqual(savedScalarGraphMaterial.pbr.emissiveIntensity, 4.0f),
+            "reloaded generic scalar lost its finite value"
+        );
+        bool reloadedHighScalar = false;
         for (const MaterialShaderNode& shaderNode : savedScalarGraphMaterial.shaderGraph.nodes)
         {
             if (shaderNode.type == MaterialShaderNodeType::Scalar)
             {
                 Require(std::isfinite(shaderNode.scalarValue), "reloaded scalar remained non-finite");
+                if (shaderNode.name == "High Emissive")
+                {
+                    reloadedHighScalar = NearlyEqual(shaderNode.scalarValue, 4.0f);
+                }
             }
         }
+        Require(reloadedHighScalar, "reloaded finite generic scalar was saturated");
 
         const ScopedFixtureDirectory fixtureDirectory;
         const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);

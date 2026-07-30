@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <sstream>
 #include <unordered_map>
 
@@ -11,6 +12,11 @@ constexpr const char* kSurfaceOutputSlot = "surface";
 constexpr const char* kTextureOutputSlot = "texture";
 constexpr const char* kScalarOutputSlot = "value";
 constexpr const char* kColorOutputSlot = "color";
+
+float NormalizeScalarValue(float value, float fallback = 1.0f)
+{
+    return std::isfinite(value) ? value : (std::isfinite(fallback) ? fallback : 1.0f);
+}
 
 const MaterialShaderNode* FindNodeById(const MaterialShaderGraph& graph, uint32_t id)
 {
@@ -483,7 +489,7 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
             nodeMap["size"] = size;
         }
         nodeMap["texture_path"] = node.texturePath;
-        nodeMap["scalar_value"] = ClampMaterialAlphaValue(node.scalarValue, 1.0f);
+        nodeMap["scalar_value"] = NormalizeScalarValue(node.scalarValue);
         YAML::Node colorValue(YAML::NodeType::Sequence);
         for (float value : node.colorValue)
         {
@@ -596,7 +602,7 @@ bool DeserializeMaterialShaderGraph(
             node.height = std::max(sizeNode[1].as<float>(node.height), 0.0f);
         }
         node.texturePath = nodeMap["texture_path"].as<std::string>(std::string{});
-        node.scalarValue = ClampMaterialAlphaValue(
+        node.scalarValue = NormalizeScalarValue(
             nodeMap["scalar_value"].as<float>(node.scalarValue),
             1.0f
         );
