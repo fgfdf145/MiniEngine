@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <string>
 
 std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value)
@@ -30,7 +31,13 @@ const char* ToString(MaterialAlphaMode mode)
 
 float ClampMaterialAlphaValue(float value)
 {
-    return std::clamp(value, 0.0f, 1.0f);
+    return ClampMaterialAlphaValue(value, 0.0f);
+}
+
+float ClampMaterialAlphaValue(float value, float fallback)
+{
+    const float finiteFallback = std::isfinite(fallback) ? fallback : 0.0f;
+    return std::clamp(std::isfinite(value) ? value : finiteFallback, 0.0f, 1.0f);
 }
 
 float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cutoff)
@@ -39,7 +46,7 @@ float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cu
     switch (mode)
     {
     case MaterialAlphaMode::Mask:
-        return clampedAlpha < ClampMaterialAlphaValue(cutoff) ? 0.0f : 1.0f;
+        return clampedAlpha < ClampMaterialAlphaValue(cutoff, 0.5f) ? 0.0f : 1.0f;
     case MaterialAlphaMode::Blend:
         return clampedAlpha;
     case MaterialAlphaMode::Opaque:

@@ -709,7 +709,7 @@ ModelMaterialData BuildMaterialData(
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
     materialData.alphaCutoff = materialData.alphaMode == MaterialAlphaMode::Mask
-        ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff))
+        ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff), 0.5f)
         : 0.5f;
     materialData.opacity = 1.0f;
     return materialData;

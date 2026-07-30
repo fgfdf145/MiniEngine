@@ -1,5 +1,6 @@
 #include <material_graph.h>
 #include <material_definition.h>
+#include <material_graph_runtime.h>
 #include <material_pipeline.h>
 #include <model_loader.h>
 #include <renderer_world.h>
@@ -127,6 +128,17 @@ int main()
 
         Require(NearlyEqual(ClampMaterialAlphaValue(-1.0f), 0.0f), "negative alpha was not clamped");
         Require(NearlyEqual(ClampMaterialAlphaValue(2.0f), 1.0f), "alpha above one was not clamped");
+        for (const float nonFinite : {
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::infinity(),
+                -std::numeric_limits<float>::infinity() })
+        {
+            const float normalized = ClampMaterialAlphaValue(nonFinite);
+            Require(
+                std::isfinite(normalized) && normalized >= 0.0f && normalized <= 1.0f,
+                "non-finite alpha helper result escaped normalization"
+            );
+        }
         Require(NearlyEqual(
             ResolveMaterialCoverageAlpha(MaterialAlphaMode::Opaque, 0.2f, 0.5f),
             1.0f
@@ -227,8 +239,8 @@ int main()
             "sidecar cutoff was not serialized"
         );
 
-        const std::filesystem::path sidecar =
-            std::filesystem::temp_directory_path() / "miniengine_material_alpha.material.yaml";
+        const ScopedFixtureDirectory sidecarFixtureDirectory;
+        const std::filesystem::path sidecar = sidecarFixtureDirectory.path / "material_alpha.material.yaml";
         {
             std::ofstream file(sidecar);
             file << "material:\n"
@@ -255,8 +267,70 @@ int main()
         Require(LoadMaterialDefinition(sidecar, restored, warning), "invalid-mode sidecar did not load");
         Require(restored.pbr.alphaMode == MaterialAlphaMode::Opaque, "invalid mode did not fall back");
         Require(!warning.empty(), "invalid mode did not report a warning");
+
+        for (const char* nonFiniteToken : { ".nan", "+.inf", "-.inf" })
+        {
+            std::ofstream file(sidecar);
+            file << "material:\n  pbr:\n    alpha_cutoff: " << nonFiniteToken
+                 << "\n    opacity: " << nonFiniteToken << '\n';
+            file.close();
+
+            restored = {};
+            restored.pbr.alphaCutoff = 0.34f;
+            restored.pbr.opacity = 0.76f;
+            warning.clear();
+            Require(LoadMaterialDefinition(sidecar, restored, warning), "non-finite sidecar did not load");
+            Require(
+                NearlyEqual(restored.pbr.alphaCutoff, 0.34f),
+                "non-finite sidecar cutoff did not retain imported fallback"
+            );
+            Require(
+                NearlyEqual(restored.pbr.opacity, 0.76f),
+                "non-finite sidecar opacity did not retain imported fallback"
+            );
+            Require(
+                std::isfinite(restored.pbr.alphaCutoff) &&
+                    restored.pbr.alphaCutoff >= 0.0f && restored.pbr.alphaCutoff <= 1.0f,
+                "non-finite sidecar cutoff escaped runtime normalization"
+            );
+            Require(
+                std::isfinite(restored.pbr.opacity) &&
+                    restored.pbr.opacity >= 0.0f && restored.pbr.opacity <= 1.0f,
+                "non-finite sidecar opacity escaped runtime normalization"
+            );
+        }
+
+        {
+            std::ofstream file(sidecar);
+            file << "material:\n  pbr:\n    alpha_cutoff: .nan\n    opacity: .nan\n";
+        }
+        restored = {};
+        restored.pbr.alphaCutoff = std::numeric_limits<float>::quiet_NaN();
+        restored.pbr.opacity = std::numeric_limits<float>::infinity();
+        warning.clear();
+        Require(LoadMaterialDefinition(sidecar, restored, warning), "defaulted non-finite sidecar did not load");
+        Require(NearlyEqual(restored.pbr.alphaCutoff, 0.5f), "invalid cutoff fallback was not 0.5");
+        Require(NearlyEqual(restored.pbr.opacity, 1.0f), "invalid opacity fallback was not 1.0");
+
+        ModelImportedMaterialInfo nonFiniteSource{};
+        nonFiniteSource.pbr.alphaCutoff = std::numeric_limits<float>::quiet_NaN();
+        nonFiniteSource.pbr.opacity = std::numeric_limits<float>::infinity();
+        const YAML::Node nonFiniteSerialized = SerializeMaterialDefinition(nonFiniteSource);
+        const float serializedCutoff = nonFiniteSerialized["pbr"]["alpha_cutoff"].as<float>();
+        const float serializedOpacity = nonFiniteSerialized["pbr"]["opacity"].as<float>();
+        Require(
+            std::isfinite(serializedCutoff) && serializedCutoff >= 0.0f && serializedCutoff <= 1.0f,
+            "serializer emitted non-finite cutoff"
+        );
+        Require(
+            std::isfinite(serializedOpacity) && serializedOpacity >= 0.0f && serializedOpacity <= 1.0f,
+            "serializer emitted non-finite opacity"
+        );
+        Require(
+            YAML::Dump(nonFiniteSerialized).find(".nan") == std::string::npos,
+            "serializer emitted .nan"
+        );
         std::error_code removeError;
-        std::filesystem::remove(sidecar, removeError);
 
         const ScopedFixtureDirectory reloadFixtureDirectory;
         const std::filesystem::path reloadModel = WriteAlphaModeFixture(reloadFixtureDirectory.path);
@@ -287,6 +361,61 @@ int main()
             "legacy sidecar lost alpha cutoff"
         );
         std::filesystem::remove(legacySidecar, removeError);
+
+        const ScopedFixtureDirectory legacyGraphFixtureDirectory;
+        const std::filesystem::path legacyGraphSidecar =
+            legacyGraphFixtureDirectory.path / "legacy_graph.material.yaml";
+        {
+            std::ofstream file(legacyGraphSidecar);
+            file << "material:\n"
+                    "  name: legacy graph\n"
+                    "  pbr:\n"
+                    "    alpha_mode: mask\n"
+                    "    alpha_cutoff: 0.41\n"
+                    "  shader_graph:\n"
+                    "    version: 2\n"
+                    "    next_node_id: 2\n"
+                    "    next_link_id: 1\n"
+                    "    nodes:\n"
+                    "      - id: 1\n"
+                    "        type: output\n"
+                    "        name: Legacy Output\n"
+                    "        pbr:\n"
+                    "          base_color_factor: [1, 1, 1, 0.7]\n"
+                    "          opacity: 0.8\n"
+                    "    links: []\n";
+        }
+        ModelImportedMaterialInfo legacyGraphMaterial{};
+        warning.clear();
+        Require(
+            LoadMaterialDefinition(legacyGraphSidecar, legacyGraphMaterial, warning),
+            "legacy shader graph sidecar did not load"
+        );
+        Require(CompileMaterialShaderGraph(legacyGraphMaterial).success, "legacy shader graph did not compile");
+
+        const std::filesystem::path savedGraphSidecar =
+            legacyGraphFixtureDirectory.path / "saved_graph.material.yaml";
+        {
+            YAML::Node root(YAML::NodeType::Map);
+            root["material"] = SerializeMaterialDefinition(legacyGraphMaterial);
+            std::ofstream file(savedGraphSidecar);
+            file << root;
+        }
+        ModelImportedMaterialInfo savedGraphMaterial{};
+        warning.clear();
+        Require(
+            LoadMaterialDefinition(savedGraphSidecar, savedGraphMaterial, warning),
+            "saved shader graph sidecar did not reload"
+        );
+        Require(CompileMaterialShaderGraph(savedGraphMaterial).success, "saved shader graph did not compile");
+        Require(
+            savedGraphMaterial.pbr.alphaMode == MaterialAlphaMode::Mask,
+            "legacy shader graph lost canonical alpha mode"
+        );
+        Require(
+            NearlyEqual(savedGraphMaterial.pbr.alphaCutoff, 0.41f),
+            "legacy shader graph lost canonical alpha cutoff"
+        );
 
         const ScopedFixtureDirectory fixtureDirectory;
         const std::filesystem::path fixture = WriteAlphaModeFixture(fixtureDirectory.path);

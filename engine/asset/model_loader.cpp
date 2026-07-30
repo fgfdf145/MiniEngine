@@ -37,8 +37,8 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.occlusionStrength = material.occlusionStrength;
     pbr.emissiveIntensity = material.emissiveIntensity;
     pbr.alphaMode = material.alphaMode;
-    pbr.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff);
-    pbr.opacity = ClampMaterialAlphaValue(material.opacity);
+    pbr.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
+    pbr.opacity = ClampMaterialAlphaValue(material.opacity, 1.0f);
     return pbr;
 }
 
@@ -59,8 +59,8 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.occlusionStrength = pbr.occlusionStrength;
     material.emissiveIntensity = pbr.emissiveIntensity;
     material.alphaMode = pbr.alphaMode;
-    material.alphaCutoff = ClampMaterialAlphaValue(pbr.alphaCutoff);
-    material.opacity = ClampMaterialAlphaValue(pbr.opacity);
+    material.alphaCutoff = ClampMaterialAlphaValue(pbr.alphaCutoff, 0.5f);
+    material.opacity = ClampMaterialAlphaValue(pbr.opacity, 1.0f);
 }
 
 }
@@ -126,7 +126,18 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
         ModelImportedMaterialInfo editable = BuildImportedMaterialInfo(rawMaterial);
         const std::filesystem::path sidecar =
             BuildMaterialDefinitionPath(modelPath, static_cast<uint32_t>(materialIndex));
-        if (std::filesystem::exists(sidecar))
+        std::error_code probeError;
+        const bool sidecarExists = std::filesystem::exists(sidecar, probeError);
+        if (probeError)
+        {
+            LOG_WARN(
+                "Unable to probe optional material sidecar '{}': {}; using imported glTF material",
+                sidecar.string(),
+                probeError.message()
+            );
+            continue;
+        }
+        if (sidecarExists)
         {
             std::string warning;
             if (LoadMaterialDefinition(sidecar, editable, warning))

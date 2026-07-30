@@ -16,6 +16,7 @@ enum class MaterialAlphaMode
 std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value);
 const char* ToString(MaterialAlphaMode mode);
 float ClampMaterialAlphaValue(float value);
+float ClampMaterialAlphaValue(float value, float fallback);
 float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cutoff);
 
 struct MaterialPbrSurfaceSettings

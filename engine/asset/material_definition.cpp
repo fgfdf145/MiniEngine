@@ -94,9 +94,9 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.normalScale = source.pbr.normalScale;
     destination.occlusionStrength = source.pbr.occlusionStrength;
     destination.emissiveIntensity = source.pbr.emissiveIntensity;
-    destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity);
+    destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
-    destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff);
+    destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
     destination.pbr.opacity = destination.opacity;
     destination.pbr.alphaCutoff = destination.alphaCutoff;
 }
@@ -125,8 +125,8 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     pbr["occlusion_strength"] = material.pbr.occlusionStrength;
     pbr["emissive_intensity"] = material.pbr.emissiveIntensity;
     pbr["alpha_mode"] = ToString(material.pbr.alphaMode);
-    pbr["alpha_cutoff"] = ClampMaterialAlphaValue(material.pbr.alphaCutoff);
-    pbr["opacity"] = ClampMaterialAlphaValue(material.pbr.opacity);
+    pbr["alpha_cutoff"] = ClampMaterialAlphaValue(material.pbr.alphaCutoff, 0.5f);
+    pbr["opacity"] = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
     node["pbr"] = pbr;
 
     if (HasBlendData(material.blendGraph))
@@ -196,11 +196,15 @@ bool LoadMaterialDefinition(
                 material.pbr.alphaMode = MaterialAlphaMode::Opaque;
                 warning = "Unknown material alpha_mode '" + storedMode + "'; using opaque";
             }
+            const float cutoffFallback = ClampMaterialAlphaValue(material.pbr.alphaCutoff, 0.5f);
             material.pbr.alphaCutoff = ClampMaterialAlphaValue(
-                pbrNode["alpha_cutoff"].as<float>(material.pbr.alphaCutoff)
+                pbrNode["alpha_cutoff"].as<float>(cutoffFallback),
+                cutoffFallback
             );
+            const float opacityFallback = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
             material.pbr.opacity = ClampMaterialAlphaValue(
-                pbrNode["opacity"].as<float>(material.pbr.opacity)
+                pbrNode["opacity"].as<float>(opacityFallback),
+                opacityFallback
             );
         }
 
@@ -221,6 +225,15 @@ bool LoadMaterialDefinition(
         if (const YAML::Node shaderGraph = node["shader_graph"])
         {
             DeserializeMaterialShaderGraph(shaderGraph, material.name, std::nullopt, material);
+            for (MaterialShaderNode& shaderNode : material.shaderGraph.nodes)
+            {
+                if (shaderNode.type == MaterialShaderNodeType::Output)
+                {
+                    shaderNode.pbr.alphaMode = material.pbr.alphaMode;
+                    shaderNode.pbr.alphaCutoff = material.pbr.alphaCutoff;
+                    break;
+                }
+            }
         }
         return true;
     }
