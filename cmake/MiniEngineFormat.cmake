@@ -69,7 +69,7 @@ foreach(_relative_path IN LISTS _tracked_files)
     if(_relative_path MATCHES "\\.(ps1|sh)$")
         list(APPEND _script_files "${_relative_path}")
     endif()
-    if(_relative_path STREQUAL "CMakeLists.txt" OR
+    if(_relative_path MATCHES "(^|/)CMakeLists\\.txt$" OR
        _relative_path MATCHES "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|vert|frag|comp|geom|tesc|tese|glsl|ps1|sh|cmake)$")
         list(APPEND _whitespace_files "${_relative_path}")
     endif()
