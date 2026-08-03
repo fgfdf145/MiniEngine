@@ -78,6 +78,8 @@ set(miniengine_format_contract_cases
     bash_ansi_c_extended_escape_decoding
     bash_ansi_c_unicode_heredoc_delimiters
     bash_ansi_c_control_heredoc_delimiter
+    bash_ansi_c_short_unicode_heredoc_delimiters
+    bash_ansi_c_digit_control_heredoc_delimiter
     nested_cmakelists_classification
     explicit_formatter_override
     environment_formatter_override

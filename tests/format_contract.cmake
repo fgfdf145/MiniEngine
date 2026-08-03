@@ -117,6 +117,18 @@ elseif(TEST_CASE STREQUAL "bash_ansi_c_extended_escape_decoding")
     string(HEX "${decoded}" decoded_hex)
     assert_equal("${decoded_hex}" "18" "Bash ANSI-C control escape")
     assert_equal("${consumed}" "2" "Bash ANSI-C control consumption")
+    _miniengine_decode_bash_ansi_c_escape("u45OF" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "45" "Bash ANSI-C short lowercase Unicode escape")
+    assert_equal("${consumed}" "3" "Bash ANSI-C short lowercase Unicode consumption")
+    _miniengine_decode_bash_ansi_c_escape("U45OF" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "45" "Bash ANSI-C short uppercase Unicode escape")
+    assert_equal("${consumed}" "3" "Bash ANSI-C short uppercase Unicode consumption")
+    _miniengine_decode_bash_ansi_c_escape("c1" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "11" "Bash ANSI-C digit control escape")
+    assert_equal("${consumed}" "2" "Bash ANSI-C digit control consumption")
 elseif(TEST_CASE STREQUAL "bash_ansi_c_unicode_heredoc_delimiters")
     miniengine_check_script_file(
         "${fixture_root}/bash-ansi-c-unicode-heredoc.txt"
@@ -137,6 +149,28 @@ elseif(TEST_CASE STREQUAL "bash_ansi_c_control_heredoc_delimiter")
         "${control_fixture}" "ansi-c-control-heredoc.sh" violations)
     list(LENGTH violations violation_count)
     assert_equal("${violation_count}" "1" "Bash ANSI-C control heredoc delimiter")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_short_unicode_heredoc_delimiters")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-ansi-c-short-unicode-heredoc.txt"
+        "ansi-c-short-unicode-heredoc.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash ANSI-C short Unicode heredoc delimiters")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_digit_control_heredoc_delimiter")
+    string(ASCII 17 control_one)
+    file(MAKE_DIRECTORY "${test_temp_root_cmake}")
+    set(digit_control_fixture
+        "${test_temp_root_cmake}/bash-ansi-c-digit-control-heredoc.sh")
+    file(WRITE "${digit_control_fixture}"
+        "cat <<\$'\\c1'\n"
+        "hidden-in-digit-control-heredoc() {\n"
+        "${control_one}\n"
+        "bad-after-digit-control-heredoc() {\n"
+        "    :\n"
+        "}\n")
+    miniengine_check_script_file(
+        "${digit_control_fixture}" "ansi-c-digit-control-heredoc.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash ANSI-C digit control heredoc delimiter")
 elseif(TEST_CASE STREQUAL "nested_cmakelists_classification")
     set(tracked_files
         CMakeLists.txt
