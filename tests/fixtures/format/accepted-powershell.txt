@@ -1,9 +1,12 @@
 # if ($true) { comment content must not count
 $single = 'catch {} and process {}'
 $double = "if (`$true) { and begin {}"
+$switchText = '"literal" { return }'
+# default { return "comment" }
 $here = @"
 	function Hidden-In-HereString {
 	catch {}
+	default { return "here-string" }
 "@
 $literal = @'
 	process {
@@ -16,7 +19,6 @@ class Hidden {
 <# nested comment #>
 function Still-Hidden {
 #>
-default { return "inline switch clauses remain unchanged" }
 function Invoke-GoodThing
 {
     begin

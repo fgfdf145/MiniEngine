@@ -21,6 +21,10 @@ sequence {
 inlinescript {
 configuration Demo {
 node localhost {
+default { return "default" }
+"literal" { return "literal" }
+'pattern.*' { return "pattern" }
+{ $_ -gt 0 } { return "scriptblock pattern" }
 <#
 	comment indentation
 #>

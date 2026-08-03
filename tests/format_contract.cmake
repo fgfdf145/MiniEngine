@@ -33,7 +33,7 @@ elseif(TEST_CASE STREQUAL "powershell_rejects_same_line_braces")
     miniengine_check_script_file(
         "${fixture_root}/rejected-powershell.txt" "rejected.ps1" violations)
     list(LENGTH violations violation_count)
-    assert_equal("${violation_count}" "24" "PowerShell block and indentation coverage")
+    assert_equal("${violation_count}" "28" "PowerShell block and indentation coverage")
 elseif(TEST_CASE STREQUAL "bash_accepts_heredoc_literals")
     miniengine_check_script_file(
         "${fixture_root}/accepted-bash.txt" "accepted.sh" violations)
@@ -43,6 +43,21 @@ elseif(TEST_CASE STREQUAL "bash_rejects_hyphenated_function")
         "${fixture_root}/rejected-bash.txt" "rejected.sh" violations)
     list(LENGTH violations violation_count)
     assert_equal("${violation_count}" "3" "Bash function and indentation coverage")
+elseif(TEST_CASE STREQUAL "bash_here_string_is_atomic")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-here-string.txt" "here-string.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash here-string tokenization")
+elseif(TEST_CASE STREQUAL "bash_shift_contexts_are_not_heredocs")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-shift-contexts.txt" "shift-contexts.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash arithmetic and conditional shifts")
+elseif(TEST_CASE STREQUAL "bash_heredoc_delimiter_quote_removal")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-partial-quotes.txt" "partial-quotes.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash heredoc delimiter quote removal")
 elseif(TEST_CASE STREQUAL "nested_cmakelists_classification")
     set(tracked_files
         CMakeLists.txt

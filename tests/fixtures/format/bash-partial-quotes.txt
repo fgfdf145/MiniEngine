@@ -1,0 +1,9 @@
+cat <<E\OF
+hidden-in-first-heredoc() {
+EOF
+cat <<E"O"F
+hidden-in-second-heredoc() {
+EOF
+bad-after-partial-quotes() {
+    :
+}

@@ -63,6 +63,9 @@ set(miniengine_format_contract_cases
     powershell_rejects_same_line_braces
     bash_accepts_heredoc_literals
     bash_rejects_hyphenated_function
+    bash_here_string_is_atomic
+    bash_shift_contexts_are_not_heredocs
+    bash_heredoc_delimiter_quote_removal
     nested_cmakelists_classification
     explicit_formatter_override
     environment_formatter_override

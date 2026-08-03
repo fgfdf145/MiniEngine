@@ -1,0 +1,10 @@
+value=4
+expanded=$((value << 2))
+((value <<= 1))
+if [[ $((value << 1)) -gt 0 ]]
+then
+    printf '%s\n' "$value"
+fi
+bad-after-shifts() {
+    :
+}
