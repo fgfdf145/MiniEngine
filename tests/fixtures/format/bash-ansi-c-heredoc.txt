@@ -1,0 +1,9 @@
+cat <<$'EOF'
+hidden-in-ansi-c-heredoc() {
+EOF
+cat <<$'E\x4fF'
+hidden-in-escaped-ansi-c-heredoc() {
+EOF
+bad-after-ansi-c-heredoc() {
+    :
+}

@@ -61,11 +61,17 @@ add_test(
 set(miniengine_format_contract_cases
     powershell_accepts_literals
     powershell_rejects_same_line_braces
+    powershell_switch_numeric_clause
+    powershell_switch_variable_clause
+    powershell_switch_bareword_clause
+    powershell_switch_existing_clause_forms
+    powershell_switch_avoids_non_switch_blocks
     bash_accepts_heredoc_literals
     bash_rejects_hyphenated_function
     bash_here_string_is_atomic
     bash_shift_contexts_are_not_heredocs
     bash_heredoc_delimiter_quote_removal
+    bash_ansi_c_heredoc_delimiter
     nested_cmakelists_classification
     explicit_formatter_override
     environment_formatter_override

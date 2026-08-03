@@ -33,7 +33,31 @@ elseif(TEST_CASE STREQUAL "powershell_rejects_same_line_braces")
     miniengine_check_script_file(
         "${fixture_root}/rejected-powershell.txt" "rejected.ps1" violations)
     list(LENGTH violations violation_count)
-    assert_equal("${violation_count}" "28" "PowerShell block and indentation coverage")
+    assert_equal("${violation_count}" "24" "PowerShell block and indentation coverage")
+elseif(TEST_CASE STREQUAL "powershell_switch_numeric_clause")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-numeric.txt" "switch-numeric.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "PowerShell numeric switch clause")
+elseif(TEST_CASE STREQUAL "powershell_switch_variable_clause")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-variable.txt" "switch-variable.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "PowerShell variable switch clause")
+elseif(TEST_CASE STREQUAL "powershell_switch_bareword_clause")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-bareword.txt" "switch-bareword.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "PowerShell bareword switch clause")
+elseif(TEST_CASE STREQUAL "powershell_switch_existing_clause_forms")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-existing-forms.txt" "switch-existing.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "4" "PowerShell existing switch clause forms")
+elseif(TEST_CASE STREQUAL "powershell_switch_avoids_non_switch_blocks")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-non-context.txt" "switch-non-context.ps1" violations)
+    assert_equal("${violations}" "" "PowerShell non-switch block false positives")
 elseif(TEST_CASE STREQUAL "bash_accepts_heredoc_literals")
     miniengine_check_script_file(
         "${fixture_root}/accepted-bash.txt" "accepted.sh" violations)
@@ -58,6 +82,11 @@ elseif(TEST_CASE STREQUAL "bash_heredoc_delimiter_quote_removal")
         "${fixture_root}/bash-partial-quotes.txt" "partial-quotes.sh" violations)
     list(LENGTH violations violation_count)
     assert_equal("${violation_count}" "1" "Bash heredoc delimiter quote removal")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_heredoc_delimiter")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-ansi-c-heredoc.txt" "ansi-c-heredoc.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash ANSI-C heredoc delimiter")
 elseif(TEST_CASE STREQUAL "nested_cmakelists_classification")
     set(tracked_files
         CMakeLists.txt

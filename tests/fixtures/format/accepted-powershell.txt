@@ -19,6 +19,10 @@ class Hidden {
 <# nested comment #>
 function Still-Hidden {
 #>
+$hash = @{
+    key = "value"
+}
+ForEach-Object { $_ }
 function Invoke-GoodThing
 {
     begin

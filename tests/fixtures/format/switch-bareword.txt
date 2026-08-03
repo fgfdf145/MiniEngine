@@ -1,0 +1,4 @@
+switch ($value)
+{
+    foo { return "bareword" }
+}

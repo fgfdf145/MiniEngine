@@ -197,6 +197,108 @@ function(_miniengine_mask_powershell_line line input_state output_line output_st
     set(${output_state} "${state}" PARENT_SCOPE)
 endfunction()
 
+function(_miniengine_count_powershell_delimiters line
+         output_open_braces output_close_braces
+         output_open_parentheses output_close_parentheses)
+    set(open_count 0)
+    set(close_count 0)
+    set(open_parentheses 0)
+    set(close_parentheses 0)
+    string(LENGTH "${line}" line_length)
+    set(index 0)
+    while(index LESS line_length)
+        string(SUBSTRING "${line}" ${index} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR open_count "${open_count} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR close_count "${close_count} + 1")
+        elseif(character STREQUAL "(")
+            math(EXPR open_parentheses "${open_parentheses} + 1")
+        elseif(character STREQUAL ")")
+            math(EXPR close_parentheses "${close_parentheses} + 1")
+        endif()
+        math(EXPR index "${index} + 1")
+    endwhile()
+    set(${output_open_braces} "${open_count}" PARENT_SCOPE)
+    set(${output_close_braces} "${close_count}" PARENT_SCOPE)
+    set(${output_open_parentheses} "${open_parentheses}" PARENT_SCOPE)
+    set(${output_close_parentheses} "${close_parentheses}" PARENT_SCOPE)
+endfunction()
+
+function(_miniengine_decode_bash_ansi_c_escape escape_text
+         output_value output_consumed)
+    string(LENGTH "${escape_text}" escape_length)
+    if(escape_length EQUAL 0)
+        set(${output_value} "\\" PARENT_SCOPE)
+        set(${output_consumed} 0 PARENT_SCOPE)
+        return()
+    endif()
+
+    string(SUBSTRING "${escape_text}" 0 1 escape_code)
+    set(decoded "")
+    set(consumed 1)
+    if(escape_code STREQUAL "a")
+        string(ASCII 7 decoded)
+    elseif(escape_code STREQUAL "b")
+        string(ASCII 8 decoded)
+    elseif(escape_code STREQUAL "e" OR escape_code STREQUAL "E")
+        string(ASCII 27 decoded)
+    elseif(escape_code STREQUAL "f")
+        string(ASCII 12 decoded)
+    elseif(escape_code STREQUAL "n")
+        string(ASCII 10 decoded)
+    elseif(escape_code STREQUAL "r")
+        string(ASCII 13 decoded)
+    elseif(escape_code STREQUAL "t")
+        string(ASCII 9 decoded)
+    elseif(escape_code STREQUAL "v")
+        string(ASCII 11 decoded)
+    elseif(escape_code STREQUAL "\\" OR
+           escape_code STREQUAL "'" OR
+           escape_code STREQUAL "\"" OR
+           escape_code STREQUAL "?")
+        set(decoded "${escape_code}")
+    elseif(escape_code STREQUAL "x")
+        set(hex_digits "")
+        set(position 1)
+        while(position LESS escape_length AND position LESS_EQUAL 2)
+            string(SUBSTRING "${escape_text}" ${position} 1 digit)
+            if(digit MATCHES "^[0-9A-Fa-f]$")
+                string(APPEND hex_digits "${digit}")
+                math(EXPR position "${position} + 1")
+            else()
+                break()
+            endif()
+        endwhile()
+        if(hex_digits STREQUAL "")
+            set(decoded "\\x")
+        else()
+            math(EXPR ascii_value "0x${hex_digits}")
+            string(ASCII ${ascii_value} decoded)
+            set(consumed "${position}")
+        endif()
+    elseif(escape_code MATCHES "^[0-7]$")
+        set(octal_value 0)
+        set(position 0)
+        while(position LESS escape_length AND position LESS 3)
+            string(SUBSTRING "${escape_text}" ${position} 1 digit)
+            if(digit MATCHES "^[0-7]$")
+                math(EXPR octal_value "${octal_value} * 8 + ${digit}")
+                math(EXPR position "${position} + 1")
+            else()
+                break()
+            endif()
+        endwhile()
+        string(ASCII ${octal_value} decoded)
+        set(consumed "${position}")
+    else()
+        set(decoded "\\${escape_code}")
+    endif()
+
+    set(${output_value} "${decoded}" PARENT_SCOPE)
+    set(${output_consumed} "${consumed}" PARENT_SCOPE)
+endfunction()
+
 function(_miniengine_parse_bash_heredoc remainder
          output_match output_delimiter output_strip_tabs)
     set(heredoc_match "")
@@ -247,6 +349,21 @@ function(_miniengine_parse_bash_heredoc remainder
                 string(APPEND delimiter "${character}")
             endif()
             math(EXPR index "${index} + 1")
+        elseif(delimiter_quote STREQUAL "ANSI_C")
+            set(word_started TRUE)
+            if(character STREQUAL "'")
+                set(delimiter_quote NORMAL)
+                math(EXPR index "${index} + 1")
+            elseif(character STREQUAL "\\")
+                string(SUBSTRING "${remainder}" ${next_index} -1 escape_text)
+                _miniengine_decode_bash_ansi_c_escape(
+                    "${escape_text}" decoded_escape escape_consumed)
+                string(APPEND delimiter "${decoded_escape}")
+                math(EXPR index "${index} + 1 + ${escape_consumed}")
+            else()
+                string(APPEND delimiter "${character}")
+                math(EXPR index "${index} + 1")
+            endif()
         elseif(delimiter_quote STREQUAL "DOUBLE")
             set(word_started TRUE)
             if(character STREQUAL "\"")
@@ -265,6 +382,10 @@ function(_miniengine_parse_bash_heredoc remainder
             endif()
         elseif(character MATCHES "^[ \t;&|()<>]$")
             break()
+        elseif(character STREQUAL "$" AND next_character STREQUAL "'")
+            set(word_started TRUE)
+            set(delimiter_quote ANSI_C)
+            math(EXPR index "${index} + 2")
         elseif(character STREQUAL "'")
             set(word_started TRUE)
             set(delimiter_quote SINGLE)
@@ -482,6 +603,10 @@ function(miniengine_check_script_file file_path display_path output_violations)
 
     if(display_path MATCHES "\\.ps1$")
         set(powershell_state NORMAL)
+        set(powershell_brace_depth 0)
+        set(powershell_switch_depths)
+        set(powershell_switch_pending FALSE)
+        set(powershell_switch_parenthesis_depth 0)
         foreach(line IN LISTS lines)
             math(EXPR line_number "${line_number} + 1")
             set(powershell_state_at_line_start "${powershell_state}")
@@ -493,18 +618,66 @@ function(miniengine_check_script_file file_path display_path output_violations)
                 list(APPEND violations
                     "${display_path}:${line_number}: indentation must not use tabs")
             endif()
-            if(masked MATCHES "\\)[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*default[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*Q[ Q\t]*\\{" OR
-               masked MATCHES "^[ \t]*\\{[^}]+\\}[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*(else|try|finally|do|begin|process|end|dynamicparam|clean|parallel|sequence|inlinescript)[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*(catch|trap)([ \t]+[^{}]+)?[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*(data|configuration|node)[ \t]+[^{}]+[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*(function|filter|workflow)[ \t]+[^{}]+[ \t]*\\{" OR
-               masked MATCHES "^[ \t]*(class|enum)[ \t]+[^{}]+[ \t]*\\{")
+            _miniengine_count_powershell_delimiters(
+                "${masked}"
+                powershell_open_count powershell_close_count
+                powershell_open_parentheses powershell_close_parentheses)
+            set(is_switch_header FALSE)
+            if(masked MATCHES "^[ \t]*switch([ \t(]|$)")
+                set(is_switch_header TRUE)
+                set(powershell_switch_pending TRUE)
+                set(powershell_switch_parenthesis_depth 0)
+            endif()
+            if(powershell_switch_pending)
+                math(EXPR powershell_switch_parenthesis_depth
+                    "${powershell_switch_parenthesis_depth} + ${powershell_open_parentheses} - ${powershell_close_parentheses}")
+            endif()
+            set(is_switch_clause_level FALSE)
+            if(powershell_switch_depths)
+                list(GET powershell_switch_depths -1 active_switch_depth)
+                if(powershell_brace_depth EQUAL active_switch_depth)
+                    set(is_switch_clause_level TRUE)
+                endif()
+            endif()
+            set(switch_clause_violation FALSE)
+            if(is_switch_clause_level AND NOT is_switch_header AND
+               (masked MATCHES "^[ \t]*[^ \t{}][^{]*\\{" OR
+                masked MATCHES "^[ \t]*\\{[ \t]*[^ \t}]"))
+                list(APPEND violations
+                    "${display_path}:${line_number}: PowerShell switch clause opening brace must be on the following line")
+                set(switch_clause_violation TRUE)
+            endif()
+            if(NOT switch_clause_violation AND
+               (masked MATCHES "\\)[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*(else|try|finally|do|begin|process|end|dynamicparam|clean|parallel|sequence|inlinescript)[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*(catch|trap)([ \t]+[^{}]+)?[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*(data|configuration|node)[ \t]+[^{}]+[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*(function|filter|workflow)[ \t]+[^{}]+[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*(class|enum)[ \t]+[^{}]+[ \t]*\\{"))
                 list(APPEND violations
                     "${display_path}:${line_number}: PowerShell opening brace must be on the following line")
             endif()
+            if(powershell_switch_pending AND
+                powershell_switch_parenthesis_depth EQUAL 0 AND
+               ((is_switch_header AND
+                 (masked MATCHES "\\)[ \t]*\\{" OR
+                  masked MATCHES "^[ \t]*switch[^{(]*\\{")) OR
+                (NOT is_switch_header AND
+                 masked MATCHES "^[ \t]*\\{")))
+                math(EXPR switch_body_depth "${powershell_brace_depth} + 1")
+                list(APPEND powershell_switch_depths "${switch_body_depth}")
+                set(powershell_switch_pending FALSE)
+            endif()
+            math(EXPR powershell_brace_depth
+                "${powershell_brace_depth} + ${powershell_open_count} - ${powershell_close_count}")
+            while(powershell_switch_depths)
+                list(GET powershell_switch_depths -1 active_switch_depth)
+                if(powershell_brace_depth LESS active_switch_depth)
+                    list(POP_BACK powershell_switch_depths)
+                else()
+                    break()
+                endif()
+            endwhile()
         endforeach()
     elseif(display_path MATCHES "\\.sh$")
         set(bash_quote NORMAL)
