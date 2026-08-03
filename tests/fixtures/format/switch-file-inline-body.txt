@@ -1,0 +1,6 @@
+switch -File "input.txt" {
+    default
+    {
+        return "default"
+    }
+}

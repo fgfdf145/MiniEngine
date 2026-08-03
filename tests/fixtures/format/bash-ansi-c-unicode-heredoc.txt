@@ -1,0 +1,9 @@
+cat <<$'\u0045OF'
+hidden-in-lower-unicode-heredoc() {
+EOF
+cat <<$'\U00000045OF'
+hidden-in-upper-unicode-heredoc() {
+EOF
+bad-after-unicode-heredocs() {
+    :
+}

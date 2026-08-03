@@ -54,6 +54,23 @@ elseif(TEST_CASE STREQUAL "powershell_switch_existing_clause_forms")
         "${fixture_root}/switch-existing-forms.txt" "switch-existing.ps1" violations)
     list(LENGTH violations violation_count)
     assert_equal("${violation_count}" "4" "PowerShell existing switch clause forms")
+elseif(TEST_CASE STREQUAL "powershell_switch_accepts_scriptblock_pattern")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-scriptblock-pattern-valid.txt"
+        "switch-scriptblock-pattern-valid.ps1" violations)
+    assert_equal("${violations}" "" "PowerShell Allman scriptblock-pattern clause")
+elseif(TEST_CASE STREQUAL "powershell_switch_rejects_inline_scriptblock_action")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-scriptblock-action-inline.txt"
+        "switch-scriptblock-action-inline.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "PowerShell inline scriptblock-pattern action")
+elseif(TEST_CASE STREQUAL "powershell_switch_rejects_inline_file_body")
+    miniengine_check_script_file(
+        "${fixture_root}/switch-file-inline-body.txt"
+        "switch-file-inline-body.ps1" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "PowerShell inline switch -File body")
 elseif(TEST_CASE STREQUAL "powershell_switch_avoids_non_switch_blocks")
     miniengine_check_script_file(
         "${fixture_root}/switch-non-context.txt" "switch-non-context.ps1" violations)
@@ -87,6 +104,39 @@ elseif(TEST_CASE STREQUAL "bash_ansi_c_heredoc_delimiter")
         "${fixture_root}/bash-ansi-c-heredoc.txt" "ansi-c-heredoc.sh" violations)
     list(LENGTH violations violation_count)
     assert_equal("${violation_count}" "1" "Bash ANSI-C heredoc delimiter")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_extended_escape_decoding")
+    _miniengine_decode_bash_ansi_c_escape("u03A9" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "cea9" "Bash ANSI-C lowercase Unicode escape")
+    assert_equal("${consumed}" "5" "Bash ANSI-C lowercase Unicode consumption")
+    _miniengine_decode_bash_ansi_c_escape("U0001F642" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "f09f9982" "Bash ANSI-C uppercase Unicode escape")
+    assert_equal("${consumed}" "9" "Bash ANSI-C uppercase Unicode consumption")
+    _miniengine_decode_bash_ansi_c_escape("cX" decoded consumed)
+    string(HEX "${decoded}" decoded_hex)
+    assert_equal("${decoded_hex}" "18" "Bash ANSI-C control escape")
+    assert_equal("${consumed}" "2" "Bash ANSI-C control consumption")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_unicode_heredoc_delimiters")
+    miniengine_check_script_file(
+        "${fixture_root}/bash-ansi-c-unicode-heredoc.txt"
+        "ansi-c-unicode-heredoc.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash ANSI-C Unicode heredoc delimiters")
+elseif(TEST_CASE STREQUAL "bash_ansi_c_control_heredoc_delimiter")
+    string(ASCII 24 control_x)
+    set(control_fixture "${test_temp_root_cmake}/bash-ansi-c-control-heredoc.sh")
+    file(WRITE "${control_fixture}"
+        "cat <<\$'\\cX'\n"
+        "hidden-in-control-heredoc() {\n"
+        "${control_x}\n"
+        "bad-after-control-heredoc() {\n"
+        "    :\n"
+        "}\n")
+    miniengine_check_script_file(
+        "${control_fixture}" "ansi-c-control-heredoc.sh" violations)
+    list(LENGTH violations violation_count)
+    assert_equal("${violation_count}" "1" "Bash ANSI-C control heredoc delimiter")
 elseif(TEST_CASE STREQUAL "nested_cmakelists_classification")
     set(tracked_files
         CMakeLists.txt

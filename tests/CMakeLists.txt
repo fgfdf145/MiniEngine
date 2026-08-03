@@ -65,6 +65,9 @@ set(miniengine_format_contract_cases
     powershell_switch_variable_clause
     powershell_switch_bareword_clause
     powershell_switch_existing_clause_forms
+    powershell_switch_accepts_scriptblock_pattern
+    powershell_switch_rejects_inline_scriptblock_action
+    powershell_switch_rejects_inline_file_body
     powershell_switch_avoids_non_switch_blocks
     bash_accepts_heredoc_literals
     bash_rejects_hyphenated_function
@@ -72,6 +75,9 @@ set(miniengine_format_contract_cases
     bash_shift_contexts_are_not_heredocs
     bash_heredoc_delimiter_quote_removal
     bash_ansi_c_heredoc_delimiter
+    bash_ansi_c_extended_escape_decoding
+    bash_ansi_c_unicode_heredoc_delimiters
+    bash_ansi_c_control_heredoc_delimiter
     nested_cmakelists_classification
     explicit_formatter_override
     environment_formatter_override

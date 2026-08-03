@@ -225,6 +225,37 @@ function(_miniengine_count_powershell_delimiters line
     set(${output_close_parentheses} "${close_parentheses}" PARENT_SCOPE)
 endfunction()
 
+function(_miniengine_encode_utf8_codepoint codepoint output_value output_valid)
+    set(encoded "")
+    set(valid TRUE)
+    if(codepoint LESS 0 OR codepoint GREATER 1114111 OR
+       (codepoint GREATER_EQUAL 55296 AND codepoint LESS_EQUAL 57343))
+        set(valid FALSE)
+    elseif(codepoint EQUAL 0)
+        # Bash strings cannot contain NUL; its ANSI-C expansion drops it.
+    elseif(codepoint LESS_EQUAL 127)
+        string(ASCII ${codepoint} encoded)
+    elseif(codepoint LESS_EQUAL 2047)
+        math(EXPR byte1 "192 + (${codepoint} >> 6)")
+        math(EXPR byte2 "128 + (${codepoint} & 63)")
+        string(ASCII ${byte1} ${byte2} encoded)
+    elseif(codepoint LESS_EQUAL 65535)
+        math(EXPR byte1 "224 + (${codepoint} >> 12)")
+        math(EXPR byte2 "128 + ((${codepoint} >> 6) & 63)")
+        math(EXPR byte3 "128 + (${codepoint} & 63)")
+        string(ASCII ${byte1} ${byte2} ${byte3} encoded)
+    else()
+        math(EXPR byte1 "240 + (${codepoint} >> 18)")
+        math(EXPR byte2 "128 + ((${codepoint} >> 12) & 63)")
+        math(EXPR byte3 "128 + ((${codepoint} >> 6) & 63)")
+        math(EXPR byte4 "128 + (${codepoint} & 63)")
+        string(ASCII ${byte1} ${byte2} ${byte3} ${byte4} encoded)
+    endif()
+
+    set(${output_value} "${encoded}" PARENT_SCOPE)
+    set(${output_valid} "${valid}" PARENT_SCOPE)
+endfunction()
+
 function(_miniengine_decode_bash_ansi_c_escape escape_text
          output_value output_consumed)
     string(LENGTH "${escape_text}" escape_length)
@@ -276,6 +307,62 @@ function(_miniengine_decode_bash_ansi_c_escape escape_text
             math(EXPR ascii_value "0x${hex_digits}")
             string(ASCII ${ascii_value} decoded)
             set(consumed "${position}")
+        endif()
+    elseif(escape_code STREQUAL "u" OR escape_code STREQUAL "U")
+        if(escape_code STREQUAL "u")
+            set(required_digits 4)
+        else()
+            set(required_digits 8)
+        endif()
+        math(EXPR required_length "${required_digits} + 1")
+        if(escape_length GREATER_EQUAL required_length)
+            string(SUBSTRING "${escape_text}" 1 ${required_digits} hex_digits)
+        else()
+            set(hex_digits "")
+        endif()
+        if(hex_digits MATCHES "^[0-9A-Fa-f]+$")
+            math(EXPR codepoint "0x${hex_digits}")
+            _miniengine_encode_utf8_codepoint(
+                "${codepoint}" decoded unicode_valid)
+            if(unicode_valid)
+                set(consumed "${required_length}")
+            else()
+                set(decoded "\\${escape_code}${hex_digits}")
+                set(consumed "${required_length}")
+            endif()
+        else()
+            set(decoded "\\${escape_code}")
+        endif()
+    elseif(escape_code STREQUAL "c" AND escape_length GREATER_EQUAL 2)
+        string(SUBSTRING "${escape_text}" 1 1 control_character)
+        string(TOUPPER "${control_character}" control_upper)
+        string(FIND "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "${control_upper}" control_index)
+        set(control_value -1)
+        if(control_index GREATER_EQUAL 0)
+            math(EXPR control_value "${control_index} + 1")
+        elseif(control_character STREQUAL "@" OR control_character STREQUAL " ")
+            set(control_value 0)
+        elseif(control_character STREQUAL "[")
+            set(control_value 27)
+        elseif(control_character STREQUAL "\\")
+            set(control_value 28)
+        elseif(control_character STREQUAL "]")
+            set(control_value 29)
+        elseif(control_character STREQUAL "^")
+            set(control_value 30)
+        elseif(control_character STREQUAL "_")
+            set(control_value 31)
+        elseif(control_character STREQUAL "?")
+            set(control_value 127)
+        endif()
+        if(control_value EQUAL 0)
+            set(decoded "")
+            set(consumed 2)
+        elseif(control_value GREATER 0)
+            string(ASCII ${control_value} decoded)
+            set(consumed 2)
+        else()
+            set(decoded "\\c")
         endif()
     elseif(escape_code MATCHES "^[0-7]$")
         set(octal_value 0)
@@ -596,8 +683,17 @@ function(_miniengine_mask_bash_line line input_quote
     set(${output_strip_tabs_list} "${strip_tabs_list}" PARENT_SCOPE)
 endfunction()
 
+function(_miniengine_read_script_lines file_path output_lines)
+    file(READ "${file_path}" content ENCODING UTF-8)
+    string(REPLACE "\r\n" "\n" content "${content}")
+    string(REPLACE "\r" "\n" content "${content}")
+    string(REPLACE ";" "\\;" content "${content}")
+    string(REPLACE "\n" ";" lines "${content}")
+    set(${output_lines} "${lines}" PARENT_SCOPE)
+endfunction()
+
 function(miniengine_check_script_file file_path display_path output_violations)
-    file(STRINGS "${file_path}" lines ENCODING UTF-8)
+    _miniengine_read_script_lines("${file_path}" lines)
     set(violations)
     set(line_number 0)
 
@@ -632,6 +728,13 @@ function(miniengine_check_script_file file_path display_path output_violations)
                 math(EXPR powershell_switch_parenthesis_depth
                     "${powershell_switch_parenthesis_depth} + ${powershell_open_parentheses} - ${powershell_close_parentheses}")
             endif()
+            set(switch_body_on_header_line FALSE)
+            if(is_switch_header AND
+               powershell_switch_parenthesis_depth EQUAL 0 AND
+               (masked MATCHES "\\)[ \t]*\\{" OR
+                masked MATCHES "^[ \t]*switch[^{(]*\\{"))
+                set(switch_body_on_header_line TRUE)
+            endif()
             set(is_switch_clause_level FALSE)
             if(powershell_switch_depths)
                 list(GET powershell_switch_depths -1 active_switch_depth)
@@ -639,15 +742,22 @@ function(miniengine_check_script_file file_path display_path output_violations)
                     set(is_switch_clause_level TRUE)
                 endif()
             endif()
+            set(switch_header_body_violation FALSE)
+            if(switch_body_on_header_line)
+                list(APPEND violations
+                    "${display_path}:${line_number}: PowerShell opening brace must be on the following line")
+                set(switch_header_body_violation TRUE)
+            endif()
             set(switch_clause_violation FALSE)
             if(is_switch_clause_level AND NOT is_switch_header AND
                (masked MATCHES "^[ \t]*[^ \t{}][^{]*\\{" OR
-                masked MATCHES "^[ \t]*\\{[ \t]*[^ \t}]"))
+                masked MATCHES "^[ \t]*\\{.*\\}[ \t]*\\{"))
                 list(APPEND violations
                     "${display_path}:${line_number}: PowerShell switch clause opening brace must be on the following line")
                 set(switch_clause_violation TRUE)
             endif()
             if(NOT switch_clause_violation AND
+               NOT switch_header_body_violation AND
                (masked MATCHES "\\)[ \t]*\\{" OR
                 masked MATCHES "^[ \t]*(else|try|finally|do|begin|process|end|dynamicparam|clean|parallel|sequence|inlinescript)[ \t]*\\{" OR
                 masked MATCHES "^[ \t]*(catch|trap)([ \t]+[^{}]+)?[ \t]*\\{" OR
@@ -659,9 +769,7 @@ function(miniengine_check_script_file file_path display_path output_violations)
             endif()
             if(powershell_switch_pending AND
                 powershell_switch_parenthesis_depth EQUAL 0 AND
-               ((is_switch_header AND
-                 (masked MATCHES "\\)[ \t]*\\{" OR
-                  masked MATCHES "^[ \t]*switch[^{(]*\\{")) OR
+               (switch_body_on_header_line OR
                 (NOT is_switch_header AND
                  masked MATCHES "^[ \t]*\\{")))
                 math(EXPR switch_body_depth "${powershell_brace_depth} + 1")
