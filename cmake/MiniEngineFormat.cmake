@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 get_filename_component(MINIENGINE_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+include("${CMAKE_CURRENT_LIST_DIR}/MiniEngineFormatSupport.cmake")
 
 if(NOT DEFINED MINIENGINE_FORMAT_MODE)
     set(MINIENGINE_FORMAT_MODE CHECK)
@@ -12,36 +13,9 @@ if(NOT MINIENGINE_FORMAT_MODE STREQUAL "CHECK" AND
 endif()
 
 find_program(GIT_EXECUTABLE NAMES git REQUIRED)
-
-if(DEFINED MINIENGINE_CLANG_FORMAT AND NOT MINIENGINE_CLANG_FORMAT STREQUAL "")
-    set(CLANG_FORMAT_EXECUTABLE "${MINIENGINE_CLANG_FORMAT}")
-elseif(DEFINED ENV{CLANG_FORMAT} AND NOT "$ENV{CLANG_FORMAT}" STREQUAL "")
-    set(CLANG_FORMAT_EXECUTABLE "$ENV{CLANG_FORMAT}")
-else()
-    set(_clang_format_hints)
-    if(WIN32)
-        list(APPEND _clang_format_hints
-            "$ENV{ProgramFiles}/LLVM/bin"
-            "$ENV{ProgramFiles}/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin")
-    endif()
-    find_program(CLANG_FORMAT_EXECUTABLE
-        NAMES clang-format clang-format-22
-        HINTS ${_clang_format_hints}
-        REQUIRED)
-endif()
-
-execute_process(
-    COMMAND "${CLANG_FORMAT_EXECUTABLE}" --version
-    RESULT_VARIABLE _version_result
-    OUTPUT_VARIABLE _version_output
-    ERROR_VARIABLE _version_error
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT _version_result EQUAL 0)
-    message(FATAL_ERROR "clang-format --version failed: ${_version_error}")
-endif()
-if(NOT _version_output MATCHES "clang-format version 22\\.")
-    message(FATAL_ERROR "clang-format 22.x is required; found: ${_version_output}")
-endif()
+miniengine_select_clang_format(CLANG_FORMAT_EXECUTABLE CLANG_FORMAT_SOURCE)
+miniengine_require_clang_format_22(
+    "${CLANG_FORMAT_EXECUTABLE}" "${CLANG_FORMAT_SOURCE}")
 
 execute_process(
     COMMAND "${GIT_EXECUTABLE}" -C "${MINIENGINE_ROOT}" ls-files --
@@ -58,21 +32,11 @@ string(REPLACE "\r\n" "\n" _tracked_output "${_tracked_output}")
 string(REPLACE "\n" ";" _tracked_files "${_tracked_output}")
 list(FILTER _tracked_files EXCLUDE REGEX "^$")
 
+miniengine_classify_format_files(
+    "${_tracked_files}" _clang_relative_files _script_files _whitespace_files)
 set(_clang_files)
-set(_script_files)
-set(_whitespace_files)
-foreach(_relative_path IN LISTS _tracked_files)
-    set(_absolute_path "${MINIENGINE_ROOT}/${_relative_path}")
-    if(_relative_path MATCHES "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|vert|frag|comp|geom|tesc|tese|glsl)$")
-        list(APPEND _clang_files "${_absolute_path}")
-    endif()
-    if(_relative_path MATCHES "\\.(ps1|sh)$")
-        list(APPEND _script_files "${_relative_path}")
-    endif()
-    if(_relative_path MATCHES "(^|/)CMakeLists\\.txt$" OR
-       _relative_path MATCHES "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|vert|frag|comp|geom|tesc|tese|glsl|ps1|sh|cmake)$")
-        list(APPEND _whitespace_files "${_relative_path}")
-    endif()
+foreach(_relative_path IN LISTS _clang_relative_files)
+    list(APPEND _clang_files "${MINIENGINE_ROOT}/${_relative_path}")
 endforeach()
 
 if(NOT _clang_files)
@@ -98,27 +62,17 @@ endif()
 
 set(_style_violations)
 foreach(_relative_path IN LISTS _script_files)
-    file(READ "${MINIENGINE_ROOT}/${_relative_path}" _contents)
-    if(_relative_path MATCHES "\\.ps1$")
-        if(_contents MATCHES "(^|\n)[^\n]*\\)[ \t]*\\{" OR
-           _contents MATCHES "(^|\n)[ \t]*(else|try|finally|do)[ \t]*\\{" OR
-           _contents MATCHES "(^|\n)[ \t]*(function|filter)[ \t]+[^ \t\r\n{]+[^\r\n{]*[ \t]*\\{" OR
-           _contents MATCHES "(^|\n)[ \t]*(class|enum)[^\n{]*\\{")
-            list(APPEND _style_violations "${_relative_path}: PowerShell opening brace must be on the following line")
-        endif()
-    elseif(_contents MATCHES "(^|\n)[ \t]*(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*(\\(\\))?[ \t]*\\{")
-        list(APPEND _style_violations "${_relative_path}: Bash function opening brace must be on the following line")
-    endif()
-    if(_contents MATCHES "(^|\n)[ \t]*\t")
-        list(APPEND _style_violations "${_relative_path}: indentation must not use tabs")
-    endif()
+    miniengine_check_script_file(
+        "${MINIENGINE_ROOT}/${_relative_path}" "${_relative_path}"
+        _script_violations)
+    list(APPEND _style_violations ${_script_violations})
 endforeach()
 
 foreach(_relative_path IN LISTS _whitespace_files)
-    file(READ "${MINIENGINE_ROOT}/${_relative_path}" _contents)
-    if(_contents MATCHES "[ \t]+(\r?\n|$)")
-        list(APPEND _style_violations "${_relative_path}: trailing whitespace")
-    endif()
+    miniengine_check_whitespace_file(
+        "${MINIENGINE_ROOT}/${_relative_path}" "${_relative_path}"
+        _whitespace_violations)
+    list(APPEND _style_violations ${_whitespace_violations})
 endforeach()
 
 if(_style_violations)

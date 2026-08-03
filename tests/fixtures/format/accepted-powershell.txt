@@ -1,0 +1,34 @@
+# if ($true) { comment content must not count
+$single = 'catch {} and process {}'
+$double = "if (`$true) { and begin {}"
+$here = @"
+	function Hidden-In-HereString {
+	catch {}
+"@
+$literal = @'
+	process {
+'@
+<#
+dynamicparam {
+class Hidden {
+#>
+<#
+<# nested comment #>
+function Still-Hidden {
+#>
+default { return "inline switch clauses remain unchanged" }
+function Invoke-GoodThing
+{
+    begin
+    {
+        "ok"
+    }
+    process
+    {
+        "ok"
+    }
+    end
+    {
+        "ok"
+    }
+}

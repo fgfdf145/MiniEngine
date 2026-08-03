@@ -1,0 +1,26 @@
+function Invoke-Thing {
+filter Select-Thing {
+workflow Start-Thing {
+class Thing {
+enum Choice {
+if ($true) {
+else {
+try {
+catch [System.Exception] {
+finally {
+do {
+begin {
+process {
+end {
+dynamicparam {
+clean {
+trap {
+data Messages {
+parallel {
+sequence {
+inlinescript {
+configuration Demo {
+node localhost {
+<#
+	comment indentation
+#>

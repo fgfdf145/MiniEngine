@@ -57,3 +57,28 @@ add_test(
         "-DREPO_ROOT=${CMAKE_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg_layout_contract.cmake"
 )
+
+set(miniengine_format_contract_cases
+    powershell_accepts_literals
+    powershell_rejects_same_line_braces
+    bash_accepts_heredoc_literals
+    bash_rejects_hyphenated_function
+    nested_cmakelists_classification
+    explicit_formatter_override
+    environment_formatter_override
+    automatic_formatter_preference
+    missing_formatter_diagnostic
+    wrong_formatter_diagnostic
+    powershell_command_resolution
+)
+
+foreach(miniengine_format_contract_case IN LISTS miniengine_format_contract_cases)
+    add_test(
+        NAME "miniengine.format_contract.${miniengine_format_contract_case}"
+        COMMAND ${CMAKE_COMMAND}
+            "-DREPO_ROOT=${CMAKE_SOURCE_DIR}"
+            "-DTEST_TEMP_ROOT=${CMAKE_CURRENT_BINARY_DIR}/format-contract"
+            "-DTEST_CASE=${miniengine_format_contract_case}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/format_contract.cmake"
+    )
+endforeach()
