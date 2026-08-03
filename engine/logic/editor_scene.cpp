@@ -24,21 +24,31 @@ const char* LightTypeToString(LightType type)
 {
     switch (type)
     {
-    case LightType::Directional: return "directional";
-    case LightType::Point:       return "point";
-    case LightType::Spot:        return "spot";
-    case LightType::Area:        return "area";
-    case LightType::Ambient:     return "ambient";
-    default:                     return "point";
+    case LightType::Directional:
+        return "directional";
+    case LightType::Point:
+        return "point";
+    case LightType::Spot:
+        return "spot";
+    case LightType::Area:
+        return "area";
+    case LightType::Ambient:
+        return "ambient";
+    default:
+        return "point";
     }
 }
 
 LightType LightTypeFromString(const std::string& value)
 {
-    if (value == "directional") return LightType::Directional;
-    if (value == "spot")        return LightType::Spot;
-    if (value == "area")        return LightType::Area;
-    if (value == "ambient")     return LightType::Ambient;
+    if (value == "directional")
+        return LightType::Directional;
+    if (value == "spot")
+        return LightType::Spot;
+    if (value == "area")
+        return LightType::Area;
+    if (value == "ambient")
+        return LightType::Ambient;
     return LightType::Point;
 }
 
@@ -59,8 +69,7 @@ std::string SanitizeName(const std::string& value, const std::string& fallback)
 
 ImGuizmo::OPERATION ParseOperation(
     const std::string& value,
-    ImGuizmo::OPERATION fallback
-)
+    ImGuizmo::OPERATION fallback)
 {
     if (value == "scale")
     {
@@ -106,8 +115,7 @@ GizmoSettings ReadGizmoSettings(const YAML::Node& gizmoNode, const GizmoSettings
     GizmoSettings settings = fallback;
     settings.operation = ParseOperation(
         gizmoNode["operation"].as<std::string>(ToString(settings.operation)),
-        settings.operation
-    );
+        settings.operation);
     settings.mode = ParseMode(gizmoNode["mode"].as<std::string>(ToString(settings.mode)));
     settings.useSnap = gizmoNode["use_snap"].as<bool>(settings.useSnap);
     settings.translationSnap = ReadVec3(gizmoNode["translation_snap"], settings.translationSnap);
@@ -132,8 +140,7 @@ glm::vec3 UnwrapRotationDegrees(const glm::vec3& value, const glm::vec3& referen
     return glm::vec3(
         UnwrapDegrees(value.x, reference.x),
         UnwrapDegrees(value.y, reference.y),
-        UnwrapDegrees(value.z, reference.z)
-    );
+        UnwrapDegrees(value.z, reference.z));
 }
 
 TransformComponent DecomposeTransformMatrix(const glm::mat4& matrix, const TransformComponent& reference)
@@ -161,8 +168,7 @@ TransformComponent DecomposeTransformMatrix(const glm::mat4& matrix, const Trans
     transform.translation = translation;
     transform.rotationDegrees = UnwrapRotationDegrees(
         glm::degrees(glm::vec3(rotationX, rotationY, rotationZ)),
-        reference.rotationDegrees
-    );
+        reference.rotationDegrees);
     transform.scale = glm::max(glm::abs(scale), WorldUnits::kMinimumScale3);
     return transform;
 }
@@ -380,11 +386,11 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
 {
     entt::entity entity = m_registry.create();
     const std::string entityUuid = AdoptOrCreateEntityUuid(entityData.entityUuid);
-    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{ entityUuid });
+    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{entityUuid});
     m_entityByUuid.emplace(entityUuid, entity);
-    m_registry.emplace<TagComponent>(entity, TagComponent{ entityData.tagName });
+    m_registry.emplace<TagComponent>(entity, TagComponent{entityData.tagName});
     m_registry.emplace<TransformComponent>(entity, entityData.transform);
-    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{ BuildTransformMatrix(entityData.transform) });
+    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{BuildTransformMatrix(entityData.transform)});
     ModelComponent& model = m_registry.emplace<ModelComponent>(entity);
     model.sourcePath = entityData.modelSourcePath;
     model.displayName = entityData.modelDisplayName;
@@ -416,8 +422,7 @@ void EditorScene::OnEntityDestroyed(entt::registry&, entt::entity entity)
 {
     m_sceneOrder.erase(
         std::remove(m_sceneOrder.begin(), m_sceneOrder.end(), entity),
-        m_sceneOrder.end()
-    );
+        m_sceneOrder.end());
 
     if (m_selectedEntity == entity)
     {
@@ -509,8 +514,7 @@ std::string EditorScene::AdoptOrCreateEntityUuid(const std::string& requestedUui
     do
     {
         uuid = Uuid::GenerateV4();
-    }
-    while (m_entityByUuid.contains(uuid));
+    } while (m_entityByUuid.contains(uuid));
 
     if (!requestedUuid.empty())
     {
@@ -582,15 +586,13 @@ void EditorScene::UpdateModelInfo(
     const glm::vec3& maxBounds,
     bool hasBounds,
     const std::vector<ModelImportedMaterialInfo>& importedMaterials,
-    const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes
-)
+    const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes)
 {
     auto [model, bounds, metadata, tag] = m_registry.get<
         ModelComponent,
         ModelBoundsComponent,
         EditorModelMetadataComponent,
-        TagComponent
-    >(entity);
+        TagComponent>(entity);
     model.displayName = SanitizeName(displayName, model.displayName);
     model.sourcePath = sourcePath;
     bounds.minBounds = minBounds;
@@ -667,8 +669,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
         const size_t selectedModelIndex = static_cast<size_t>(std::clamp(
             sceneData.selectedEntityIndex,
             0,
-            static_cast<int>(modelCount) - 1
-        ));
+            static_cast<int>(modelCount) - 1));
         size_t modelIndex = 0;
         for (entt::entity entity : m_sceneOrder)
         {
@@ -741,11 +742,11 @@ entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData
 {
     entt::entity entity = m_registry.create();
     const std::string entityUuid = AdoptOrCreateEntityUuid(lightData.entityUuid);
-    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{ entityUuid });
+    m_registry.emplace<SceneEntityIdComponent>(entity, SceneEntityIdComponent{entityUuid});
     m_entityByUuid.emplace(entityUuid, entity);
-    m_registry.emplace<TagComponent>(entity, TagComponent{ lightData.tagName });
+    m_registry.emplace<TagComponent>(entity, TagComponent{lightData.tagName});
     m_registry.emplace<TransformComponent>(entity, lightData.transform);
-    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{ BuildTransformMatrix(lightData.transform) });
+    m_registry.emplace<WorldTransformComponent>(entity, WorldTransformComponent{BuildTransformMatrix(lightData.transform)});
     LightComponent light{};
     light.type = lightData.lightType;
     light.color = lightData.color;

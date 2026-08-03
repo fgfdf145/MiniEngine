@@ -11,8 +11,7 @@
 inline constexpr ImGuizmo::OPERATION kCombinedGizmoOperation =
     static_cast<ImGuizmo::OPERATION>(
         static_cast<int>(ImGuizmo::TRANSLATE) |
-        static_cast<int>(ImGuizmo::ROTATE)
-    );
+        static_cast<int>(ImGuizmo::ROTATE));
 
 enum class GizmoSnapFamily
 {
@@ -37,16 +36,18 @@ std::array<float, 3> BuildGizmoSnapValues(const GizmoSettings& settings, GizmoSn
 
 class GizmoDragSnapState
 {
-public:
+  public:
     void PrepareForManipulate(
         ImGuizmo::OPERATION operation,
         bool gizmoIsUsing,
         bool translationHandleHovered,
-        bool rotationHandleHovered
-    );
+        bool rotationHandleHovered);
     void FinishManipulate(bool gizmoIsUsing);
-    GizmoSnapFamily Family() const { return m_family; }
+    GizmoSnapFamily Family() const
+    {
+        return m_family;
+    }
 
-private:
+  private:
     GizmoSnapFamily m_family = GizmoSnapFamily::None;
 };

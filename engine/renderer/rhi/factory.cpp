@@ -29,8 +29,8 @@ std::optional<std::string> ProbeVulkanRuntimeSupport()
     const bool loaded = SDL_Vulkan_LoadLibrary(nullptr);
     const char* errorText = SDL_GetError();
     const std::string error = (errorText != nullptr && errorText[0] != '\0')
-        ? std::string(errorText)
-        : std::string("SDL_Vulkan_LoadLibrary failed without an SDL error message");
+                                  ? std::string(errorText)
+                                  : std::string("SDL_Vulkan_LoadLibrary failed without an SDL error message");
 
     if (loaded)
     {
@@ -56,8 +56,7 @@ RenderBackendDescriptor DescribeVulkanBackend()
         RenderBackendType::Vulkan,
         ToString(RenderBackendType::Vulkan),
         true,
-        nullptr
-    };
+        nullptr};
 }
 }
 
@@ -72,8 +71,7 @@ RenderBackendDescriptor GetRenderBackendDescriptor(RenderBackendType backendType
             backendType,
             ToString(backendType),
             false,
-            "Unsupported render backend"
-        };
+            "Unsupported render backend"};
     }
 }
 
@@ -88,8 +86,8 @@ std::optional<std::string> GetRenderBackendRuntimeError(RenderBackendType backen
     if (!descriptor.isSupported)
     {
         return descriptor.unsupportedReason != nullptr
-            ? std::optional<std::string>(descriptor.unsupportedReason)
-            : std::optional<std::string>("Unsupported render backend");
+                   ? std::optional<std::string>(descriptor.unsupportedReason)
+                   : std::optional<std::string>("Unsupported render backend");
     }
 
     switch (backendType)
@@ -116,8 +114,7 @@ std::unique_ptr<IRenderBackend> CreateRenderBackend(
     Window& window,
     std::shared_ptr<RendererSharedState> sharedState,
     RenderBackendType backendType,
-    std::optional<std::string> startupModelPath
-)
+    std::optional<std::string> startupModelPath)
 {
     if (const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(backendType); runtimeError.has_value())
     {

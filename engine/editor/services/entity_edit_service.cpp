@@ -89,14 +89,14 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
     load.future = std::async(std::launch::async, [p = path, progress = load.progress]()
-    {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
-        {
-            progress->store(fraction);
-        }));
-        ModelCache::Store(p, std::move(data));
-        progress->store(1.0f);
-    });
+                             {
+                                 auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+                                                                                                      {
+                                                                                                          progress->store(fraction);
+                                                                                                      }));
+                                 ModelCache::Store(p, std::move(data));
+                                 progress->store(1.0f);
+                             });
 
     LOG_INFO("Started async load for: {}", path);
 }
@@ -150,7 +150,7 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
         }
         state.lastModelLoadError.clear();
         LOG_INFO("Placed model (cached) at ({:.3f}, {:.3f}, {:.3f}): {}",
-            worldPosition.x, worldPosition.y, worldPosition.z, modelPath.string());
+                 worldPosition.x, worldPosition.y, worldPosition.z, modelPath.string());
         return;
     }
 
@@ -168,14 +168,14 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
     load.future = std::async(std::launch::async, [p = modelPath.string(), progress = load.progress]()
-    {
-        auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
-        {
-            progress->store(fraction);
-        }));
-        ModelCache::Store(p, std::move(data));
-        progress->store(1.0f);
-    });
+                             {
+                                 auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+                                                                                                      {
+                                                                                                          progress->store(fraction);
+                                                                                                      }));
+                                 ModelCache::Store(p, std::move(data));
+                                 progress->store(1.0f);
+                             });
 
     LOG_INFO("Started async load for: {}", modelPath.string());
 }
@@ -281,8 +281,7 @@ void CommitViewportModelPreview(RendererSharedState& state, const std::string& r
         worldPosition.x,
         worldPosition.y,
         worldPosition.z,
-        modelPath.string()
-    );
+        modelPath.string());
 }
 
 void ClearViewportModelPreview(RendererSharedState& state, bool restoreSelection)
@@ -401,8 +400,7 @@ void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::s
     LOG_INFO(
         "Applied selected texture override to '{}': {}",
         state.GetEditorWorld().GetTag(selectedEntity).name,
-        path
-    );
+        path);
 }
 
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
@@ -452,9 +450,8 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
     IEditorWorld& world = state.GetEditorWorld();
     const auto IsValidSceneEntity = [&world](entt::entity e) -> bool
     {
-        return
-            world.IsValidEntity(e) &&
-            world.Registry().all_of<TagComponent, TransformComponent>(e);
+        return world.IsValidEntity(e) &&
+               world.Registry().all_of<TagComponent, TransformComponent>(e);
     };
     const auto IsValidModelEntity = [&world](entt::entity e) -> bool
     {

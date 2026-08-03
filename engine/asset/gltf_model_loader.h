@@ -6,7 +6,7 @@
 
 class GltfModelLoader
 {
-public:
+  public:
     static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
 
     // Copies an ASCII .gltf into targetDirectory together with the external
@@ -17,6 +17,5 @@ public:
     // JSON.
     static std::filesystem::path CopyWithSortedReferences(
         const std::filesystem::path& gltfPath,
-        const std::filesystem::path& targetDirectory
-    );
+        const std::filesystem::path& targetDirectory);
 };

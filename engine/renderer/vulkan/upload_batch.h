@@ -12,7 +12,7 @@
 // of individual GPU round-trips. Flush() resets the batch so it can keep being reused.
 class VulkanUploadBatch
 {
-public:
+  public:
     VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
     ~VulkanUploadBatch();
 
@@ -27,7 +27,7 @@ public:
     // No-op if nothing has been recorded.
     void Flush();
 
-private:
+  private:
     void BeginRecording();
 
     VkDevice m_device = VK_NULL_HANDLE;

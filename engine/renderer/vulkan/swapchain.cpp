@@ -9,8 +9,7 @@ VulkanSwapchain::VulkanSwapchain(
     VkDevice device,
     VkSurfaceKHR surface,
     const QueueFamilyIndices& queueFamilies,
-    const SwapchainSupportDetails& supportDetails
-)
+    const SwapchainSupportDetails& supportDetails)
     : m_device(device)
 {
     const VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(supportDetails.formats);
@@ -25,8 +24,7 @@ VulkanSwapchain::VulkanSwapchain(
 
     const uint32_t queueFamilyIndices[] = {
         queueFamilies.graphicsFamily.value(),
-        queueFamilies.presentFamily.value()
-    };
+        queueFamilies.presentFamily.value()};
 
     VkSwapchainCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -153,8 +151,7 @@ VkExtent2D VulkanSwapchain::ChooseExtent(SDL_Window* window, const VkSurfaceCapa
 
     VkExtent2D actualExtent = {
         static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height)
-    };
+        static_cast<uint32_t>(height)};
 
     actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
     actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);

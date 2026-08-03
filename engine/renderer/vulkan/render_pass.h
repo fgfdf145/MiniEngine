@@ -4,14 +4,13 @@
 
 class VulkanRenderPass
 {
-public:
+  public:
     VulkanRenderPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         VkFormat swapchainImageFormat,
         VkExtent2D extent,
-        const std::vector<VkImageView>& imageViews
-    );
+        const std::vector<VkImageView>& imageViews);
     ~VulkanRenderPass();
 
     VulkanRenderPass(const VulkanRenderPass&) = delete;
@@ -20,7 +19,7 @@ public:
     VkRenderPass GetHandle() const;
     const std::vector<VkFramebuffer>& GetFramebuffers() const;
 
-private:
+  private:
     VkFormat FindDepthFormat() const;
     void CreateDepthResources(VkExtent2D extent);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;

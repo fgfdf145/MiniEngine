@@ -8,7 +8,7 @@
 
 class Window
 {
-public:
+  public:
     Window(int width, int height, const char* title, RenderBackendType backendType);
     ~Window();
     Window(const Window&) = delete;
@@ -22,7 +22,7 @@ public:
     SDL_Window* GetSDLWindow() const;
     RenderBackendType GetBackendType() const;
 
-private:
+  private:
     void CreateNativeWindow();
 
     SDL_Window* m_window = nullptr;

@@ -9,8 +9,7 @@ namespace
 const std::array<VkFormat, 3> kDepthFormats = {
     VK_FORMAT_D32_SFLOAT,
     VK_FORMAT_D32_SFLOAT_S8_UINT,
-    VK_FORMAT_D24_UNORM_S8_UINT
-};
+    VK_FORMAT_D24_UNORM_S8_UINT};
 
 bool HasStencilComponent(VkFormat format)
 {
@@ -23,8 +22,7 @@ VulkanRenderPass::VulkanRenderPass(
     VkDevice device,
     VkFormat swapchainImageFormat,
     VkExtent2D extent,
-    const std::vector<VkImageView>& imageViews
-)
+    const std::vector<VkImageView>& imageViews)
     : m_physicalDevice(physicalDevice),
       m_device(device)
 {
@@ -74,8 +72,7 @@ VulkanRenderPass::VulkanRenderPass(
 
     const std::array<VkAttachmentDescription, 2> attachments = {
         colorAttachment,
-        depthAttachment
-    };
+        depthAttachment};
 
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -91,7 +88,7 @@ VulkanRenderPass::VulkanRenderPass(
 
     for (size_t i = 0; i < imageViews.size(); ++i)
     {
-        VkImageView attachments[] = { imageViews[i], m_depthImageView };
+        VkImageView attachments[] = {imageViews[i], m_depthImageView};
 
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;

@@ -161,8 +161,7 @@ void LoadThemeSettings(const YAML::Node& themeNode, EditorThemeSettings& theme)
             colorValueNode[0].as<float>(0.0f),
             colorValueNode[1].as<float>(0.0f),
             colorValueNode[2].as<float>(0.0f),
-            colorValueNode[3].as<float>(1.0f)
-        );
+            colorValueNode[3].as<float>(1.0f));
         theme.colorDefined[static_cast<size_t>(colorIndex)] = true;
         foundAnyColor = true;
     }

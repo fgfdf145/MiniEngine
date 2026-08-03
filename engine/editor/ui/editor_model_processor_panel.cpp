@@ -53,8 +53,7 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.emissiveTexturePath,
         material.pbr,
         material.blendGraph,
-        material.shaderGraph
-    };
+        material.shaderGraph};
     EnsureMaterialShaderGraph(importedMaterial.name, std::nullopt, importedMaterial);
     CompileMaterialShaderGraph(importedMaterial);
     return importedMaterial;
@@ -63,15 +62,14 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
 std::string BuildMaterialSlotLabel(const ModelImportedMaterialInfo& material, size_t materialIndex)
 {
     return material.name.empty()
-        ? ("Material " + std::to_string(materialIndex))
-        : material.name;
+               ? ("Material " + std::to_string(materialIndex))
+               : material.name;
 }
 
 std::vector<ModelImportedMaterialInfo> LoadEffectiveImportedModelMaterials(
     const std::filesystem::path& modelPath,
     const LoadedModelData& loadedModel,
-    std::vector<std::string>* materialAssetPaths
-)
+    std::vector<std::string>* materialAssetPaths)
 {
     static_cast<void>(modelPath);
     std::vector<ModelImportedMaterialInfo> materials;
@@ -177,16 +175,14 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
 
     ImGui::SetNextWindowSize(
         ImVec2(560.0f * m_effectiveUiScale, 560.0f * m_effectiveUiScale),
-        ImGuiCond_FirstUseEver
-    );
+        ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Model Preview", &keepModelProcessorWindowOpen))
     {
         ImGui::TextWrapped("Model: %s", m_modelProcessorDisplayName.empty() ? "<unknown>" : m_modelProcessorDisplayName.c_str());
         ImGui::TextWrapped("Asset Path: %s", m_modelProcessorModelPath.c_str());
         ImGui::TextWrapped(
             "Scene Target: %s",
-            scene.HasSelection() ? scene.GetSelectedTag().name.c_str() : "<no entity selected>"
-        );
+            scene.HasSelection() ? scene.GetSelectedTag().name.c_str() : "<no entity selected>");
         ImGui::TextDisabled("Asset management is disabled while it is being rebuilt.");
 
         if (!m_modelProcessorStatusMessage.empty())
@@ -232,21 +228,18 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 m_modelPreviewAutoFramePending,
                 m_effectiveUiScale,
                 "ModelDraftPreviewCanvas",
-                "Approximate PBR draft preview"
-            );
+                "Approximate PBR draft preview");
             ImGui::Text(
                 "Submeshes: %u  Triangles: %u",
                 static_cast<unsigned int>(m_modelProcessorLoadedModel.submeshes.size()),
-                static_cast<unsigned int>(previewTriangleCount)
-            );
+                static_cast<unsigned int>(previewTriangleCount));
 
             ImGui::Spacing();
             ImGui::SeparatorText("UV Preview");
             DrawModelUvPreview(
                 m_modelProcessorLoadedModel,
                 m_modelProcessorSelectedUvSubmeshIndex,
-                m_effectiveUiScale
-            );
+                m_effectiveUiScale);
         }
 
         if (m_modelProcessorMaterials.empty())
@@ -259,15 +252,13 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
             m_modelProcessorSelectedMaterialIndex = std::clamp(
                 m_modelProcessorSelectedMaterialIndex,
                 0,
-                static_cast<int>(m_modelProcessorMaterials.size()) - 1
-            );
+                static_cast<int>(m_modelProcessorMaterials.size()) - 1);
 
             const auto buildCurrentSlotLabel = [&]() -> std::string
             {
                 return BuildMaterialSlotLabel(
                     m_modelProcessorMaterials[static_cast<size_t>(m_modelProcessorSelectedMaterialIndex)],
-                    static_cast<size_t>(m_modelProcessorSelectedMaterialIndex)
-                );
+                    static_cast<size_t>(m_modelProcessorSelectedMaterialIndex));
             };
             const std::string currentSlotLabel = buildCurrentSlotLabel();
 
@@ -330,8 +321,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
             ImGui::SameLine();
             ImGui::BeginDisabled(
                 selectedGraphNodeForActions == nullptr ||
-                selectedGraphNodeForActions->type == MaterialShaderNodeType::Output
-            );
+                selectedGraphNodeForActions->type == MaterialShaderNodeType::Output);
             if (ImGui::Button("Delete Selected Node", ImVec2(190.0f * m_effectiveUiScale, 0.0f)))
             {
                 RemoveMaterialGraphNode(selectedMaterial.shaderGraph, m_materialGraphSelectedNodeId);
@@ -369,8 +359,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 ImGui::TextDisabled(
                     "Linking: %u.%s",
                     static_cast<unsigned int>(m_materialGraphLinkDragFromNodeId),
-                    m_materialGraphLinkDragFromSlot.c_str()
-                );
+                    m_materialGraphLinkDragFromSlot.c_str());
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel Link", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
                 {
@@ -391,8 +380,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     selectedGraphNode->name.empty()
                         ? GetDefaultMaterialGraphNodeName(selectedGraphNode->type)
                         : selectedGraphNode->name.c_str(),
-                    GetMaterialGraphNodeTypeLabel(selectedGraphNode->type)
-                );
+                    GetMaterialGraphNodeTypeLabel(selectedGraphNode->type));
             }
             else if (selectedGraphLink != nullptr)
             {
@@ -405,8 +393,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     fromNode != nullptr ? fromNode->name.c_str() : "<missing>",
                     selectedGraphLink->fromSlot.c_str(),
                     toNode != nullptr ? toNode->name.c_str() : "<missing>",
-                    selectedGraphLink->toSlot.c_str()
-                );
+                    selectedGraphLink->toSlot.c_str());
             }
             else
             {
@@ -417,8 +404,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     "MaterialShaderGraphCanvas",
                     ImVec2(0.0f, 660.0f * m_effectiveUiScale),
                     true,
-                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
-                ))
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
             {
                 ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
                 ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
@@ -427,13 +413,11 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 const ImVec2 canvasOrigin =
                     ImVec2(
                         ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x,
-                        ImGui::GetWindowPos().y + ImGui::GetWindowContentRegionMin().y
-                    );
+                        ImGui::GetWindowPos().y + ImGui::GetWindowContentRegionMin().y);
                 const ImVec2 canvasMax =
                     ImVec2(
                         ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x,
-                        ImGui::GetWindowPos().y + ImGui::GetWindowContentRegionMax().y
-                    );
+                        ImGui::GetWindowPos().y + ImGui::GetWindowContentRegionMax().y);
                 const float visibleWidth = canvasMax.x - canvasOrigin.x;
                 const float visibleHeight = canvasMax.y - canvasOrigin.y;
                 const float gridStep = 48.0f * m_effectiveUiScale * m_materialGraphZoom;
@@ -446,8 +430,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     canvasOrigin,
                     m_materialGraphViewOrigin,
                     nodeUiScale,
-                    m_materialGraphZoom
-                );
+                    m_materialGraphZoom);
                 const ImGuiHoveredFlags canvasHoverFlags =
                     ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows;
                 const bool canvasHovered = ImGui::IsWindowHovered(canvasHoverFlags);
@@ -458,18 +441,15 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     ImGui::SetKeyOwner(
                         ImGuiKey_MouseWheelY,
                         canvasInputOwner,
-                        ImGuiInputFlags_LockThisFrame
-                    );
+                        ImGuiInputFlags_LockThisFrame);
                     ImGui::SetKeyOwner(
                         ImGuiKey_MouseWheelX,
                         canvasInputOwner,
-                        ImGuiInputFlags_LockThisFrame
-                    );
+                        ImGuiInputFlags_LockThisFrame);
                     ImGui::SetKeyOwner(
                         ImGuiKey_MouseMiddle,
                         canvasInputOwner,
-                        ImGuiInputFlags_LockUntilRelease
-                    );
+                        ImGuiInputFlags_LockUntilRelease);
                     ImGui::SetNextFrameWantCaptureMouse(true);
                 }
                 if (canvasBackgroundHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
@@ -497,14 +477,12 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                             mousePosition,
                             canvasOrigin,
                             m_materialGraphViewOrigin,
-                            m_materialGraphZoom
-                        );
+                            m_materialGraphZoom);
                     const float zoomFactor = std::pow(kMaterialGraphZoomStep, ImGui::GetIO().MouseWheel);
                     m_materialGraphZoom = std::clamp(
                         m_materialGraphZoom * zoomFactor,
                         kMaterialGraphMinZoom,
-                        kMaterialGraphMaxZoom
-                    );
+                        kMaterialGraphMaxZoom);
                     m_materialGraphViewOrigin.x =
                         graphPositionBeforeZoom.x -
                         (mousePosition.x - canvasOrigin.x) / m_materialGraphZoom;
@@ -517,8 +495,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 {
                     m_materialGraphContextSpawnPosition = MaterialGraphNodePosition{
                         m_materialGraphViewOrigin.x + visibleWidth * 0.28f / m_materialGraphZoom,
-                        m_materialGraphViewOrigin.y + visibleHeight * 0.22f / m_materialGraphZoom
-                    };
+                        m_materialGraphViewOrigin.y + visibleHeight * 0.22f / m_materialGraphZoom};
                     ImGui::OpenPopup("MaterialGraphAddNodePopup");
                     m_openMaterialGraphAddNodePopup = false;
                 }
@@ -532,8 +509,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         ImGui::GetIO().MousePos,
                         canvasOrigin,
                         m_materialGraphViewOrigin,
-                        m_materialGraphZoom
-                    );
+                        m_materialGraphZoom);
                     ImGui::OpenPopup("MaterialGraphAddNodePopup");
                 }
 
@@ -547,8 +523,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         ImVec2(canvasOrigin.x + x, canvasOrigin.y),
                         ImVec2(canvasOrigin.x + x, canvasMax.y),
                         IM_COL32(44, 54, 70, 90),
-                        1.0f
-                    );
+                        1.0f);
                 }
                 const float gridOffsetY =
                     std::fmod(-(m_materialGraphViewOrigin.y * m_materialGraphZoom), gridStep);
@@ -558,8 +533,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         ImVec2(canvasOrigin.x, canvasOrigin.y + y),
                         ImVec2(canvasMax.x, canvasOrigin.y + y),
                         IM_COL32(44, 54, 70, 90),
-                        1.0f
-                    );
+                        1.0f);
                 }
 
                 uint32_t pendingDeleteNodeId = 0;
@@ -583,8 +557,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     {
                         const ImVec2 resizeMouseDelta(
                             ImGui::GetIO().MousePos.x - m_materialGraphResizeStartMouse.x,
-                            ImGui::GetIO().MousePos.y - m_materialGraphResizeStartMouse.y
-                        );
+                            ImGui::GetIO().MousePos.y - m_materialGraphResizeStartMouse.y);
                         materialChanged |= ApplyMaterialGraphNodeResize(
                             *resizingNode,
                             m_materialGraphResizeEdges,
@@ -592,8 +565,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                             m_materialGraphResizeStartSize,
                             resizeMouseDelta,
                             m_effectiveUiScale,
-                            m_materialGraphZoom
-                        );
+                            m_materialGraphZoom);
                         graphNodeCapturedMouse = true;
                         ImGui::SetMouseCursor(GetMaterialGraphResizeCursor(m_materialGraphResizeEdges));
                     }
@@ -622,8 +594,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         canPasteClipboardNode,
                         m_materialGraphLinkDragFromNodeId,
                         m_materialGraphLinkDragFromSlot,
-                        &m_modelProcessorStatusMessage
-                    );
+                        &m_modelProcessorStatusMessage);
                     materialChanged |= drawResult.changed;
                     graphNodeCapturedMouse |= drawResult.capturesMouse;
                     if (drawResult.selected)
@@ -691,8 +662,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     renderedPins.insert(
                         renderedPins.end(),
                         drawResult.pins.begin(),
-                        drawResult.pins.end()
-                    );
+                        drawResult.pins.end());
                 }
 
                 if (pendingDeleteNodeId != 0)
@@ -737,8 +707,8 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
 
                     const ImU32 linkColor =
                         m_materialGraphSelectedLinkId == link.id
-                        ? kSelectionOutlineColor
-                        : GetMaterialGraphPinColor(fromPin->kind);
+                            ? kSelectionOutlineColor
+                            : GetMaterialGraphPinColor(fromPin->kind);
                     DrawNodeConnection(
                         graphDrawList,
                         fromPin->center,
@@ -746,8 +716,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         linkColor,
                         m_materialGraphSelectedLinkId == link.id
                             ? 3.6f * nodeUiScale
-                            : 2.6f * nodeUiScale
-                    );
+                            : 2.6f * nodeUiScale);
                 }
 
                 if (m_materialGraphLinkDragActive)
@@ -756,8 +725,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         renderedPins,
                         m_materialGraphLinkDragFromNodeId,
                         m_materialGraphLinkDragFromSlot,
-                        false
-                    );
+                        false);
                     if (dragFromPin != nullptr)
                     {
                         DrawNodeConnection(
@@ -765,8 +733,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                             dragFromPin->center,
                             ImGui::GetIO().MousePos,
                             kSelectionOutlineColor,
-                            2.4f * nodeUiScale
-                        );
+                            2.4f * nodeUiScale);
                     }
                     else
                     {
@@ -800,8 +767,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     if (MaterialShaderNode* pastedNode = PasteMaterialGraphNode(
                             selectedMaterial.shaderGraph,
                             *m_materialGraphClipboardNode,
-                            *pendingPasteNodePosition
-                        );
+                            *pendingPasteNodePosition);
                         pastedNode != nullptr)
                     {
                         m_materialGraphSelectedNodeId = pastedNode->id;
@@ -820,8 +786,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                         if (MaterialShaderNode* newNode = AddMaterialGraphNode(
                                 selectedMaterial.shaderGraph,
                                 type,
-                                m_materialGraphContextSpawnPosition
-                            );
+                                m_materialGraphContextSpawnPosition);
                             newNode != nullptr)
                         {
                             m_materialGraphSelectedNodeId = newNode->id;
@@ -876,8 +841,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     if (MaterialShaderNode* pastedNode = PasteMaterialGraphNode(
                             selectedMaterial.shaderGraph,
                             *m_materialGraphClipboardNode,
-                            *pendingPasteNodePosition
-                        );
+                            *pendingPasteNodePosition);
                         pastedNode != nullptr)
                     {
                         m_materialGraphSelectedNodeId = pastedNode->id;
@@ -913,8 +877,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.normalScale,
                 selectedMaterial.pbr.occlusionStrength,
                 selectedMaterial.pbr.emissiveIntensity,
-                selectedMaterial.pbr.opacity
-            );
+                selectedMaterial.pbr.opacity);
             if (HasSecondaryMaterialLayer(blendGraph))
             {
                 ImGui::Separator();
@@ -927,8 +890,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
             {
                 result.actions.updatedImportedModelMaterials = EditorUiActions::ImportedModelMaterialsUpdate{
                     m_modelProcessorModelPath,
-                    m_modelProcessorMaterials
-                };
+                    m_modelProcessorMaterials};
                 m_modelProcessorDirty = false;
                 m_modelProcessorStatusMessage = "Saved material graph for slot: " + currentSlotLabel;
             }

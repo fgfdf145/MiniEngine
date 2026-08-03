@@ -39,7 +39,7 @@ struct CpuRenderSubmesh
 
 class RendererWorld
 {
-public:
+  public:
     void SetSceneWorld(ISceneWorld& sceneWorld);
     bool HasSceneWorld() const;
     ISceneWorld& GetSceneWorld();
@@ -52,7 +52,7 @@ public:
     const std::vector<CpuRenderSubmesh>& GetRenderSubmeshes() const;
     glm::mat4 GetModelMatrix(entt::entity entity) const;
 
-private:
+  private:
     ISceneWorld* m_sceneWorld = nullptr;
     std::vector<CpuRenderSubmesh> m_renderSubmeshes;
 };

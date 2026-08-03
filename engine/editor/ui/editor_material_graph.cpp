@@ -45,8 +45,7 @@ std::string ImportTextureIntoModelMaterialDirectory(
     const std::string& modelPath,
     uint32_t materialIndex,
     const char* slotName,
-    const std::string& sourceTexturePath
-);
+    const std::string& sourceTexturePath);
 
 bool DrawGraphTextureSlotEditor(
     const char* label,
@@ -55,8 +54,7 @@ bool DrawGraphTextureSlotEditor(
     uint32_t materialIndex,
     const char* slotName,
     std::string& path,
-    std::string* statusMessage = nullptr
-)
+    std::string* statusMessage = nullptr)
 {
     bool changed = false;
     const std::string compactPathLabel = [&path]()
@@ -108,8 +106,8 @@ bool DrawGraphTextureSlotEditor(
             {
                 path =
                     !modelPath.empty() && slotName != nullptr
-                    ? ImportTextureIntoModelMaterialDirectory(modelPath, materialIndex, slotName, *selectedPath)
-                    : *selectedPath;
+                        ? ImportTextureIntoModelMaterialDirectory(modelPath, materialIndex, slotName, *selectedPath)
+                        : *selectedPath;
                 if (statusMessage != nullptr)
                 {
                     *statusMessage = "Imported texture for " + std::string(label) + ": " + path;
@@ -222,30 +220,27 @@ const std::vector<MaterialGraphPinDefinition>& GetMaterialGraphInputPins(Materia
 {
     static const std::vector<MaterialGraphPinDefinition> kEmptyPins{};
     static const std::vector<MaterialGraphPinDefinition> kSurfacePins = {
-        { "base_color", "Base Color", MaterialGraphPinKind::Texture },
-        { "normal", "Normal", MaterialGraphPinKind::Texture },
-        { "metallic", "Metallic", MaterialGraphPinKind::Texture },
-        { "roughness", "Roughness", MaterialGraphPinKind::Texture },
-        { "occlusion", "Occlusion", MaterialGraphPinKind::Texture },
-        { "emissive", "Emissive", MaterialGraphPinKind::Texture }
-    };
+        {"base_color", "Base Color", MaterialGraphPinKind::Texture},
+        {"normal", "Normal", MaterialGraphPinKind::Texture},
+        {"metallic", "Metallic", MaterialGraphPinKind::Texture},
+        {"roughness", "Roughness", MaterialGraphPinKind::Texture},
+        {"occlusion", "Occlusion", MaterialGraphPinKind::Texture},
+        {"emissive", "Emissive", MaterialGraphPinKind::Texture}};
     static const std::vector<MaterialGraphPinDefinition> kBlendPins = {
-        { "surface_a", "Surface A", MaterialGraphPinKind::Surface },
-        { "surface_b", "Surface B", MaterialGraphPinKind::Surface },
-        { "mask", "Mask", MaterialGraphPinKind::Texture },
-        { "factor", "Factor", MaterialGraphPinKind::Scalar }
-    };
+        {"surface_a", "Surface A", MaterialGraphPinKind::Surface},
+        {"surface_b", "Surface B", MaterialGraphPinKind::Surface},
+        {"mask", "Mask", MaterialGraphPinKind::Texture},
+        {"factor", "Factor", MaterialGraphPinKind::Scalar}};
     static const std::vector<MaterialGraphPinDefinition> kOutputPins = {
-        { "surface", "Surface", MaterialGraphPinKind::Surface },
-        { "base_factor", "Base Factor", MaterialGraphPinKind::Color },
-        { "metallic_factor", "Metallic", MaterialGraphPinKind::Scalar },
-        { "roughness_factor", "Roughness", MaterialGraphPinKind::Scalar },
-        { "normal_scale", "Normal Scale", MaterialGraphPinKind::Scalar },
-        { "ao_strength", "AO Strength", MaterialGraphPinKind::Scalar },
-        { "emissive_color", "Emissive", MaterialGraphPinKind::Color },
-        { "emissive_intensity", "Emissive Intensity", MaterialGraphPinKind::Scalar },
-        { "opacity", "Opacity", MaterialGraphPinKind::Scalar }
-    };
+        {"surface", "Surface", MaterialGraphPinKind::Surface},
+        {"base_factor", "Base Factor", MaterialGraphPinKind::Color},
+        {"metallic_factor", "Metallic", MaterialGraphPinKind::Scalar},
+        {"roughness_factor", "Roughness", MaterialGraphPinKind::Scalar},
+        {"normal_scale", "Normal Scale", MaterialGraphPinKind::Scalar},
+        {"ao_strength", "AO Strength", MaterialGraphPinKind::Scalar},
+        {"emissive_color", "Emissive", MaterialGraphPinKind::Color},
+        {"emissive_intensity", "Emissive Intensity", MaterialGraphPinKind::Scalar},
+        {"opacity", "Opacity", MaterialGraphPinKind::Scalar}};
 
     switch (type)
     {
@@ -264,17 +259,13 @@ const std::vector<MaterialGraphPinDefinition>& GetMaterialGraphOutputPins(Materi
 {
     static const std::vector<MaterialGraphPinDefinition> kEmptyPins{};
     static const std::vector<MaterialGraphPinDefinition> kTexturePins = {
-        { "texture", "Texture", MaterialGraphPinKind::Texture }
-    };
+        {"texture", "Texture", MaterialGraphPinKind::Texture}};
     static const std::vector<MaterialGraphPinDefinition> kScalarPins = {
-        { "value", "Value", MaterialGraphPinKind::Scalar }
-    };
+        {"value", "Value", MaterialGraphPinKind::Scalar}};
     static const std::vector<MaterialGraphPinDefinition> kColorPins = {
-        { "color", "Color", MaterialGraphPinKind::Color }
-    };
+        {"color", "Color", MaterialGraphPinKind::Color}};
     static const std::vector<MaterialGraphPinDefinition> kSurfacePins = {
-        { "surface", "Surface", MaterialGraphPinKind::Surface }
-    };
+        {"surface", "Surface", MaterialGraphPinKind::Surface}};
 
     switch (type)
     {
@@ -294,53 +285,51 @@ const std::vector<MaterialGraphPinDefinition>& GetMaterialGraphOutputPins(Materi
 
 const MaterialGraphPinDefinition* FindMaterialGraphPinDefinition(
     const std::vector<MaterialGraphPinDefinition>& pins,
-    std::string_view slot
-)
+    std::string_view slot)
 {
     const auto iterator = std::find_if(pins.begin(), pins.end(), [slot](const MaterialGraphPinDefinition& pin)
-    {
-        return pin.slot == slot;
-    });
+                                       {
+                                           return pin.slot == slot;
+                                       });
     return iterator != pins.end() ? &(*iterator) : nullptr;
 }
 
 const MaterialShaderNode* FindMaterialGraphNode(const MaterialShaderGraph& graph, uint32_t nodeId)
 {
     const auto iterator = std::find_if(graph.nodes.begin(), graph.nodes.end(), [nodeId](const MaterialShaderNode& node)
-    {
-        return node.id == nodeId;
-    });
+                                       {
+                                           return node.id == nodeId;
+                                       });
     return iterator != graph.nodes.end() ? &(*iterator) : nullptr;
 }
 
 MaterialShaderNode* FindMaterialGraphNode(MaterialShaderGraph& graph, uint32_t nodeId)
 {
     const auto iterator = std::find_if(graph.nodes.begin(), graph.nodes.end(), [nodeId](const MaterialShaderNode& node)
-    {
-        return node.id == nodeId;
-    });
+                                       {
+                                           return node.id == nodeId;
+                                       });
     return iterator != graph.nodes.end() ? &(*iterator) : nullptr;
 }
 
 const MaterialShaderLink* FindMaterialGraphLink(const MaterialShaderGraph& graph, uint32_t linkId)
 {
     const auto iterator = std::find_if(graph.links.begin(), graph.links.end(), [linkId](const MaterialShaderLink& link)
-    {
-        return link.id == linkId;
-    });
+                                       {
+                                           return link.id == linkId;
+                                       });
     return iterator != graph.links.end() ? &(*iterator) : nullptr;
 }
 
 const MaterialShaderLink* FindIncomingMaterialGraphLink(
     const MaterialShaderGraph& graph,
     uint32_t nodeId,
-    std::string_view slot
-)
+    std::string_view slot)
 {
     const auto iterator = std::find_if(graph.links.begin(), graph.links.end(), [&](const MaterialShaderLink& link)
-    {
-        return link.toNodeId == nodeId && link.toSlot == slot;
-    });
+                                       {
+                                           return link.toNodeId == nodeId && link.toSlot == slot;
+                                       });
     return iterator != graph.links.end() ? &(*iterator) : nullptr;
 }
 
@@ -348,22 +337,21 @@ const MaterialGraphRenderedPin* FindRenderedMaterialGraphPin(
     const std::vector<MaterialGraphRenderedPin>& pins,
     uint32_t nodeId,
     std::string_view slot,
-    bool input
-)
+    bool input)
 {
     const auto iterator = std::find_if(pins.begin(), pins.end(), [&](const MaterialGraphRenderedPin& pin)
-    {
-        return pin.nodeId == nodeId && pin.input == input && pin.slot == slot;
-    });
+                                       {
+                                           return pin.nodeId == nodeId && pin.input == input && pin.slot == slot;
+                                       });
     return iterator != pins.end() ? &(*iterator) : nullptr;
 }
 
 bool MaterialGraphHasOutputNode(const MaterialShaderGraph& graph)
 {
     return std::any_of(graph.nodes.begin(), graph.nodes.end(), [](const MaterialShaderNode& node)
-    {
-        return node.type == MaterialShaderNodeType::Output;
-    });
+                       {
+                           return node.type == MaterialShaderNodeType::Output;
+                       });
 }
 
 std::string BuildMaterialGraphNodeName(MaterialShaderNodeType type, uint32_t nodeId)
@@ -378,8 +366,7 @@ std::string BuildMaterialGraphNodeName(MaterialShaderNodeType type, uint32_t nod
 MaterialShaderNode* AddMaterialGraphNode(
     MaterialShaderGraph& graph,
     MaterialShaderNodeType type,
-    const MaterialGraphNodePosition& position
-)
+    const MaterialGraphNodePosition& position)
 {
     MaterialShaderNode node{};
     node.id = graph.nextNodeId++;
@@ -403,17 +390,14 @@ void RemoveMaterialGraphLink(MaterialShaderGraph& graph, uint32_t linkId)
             [linkId](const MaterialShaderLink& link)
             {
                 return link.id == linkId;
-            }
-        ),
-        graph.links.end()
-    );
+            }),
+        graph.links.end());
 }
 
 void RemoveMaterialGraphIncomingLink(
     MaterialShaderGraph& graph,
     uint32_t nodeId,
-    std::string_view slot
-)
+    std::string_view slot)
 {
     graph.links.erase(
         std::remove_if(
@@ -422,10 +406,8 @@ void RemoveMaterialGraphIncomingLink(
             [nodeId, slot](const MaterialShaderLink& link)
             {
                 return link.toNodeId == nodeId && link.toSlot == slot;
-            }
-        ),
-        graph.links.end()
-    );
+            }),
+        graph.links.end());
 }
 
 void RemoveMaterialGraphNode(MaterialShaderGraph& graph, uint32_t nodeId)
@@ -437,10 +419,8 @@ void RemoveMaterialGraphNode(MaterialShaderGraph& graph, uint32_t nodeId)
             [nodeId](const MaterialShaderLink& link)
             {
                 return link.fromNodeId == nodeId || link.toNodeId == nodeId;
-            }
-        ),
-        graph.links.end()
-    );
+            }),
+        graph.links.end());
     graph.nodes.erase(
         std::remove_if(
             graph.nodes.begin(),
@@ -448,19 +428,16 @@ void RemoveMaterialGraphNode(MaterialShaderGraph& graph, uint32_t nodeId)
             [nodeId](const MaterialShaderNode& node)
             {
                 return node.id == nodeId;
-            }
-        ),
-        graph.nodes.end()
-    );
+            }),
+        graph.nodes.end());
 }
 
 bool WouldMaterialGraphCreateCycle(
     const MaterialShaderGraph& graph,
     uint32_t fromNodeId,
-    uint32_t toNodeId
-)
+    uint32_t toNodeId)
 {
-    std::vector<uint32_t> pending{ toNodeId };
+    std::vector<uint32_t> pending{toNodeId};
     std::vector<uint32_t> visited;
 
     while (!pending.empty())
@@ -497,8 +474,7 @@ bool CanConnectMaterialGraphPins(
     std::string_view fromSlot,
     uint32_t toNodeId,
     std::string_view toSlot,
-    std::string* failureReason = nullptr
-)
+    std::string* failureReason = nullptr)
 {
     const MaterialShaderNode* fromNode = FindMaterialGraphNode(graph, fromNodeId);
     const MaterialShaderNode* toNode = FindMaterialGraphNode(graph, toNodeId);
@@ -559,8 +535,7 @@ uint32_t ConnectMaterialGraphPins(
     uint32_t fromNodeId,
     std::string_view fromSlot,
     uint32_t toNodeId,
-    std::string_view toSlot
-)
+    std::string_view toSlot)
 {
     if (!CanConnectMaterialGraphPins(graph, fromNodeId, fromSlot, toNodeId, toSlot))
     {
@@ -594,26 +569,22 @@ ImVec2 ComputeNodeScreenPosition(
     const MaterialGraphNodePosition& position,
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
-    float zoom
-)
+    float zoom)
 {
     return ImVec2(
         canvasOrigin.x + (position.x - viewOrigin.x) * zoom,
-        canvasOrigin.y + (position.y - viewOrigin.y) * zoom
-    );
+        canvasOrigin.y + (position.y - viewOrigin.y) * zoom);
 }
 
 MaterialGraphNodePosition ComputeMaterialGraphPositionFromScreen(
     const ImVec2& screenPosition,
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
-    float zoom
-)
+    float zoom)
 {
     return MaterialGraphNodePosition{
         viewOrigin.x + (screenPosition.x - canvasOrigin.x) / zoom,
-        viewOrigin.y + (screenPosition.y - canvasOrigin.y) / zoom
-    };
+        viewOrigin.y + (screenPosition.y - canvasOrigin.y) / zoom};
 }
 
 ImVec2 GetMaterialGraphNodeBaseSize(MaterialShaderNodeType type)
@@ -663,8 +634,7 @@ ImVec2 GetMaterialGraphNodeLogicalSize(const MaterialShaderNode& node)
     const ImVec2 baseSize = GetMaterialGraphNodeBaseSize(node.type);
     return ImVec2(
         node.width > 0.0f ? node.width : baseSize.x,
-        node.height > 0.0f ? node.height : baseSize.y
-    );
+        node.height > 0.0f ? node.height : baseSize.y);
 }
 
 void SetMaterialGraphNodeLogicalSize(MaterialShaderNode& node, const ImVec2& logicalSize)
@@ -690,8 +660,7 @@ uint8_t GetMaterialGraphResizeEdges(const ImRect& nodeRect, const ImVec2& mouseP
     const float borderThickness = kMaterialGraphResizeBorderPixels * uiScale;
     const ImRect innerRect(
         ImVec2(nodeRect.Min.x + borderThickness, nodeRect.Min.y + borderThickness),
-        ImVec2(nodeRect.Max.x - borderThickness, nodeRect.Max.y - borderThickness)
-    );
+        ImVec2(nodeRect.Max.x - borderThickness, nodeRect.Max.y - borderThickness));
     if (innerRect.Contains(mousePosition))
     {
         return MaterialGraphResizeEdge_None;
@@ -743,8 +712,7 @@ ImGuiMouseCursor GetMaterialGraphResizeCursor(uint8_t edges)
 
 bool CanPasteMaterialGraphNode(
     const MaterialShaderGraph& graph,
-    const std::optional<MaterialShaderNode>& clipboardNode
-)
+    const std::optional<MaterialShaderNode>& clipboardNode)
 {
     if (!clipboardNode.has_value())
     {
@@ -760,8 +728,7 @@ bool CanPasteMaterialGraphNode(
 MaterialShaderNode* PasteMaterialGraphNode(
     MaterialShaderGraph& graph,
     const MaterialShaderNode& clipboardNode,
-    const MaterialGraphNodePosition& position
-)
+    const MaterialGraphNodePosition& position)
 {
     if (clipboardNode.type == MaterialShaderNodeType::Output && MaterialGraphHasOutputNode(graph))
     {
@@ -790,8 +757,7 @@ bool ApplyMaterialGraphNodeResize(
     const ImVec2& startLogicalSize,
     const ImVec2& mouseDelta,
     float effectiveUiScale,
-    float zoom
-)
+    float zoom)
 {
     if (effectiveUiScale <= 0.0f || zoom <= 0.0f || resizeEdges == MaterialGraphResizeEdge_None)
     {
@@ -846,8 +812,7 @@ ImRect BuildMaterialGraphNodeRect(
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
     float uiScale,
-    float zoom
-)
+    float zoom)
 {
     const ImVec2 nodePosition = ComputeNodeScreenPosition(node.position, canvasOrigin, viewOrigin, zoom);
     const ImVec2 nodeSize = GetMaterialGraphNodeSize(node, uiScale);
@@ -860,13 +825,12 @@ bool IsMouseOverMaterialGraphNode(
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
     float uiScale,
-    float zoom
-)
+    float zoom)
 {
     return std::any_of(graph.nodes.begin(), graph.nodes.end(), [&](const MaterialShaderNode& node)
-    {
-        return BuildMaterialGraphNodeRect(node, canvasOrigin, viewOrigin, uiScale, zoom).Contains(mousePosition);
-    });
+                       {
+                           return BuildMaterialGraphNodeRect(node, canvasOrigin, viewOrigin, uiScale, zoom).Contains(mousePosition);
+                       });
 }
 
 std::string BuildMaterialGraphTextureImportSlotName(const MaterialShaderNode& node)
@@ -898,8 +862,7 @@ MaterialGraphRenderedPin DrawMaterialGraphPinRow(
     bool selected,
     uint32_t linkId,
     bool& pinPressed,
-    bool& disconnectRequested
-)
+    bool& disconnectRequested)
 {
     const float pinRadius = 6.0f * uiScale;
     const float pinDiameter = pinRadius * 2.0f + 6.0f * uiScale;
@@ -919,8 +882,7 @@ MaterialGraphRenderedPin DrawMaterialGraphPinRow(
         const float rowWidth = labelWidth + pinDiameter + 10.0f * uiScale;
         const float outputStartX = std::max(
             ImGui::GetCursorPosX(),
-            ImGui::GetWindowContentRegionMax().x - rowWidth
-        );
+            ImGui::GetWindowContentRegionMax().x - rowWidth);
         ImGui::SetCursorPosX(outputStartX);
         ImGui::TextUnformatted(pinDefinition.label);
         ImGui::SameLine(0.0f, 8.0f * uiScale);
@@ -931,8 +893,7 @@ MaterialGraphRenderedPin DrawMaterialGraphPinRow(
     pinPressed = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     renderedPin.center = ImVec2(
         (ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f,
-        (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f
-    );
+        (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
 
     ImU32 fillColor = pinColor;
     if (linkDragActive && highlightCompatible)
@@ -951,8 +912,7 @@ MaterialGraphRenderedPin DrawMaterialGraphPinRow(
         pinRadius + 1.25f * uiScale,
         hovered ? IM_COL32(255, 255, 255, 240) : IM_COL32(24, 28, 34, 230),
         14,
-        1.5f * uiScale
-    );
+        1.5f * uiScale);
 
     if (input)
     {
@@ -986,8 +946,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     bool canPasteClipboardNode,
     uint32_t dragFromNodeId,
     std::string_view dragFromSlot,
-    std::string* statusMessage
-)
+    std::string* statusMessage)
 {
     MaterialGraphNodeDrawResult result{};
     const ImVec2 nodeSize = GetMaterialGraphNodeSize(node, uiScale);
@@ -1020,16 +979,14 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
         nodeMin,
         ImVec2(nodeMax.x, nodeMin.y + headerHeight),
         headerFillColor,
-        cornerRounding
-    );
+        cornerRounding);
     drawList->AddRect(
         nodeMin,
         nodeMax,
         nodeBorderColor,
         cornerRounding,
         0,
-        nodeSelected ? 2.8f * uiScale : 1.4f * uiScale
-    );
+        nodeSelected ? 2.8f * uiScale : 1.4f * uiScale);
 
     const char* nodeTitle = node.name.empty() ? GetDefaultMaterialGraphNodeName(node.type) : node.name.c_str();
     const char* nodeTypeLabel = GetMaterialGraphNodeTypeLabel(node.type);
@@ -1037,19 +994,16 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     const ImVec2 badgeTextSize = ImGui::CalcTextSize(nodeTypeLabel);
     const ImVec2 badgeMax(
         badgeMin.x + badgeTextSize.x + 14.0f * uiScale,
-        badgeMin.y + std::max(18.0f * uiScale, badgeTextSize.y + 6.0f * uiScale)
-    );
+        badgeMin.y + std::max(18.0f * uiScale, badgeTextSize.y + 6.0f * uiScale));
     drawList->AddRectFilled(badgeMin, badgeMax, badgeColor, 7.0f * uiScale);
     drawList->AddText(
         ImVec2(badgeMin.x + 7.0f * uiScale, badgeMin.y + 3.0f * uiScale),
         IM_COL32(36, 40, 48, 255),
-        nodeTypeLabel
-    );
+        nodeTypeLabel);
     drawList->AddText(
         ImVec2(badgeMax.x + 10.0f * uiScale, nodeMin.y + 9.0f * uiScale),
         titleColor,
-        nodeTitle
-    );
+        nodeTitle);
 
     if (allowDelete)
     {
@@ -1078,8 +1032,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
                     dragFromNodeId,
                     dragFromSlot,
                     node.id,
-                    pinDefinition.slot
-                );
+                    pinDefinition.slot);
 
             bool pinPressed = false;
             bool disconnectRequested = false;
@@ -1093,8 +1046,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
                 incomingLink != nullptr,
                 incomingLink != nullptr ? incomingLink->id : 0,
                 pinPressed,
-                disconnectRequested
-            );
+                disconnectRequested);
             if (pinPressed)
             {
                 result.selected = true;
@@ -1107,16 +1059,14 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
                             dragFromSlot,
                             node.id,
                             pinDefinition.slot,
-                            &failureReason
-                        ))
+                            &failureReason))
                     {
                         result.connectedLinkId = ConnectMaterialGraphPins(
                             material.shaderGraph,
                             dragFromNodeId,
                             dragFromSlot,
                             node.id,
-                            pinDefinition.slot
-                        );
+                            pinDefinition.slot);
                         result.changed |= result.connectedLinkId != 0;
                     }
                     else if (statusMessage != nullptr && !failureReason.empty())
@@ -1153,8 +1103,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
             materialIndex,
             slotName.c_str(),
             node.texturePath,
-            statusMessage
-        );
+            statusMessage);
         break;
     }
     case MaterialShaderNodeType::Scalar:
@@ -1205,8 +1154,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
                     dragFromSlot == pinDefinition.slot,
                 0,
                 pinPressed,
-                disconnectRequested
-            );
+                disconnectRequested);
             if (pinPressed)
             {
                 result.requestStartLinkDrag = true;
@@ -1278,8 +1226,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
                 result.requestPaste = true;
                 result.pastePosition = MaterialGraphNodePosition{
                     node.position.x + 40.0f,
-                    node.position.y + 40.0f
-                };
+                    node.position.y + 40.0f};
             }
             if (ImGui::MenuItem("Delete Node", nullptr, false, allowDelete))
             {
@@ -1299,8 +1246,7 @@ void DrawNodeConnection(
     const ImVec2& from,
     const ImVec2& to,
     ImU32 color,
-    float thickness
-)
+    float thickness)
 {
     if (drawList == nullptr)
     {
@@ -1319,8 +1265,7 @@ std::string ImportTextureIntoModelMaterialDirectory(
     const std::string& modelPath,
     uint32_t materialIndex,
     const char* slotName,
-    const std::string& sourceTexturePath
-)
+    const std::string& sourceTexturePath)
 {
     static_cast<void>(modelPath);
     static_cast<void>(materialIndex);

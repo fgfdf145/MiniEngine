@@ -12,17 +12,16 @@ class Window;
 
 class EditorRenderBackendBase : public IRenderBackend
 {
-public:
+  public:
     RenderBackendType GetBackendType() const override;
     void HandleEvent(const SDL_Event& event) override;
 
-protected:
+  protected:
     EditorRenderBackendBase(
         Window& window,
         std::shared_ptr<RendererSharedState> sharedState,
         RenderBackendType backendType,
-        std::optional<std::string> startupModelPath = std::nullopt
-    );
+        std::optional<std::string> startupModelPath = std::nullopt);
 
     bool TickSharedFrame();
     bool ProcessPendingOperations();
@@ -42,7 +41,7 @@ protected:
     virtual void HandleBackendEvent(const SDL_Event& event) = 0;
     virtual bool WantsKeyboardCapture() const = 0;
 
-private:
+  private:
     static void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaTime, bool blockKeyboardInput);
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();

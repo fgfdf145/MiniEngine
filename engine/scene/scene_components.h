@@ -12,21 +12,21 @@
 enum class LightType : uint32_t
 {
     Directional = 0, // Global sun-like light, uses transform rotation for direction
-    Point       = 1, // Omnidirectional point light
-    Spot        = 2, // Cone spotlight
-    Area        = 3, // Rectangular area light (approximate)
-    Ambient     = 4  // Global ambient (no position or direction)
+    Point = 1,       // Omnidirectional point light
+    Spot = 2,        // Cone spotlight
+    Area = 3,        // Rectangular area light (approximate)
+    Ambient = 4      // Global ambient (no position or direction)
 };
 
 struct LightComponent
 {
     LightType type = LightType::Point;
-    glm::vec3 color{ 1.0f, 1.0f, 1.0f };
-    float intensity = 1000.0f;                // Lumens (point/spot/area) or lux (directional)
-    float range = 10.0f;                      // Effective range in meters
-    float spotInnerAngleDegrees = 15.0f;     // Spot inner cone half-angle
-    float spotOuterAngleDegrees = 30.0f;     // Spot outer cone half-angle
-    glm::vec2 areaSize{ 1.0f, 1.0f };        // Area light width x height in meters
+    glm::vec3 color{1.0f, 1.0f, 1.0f};
+    float intensity = 1000.0f;           // Lumens (point/spot/area) or lux (directional)
+    float range = 10.0f;                 // Effective range in meters
+    float spotInnerAngleDegrees = 15.0f; // Spot inner cone half-angle
+    float spotOuterAngleDegrees = 30.0f; // Spot outer cone half-angle
+    glm::vec2 areaSize{1.0f, 1.0f};      // Area light width x height in meters
 };
 
 struct ModelImportedMaterialInfo
@@ -66,19 +66,23 @@ struct TagComponent
 
 struct TransformComponent
 {
-    glm::vec3 translation{ 0.0f, 0.0f, 0.0f };
-    glm::vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
-    glm::vec3 scale{ 1.0f, 1.0f, 1.0f };
+    glm::vec3 translation{0.0f, 0.0f, 0.0f};
+    glm::vec3 rotationDegrees{0.0f, 0.0f, 0.0f};
+    glm::vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
 struct WorldTransformComponent
 {
-    glm::mat4 matrix{ 1.0f };
+    glm::mat4 matrix{1.0f};
 };
 
 // Empty tags consumed in batches by scene/render systems.
-struct TransformDirty {};
-struct ModelRenderableDirty {};
+struct TransformDirty
+{
+};
+struct ModelRenderableDirty
+{
+};
 
 struct ModelComponent
 {

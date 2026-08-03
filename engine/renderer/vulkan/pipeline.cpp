@@ -11,8 +11,7 @@ VulkanPipeline::VulkanPipeline(
     VkExtent2D extent,
     VkRenderPass renderPass,
     VkDescriptorSetLayout descriptorSetLayout,
-    bool doubleSided
-)
+    bool doubleSided)
     : m_device(device)
 {
     const std::string shaderDir = MINIENGINE_SHADER_DIR;
@@ -34,7 +33,7 @@ VulkanPipeline::VulkanPipeline(
     fragmentShaderStageInfo.module = fragmentShaderModule;
     fragmentShaderStageInfo.pName = "main";
 
-    const VkPipelineShaderStageCreateInfo shaderStages[] = { vertexShaderStageInfo, fragmentShaderStageInfo };
+    const VkPipelineShaderStageCreateInfo shaderStages[] = {vertexShaderStageInfo, fragmentShaderStageInfo};
 
     const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
     const auto attributeDescriptions = GetVertexAttributeDescriptions();

@@ -51,12 +51,11 @@ struct MaterialTextureSlots
 
 class VulkanRenderer : public EditorRenderBackendBase
 {
-public:
+  public:
     VulkanRenderer(
         Window& window,
         std::shared_ptr<RendererSharedState> sharedState,
-        std::optional<std::string> startupModelPath = std::nullopt
-    );
+        std::optional<std::string> startupModelPath = std::nullopt);
     ~VulkanRenderer();
 
     VulkanRenderer(const VulkanRenderer&) = delete;
@@ -64,11 +63,11 @@ public:
 
     void DrawFrame() override;
 
-protected:
+  protected:
     void HandleBackendEvent(const SDL_Event& event) override;
     bool WantsKeyboardCapture() const override;
 
-private:
+  private:
     void CreateSwapchainResources();
     void DestroySwapchainResources();
     void CreatePipelineResources();
@@ -79,8 +78,7 @@ private:
     void ApplyRenderContent(
         std::vector<std::unique_ptr<VulkanTexture>> newTextures,
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
-        std::vector<RenderSubmesh> newRenderSubmeshes
-    );
+        std::vector<RenderSubmesh> newRenderSubmeshes);
     std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex) const;
     void RecordSceneLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, const std::vector<VulkanDrawItem>& drawItems) const;
     void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const;

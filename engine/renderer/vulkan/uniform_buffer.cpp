@@ -8,8 +8,7 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     uint32_t imageCount,
-    const std::vector<MaterialTextureBinding>& materialBindings
-)
+    const std::vector<MaterialTextureBinding>& materialBindings)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
@@ -80,8 +79,7 @@ void VulkanUniformBuffer::Update(
     uint32_t imageIndex,
     const ViewportMatrices& matrices,
     const glm::vec3& cameraPosition,
-    const std::vector<GpuLightData>& lights
-)
+    const std::vector<GpuLightData>& lights)
 {
     CameraUniformData data{};
     data.view = matrices.view;
@@ -149,8 +147,7 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         allocateInfo.allocationSize = memoryRequirements.size;
         allocateInfo.memoryTypeIndex = FindMemoryType(
             memoryRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-        );
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memories[i]), "Failed to allocate uniform buffer memory");
         CheckVulkan(vkBindBufferMemory(m_device, m_buffers[i], m_memories[i], 0), "Failed to bind uniform buffer memory");
         CheckVulkan(vkMapMemory(m_device, m_memories[i], 0, sizeof(CameraUniformData), 0, &m_mappedBuffers[i]), "Failed to map uniform buffer memory");
@@ -160,10 +157,8 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
     const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorSetCount },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 13 }
-    }};
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorSetCount},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 13}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -214,8 +209,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 materialBinding.secondaryRoughness,
                 materialBinding.secondaryOcclusion,
                 materialBinding.secondaryEmissive,
-                materialBinding.blendMask
-            };
+                materialBinding.blendMask};
 
             std::array<VkDescriptorImageInfo, 13> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)

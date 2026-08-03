@@ -11,9 +11,9 @@ namespace
 std::string ToLowerCopy(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-    {
-        return static_cast<char>(std::tolower(character));
-    });
+                   {
+                       return static_cast<char>(std::tolower(character));
+                   });
     return value;
 }
 
@@ -76,8 +76,7 @@ const char* ModelLoader::GetImporterName()
 
 std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::filesystem::path& modelPath,
-    const std::filesystem::path& targetDirectory
-)
+    const std::filesystem::path& targetDirectory)
 {
     const std::string extension = ToLowerCopy(modelPath.extension().string());
     if (extension == ".gltf")
@@ -92,8 +91,7 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     if (ec)
     {
         throw std::runtime_error(
-            "Failed to copy '" + modelPath.string() + "' to '" + dst.string() + "': " + ec.message()
-        );
+            "Failed to copy '" + modelPath.string() + "' to '" + dst.string() + "': " + ec.message());
     }
     return dst;
 }
@@ -104,8 +102,7 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     if (!IsSupportedModelPath(modelPath))
     {
         throw std::runtime_error(
-            "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string()
-        );
+            "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string());
     }
 
     LoadedModelData modelData = GltfModelLoader::LoadModel(modelPath.string(), progress);

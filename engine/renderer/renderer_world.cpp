@@ -40,24 +40,26 @@ void RendererWorld::SetRenderSubmeshes(std::vector<CpuRenderSubmesh> renderSubme
 
 void RendererWorld::ReplaceEntityRenderSubmeshes(
     entt::entity entity,
-    std::vector<CpuRenderSubmesh> renderSubmeshes
-)
+    std::vector<CpuRenderSubmesh> renderSubmeshes)
 {
     const auto first = std::find_if(
         m_renderSubmeshes.begin(),
         m_renderSubmeshes.end(),
-        [entity](const CpuRenderSubmesh& submesh) { return submesh.entity == entity; }
-    );
+        [entity](const CpuRenderSubmesh& submesh)
+        {
+            return submesh.entity == entity;
+        });
     const size_t insertionIndex = static_cast<size_t>(std::distance(m_renderSubmeshes.begin(), first));
     std::erase_if(
         m_renderSubmeshes,
-        [entity](const CpuRenderSubmesh& submesh) { return submesh.entity == entity; }
-    );
+        [entity](const CpuRenderSubmesh& submesh)
+        {
+            return submesh.entity == entity;
+        });
     m_renderSubmeshes.insert(
         m_renderSubmeshes.begin() + static_cast<std::ptrdiff_t>(std::min(insertionIndex, m_renderSubmeshes.size())),
         std::make_move_iterator(renderSubmeshes.begin()),
-        std::make_move_iterator(renderSubmeshes.end())
-    );
+        std::make_move_iterator(renderSubmeshes.end()));
 }
 
 bool RendererWorld::RemoveEntityRenderSubmeshes(entt::entity entity)
@@ -65,8 +67,10 @@ bool RendererWorld::RemoveEntityRenderSubmeshes(entt::entity entity)
     const size_t previousSize = m_renderSubmeshes.size();
     std::erase_if(
         m_renderSubmeshes,
-        [entity](const CpuRenderSubmesh& submesh) { return submesh.entity == entity; }
-    );
+        [entity](const CpuRenderSubmesh& submesh)
+        {
+            return submesh.entity == entity;
+        });
     return m_renderSubmeshes.size() != previousSize;
 }
 

@@ -30,6 +30,5 @@ void DrawTopToolbar(
     bool& showSceneWindow,
     bool& showThemeWindow,
     bool& showViewportWindow,
-    float effectiveUiScale
-);
+    float effectiveUiScale);
 ImGuiID DrawDockspaceBelowToolbar(float toolbarHeight);

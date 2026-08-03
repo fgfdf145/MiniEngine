@@ -6,7 +6,7 @@
 
 class EditorScene final : public IEditorWorld
 {
-public:
+  public:
     EditorScene();
 
     void LoadConfig(const std::string& path) override;
@@ -24,7 +24,10 @@ public:
     void SetSelectedEntity(entt::entity entity) override;
     void ClearSelection() override;
 
-    const entt::registry& Registry() const override { return m_registry; }
+    const entt::registry& Registry() const override
+    {
+        return m_registry;
+    }
     const std::vector<entt::entity>& GetSceneOrder() const override;
     bool IsValidEntity(entt::entity entity) const override;
     TagComponent& EditTag(entt::entity entity) override;
@@ -51,8 +54,7 @@ public:
         const glm::vec3& maxBounds,
         bool hasBounds,
         const std::vector<ModelImportedMaterialInfo>& importedMaterials,
-        const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes
-    ) override;
+        const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes) override;
 
     glm::mat4 GetModelMatrix(entt::entity entity) const override;
     void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix) override;
@@ -65,7 +67,7 @@ public:
     const std::string& GetConfigPath() const override;
     const std::string& GetSceneFilePath() const override;
 
-private:
+  private:
     void EnsureSelection();
     void OnEntityDestroyed(entt::registry& registry, entt::entity entity);
     void OnSceneEntityIdDestroyed(entt::registry& registry, entt::entity entity);

@@ -14,28 +14,42 @@ struct AssetManagerResult
         std::string destinationDirectory;
     };
 
-    std::optional<std::string> selectedModelPath;   // explicit "Load Model" action
-    std::vector<std::string> batchLoadModelPaths;    // "Load N Models": each placed as a new entity
+    std::optional<std::string> selectedModelPath; // explicit "Load Model" action
+    std::vector<std::string> batchLoadModelPaths; // "Load N Models": each placed as a new entity
     bool wantsImportModel = false;
-    std::vector<std::string> deleteRequests;         // one or more paths to delete
+    std::vector<std::string> deleteRequests; // one or more paths to delete
     std::optional<std::string> draggedModelPath;
     std::optional<PasteRequest> pasteRequest;
 };
 
 class AssetManager
 {
-public:
+  public:
     explicit AssetManager(std::filesystem::path assetsRoot);
 
     void Refresh();
     AssetManagerResult Draw();
 
-    const std::filesystem::path& GetAssetsRoot() const { return m_root; }
-    const std::filesystem::path& GetCurrentDirectory() const { return m_currentDir; }
+    const std::filesystem::path& GetAssetsRoot() const
+    {
+        return m_root;
+    }
+    const std::filesystem::path& GetCurrentDirectory() const
+    {
+        return m_currentDir;
+    }
     void NavigateTo(const std::filesystem::path& dir);
 
-private:
-    enum class AssetType { Dir, Model, Material, Scene, Texture, Other };
+  private:
+    enum class AssetType
+    {
+        Dir,
+        Model,
+        Material,
+        Scene,
+        Texture,
+        Other
+    };
 
     struct Entry
     {
@@ -71,7 +85,7 @@ private:
     std::filesystem::path m_currentDir;
     std::vector<Entry> m_entries;
     std::unordered_set<int> m_selectedIndices;
-    int m_anchorIdx = -1;         // anchor for shift-range, also the focused preview item
+    int m_anchorIdx = -1; // anchor for shift-range, also the focused preview item
     std::string m_clipboard;
     bool m_needsScan = true;
 
@@ -85,7 +99,7 @@ private:
     // Delete requests are staged here until the user confirms them in a modal;
     // only confirmed paths are emitted as AssetManagerResult::deleteRequests.
     std::vector<std::string> m_pendingDeletePaths;
-    std::vector<std::string> m_pendingDeleteWarnings;   // "'x.png' is referenced by ..." lines
+    std::vector<std::string> m_pendingDeleteWarnings; // "'x.png' is referenced by ..." lines
     bool m_pendingDeleteHasDir = false;
     bool m_openDeleteModal = false;
 };

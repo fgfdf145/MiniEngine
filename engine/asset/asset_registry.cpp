@@ -34,9 +34,10 @@ RegistryState& State()
 
 std::string ToLowerCopy(std::string s)
 {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                   {
+                       return static_cast<char>(std::tolower(c));
+                   });
     return s;
 }
 
@@ -103,8 +104,7 @@ SidecarData ReadSidecar(const std::filesystem::path& sidecarPath)
         const YAML::Node root = YAML::LoadFile(sidecarPath.string());
         return SidecarData{
             root["asset"]["uuid"].as<std::string>(""),
-            root["asset"]["file"].as<std::string>("")
-        };
+            root["asset"]["file"].as<std::string>("")};
     }
     catch (...)
     {
@@ -193,16 +193,14 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
                     state.uuidToPath[ownerNewUuid] = ownerDisplay;
                     LOG_WARN(
                         "Duplicate asset uuid {}: '{}' is the copy, assigned new uuid {}",
-                        uuid, ownerDisplay, ownerNewUuid
-                    );
+                        uuid, ownerDisplay, ownerNewUuid);
                 }
                 else
                 {
                     // References keep pointing at the registered original.
                     LOG_WARN(
                         "Duplicate asset uuid {} ('{}' vs '{}'); assigning a new uuid to the copy",
-                        uuid, owner->second, file.string()
-                    );
+                        uuid, owner->second, file.string());
                     uuid.clear();
                 }
             }
@@ -241,7 +239,8 @@ void ScanLocked()
 
     std::vector<std::filesystem::path> orphanedSidecars;
     for (std::filesystem::recursive_directory_iterator
-             it(state.root, std::filesystem::directory_options::skip_permission_denied, ec), end;
+             it(state.root, std::filesystem::directory_options::skip_permission_denied, ec),
+         end;
          !ec && it != end;
          it.increment(ec))
     {
@@ -393,8 +392,8 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
             result.resolved = true;
             const std::string key = NormalizeKey(storedPath);
             result.uuid = (HasRegistrableExtension(storedPath) && IsUnderRootLocked(key))
-                ? RegisterFileLocked(storedPath)
-                : std::string{};
+                              ? RegisterFileLocked(storedPath)
+                              : std::string{};
             return result;
         }
     }
@@ -423,8 +422,7 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
             {
                 LOG_WARN(
                     "Asset reference '{}' resolved by filename to '{}' (uuid {})",
-                    storedPath, it->second, matchedUuid
-                );
+                    storedPath, it->second, matchedUuid);
                 result.path = it->second;
                 result.uuid = matchedUuid;
                 result.resolved = true;
@@ -461,8 +459,7 @@ void OnAssetRenamed(const std::filesystem::path& oldPath, const std::filesystem:
         {
             LOG_WARN(
                 "Could not move asset sidecar '{}' -> '{}': {}",
-                oldSidecar.string(), newSidecar.string(), sidecarEc.message()
-            );
+                oldSidecar.string(), newSidecar.string(), sidecarEc.message());
         }
     }
 

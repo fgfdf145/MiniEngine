@@ -38,7 +38,7 @@ struct MaterialGraphRenderedPin
     std::string slot;
     MaterialGraphPinKind kind = MaterialGraphPinKind::Texture;
     bool input = true;
-    ImVec2 center{ 0.0f, 0.0f };
+    ImVec2 center{0.0f, 0.0f};
     uint32_t linkId = 0;
 };
 
@@ -59,8 +59,8 @@ struct MaterialGraphNodeDrawResult
     uint8_t resizeEdges = 0;
     std::string startLinkSlot;
     std::vector<MaterialGraphRenderedPin> pins;
-    ImVec2 min{ 0.0f, 0.0f };
-    ImVec2 max{ 0.0f, 0.0f };
+    ImVec2 min{0.0f, 0.0f};
+    ImVec2 max{0.0f, 0.0f};
     MaterialGraphNodePosition pastePosition{};
 };
 
@@ -83,33 +83,28 @@ const MaterialGraphRenderedPin* FindRenderedMaterialGraphPin(
     const std::vector<MaterialGraphRenderedPin>& pins,
     uint32_t nodeId,
     std::string_view slot,
-    bool input
-);
+    bool input);
 bool MaterialGraphHasOutputNode(const MaterialShaderGraph& graph);
 MaterialShaderNode* AddMaterialGraphNode(
     MaterialShaderGraph& graph,
     MaterialShaderNodeType type,
-    const MaterialGraphNodePosition& position
-);
+    const MaterialGraphNodePosition& position);
 void RemoveMaterialGraphLink(MaterialShaderGraph& graph, uint32_t linkId);
 void RemoveMaterialGraphNode(MaterialShaderGraph& graph, uint32_t nodeId);
 MaterialGraphNodePosition ComputeMaterialGraphPositionFromScreen(
     const ImVec2& screenPosition,
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
-    float zoom
-);
+    float zoom);
 ImVec2 GetMaterialGraphNodeLogicalSize(const MaterialShaderNode& node);
 ImGuiMouseCursor GetMaterialGraphResizeCursor(uint8_t edges);
 bool CanPasteMaterialGraphNode(
     const MaterialShaderGraph& graph,
-    const std::optional<MaterialShaderNode>& clipboardNode
-);
+    const std::optional<MaterialShaderNode>& clipboardNode);
 MaterialShaderNode* PasteMaterialGraphNode(
     MaterialShaderGraph& graph,
     const MaterialShaderNode& clipboardNode,
-    const MaterialGraphNodePosition& position
-);
+    const MaterialGraphNodePosition& position);
 bool ApplyMaterialGraphNodeResize(
     MaterialShaderNode& node,
     uint8_t resizeEdges,
@@ -117,16 +112,14 @@ bool ApplyMaterialGraphNodeResize(
     const ImVec2& startLogicalSize,
     const ImVec2& mouseDelta,
     float effectiveUiScale,
-    float zoom
-);
+    float zoom);
 bool IsMouseOverMaterialGraphNode(
     const MaterialShaderGraph& graph,
     const ImVec2& mousePosition,
     const ImVec2& canvasOrigin,
     const MaterialGraphNodePosition& viewOrigin,
     float uiScale,
-    float zoom
-);
+    float zoom);
 MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     ModelImportedMaterialInfo& material,
     MaterialShaderNode& node,
@@ -142,12 +135,10 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     bool canPasteClipboardNode,
     uint32_t dragFromNodeId,
     std::string_view dragFromSlot,
-    std::string* statusMessage
-);
+    std::string* statusMessage);
 void DrawNodeConnection(
     ImDrawList* drawList,
     const ImVec2& from,
     const ImVec2& to,
     ImU32 color,
-    float thickness
-);
+    float thickness);

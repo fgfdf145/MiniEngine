@@ -37,8 +37,7 @@ int main()
         Require(!world->GetEntityUuid(duplicateEntity).empty(), "duplicate entity did not receive a uuid");
         Require(
             world->GetEntityUuid(duplicateEntity) != world->GetEntityUuid(firstEntity),
-            "duplicate scene uuids were not arbitrated"
-        );
+            "duplicate scene uuids were not arbitrated");
 
         SerializedLightData light{};
         light.entityUuid = "22222222-2222-4222-8222-222222222222";
@@ -84,12 +83,10 @@ int main()
         Require(!upgraded.entities[1].entityUuid.empty(), "legacy second entity did not receive a uuid");
         Require(
             upgraded.entities[0].entityUuid != upgraded.entities[1].entityUuid,
-            "legacy entities received duplicate uuids"
-        );
+            "legacy entities received duplicate uuids");
         Require(
             upgraded.selectedEntityUuid == upgraded.entities[1].entityUuid,
-            "legacy selected model index did not upgrade to selected uuid"
-        );
+            "legacy selected model index did not upgrade to selected uuid");
 
         std::cout << "scene identity tests passed\n";
         return 0;

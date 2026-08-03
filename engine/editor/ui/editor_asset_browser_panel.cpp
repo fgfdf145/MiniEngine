@@ -54,8 +54,7 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
                 // RequestAssetBrowserRefresh() once the files are on disk.
                 result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
                     *sourcePath,
-                    m_assetManager->GetCurrentDirectory().string()
-                };
+                    m_assetManager->GetCurrentDirectory().string()};
             }
         }
         if (assetResult.selectedModelPath.has_value())
@@ -78,8 +77,7 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         {
             result.actions.pastedAsset = EditorUiActions::AssetPasteRequest{
                 assetResult.pasteRequest->sourcePath,
-                assetResult.pasteRequest->destinationDirectory
-            };
+                assetResult.pasteRequest->destinationDirectory};
             m_assetManager->Refresh();
         }
     }

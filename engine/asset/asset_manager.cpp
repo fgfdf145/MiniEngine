@@ -18,9 +18,10 @@ namespace
 {
 std::string ToLower(std::string s)
 {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                   {
+                       return static_cast<char>(std::tolower(c));
+                   });
     return s;
 }
 
@@ -87,7 +88,10 @@ void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, cons
             name.substr(oldPrefix.size(), name.size() - oldPrefix.size() - kSuffix.size());
         const bool isMaterialIndex =
             !indexPart.empty() &&
-            std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c)
+                        {
+                            return std::isdigit(c) != 0;
+                        });
         if (!isMaterialIndex)
         {
             continue;
@@ -97,22 +101,20 @@ void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, cons
         std::filesystem::rename(
             item.path(),
             item.path().parent_path() / (newPrefix + indexPart + std::string(kSuffix)),
-            renameEc
-        );
+            renameEc);
     }
 }
 
 // Square tile layout (Unreal-style content browser)
 constexpr float kTileWidth = 96.0f;
 constexpr float kTileIconHeight = 64.0f;
-constexpr float kTileHeight = 100.0f;   // icon area + ~2 lines of label
+constexpr float kTileHeight = 100.0f; // icon area + ~2 lines of label
 }
 
 // ---------------------------------------------------------------------------
 
 AssetManager::AssetManager(std::filesystem::path assetsRoot)
-    : m_root(std::move(assetsRoot))
-    , m_currentDir(m_root)
+    : m_root(std::move(assetsRoot)), m_currentDir(m_root)
 {
 }
 
@@ -227,7 +229,10 @@ void AssetManager::ScanCurrentDir()
         }
     }
 
-    const auto byName = [](const Entry& a, const Entry& b) { return a.name < b.name; };
+    const auto byName = [](const Entry& a, const Entry& b)
+    {
+        return a.name < b.name;
+    };
     std::sort(dirs.begin(), dirs.end(), byName);
     std::sort(files.begin(), files.end(), byName);
 
@@ -246,10 +251,14 @@ void AssetManager::ScanCurrentDir()
 
 AssetManager::AssetType AssetManager::ClassifyPath(const std::filesystem::path& p)
 {
-    if (IsModelExt(p))    return AssetType::Model;
-    if (IsMaterialFile(p)) return AssetType::Material;
-    if (IsSceneFile(p))    return AssetType::Scene;
-    if (IsTextureExt(p))   return AssetType::Texture;
+    if (IsModelExt(p))
+        return AssetType::Model;
+    if (IsMaterialFile(p))
+        return AssetType::Material;
+    if (IsSceneFile(p))
+        return AssetType::Scene;
+    if (IsTextureExt(p))
+        return AssetType::Texture;
     return AssetType::Other;
 }
 
@@ -257,12 +266,18 @@ const char* AssetManager::TypeTag(AssetType t)
 {
     switch (t)
     {
-    case AssetType::Dir:      return "[DIR]";
-    case AssetType::Model:    return "[MDL]";
-    case AssetType::Material: return "[MAT]";
-    case AssetType::Scene:    return "[SCN]";
-    case AssetType::Texture:  return "[TEX]";
-    default:                  return "[   ]";
+    case AssetType::Dir:
+        return "[DIR]";
+    case AssetType::Model:
+        return "[MDL]";
+    case AssetType::Material:
+        return "[MAT]";
+    case AssetType::Scene:
+        return "[SCN]";
+    case AssetType::Texture:
+        return "[TEX]";
+    default:
+        return "[   ]";
     }
 }
 
@@ -270,12 +285,24 @@ void AssetManager::PushTypeColor(AssetType t)
 {
     switch (t)
     {
-    case AssetType::Dir:      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.80f, 0.30f, 1.0f)); break;
-    case AssetType::Model:    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.00f, 1.0f)); break;
-    case AssetType::Material: ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.55f, 1.00f, 1.0f)); break;
-    case AssetType::Scene:    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 1.00f, 0.60f, 1.0f)); break;
-    case AssetType::Texture:  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.90f, 0.85f, 1.0f)); break;
-    default:                  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f)); break;
+    case AssetType::Dir:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.80f, 0.30f, 1.0f));
+        break;
+    case AssetType::Model:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.00f, 1.0f));
+        break;
+    case AssetType::Material:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.55f, 1.00f, 1.0f));
+        break;
+    case AssetType::Scene:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 1.00f, 0.60f, 1.0f));
+        break;
+    case AssetType::Texture:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.90f, 0.85f, 1.0f));
+        break;
+    default:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
+        break;
     }
 }
 
@@ -283,12 +310,18 @@ const char* AssetManager::ShortTag(AssetType t)
 {
     switch (t)
     {
-    case AssetType::Dir:      return "DIR";
-    case AssetType::Model:    return "MDL";
-    case AssetType::Material: return "MAT";
-    case AssetType::Scene:    return "SCN";
-    case AssetType::Texture:  return "TEX";
-    default:                  return "FILE";
+    case AssetType::Dir:
+        return "DIR";
+    case AssetType::Model:
+        return "MDL";
+    case AssetType::Material:
+        return "MAT";
+    case AssetType::Scene:
+        return "SCN";
+    case AssetType::Texture:
+        return "TEX";
+    default:
+        return "FILE";
     }
 }
 
@@ -296,12 +329,18 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
 {
     switch (t)
     {
-    case AssetType::Dir:      return IM_COL32(255, 204,  77, 255);
-    case AssetType::Model:    return IM_COL32(115, 191, 255, 255);
-    case AssetType::Material: return IM_COL32(204, 140, 255, 255);
-    case AssetType::Scene:    return IM_COL32(128, 255, 153, 255);
-    case AssetType::Texture:  return IM_COL32(102, 230, 217, 255);
-    default:                  return IM_COL32(153, 153, 158, 255);
+    case AssetType::Dir:
+        return IM_COL32(255, 204, 77, 255);
+    case AssetType::Model:
+        return IM_COL32(115, 191, 255, 255);
+    case AssetType::Material:
+        return IM_COL32(204, 140, 255, 255);
+    case AssetType::Scene:
+        return IM_COL32(128, 255, 153, 255);
+    case AssetType::Texture:
+        return IM_COL32(102, 230, 217, 255);
+    default:
+        return IM_COL32(153, 153, 158, 255);
     }
 }
 
@@ -366,8 +405,8 @@ void AssetManager::DrawBreadcrumb()
         }
 
         const std::string label = segments[i].filename().string().empty()
-            ? "assets"
-            : segments[i].filename().string();
+                                      ? "assets"
+                                      : segments[i].filename().string();
 
         const bool isCurrent = (i + 1 == segments.size());
         if (isCurrent)
@@ -392,15 +431,13 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
     constexpr float kPreviewPanelHeight = 100.0f;
     const float listHeight = std::max(
         ImGui::GetContentRegionAvail().y - kPreviewPanelHeight - ImGui::GetStyle().ItemSpacing.y,
-        60.0f
-    );
+        60.0f);
     if (ImGui::BeginChild("##asset_list", ImVec2(0.0f, listHeight), false))
     {
         const ImGuiStyle& style = ImGui::GetStyle();
         const int columns = std::max(
             1,
-            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (kTileWidth + style.ItemSpacing.x))
-        );
+            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (kTileWidth + style.ItemSpacing.x)));
 
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
         {
@@ -421,7 +458,7 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
 
         // Right-click on empty space
         if (ImGui::BeginPopupContextWindow("##asset_list_ctx",
-                ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
         {
             if (ImGui::MenuItem("New Folder"))
             {
@@ -431,8 +468,7 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
             {
                 result.pasteRequest = AssetManagerResult::PasteRequest{
                     m_clipboard,
-                    m_currentDir.string()
-                };
+                    m_currentDir.string()};
             }
             ImGui::EndPopup();
         }
@@ -559,7 +595,7 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
         }
         ImGui::SetNextItemWidth(kTileWidth);
         const bool committed = ImGui::InputText("##rename", m_renameBuffer, sizeof(m_renameBuffer),
-            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
         if (committed)
         {
             CommitRename();
@@ -572,7 +608,7 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
             }
             else
             {
-                CommitRename();   // focus lost commits, like Unreal / Explorer
+                CommitRename(); // focus lost commits, like Unreal / Explorer
             }
         }
     }
@@ -612,8 +648,8 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
         const float wrapWidth = kTileWidth - 6.0f;
         const ImVec2 textSize = ImGui::CalcTextSize(entry.name.c_str(), nullptr, false, wrapWidth);
         const float textX = (textSize.x < wrapWidth)
-            ? tileMin.x + (kTileWidth - textSize.x) * 0.5f
-            : tileMin.x + 3.0f;
+                                ? tileMin.x + (kTileWidth - textSize.x) * 0.5f
+                                : tileMin.x + 3.0f;
         const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + kTileWidth, tileMin.y + kTileHeight);
         drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(textX, labelTop),
                           ImGui::GetColorU32(ImGuiCol_Text), entry.name.c_str(), nullptr,
@@ -651,22 +687,40 @@ void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
             {
                 continue;
             }
-            if (e.isDir)      { ++dirCount; }
-            else if (e.type == AssetType::Model) { ++modelCount; }
-            else              { ++otherCount; }
+            if (e.isDir)
+            {
+                ++dirCount;
+            }
+            else if (e.type == AssetType::Model)
+            {
+                ++modelCount;
+            }
+            else
+            {
+                ++otherCount;
+            }
         }
         ImGui::Text("%zu items selected", m_selectedIndices.size());
-        if (modelCount > 0) { ImGui::Text("  Models:  %zu", modelCount); }
-        if (dirCount   > 0) { ImGui::Text("  Folders: %zu", dirCount); }
-        if (otherCount > 0) { ImGui::Text("  Other:   %zu", otherCount); }
+        if (modelCount > 0)
+        {
+            ImGui::Text("  Models:  %zu", modelCount);
+        }
+        if (dirCount > 0)
+        {
+            ImGui::Text("  Folders: %zu", dirCount);
+        }
+        if (otherCount > 0)
+        {
+            ImGui::Text("  Other:   %zu", otherCount);
+        }
         ImGui::TextDisabled("Shift+click to extend range, Ctrl+click to toggle");
         return;
     }
 
     // Single selection: use anchor as the focused item
     const int focusIdx = (m_anchorIdx >= 0 && m_anchorIdx < static_cast<int>(m_entries.size()))
-        ? m_anchorIdx
-        : *m_selectedIndices.begin();
+                             ? m_anchorIdx
+                             : *m_selectedIndices.begin();
 
     const Entry& entry = m_entries[static_cast<size_t>(focusIdx)];
 
@@ -821,8 +875,7 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, int index, AssetMana
         {
             result.pasteRequest = AssetManagerResult::PasteRequest{
                 m_clipboard,
-                m_currentDir.string()
-            };
+                m_currentDir.string()};
         }
     }
 
@@ -889,7 +942,7 @@ void AssetManager::CommitRename()
     std::error_code ec;
     if (std::filesystem::exists(target, ec))
     {
-        return;   // never clobber an existing file/folder
+        return; // never clobber an existing file/folder
     }
     std::filesystem::rename(entry.path, target, ec);
     if (!ec)
@@ -1018,8 +1071,7 @@ void AssetManager::BuildPendingDeleteWarnings()
         }
         const std::string content(
             (std::istreambuf_iterator<char>(file)),
-            std::istreambuf_iterator<char>()
-        );
+            std::istreambuf_iterator<char>());
         for (const std::string& name : deletedNames)
         {
             if (content.find(name) == std::string::npos)
@@ -1027,8 +1079,7 @@ void AssetManager::BuildPendingDeleteWarnings()
                 continue;
             }
             m_pendingDeleteWarnings.push_back(
-                "'" + name + "' is referenced by " + item.path().filename().string()
-            );
+                "'" + name + "' is referenced by " + item.path().filename().string());
             if (m_pendingDeleteWarnings.size() >= kMaxWarnings)
             {
                 break;

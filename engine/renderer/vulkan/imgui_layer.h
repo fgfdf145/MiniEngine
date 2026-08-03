@@ -10,15 +10,14 @@ struct ImDrawData;
 
 class VulkanImGuiLayer
 {
-public:
+  public:
     VulkanImGuiLayer(
         SDL_Window* window,
         VkInstance instance,
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         uint32_t graphicsQueueFamily,
-        VkQueue graphicsQueue
-    );
+        VkQueue graphicsQueue);
     ~VulkanImGuiLayer();
 
     VulkanImGuiLayer(const VulkanImGuiLayer&) = delete;
@@ -33,7 +32,7 @@ public:
     void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount);
     void DestroyVulkanResources();
 
-private:
+  private:
     void CreateDescriptorPool();
     void UploadFonts() const;
     static void CheckVkResult(VkResult result);

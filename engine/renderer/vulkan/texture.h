@@ -14,7 +14,7 @@ enum class VulkanTextureFormat
 
 class VulkanTexture
 {
-public:
+  public:
     // Records this texture's upload (staging copy + layout transitions) into a caller-supplied
     // batch instead of submitting and waiting on its own. The caller must call
     // uploadBatch.Flush() (or otherwise ensure it gets flushed) before the texture is sampled,
@@ -24,15 +24,13 @@ public:
         VkDevice device,
         const std::string& path,
         VulkanUploadBatch& uploadBatch,
-        VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor
-    );
+        VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         const TextureData& textureData,
         VulkanUploadBatch& uploadBatch,
-        VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor
-    );
+        VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
     ~VulkanTexture();
 
     VulkanTexture(const VulkanTexture&) = delete;
@@ -41,7 +39,7 @@ public:
     VkImageView GetImageView() const;
     VkSampler GetSampler() const;
 
-private:
+  private:
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;

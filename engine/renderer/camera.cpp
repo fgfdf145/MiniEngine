@@ -16,8 +16,8 @@ glm::mat4 Camera::GetProjectionMatrix(RenderExtent extent, bool invertYAxis, boo
 {
     const float aspect = extent.height == 0 ? 1.0f : static_cast<float>(extent.width) / static_cast<float>(extent.height);
     glm::mat4 projection = useZeroToOneDepth
-        ? glm::perspectiveRH_ZO(glm::radians(fovDegrees), aspect, nearPlane, farPlane)
-        : glm::perspectiveRH_NO(glm::radians(fovDegrees), aspect, nearPlane, farPlane);
+                               ? glm::perspectiveRH_ZO(glm::radians(fovDegrees), aspect, nearPlane, farPlane)
+                               : glm::perspectiveRH_NO(glm::radians(fovDegrees), aspect, nearPlane, farPlane);
     if (invertYAxis)
     {
         projection[1][1] *= -1.0f;

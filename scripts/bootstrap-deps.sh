@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log() {
-  printf '[bootstrap] %s\n' "$1"
+log()
+{
+    printf '[bootstrap] %s\n' "$1"
 }
 
-step() {
-  printf '==> %s\n' "$1"
+step()
+{
+    printf '==> %s\n' "$1"
 }
 
-die() {
-  printf 'error: %s\n' "$1" >&2
-  exit 1
+die()
+{
+    printf 'error: %s\n' "$1" >&2
+    exit 1
 }
 
-require_command() {
-  local name="$1"
-  local hint="$2"
-  if ! command -v "$name" >/dev/null 2>&1; then
-    die "Required command '$name' was not found. $hint"
-  fi
+require_command()
+{
+    local name="$1"
+    local hint="$2"
+    if ! command -v "$name" >/dev/null 2>&1; then
+        die "Required command '$name' was not found. $hint"
+    fi
 }
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,53 +32,55 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 platform_name=""
 architecture_name=""
 
-detect_host() {
-  case "$(uname -s)" in
-    Linux)
-      platform_name="linux"
-      ;;
-    Darwin)
-      platform_name="osx"
-      ;;
-    MINGW*|MSYS*|CYGWIN*)
-      die "Use scripts/bootstrap-deps.ps1 on Windows."
-      ;;
-    *)
-      die "Unsupported operating system for dependency bootstrap."
-      ;;
-  esac
+detect_host()
+{
+    case "$(uname -s)" in
+        Linux)
+            platform_name="linux"
+            ;;
+        Darwin)
+            platform_name="osx"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            die "Use scripts/bootstrap-deps.ps1 on Windows."
+            ;;
+        *)
+            die "Unsupported operating system for dependency bootstrap."
+            ;;
+    esac
 
-  case "$(uname -m)" in
-    x86_64|amd64)
-      architecture_name="x64"
-      ;;
-    arm64|aarch64)
-      architecture_name="arm64"
-      ;;
-    *)
-      die "Unsupported architecture '$(uname -m)'."
-      ;;
-  esac
+    case "$(uname -m)" in
+        x86_64|amd64)
+            architecture_name="x64"
+            ;;
+        arm64|aarch64)
+            architecture_name="arm64"
+            ;;
+        *)
+            die "Unsupported architecture '$(uname -m)'."
+            ;;
+    esac
 }
 
-default_triplet() {
-  case "$platform_name/$architecture_name" in
-    linux/x64)
-      printf 'x64-linux'
-      ;;
-    linux/arm64)
-      printf 'arm64-linux'
-      ;;
-    osx/x64)
-      printf 'x64-osx'
-      ;;
-    osx/arm64)
-      printf 'arm64-osx'
-      ;;
-    *)
-      die "No default vcpkg triplet mapping for '$platform_name/$architecture_name'."
-      ;;
-  esac
+default_triplet()
+{
+    case "$platform_name/$architecture_name" in
+        linux/x64)
+            printf 'x64-linux'
+            ;;
+        linux/arm64)
+            printf 'arm64-linux'
+            ;;
+        osx/x64)
+            printf 'x64-osx'
+            ;;
+        osx/arm64)
+            printf 'arm64-osx'
+            ;;
+        *)
+            die "No default vcpkg triplet mapping for '$platform_name/$architecture_name'."
+            ;;
+    esac
 }
 
 vcpkg_root="${VCPKG_ROOT:-$repo_root/.deps/vcpkg}"
@@ -83,27 +89,27 @@ skip_install=0
 print_install_root=0
 
 while (($# > 0)); do
-  case "$1" in
-    --vcpkg-root)
-      (($# >= 2)) || die "--vcpkg-root requires a value."
-      vcpkg_root="$2"
-      shift 2
-      ;;
-    --triplet)
-      (($# >= 2)) || die "--triplet requires a value."
-      triplet="$2"
-      shift 2
-      ;;
-    --skip-install)
-      skip_install=1
-      shift
-      ;;
-    --print-install-root)
-      print_install_root=1
-      shift
-      ;;
-    -h|--help)
-      cat <<'EOF'
+    case "$1" in
+        --vcpkg-root)
+            (($# >= 2)) || die "--vcpkg-root requires a value."
+            vcpkg_root="$2"
+            shift 2
+            ;;
+        --triplet)
+            (($# >= 2)) || die "--triplet requires a value."
+            triplet="$2"
+            shift 2
+            ;;
+        --skip-install)
+            skip_install=1
+            shift
+            ;;
+        --print-install-root)
+            print_install_root=1
+            shift
+            ;;
+        -h|--help)
+            cat <<'EOF'
 Usage: ./scripts/bootstrap-deps.sh [options]
 
 Options:
@@ -113,43 +119,43 @@ Options:
   --print-install-root   Print the selected install root without side effects.
   -h, --help             Show this help message.
 EOF
-      exit 0
-      ;;
-    *)
-      die "Unknown argument: $1"
-      ;;
-  esac
+            exit 0
+            ;;
+        *)
+            die "Unknown argument: $1"
+            ;;
+    esac
 done
 
 if [[ -z "$triplet" ]]; then
-  detect_host
-  triplet="$(default_triplet)"
+    detect_host
+    triplet="$(default_triplet)"
 fi
 
 triplet_architecture="${triplet%%-*}"
 case "$triplet_architecture" in
-  x64|x86|arm64)
-    ;;
-  *)
-    die "Unsupported vcpkg triplet architecture: '$triplet'."
-    ;;
+    x64|x86|arm64)
+        ;;
+    *)
+        die "Unsupported vcpkg triplet architecture: '$triplet'."
+        ;;
 esac
 installed_root="$repo_root/.deps/vcpkg_installed/$triplet_architecture"
 
 if [[ "$print_install_root" -eq 1 ]]; then
-  printf '%s\n' "$installed_root"
-  exit 0
+    printf '%s\n' "$installed_root"
+    exit 0
 fi
 
 if [[ -z "$platform_name" ]]; then
-  detect_host
+    detect_host
 fi
 
 require_command git "Install Git and retry."
 require_command cmake "Install CMake 3.25+ and retry."
 
 if [[ "$vcpkg_root" != /* ]]; then
-  vcpkg_root="$repo_root/$vcpkg_root"
+    vcpkg_root="$repo_root/$vcpkg_root"
 fi
 
 log "Repository root: $repo_root"
@@ -159,36 +165,36 @@ log "Selected triplet: $triplet"
 log "vcpkg installed root: $installed_root"
 
 if [[ -d "$vcpkg_root/.git" ]]; then
-  log "Using existing vcpkg checkout at '$vcpkg_root'."
+    log "Using existing vcpkg checkout at '$vcpkg_root'."
 else
-  if [[ -e "$vcpkg_root" ]] && [[ -n "$(ls -A "$vcpkg_root" 2>/dev/null || true)" ]]; then
-    die "Target vcpkg directory exists but is not a git checkout: '$vcpkg_root'."
-  fi
+    if [[ -e "$vcpkg_root" ]] && [[ -n "$(ls -A "$vcpkg_root" 2>/dev/null || true)" ]]; then
+        die "Target vcpkg directory exists but is not a git checkout: '$vcpkg_root'."
+    fi
 
-  mkdir -p -- "$(dirname -- "$vcpkg_root")"
-  step "Cloning vcpkg into '$vcpkg_root'"
-  git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkg_root"
+    mkdir -p -- "$(dirname -- "$vcpkg_root")"
+    step "Cloning vcpkg into '$vcpkg_root'"
+    git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkg_root"
 fi
 
 if [[ ! -x "$vcpkg_root/bootstrap-vcpkg.sh" ]]; then
-  die "vcpkg bootstrap script was not found: '$vcpkg_root/bootstrap-vcpkg.sh'."
+    die "vcpkg bootstrap script was not found: '$vcpkg_root/bootstrap-vcpkg.sh'."
 fi
 
 step "Bootstrapping vcpkg for $platform_name"
 "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
 
 if [[ ! -x "$vcpkg_root/vcpkg" ]]; then
-  die "The vcpkg executable was not produced at '$vcpkg_root/vcpkg'."
+    die "The vcpkg executable was not produced at '$vcpkg_root/vcpkg'."
 fi
 
 if [[ "$skip_install" -eq 0 ]]; then
-  step "Installing manifest dependencies for triplet '$triplet'"
-  "$vcpkg_root/vcpkg" install \
-    "--x-manifest-root=$repo_root" \
-    "--x-install-root=$installed_root" \
-    "--triplet=$triplet"
+    step "Installing manifest dependencies for triplet '$triplet'"
+    "$vcpkg_root/vcpkg" install \
+        "--x-manifest-root=$repo_root" \
+        "--x-install-root=$installed_root" \
+        "--triplet=$triplet"
 else
-  log "Skipping 'vcpkg install' because --skip-install was provided."
+    log "Skipping 'vcpkg install' because --skip-install was provided."
 fi
 
 step "Dependency bootstrap completed"

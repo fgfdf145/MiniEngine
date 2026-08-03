@@ -41,16 +41,14 @@ float NormalizeTriggerAxis(unsigned char value)
         static_cast<float>(value - XINPUT_GAMEPAD_TRIGGER_THRESHOLD) /
             static_cast<float>(255 - XINPUT_GAMEPAD_TRIGGER_THRESHOLD),
         0.0f,
-        1.0f
-    );
+        1.0f);
 }
 
 void SetButtonState(
     PolledGamepadState& gamepad,
     SDL_GamepadButton button,
     WORD buttons,
-    WORD mask
-)
+    WORD mask)
 {
     const size_t buttonIndex = static_cast<size_t>(button);
     if (buttonIndex >= gamepad.buttonDown.size())

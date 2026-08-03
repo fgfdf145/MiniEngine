@@ -31,8 +31,7 @@ std::string WideToUtf8(const std::wstring& wide)
         nullptr,
         0,
         nullptr,
-        nullptr
-    );
+        nullptr);
     std::string utf8(static_cast<size_t>(bufferSize), '\0');
     WideCharToMultiByte(
         CP_UTF8,
@@ -42,8 +41,7 @@ std::string WideToUtf8(const std::wstring& wide)
         utf8.data(),
         bufferSize,
         nullptr,
-        nullptr
-    );
+        nullptr);
     return utf8;
 }
 

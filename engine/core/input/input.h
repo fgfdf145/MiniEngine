@@ -24,18 +24,18 @@ struct KeyCode
 
 namespace KeyCodes
 {
-inline constexpr KeyCode Unknown{ SDL_SCANCODE_UNKNOWN };
-inline constexpr KeyCode W{ SDL_SCANCODE_W };
-inline constexpr KeyCode A{ SDL_SCANCODE_A };
-inline constexpr KeyCode S{ SDL_SCANCODE_S };
-inline constexpr KeyCode D{ SDL_SCANCODE_D };
-inline constexpr KeyCode Q{ SDL_SCANCODE_Q };
-inline constexpr KeyCode E{ SDL_SCANCODE_E };
-inline constexpr KeyCode Space{ SDL_SCANCODE_SPACE };
-inline constexpr KeyCode LeftShift{ SDL_SCANCODE_LSHIFT };
-inline constexpr KeyCode RightShift{ SDL_SCANCODE_RSHIFT };
-inline constexpr KeyCode LeftControl{ SDL_SCANCODE_LCTRL };
-inline constexpr KeyCode RightControl{ SDL_SCANCODE_RCTRL };
+inline constexpr KeyCode Unknown{SDL_SCANCODE_UNKNOWN};
+inline constexpr KeyCode W{SDL_SCANCODE_W};
+inline constexpr KeyCode A{SDL_SCANCODE_A};
+inline constexpr KeyCode S{SDL_SCANCODE_S};
+inline constexpr KeyCode D{SDL_SCANCODE_D};
+inline constexpr KeyCode Q{SDL_SCANCODE_Q};
+inline constexpr KeyCode E{SDL_SCANCODE_E};
+inline constexpr KeyCode Space{SDL_SCANCODE_SPACE};
+inline constexpr KeyCode LeftShift{SDL_SCANCODE_LSHIFT};
+inline constexpr KeyCode RightShift{SDL_SCANCODE_RSHIFT};
+inline constexpr KeyCode LeftControl{SDL_SCANCODE_LCTRL};
+inline constexpr KeyCode RightControl{SDL_SCANCODE_RCTRL};
 }
 
 enum class GamepadButton : int8_t
@@ -82,7 +82,7 @@ enum class GamepadAxis : int8_t
 
 class InputState
 {
-public:
+  public:
     static constexpr size_t kKeyboardKeyCount = static_cast<size_t>(SDL_SCANCODE_COUNT);
     static constexpr size_t kGamepadButtonCount = static_cast<size_t>(SDL_GAMEPAD_BUTTON_COUNT);
     static constexpr size_t kGamepadAxisCount = static_cast<size_t>(SDL_GAMEPAD_AXIS_COUNT);
@@ -128,7 +128,7 @@ public:
     static std::string GetGamepadButtonName(GamepadButton button);
     static std::string GetGamepadAxisName(GamepadAxis axis);
 
-private:
+  private:
     struct GamepadState
     {
         bool connected = false;
@@ -175,7 +175,7 @@ private:
     bool m_shouldRestoreMouseLookAnchor = false;
     int m_mouseLookAnchorX = 0;
     int m_mouseLookAnchorY = 0;
-    SDL_FRect m_viewportInteractionRect{ 0.0f, 0.0f, 0.0f, 0.0f };
+    SDL_FRect m_viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool m_hasTimestampBase = false;
     std::chrono::system_clock::time_point m_wallClockAtSdlTickZero{};
 };

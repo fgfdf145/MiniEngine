@@ -83,8 +83,7 @@ void DrawTopToolbar(
     bool& showSceneWindow,
     bool& showThemeWindow,
     bool& showViewportWindow,
-    float effectiveUiScale
-)
+    float effectiveUiScale)
 {
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
     if (mainViewport == nullptr)
@@ -190,8 +189,7 @@ ImGuiID DrawDockspaceBelowToolbar(float toolbarHeight)
     const ImVec2 dockspacePosition(mainViewport->Pos.x, mainViewport->Pos.y + toolbarHeight);
     const ImVec2 dockspaceSize(
         mainViewport->Size.x,
-        std::max(mainViewport->Size.y - toolbarHeight, 1.0f)
-    );
+        std::max(mainViewport->Size.y - toolbarHeight, 1.0f));
 
     ImGui::SetNextWindowPos(dockspacePosition, ImGuiCond_Always);
     ImGui::SetNextWindowSize(dockspaceSize, ImGuiCond_Always);

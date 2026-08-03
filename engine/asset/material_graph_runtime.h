@@ -27,21 +27,18 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
     const std::string& emissiveTexturePath,
     const MaterialPbrSurfaceSettings& pbr,
     const MaterialTextureBlendGraph& blendGraph,
-    const std::optional<MaterialShaderNodeLayout>& legacyLayout = std::nullopt
-);
+    const std::optional<MaterialShaderNodeLayout>& legacyLayout = std::nullopt);
 
 void EnsureMaterialShaderGraph(
     const std::string& materialName,
     const std::optional<MaterialShaderNodeLayout>& legacyLayout,
-    ModelImportedMaterialInfo& material
-);
+    ModelImportedMaterialInfo& material);
 
 YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph);
 bool DeserializeMaterialShaderGraph(
     const YAML::Node& shaderGraphNode,
     const std::string& materialName,
     const std::optional<MaterialShaderNodeLayout>& legacyLayout,
-    ModelImportedMaterialInfo& material
-);
+    ModelImportedMaterialInfo& material);
 
 MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo& material);

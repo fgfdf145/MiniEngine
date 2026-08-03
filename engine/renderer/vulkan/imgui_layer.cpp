@@ -24,15 +24,13 @@ std::filesystem::path FindPreferredUiFontPath()
         "C:/Windows/Fonts/segoeuivariable.ttf",
         "C:/Windows/Fonts/segoeui.ttf",
         "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/tahoma.ttf"
-    };
+        "C:/Windows/Fonts/tahoma.ttf"};
 #else
     constexpr std::array<const char*, 4> kCandidates = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-    };
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"};
 #endif
 
     for (const char* candidate : kCandidates)
@@ -78,13 +76,13 @@ void ConfigureImGuiStyle()
     style.DockingSeparatorSize = 2.0f;
 
     ImVec4* colors = style.Colors;
-    const ImVec4 baseBg = ImVec4(0.141f, 0.141f, 0.141f, 1.0f);          // #242424
-    const ImVec4 elevatedBg = ImVec4(0.165f, 0.165f, 0.165f, 1.0f);      // #2a2a2a
-    const ImVec4 activeBg = ImVec4(0.188f, 0.188f, 0.188f, 1.0f);        // #303030
-    const ImVec4 hoverBg = ImVec4(0.212f, 0.212f, 0.212f, 1.0f);         // #363636
-    const ImVec4 strongBg = ImVec4(0.251f, 0.251f, 0.251f, 1.0f);        // #404040
-    const ImVec4 border = ImVec4(0.314f, 0.314f, 0.314f, 1.0f);          // #505050
-    const ImVec4 accent = ImVec4(0.380f, 0.380f, 0.380f, 1.0f);          // #616161
+    const ImVec4 baseBg = ImVec4(0.141f, 0.141f, 0.141f, 1.0f);     // #242424
+    const ImVec4 elevatedBg = ImVec4(0.165f, 0.165f, 0.165f, 1.0f); // #2a2a2a
+    const ImVec4 activeBg = ImVec4(0.188f, 0.188f, 0.188f, 1.0f);   // #303030
+    const ImVec4 hoverBg = ImVec4(0.212f, 0.212f, 0.212f, 1.0f);    // #363636
+    const ImVec4 strongBg = ImVec4(0.251f, 0.251f, 0.251f, 1.0f);   // #404040
+    const ImVec4 border = ImVec4(0.314f, 0.314f, 0.314f, 1.0f);     // #505050
+    const ImVec4 accent = ImVec4(0.380f, 0.380f, 0.380f, 1.0f);     // #616161
     colors[ImGuiCol_Text] = ImVec4(0.86f, 0.86f, 0.86f, 1.0f);
     colors[ImGuiCol_TextDisabled] = ImVec4(0.56f, 0.56f, 0.56f, 1.0f);
     colors[ImGuiCol_WindowBg] = baseBg;
@@ -157,8 +155,7 @@ void ConfigureImGuiFonts(ImGuiIO& io)
             preferredFontPathString.c_str(),
             fontConfig.SizePixels,
             &fontConfig,
-            fontConfig.GlyphRanges
-        );
+            fontConfig.GlyphRanges);
     }
 
     if (defaultFont == nullptr)
@@ -194,8 +191,7 @@ VulkanImGuiLayer::VulkanImGuiLayer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue
-)
+    VkQueue graphicsQueue)
     : m_window(window),
       m_instance(instance),
       m_physicalDevice(physicalDevice),

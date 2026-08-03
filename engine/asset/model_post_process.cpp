@@ -52,7 +52,7 @@ void GenerateNormals(MeshData& meshData)
         }
 
         const glm::vec3 normalizedFaceNormal = glm::normalize(faceNormal);
-        for (Vertex* vertex : { &vertex0, &vertex1, &vertex2 })
+        for (Vertex* vertex : {&vertex0, &vertex1, &vertex2})
         {
             vertex->normal[0] += normalizedFaceNormal.x;
             vertex->normal[1] += normalizedFaceNormal.y;
