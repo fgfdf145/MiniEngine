@@ -15,6 +15,8 @@ find_program(GIT_EXECUTABLE NAMES git REQUIRED)
 
 if(DEFINED MINIENGINE_CLANG_FORMAT AND NOT MINIENGINE_CLANG_FORMAT STREQUAL "")
     set(CLANG_FORMAT_EXECUTABLE "${MINIENGINE_CLANG_FORMAT}")
+elseif(DEFINED ENV{CLANG_FORMAT} AND NOT "$ENV{CLANG_FORMAT}" STREQUAL "")
+    set(CLANG_FORMAT_EXECUTABLE "$ENV{CLANG_FORMAT}")
 else()
     set(_clang_format_hints)
     if(WIN32)
@@ -100,11 +102,15 @@ foreach(_relative_path IN LISTS _script_files)
     if(_relative_path MATCHES "\\.ps1$")
         if(_contents MATCHES "(^|\n)[^\n]*\\)[ \t]*\\{" OR
            _contents MATCHES "(^|\n)[ \t]*(else|try|finally|do)[ \t]*\\{" OR
+           _contents MATCHES "(^|\n)[ \t]*(function|filter)[ \t]+[^ \t\r\n{]+[^\r\n{]*[ \t]*\\{" OR
            _contents MATCHES "(^|\n)[ \t]*(class|enum)[^\n{]*\\{")
             list(APPEND _style_violations "${_relative_path}: PowerShell opening brace must be on the following line")
         endif()
     elseif(_contents MATCHES "(^|\n)[ \t]*(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*(\\(\\))?[ \t]*\\{")
         list(APPEND _style_violations "${_relative_path}: Bash function opening brace must be on the following line")
+    endif()
+    if(_contents MATCHES "(^|\n)[ \t]*\t")
+        list(APPEND _style_violations "${_relative_path}: indentation must not use tabs")
     endif()
 endforeach()
 

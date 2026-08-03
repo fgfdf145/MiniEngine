@@ -7,7 +7,7 @@ cmake_args=(-DMINIENGINE_FORMAT_MODE=APPLY)
 
 if [[ -n "${CLANG_FORMAT:-}" ]]
 then
-  cmake_args+=("-DMINIENGINE_CLANG_FORMAT=$CLANG_FORMAT")
+    cmake_args+=("-DMINIENGINE_CLANG_FORMAT=$CLANG_FORMAT")
 fi
 
 cmake "${cmake_args[@]}" -P "$repo_root/cmake/MiniEngineFormat.cmake"
