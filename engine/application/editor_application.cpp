@@ -48,16 +48,14 @@ RenderBackendType ParseRenderBackend(std::string_view value)
     if (!TryParseRenderBackendType(value, backendType))
     {
         throw std::runtime_error(
-            "Unknown backend: " + std::string(value) + ". Supported values: vulkan"
-        );
+            "Unknown backend: " + std::string(value) + ". Supported values: vulkan");
     }
 
     if (const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(backendType); runtimeError.has_value())
     {
         throw std::runtime_error(
             "Requested backend '" + std::string(value) + "' is unavailable: " +
-            *runtimeError
-        );
+            *runtimeError);
     }
 
     return backendType;
@@ -123,16 +121,15 @@ int EditorApplication::Run()
         window,
         sharedState,
         m_options.renderBackend,
-        m_options.startupModelPath
-    );
+        m_options.startupModelPath);
     uint32_t renderedFrameCount = 0;
 
     while (!window.ShouldClose())
     {
         window.PollEvents([&renderer](const SDL_Event& event)
-        {
-            renderer->HandleEvent(event);
-        });
+                          {
+                              renderer->HandleEvent(event);
+                          });
         renderer->DrawFrame();
 
         if (m_options.maxFrames > 0)

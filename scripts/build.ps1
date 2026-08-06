@@ -31,7 +31,14 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments)
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $buildDir = Join-Path $repoRoot "out\build\$Preset"
-$resolvedJobs = if ($Jobs -gt 0) { $Jobs } else { [System.Environment]::ProcessorCount }
+$resolvedJobs = if ($Jobs -gt 0)
+{
+    $Jobs
+}
+else
+{
+    [System.Environment]::ProcessorCount
+}
 
 Write-Info("Preset: $Preset")
 Write-Info("Build directory: $buildDir")

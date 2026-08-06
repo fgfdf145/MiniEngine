@@ -69,8 +69,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const std::string& lastSceneIoError,
     ImTextureID viewportTextureId,
     RenderExtent viewportExtent,
-    RenderBackendType currentBackendType
-)
+    RenderBackendType currentBackendType)
 {
     static_cast<void>(currentModelPath);
     static_cast<void>(lastLoadError);
@@ -108,8 +107,7 @@ EditorUiFrameResult EditorUiController::Draw(
         m_showSceneWindow,
         m_showThemeWindow,
         m_showViewportWindow,
-        m_effectiveUiScale
-    );
+        m_effectiveUiScale);
 
     if (m_showCameraWindow)
     {

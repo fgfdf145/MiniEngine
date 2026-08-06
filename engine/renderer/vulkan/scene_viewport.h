@@ -8,14 +8,13 @@
 
 class VulkanSceneViewport
 {
-public:
+  public:
     VulkanSceneViewport(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         VkFormat colorFormat,
         VkExtent2D extent,
-        uint32_t frameCount
-    );
+        uint32_t frameCount);
     ~VulkanSceneViewport();
 
     VulkanSceneViewport(const VulkanSceneViewport&) = delete;
@@ -27,7 +26,7 @@ public:
     ImTextureID GetTextureId(uint32_t frameIndex) const;
     bool MatchesExtent(VkExtent2D extent) const;
 
-private:
+  private:
     struct FrameResources
     {
         VkImage colorImage = VK_NULL_HANDLE;
@@ -51,8 +50,7 @@ private:
         VkFormat format,
         VkImageUsageFlags usage,
         VkImage& image,
-        VkDeviceMemory& memory
-    ) const;
+        VkDeviceMemory& memory) const;
     VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectMask) const;
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;

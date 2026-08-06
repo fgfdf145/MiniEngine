@@ -49,9 +49,9 @@ constexpr int kGltfModeTriangleFan = 6;
 std::string ToLowerCopy(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-    {
-        return static_cast<char>(std::tolower(character));
-    });
+                   {
+                       return static_cast<char>(std::tolower(character));
+                   });
     return value;
 }
 
@@ -256,8 +256,7 @@ const unsigned char* GetAccessorDataPointer(
     const tinygltf::Accessor& accessor,
     const tinygltf::BufferView& bufferView,
     size_t elementIndex,
-    size_t elementByteSize
-)
+    size_t elementByteSize)
 {
     EnsureIndexInRange(static_cast<size_t>(bufferView.buffer), model.buffers.size(), "buffer");
     const tinygltf::Buffer& buffer = model.buffers[static_cast<size_t>(bufferView.buffer)];
@@ -281,8 +280,7 @@ const unsigned char* GetBufferViewDataPointer(
     const tinygltf::Model& model,
     const tinygltf::BufferView& bufferView,
     size_t byteOffset,
-    size_t byteSize
-)
+    size_t byteSize)
 {
     EnsureIndexInRange(static_cast<size_t>(bufferView.buffer), model.buffers.size(), "buffer");
     const tinygltf::Buffer& buffer = model.buffers[static_cast<size_t>(bufferView.buffer)];
@@ -298,8 +296,7 @@ const unsigned char* GetBufferViewDataPointer(
 
 std::vector<uint32_t> ReadSparseAccessorIndices(
     const tinygltf::Model& model,
-    const tinygltf::Accessor& accessor
-)
+    const tinygltf::Accessor& accessor)
 {
     if (!accessor.sparse.isSparse)
     {
@@ -310,8 +307,7 @@ std::vector<uint32_t> ReadSparseAccessorIndices(
     const tinygltf::BufferView& indicesBufferView =
         model.bufferViews[static_cast<size_t>(accessor.sparse.indices.bufferView)];
     const int componentSize = tinygltf::GetComponentSizeInBytes(
-        static_cast<uint32_t>(accessor.sparse.indices.componentType)
-    );
+        static_cast<uint32_t>(accessor.sparse.indices.componentType));
     if (componentSize <= 0)
     {
         throw std::runtime_error("glTF sparse accessor index component has an invalid size");
@@ -329,8 +325,7 @@ std::vector<uint32_t> ReadSparseAccessorIndices(
             model,
             indicesBufferView,
             accessor.sparse.indices.byteOffset + static_cast<size_t>(sparseIndex) * static_cast<size_t>(componentSize),
-            static_cast<size_t>(componentSize)
-        );
+            static_cast<size_t>(componentSize));
         const uint32_t targetIndex = ReadIndexComponent(indexData, accessor.sparse.indices.componentType);
         if (targetIndex >= accessor.count)
         {
@@ -345,8 +340,7 @@ std::vector<uint32_t> ReadSparseAccessorIndices(
 std::vector<float> ReadAccessorFloatComponents(
     const tinygltf::Model& model,
     int accessorIndex,
-    size_t expectedComponents
-)
+    size_t expectedComponents)
 {
     EnsureIndexInRange(static_cast<size_t>(accessorIndex), model.accessors.size(), "accessor");
     const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIndex)];
@@ -396,9 +390,7 @@ std::vector<float> ReadAccessorFloatComponents(
                     ReadComponentAsDouble(
                         elementData + componentIndex * static_cast<size_t>(componentSize),
                         accessor.componentType,
-                        accessor.normalized
-                    )
-                );
+                        accessor.normalized));
             }
         }
     }
@@ -420,8 +412,7 @@ std::vector<float> ReadAccessorFloatComponents(
                 model,
                 valuesBufferView,
                 accessor.sparse.values.byteOffset + sparseIndex * elementByteSize,
-                elementByteSize
-            );
+                elementByteSize);
             const size_t targetElementIndex = sparseIndices[sparseIndex];
 
             for (size_t componentIndex = 0; componentIndex < expectedComponents; ++componentIndex)
@@ -437,9 +428,7 @@ std::vector<float> ReadAccessorFloatComponents(
                     ReadComponentAsDouble(
                         elementData + componentIndex * static_cast<size_t>(componentSize),
                         accessor.componentType,
-                        accessor.normalized
-                    )
-                );
+                        accessor.normalized));
             }
         }
     }
@@ -488,8 +477,7 @@ std::vector<uint32_t> ReadIndices(const tinygltf::Model& model, int accessorInde
                 model,
                 valuesBufferView,
                 accessor.sparse.values.byteOffset + sparseIndex * elementByteSize,
-                elementByteSize
-            );
+                elementByteSize);
             indices[sparseIndices[sparseIndex]] = ReadIndexComponent(elementData, accessor.componentType);
         }
     }
@@ -521,9 +509,7 @@ glm::mat4 BuildNodeMatrix(const tinygltf::Node& node)
             glm::vec3(
                 static_cast<float>(node.translation[0]),
                 static_cast<float>(node.translation[1]),
-                static_cast<float>(node.translation[2])
-            )
-        );
+                static_cast<float>(node.translation[2])));
     }
     if (node.rotation.size() == 4)
     {
@@ -531,8 +517,7 @@ glm::mat4 BuildNodeMatrix(const tinygltf::Node& node)
             static_cast<float>(node.rotation[3]),
             static_cast<float>(node.rotation[0]),
             static_cast<float>(node.rotation[1]),
-            static_cast<float>(node.rotation[2])
-        );
+            static_cast<float>(node.rotation[2]));
         matrix *= glm::mat4_cast(rotation);
     }
     if (node.scale.size() == 3)
@@ -542,9 +527,7 @@ glm::mat4 BuildNodeMatrix(const tinygltf::Node& node)
             glm::vec3(
                 static_cast<float>(node.scale[0]),
                 static_cast<float>(node.scale[1]),
-                static_cast<float>(node.scale[2])
-            )
-        );
+                static_cast<float>(node.scale[2])));
     }
 
     return matrix;
@@ -584,8 +567,7 @@ std::string ResolveExternalImagePath(const std::filesystem::path& /*modelPath*/,
 std::string ExportEmbeddedImage(
     const std::filesystem::path& modelPath,
     const tinygltf::Image& image,
-    size_t imageIndex
-)
+    size_t imageIndex)
 {
     if (image.image.empty() || image.width <= 0 || image.height <= 0 || image.component <= 0 || image.component > 4)
     {
@@ -596,8 +578,7 @@ std::string ExportEmbeddedImage(
         LOG_WARN(
             "Skipping embedded image export for '{}' because {}-bit textures are not yet supported.",
             modelPath.string(),
-            image.bits
-        );
+            image.bits);
         return {};
     }
 
@@ -613,8 +594,7 @@ std::string ExportEmbeddedImage(
             image.height,
             image.component,
             image.image.data(),
-            image.width * image.component
-        );
+            image.width * image.component);
         if (writeResult == 0)
         {
             throw std::runtime_error("Failed to export embedded glTF texture: " + outputPath.string());
@@ -627,8 +607,7 @@ std::string ExportEmbeddedImage(
 std::string ResolveImagePath(
     const tinygltf::Model& model,
     const std::filesystem::path& modelPath,
-    int textureIndex
-)
+    int textureIndex)
 {
     if (textureIndex < 0)
     {
@@ -656,8 +635,7 @@ std::string ResolveImagePath(
 ModelMaterialData BuildMaterialData(
     const tinygltf::Model& model,
     const tinygltf::Material& material,
-    const std::filesystem::path& modelPath
-)
+    const std::filesystem::path& modelPath)
 {
     ModelMaterialData materialData{};
     materialData.name = material.name;
@@ -709,8 +687,8 @@ ModelMaterialData BuildMaterialData(
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
     materialData.alphaCutoff = materialData.alphaMode == MaterialAlphaMode::Mask
-        ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff), 0.5f)
-        : 0.5f;
+                                   ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff), 0.5f)
+                                   : 0.5f;
     materialData.opacity = 1.0f;
     return materialData;
 }
@@ -756,11 +734,11 @@ std::vector<uint32_t> BuildTriangleIndices(std::span<const uint32_t> primitiveIn
 
             if ((index % 2) == 0)
             {
-                triangles.insert(triangles.end(), { a, b, c });
+                triangles.insert(triangles.end(), {a, b, c});
             }
             else
             {
-                triangles.insert(triangles.end(), { b, a, c });
+                triangles.insert(triangles.end(), {b, a, c});
             }
         }
         return triangles;
@@ -781,7 +759,7 @@ std::vector<uint32_t> BuildTriangleIndices(std::span<const uint32_t> primitiveIn
                 continue;
             }
 
-            triangles.insert(triangles.end(), { a, b, c });
+            triangles.insert(triangles.end(), {a, b, c});
         }
         return triangles;
 
@@ -799,8 +777,7 @@ std::vector<uint32_t> BuildTriangleIndices(std::span<const uint32_t> primitiveIn
 std::string BuildSubmeshName(
     const tinygltf::Node& node,
     const tinygltf::Mesh& mesh,
-    size_t primitiveIndex
-)
+    size_t primitiveIndex)
 {
     if (!node.name.empty() && !mesh.name.empty())
     {
@@ -825,8 +802,7 @@ void AppendPrimitive(
     const tinygltf::Primitive& primitive,
     size_t primitiveIndex,
     const glm::mat4& worldTransform,
-    LoadedModelData& modelData
-)
+    LoadedModelData& modelData)
 {
     const auto positionIt = primitive.attributes.find("POSITION");
     if (positionIt == primitive.attributes.end())
@@ -907,11 +883,10 @@ void AppendPrimitive(
         vertex.tangent[3] = 1.0f;
 
         const glm::vec4 position = worldTransform * glm::vec4(
-            positions[vertexIndex * 3 + 0],
-            positions[vertexIndex * 3 + 1],
-            positions[vertexIndex * 3 + 2],
-            1.0f
-        );
+                                                        positions[vertexIndex * 3 + 0],
+                                                        positions[vertexIndex * 3 + 1],
+                                                        positions[vertexIndex * 3 + 2],
+                                                        1.0f);
         vertex.position[0] = position.x;
         vertex.position[1] = position.y;
         vertex.position[2] = position.z;
@@ -933,10 +908,9 @@ void AppendPrimitive(
         if (!normals.empty())
         {
             glm::vec3 normal = glm::normalize(normalMatrix * glm::vec3(
-                normals[vertexIndex * 3 + 0],
-                normals[vertexIndex * 3 + 1],
-                normals[vertexIndex * 3 + 2]
-            ));
+                                                                 normals[vertexIndex * 3 + 0],
+                                                                 normals[vertexIndex * 3 + 1],
+                                                                 normals[vertexIndex * 3 + 2]));
             if (!std::isfinite(normal.x) || !std::isfinite(normal.y) || !std::isfinite(normal.z))
             {
                 normal = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -949,10 +923,9 @@ void AppendPrimitive(
         if (!tangents.empty())
         {
             glm::vec3 tangent = glm::normalize(glm::mat3(worldTransform) * glm::vec3(
-                tangents[vertexIndex * 4 + 0],
-                tangents[vertexIndex * 4 + 1],
-                tangents[vertexIndex * 4 + 2]
-            ));
+                                                                               tangents[vertexIndex * 4 + 0],
+                                                                               tangents[vertexIndex * 4 + 1],
+                                                                               tangents[vertexIndex * 4 + 2]));
             if (!std::isfinite(tangent.x) || !std::isfinite(tangent.y) || !std::isfinite(tangent.z))
             {
                 tangent = glm::vec3(1.0f, 0.0f, 0.0f);
@@ -980,8 +953,7 @@ void AppendPrimitive(
 
     submeshData.mesh.indices = BuildTriangleIndices(
         primitiveIndices,
-        primitive.mode >= 0 ? primitive.mode : kGltfModeTriangles
-    );
+        primitive.mode >= 0 ? primitive.mode : kGltfModeTriangles);
 
     if (tangentHandednessScale < 0.0f)
     {
@@ -1034,8 +1006,7 @@ bool LoadImageDataWithProgress(
     int requestedHeight,
     const unsigned char* bytes,
     int size,
-    void* userData
-)
+    void* userData)
 {
     auto* context = static_cast<GltfParseProgressContext*>(userData);
     if (context != nullptr && context->callback)
@@ -1044,8 +1015,7 @@ bool LoadImageDataWithProgress(
         const float imageCount = static_cast<float>(context->imagesLoaded);
         const float asymptoticFraction = imageCount / (imageCount + 4.0f);
         context->callback(
-            kProgressParseStarted + (kProgressParseDone - kProgressParseStarted) * asymptoticFraction
-        );
+            kProgressParseStarted + (kProgressParseDone - kProgressParseStarted) * asymptoticFraction);
     }
 
     // Installing a custom image loader bypasses TinyGLTF::SetPreserveImageChannels,
@@ -1053,8 +1023,7 @@ bool LoadImageDataWithProgress(
     tinygltf::LoadImageDataOption imageDataOption;
     imageDataOption.preserve_channels = true;
     return tinygltf::LoadImageData(
-        image, imageIndex, error, warning, requestedWidth, requestedHeight, bytes, size, &imageDataOption
-    );
+        image, imageIndex, error, warning, requestedWidth, requestedHeight, bytes, size, &imageDataOption);
 }
 
 struct GltfLoadProgressTracker
@@ -1082,8 +1051,7 @@ struct GltfLoadProgressTracker
         // Instanced meshes can make the processed count exceed the estimate; clamp.
         const float primitiveFraction = std::min(
             1.0f,
-            static_cast<float>(processedPrimitives) / static_cast<float>(estimatedTotalPrimitives)
-        );
+            static_cast<float>(processedPrimitives) / static_cast<float>(estimatedTotalPrimitives));
         Report(kProgressMaterialsDone + (1.0f - kProgressMaterialsDone) * primitiveFraction);
     }
 };
@@ -1094,8 +1062,7 @@ void TraverseNode(
     const glm::mat4& parentTransform,
     LoadedModelData& modelData,
     std::unordered_set<int>& visitedNodes,
-    GltfLoadProgressTracker& progressTracker
-)
+    GltfLoadProgressTracker& progressTracker)
 {
     if (!visitedNodes.insert(nodeIndex).second)
     {
@@ -1119,8 +1086,7 @@ void TraverseNode(
                 mesh.primitives[primitiveIndex],
                 primitiveIndex,
                 worldTransform,
-                modelData
-            );
+                modelData);
             progressTracker.ReportPrimitiveProcessed();
         }
     }
@@ -1134,8 +1100,7 @@ void TraverseNode(
 LoadedModelData BuildLoadedModelData(
     const tinygltf::Model& tinyModel,
     const std::filesystem::path& modelPath,
-    const ModelLoadProgressCallback& progress
-)
+    const ModelLoadProgressCallback& progress)
 {
     GltfLoadProgressTracker progressTracker{progress};
     for (const tinygltf::Mesh& mesh : tinyModel.meshes)
@@ -1254,8 +1219,7 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     {
         throw std::runtime_error(
             "Failed to load glTF model '" + modelPath.string() + "'" +
-            (errors.empty() ? std::string{} : ": " + errors)
-        );
+            (errors.empty() ? std::string{} : ": " + errors));
     }
 
     if (progress)
@@ -1268,8 +1232,7 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
 
 std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
     const std::filesystem::path& gltfPath,
-    const std::filesystem::path& targetDirectory
-)
+    const std::filesystem::path& targetDirectory)
 {
     std::ifstream file(gltfPath, std::ios::binary);
     if (!file)
@@ -1317,8 +1280,7 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
             {
                 LOG_WARN(
                     "Reference '{}' in '{}' escapes the model folder; left as-is and not copied",
-                    uri, gltfPath.string()
-                );
+                    uri, gltfPath.string());
                 continue;
             }
 
@@ -1346,7 +1308,7 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
             std::filesystem::create_directories(companionDst.parent_path(), mkdirEc);
             std::error_code copyEc;
             std::filesystem::copy_file(companionSrc, companionDst,
-                std::filesystem::copy_options::skip_existing, copyEc);
+                                       std::filesystem::copy_options::skip_existing, copyEc);
             if (copyEc)
             {
                 LOG_WARN("Could not copy companion file '{}': {}", companionSrc.string(), copyEc.message());

@@ -2,7 +2,7 @@
 
 class IApplication
 {
-public:
+  public:
     virtual ~IApplication() = default;
     virtual int Run() = 0;
 };

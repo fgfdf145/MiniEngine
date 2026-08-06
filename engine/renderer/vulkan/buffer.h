@@ -13,15 +13,14 @@ std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions(
 
 class VulkanBuffer
 {
-public:
+  public:
     // Self-contained: builds a one-shot internal upload batch and flushes it immediately.
     // Use for one-off buffers outside of bulk model loading.
     VulkanBuffer(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         uint32_t graphicsQueueFamily,
-        VkQueue graphicsQueue
-    );
+        VkQueue graphicsQueue);
 
     // Records this buffer's vertex/index upload into a caller-supplied batch instead of
     // submitting and waiting on its own. The caller must call uploadBatch.Flush() (directly or
@@ -30,8 +29,7 @@ public:
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         const MeshData& meshData,
-        VulkanUploadBatch& uploadBatch
-    );
+        VulkanUploadBatch& uploadBatch);
     ~VulkanBuffer();
 
     VulkanBuffer(const VulkanBuffer&) = delete;
@@ -42,7 +40,7 @@ public:
     uint32_t GetVertexCount() const;
     uint32_t GetIndexCount() const;
 
-private:
+  private:
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices(VulkanUploadBatch& uploadBatch);

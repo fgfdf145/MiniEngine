@@ -9,7 +9,7 @@
 
 class ISceneWorld
 {
-public:
+  public:
     virtual ~ISceneWorld() = default;
 
     // Read-only ECS access supports efficient views without letting callers
@@ -33,16 +33,33 @@ public:
     virtual void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix) = 0;
     virtual glm::vec3 GetBoundsCenter(entt::entity entity) const = 0;
 
-    const TagComponent& GetTag(entt::entity entity) const { return Registry().get<TagComponent>(entity); }
-    const TransformComponent& GetTransform(entt::entity entity) const { return Registry().get<TransformComponent>(entity); }
-    const ModelComponent& GetModel(entt::entity entity) const { return Registry().get<ModelComponent>(entity); }
-    const ModelBoundsComponent& GetModelBounds(entt::entity entity) const { return Registry().get<ModelBoundsComponent>(entity); }
-    const EditorModelMetadataComponent& GetModelMetadata(entt::entity entity) const { return Registry().get<EditorModelMetadataComponent>(entity); }
-    const std::string& GetEntityUuid(entt::entity entity) const { return Registry().get<SceneEntityIdComponent>(entity).value; }
+    const TagComponent& GetTag(entt::entity entity) const
+    {
+        return Registry().get<TagComponent>(entity);
+    }
+    const TransformComponent& GetTransform(entt::entity entity) const
+    {
+        return Registry().get<TransformComponent>(entity);
+    }
+    const ModelComponent& GetModel(entt::entity entity) const
+    {
+        return Registry().get<ModelComponent>(entity);
+    }
+    const ModelBoundsComponent& GetModelBounds(entt::entity entity) const
+    {
+        return Registry().get<ModelBoundsComponent>(entity);
+    }
+    const EditorModelMetadataComponent& GetModelMetadata(entt::entity entity) const
+    {
+        return Registry().get<EditorModelMetadataComponent>(entity);
+    }
+    const std::string& GetEntityUuid(entt::entity entity) const
+    {
+        return Registry().get<SceneEntityIdComponent>(entity).value;
+    }
 
     bool HasModelComponent(entt::entity entity) const
     {
         return IsValidEntity(entity) && Registry().all_of<ModelComponent>(entity);
     }
-
 };

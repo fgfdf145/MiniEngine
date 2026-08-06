@@ -59,8 +59,7 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
             &camera.position.x,
             -WorldUnits::kUiCameraPositionRangeMeters,
             WorldUnits::kUiCameraPositionRangeMeters,
-            "%.2f"
-        );
+            "%.2f");
         ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
         ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
         ImGui::SliderFloat(
@@ -68,29 +67,25 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
             &camera.moveSpeed,
             WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
             WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond,
-            "%.2f"
-        );
+            "%.2f");
         ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
         ImGui::SliderFloat(
             "Fov",
             &camera.fovDegrees,
             WorldUnits::kUiCameraFovMinDegrees,
-            WorldUnits::kUiCameraFovMaxDegrees
-        );
+            WorldUnits::kUiCameraFovMaxDegrees);
         ImGui::SliderFloat(
             "Near (m)",
             &camera.nearPlane,
             WorldUnits::kUiCameraNearMinMeters,
             WorldUnits::kUiCameraNearMaxMeters,
-            "%.3f"
-        );
+            "%.3f");
         ImGui::SliderFloat(
             "Far (m)",
             &camera.farPlane,
             WorldUnits::kUiCameraFarMinMeters,
             WorldUnits::kUiCameraFarMaxMeters,
-            "%.1f"
-        );
+            "%.1f");
     }
     ImGui::End();
 }
@@ -99,8 +94,7 @@ void EditorUiController::DrawInputMonitorPanel()
 {
     ImGui::SetNextWindowSize(
         ImVec2(720.0f * m_effectiveUiScale, 360.0f * m_effectiveUiScale),
-        ImGuiCond_FirstUseEver
-    );
+        ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Input Monitor", &m_showInputMonitorWindow))
     {
         const std::vector<std::string> inputMessages = Log::GetInputMessagesSnapshot();

@@ -23,24 +23,24 @@ size_t GetMaterialPipelineIndex(MaterialPipelineKey key)
 std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> keys)
 {
     std::vector<size_t> order(keys.size());
-    std::iota(order.begin(), order.end(), size_t{ 0 });
+    std::iota(order.begin(), order.end(), size_t{0});
     const auto blendBegin = std::stable_partition(order.begin(), order.end(), [&](size_t index)
-    {
-        return keys[index].pipeline.alphaMode != MaterialAlphaMode::Blend;
-    });
+                                                  {
+                                                      return keys[index].pipeline.alphaMode != MaterialAlphaMode::Blend;
+                                                  });
     std::stable_sort(blendBegin, order.end(), [&](size_t lhs, size_t rhs)
-    {
-        const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);
-        const bool rhsIsNaN = std::isnan(keys[rhs].viewDepth);
-        if (lhsIsNaN != rhsIsNaN)
-        {
-            return !lhsIsNaN;
-        }
-        if (lhsIsNaN)
-        {
-            return false;
-        }
-        return keys[lhs].viewDepth > keys[rhs].viewDepth;
-    });
+                     {
+                         const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);
+                         const bool rhsIsNaN = std::isnan(keys[rhs].viewDepth);
+                         if (lhsIsNaN != rhsIsNaN)
+                         {
+                             return !lhsIsNaN;
+                         }
+                         if (lhsIsNaN)
+                         {
+                             return false;
+                         }
+                         return keys[lhs].viewDepth > keys[rhs].viewDepth;
+                     });
     return order;
 }

@@ -2,18 +2,18 @@
 
 class ILogicLayer
 {
-public:
+  public:
     virtual ~ILogicLayer() = default;
 };
 
 class IEditorLogicLayer : public ILogicLayer
 {
-public:
+  public:
     ~IEditorLogicLayer() override = default;
 };
 
 class IGameLogicLayer : public ILogicLayer
 {
-public:
+  public:
     ~IGameLogicLayer() override = default;
 };

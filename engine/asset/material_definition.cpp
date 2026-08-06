@@ -34,23 +34,22 @@ void SerializeFloatSequence(YAML::Node& node, const float* values, size_t count)
 bool HasBlendData(const MaterialTextureBlendGraph& blendGraph)
 {
     return blendGraph.enabled ||
-        !blendGraph.blendMaskTexturePath.empty() ||
-        !blendGraph.secondaryBaseColorTexturePath.empty() ||
-        !blendGraph.secondaryNormalTexturePath.empty() ||
-        !blendGraph.secondaryMetallicTexturePath.empty() ||
-        !blendGraph.secondaryRoughnessTexturePath.empty() ||
-        !blendGraph.secondaryOcclusionTexturePath.empty() ||
-        !blendGraph.secondaryEmissiveTexturePath.empty();
+           !blendGraph.blendMaskTexturePath.empty() ||
+           !blendGraph.secondaryBaseColorTexturePath.empty() ||
+           !blendGraph.secondaryNormalTexturePath.empty() ||
+           !blendGraph.secondaryMetallicTexturePath.empty() ||
+           !blendGraph.secondaryRoughnessTexturePath.empty() ||
+           !blendGraph.secondaryOcclusionTexturePath.empty() ||
+           !blendGraph.secondaryEmissiveTexturePath.empty();
 }
 }
 
 std::filesystem::path BuildMaterialDefinitionPath(
     const std::filesystem::path& modelPath,
-    uint32_t materialIndex
-)
+    uint32_t materialIndex)
 {
     return modelPath.parent_path() /
-        (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
+           (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
 }
 
 ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)
@@ -65,8 +64,7 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.emissiveTexturePath,
         material.pbr,
         material.blendGraph,
-        material.shaderGraph
-    };
+        material.shaderGraph};
 }
 
 void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMaterialData& destination)
@@ -155,8 +153,7 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
 bool LoadMaterialDefinition(
     const std::filesystem::path& path,
     ModelImportedMaterialInfo& material,
-    std::string& warning
-)
+    std::string& warning)
 {
     warning.clear();
     try
@@ -199,13 +196,11 @@ bool LoadMaterialDefinition(
             const float cutoffFallback = ClampMaterialAlphaValue(material.pbr.alphaCutoff, 0.5f);
             material.pbr.alphaCutoff = ClampMaterialAlphaValue(
                 pbrNode["alpha_cutoff"].as<float>(cutoffFallback),
-                cutoffFallback
-            );
+                cutoffFallback);
             const float opacityFallback = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
             material.pbr.opacity = ClampMaterialAlphaValue(
                 pbrNode["opacity"].as<float>(opacityFallback),
-                opacityFallback
-            );
+                opacityFallback);
         }
 
         if (const YAML::Node graph = node["texture_graph"]; graph && graph.IsMap())

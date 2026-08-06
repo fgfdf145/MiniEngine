@@ -13,8 +13,7 @@ void ResetMaterialShadedPreviewCache(const char* canvasId);
 void DrawModelUvPreview(
     const LoadedModelData& loadedModel,
     int& selectedUvSubmeshIndex,
-    float uiScale
-);
+    float uiScale);
 
 void DrawMaterialShadedPreview(
     const LoadedModelData& loadedModel,
@@ -26,5 +25,4 @@ void DrawMaterialShadedPreview(
     bool& autoFramePending,
     float uiScale,
     const char* canvasId,
-    const char* overlayLabel
-);
+    const char* overlayLabel);

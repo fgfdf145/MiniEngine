@@ -46,16 +46,16 @@ constexpr float kSelectionOutlineThickness = 2.0f;
 struct ProjectedEntityCenter
 {
     entt::entity entity = entt::null;
-    ImVec2 center{ 0.0f, 0.0f };
-    ImVec2 min{ 0.0f, 0.0f };
-    ImVec2 max{ 0.0f, 0.0f };
+    ImVec2 center{0.0f, 0.0f};
+    ImVec2 min{0.0f, 0.0f};
+    ImVec2 max{0.0f, 0.0f};
     float depth = std::numeric_limits<float>::max();
 };
 
 struct ViewportOverlayRect
 {
-    ImVec2 origin{ 0.0f, 0.0f };
-    ImVec2 size{ 0.0f, 0.0f };
+    ImVec2 origin{0.0f, 0.0f};
+    ImVec2 size{0.0f, 0.0f};
     ImDrawList* drawList = nullptr;
     bool hovered = false;
     bool focused = false;
@@ -93,8 +93,7 @@ RenderExtent BuildViewportExtent(const ViewportOverlayRect& rect)
 {
     return RenderExtent{
         std::max(static_cast<uint32_t>(std::lround(rect.size.x)), 1u),
-        std::max(static_cast<uint32_t>(std::lround(rect.size.y)), 1u)
-    };
+        std::max(static_cast<uint32_t>(std::lround(rect.size.y)), 1u)};
 }
 
 void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTextureId)
@@ -123,15 +122,10 @@ std::array<glm::vec3, 8> BuildBoundsCorners(const glm::vec3& minBounds, const gl
         glm::vec3(minBounds.x, minBounds.y, maxBounds.z),
         glm::vec3(maxBounds.x, minBounds.y, maxBounds.z),
         glm::vec3(minBounds.x, maxBounds.y, maxBounds.z),
-        glm::vec3(maxBounds.x, maxBounds.y, maxBounds.z)
-    };
+        glm::vec3(maxBounds.x, maxBounds.y, maxBounds.z)};
 }
 
-constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = { {
-    { 0, 1 }, { 1, 3 }, { 3, 2 }, { 2, 0 },
-    { 4, 5 }, { 5, 7 }, { 7, 6 }, { 6, 4 },
-    { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }
-} };
+constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = {{{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7}, {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
 
 std::string ReadDragDropPayloadString(const ImGuiPayload& payload)
 {
@@ -142,8 +136,8 @@ std::string ReadDragDropPayloadString(const ImGuiPayload& payload)
 
     const size_t stringLength =
         payload.DataSize > 0
-        ? static_cast<size_t>(payload.DataSize - 1)
-        : static_cast<size_t>(payload.DataSize);
+            ? static_cast<size_t>(payload.DataSize - 1)
+            : static_cast<size_t>(payload.DataSize);
     return std::string(static_cast<const char*>(payload.Data), stringLength);
 }
 
@@ -151,8 +145,7 @@ bool ProjectWorldPointToViewport(
     const glm::vec3& worldPoint,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ImVec2& projectedPoint
-)
+    ImVec2& projectedPoint)
 {
     const glm::vec4 clip = viewProjection * glm::vec4(worldPoint, 1.0f);
     if (clip.w <= 0.0f)
@@ -168,8 +161,7 @@ bool ProjectWorldPointToViewport(
 
     projectedPoint = ImVec2(
         viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x,
-        viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y
-    );
+        viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y);
     return true;
 }
 
@@ -178,8 +170,7 @@ bool BuildProjectedSelectionBox(
     entt::entity entity,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    std::array<ImVec2, 8>& projectedCorners
-)
+    std::array<ImVec2, 8>& projectedCorners)
 {
     const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
     if (!bounds.hasBounds || viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
@@ -206,8 +197,7 @@ bool ComputeWorldBounds(
     const IEditorWorld& scene,
     entt::entity entity,
     glm::vec3& minBounds,
-    glm::vec3& maxBounds
-)
+    glm::vec3& maxBounds)
 {
     const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
     if (!bounds.hasBounds)
@@ -231,8 +221,7 @@ bool ComputeWorldBounds(
 std::vector<ProjectedEntityCenter> ProjectSceneCenters(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
-    const ViewportOverlayRect& viewportRect
-)
+    const ViewportOverlayRect& viewportRect)
 {
     std::vector<ProjectedEntityCenter> projectedCenters;
     if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
@@ -284,8 +273,7 @@ std::vector<ProjectedEntityCenter> ProjectSceneCenters(
 
         projected.center = ImVec2(
             viewportRect.origin.x + (ndc.x * 0.5f + 0.5f) * viewportRect.size.x,
-            viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y
-        );
+            viewportRect.origin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportRect.size.y);
         projected.depth = ndc.z;
         projectedCenters.push_back(projected);
     }
@@ -328,44 +316,46 @@ void DrawLightViewportIcon(
     const ImVec2& screenPos,
     LightType type,
     bool selected,
-    float scale
-)
+    float scale)
 {
     const ImU32 typeColor = GetLightTypeColor(type);
-    const float radius    = 10.0f * scale;
+    const float radius = 10.0f * scale;
     const ImU32 fillColor = selected
-        ? IM_COL32(255, 196, 64, 220)
-        : IM_COL32(255, 255, 255, 80);
+                                ? IM_COL32(255, 196, 64, 220)
+                                : IM_COL32(255, 255, 255, 80);
 
     drawList->AddCircleFilled(screenPos, radius, fillColor);
     drawList->AddCircle(screenPos, radius, typeColor, 16, selected ? 2.5f : 1.5f);
 
     const char* badge = "L";
-    if (type == LightType::Directional) badge = "D";
-    else if (type == LightType::Spot)   badge = "S";
-    else if (type == LightType::Area)   badge = "A";
-    else if (type == LightType::Ambient) badge = "*";
+    if (type == LightType::Directional)
+        badge = "D";
+    else if (type == LightType::Spot)
+        badge = "S";
+    else if (type == LightType::Area)
+        badge = "A";
+    else if (type == LightType::Ambient)
+        badge = "*";
 
     const ImVec2 textSize = ImGui::CalcTextSize(badge);
     drawList->AddText(
         ImVec2(screenPos.x - textSize.x * 0.5f, screenPos.y - textSize.y * 0.5f),
         typeColor,
-        badge
-    );
+        badge);
 }
 
 void DrawLightSelectionIndicator(
     const IEditorWorld& scene,
     entt::entity entity,
     const ViewportMatrices& matrices,
-    const ViewportOverlayRect& viewportRect
-)
+    const ViewportOverlayRect& viewportRect)
 {
-    if (viewportRect.drawList == nullptr) return;
+    if (viewportRect.drawList == nullptr)
+        return;
 
     const glm::mat4 modelMat = scene.GetModelMatrix(entity);
     const glm::vec3 worldPos = glm::vec3(modelMat[3]);
-    const glm::mat4 vp       = matrices.projection * matrices.view;
+    const glm::mat4 vp = matrices.projection * matrices.view;
 
     ImVec2 screenPos;
     if (!ProjectWorldPointToViewport(worldPos, vp, viewportRect, screenPos))
@@ -380,8 +370,7 @@ void DrawViewportSelectionOverlay(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    const std::vector<ProjectedEntityCenter>& projectedCenters
-)
+    const std::vector<ProjectedEntityCenter>& projectedCenters)
 {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     if (drawList == nullptr || !scene.HasSelection())
@@ -410,8 +399,7 @@ void DrawViewportSelectionOverlay(
             projectedSelectionCorners[edge.first],
             projectedSelectionCorners[edge.second],
             kSelectionOutlineColor,
-            kSelectionOutlineThickness
-        );
+            kSelectionOutlineThickness);
     }
 
     for (const ImVec2& corner : projectedSelectionCorners)
@@ -425,8 +413,7 @@ void RefreshViewportMatrices(
     ViewportMatrices& matrices,
     const IEditorWorld& scene,
     RenderExtent viewportExtent,
-    RenderBackendType currentBackendType
-)
+    RenderBackendType currentBackendType)
 {
     const bool useZeroToOneDepth = UsesZeroToOneDepth(currentBackendType);
     const bool invertRenderYAxis = UsesInvertedRenderYAxis(currentBackendType);
@@ -468,8 +455,7 @@ void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const Viewport
 void HandleViewportSelection(
     IEditorWorld& scene,
     const std::vector<ProjectedEntityCenter>& projectedCenters,
-    const ViewportOverlayRect& viewportRect
-)
+    const ViewportOverlayRect& viewportRect)
 {
     if (!viewportRect.hovered || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
@@ -498,8 +484,7 @@ void DrawViewManipulator(Camera& camera, ViewportMatrices& matrices, const Viewp
         7.5f,
         ImVec2(viewportRect.origin.x + viewportRect.size.x - 144.0f, viewportRect.origin.y + 16.0f),
         ImVec2(128.0f, 128.0f),
-        IM_COL32(32, 32, 32, 180)
-    );
+        IM_COL32(32, 32, 32, 180));
     if (matrices.view != viewBefore)
     {
         camera.SetFromViewMatrix(matrices.view);
@@ -511,8 +496,7 @@ void DrawGizmoOverlay(
     IEditorWorld& scene,
     ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    GizmoDragSnapState& dragSnapState
-)
+    GizmoDragSnapState& dragSnapState)
 {
     if (!scene.HasSelection() ||
         viewportRect.size.x <= 0.0f ||
@@ -557,8 +541,7 @@ void DrawGizmoOverlay(
         effectiveOperation,
         gizmoWasUsing,
         translationHandleHovered,
-        rotationHandleHovered
-    );
+        rotationHandleHovered);
     const std::array<float, 3> snapValues =
         BuildGizmoSnapValues(gizmo, dragSnapState.Family());
 
@@ -569,8 +552,7 @@ void DrawGizmoOverlay(
         gizmo.mode,
         glm::value_ptr(gizmoMatrix),
         nullptr,
-        gizmo.useSnap ? snapValues.data() : nullptr
-    );
+        gizmo.useSnap ? snapValues.data() : nullptr);
 
     const bool gizmoIsUsing = ImGuizmo::IsUsing();
     dragSnapState.FinishManipulate(gizmoIsUsing);
@@ -591,8 +573,7 @@ bool ProjectLightCenter(
     const glm::vec3& worldPos,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ProjectedEntityCenter& out
-)
+    ProjectedEntityCenter& out)
 {
     ImVec2 screenPos;
     if (!ProjectWorldPointToViewport(worldPos, viewProjection, viewportRect, screenPos))
@@ -603,8 +584,8 @@ bool ProjectLightCenter(
     constexpr float kIconHalfSize = 16.0f;
     out.entity = entity;
     out.center = screenPos;
-    out.min    = ImVec2(screenPos.x - kIconHalfSize, screenPos.y - kIconHalfSize);
-    out.max    = ImVec2(screenPos.x + kIconHalfSize, screenPos.y + kIconHalfSize);
+    out.min = ImVec2(screenPos.x - kIconHalfSize, screenPos.y - kIconHalfSize);
+    out.max = ImVec2(screenPos.x + kIconHalfSize, screenPos.y + kIconHalfSize);
 
     // Compute NDC depth for depth-sorting with model entities.
     const glm::vec4 clip = viewProjection * glm::vec4(worldPos, 1.0f);
@@ -619,23 +600,22 @@ void DrawLightSphereGizmo(
     float radius,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ImU32 color
-)
+    ImU32 color)
 {
     constexpr int kSegments = 24;
     const auto project = [&](glm::vec3 p) -> std::optional<ImVec2>
     {
         ImVec2 s;
-        if (!ProjectWorldPointToViewport(p, viewProjection, viewportRect, s)) return std::nullopt;
+        if (!ProjectWorldPointToViewport(p, viewProjection, viewportRect, s))
+            return std::nullopt;
         return s;
     };
 
     // Three orthogonal rings (XZ, XY, YZ planes)
     const glm::vec3 axes[3][2] = {
-        { {1,0,0}, {0,0,1} },
-        { {1,0,0}, {0,1,0} },
-        { {0,1,0}, {0,0,1} }
-    };
+        {{1, 0, 0}, {0, 0, 1}},
+        {{1, 0, 0}, {0, 1, 0}},
+        {{0, 1, 0}, {0, 0, 1}}};
     for (auto& ax : axes)
     {
         for (int i = 0; i < kSegments; ++i)
@@ -661,8 +641,7 @@ void DrawLightConeGizmo(
     float outerAngleDegrees,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ImU32 color
-)
+    ImU32 color)
 {
     const float halfAngle = glm::radians(outerAngleDegrees);
     const float capRadius = range * std::tan(halfAngle);
@@ -671,15 +650,16 @@ void DrawLightConeGizmo(
     glm::vec3 up(0.0f, 1.0f, 0.0f);
     if (std::abs(glm::dot(direction, up)) > 0.99f)
         up = glm::vec3(1.0f, 0.0f, 0.0f);
-    const glm::vec3 right  = glm::normalize(glm::cross(direction, up));
-    const glm::vec3 upDir  = glm::normalize(glm::cross(right, direction));
+    const glm::vec3 right = glm::normalize(glm::cross(direction, up));
+    const glm::vec3 upDir = glm::normalize(glm::cross(right, direction));
     const glm::vec3 capCenter = apex + direction * range;
 
     constexpr int kSegments = 16;
     const auto project = [&](glm::vec3 p) -> std::optional<ImVec2>
     {
         ImVec2 s;
-        if (!ProjectWorldPointToViewport(p, viewProjection, viewportRect, s)) return std::nullopt;
+        if (!ProjectWorldPointToViewport(p, viewProjection, viewportRect, s))
+            return std::nullopt;
         return s;
     };
 
@@ -699,7 +679,7 @@ void DrawLightConeGizmo(
     {
         const float a = static_cast<float>(i) * (3.14159265f * 0.5f);
         const auto pApex = project(apex);
-        const auto pCap  = project(capCenter + (std::cos(a) * right + std::sin(a) * upDir) * capRadius);
+        const auto pCap = project(capCenter + (std::cos(a) * right + std::sin(a) * upDir) * capRadius);
         if (pApex && pCap)
             drawList->AddLine(*pApex, *pCap, color, 1.0f);
     }
@@ -713,18 +693,16 @@ void DrawLightAreaGizmo(
     float height,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ImU32 color
-)
+    ImU32 color)
 {
-    const float hw = width  * 0.5f;
+    const float hw = width * 0.5f;
     const float hh = height * 0.5f;
 
     const glm::vec4 corners[4] = {
         {-hw, -hh, 0.0f, 1.0f},
-        { hw, -hh, 0.0f, 1.0f},
-        { hw,  hh, 0.0f, 1.0f},
-        {-hw,  hh, 0.0f, 1.0f}
-    };
+        {hw, -hh, 0.0f, 1.0f},
+        {hw, hh, 0.0f, 1.0f},
+        {-hw, hh, 0.0f, 1.0f}};
 
     std::array<std::optional<ImVec2>, 4> projected;
     for (int i = 0; i < 4; ++i)
@@ -743,7 +721,7 @@ void DrawLightAreaGizmo(
     }
 
     // Draw normal arrow
-    const glm::vec3 center  = glm::vec3(transform * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    const glm::vec3 center = glm::vec3(transform * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     const glm::vec3 arrowTip = glm::vec3(transform * glm::vec4(0.0f, 0.0f, -0.5f, 1.0f));
     ImVec2 sc, sa;
     if (ProjectWorldPointToViewport(center, viewProjection, viewportRect, sc) &&
@@ -761,13 +739,12 @@ void DrawLightDirectionalGizmo(
     float length,
     const glm::mat4& viewProjection,
     const ViewportOverlayRect& viewportRect,
-    ImU32 color
-)
+    ImU32 color)
 {
     const glm::vec3 tip = origin + direction * length;
     ImVec2 so, st;
     if (!ProjectWorldPointToViewport(origin, viewProjection, viewportRect, so) ||
-        !ProjectWorldPointToViewport(tip,    viewProjection, viewportRect, st))
+        !ProjectWorldPointToViewport(tip, viewProjection, viewportRect, st))
     {
         return;
     }
@@ -775,7 +752,8 @@ void DrawLightDirectionalGizmo(
 
     // Draw 3 parallel rays offset from origin
     glm::vec3 up(0.0f, 1.0f, 0.0f);
-    if (std::abs(glm::dot(direction, up)) > 0.99f) up = glm::vec3(1.0f, 0.0f, 0.0f);
+    if (std::abs(glm::dot(direction, up)) > 0.99f)
+        up = glm::vec3(1.0f, 0.0f, 0.0f);
     const glm::vec3 right = glm::normalize(glm::cross(direction, up));
     const float offset = 0.3f;
     for (int k = -1; k <= 1; k += 2)
@@ -783,7 +761,7 @@ void DrawLightDirectionalGizmo(
         const glm::vec3 off = right * (static_cast<float>(k) * offset);
         ImVec2 s0, s1;
         if (ProjectWorldPointToViewport(origin + off, viewProjection, viewportRect, s0) &&
-            ProjectWorldPointToViewport(tip    + off, viewProjection, viewportRect, s1))
+            ProjectWorldPointToViewport(tip + off, viewProjection, viewportRect, s1))
         {
             drawList->AddLine(s0, s1, color, 1.0f);
         }
@@ -794,8 +772,7 @@ void DrawLightDirectionalGizmo(
 void DrawLightGizmos(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
-    const ViewportOverlayRect& viewportRect
-)
+    const ViewportOverlayRect& viewportRect)
 {
     if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
     {
@@ -807,58 +784,57 @@ void DrawLightGizmos(
     ImDrawList* drawList = viewportRect.drawList;
 
     scene.ForEachLight([&](entt::entity entity, const TagComponent&, const TransformComponent& transform, const LightComponent& light)
-    {
-        const glm::mat4 modelMat = scene.GetModelMatrix(entity);
-        const glm::vec3 worldPos = glm::vec3(modelMat[3]);
-        const bool isSelected    = hasSelection && scene.IsSelected(entity);
-        const ImU32 baseColor    = GetLightTypeColor(light.type);
-        const ImU32 color        = isSelected
-            ? IM_COL32(255, 196, 64, 255)
-            : ImGui::ColorConvertFloat4ToU32(ImVec4(
-                ((baseColor >> 0)  & 0xFF) / 255.0f,
-                ((baseColor >> 8)  & 0xFF) / 255.0f,
-                ((baseColor >> 16) & 0xFF) / 255.0f,
-                0.6f
-              ));
+                       {
+                           const glm::mat4 modelMat = scene.GetModelMatrix(entity);
+                           const glm::vec3 worldPos = glm::vec3(modelMat[3]);
+                           const bool isSelected = hasSelection && scene.IsSelected(entity);
+                           const ImU32 baseColor = GetLightTypeColor(light.type);
+                           const ImU32 color = isSelected
+                                                   ? IM_COL32(255, 196, 64, 255)
+                                                   : ImGui::ColorConvertFloat4ToU32(ImVec4(
+                                                         ((baseColor >> 0) & 0xFF) / 255.0f,
+                                                         ((baseColor >> 8) & 0xFF) / 255.0f,
+                                                         ((baseColor >> 16) & 0xFF) / 255.0f,
+                                                         0.6f));
 
-        // Icon
-        ImVec2 iconPos;
-        if (ProjectWorldPointToViewport(worldPos, viewProjection, viewportRect, iconPos))
-        {
-            DrawLightViewportIcon(drawList, iconPos, light.type, isSelected, 1.0f);
-        }
+                           // Icon
+                           ImVec2 iconPos;
+                           if (ProjectWorldPointToViewport(worldPos, viewProjection, viewportRect, iconPos))
+                           {
+                               DrawLightViewportIcon(drawList, iconPos, light.type, isSelected, 1.0f);
+                           }
 
-        // Type-specific wireframe (only when selected, or always for small gizmo)
-        if (light.type == LightType::Point)
-        {
-            DrawLightSphereGizmo(drawList, worldPos, light.range, viewProjection, viewportRect, color);
-        }
-        else if (light.type == LightType::Spot)
-        {
-            // Compute forward direction from transform rotation
-            glm::mat4 rotMat(1.0f);
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1,0,0));
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0,1,0));
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0,0,1));
-            const glm::vec3 dir = glm::normalize(glm::vec3(rotMat * glm::vec4(0,-1,0,0)));
-            DrawLightConeGizmo(drawList, worldPos, dir, light.range, light.spotOuterAngleDegrees,
-                               viewProjection, viewportRect, color);
-        }
-        else if (light.type == LightType::Area)
-        {
-            DrawLightAreaGizmo(drawList, modelMat, light.areaSize.x, light.areaSize.y,
-                               viewProjection, viewportRect, color);
-        }
-        else if (light.type == LightType::Directional)
-        {
-            glm::mat4 rotMat(1.0f);
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1,0,0));
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0,1,0));
-            rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0,0,1));
-            const glm::vec3 dir = glm::normalize(glm::vec3(rotMat * glm::vec4(0,-1,0,0)));
-            DrawLightDirectionalGizmo(drawList, worldPos, dir, 2.0f, viewProjection, viewportRect, color);
-        }
-    });
+                           // Type-specific wireframe (only when selected, or always for small gizmo)
+                           if (light.type == LightType::Point)
+                           {
+                               DrawLightSphereGizmo(drawList, worldPos, light.range, viewProjection, viewportRect, color);
+                           }
+                           else if (light.type == LightType::Spot)
+                           {
+                               // Compute forward direction from transform rotation
+                               glm::mat4 rotMat(1.0f);
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1, 0, 0));
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0, 1, 0));
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0, 0, 1));
+                               const glm::vec3 dir = glm::normalize(glm::vec3(rotMat * glm::vec4(0, -1, 0, 0)));
+                               DrawLightConeGizmo(drawList, worldPos, dir, light.range, light.spotOuterAngleDegrees,
+                                                  viewProjection, viewportRect, color);
+                           }
+                           else if (light.type == LightType::Area)
+                           {
+                               DrawLightAreaGizmo(drawList, modelMat, light.areaSize.x, light.areaSize.y,
+                                                  viewProjection, viewportRect, color);
+                           }
+                           else if (light.type == LightType::Directional)
+                           {
+                               glm::mat4 rotMat(1.0f);
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1, 0, 0));
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0, 1, 0));
+                               rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0, 0, 1));
+                               const glm::vec3 dir = glm::normalize(glm::vec3(rotMat * glm::vec4(0, -1, 0, 0)));
+                               DrawLightDirectionalGizmo(drawList, worldPos, dir, 2.0f, viewProjection, viewportRect, color);
+                           }
+                       });
 }
 
 // Extend projected centers with light entities for picking.
@@ -866,31 +842,29 @@ void AppendLightProjectedCenters(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    std::vector<ProjectedEntityCenter>& projectedCenters
-)
+    std::vector<ProjectedEntityCenter>& projectedCenters)
 {
-    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f) return;
+    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
+        return;
 
     const glm::mat4 viewProjection = matrices.projection * matrices.view;
 
     scene.ForEachLight([&](entt::entity entity, const TagComponent&, const TransformComponent&, const LightComponent&)
-    {
-        const glm::vec3 worldPos = glm::vec3(scene.GetModelMatrix(entity) * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        ProjectedEntityCenter projected{};
-        if (ProjectLightCenter(entity, worldPos, viewProjection, viewportRect, projected))
-        {
-            projectedCenters.push_back(projected);
-        }
-    });
+                       {
+                           const glm::vec3 worldPos = glm::vec3(scene.GetModelMatrix(entity) * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                           ProjectedEntityCenter projected{};
+                           if (ProjectLightCenter(entity, worldPos, viewProjection, viewportRect, projected))
+                           {
+                               projectedCenters.push_back(projected);
+                           }
+                       });
 }
-
 
 glm::vec3 UnprojectToGroundPlane(
     const ImVec2& mousePos,
     const ViewportOverlayRect& viewportRect,
     const ViewportMatrices& matrices,
-    const Camera& camera
-)
+    const Camera& camera)
 {
     if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f)
     {
@@ -902,9 +876,9 @@ glm::vec3 UnprojectToGroundPlane(
 
     const glm::mat4 invViewProj = glm::inverse(matrices.projection * matrices.view);
     const glm::vec4 nearClip = invViewProj * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
-    const glm::vec4 farClip  = invViewProj * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
+    const glm::vec4 farClip = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
     const glm::vec3 nearWorld = glm::vec3(nearClip) / nearClip.w;
-    const glm::vec3 farWorld  = glm::vec3(farClip)  / farClip.w;
+    const glm::vec3 farWorld = glm::vec3(farClip) / farClip.w;
     const glm::vec3 rayDir = glm::normalize(farWorld - nearWorld);
 
     if (std::abs(rayDir.y) > 0.0001f)
@@ -926,8 +900,7 @@ void EditorUiController::DrawViewportPanel(
     IEditorWorld& scene,
     ImTextureID viewportTextureId,
     RenderBackendType currentBackendType,
-    EditorUiFrameResult& result
-)
+    EditorUiFrameResult& result)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     if (ImGui::Begin("Viewport", &m_showViewportWindow))
@@ -944,8 +917,7 @@ void EditorUiController::DrawViewportPanel(
             {
                 result.actions.hoveredViewportModel = EditorUiActions::ViewportModelPlacement{
                     hoveredPath,
-                    UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)
-                };
+                    UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)};
             }
         }
         if (ImGui::BeginDragDropTarget())
@@ -957,8 +929,7 @@ void EditorUiController::DrawViewportPanel(
                 {
                     result.actions.droppedViewportModel = EditorUiActions::ViewportModelPlacement{
                         droppedPath,
-                        UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)
-                    };
+                        UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)};
                 }
             }
             ImGui::EndDragDropTarget();
@@ -969,8 +940,7 @@ void EditorUiController::DrawViewportPanel(
             viewportRect.origin.x,
             viewportRect.origin.y,
             viewportRect.size.x,
-            viewportRect.size.y
-        };
+            viewportRect.size.y};
         result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
         HandleViewportShortcuts(scene, camera, viewportRect);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);

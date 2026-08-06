@@ -9,12 +9,15 @@ std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value)
 {
     std::string normalized(value);
     std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char character)
-    {
-        return static_cast<char>(std::tolower(character));
-    });
-    if (normalized == "opaque") return MaterialAlphaMode::Opaque;
-    if (normalized == "mask") return MaterialAlphaMode::Mask;
-    if (normalized == "blend") return MaterialAlphaMode::Blend;
+                   {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    if (normalized == "opaque")
+        return MaterialAlphaMode::Opaque;
+    if (normalized == "mask")
+        return MaterialAlphaMode::Mask;
+    if (normalized == "blend")
+        return MaterialAlphaMode::Blend;
     return std::nullopt;
 }
 
@@ -22,10 +25,13 @@ const char* ToString(MaterialAlphaMode mode)
 {
     switch (mode)
     {
-    case MaterialAlphaMode::Mask: return "mask";
-    case MaterialAlphaMode::Blend: return "blend";
+    case MaterialAlphaMode::Mask:
+        return "mask";
+    case MaterialAlphaMode::Blend:
+        return "blend";
     case MaterialAlphaMode::Opaque:
-    default: return "opaque";
+    default:
+        return "opaque";
     }
 }
 

@@ -68,24 +68,20 @@ struct BlendGraphTexturePathRow
     const std::string MaterialTextureBlendGraph::* path = nullptr;
 };
 
-constexpr std::array<MaterialTexturePathRow, 6> kPrimaryMaterialTextureRows = { {
-    { "Base Color", &ModelImportedMaterialInfo::baseColorTexturePath },
-    { "Normal", &ModelImportedMaterialInfo::normalTexturePath },
-    { "Metallic", &ModelImportedMaterialInfo::metallicTexturePath },
-    { "Roughness", &ModelImportedMaterialInfo::roughnessTexturePath },
-    { "Occlusion", &ModelImportedMaterialInfo::occlusionTexturePath },
-    { "Emissive", &ModelImportedMaterialInfo::emissiveTexturePath }
-} };
+constexpr std::array<MaterialTexturePathRow, 6> kPrimaryMaterialTextureRows = {{{"Base Color", &ModelImportedMaterialInfo::baseColorTexturePath},
+                                                                                {"Normal", &ModelImportedMaterialInfo::normalTexturePath},
+                                                                                {"Metallic", &ModelImportedMaterialInfo::metallicTexturePath},
+                                                                                {"Roughness", &ModelImportedMaterialInfo::roughnessTexturePath},
+                                                                                {"Occlusion", &ModelImportedMaterialInfo::occlusionTexturePath},
+                                                                                {"Emissive", &ModelImportedMaterialInfo::emissiveTexturePath}}};
 
-constexpr std::array<BlendGraphTexturePathRow, 7> kSecondaryMaterialTextureRows = { {
-    { "Blend Mask", &MaterialTextureBlendGraph::blendMaskTexturePath },
-    { "Layer B Base", &MaterialTextureBlendGraph::secondaryBaseColorTexturePath },
-    { "Layer B Normal", &MaterialTextureBlendGraph::secondaryNormalTexturePath },
-    { "Layer B Metallic", &MaterialTextureBlendGraph::secondaryMetallicTexturePath },
-    { "Layer B Roughness", &MaterialTextureBlendGraph::secondaryRoughnessTexturePath },
-    { "Layer B Occlusion", &MaterialTextureBlendGraph::secondaryOcclusionTexturePath },
-    { "Layer B Emissive", &MaterialTextureBlendGraph::secondaryEmissiveTexturePath }
-} };
+constexpr std::array<BlendGraphTexturePathRow, 7> kSecondaryMaterialTextureRows = {{{"Blend Mask", &MaterialTextureBlendGraph::blendMaskTexturePath},
+                                                                                    {"Layer B Base", &MaterialTextureBlendGraph::secondaryBaseColorTexturePath},
+                                                                                    {"Layer B Normal", &MaterialTextureBlendGraph::secondaryNormalTexturePath},
+                                                                                    {"Layer B Metallic", &MaterialTextureBlendGraph::secondaryMetallicTexturePath},
+                                                                                    {"Layer B Roughness", &MaterialTextureBlendGraph::secondaryRoughnessTexturePath},
+                                                                                    {"Layer B Occlusion", &MaterialTextureBlendGraph::secondaryOcclusionTexturePath},
+                                                                                    {"Layer B Emissive", &MaterialTextureBlendGraph::secondaryEmissiveTexturePath}}};
 
 template <typename TObject, typename TEntry, size_t TSize>
 void DrawTexturePathRows(const TObject& object, const std::array<TEntry, TSize>& rows)
@@ -123,12 +119,11 @@ size_t CountMaterialGraphSecondaryTextures(const MaterialTextureBlendGraph& blen
         &blendGraph.secondaryRoughnessTexturePath,
         &blendGraph.secondaryOcclusionTexturePath,
         &blendGraph.secondaryEmissiveTexturePath,
-        &blendGraph.blendMaskTexturePath
-    };
+        &blendGraph.blendMaskTexturePath};
     return static_cast<size_t>(std::count_if(paths.begin(), paths.end(), [](const std::string* value)
-    {
-        return value != nullptr && !value->empty();
-    }));
+                                             {
+                                                 return value != nullptr && !value->empty();
+                                             }));
 }
 }
 
@@ -148,12 +143,18 @@ const char* GetLightTypeLabel(LightType type)
 {
     switch (type)
     {
-    case LightType::Directional: return "Directional";
-    case LightType::Point:       return "Point";
-    case LightType::Spot:        return "Spot";
-    case LightType::Area:        return "Area";
-    case LightType::Ambient:     return "Ambient";
-    default:                     return "Unknown";
+    case LightType::Directional:
+        return "Directional";
+    case LightType::Point:
+        return "Point";
+    case LightType::Spot:
+        return "Spot";
+    case LightType::Area:
+        return "Area";
+    case LightType::Ambient:
+        return "Ambient";
+    default:
+        return "Unknown";
     }
 }
 
@@ -161,11 +162,17 @@ ImU32 GetLightTypeColor(LightType type)
 {
     switch (type)
     {
-    case LightType::Directional: return IM_COL32(255, 240, 128, 255);
-    case LightType::Point:       return IM_COL32(255, 196, 64,  255);
-    case LightType::Spot:        return IM_COL32(128, 220, 255, 255);
-    case LightType::Area:        return IM_COL32(180, 255, 160, 255);
-    case LightType::Ambient:     return IM_COL32(200, 180, 255, 255);
-    default:                     return IM_COL32(220, 220, 220, 255);
+    case LightType::Directional:
+        return IM_COL32(255, 240, 128, 255);
+    case LightType::Point:
+        return IM_COL32(255, 196, 64, 255);
+    case LightType::Spot:
+        return IM_COL32(128, 220, 255, 255);
+    case LightType::Area:
+        return IM_COL32(180, 255, 160, 255);
+    case LightType::Ambient:
+        return IM_COL32(200, 180, 255, 255);
+    default:
+        return IM_COL32(220, 220, 220, 255);
     }
 }

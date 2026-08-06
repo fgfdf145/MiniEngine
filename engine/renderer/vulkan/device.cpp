@@ -7,8 +7,7 @@
 namespace
 {
 const std::vector<const char*> kRequiredExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
-};
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 // Defined in vulkan_beta.h; spelled out here so no VK_ENABLE_BETA_EXTENSIONS is needed.
 // The spec requires enabling this extension whenever the device advertises it (MoltenVK does).
@@ -60,8 +59,7 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
 
     std::set<uint32_t> uniqueQueueFamilies = {
         m_queueFamilies.graphicsFamily.value(),
-        m_queueFamilies.presentFamily.value()
-    };
+        m_queueFamilies.presentFamily.value()};
 
     const float queuePriority = 1.0f;
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;

@@ -22,8 +22,7 @@ EditorRenderBackendBase::EditorRenderBackendBase(
     Window& window,
     std::shared_ptr<RendererSharedState> sharedState,
     RenderBackendType backendType,
-    std::optional<std::string> startupModelPath
-)
+    std::optional<std::string> startupModelPath)
     : m_window(window),
       m_sharedState(std::move(sharedState)),
       m_backendType(backendType)
@@ -137,8 +136,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     State().requestedViewportExtent = uiFrame.viewportExtent;
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,
-        uiFrame.viewportAllowsMouseInteraction
-    );
+        uiFrame.viewportAllowsMouseInteraction);
 
     try
     {
@@ -147,8 +145,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             EntityEditService::UpdateViewportModelPreview(
                 State(),
                 uiFrame.actions.hoveredViewportModel->modelPath,
-                uiFrame.actions.hoveredViewportModel->worldPosition
-            );
+                uiFrame.actions.hoveredViewportModel->worldPosition);
         }
         else
         {
@@ -168,8 +165,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             ModelImportService::StartAsyncImport(
                 State(),
                 uiFrame.actions.importedModelRequest->sourcePath,
-                uiFrame.actions.importedModelRequest->destinationDirectory
-            );
+                uiFrame.actions.importedModelRequest->destinationDirectory);
         }
         catch (const std::exception& error)
         {
@@ -178,17 +174,16 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 "Failed to start import of '{}' into '{}': {}",
                 uiFrame.actions.importedModelRequest->sourcePath,
                 uiFrame.actions.importedModelRequest->destinationDirectory,
-                error.what()
-            );
+                error.what());
         }
     }
     if (uiFrame.actions.selectedModelPath.has_value())
     {
-        State().pendingModelLoads.push_back({ *uiFrame.actions.selectedModelPath, false });
+        State().pendingModelLoads.push_back({*uiFrame.actions.selectedModelPath, false});
     }
     for (const std::string& path : uiFrame.actions.batchLoadModelPaths)
     {
-        State().pendingModelLoads.push_back({ path, true });
+        State().pendingModelLoads.push_back({path, true});
     }
     if (uiFrame.actions.createSceneEntity)
     {
@@ -209,8 +204,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             EntityEditService::CreateSceneLightEntity(
                 State(),
                 uiFrame.actions.createLightEntity->name,
-                uiFrame.actions.createLightEntity->type
-            );
+                uiFrame.actions.createLightEntity->type);
         }
         catch (const std::exception& error)
         {
@@ -245,8 +239,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             EntityEditService::CommitViewportModelPreview(
                 State(),
                 uiFrame.actions.droppedViewportModel->modelPath,
-                uiFrame.actions.droppedViewportModel->worldPosition
-            );
+                uiFrame.actions.droppedViewportModel->worldPosition);
         }
         catch (const std::exception& error)
         {
@@ -254,8 +247,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR(
                 "Failed to place dropped model '{}' into scene: {}",
                 uiFrame.actions.droppedViewportModel->modelPath,
-                error.what()
-            );
+                error.what());
         }
     }
     if (uiFrame.actions.updatedImportedMaterial.has_value())
@@ -266,8 +258,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 State(),
                 uiFrame.actions.updatedImportedMaterial->modelPath,
                 uiFrame.actions.updatedImportedMaterial->materialIndex,
-                uiFrame.actions.updatedImportedMaterial->material
-            );
+                uiFrame.actions.updatedImportedMaterial->material);
         }
         catch (const std::exception& error)
         {
@@ -276,8 +267,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 "Failed to update imported material '{}' index {}: {}",
                 uiFrame.actions.updatedImportedMaterial->modelPath,
                 uiFrame.actions.updatedImportedMaterial->materialIndex,
-                error.what()
-            );
+                error.what());
         }
     }
     if (uiFrame.actions.updatedImportedModelMaterials.has_value())
@@ -287,8 +277,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             ModelImportService::UpdateImportedModelMaterialDefinitions(
                 State(),
                 uiFrame.actions.updatedImportedModelMaterials->modelPath,
-                uiFrame.actions.updatedImportedModelMaterials->materials
-            );
+                uiFrame.actions.updatedImportedModelMaterials->materials);
         }
         catch (const std::exception& error)
         {
@@ -296,8 +285,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR(
                 "Failed to update imported model materials '{}': {}",
                 uiFrame.actions.updatedImportedModelMaterials->modelPath,
-                error.what()
-            );
+                error.what());
         }
     }
     if (uiFrame.actions.selectedBaseColorTexturePath.has_value())
@@ -306,8 +294,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         {
             EntityEditService::ApplySelectedModelBaseColorTexture(
                 State(),
-                *uiFrame.actions.selectedBaseColorTexturePath
-            );
+                *uiFrame.actions.selectedBaseColorTexturePath);
         }
         catch (const std::exception& error)
         {
@@ -315,8 +302,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR(
                 "Failed to apply base color texture '{}' to selected model: {}",
                 *uiFrame.actions.selectedBaseColorTexturePath,
-                error.what()
-            );
+                error.what());
         }
     }
     if (uiFrame.actions.clearSelectedBaseColorTexture)
@@ -365,8 +351,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         {
             ModelImportService::PasteAsset(
                 uiFrame.actions.pastedAsset->sourcePath,
-                uiFrame.actions.pastedAsset->destinationDirectory
-            );
+                uiFrame.actions.pastedAsset->destinationDirectory);
         }
         catch (const std::exception& error)
         {
@@ -375,8 +360,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 "Failed to paste asset '{}' into '{}': {}",
                 uiFrame.actions.pastedAsset->sourcePath,
                 uiFrame.actions.pastedAsset->destinationDirectory,
-                error.what()
-            );
+                error.what());
         }
     }
 }
@@ -410,8 +394,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         State().lastSceneIoError,
         viewportTextureId,
         viewportExtent,
-        m_backendType
-    );
+        m_backendType);
 
     if (result.engineSettingsChanged || State().engineSettingsNeedsBootstrapSave)
     {
@@ -431,9 +414,9 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         ImGui::SetNextWindowBgAlpha(0.88f);
         ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f));
         if (ImGui::Begin("##async_load_overlay", nullptr,
-            ImGuiWindowFlags_NoDecoration  | ImGuiWindowFlags_NoInputs     |
-            ImGuiWindowFlags_NoMove        | ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoNav         | ImGuiWindowFlags_AlwaysAutoResize))
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize))
         {
             const std::string filename = std::filesystem::path(activePath).filename().string();
 
@@ -508,8 +491,7 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
     Camera& camera,
     const InputState& input,
     float deltaTime,
-    bool blockKeyboardInput
-)
+    bool blockKeyboardInput)
 {
     const float moveDistance = camera.moveSpeed * deltaTime;
     const bool mousePanActive = input.IsMousePanActive();
@@ -556,8 +538,7 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
                 const float gamepadLookSpeed = 180.0f * deltaTime;
                 camera.Rotate(
                     rightStickX * gamepadLookSpeed,
-                    -rightStickY * gamepadLookSpeed
-                );
+                    -rightStickY * gamepadLookSpeed);
             }
         }
     }
@@ -566,8 +547,7 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
     {
         camera.Rotate(
             input.GetMouseDeltaX() * camera.mouseSensitivity,
-            -input.GetMouseDeltaY() * camera.mouseSensitivity
-        );
+            -input.GetMouseDeltaY() * camera.mouseSensitivity);
     }
 
     if (input.IsMousePanActive())
@@ -586,8 +566,7 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
             camera.moveSpeed = std::clamp(
                 camera.moveSpeed * std::pow(speedScalePerNotch, wheelDelta),
                 WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
-                WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond
-            );
+                WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond);
         }
         else
         {
@@ -595,8 +574,7 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
             camera.fovDegrees = std::clamp(
                 camera.fovDegrees - wheelDelta * fovDegreesPerNotch,
                 WorldUnits::kUiCameraFovMinDegrees,
-                WorldUnits::kUiCameraFovMaxDegrees
-            );
+                WorldUnits::kUiCameraFovMaxDegrees);
         }
     }
 }
@@ -620,8 +598,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
         LOG_ERROR(
             "Failed to load engine settings '{}': {}",
             State().engineSettingsPath.string(),
-            State().lastEngineSettingsError
-        );
+            State().lastEngineSettingsError);
         State().engineSettingsNeedsBootstrapSave = true;
     }
     else
@@ -639,7 +616,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
     EditorWorld().CreateTwoCubeTestScene();
     if (startupModelPath.has_value())
     {
-        State().pendingModelLoads.push_back({ *startupModelPath, false });
+        State().pendingModelLoads.push_back({*startupModelPath, false});
     }
 
     RebuildSceneRenderables(State());
@@ -667,8 +644,7 @@ void EditorRenderBackendBase::SaveEngineSettings()
         LOG_ERROR(
             "Failed to save engine settings '{}': {}",
             State().engineSettingsPath.string(),
-            errorMessage
-        );
+            errorMessage);
         return;
     }
 

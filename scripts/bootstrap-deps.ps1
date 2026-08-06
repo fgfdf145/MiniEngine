@@ -67,10 +67,22 @@ function Get-ArchitectureName()
     $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     switch ($architecture)
     {
-        "x64" { return "x64" }
-        "x86" { return "x86" }
-        "arm64" { return "arm64" }
-        default { Fail("Unsupported architecture '$architecture'.") }
+        "x64"
+        {
+            return "x64"
+        }
+        "x86"
+        {
+            return "x86"
+        }
+        "arm64"
+        {
+            return "arm64"
+        }
+        default
+        {
+            Fail("Unsupported architecture '$architecture'.")
+        }
     }
 
     return ""
@@ -80,14 +92,38 @@ function Get-DefaultTriplet([string]$PlatformName, [string]$ArchitectureName)
 {
     switch ("$PlatformName/$ArchitectureName")
     {
-        "windows/x64" { return "x64-windows" }
-        "windows/x86" { return "x86-windows" }
-        "windows/arm64" { return "arm64-windows" }
-        "linux/x64" { return "x64-linux" }
-        "linux/arm64" { return "arm64-linux" }
-        "macos/x64" { return "x64-osx" }
-        "macos/arm64" { return "arm64-osx" }
-        default { Fail("No default vcpkg triplet mapping for '$PlatformName/$ArchitectureName'.") }
+        "windows/x64"
+        {
+            return "x64-windows"
+        }
+        "windows/x86"
+        {
+            return "x86-windows"
+        }
+        "windows/arm64"
+        {
+            return "arm64-windows"
+        }
+        "linux/x64"
+        {
+            return "x64-linux"
+        }
+        "linux/arm64"
+        {
+            return "arm64-linux"
+        }
+        "macos/x64"
+        {
+            return "x64-osx"
+        }
+        "macos/arm64"
+        {
+            return "arm64-osx"
+        }
+        default
+        {
+            Fail("No default vcpkg triplet mapping for '$PlatformName/$ArchitectureName'.")
+        }
     }
 
     return ""

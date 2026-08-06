@@ -43,8 +43,7 @@ ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submes
         submesh.materialIndex,
         submesh.hasTexCoords,
         submesh.hasNormals,
-        submesh.hasTangents
-    };
+        submesh.hasTangents};
 }
 
 std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& state, entt::entity entity)
@@ -65,8 +64,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             WorldUnits::kDefaultCubeMaxBoundsMeters,
             true,
             {},
-            {}
-        );
+            {});
 
         const ModelMaterialData material{};
         CpuRenderSubmesh renderSubmesh{};
@@ -175,31 +173,31 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         if (submesh.hasTexCoords)
         {
             renderSubmesh.textures.baseColor = model.baseColorTextureOverridePath.empty()
-                ? resolveTex(material.baseColorTexturePath)
-                : model.baseColorTextureOverridePath;
+                                                   ? resolveTex(material.baseColorTexturePath)
+                                                   : model.baseColorTextureOverridePath;
             renderSubmesh.textures.normal = resolveTex(material.normalTexturePath);
             renderSubmesh.textures.metallic = resolveTex(material.metallicTexturePath);
             renderSubmesh.textures.roughness = resolveTex(material.roughnessTexturePath);
             renderSubmesh.textures.occlusion = resolveTex(material.occlusionTexturePath);
             renderSubmesh.textures.emissive = resolveTex(material.emissiveTexturePath);
             renderSubmesh.textures.secondaryBaseColor = material.blendGraph.secondaryBaseColorTexturePath.empty()
-                ? renderSubmesh.textures.baseColor
-                : material.blendGraph.secondaryBaseColorTexturePath;
+                                                            ? renderSubmesh.textures.baseColor
+                                                            : material.blendGraph.secondaryBaseColorTexturePath;
             renderSubmesh.textures.secondaryNormal = material.blendGraph.secondaryNormalTexturePath.empty()
-                ? renderSubmesh.textures.normal
-                : material.blendGraph.secondaryNormalTexturePath;
+                                                         ? renderSubmesh.textures.normal
+                                                         : material.blendGraph.secondaryNormalTexturePath;
             renderSubmesh.textures.secondaryMetallic = material.blendGraph.secondaryMetallicTexturePath.empty()
-                ? renderSubmesh.textures.metallic
-                : material.blendGraph.secondaryMetallicTexturePath;
+                                                           ? renderSubmesh.textures.metallic
+                                                           : material.blendGraph.secondaryMetallicTexturePath;
             renderSubmesh.textures.secondaryRoughness = material.blendGraph.secondaryRoughnessTexturePath.empty()
-                ? renderSubmesh.textures.roughness
-                : material.blendGraph.secondaryRoughnessTexturePath;
+                                                            ? renderSubmesh.textures.roughness
+                                                            : material.blendGraph.secondaryRoughnessTexturePath;
             renderSubmesh.textures.secondaryOcclusion = material.blendGraph.secondaryOcclusionTexturePath.empty()
-                ? renderSubmesh.textures.occlusion
-                : material.blendGraph.secondaryOcclusionTexturePath;
+                                                            ? renderSubmesh.textures.occlusion
+                                                            : material.blendGraph.secondaryOcclusionTexturePath;
             renderSubmesh.textures.secondaryEmissive = material.blendGraph.secondaryEmissiveTexturePath.empty()
-                ? renderSubmesh.textures.emissive
-                : material.blendGraph.secondaryEmissiveTexturePath;
+                                                           ? renderSubmesh.textures.emissive
+                                                           : material.blendGraph.secondaryEmissiveTexturePath;
             renderSubmesh.textures.blendMask = material.blendGraph.blendMaskTexturePath;
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
@@ -214,8 +212,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         modelData.maxBounds,
         modelData.hasBounds,
         importedMaterials,
-        importedSubmeshes
-    );
+        importedSubmeshes);
     return renderSubmeshes;
 }
 }
@@ -230,8 +227,7 @@ void RebuildSceneRenderables(RendererSharedState& state)
         newRenderSubmeshes.insert(
             newRenderSubmeshes.end(),
             std::make_move_iterator(entitySubmeshes.begin()),
-            std::make_move_iterator(entitySubmeshes.end())
-        );
+            std::make_move_iterator(entitySubmeshes.end()));
     }
 
     state.rendererWorld.SetRenderSubmeshes(std::move(newRenderSubmeshes));

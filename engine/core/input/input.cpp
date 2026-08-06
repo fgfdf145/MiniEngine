@@ -219,50 +219,44 @@ bool InputState::WasGamepadDisconnected(uint32_t playerIndex) const
 
 bool InputState::IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-        ? m_gamepads[playerIndex].buttonDown[ToGamepadButtonIndex(button)]
-        : false;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
+               ? m_gamepads[playerIndex].buttonDown[ToGamepadButtonIndex(button)]
+               : false;
 }
 
 bool InputState::WasGamepadButtonPressed(GamepadButton button, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-        ? m_gamepads[playerIndex].buttonPressed[ToGamepadButtonIndex(button)]
-        : false;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
+               ? m_gamepads[playerIndex].buttonPressed[ToGamepadButtonIndex(button)]
+               : false;
 }
 
 bool InputState::WasGamepadButtonReleased(GamepadButton button, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-        ? m_gamepads[playerIndex].buttonReleased[ToGamepadButtonIndex(button)]
-        : false;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
+               ? m_gamepads[playerIndex].buttonReleased[ToGamepadButtonIndex(button)]
+               : false;
 }
 
 float InputState::GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
-        ? m_gamepads[playerIndex].axisValues[ToGamepadAxisIndex(axis)]
-        : 0.0f;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
+               ? m_gamepads[playerIndex].axisValues[ToGamepadAxisIndex(axis)]
+               : 0.0f;
 }
 
 float InputState::GetGamepadAxisDelta(GamepadAxis axis, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
-        ? m_gamepads[playerIndex].axisDeltas[ToGamepadAxisIndex(axis)]
-        : 0.0f;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
+               ? m_gamepads[playerIndex].axisDeltas[ToGamepadAxisIndex(axis)]
+               : 0.0f;
 }
 
 bool InputState::WasGamepadAxisChanged(GamepadAxis axis, uint32_t playerIndex) const
 {
-    return
-        IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
-        ? m_gamepads[playerIndex].axisChanged[ToGamepadAxisIndex(axis)]
-        : false;
+    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
+               ? m_gamepads[playerIndex].axisChanged[ToGamepadAxisIndex(axis)]
+               : false;
 }
 
 int InputState::GetFirstConnectedGamepadIndex() const
@@ -323,7 +317,7 @@ void InputState::ConsumeMouseLookAnchor(int& x, int& y)
 
 KeyCode InputState::FromScancode(SDL_Scancode scancode)
 {
-    return KeyCode{ scancode };
+    return KeyCode{scancode};
 }
 
 std::string InputState::GetKeyName(KeyCode key)
@@ -466,11 +460,10 @@ bool InputState::IsViewportInteractionPoint(float x, float y) const
         return false;
     }
 
-    return
-        x >= m_viewportInteractionRect.x &&
-        y >= m_viewportInteractionRect.y &&
-        x <= (m_viewportInteractionRect.x + m_viewportInteractionRect.w) &&
-        y <= (m_viewportInteractionRect.y + m_viewportInteractionRect.h);
+    return x >= m_viewportInteractionRect.x &&
+           y >= m_viewportInteractionRect.y &&
+           x <= (m_viewportInteractionRect.x + m_viewportInteractionRect.w) &&
+           y <= (m_viewportInteractionRect.y + m_viewportInteractionRect.h);
 }
 
 void InputState::PollGamepads()
@@ -582,8 +575,7 @@ void InputState::PollGamepads()
                     timestampNs,
                     playerIndex,
                     static_cast<GamepadAxis>(static_cast<int>(axisIndex)),
-                    currentValue
-                );
+                    currentValue);
             }
         }
     }
@@ -598,8 +590,7 @@ void InputState::EnsureTimestampBaseInitialized()
 
     const Uint64 currentTicksNs = SDL_GetTicksNS();
     m_wallClockAtSdlTickZero = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-        std::chrono::system_clock::now() - std::chrono::nanoseconds(currentTicksNs)
-    );
+        std::chrono::system_clock::now() - std::chrono::nanoseconds(currentTicksNs));
     m_hasTimestampBase = true;
 }
 
@@ -611,8 +602,7 @@ std::string InputState::FormatEventTimestamp(Uint64 timestampNs) const
     }
 
     const auto timePoint = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-        m_wallClockAtSdlTickZero + std::chrono::nanoseconds(timestampNs)
-    );
+        m_wallClockAtSdlTickZero + std::chrono::nanoseconds(timestampNs));
     const auto milliseconds =
         std::chrono::duration_cast<std::chrono::milliseconds>(timePoint.time_since_epoch()) %
         std::chrono::seconds(1);
@@ -640,8 +630,7 @@ void InputState::LogKeyboardEvent(Uint64 timestampNs, KeyCode key, const char* a
         FormatEventTimestamp(timestampNs),
         static_cast<double>(timestampNs) / 1'000'000.0,
         action,
-        GetKeyName(key)
-    );
+        GetKeyName(key));
 }
 
 void InputState::LogGamepadConnectionEvent(Uint64 timestampNs, uint32_t playerIndex, const char* action) const
@@ -651,16 +640,14 @@ void InputState::LogGamepadConnectionEvent(Uint64 timestampNs, uint32_t playerIn
         FormatEventTimestamp(timestampNs),
         static_cast<double>(timestampNs) / 1'000'000.0,
         playerIndex,
-        action
-    );
+        action);
 }
 
 void InputState::LogGamepadButtonEvent(
     Uint64 timestampNs,
     uint32_t playerIndex,
     GamepadButton button,
-    const char* action
-) const
+    const char* action) const
 {
     LOG_INPUT_INFO(
         "[input][{}][{:.3f} ms] gamepad[{}] {} {}",
@@ -668,8 +655,7 @@ void InputState::LogGamepadButtonEvent(
         static_cast<double>(timestampNs) / 1'000'000.0,
         playerIndex,
         action,
-        GetGamepadButtonName(button)
-    );
+        GetGamepadButtonName(button));
 }
 
 void InputState::LogGamepadAxisEvent(Uint64 timestampNs, uint32_t playerIndex, GamepadAxis axis, float value) const
@@ -680,6 +666,5 @@ void InputState::LogGamepadAxisEvent(Uint64 timestampNs, uint32_t playerIndex, G
         static_cast<double>(timestampNs) / 1'000'000.0,
         playerIndex,
         GetGamepadAxisName(axis),
-        value
-    );
+        value);
 }

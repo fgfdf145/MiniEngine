@@ -13,18 +13,17 @@ namespace
 const std::array<VkFormat, 3> kDepthFormats = {
     VK_FORMAT_D32_SFLOAT,
     VK_FORMAT_D32_SFLOAT_S8_UINT,
-    VK_FORMAT_D24_UNORM_S8_UINT
-};
+    VK_FORMAT_D24_UNORM_S8_UINT};
 
 bool HasStencilComponent(VkFormat format)
 {
     return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
-template<typename Handle>
+template <typename Handle>
 ImTextureID ToImTextureId(Handle handle)
 {
-    if constexpr(std::is_pointer_v<Handle>)
+    if constexpr (std::is_pointer_v<Handle>)
     {
         return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(handle));
     }
@@ -40,14 +39,11 @@ VulkanSceneViewport::VulkanSceneViewport(
     VkDevice device,
     VkFormat colorFormat,
     VkExtent2D extent,
-    uint32_t frameCount
-)
+    uint32_t frameCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_extent({
-          std::max(extent.width, 1u),
-          std::max(extent.height, 1u)
-      }),
+      m_extent({std::max(extent.width, 1u),
+                std::max(extent.height, 1u)}),
       m_colorFormat(colorFormat)
 {
     m_depthFormat = FindDepthFormat();
@@ -216,8 +212,7 @@ void VulkanSceneViewport::CreateRenderPass(VkFormat colorFormat)
 
     const std::array<VkAttachmentDescription, 2> attachments = {
         colorAttachment,
-        depthAttachment
-    };
+        depthAttachment};
 
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -266,8 +261,7 @@ void VulkanSceneViewport::CreateFrameResources(uint32_t frameCount)
             m_colorFormat,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             frame.colorImage,
-            frame.colorMemory
-        );
+            frame.colorMemory);
         frame.colorImageView = CreateImageView(frame.colorImage, m_colorFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 
         CreateImage(
@@ -276,8 +270,7 @@ void VulkanSceneViewport::CreateFrameResources(uint32_t frameCount)
             m_depthFormat,
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
             frame.depthImage,
-            frame.depthMemory
-        );
+            frame.depthMemory);
 
         VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (HasStencilComponent(m_depthFormat))
@@ -286,7 +279,7 @@ void VulkanSceneViewport::CreateFrameResources(uint32_t frameCount)
         }
         frame.depthImageView = CreateImageView(frame.depthImage, m_depthFormat, depthAspect);
 
-        VkImageView attachments[] = { frame.colorImageView, frame.depthImageView };
+        VkImageView attachments[] = {frame.colorImageView, frame.depthImageView};
 
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -301,8 +294,7 @@ void VulkanSceneViewport::CreateFrameResources(uint32_t frameCount)
         frame.textureDescriptorSet = ImGui_ImplVulkan_AddTexture(
             m_sampler,
             frame.colorImageView,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        );
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 }
 
@@ -312,8 +304,7 @@ void VulkanSceneViewport::CreateImage(
     VkFormat format,
     VkImageUsageFlags usage,
     VkImage& image,
-    VkDeviceMemory& memory
-) const
+    VkDeviceMemory& memory) const
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;

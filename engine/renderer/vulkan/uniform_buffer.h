@@ -37,22 +37,22 @@ struct MaterialTextureBinding
 // spotAndArea      : x = cos(innerAngle), y = cos(outerAngle), z = areaWidth, w = areaHeight
 struct GpuLightData
 {
-    glm::vec4 positionAndRange{ 0.0f, 0.0f, 0.0f, 10.0f };
-    glm::vec4 colorAndIntensity{ 1.0f, 1.0f, 1.0f, 1000.0f };
-    glm::vec4 directionAndType{ 0.0f, -1.0f, 0.0f, 1.0f }; // type 1 = point
-    glm::vec4 spotAndArea{ 0.97f, 0.87f, 1.0f, 1.0f };
+    glm::vec4 positionAndRange{0.0f, 0.0f, 0.0f, 10.0f};
+    glm::vec4 colorAndIntensity{1.0f, 1.0f, 1.0f, 1000.0f};
+    glm::vec4 directionAndType{0.0f, -1.0f, 0.0f, 1.0f}; // type 1 = point
+    glm::vec4 spotAndArea{0.97f, 0.87f, 1.0f, 1.0f};
 };
 
 static constexpr uint32_t kMaxSceneLights = 8;
 
 struct alignas(16) CameraUniformData
 {
-    glm::mat4 view{ 1.0f };
-    glm::mat4 proj{ 1.0f };
-    glm::vec4 cameraWorldPosition{ 0.0f, 0.0f, 0.0f, 1.0f };
-    glm::vec4 ambientColorAndIntensity{ 0.05f, 0.05f, 0.08f, 1.0f };
+    glm::mat4 view{1.0f};
+    glm::mat4 proj{1.0f};
+    glm::vec4 cameraWorldPosition{0.0f, 0.0f, 0.0f, 1.0f};
+    glm::vec4 ambientColorAndIntensity{0.05f, 0.05f, 0.08f, 1.0f};
     GpuLightData lights[kMaxSceneLights];
-    glm::uvec4 sceneLightCount{ 0u, 0u, 0u, 0u };
+    glm::uvec4 sceneLightCount{0u, 0u, 0u, 0u};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -62,18 +62,16 @@ struct alignas(16) CameraUniformData
 static_assert(sizeof(GpuLightData) == 64, "GpuLightData must stay 4 x vec4 to match std140");
 static_assert(
     sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
-    "CameraUniformData layout drifted from the shader CameraBuffer std140 block"
-);
+    "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
 class VulkanUniformBuffer
 {
-public:
+  public:
     VulkanUniformBuffer(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         uint32_t imageCount,
-        const std::vector<MaterialTextureBinding>& materialBindings
-    );
+        const std::vector<MaterialTextureBinding>& materialBindings);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -85,10 +83,9 @@ public:
         uint32_t imageIndex,
         const ViewportMatrices& matrices,
         const glm::vec3& cameraPosition,
-        const std::vector<GpuLightData>& lights
-    );
+        const std::vector<GpuLightData>& lights);
 
-private:
+  private:
     void CreateDescriptorSetLayout();
     void CreateBuffers(uint32_t imageCount);
     void CreateDescriptorPool(uint32_t imageCount);

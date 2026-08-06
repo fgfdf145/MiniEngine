@@ -19,8 +19,8 @@ struct ModelMaterialData
     std::string roughnessTexturePath;
     std::string occlusionTexturePath;
     std::string emissiveTexturePath;
-    float baseColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    float emissiveColor[3] = { 0.0f, 0.0f, 0.0f };
+    float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
     float roughnessFactor = 1.0f;
     float normalScale = 1.0f;
@@ -49,8 +49,8 @@ struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
     std::vector<ModelSubmeshData> submeshes;
-    glm::vec3 minBounds{ 0.0f, 0.0f, 0.0f };
-    glm::vec3 maxBounds{ 0.0f, 0.0f, 0.0f };
+    glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
+    glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;
 
     bool IsValid() const
@@ -65,7 +65,7 @@ using ModelLoadProgressCallback = std::function<void(float)>;
 
 class ModelLoader
 {
-public:
+  public:
     static bool IsImportAvailable();
     static bool IsSupportedModelPath(const std::filesystem::path& path);
     static const char* GetImporterName();
@@ -78,6 +78,5 @@ public:
     // the copied model's path.
     static std::filesystem::path CopyModelWithSortedReferences(
         const std::filesystem::path& modelPath,
-        const std::filesystem::path& targetDirectory
-    );
+        const std::filesystem::path& targetDirectory);
 };

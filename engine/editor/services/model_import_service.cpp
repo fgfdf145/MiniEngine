@@ -29,8 +29,7 @@ namespace
 std::optional<std::filesystem::path> WriteMaterialYamlFile(
     const std::filesystem::path& modelPath,
     uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material
-)
+    const ModelImportedMaterialInfo& material)
 {
     const std::filesystem::path outPath = BuildMaterialDefinitionPath(modelPath, materialIndex);
 
@@ -72,8 +71,7 @@ std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const s
     if (mkdirEc)
     {
         throw std::runtime_error(
-            "Failed to create model folder '" + modelFolder.string() + "': " + mkdirEc.message()
-        );
+            "Failed to create model folder '" + modelFolder.string() + "': " + mkdirEc.message());
     }
 
     const std::filesystem::path dst = ModelLoader::CopyModelWithSortedReferences(src, modelFolder);
@@ -96,9 +94,9 @@ void StartAsyncImport(RendererSharedState& state, const std::string& sourcePath,
     state.asyncImport.sourcePath = sourcePath;
     state.asyncImport.destinationDirectory = destinationDirectory;
     state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory]()
-    {
-        return ImportModelIntoAssetDirectory(sourcePath, destinationDirectory);
-    });
+                                          {
+                                              return ImportModelIntoAssetDirectory(sourcePath, destinationDirectory);
+                                          });
 
     LOG_INFO("Started async import: {} -> {}", sourcePath, destinationDirectory);
 }
@@ -122,8 +120,7 @@ void PumpAsyncImport(RendererSharedState& state)
             "Failed to import model '{}' into '{}': {}",
             state.asyncImport.sourcePath,
             state.asyncImport.destinationDirectory,
-            error.what()
-        );
+            error.what());
     }
 
     // Whether it succeeded or failed, rescan so the browser reflects whatever
@@ -164,7 +161,10 @@ void DeleteAssetPath(const std::string& path)
                 name.substr(sidecarPrefix.size(), name.size() - sidecarPrefix.size() - kSidecarSuffix.size());
             const bool isMaterialIndex =
                 !indexPart.empty() &&
-                std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+                std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c)
+                            {
+                                return std::isdigit(c) != 0;
+                            });
             if (!isMaterialIndex)
             {
                 continue;
@@ -206,13 +206,12 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
     }
     std::error_code ec;
     std::filesystem::copy(src, dst,
-        std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
-        ec);
+                          std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
+                          ec);
     if (ec)
     {
         throw std::runtime_error(
-            "Failed to copy '" + sourcePath + "' to '" + destinationDirectory + "': " + ec.message()
-        );
+            "Failed to copy '" + sourcePath + "' to '" + destinationDirectory + "': " + ec.message());
     }
 
     // Copied uuid sidecars would duplicate their source's identity, and rescan
@@ -222,7 +221,8 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
     if (std::filesystem::is_directory(dst, sidecarEc))
     {
         for (std::filesystem::recursive_directory_iterator
-                 it(dst, std::filesystem::directory_options::skip_permission_denied, sidecarEc), end;
+                 it(dst, std::filesystem::directory_options::skip_permission_denied, sidecarEc),
+             end;
              !sidecarEc && it != end;
              it.increment(sidecarEc))
         {
@@ -244,8 +244,7 @@ void UpdateImportedMaterialDefinition(
     RendererSharedState& state,
     const std::string& modelPath,
     uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material
-)
+    const ModelImportedMaterialInfo& material)
 {
     if (modelPath.empty())
     {
@@ -262,23 +261,20 @@ void UpdateImportedMaterialDefinition(
     WriteMaterialYamlFile(
         std::filesystem::path(modelPath),
         materialIndex,
-        material
-    );
+        material);
 
     MarkModelRenderablesDirtyForSourcePath(state, modelPath);
     RefreshDirtySceneRenderables(state);
     LOG_INFO(
         "Updated material {} for model '{}'",
         materialIndex,
-        modelPath
-    );
+        modelPath);
 }
 
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
-    const std::vector<ModelImportedMaterialInfo>& materials
-)
+    const std::vector<ModelImportedMaterialInfo>& materials)
 {
     if (modelPathString.empty() || materials.empty())
     {
@@ -314,8 +310,7 @@ void UpdateImportedModelMaterialDefinitions(
     LOG_INFO(
         "Saved {} material(s) for model '{}'",
         materials.size(),
-        modelPathString
-    );
+        modelPathString);
 }
 
 }

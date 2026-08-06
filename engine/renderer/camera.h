@@ -8,15 +8,15 @@
 
 struct ViewportMatrices
 {
-    glm::mat4 view{ 1.0f };
-    glm::mat4 projection{ 1.0f };
-    glm::mat4 renderProjection{ 1.0f };
-    glm::mat4 model{ 1.0f };
+    glm::mat4 view{1.0f};
+    glm::mat4 projection{1.0f};
+    glm::mat4 renderProjection{1.0f};
+    glm::mat4 model{1.0f};
 };
 
 class Camera
 {
-public:
+  public:
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth) const;
     glm::vec3 GetForward() const;
@@ -29,7 +29,7 @@ public:
     void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
 
     glm::vec3 position = WorldUnits::kDefaultCameraPositionMeters;
-    glm::vec3 worldUp = { 0.0f, 1.0f, 0.0f };
+    glm::vec3 worldUp = {0.0f, 1.0f, 0.0f};
     float fovDegrees = 45.0f;
     float nearPlane = WorldUnits::kDefaultCameraNearPlaneMeters;
     float farPlane = WorldUnits::kDefaultCameraFarPlaneMeters;

@@ -41,13 +41,12 @@ namespace
 {
 bool MaterialHasAnyTexture(const ModelImportedMaterialInfo& material)
 {
-    return
-        !material.baseColorTexturePath.empty() ||
-        !material.normalTexturePath.empty() ||
-        !material.metallicTexturePath.empty() ||
-        !material.roughnessTexturePath.empty() ||
-        !material.occlusionTexturePath.empty() ||
-        !material.emissiveTexturePath.empty();
+    return !material.baseColorTexturePath.empty() ||
+           !material.normalTexturePath.empty() ||
+           !material.metallicTexturePath.empty() ||
+           !material.roughnessTexturePath.empty() ||
+           !material.occlusionTexturePath.empty() ||
+           !material.emissiveTexturePath.empty();
 }
 
 uint32_t CountUvReadySubmeshes(const EditorModelMetadataComponent& metadata)
@@ -58,8 +57,7 @@ uint32_t CountUvReadySubmeshes(const EditorModelMetadataComponent& metadata)
         [](const ModelImportedSubmeshInfo& submesh)
         {
             return submesh.hasTexCoords;
-        }
-    ));
+        }));
 }
 
 uint32_t CountTexturedMaterials(const EditorModelMetadataComponent& metadata)
@@ -70,8 +68,7 @@ uint32_t CountTexturedMaterials(const EditorModelMetadataComponent& metadata)
         [](const ModelImportedMaterialInfo& material)
         {
             return MaterialHasAnyTexture(material);
-        }
-    ));
+        }));
 }
 
 void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
@@ -86,13 +83,11 @@ void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
     ImGui::Text(
         "UV Submeshes: %u / %u",
         CountUvReadySubmeshes(metadata),
-        static_cast<unsigned int>(metadata.importedSubmeshes.size())
-    );
+        static_cast<unsigned int>(metadata.importedSubmeshes.size()));
     ImGui::Text(
         "Textured Materials: %u / %u",
         CountTexturedMaterials(metadata),
-        static_cast<unsigned int>(metadata.importedMaterials.size())
-    );
+        static_cast<unsigned int>(metadata.importedMaterials.size()));
     ImGui::TextWrapped("Texture bindings are applied only when the imported submesh carries valid UVs.");
 
     if (ImGui::TreeNode("Imported Submeshes"))
@@ -102,8 +97,8 @@ void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
             const ModelImportedSubmeshInfo& submesh = metadata.importedSubmeshes[submeshIndex];
             const std::string treeLabel =
                 submesh.name.empty()
-                ? ("Submesh " + std::to_string(submeshIndex))
-                : (submesh.name + "##submesh_" + std::to_string(submeshIndex));
+                    ? ("Submesh " + std::to_string(submeshIndex))
+                    : (submesh.name + "##submesh_" + std::to_string(submeshIndex));
             if (!ImGui::TreeNode(treeLabel.c_str()))
             {
                 continue;
@@ -129,8 +124,8 @@ void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
             const MaterialTextureBlendGraph& blendGraph = material.blendGraph;
             const bool hasProgrammableGraph = HasSecondaryMaterialLayer(blendGraph);
             const std::string materialName = material.name.empty()
-                ? ("Material " + std::to_string(materialIndex))
-                : material.name;
+                                                 ? ("Material " + std::to_string(materialIndex))
+                                                 : material.name;
             const std::string treeLabel =
                 (hasProgrammableGraph ? "[PBR Graph] " : "") + materialName + "##material_" + std::to_string(materialIndex);
             if (!ImGui::TreeNode(treeLabel.c_str()))
@@ -172,8 +167,7 @@ bool DrawTransformComponent(TransformComponent& transform)
         0.05f,
         -WorldUnits::kUiTransformTranslationRangeMeters,
         WorldUnits::kUiTransformTranslationRangeMeters,
-        "%.3f"
-    );
+        "%.3f");
     changed |= ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
     changed |= ImGui::DragFloat3(
         "Scale (1 = source meters)",
@@ -181,8 +175,7 @@ bool DrawTransformComponent(TransformComponent& transform)
         0.02f,
         WorldUnits::kMinimumScale,
         WorldUnits::kUiTransformScaleMax,
-        "%.3f"
-    );
+        "%.3f");
     const glm::vec3 clampedScale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
     changed |= glm::any(glm::notEqual(clampedScale, transform.scale));
     transform.scale = clampedScale;
@@ -213,8 +206,7 @@ void DrawGizmoControls(GizmoSettings& gizmo)
         0.05f,
         WorldUnits::kUiCameraNearMinMeters,
         WorldUnits::kUiTranslationSnapMaxMeters,
-        "%.2f"
-    );
+        "%.2f");
     ImGui::DragFloat("Rotate Snap", &gizmo.rotationSnap, 0.5f, 1.0f, 90.0f, "%.1f deg");
     ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, WorldUnits::kUiScaleSnapMax, "%.2f");
 }
@@ -227,8 +219,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     {
         constexpr LightType kTypes[] = {
             LightType::Directional, LightType::Point, LightType::Spot,
-            LightType::Area, LightType::Ambient
-        };
+            LightType::Area, LightType::Ambient};
         for (LightType t : kTypes)
         {
             const bool selected = t == light.type;
@@ -236,7 +227,8 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
             {
                 light.type = t;
             }
-            if (selected) ImGui::SetItemDefaultFocus();
+            if (selected)
+                ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
@@ -245,9 +237,11 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     ImGui::ColorEdit3("Color", &light.color.x, ImGuiColorEditFlags_Float);
 
     // Intensity with unit label
-    const char* intensityUnit = "lm";  // lumens for most lights
-    if (light.type == LightType::Directional) intensityUnit = "lx";
-    if (light.type == LightType::Ambient)     intensityUnit = "x";
+    const char* intensityUnit = "lm"; // lumens for most lights
+    if (light.type == LightType::Directional)
+        intensityUnit = "lx";
+    if (light.type == LightType::Ambient)
+        intensityUnit = "x";
 
     const std::string intensityLabel = std::string("Intensity (") + intensityUnit + ")";
     ImGui::DragFloat(intensityLabel.c_str(), &light.intensity, 10.0f, 0.0f, 1000000.0f, "%.1f");
@@ -267,7 +261,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
         ImGui::SliderFloat("Outer Angle", &light.spotOuterAngleDegrees, 1.0f, 89.0f, "%.1f deg");
         light.spotInnerAngleDegrees = std::clamp(light.spotInnerAngleDegrees, 1.0f, 89.0f);
         light.spotOuterAngleDegrees = std::clamp(light.spotOuterAngleDegrees,
-                                                  light.spotInnerAngleDegrees, 89.0f);
+                                                 light.spotInnerAngleDegrees, 89.0f);
     }
 
     // Area size
@@ -290,8 +284,8 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
         const size_t modelCount = scene.Registry().view<const ModelComponent>().size();
         const size_t lightCount = scene.Registry().view<const LightComponent>().size();
         ImGui::Text("Models: %u  Lights: %u",
-            static_cast<unsigned int>(modelCount),
-            static_cast<unsigned int>(lightCount));
+                    static_cast<unsigned int>(modelCount),
+                    static_cast<unsigned int>(lightCount));
 
         if (ImGui::Button("Add Entity"))
         {
@@ -312,15 +306,14 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                 {
                     result.actions.createLightEntity = EditorUiActions::LightCreate{
                         std::string(name) + " Light",
-                        type
-                    };
+                        type};
                 }
             };
-            addLight(LightType::Point,       "Point");
+            addLight(LightType::Point, "Point");
             addLight(LightType::Directional, "Directional");
-            addLight(LightType::Spot,        "Spot");
-            addLight(LightType::Area,        "Area");
-            addLight(LightType::Ambient,     "Ambient");
+            addLight(LightType::Spot, "Spot");
+            addLight(LightType::Area, "Area");
+            addLight(LightType::Ambient, "Ambient");
             ImGui::EndPopup();
         }
 
@@ -347,7 +340,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             }
             const TagComponent& tag = scene.GetTag(entity);
             const std::string label = tag.name + "##model_" +
-                std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
+                                      std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
             if (ImGui::Selectable(label.c_str(), scene.IsSelected(entity)))
             {
                 scene.SetSelectedEntity(entity);
@@ -357,7 +350,8 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
         // --- Light entity list ---
         if (lightCount != 0u)
         {
-            if (modelCount != 0u) ImGui::Spacing();
+            if (modelCount != 0u)
+                ImGui::Spacing();
             ImGui::TextDisabled("Lights");
         }
         for (entt::entity entity : scene.GetSceneOrder())
@@ -371,8 +365,8 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
             const ImVec4 typeColor = ImGui::ColorConvertU32ToFloat4(GetLightTypeColor(light.type));
             ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
             const std::string label = std::string("[") + GetLightTypeLabel(light.type)[0] + "] " +
-                tag.name + "##light_" +
-                std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
+                                      tag.name + "##light_" +
+                                      std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
             ImGui::PopStyleColor();
             if (ImGui::Selectable(label.c_str(), scene.IsSelected(entity)))
             {
@@ -438,7 +432,7 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                 const ModelComponent& model = scene.GetSelectedModel();
                 const ModelBoundsComponent& bounds = scene.GetSelectedModelBounds();
                 const EditorModelMetadataComponent& metadata = scene.GetSelectedModelMetadata();
-                GizmoSettings& gizmo  = scene.GetGizmoSettings();
+                GizmoSettings& gizmo = scene.GetGizmoSettings();
 
                 if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
                 {
@@ -466,7 +460,6 @@ void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& 
                     DrawGizmoControls(gizmo);
                 }
             }
-
         }
         else
         {

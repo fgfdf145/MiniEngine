@@ -8,12 +8,12 @@ namespace Uuid
 {
 std::string GenerateV4()
 {
-    thread_local std::mt19937_64 rng = [] {
+    thread_local std::mt19937_64 rng = []
+    {
         std::random_device device;
         std::seed_seq seed{
             device(), device(), device(), device(),
-            static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count())
-        };
+            static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count())};
         return std::mt19937_64(seed);
     }();
 
@@ -31,8 +31,7 @@ std::string GenerateV4()
         static_cast<unsigned long long>((hi >> 16) & 0xFFFFull),
         static_cast<unsigned long long>(hi & 0xFFFFull),
         static_cast<unsigned long long>(lo >> 48),
-        static_cast<unsigned long long>(lo & 0xFFFFFFFFFFFFull)
-    );
+        static_cast<unsigned long long>(lo & 0xFFFFFFFFFFFFull));
     return std::string(buffer);
 }
 }

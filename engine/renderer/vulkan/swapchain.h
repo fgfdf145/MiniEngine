@@ -4,14 +4,13 @@
 
 class VulkanSwapchain
 {
-public:
+  public:
     VulkanSwapchain(
         SDL_Window* window,
         VkDevice device,
         VkSurfaceKHR surface,
         const QueueFamilyIndices& queueFamilies,
-        const SwapchainSupportDetails& supportDetails
-    );
+        const SwapchainSupportDetails& supportDetails);
     ~VulkanSwapchain();
 
     VulkanSwapchain(const VulkanSwapchain&) = delete;
@@ -22,7 +21,7 @@ public:
     VkExtent2D GetExtent() const;
     const std::vector<VkImageView>& GetImageViews() const;
 
-private:
+  private:
     VkSurfaceFormatKHR ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const;
     VkPresentModeKHR ChoosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) const;
     VkExtent2D ChooseExtent(SDL_Window* window, const VkSurfaceCapabilitiesKHR& capabilities) const;

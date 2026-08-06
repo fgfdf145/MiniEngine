@@ -18,7 +18,10 @@ bool IsPortableMapExtension(const std::string& path)
 {
     std::string ext = std::filesystem::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-        [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   {
+                       return static_cast<char>(std::tolower(c));
+                   });
     return ext == ".ppm" || ext == ".pgm" || ext == ".pbm";
 }
 
@@ -101,8 +104,7 @@ TextureData TextureLoader::LoadRGBA8(const std::string& path, bool flipVerticall
             const char* reason = stbi_failure_reason();
             throw std::runtime_error(
                 "Failed to load texture '" + path + "': " +
-                (reason ? reason : "unknown error")
-            );
+                (reason ? reason : "unknown error"));
         }
 
         TextureData texture = LoadPortablePixmap(path);

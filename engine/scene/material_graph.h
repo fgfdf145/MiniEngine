@@ -21,8 +21,8 @@ float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cu
 
 struct MaterialPbrSurfaceSettings
 {
-    float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    float emissiveColor[3] = { 0.0f, 0.0f, 0.0f };
+    float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
     float roughnessFactor = 1.0f;
     float normalScale = 1.0f;
@@ -41,10 +41,10 @@ struct MaterialGraphNodePosition
 
 struct MaterialShaderNodeLayout
 {
-    MaterialGraphNodePosition primarySurfaceNode{ 72.0f, 80.0f };
-    MaterialGraphNodePosition blendNode{ 420.0f, 260.0f };
-    MaterialGraphNodePosition secondarySurfaceNode{ 760.0f, 80.0f };
-    MaterialGraphNodePosition outputNode{ 1120.0f, 240.0f };
+    MaterialGraphNodePosition primarySurfaceNode{72.0f, 80.0f};
+    MaterialGraphNodePosition blendNode{420.0f, 260.0f};
+    MaterialGraphNodePosition secondarySurfaceNode{760.0f, 80.0f};
+    MaterialGraphNodePosition outputNode{1120.0f, 240.0f};
 };
 
 enum class MaterialShaderNodeType : uint32_t
@@ -67,7 +67,7 @@ struct MaterialShaderNode
     float height = 0.0f;
     std::string texturePath;
     float scalarValue = 1.0f;
-    float colorValue[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float colorValue[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     MaterialPbrSurfaceSettings pbr;
 };
 

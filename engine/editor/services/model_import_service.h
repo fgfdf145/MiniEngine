@@ -33,11 +33,9 @@ void UpdateImportedMaterialDefinition(
     RendererSharedState& state,
     const std::string& modelPath,
     uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material
-);
+    const ModelImportedMaterialInfo& material);
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
-    const std::vector<ModelImportedMaterialInfo>& materials
-);
+    const std::vector<ModelImportedMaterialInfo>& materials);
 }

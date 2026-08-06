@@ -1,0 +1,4 @@
+switch ($items | ForEach-Object { $_ })
+{
+    1 { return "numeric" }
+}

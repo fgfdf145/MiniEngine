@@ -50,8 +50,7 @@ VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue
-)
+    VkQueue graphicsQueue)
     : m_physicalDevice(physicalDevice),
       m_device(device)
 {
@@ -70,8 +69,7 @@ VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     const MeshData& meshData,
-    VulkanUploadBatch& uploadBatch
-)
+    VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_vertices(meshData.vertices),
@@ -126,8 +124,7 @@ void VulkanBuffer::CreateBuffer(
     VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties,
     VkBuffer& buffer,
-    VkDeviceMemory& memory
-)
+    VkDeviceMemory& memory)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -178,8 +175,7 @@ void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
-        stagingMemory
-    );
+        stagingMemory);
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map staging buffer memory");
@@ -191,8 +187,7 @@ void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_vertexBuffer,
-        m_vertexMemory
-    );
+        m_vertexMemory);
 
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
@@ -212,8 +207,7 @@ void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
-        stagingMemory
-    );
+        stagingMemory);
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map index staging buffer memory");
@@ -225,8 +219,7 @@ void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_indexBuffer,
-        m_indexMemory
-    );
+        m_indexMemory);
 
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;

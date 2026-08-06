@@ -13,7 +13,7 @@ struct RenderBackendDescriptor
 
 class IRenderBackend
 {
-public:
+  public:
     virtual ~IRenderBackend() = default;
 
     virtual RenderBackendType GetBackendType() const = 0;

@@ -5,14 +5,13 @@
 
 class VulkanPipeline
 {
-public:
+  public:
     VulkanPipeline(
         VkDevice device,
         VkExtent2D extent,
         VkRenderPass renderPass,
         VkDescriptorSetLayout descriptorSetLayout,
-        MaterialPipelineKey key
-    );
+        MaterialPipelineKey key);
     ~VulkanPipeline();
 
     VulkanPipeline(const VulkanPipeline&) = delete;
@@ -21,7 +20,7 @@ public:
     VkPipeline GetHandle() const;
     VkPipelineLayout GetLayout() const;
 
-private:
+  private:
     std::vector<char> ReadFile(const std::string& path) const;
     VkShaderModule CreateShaderModule(const std::vector<char>& code) const;
 

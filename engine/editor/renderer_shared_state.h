@@ -35,7 +35,7 @@ struct AsyncModelLoad
     std::string path;
 
     // Context needed to finalize placement / roll back on failure.
-    bool isReplacement = false;          // true = LoadSelectedModel, false = PlaceModelIntoScene
+    bool isReplacement = false; // true = LoadSelectedModel, false = PlaceModelIntoScene
     glm::vec3 worldPosition{0.0f};
     entt::entity trackedEntity = entt::null;
     entt::entity previousSelection = entt::null;
@@ -50,13 +50,19 @@ struct AsyncModelLoad
     // Overall load fraction in [0, 1], written by the loading thread.
     std::shared_ptr<std::atomic<float>> progress;
 
-    bool IsActive() const { return future.valid(); }
+    bool IsActive() const
+    {
+        return future.valid();
+    }
     bool IsLoading() const
     {
         return future.valid() &&
                future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
     }
-    float Progress() const { return progress ? progress->load() : 0.0f; }
+    float Progress() const
+    {
+        return progress ? progress->load() : 0.0f;
+    }
 };
 
 // State for a single in-flight async scene load.
@@ -70,13 +76,19 @@ struct AsyncSceneLoad
     // Overall load fraction in [0, 1], written by the loading thread.
     std::shared_ptr<std::atomic<float>> progress;
 
-    bool IsActive() const { return future.valid(); }
+    bool IsActive() const
+    {
+        return future.valid();
+    }
     bool IsLoading() const
     {
         return future.valid() &&
                future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
     }
-    float Progress() const { return progress ? progress->load() : 0.0f; }
+    float Progress() const
+    {
+        return progress ? progress->load() : 0.0f;
+    }
 };
 
 // State for a single in-flight asset import: the file copies run on a
@@ -89,7 +101,10 @@ struct AsyncAssetImport
     // Resolves to the imported model path; throws on failure.
     std::future<std::string> future;
 
-    bool IsActive() const { return future.valid(); }
+    bool IsActive() const
+    {
+        return future.valid();
+    }
     bool IsLoading() const
     {
         return future.valid() &&

@@ -61,73 +61,59 @@ bool DrawThemeColorSection(const char* title, const ThemeColorEntry* entries, si
     return changed;
 }
 
-constexpr std::array<ThemeColorEntry, 8> kThemeSurfaceEntries = { {
-    { "Window Background", ImGuiCol_WindowBg },
-    { "Child Background", ImGuiCol_ChildBg },
-    { "Popup Background", ImGuiCol_PopupBg },
-    { "Frame Background", ImGuiCol_FrameBg },
-    { "Frame Hovered", ImGuiCol_FrameBgHovered },
-    { "Frame Active", ImGuiCol_FrameBgActive },
-    { "Menu Bar", ImGuiCol_MenuBarBg },
-    { "Scrollbar Background", ImGuiCol_ScrollbarBg }
-} };
+constexpr std::array<ThemeColorEntry, 8> kThemeSurfaceEntries = {{{"Window Background", ImGuiCol_WindowBg},
+                                                                  {"Child Background", ImGuiCol_ChildBg},
+                                                                  {"Popup Background", ImGuiCol_PopupBg},
+                                                                  {"Frame Background", ImGuiCol_FrameBg},
+                                                                  {"Frame Hovered", ImGuiCol_FrameBgHovered},
+                                                                  {"Frame Active", ImGuiCol_FrameBgActive},
+                                                                  {"Menu Bar", ImGuiCol_MenuBarBg},
+                                                                  {"Scrollbar Background", ImGuiCol_ScrollbarBg}}};
 
-constexpr std::array<ThemeColorEntry, 10> kThemeControlEntries = { {
-    { "Button", ImGuiCol_Button },
-    { "Button Hovered", ImGuiCol_ButtonHovered },
-    { "Button Active", ImGuiCol_ButtonActive },
-    { "Header", ImGuiCol_Header },
-    { "Header Hovered", ImGuiCol_HeaderHovered },
-    { "Header Active", ImGuiCol_HeaderActive },
-    { "Check Mark", ImGuiCol_CheckMark },
-    { "Slider Grab", ImGuiCol_SliderGrab },
-    { "Slider Grab Active", ImGuiCol_SliderGrabActive },
-    { "Separator", ImGuiCol_Separator }
-} };
+constexpr std::array<ThemeColorEntry, 10> kThemeControlEntries = {{{"Button", ImGuiCol_Button},
+                                                                   {"Button Hovered", ImGuiCol_ButtonHovered},
+                                                                   {"Button Active", ImGuiCol_ButtonActive},
+                                                                   {"Header", ImGuiCol_Header},
+                                                                   {"Header Hovered", ImGuiCol_HeaderHovered},
+                                                                   {"Header Active", ImGuiCol_HeaderActive},
+                                                                   {"Check Mark", ImGuiCol_CheckMark},
+                                                                   {"Slider Grab", ImGuiCol_SliderGrab},
+                                                                   {"Slider Grab Active", ImGuiCol_SliderGrabActive},
+                                                                   {"Separator", ImGuiCol_Separator}}};
 
-constexpr std::array<ThemeColorEntry, 7> kThemeChromeEntries = { {
-    { "Title Background", ImGuiCol_TitleBg },
-    { "Title Active", ImGuiCol_TitleBgActive },
-    { "Title Collapsed", ImGuiCol_TitleBgCollapsed },
-    { "Border", ImGuiCol_Border },
-    { "Resize Grip", ImGuiCol_ResizeGrip },
-    { "Resize Grip Hovered", ImGuiCol_ResizeGripHovered },
-    { "Resize Grip Active", ImGuiCol_ResizeGripActive }
-} };
+constexpr std::array<ThemeColorEntry, 7> kThemeChromeEntries = {{{"Title Background", ImGuiCol_TitleBg},
+                                                                 {"Title Active", ImGuiCol_TitleBgActive},
+                                                                 {"Title Collapsed", ImGuiCol_TitleBgCollapsed},
+                                                                 {"Border", ImGuiCol_Border},
+                                                                 {"Resize Grip", ImGuiCol_ResizeGrip},
+                                                                 {"Resize Grip Hovered", ImGuiCol_ResizeGripHovered},
+                                                                 {"Resize Grip Active", ImGuiCol_ResizeGripActive}}};
 
-constexpr std::array<ThemeColorEntry, 7> kThemeTabDockEntries = { {
-    { "Tab", ImGuiCol_Tab },
-    { "Tab Hovered", ImGuiCol_TabHovered },
-    { "Tab Active", ImGuiCol_TabActive },
-    { "Tab Unfocused", ImGuiCol_TabUnfocused },
-    { "Tab Unfocused Active", ImGuiCol_TabUnfocusedActive },
-    { "Docking Preview", ImGuiCol_DockingPreview },
-    { "Docking Empty Background", ImGuiCol_DockingEmptyBg }
-} };
+constexpr std::array<ThemeColorEntry, 7> kThemeTabDockEntries = {{{"Tab", ImGuiCol_Tab},
+                                                                  {"Tab Hovered", ImGuiCol_TabHovered},
+                                                                  {"Tab Active", ImGuiCol_TabActive},
+                                                                  {"Tab Unfocused", ImGuiCol_TabUnfocused},
+                                                                  {"Tab Unfocused Active", ImGuiCol_TabUnfocusedActive},
+                                                                  {"Docking Preview", ImGuiCol_DockingPreview},
+                                                                  {"Docking Empty Background", ImGuiCol_DockingEmptyBg}}};
 
-constexpr std::array<ThemeColorEntry, 9> kThemeStateEntries = { {
-    { "Text", ImGuiCol_Text },
-    { "Text Disabled", ImGuiCol_TextDisabled },
-    { "Scrollbar Grab", ImGuiCol_ScrollbarGrab },
-    { "Scrollbar Grab Hovered", ImGuiCol_ScrollbarGrabHovered },
-    { "Scrollbar Grab Active", ImGuiCol_ScrollbarGrabActive },
-    { "Table Header", ImGuiCol_TableHeaderBg },
-    { "Table Border Strong", ImGuiCol_TableBorderStrong },
-    { "Table Border Light", ImGuiCol_TableBorderLight },
-    { "Table Row Alt", ImGuiCol_TableRowBgAlt }
-} };
+constexpr std::array<ThemeColorEntry, 9> kThemeStateEntries = {{{"Text", ImGuiCol_Text},
+                                                                {"Text Disabled", ImGuiCol_TextDisabled},
+                                                                {"Scrollbar Grab", ImGuiCol_ScrollbarGrab},
+                                                                {"Scrollbar Grab Hovered", ImGuiCol_ScrollbarGrabHovered},
+                                                                {"Scrollbar Grab Active", ImGuiCol_ScrollbarGrabActive},
+                                                                {"Table Header", ImGuiCol_TableHeaderBg},
+                                                                {"Table Border Strong", ImGuiCol_TableBorderStrong},
+                                                                {"Table Border Light", ImGuiCol_TableBorderLight},
+                                                                {"Table Row Alt", ImGuiCol_TableRowBgAlt}}};
 
-constexpr std::array<ThemeColorEntry, 5> kThemeFeedbackEntries = { {
-    { "Text Selection", ImGuiCol_TextSelectedBg },
-    { "Drag Drop Target", ImGuiCol_DragDropTarget },
-    { "Navigation Cursor", ImGuiCol_NavCursor },
-    { "Navigation Highlight", ImGuiCol_NavWindowingHighlight },
-    { "Separator Hovered", ImGuiCol_SeparatorHovered }
-} };
+constexpr std::array<ThemeColorEntry, 5> kThemeFeedbackEntries = {{{"Text Selection", ImGuiCol_TextSelectedBg},
+                                                                   {"Drag Drop Target", ImGuiCol_DragDropTarget},
+                                                                   {"Navigation Cursor", ImGuiCol_NavCursor},
+                                                                   {"Navigation Highlight", ImGuiCol_NavWindowingHighlight},
+                                                                   {"Separator Hovered", ImGuiCol_SeparatorHovered}}};
 
-constexpr std::array<ThemeColorEntry, 1> kThemeFeedbackActiveEntries = { {
-    { "Separator Active", ImGuiCol_SeparatorActive }
-} };
+constexpr std::array<ThemeColorEntry, 1> kThemeFeedbackActiveEntries = {{{"Separator Active", ImGuiCol_SeparatorActive}}};
 }
 
 void EditorUiController::CaptureDefaultThemeColors()

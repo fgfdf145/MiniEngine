@@ -38,25 +38,24 @@ std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
 {
     std::vector<GpuLightData> gpuLights;
     world.ForEachLight([&](
-        entt::entity,
-        const TagComponent&,
-        const TransformComponent& transform,
-        const LightComponent& light
-    )
-    {
-        GpuLightData gpu{};
-        gpu.positionAndRange = glm::vec4(transform.translation, light.range);
-        gpu.colorAndIntensity = glm::vec4(light.color, light.intensity);
+                           entt::entity,
+                           const TagComponent&,
+                           const TransformComponent& transform,
+                           const LightComponent& light)
+                       {
+                           GpuLightData gpu{};
+                           gpu.positionAndRange = glm::vec4(transform.translation, light.range);
+                           gpu.colorAndIntensity = glm::vec4(light.color, light.intensity);
 
-        const glm::vec3 direction = BuildLightDirection(transform);
-        gpu.directionAndType = glm::vec4(direction, static_cast<float>(light.type));
+                           const glm::vec3 direction = BuildLightDirection(transform);
+                           gpu.directionAndType = glm::vec4(direction, static_cast<float>(light.type));
 
-        const float innerCos = std::cos(glm::radians(light.spotInnerAngleDegrees));
-        const float outerCos = std::cos(glm::radians(light.spotOuterAngleDegrees));
-        gpu.spotAndArea = glm::vec4(innerCos, outerCos, light.areaSize.x, light.areaSize.y);
+                           const float innerCos = std::cos(glm::radians(light.spotInnerAngleDegrees));
+                           const float outerCos = std::cos(glm::radians(light.spotOuterAngleDegrees));
+                           gpu.spotAndArea = glm::vec4(innerCos, outerCos, light.areaSize.x, light.areaSize.y);
 
-        gpuLights.push_back(gpu);
-    });
+                           gpuLights.push_back(gpu);
+                       });
     return gpuLights;
 }
 
@@ -66,7 +65,7 @@ TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_
     texture.width = 1;
     texture.height = 1;
     texture.channelCount = 4;
-    texture.pixels = { red, green, blue, alpha };
+    texture.pixels = {red, green, blue, alpha};
     return texture;
 }
 
@@ -82,8 +81,7 @@ std::string BuildTextureCacheKey(const std::string& path, VulkanTextureFormat te
 
 std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
     const std::vector<std::unique_ptr<VulkanTexture>>& textures,
-    const std::vector<MaterialTextureSlots>& materialTextureSlots
-)
+    const std::vector<MaterialTextureSlots>& materialTextureSlots)
 {
     std::vector<MaterialTextureBinding> bindings;
     bindings.reserve(materialTextureSlots.size());
@@ -91,20 +89,19 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
     for (const MaterialTextureSlots& slots : materialTextureSlots)
     {
         bindings.push_back(MaterialTextureBinding{
-            { textures[slots.baseColor]->GetImageView(), textures[slots.baseColor]->GetSampler() },
-            { textures[slots.normal]->GetImageView(), textures[slots.normal]->GetSampler() },
-            { textures[slots.metallic]->GetImageView(), textures[slots.metallic]->GetSampler() },
-            { textures[slots.roughness]->GetImageView(), textures[slots.roughness]->GetSampler() },
-            { textures[slots.occlusion]->GetImageView(), textures[slots.occlusion]->GetSampler() },
-            { textures[slots.emissive]->GetImageView(), textures[slots.emissive]->GetSampler() },
-            { textures[slots.secondaryBaseColor]->GetImageView(), textures[slots.secondaryBaseColor]->GetSampler() },
-            { textures[slots.secondaryNormal]->GetImageView(), textures[slots.secondaryNormal]->GetSampler() },
-            { textures[slots.secondaryMetallic]->GetImageView(), textures[slots.secondaryMetallic]->GetSampler() },
-            { textures[slots.secondaryRoughness]->GetImageView(), textures[slots.secondaryRoughness]->GetSampler() },
-            { textures[slots.secondaryOcclusion]->GetImageView(), textures[slots.secondaryOcclusion]->GetSampler() },
-            { textures[slots.secondaryEmissive]->GetImageView(), textures[slots.secondaryEmissive]->GetSampler() },
-            { textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler() }
-        });
+            {textures[slots.baseColor]->GetImageView(), textures[slots.baseColor]->GetSampler()},
+            {textures[slots.normal]->GetImageView(), textures[slots.normal]->GetSampler()},
+            {textures[slots.metallic]->GetImageView(), textures[slots.metallic]->GetSampler()},
+            {textures[slots.roughness]->GetImageView(), textures[slots.roughness]->GetSampler()},
+            {textures[slots.occlusion]->GetImageView(), textures[slots.occlusion]->GetSampler()},
+            {textures[slots.emissive]->GetImageView(), textures[slots.emissive]->GetSampler()},
+            {textures[slots.secondaryBaseColor]->GetImageView(), textures[slots.secondaryBaseColor]->GetSampler()},
+            {textures[slots.secondaryNormal]->GetImageView(), textures[slots.secondaryNormal]->GetSampler()},
+            {textures[slots.secondaryMetallic]->GetImageView(), textures[slots.secondaryMetallic]->GetSampler()},
+            {textures[slots.secondaryRoughness]->GetImageView(), textures[slots.secondaryRoughness]->GetSampler()},
+            {textures[slots.secondaryOcclusion]->GetImageView(), textures[slots.secondaryOcclusion]->GetSampler()},
+            {textures[slots.secondaryEmissive]->GetImageView(), textures[slots.secondaryEmissive]->GetSampler()},
+            {textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler()}});
     }
 
     return bindings;
@@ -114,16 +111,14 @@ VkExtent2D ToVkExtent(RenderExtent extent)
 {
     return VkExtent2D{
         std::max(extent.width, 1u),
-        std::max(extent.height, 1u)
-    };
+        std::max(extent.height, 1u)};
 }
 
 RenderExtent FromVkExtent(VkExtent2D extent)
 {
     return RenderExtent{
         extent.width,
-        extent.height
-    };
+        extent.height};
 }
 
 void LogVulkanRuntimeInfo()
@@ -134,16 +129,14 @@ void LogVulkanRuntimeInfo()
         "Vulkan runtime API version: {}.{}.{}",
         VK_API_VERSION_MAJOR(apiVersion),
         VK_API_VERSION_MINOR(apiVersion),
-        VK_API_VERSION_PATCH(apiVersion)
-    );
+        VK_API_VERSION_PATCH(apiVersion));
 }
 }
 
 VulkanRenderer::VulkanRenderer(
     Window& window,
     std::shared_ptr<RendererSharedState> sharedState,
-    std::optional<std::string> startupModelPath
-)
+    std::optional<std::string> startupModelPath)
     : EditorRenderBackendBase(window, std::move(sharedState), RenderBackendType::Vulkan, std::move(startupModelPath))
 {
     LogVulkanRuntimeInfo();
@@ -156,8 +149,7 @@ VulkanRenderer::VulkanRenderer(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue()
-    );
+        m_device->GetGraphicsQueue());
     CreateSwapchainResources();
     UploadSceneResources();
 }
@@ -213,8 +205,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
     const EditorUiFrameResult uiFrame = DrawEditorUi(
         m_sceneViewportLayer->GetTextureId(imageIndex),
-        FromVkExtent(m_sceneViewportLayer->GetExtent())
-    );
+        FromVkExtent(m_sceneViewportLayer->GetExtent()));
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
     if (State().renderablesDirty)
@@ -229,10 +220,10 @@ void VulkanRenderer::DrawFrame()
     m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position, gpuLights);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
-    {
-        RecordSceneLayer(commandBuffer, imageIndex, drawItems);
-        RecordEditorLayer(commandBuffer, imageIndex);
-    });
+                                          {
+                                              RecordSceneLayer(commandBuffer, imageIndex, drawItems);
+                                              RecordEditorLayer(commandBuffer, imageIndex);
+                                          });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
@@ -266,20 +257,17 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetHandle(),
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
-        supportDetails
-    );
+        supportDetails);
     m_renderPass = std::make_unique<VulkanRenderPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
         m_swapchain->GetExtent(),
-        m_swapchain->GetImageViews()
-    );
+        m_swapchain->GetImageViews());
     m_commandContext = std::make_unique<VulkanCommandContext>(
         m_device->GetHandle(),
         m_device->GetQueueFamilies(),
-        m_renderPass->GetFramebuffers().size()
-    );
+        m_renderPass->GetFramebuffers().size());
     m_imguiLayer->CreateOrUpdateVulkanResources(m_renderPass->GetHandle(), static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     if (!State().requestedViewportExtent.IsValid())
     {
@@ -290,8 +278,7 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
         ToVkExtent(State().requestedViewportExtent),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
-    );
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
 }
 
 void VulkanRenderer::DestroySwapchainResources()
@@ -321,14 +308,12 @@ void VulkanRenderer::CreatePipelineResources()
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        BuildMaterialTextureBindings(m_textures, m_materialTextureSlots)
-    );
+        BuildMaterialTextureBindings(m_textures, m_materialTextureSlots));
     m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_sceneViewportLayer->GetExtent(),
         m_sceneViewportLayer->GetRenderPass(),
-        m_uniformBuffer->GetDescriptorSetLayout()
-    );
+        m_uniformBuffer->GetDescriptorSetLayout());
 }
 
 void VulkanRenderer::DestroyPipelineResources()
@@ -381,8 +366,7 @@ void VulkanRenderer::SyncSceneViewportLayer()
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
         ToVkExtent(State().requestedViewportExtent),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size())
-    );
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     CreatePipelineResources();
 }
 
@@ -411,10 +395,10 @@ void VulkanRenderer::UploadSceneResources()
     m_textureCacheKeys.clear();
 
     std::vector<std::unique_ptr<VulkanTexture>> newTextures;
-    std::vector<std::string>                    newCacheKeys;
-    std::vector<MaterialTextureSlots>           newMaterialTextureSlots;
-    std::vector<RenderSubmesh>                  newRenderSubmeshes;
-    std::unordered_map<std::string, uint32_t>   keyToIndex;
+    std::vector<std::string> newCacheKeys;
+    std::vector<MaterialTextureSlots> newMaterialTextureSlots;
+    std::vector<RenderSubmesh> newRenderSubmeshes;
+    std::unordered_map<std::string, uint32_t> keyToIndex;
 
     // Batch every texture and submesh-buffer upload below into a handful of submit+wait
     // rounds instead of one per resource: VulkanTexture/VulkanBuffer used to each own their
@@ -426,8 +410,7 @@ void VulkanRenderer::UploadSceneResources()
     VulkanUploadBatch uploadBatch(
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue()
-    );
+        m_device->GetGraphicsQueue());
     size_t resourcesSinceFlush = 0;
     auto flushUploadBatchIfNeeded = [&]()
     {
@@ -456,8 +439,7 @@ void VulkanRenderer::UploadSceneResources()
         {
             newTextures.push_back(std::make_unique<VulkanTexture>(
                 m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                data, uploadBatch, fmt
-            ));
+                data, uploadBatch, fmt));
             flushUploadBatchIfNeeded();
         }
         newCacheKeys.push_back(key);
@@ -467,7 +449,8 @@ void VulkanRenderer::UploadSceneResources()
 
     auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex) -> uint32_t
     {
-        if (texturePath.empty()) return fallbackIndex;
+        if (texturePath.empty())
+            return fallbackIndex;
 
         const std::string key = BuildTextureCacheKey(texturePath, textureFormat);
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
@@ -490,8 +473,7 @@ void VulkanRenderer::UploadSceneResources()
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
             newTextures.push_back(std::make_unique<VulkanTexture>(
                 m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                texturePath, uploadBatch, textureFormat
-            ));
+                texturePath, uploadBatch, textureFormat));
             flushUploadBatchIfNeeded();
             newCacheKeys.push_back(key);
             keyToIndex.emplace(key, idx);
@@ -504,21 +486,20 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
-    const uint32_t defaultBaseColorIndex  = acquireDefault("__default_base_color__",  CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
-    const uint32_t defaultNormalIndex     = acquireDefault("__default_normal__",       CreateFlatNormalTexture(),               VulkanTextureFormat::LinearData);
-    const uint32_t defaultMetallicIndex   = acquireDefault("__default_metallic__",     CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultRoughnessIndex  = acquireDefault("__default_roughness__",    CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultOcclusionIndex  = acquireDefault("__default_occlusion__",    CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultEmissiveIndex   = acquireDefault("__default_emissive__",     CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
-    const uint32_t defaultBlendMaskIndex  = acquireDefault("__default_blend_mask__",   CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultBaseColorIndex = acquireDefault("__default_base_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+    const uint32_t defaultNormalIndex = acquireDefault("__default_normal__", CreateFlatNormalTexture(), VulkanTextureFormat::LinearData);
+    const uint32_t defaultMetallicIndex = acquireDefault("__default_metallic__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultRoughnessIndex = acquireDefault("__default_roughness__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultOcclusionIndex = acquireDefault("__default_occlusion__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultEmissiveIndex = acquireDefault("__default_emissive__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+    const uint32_t defaultBlendMaskIndex = acquireDefault("__default_blend_mask__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
 
     const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
     newMaterialTextureSlots.push_back(MaterialTextureSlots{
-        defaultBaseColorIndex, defaultNormalIndex,   defaultMetallicIndex,  defaultRoughnessIndex,
+        defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
         defaultOcclusionIndex, defaultEmissiveIndex,
-        defaultBaseColorIndex, defaultNormalIndex,   defaultMetallicIndex,  defaultRoughnessIndex,
-        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex
-    });
+        defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
+        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex});
 
     // Prefetch: decode every not-yet-cached material texture file in parallel before the main
     // loop below loads them one at a time on this thread. Some source assets (e.g. Sponza) ship
@@ -551,7 +532,7 @@ void VulkanRenderer::UploadSceneResources()
             {
                 return;
             }
-            pendingLoads.push_back(PendingTextureLoad{ key, path, format, {}, false, {} });
+            pendingLoads.push_back(PendingTextureLoad{key, path, format, {}, false, {}});
         };
 
         for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
@@ -561,19 +542,19 @@ void VulkanRenderer::UploadSceneResources()
                 continue;
             }
             const MaterialTexturePaths& textures = cpuRenderSubmesh.textures;
-            considerPath(textures.baseColor,          VulkanTextureFormat::SrgbColor);
-            considerPath(textures.normal,             VulkanTextureFormat::LinearData);
-            considerPath(textures.metallic,           VulkanTextureFormat::LinearData);
-            considerPath(textures.roughness,          VulkanTextureFormat::LinearData);
-            considerPath(textures.occlusion,          VulkanTextureFormat::LinearData);
-            considerPath(textures.emissive,           VulkanTextureFormat::SrgbColor);
+            considerPath(textures.baseColor, VulkanTextureFormat::SrgbColor);
+            considerPath(textures.normal, VulkanTextureFormat::LinearData);
+            considerPath(textures.metallic, VulkanTextureFormat::LinearData);
+            considerPath(textures.roughness, VulkanTextureFormat::LinearData);
+            considerPath(textures.occlusion, VulkanTextureFormat::LinearData);
+            considerPath(textures.emissive, VulkanTextureFormat::SrgbColor);
             considerPath(textures.secondaryBaseColor, VulkanTextureFormat::SrgbColor);
-            considerPath(textures.secondaryNormal,    VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryMetallic,  VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryNormal, VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryMetallic, VulkanTextureFormat::LinearData);
             considerPath(textures.secondaryRoughness, VulkanTextureFormat::LinearData);
             considerPath(textures.secondaryOcclusion, VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryEmissive,  VulkanTextureFormat::SrgbColor);
-            considerPath(textures.blendMask,          VulkanTextureFormat::LinearData);
+            considerPath(textures.secondaryEmissive, VulkanTextureFormat::SrgbColor);
+            considerPath(textures.blendMask, VulkanTextureFormat::LinearData);
         }
 
         // Decode in bounded chunks rather than all at once, so we don't hold dozens of huge
@@ -592,17 +573,17 @@ void VulkanRenderer::UploadSceneResources()
             for (size_t i = chunkStart; i < chunkEnd; ++i)
             {
                 decodeTasks.push_back(std::async(std::launch::async, [&pending = pendingLoads[i]]()
-                {
-                    try
-                    {
-                        pending.decoded = TextureLoader::LoadRGBA8(pending.path);
-                    }
-                    catch (const std::exception& error)
-                    {
-                        pending.decodeFailed = true;
-                        pending.decodeError = error.what();
-                    }
-                }));
+                                                 {
+                                                     try
+                                                     {
+                                                         pending.decoded = TextureLoader::LoadRGBA8(pending.path);
+                                                     }
+                                                     catch (const std::exception& error)
+                                                     {
+                                                         pending.decodeFailed = true;
+                                                         pending.decodeError = error.what();
+                                                     }
+                                                 }));
             }
             for (std::future<void>& decodeTask : decodeTasks)
             {
@@ -623,8 +604,7 @@ void VulkanRenderer::UploadSceneResources()
                     const uint32_t idx = static_cast<uint32_t>(newTextures.size());
                     newTextures.push_back(std::make_unique<VulkanTexture>(
                         m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                        pending.decoded, uploadBatch, pending.format
-                    ));
+                        pending.decoded, uploadBatch, pending.format));
                     flushUploadBatchIfNeeded();
                     newCacheKeys.push_back(pending.cacheKey);
                     keyToIndex.emplace(pending.cacheKey, idx);
@@ -645,17 +625,16 @@ void VulkanRenderer::UploadSceneResources()
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
         RenderSubmesh renderSubmesh{};
-        renderSubmesh.entity   = cpuRenderSubmesh.entity;
-        renderSubmesh.buffer   = std::make_unique<VulkanBuffer>(
+        renderSubmesh.entity = cpuRenderSubmesh.entity;
+        renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            cpuRenderSubmesh.mesh, uploadBatch
-        );
+            cpuRenderSubmesh.mesh, uploadBatch);
         flushUploadBatchIfNeeded();
         renderSubmesh.material = cpuRenderSubmesh.material;
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
         renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
         renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
-        renderSubmesh.name     = cpuRenderSubmesh.name;
+        renderSubmesh.name = cpuRenderSubmesh.name;
 
         if (!cpuRenderSubmesh.hasTexCoords)
         {
@@ -665,19 +644,19 @@ void VulkanRenderer::UploadSceneResources()
         }
 
         MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
-        slots.baseColor        = loadTextureIndex(cpuRenderSubmesh.textures.baseColor,        VulkanTextureFormat::SrgbColor,  defaultBaseColorIndex);
-        slots.normal           = loadTextureIndex(cpuRenderSubmesh.textures.normal,           VulkanTextureFormat::LinearData, defaultNormalIndex);
-        slots.metallic         = loadTextureIndex(cpuRenderSubmesh.textures.metallic,         VulkanTextureFormat::LinearData, defaultMetallicIndex);
-        slots.roughness        = loadTextureIndex(cpuRenderSubmesh.textures.roughness,        VulkanTextureFormat::LinearData, defaultRoughnessIndex);
-        slots.occlusion        = loadTextureIndex(cpuRenderSubmesh.textures.occlusion,        VulkanTextureFormat::LinearData, defaultOcclusionIndex);
-        slots.emissive         = loadTextureIndex(cpuRenderSubmesh.textures.emissive,         VulkanTextureFormat::SrgbColor,  defaultEmissiveIndex);
-        slots.secondaryBaseColor  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor,  VulkanTextureFormat::SrgbColor,  slots.baseColor);
-        slots.secondaryNormal     = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal,     VulkanTextureFormat::LinearData, slots.normal);
-        slots.secondaryMetallic   = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic,   VulkanTextureFormat::LinearData, slots.metallic);
-        slots.secondaryRoughness  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness,  VulkanTextureFormat::LinearData, slots.roughness);
-        slots.secondaryOcclusion  = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion,  VulkanTextureFormat::LinearData, slots.occlusion);
-        slots.secondaryEmissive   = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive,   VulkanTextureFormat::SrgbColor,  slots.emissive);
-        slots.blendMask           = loadTextureIndex(cpuRenderSubmesh.textures.blendMask,           VulkanTextureFormat::LinearData, defaultBlendMaskIndex);
+        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, VulkanTextureFormat::SrgbColor, defaultBaseColorIndex);
+        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, VulkanTextureFormat::LinearData, defaultNormalIndex);
+        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, VulkanTextureFormat::LinearData, defaultMetallicIndex);
+        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, VulkanTextureFormat::LinearData, defaultRoughnessIndex);
+        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, VulkanTextureFormat::LinearData, defaultOcclusionIndex);
+        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex);
+        slots.secondaryBaseColor = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor, VulkanTextureFormat::SrgbColor, slots.baseColor);
+        slots.secondaryNormal = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal, VulkanTextureFormat::LinearData, slots.normal);
+        slots.secondaryMetallic = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic, VulkanTextureFormat::LinearData, slots.metallic);
+        slots.secondaryRoughness = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness, VulkanTextureFormat::LinearData, slots.roughness);
+        slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, VulkanTextureFormat::LinearData, slots.occlusion);
+        slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, VulkanTextureFormat::SrgbColor, slots.emissive);
+        slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, VulkanTextureFormat::LinearData, defaultBlendMaskIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
@@ -703,8 +682,7 @@ void VulkanRenderer::UploadSceneResources()
 void VulkanRenderer::ApplyRenderContent(
     std::vector<std::unique_ptr<VulkanTexture>> newTextures,
     std::vector<MaterialTextureSlots> newMaterialTextureSlots,
-    std::vector<RenderSubmesh> newRenderSubmeshes
-)
+    std::vector<RenderSubmesh> newRenderSubmeshes)
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
     std::unique_ptr<VulkanPipelineSet> newGraphicsPipelines;
@@ -715,14 +693,12 @@ void VulkanRenderer::ApplyRenderContent(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-            BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots)
-        );
+            BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots));
         newGraphicsPipelines = std::make_unique<VulkanPipelineSet>(
             m_device->GetHandle(),
             m_sceneViewportLayer->GetExtent(),
             m_sceneViewportLayer->GetRenderPass(),
-            newUniformBuffer->GetDescriptorSetLayout()
-        );
+            newUniformBuffer->GetDescriptorSetLayout());
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and new UBO/pipeline above are built while the GPU
@@ -751,21 +727,19 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
         drawConstants.material = renderSubmesh.material;
         const MaterialPipelineKey pipelineKey{
             renderSubmesh.alphaMode,
-            renderSubmesh.doubleSided
-        };
+            renderSubmesh.doubleSided};
         const glm::vec4 viewCenter =
             State().viewportMatrices.view *
             drawConstants.model *
             glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
-        sortKeys.push_back({ pipelineKey, -viewCenter.z });
+        sortKeys.push_back({pipelineKey, -viewCenter.z});
         unsorted.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),
             renderSubmesh.buffer->GetIndexHandle(),
             renderSubmesh.buffer->GetIndexCount(),
             m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
             drawConstants,
-            pipelineKey
-        });
+            pipelineKey});
     }
 
     std::vector<VulkanDrawItem> ordered;
@@ -780,18 +754,17 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
 void VulkanRenderer::RecordSceneLayer(
     VkCommandBuffer commandBuffer,
     uint32_t imageIndex,
-    const std::vector<VulkanDrawItem>& drawItems
-) const
+    const std::vector<VulkanDrawItem>& drawItems) const
 {
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = { { 0.08f, 0.1f, 0.16f, 1.0f } };
-    clearValues[1].depthStencil = { 1.0f, 0 };
+    clearValues[0].color = {{0.08f, 0.1f, 0.16f, 1.0f}};
+    clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = m_sceneViewportLayer->GetRenderPass();
     renderPassInfo.framebuffer = m_sceneViewportLayer->GetFramebuffer(imageIndex);
-    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_sceneViewportLayer->GetExtent();
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
@@ -810,8 +783,8 @@ void VulkanRenderer::RecordSceneLayer(
             boundPipeline = &requiredPipeline;
         }
 
-        const VkBuffer vertexBuffers[] = { drawItem.vertexBuffer };
-        const VkDeviceSize offsets[] = { 0 };
+        const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer};
+        const VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(commandBuffer, drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdBindDescriptorSets(
@@ -822,16 +795,14 @@ void VulkanRenderer::RecordSceneLayer(
             1,
             &drawItem.descriptorSet,
             0,
-            nullptr
-        );
+            nullptr);
         vkCmdPushConstants(
             commandBuffer,
             boundPipeline->GetLayout(),
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
             sizeof(ObjectPushConstants),
-            &drawItem.drawConstants
-        );
+            &drawItem.drawConstants);
         vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, 0);
     }
 
@@ -841,14 +812,14 @@ void VulkanRenderer::RecordSceneLayer(
 void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const
 {
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = { { 0.04f, 0.05f, 0.08f, 1.0f } };
-    clearValues[1].depthStencil = { 1.0f, 0 };
+    clearValues[0].color = {{0.04f, 0.05f, 0.08f, 1.0f}};
+    clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = m_renderPass->GetHandle();
     renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
-    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();

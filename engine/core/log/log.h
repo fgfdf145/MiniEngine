@@ -8,7 +8,7 @@
 
 class Log
 {
-public:
+  public:
     static void Init();
 
     template <typename... Args>
@@ -20,7 +20,7 @@ public:
     static std::vector<std::string> GetInputMessagesSnapshot();
     static void ClearInputMessages();
 
-private:
+  private:
     static void WriteInputLine(const std::string& message);
 };
 

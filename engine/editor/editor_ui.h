@@ -27,7 +27,7 @@ struct EditorUiActions
     struct ViewportModelPlacement
     {
         std::string modelPath;
-        glm::vec3 worldPosition{ 0.0f, 0.0f, 0.0f };
+        glm::vec3 worldPosition{0.0f, 0.0f, 0.0f};
     };
 
     struct ImportedMaterialUpdate
@@ -63,7 +63,7 @@ struct EditorUiActions
 
     std::optional<ImportedModelRequest> importedModelRequest;
     std::optional<std::string> selectedModelPath;
-    std::vector<std::string> batchLoadModelPaths;   // each placed as a new scene entity
+    std::vector<std::string> batchLoadModelPaths; // each placed as a new scene entity
     std::optional<std::string> selectedBaseColorTexturePath;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
@@ -82,15 +82,15 @@ struct EditorUiActions
 struct EditorUiFrameResult
 {
     EditorUiActions actions;
-    RenderExtent viewportExtent{ 1, 1 };
-    SDL_FRect viewportInteractionRect{ 0.0f, 0.0f, 0.0f, 0.0f };
+    RenderExtent viewportExtent{1, 1};
+    SDL_FRect viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
 };
 
 class EditorUiController
 {
-public:
+  public:
     void BeginFrame(SDL_Window* window, const EngineSettings& settings);
     void WriteEngineSettings(EngineSettings& settings) const;
     EditorUiFrameResult Draw(
@@ -102,8 +102,7 @@ public:
         const std::string& lastSceneIoError,
         ImTextureID viewportTextureId,
         RenderExtent viewportExtent,
-        RenderBackendType currentBackendType
-    );
+        RenderBackendType currentBackendType);
 
     // Rescans the asset browser on its next draw. Called by the backend when a
     // background operation (e.g. async import) changes files on disk.
@@ -115,7 +114,7 @@ public:
         }
     }
 
-private:
+  private:
     void ApplyEngineSettings(const EngineSettings& settings);
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
@@ -136,8 +135,7 @@ private:
         IEditorWorld& scene,
         ImTextureID viewportTextureId,
         RenderBackendType currentBackendType,
-        EditorUiFrameResult& result
-    );
+        EditorUiFrameResult& result);
     void DrawAssetBrowserPanel(EditorUiFrameResult& result);
 
     SDL_Window* m_window = nullptr;
@@ -166,8 +164,8 @@ private:
     MaterialGraphNodePosition m_materialGraphViewOrigin{};
     MaterialGraphNodePosition m_materialGraphResizeStartPosition{};
     float m_materialGraphZoom = 1.0f;
-    ImVec2 m_materialGraphResizeStartMouse{ 0.0f, 0.0f };
-    ImVec2 m_materialGraphResizeStartSize{ 0.0f, 0.0f };
+    ImVec2 m_materialGraphResizeStartMouse{0.0f, 0.0f};
+    ImVec2 m_materialGraphResizeStartSize{0.0f, 0.0f};
     std::optional<MaterialShaderNode> m_materialGraphClipboardNode;
     bool m_modelPreviewAutoFramePending = false;
     bool m_materialGraphLinkDragActive = false;

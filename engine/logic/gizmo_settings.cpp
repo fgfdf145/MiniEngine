@@ -20,17 +20,16 @@ std::array<float, 3> BuildGizmoSnapValues(const GizmoSettings& settings, GizmoSn
     switch (family)
     {
     case GizmoSnapFamily::Rotation:
-        return { settings.rotationSnap, 0.0f, 0.0f };
+        return {settings.rotationSnap, 0.0f, 0.0f};
     case GizmoSnapFamily::Scale:
-        return { settings.scaleSnap.x, settings.scaleSnap.y, settings.scaleSnap.z };
+        return {settings.scaleSnap.x, settings.scaleSnap.y, settings.scaleSnap.z};
     case GizmoSnapFamily::None:
     case GizmoSnapFamily::Translation:
     default:
         return {
             settings.translationSnap.x,
             settings.translationSnap.y,
-            settings.translationSnap.z
-        };
+            settings.translationSnap.z};
     }
 }
 
@@ -38,8 +37,7 @@ void GizmoDragSnapState::PrepareForManipulate(
     ImGuizmo::OPERATION operation,
     bool gizmoIsUsing,
     bool translationHandleHovered,
-    bool rotationHandleHovered
-)
+    bool rotationHandleHovered)
 {
     if (gizmoIsUsing && m_family != GizmoSnapFamily::None)
     {

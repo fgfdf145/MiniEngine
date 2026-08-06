@@ -1,0 +1,4 @@
+switch ($value)
+{
+    { $_ -gt 0 } { return "positive" }
+}

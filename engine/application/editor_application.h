@@ -17,13 +17,13 @@ struct EditorApplicationOptions
 
 class EditorApplication final : public IApplication
 {
-public:
+  public:
     static EditorApplicationOptions ParseArgs(int argc, char** argv);
     static void PrintDependencyLinkStatus();
 
     explicit EditorApplication(EditorApplicationOptions options);
     int Run() override;
 
-private:
+  private:
     EditorApplicationOptions m_options;
 };

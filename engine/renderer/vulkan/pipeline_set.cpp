@@ -4,25 +4,22 @@ VulkanPipelineSet::VulkanPipelineSet(
     VkDevice device,
     VkExtent2D extent,
     VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout
-)
+    VkDescriptorSetLayout descriptorSetLayout)
 {
     for (MaterialAlphaMode mode : {
-        MaterialAlphaMode::Opaque,
-        MaterialAlphaMode::Mask,
-        MaterialAlphaMode::Blend
-    })
+             MaterialAlphaMode::Opaque,
+             MaterialAlphaMode::Mask,
+             MaterialAlphaMode::Blend})
     {
-        for (bool doubleSided : { false, true })
+        for (bool doubleSided : {false, true})
         {
-            const MaterialPipelineKey key{ mode, doubleSided };
+            const MaterialPipelineKey key{mode, doubleSided};
             m_pipelines[GetMaterialPipelineIndex(key)] = std::make_unique<VulkanPipeline>(
                 device,
                 extent,
                 renderPass,
                 descriptorSetLayout,
-                key
-            );
+                key);
         }
     }
 }

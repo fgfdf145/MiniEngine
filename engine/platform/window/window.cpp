@@ -116,8 +116,7 @@ void Window::CreateNativeWindow()
         m_title.c_str(),
         m_width,
         m_height,
-        flags
-    );
+        flags);
 
     if (!m_window)
     {
@@ -131,6 +130,5 @@ void Window::CreateNativeWindow()
         "SDL window created: {}x{} ({})",
         m_width,
         m_height,
-        ToString(m_backendType)
-    );
+        ToString(m_backendType));
 }

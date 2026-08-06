@@ -34,8 +34,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessengerCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT,
     const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-    void*
-)
+    void*)
 {
     const char* message = (callbackData && callbackData->pMessage) ? callbackData->pMessage : "<no message>";
     if (IsExternalLayerSwapchainFlagsArtifact(callbackData))
@@ -212,8 +211,7 @@ bool VulkanInstance::IsValidationLayerAvailable() const
 void VulkanInstance::CreateDebugMessenger()
 {
     const auto createFn = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT")
-    );
+        vkGetInstanceProcAddr(m_instance, "vkCreateDebugUtilsMessengerEXT"));
     if (!createFn)
     {
         LOG_WARN("vkCreateDebugUtilsMessengerEXT unavailable; Vulkan messages will not reach the engine log");
@@ -232,8 +230,7 @@ void VulkanInstance::DestroyDebugMessenger()
     }
 
     const auto destroyFn = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT")
-    );
+        vkGetInstanceProcAddr(m_instance, "vkDestroyDebugUtilsMessengerEXT"));
     if (destroyFn)
     {
         destroyFn(m_instance, m_debugMessenger, nullptr);

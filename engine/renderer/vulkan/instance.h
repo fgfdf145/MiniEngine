@@ -4,7 +4,7 @@
 
 class VulkanInstance
 {
-public:
+  public:
     explicit VulkanInstance(SDL_Window* window);
     ~VulkanInstance();
 
@@ -14,7 +14,7 @@ public:
     VkInstance GetHandle() const;
     VkSurfaceKHR GetSurface() const;
 
-private:
+  private:
     std::vector<const char*> GetRequiredExtensions(bool enableValidation) const;
     bool IsValidationLayerAvailable() const;
     void CreateDebugMessenger();

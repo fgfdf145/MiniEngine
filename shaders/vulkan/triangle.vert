@@ -1,6 +1,7 @@
 #version 450
 
-struct SceneLightData {
+struct SceneLightData
+{
     vec4 positionAndRange;
     vec4 colorAndIntensity;
     vec4 directionAndType;
@@ -14,7 +15,8 @@ layout(push_constant) uniform DrawConstants
     vec4 emissiveFactor;
     vec4 surfaceFactors;
     vec4 nodeGraphFactors;
-} drawData;
+}
+drawData;
 
 layout(set = 0, binding = 0) uniform CameraBuffer
 {
@@ -24,7 +26,8 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 ambientColorAndIntensity;
     SceneLightData lights[8];
     uvec4 sceneLightCount;
-} ubo;
+}
+ubo;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
@@ -51,8 +54,7 @@ void main()
     mat3 normalMatrix = mat3(
         mc0 / max(dot(mc0, mc0), 1e-6),
         mc1 / max(dot(mc1, mc1), 1e-6),
-        mc2 / max(dot(mc2, mc2), 1e-6)
-    );
+        mc2 / max(dot(mc2, mc2), 1e-6));
 
     vec3 worldTangent = normalize(mat3(drawData.model) * inTangent.xyz);
 

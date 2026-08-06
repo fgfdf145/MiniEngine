@@ -39,11 +39,9 @@ std::filesystem::path CreateFixtureDirectory()
     std::random_device randomDevice;
     for (size_t attempt = 0; attempt < 100; ++attempt)
     {
-        const std::filesystem::path path = temporaryDirectory / (
-            "miniengine_material_alpha_" +
-            std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + "_" +
-            std::to_string(randomDevice())
-        );
+        const std::filesystem::path path = temporaryDirectory / ("miniengine_material_alpha_" +
+                                                                 std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + "_" +
+                                                                 std::to_string(randomDevice()));
         std::error_code error;
         if (std::filesystem::create_directory(path, error))
         {
@@ -60,7 +58,7 @@ std::filesystem::path CreateFixtureDirectory()
 
 class ScopedFixtureDirectory
 {
-public:
+  public:
     ScopedFixtureDirectory()
         : path(CreateFixtureDirectory())
     {
@@ -106,8 +104,8 @@ std::filesystem::path WriteAlphaModeFixture(const std::filesystem::path& fixture
 
     const std::filesystem::path bufferPath = fixtureDirectory / "miniengine_material_alpha_modes.bin";
     std::ofstream buffer(bufferPath, std::ios::binary);
-    const std::array<float, 9> positions = { 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f };
-    const std::array<uint16_t, 3> indices = { 0, 1, 2 };
+    const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    const std::array<uint16_t, 3> indices = {0, 1, 2};
     buffer.write(reinterpret_cast<const char*>(positions.data()), static_cast<std::streamsize>(sizeof(positions)));
     buffer.write(reinterpret_cast<const char*>(indices.data()), static_cast<std::streamsize>(sizeof(indices)));
     return path;
@@ -129,98 +127,83 @@ int main()
         Require(NearlyEqual(ClampMaterialAlphaValue(-1.0f), 0.0f), "negative alpha was not clamped");
         Require(NearlyEqual(ClampMaterialAlphaValue(2.0f), 1.0f), "alpha above one was not clamped");
         for (const float nonFinite : {
-                std::numeric_limits<float>::quiet_NaN(),
-                std::numeric_limits<float>::infinity(),
-                -std::numeric_limits<float>::infinity() })
+                 std::numeric_limits<float>::quiet_NaN(),
+                 std::numeric_limits<float>::infinity(),
+                 -std::numeric_limits<float>::infinity()})
         {
             const float normalized = ClampMaterialAlphaValue(nonFinite);
             Require(
                 std::isfinite(normalized) && normalized >= 0.0f && normalized <= 1.0f,
-                "non-finite alpha helper result escaped normalization"
-            );
+                "non-finite alpha helper result escaped normalization");
         }
         Require(NearlyEqual(
-            ResolveMaterialCoverageAlpha(MaterialAlphaMode::Opaque, 0.2f, 0.5f),
-            1.0f
-        ), "Opaque did not force full coverage");
+                    ResolveMaterialCoverageAlpha(MaterialAlphaMode::Opaque, 0.2f, 0.5f),
+                    1.0f),
+                "Opaque did not force full coverage");
         Require(NearlyEqual(
-            ResolveMaterialCoverageAlpha(MaterialAlphaMode::Mask, 0.49f, 0.5f),
-            0.0f
-        ), "Mask did not discard below cutoff");
+                    ResolveMaterialCoverageAlpha(MaterialAlphaMode::Mask, 0.49f, 0.5f),
+                    0.0f),
+                "Mask did not discard below cutoff");
         Require(NearlyEqual(
-            ResolveMaterialCoverageAlpha(MaterialAlphaMode::Mask, 0.5f, 0.5f),
-            1.0f
-        ), "Mask incorrectly discarded at cutoff");
+                    ResolveMaterialCoverageAlpha(MaterialAlphaMode::Mask, 0.5f, 0.5f),
+                    1.0f),
+                "Mask incorrectly discarded at cutoff");
         Require(NearlyEqual(
-            ResolveMaterialCoverageAlpha(MaterialAlphaMode::Blend, 0.25f, 0.5f),
-            0.25f
-        ), "Blend did not preserve alpha");
+                    ResolveMaterialCoverageAlpha(MaterialAlphaMode::Blend, 0.25f, 0.5f),
+                    0.25f),
+                "Blend did not preserve alpha");
 
-        const MaterialPipelineState opaqueState = GetMaterialPipelineState({
-            MaterialAlphaMode::Opaque, false
-        });
+        const MaterialPipelineState opaqueState = GetMaterialPipelineState({MaterialAlphaMode::Opaque, false});
         Require(!opaqueState.blendEnabled, "Opaque blending was enabled");
         Require(opaqueState.depthWriteEnabled, "Opaque depth writes were disabled");
         Require(!opaqueState.alphaMaskEnabled, "Opaque mask discard was enabled");
         Require(opaqueState.cullBackFaces, "single-sided Opaque stopped culling");
         Require(!opaqueState.writeAttachmentAlpha, "Opaque wrote fractional viewport alpha");
 
-        const MaterialPipelineState maskState = GetMaterialPipelineState({
-            MaterialAlphaMode::Mask, true
-        });
+        const MaterialPipelineState maskState = GetMaterialPipelineState({MaterialAlphaMode::Mask, true});
         Require(!maskState.blendEnabled, "Mask blending was enabled");
         Require(maskState.depthWriteEnabled, "Mask depth writes were disabled");
         Require(maskState.alphaMaskEnabled, "Mask discard was disabled");
         Require(!maskState.cullBackFaces, "double-sided Mask still culled");
         Require(!maskState.writeAttachmentAlpha, "Mask wrote fractional viewport alpha");
 
-        const MaterialPipelineState blendState = GetMaterialPipelineState({
-            MaterialAlphaMode::Blend, false
-        });
+        const MaterialPipelineState blendState = GetMaterialPipelineState({MaterialAlphaMode::Blend, false});
         Require(blendState.blendEnabled, "Blend blending was disabled");
         Require(!blendState.depthWriteEnabled, "Blend depth writes were enabled");
         Require(!blendState.alphaMaskEnabled, "Blend mask discard was enabled");
         Require(blendState.writeAttachmentAlpha, "Blend did not write attachment alpha");
 
-        const std::array<MaterialDrawSortKey, 6> sortKeys{ {
-            { { MaterialAlphaMode::Blend, false }, 2.0f },
-            { { MaterialAlphaMode::Mask, false }, 8.0f },
-            { { MaterialAlphaMode::Blend, true }, 9.0f },
-            { { MaterialAlphaMode::Opaque, true }, 1.0f },
-            { { MaterialAlphaMode::Blend, false }, 9.0f },
-            { { MaterialAlphaMode::Blend, false }, 4.0f }
-        } };
+        const std::array<MaterialDrawSortKey, 6> sortKeys{{{{MaterialAlphaMode::Blend, false}, 2.0f},
+                                                           {{MaterialAlphaMode::Mask, false}, 8.0f},
+                                                           {{MaterialAlphaMode::Blend, true}, 9.0f},
+                                                           {{MaterialAlphaMode::Opaque, true}, 1.0f},
+                                                           {{MaterialAlphaMode::Blend, false}, 9.0f},
+                                                           {{MaterialAlphaMode::Blend, false}, 4.0f}}};
         const std::vector<size_t> order = BuildMaterialDrawOrder(sortKeys);
-        Require(order == std::vector<size_t>({ 1, 3, 2, 4, 5, 0 }), "draw order mismatch");
+        Require(order == std::vector<size_t>({1, 3, 2, 4, 5, 0}), "draw order mismatch");
 
         const float nanDepth = std::numeric_limits<float>::quiet_NaN();
-        const std::array<MaterialDrawSortKey, 6> nanSortKeys{ {
-            { { MaterialAlphaMode::Blend, false }, nanDepth },
-            { { MaterialAlphaMode::Blend, false }, 2.0f },
-            { { MaterialAlphaMode::Blend, true }, nanDepth },
-            { { MaterialAlphaMode::Blend, false }, std::numeric_limits<float>::infinity() },
-            { { MaterialAlphaMode::Blend, false }, -std::numeric_limits<float>::infinity() },
-            { { MaterialAlphaMode::Blend, true }, 2.0f }
-        } };
+        const std::array<MaterialDrawSortKey, 6> nanSortKeys{{{{MaterialAlphaMode::Blend, false}, nanDepth},
+                                                              {{MaterialAlphaMode::Blend, false}, 2.0f},
+                                                              {{MaterialAlphaMode::Blend, true}, nanDepth},
+                                                              {{MaterialAlphaMode::Blend, false}, std::numeric_limits<float>::infinity()},
+                                                              {{MaterialAlphaMode::Blend, false}, -std::numeric_limits<float>::infinity()},
+                                                              {{MaterialAlphaMode::Blend, true}, 2.0f}}};
         const std::vector<size_t> nanOrder = BuildMaterialDrawOrder(nanSortKeys);
         Require(
-            nanOrder == std::vector<size_t>({ 3, 1, 5, 4, 0, 2 }),
-            "NaN blend draw order mismatch"
-        );
+            nanOrder == std::vector<size_t>({3, 1, 5, 4, 0, 2}),
+            "NaN blend draw order mismatch");
 
         MeshData boundsMesh{};
         boundsMesh.vertices = {
-            { { -2.0f, -4.0f, -6.0f } },
-            { { 6.0f, 8.0f, 10.0f } }
-        };
+            {{-2.0f, -4.0f, -6.0f}},
+            {{6.0f, 8.0f, 10.0f}}};
         Require(
             glm::length(ComputeMeshBoundsCenter(boundsMesh) - glm::vec3(2.0f, 2.0f, 2.0f)) < 0.0001f,
-            "mesh bounds center mismatch"
-        );
+            "mesh bounds center mismatch");
         Require(
             ComputeMeshBoundsCenter(MeshData{}) == glm::vec3(0.0f),
-            "empty mesh did not use local origin"
-        );
+            "empty mesh did not use local origin");
 
         ModelImportedMaterialInfo source{};
         source.name = "masked foliage";
@@ -232,12 +215,10 @@ int main()
         const YAML::Node serialized = SerializeMaterialDefinition(source);
         Require(
             serialized["pbr"]["alpha_mode"].as<std::string>() == "mask",
-            "sidecar alpha mode was not canonical"
-        );
+            "sidecar alpha mode was not canonical");
         Require(
             NearlyEqual(serialized["pbr"]["alpha_cutoff"].as<float>(), 0.37f),
-            "sidecar cutoff was not serialized"
-        );
+            "sidecar cutoff was not serialized");
 
         const ScopedFixtureDirectory sidecarFixtureDirectory;
         const std::filesystem::path sidecar = sidecarFixtureDirectory.path / "material_alpha.material.yaml";
@@ -268,7 +249,7 @@ int main()
         Require(restored.pbr.alphaMode == MaterialAlphaMode::Opaque, "invalid mode did not fall back");
         Require(!warning.empty(), "invalid mode did not report a warning");
 
-        for (const char* nonFiniteToken : { ".nan", "+.inf", "-.inf" })
+        for (const char* nonFiniteToken : {".nan", "+.inf", "-.inf"})
         {
             std::ofstream file(sidecar);
             file << "material:\n  pbr:\n    alpha_cutoff: " << nonFiniteToken
@@ -282,22 +263,18 @@ int main()
             Require(LoadMaterialDefinition(sidecar, restored, warning), "non-finite sidecar did not load");
             Require(
                 NearlyEqual(restored.pbr.alphaCutoff, 0.34f),
-                "non-finite sidecar cutoff did not retain imported fallback"
-            );
+                "non-finite sidecar cutoff did not retain imported fallback");
             Require(
                 NearlyEqual(restored.pbr.opacity, 0.76f),
-                "non-finite sidecar opacity did not retain imported fallback"
-            );
+                "non-finite sidecar opacity did not retain imported fallback");
             Require(
                 std::isfinite(restored.pbr.alphaCutoff) &&
                     restored.pbr.alphaCutoff >= 0.0f && restored.pbr.alphaCutoff <= 1.0f,
-                "non-finite sidecar cutoff escaped runtime normalization"
-            );
+                "non-finite sidecar cutoff escaped runtime normalization");
             Require(
                 std::isfinite(restored.pbr.opacity) &&
                     restored.pbr.opacity >= 0.0f && restored.pbr.opacity <= 1.0f,
-                "non-finite sidecar opacity escaped runtime normalization"
-            );
+                "non-finite sidecar opacity escaped runtime normalization");
         }
 
         {
@@ -320,16 +297,13 @@ int main()
         const float serializedOpacity = nonFiniteSerialized["pbr"]["opacity"].as<float>();
         Require(
             std::isfinite(serializedCutoff) && serializedCutoff >= 0.0f && serializedCutoff <= 1.0f,
-            "serializer emitted non-finite cutoff"
-        );
+            "serializer emitted non-finite cutoff");
         Require(
             std::isfinite(serializedOpacity) && serializedOpacity >= 0.0f && serializedOpacity <= 1.0f,
-            "serializer emitted non-finite opacity"
-        );
+            "serializer emitted non-finite opacity");
         Require(
             YAML::Dump(nonFiniteSerialized).find(".nan") == std::string::npos,
-            "serializer emitted .nan"
-        );
+            "serializer emitted .nan");
         std::error_code removeError;
 
         const ScopedFixtureDirectory reloadFixtureDirectory;
@@ -354,12 +328,10 @@ int main()
         const LoadedModelData legacyReloaded = ModelLoader::LoadModel(legacyModel.string());
         Require(
             legacyReloaded.materials[1].pbr.alphaMode == MaterialAlphaMode::Mask,
-            "legacy sidecar lost alpha mode"
-        );
+            "legacy sidecar lost alpha mode");
         Require(
             NearlyEqual(legacyReloaded.materials[1].pbr.alphaCutoff, 0.4f),
-            "legacy sidecar lost alpha cutoff"
-        );
+            "legacy sidecar lost alpha cutoff");
         std::filesystem::remove(legacySidecar, removeError);
 
         const ScopedFixtureDirectory legacyGraphFixtureDirectory;
@@ -389,8 +361,7 @@ int main()
         warning.clear();
         Require(
             LoadMaterialDefinition(legacyGraphSidecar, legacyGraphMaterial, warning),
-            "legacy shader graph sidecar did not load"
-        );
+            "legacy shader graph sidecar did not load");
         Require(CompileMaterialShaderGraph(legacyGraphMaterial).success, "legacy shader graph did not compile");
 
         const std::filesystem::path savedGraphSidecar =
@@ -405,17 +376,14 @@ int main()
         warning.clear();
         Require(
             LoadMaterialDefinition(savedGraphSidecar, savedGraphMaterial, warning),
-            "saved shader graph sidecar did not reload"
-        );
+            "saved shader graph sidecar did not reload");
         Require(CompileMaterialShaderGraph(savedGraphMaterial).success, "saved shader graph did not compile");
         Require(
             savedGraphMaterial.pbr.alphaMode == MaterialAlphaMode::Mask,
-            "legacy shader graph lost canonical alpha mode"
-        );
+            "legacy shader graph lost canonical alpha mode");
         Require(
             NearlyEqual(savedGraphMaterial.pbr.alphaCutoff, 0.41f),
-            "legacy shader graph lost canonical alpha cutoff"
-        );
+            "legacy shader graph lost canonical alpha cutoff");
 
         const ScopedFixtureDirectory scalarGraphFixtureDirectory;
         const std::filesystem::path scalarGraphSidecar =
@@ -459,18 +427,15 @@ int main()
         warning.clear();
         Require(
             LoadMaterialDefinition(scalarGraphSidecar, scalarGraphMaterial, warning),
-            "NaN scalar graph sidecar did not load"
-        );
+            "NaN scalar graph sidecar did not load");
         Require(CompileMaterialShaderGraph(scalarGraphMaterial).success, "NaN scalar graph did not compile");
         Require(
             std::isfinite(scalarGraphMaterial.pbr.opacity) &&
                 scalarGraphMaterial.pbr.opacity >= 0.0f && scalarGraphMaterial.pbr.opacity <= 1.0f,
-            "connected scalar produced non-finite compiled opacity"
-        );
+            "connected scalar produced non-finite compiled opacity");
         Require(
             NearlyEqual(scalarGraphMaterial.pbr.emissiveIntensity, 4.0f),
-            "finite generic scalar was saturated during compile"
-        );
+            "finite generic scalar was saturated during compile");
 
         YAML::Node scalarGraphRoot(YAML::NodeType::Map);
         scalarGraphRoot["material"] = SerializeMaterialDefinition(scalarGraphMaterial);
@@ -479,8 +444,7 @@ int main()
         Require(
             std::isfinite(serializedRootOpacity) &&
                 serializedRootOpacity >= 0.0f && serializedRootOpacity <= 1.0f,
-            "serialized root opacity was non-finite"
-        );
+            "serialized root opacity was non-finite");
         bool foundScalar = false;
         bool allScalarsFinite = true;
         bool preservedHighScalar = false;
@@ -511,18 +475,15 @@ int main()
         warning.clear();
         Require(
             LoadMaterialDefinition(savedScalarGraphSidecar, savedScalarGraphMaterial, warning),
-            "saved scalar graph sidecar did not reload"
-        );
+            "saved scalar graph sidecar did not reload");
         Require(CompileMaterialShaderGraph(savedScalarGraphMaterial).success, "saved scalar graph did not compile");
         Require(
             std::isfinite(savedScalarGraphMaterial.pbr.opacity) &&
                 savedScalarGraphMaterial.pbr.opacity >= 0.0f && savedScalarGraphMaterial.pbr.opacity <= 1.0f,
-            "reloaded scalar graph opacity was non-finite"
-        );
+            "reloaded scalar graph opacity was non-finite");
         Require(
             NearlyEqual(savedScalarGraphMaterial.pbr.emissiveIntensity, 4.0f),
-            "reloaded generic scalar lost its finite value"
-        );
+            "reloaded generic scalar lost its finite value");
         bool reloadedHighScalar = false;
         for (const MaterialShaderNode& shaderNode : savedScalarGraphMaterial.shaderGraph.nodes)
         {

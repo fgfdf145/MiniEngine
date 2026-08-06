@@ -23,7 +23,7 @@ struct VulkanFrameSyncObjects
 
 class VulkanCommandContext
 {
-public:
+  public:
     VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount);
     ~VulkanCommandContext();
 
@@ -36,7 +36,7 @@ public:
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
     void WaitForAllFrames();
 
-private:
+  private:
     void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
     void AllocateCommandBuffers(size_t commandBufferCount);
     void CreateSyncObjects(size_t swapchainImageCount);

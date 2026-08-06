@@ -9,8 +9,7 @@ VulkanTexture::VulkanTexture(
     VkDevice device,
     const std::string& path,
     VulkanUploadBatch& uploadBatch,
-    VulkanTextureFormat textureFormat
-)
+    VulkanTextureFormat textureFormat)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_textureFormat(textureFormat)
@@ -23,8 +22,7 @@ VulkanTexture::VulkanTexture(
     VkDevice device,
     const TextureData& textureData,
     VulkanUploadBatch& uploadBatch,
-    VulkanTextureFormat textureFormat
-)
+    VulkanTextureFormat textureFormat)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_textureFormat(textureFormat)
@@ -52,8 +50,7 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
-        stagingMemory
-    );
+        stagingMemory);
 
     void* mappedData = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mappedData), "Failed to map texture staging buffer");
@@ -62,10 +59,10 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
 
     const bool canGenerateMips = FormatSupportsLinearBlit(vkFormat);
     m_mipLevels = canGenerateMips
-        ? static_cast<uint32_t>(std::floor(std::log2(
-              static_cast<double>(std::max(textureData.width, textureData.height))
-          ))) + 1
-        : 1;
+                      ? static_cast<uint32_t>(std::floor(std::log2(
+                            static_cast<double>(std::max(textureData.width, textureData.height))))) +
+                            1
+                      : 1;
 
     CreateImage(
         static_cast<uint32_t>(textureData.width),
@@ -74,8 +71,7 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
         vkFormat,
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         m_image,
-        m_memory
-    );
+        m_memory);
 
     // All commands below go into the caller's shared batch command buffer, in this same order,
     // so the transition -> copy -> mip-chain sequence for this image is preserved exactly as
@@ -125,8 +121,8 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.anisotropyEnable = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
     samplerInfo.maxAnisotropy = supportedFeatures.samplerAnisotropy
-        ? std::min(16.0f, physicalDeviceProperties.limits.maxSamplerAnisotropy)
-        : 1.0f;
+                                    ? std::min(16.0f, physicalDeviceProperties.limits.maxSamplerAnisotropy)
+                                    : 1.0f;
     samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.compareEnable = VK_FALSE;
@@ -141,8 +137,8 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
 VkFormat VulkanTexture::GetVkFormat() const
 {
     return m_textureFormat == VulkanTextureFormat::SrgbColor
-        ? VK_FORMAT_R8G8B8A8_SRGB
-        : VK_FORMAT_R8G8B8A8_UNORM;
+               ? VK_FORMAT_R8G8B8A8_SRGB
+               : VK_FORMAT_R8G8B8A8_UNORM;
 }
 
 VulkanTexture::~VulkanTexture()
@@ -180,8 +176,7 @@ void VulkanTexture::CreateBuffer(
     VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties,
     VkBuffer& buffer,
-    VkDeviceMemory& memory
-) const
+    VkDeviceMemory& memory) const
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -208,8 +203,7 @@ void VulkanTexture::CreateImage(
     VkFormat format,
     VkImageUsageFlags usage,
     VkImage& image,
-    VkDeviceMemory& memory
-) const
+    VkDeviceMemory& memory) const
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -283,8 +277,7 @@ void VulkanTexture::TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage
         0,
         nullptr,
         1,
-        &barrier
-    );
+        &barrier);
 }
 
 void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) const
@@ -294,7 +287,7 @@ void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer bu
     region.imageSubresource.mipLevel = 0;
     region.imageSubresource.baseArrayLayer = 0;
     region.imageSubresource.layerCount = 1;
-    region.imageExtent = { width, height, 1 };
+    region.imageExtent = {width, height, 1};
 
     vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
@@ -341,19 +334,18 @@ void VulkanTexture::GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         vkCmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &barrier
-        );
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
 
         const int32_t nextMipWidth = mipWidth > 1 ? mipWidth / 2 : 1;
         const int32_t nextMipHeight = mipHeight > 1 ? mipHeight / 2 : 1;
 
         VkImageBlit blit{};
-        blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+        blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
         blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         blit.srcSubresource.mipLevel = level - 1;
         blit.srcSubresource.baseArrayLayer = 0;
         blit.srcSubresource.layerCount = 1;
-        blit.dstOffsets[1] = { nextMipWidth, nextMipHeight, 1 };
+        blit.dstOffsets[1] = {nextMipWidth, nextMipHeight, 1};
         blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         blit.dstSubresource.mipLevel = level;
         blit.dstSubresource.baseArrayLayer = 0;
@@ -362,8 +354,7 @@ void VulkanTexture::GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image
             commandBuffer,
             image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            1, &blit, VK_FILTER_LINEAR
-        );
+            1, &blit, VK_FILTER_LINEAR);
 
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -371,8 +362,7 @@ void VulkanTexture::GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &barrier
-        );
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
 
         mipWidth = nextMipWidth;
         mipHeight = nextMipHeight;
@@ -385,8 +375,7 @@ void VulkanTexture::GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(
         commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier
-    );
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
 uint32_t VulkanTexture::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const

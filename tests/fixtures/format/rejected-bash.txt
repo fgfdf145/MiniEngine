@@ -1,0 +1,6 @@
+bad-name() {
+	printf '%s\n' bad
+cat <<END-MARK
+hidden-in-heredoc() {
+END-MARK
+another-bad-name() {

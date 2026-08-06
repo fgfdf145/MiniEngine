@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# hidden-name() { comment content must not count
+single='hidden-name() {'
+double="another-hidden() {"
+cat <<'TEXT'
+	heredoc-hidden() {
+TEXT
+cat <<-TABBED
+	function tabbed-hidden {
+	TABBED
+cat <<FIRST <<'SECOND'
+SECOND
+FIRST
+second-hidden() {
+SECOND
+cat <<'END-MARK'
+hyphen-delimiter-hidden() {
+END-MARK
+good-name()
+{
+    printf '%s\n' "$single$double"
+}

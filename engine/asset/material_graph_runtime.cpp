@@ -21,18 +21,18 @@ float NormalizeScalarValue(float value, float fallback = 1.0f)
 const MaterialShaderNode* FindNodeById(const MaterialShaderGraph& graph, uint32_t id)
 {
     const auto iterator = std::find_if(graph.nodes.begin(), graph.nodes.end(), [id](const MaterialShaderNode& node)
-    {
-        return node.id == id;
-    });
+                                       {
+                                           return node.id == id;
+                                       });
     return iterator != graph.nodes.end() ? &(*iterator) : nullptr;
 }
 
 MaterialShaderNode* FindNodeById(MaterialShaderGraph& graph, uint32_t id)
 {
     const auto iterator = std::find_if(graph.nodes.begin(), graph.nodes.end(), [id](const MaterialShaderNode& node)
-    {
-        return node.id == id;
-    });
+                                       {
+                                           return node.id == id;
+                                       });
     return iterator != graph.nodes.end() ? &(*iterator) : nullptr;
 }
 
@@ -40,8 +40,7 @@ MaterialShaderNode* AddNode(
     MaterialShaderGraph& graph,
     MaterialShaderNodeType type,
     const char* name,
-    const MaterialGraphNodePosition& position
-)
+    const MaterialGraphNodePosition& position)
 {
     MaterialShaderNode node{};
     node.id = graph.nextNodeId++;
@@ -57,8 +56,7 @@ void AddLink(
     uint32_t fromNodeId,
     const char* fromSlot,
     uint32_t toNodeId,
-    const char* toSlot
-)
+    const char* toSlot)
 {
     if (fromSlot == nullptr || toSlot == nullptr)
     {
@@ -131,19 +129,18 @@ std::string BuildTextureNodeName(const char* label)
 
 MaterialGraphNodePosition OffsetPosition(const MaterialGraphNodePosition& base, float offsetX, float offsetY)
 {
-    return MaterialGraphNodePosition{ base.x + offsetX, base.y + offsetY };
+    return MaterialGraphNodePosition{base.x + offsetX, base.y + offsetY};
 }
 
 const MaterialShaderLink* FindIncomingLink(
     const MaterialShaderGraph& graph,
     uint32_t nodeId,
-    std::string_view slot
-)
+    std::string_view slot)
 {
     const auto iterator = std::find_if(graph.links.begin(), graph.links.end(), [&](const MaterialShaderLink& link)
-    {
-        return link.toNodeId == nodeId && link.toSlot == slot;
-    });
+                                       {
+                                           return link.toNodeId == nodeId && link.toSlot == slot;
+                                       });
     return iterator != graph.links.end() ? &(*iterator) : nullptr;
 }
 
@@ -151,8 +148,7 @@ const MaterialShaderNode* ResolveUpstreamNode(
     const MaterialShaderGraph& graph,
     uint32_t nodeId,
     std::string_view slot,
-    std::string_view expectedOutputSlot = {}
-)
+    std::string_view expectedOutputSlot = {})
 {
     const MaterialShaderLink* link = FindIncomingLink(graph, nodeId, slot);
     if (link == nullptr)
@@ -171,8 +167,7 @@ void CompileSurfaceTextures(
     const MaterialShaderGraph& graph,
     const MaterialShaderNode* surfaceNode,
     bool secondaryLayer,
-    ModelImportedMaterialInfo& material
-)
+    ModelImportedMaterialInfo& material)
 {
     if (surfaceNode == nullptr || surfaceNode->type != MaterialShaderNodeType::Surface)
     {
@@ -183,8 +178,8 @@ void CompileSurfaceTextures(
     {
         const MaterialShaderNode* textureNode = ResolveUpstreamNode(graph, surfaceNode->id, slot, kTextureOutputSlot);
         return textureNode != nullptr && textureNode->type == MaterialShaderNodeType::Texture
-            ? textureNode->texturePath
-            : std::string{};
+                   ? textureNode->texturePath
+                   : std::string{};
     };
 
     if (!secondaryLayer)
@@ -208,8 +203,7 @@ void CompileSurfaceTextures(
 
 const MaterialShaderNode* CollapseToSurfaceNode(
     const MaterialShaderGraph& graph,
-    const MaterialShaderNode* node
-)
+    const MaterialShaderNode* node)
 {
     const MaterialShaderNode* current = node;
     for (int depth = 0; depth < 8 && current != nullptr; ++depth)
@@ -304,8 +298,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
     const std::string& emissiveTexturePath,
     const MaterialPbrSurfaceSettings& pbr,
     const MaterialTextureBlendGraph& blendGraph,
-    const std::optional<MaterialShaderNodeLayout>& legacyLayout
-)
+    const std::optional<MaterialShaderNodeLayout>& legacyLayout)
 {
     const MaterialShaderNodeLayout layout = legacyLayout.value_or(BuildFallbackLegacyLayout());
     MaterialShaderGraph graph{};
@@ -316,16 +309,14 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
         graph,
         MaterialShaderNodeType::Output,
         outputNodeName.c_str(),
-        layout.outputNode
-    );
+        layout.outputNode);
     outputNode->pbr = pbr;
 
     MaterialShaderNode* primarySurfaceNode = AddNode(
         graph,
         MaterialShaderNodeType::Surface,
         "Primary Surface",
-        layout.primarySurfaceNode
-    );
+        layout.primarySurfaceNode);
 
     auto addTextureChain = [&](const std::string& path,
                                const char* label,
@@ -342,23 +333,19 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             graph,
             MaterialShaderNodeType::Texture,
             BuildTextureNodeName(label).c_str(),
-            position
-        );
+            position);
         textureNode->texturePath = path;
         AddLink(graph, textureNode->id, kTextureOutputSlot, targetNodeId, toSlot);
     };
 
-    const std::array<std::pair<const char*, std::string>, 6> primaryTextures = { {
-        { "base_color", baseColorTexturePath },
-        { "normal", normalTexturePath },
-        { "metallic", metallicTexturePath },
-        { "roughness", roughnessTexturePath },
-        { "occlusion", occlusionTexturePath },
-        { "emissive", emissiveTexturePath }
-    } };
+    const std::array<std::pair<const char*, std::string>, 6> primaryTextures = {{{"base_color", baseColorTexturePath},
+                                                                                 {"normal", normalTexturePath},
+                                                                                 {"metallic", metallicTexturePath},
+                                                                                 {"roughness", roughnessTexturePath},
+                                                                                 {"occlusion", occlusionTexturePath},
+                                                                                 {"emissive", emissiveTexturePath}}};
     const std::array<const char*, 6> textureLabels = {
-        "Base Color", "Normal", "Metallic", "Roughness", "Occlusion", "Emissive"
-    };
+        "Base Color", "Normal", "Metallic", "Roughness", "Occlusion", "Emissive"};
     for (size_t index = 0; index < primaryTextures.size(); ++index)
     {
         addTextureChain(
@@ -366,8 +353,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             textureLabels[index],
             primaryTextures[index].first,
             OffsetPosition(layout.primarySurfaceNode, -320.0f, static_cast<float>(index) * 92.0f - 60.0f),
-            primarySurfaceNode->id
-        );
+            primarySurfaceNode->id);
     }
 
     const bool hasSecondaryLayer =
@@ -390,28 +376,24 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
         graph,
         MaterialShaderNodeType::Surface,
         "Secondary Surface",
-        layout.secondarySurfaceNode
-    );
+        layout.secondarySurfaceNode);
     MaterialShaderNode* blendNode = AddNode(
         graph,
         MaterialShaderNodeType::Blend,
         "Blend",
-        layout.blendNode
-    );
+        layout.blendNode);
     blendNode->scalarValue = blendGraph.blendFactor;
 
     AddLink(graph, primarySurfaceNode->id, kSurfaceOutputSlot, blendNode->id, "surface_a");
     AddLink(graph, secondarySurfaceNode->id, kSurfaceOutputSlot, blendNode->id, "surface_b");
     AddLink(graph, blendNode->id, kSurfaceOutputSlot, outputNode->id, "surface");
 
-    const std::array<std::pair<const char*, std::string>, 6> secondaryTextures = { {
-        { "base_color", blendGraph.secondaryBaseColorTexturePath },
-        { "normal", blendGraph.secondaryNormalTexturePath },
-        { "metallic", blendGraph.secondaryMetallicTexturePath },
-        { "roughness", blendGraph.secondaryRoughnessTexturePath },
-        { "occlusion", blendGraph.secondaryOcclusionTexturePath },
-        { "emissive", blendGraph.secondaryEmissiveTexturePath }
-    } };
+    const std::array<std::pair<const char*, std::string>, 6> secondaryTextures = {{{"base_color", blendGraph.secondaryBaseColorTexturePath},
+                                                                                   {"normal", blendGraph.secondaryNormalTexturePath},
+                                                                                   {"metallic", blendGraph.secondaryMetallicTexturePath},
+                                                                                   {"roughness", blendGraph.secondaryRoughnessTexturePath},
+                                                                                   {"occlusion", blendGraph.secondaryOcclusionTexturePath},
+                                                                                   {"emissive", blendGraph.secondaryEmissiveTexturePath}}};
     for (size_t index = 0; index < secondaryTextures.size(); ++index)
     {
         addTextureChain(
@@ -419,8 +401,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             textureLabels[index],
             secondaryTextures[index].first,
             OffsetPosition(layout.secondarySurfaceNode, -320.0f, static_cast<float>(index) * 92.0f - 60.0f),
-            secondarySurfaceNode->id
-        );
+            secondarySurfaceNode->id);
     }
 
     if (!blendGraph.blendMaskTexturePath.empty())
@@ -429,8 +410,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             graph,
             MaterialShaderNodeType::Texture,
             "Blend Mask Texture",
-            OffsetPosition(layout.blendNode, -280.0f, 28.0f)
-        );
+            OffsetPosition(layout.blendNode, -280.0f, 28.0f));
         maskTextureNode->texturePath = blendGraph.blendMaskTexturePath;
         AddLink(graph, maskTextureNode->id, kTextureOutputSlot, blendNode->id, "mask");
     }
@@ -441,8 +421,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
 void EnsureMaterialShaderGraph(
     const std::string& materialName,
     const std::optional<MaterialShaderNodeLayout>& legacyLayout,
-    ModelImportedMaterialInfo& material
-)
+    ModelImportedMaterialInfo& material)
 {
     if (!material.shaderGraph.IsEmpty())
     {
@@ -459,8 +438,7 @@ void EnsureMaterialShaderGraph(
         material.emissiveTexturePath,
         material.pbr,
         material.blendGraph,
-        legacyLayout
-    );
+        legacyLayout);
 }
 
 YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
@@ -542,8 +520,7 @@ bool DeserializeMaterialShaderGraph(
     const YAML::Node& shaderGraphNode,
     const std::string& materialName,
     const std::optional<MaterialShaderNodeLayout>& legacyLayout,
-    ModelImportedMaterialInfo& material
-)
+    ModelImportedMaterialInfo& material)
 {
     material.shaderGraph = {};
 
@@ -604,8 +581,7 @@ bool DeserializeMaterialShaderGraph(
         node.texturePath = nodeMap["texture_path"].as<std::string>(std::string{});
         node.scalarValue = NormalizeScalarValue(
             nodeMap["scalar_value"].as<float>(node.scalarValue),
-            1.0f
-        );
+            1.0f);
         ReadFloatSequence(nodeMap["color_value"], node.colorValue, 4);
         if (const YAML::Node pbrNode = nodeMap["pbr"]; pbrNode && pbrNode.IsMap())
         {
@@ -617,18 +593,16 @@ bool DeserializeMaterialShaderGraph(
             node.pbr.occlusionStrength = ReadFloatOrFallback(pbrNode["occlusion_strength"], node.pbr.occlusionStrength);
             node.pbr.emissiveIntensity = ReadFloatOrFallback(pbrNode["emissive_intensity"], node.pbr.emissiveIntensity);
             node.pbr.alphaMode = ParseMaterialAlphaMode(
-                pbrNode["alpha_mode"].as<std::string>("opaque")
-            ).value_or(MaterialAlphaMode::Opaque);
+                                     pbrNode["alpha_mode"].as<std::string>("opaque"))
+                                     .value_or(MaterialAlphaMode::Opaque);
             const float cutoffFallback = ClampMaterialAlphaValue(node.pbr.alphaCutoff, 0.5f);
             node.pbr.alphaCutoff = ClampMaterialAlphaValue(
                 ReadFloatOrFallback(pbrNode["alpha_cutoff"], cutoffFallback),
-                cutoffFallback
-            );
+                cutoffFallback);
             const float opacityFallback = ClampMaterialAlphaValue(node.pbr.opacity, 1.0f);
             node.pbr.opacity = ClampMaterialAlphaValue(
                 ReadFloatOrFallback(pbrNode["opacity"], opacityFallback),
-                opacityFallback
-            );
+                opacityFallback);
         }
         material.shaderGraph.nodes.push_back(node);
         maxNodeId = std::max(maxNodeId, node.id);
@@ -683,11 +657,10 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
         [](const MaterialShaderNode& node)
         {
             return node.type == MaterialShaderNodeType::Output;
-        }
-    );
+        });
     if (outputIterator == material.shaderGraph.nodes.end())
     {
-        return MaterialGraphCompileResult{ false, "Material graph is missing an Output node." };
+        return MaterialGraphCompileResult{false, "Material graph is missing an Output node."};
     }
 
     const MaterialShaderNode& outputNode = *outputIterator;
@@ -735,8 +708,7 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
     {
         return MaterialGraphCompileResult{
             true,
-            BuildCompileMessage(material.shaderGraph, false)
-        };
+            BuildCompileMessage(material.shaderGraph, false)};
     }
 
     bool blendEnabled = false;
@@ -744,12 +716,10 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
     {
         const MaterialShaderNode* primarySurface = CollapseToSurfaceNode(
             material.shaderGraph,
-            ResolveUpstreamNode(material.shaderGraph, surfaceSource->id, "surface_a", kSurfaceOutputSlot)
-        );
+            ResolveUpstreamNode(material.shaderGraph, surfaceSource->id, "surface_a", kSurfaceOutputSlot));
         const MaterialShaderNode* secondarySurface = CollapseToSurfaceNode(
             material.shaderGraph,
-            ResolveUpstreamNode(material.shaderGraph, surfaceSource->id, "surface_b", kSurfaceOutputSlot)
-        );
+            ResolveUpstreamNode(material.shaderGraph, surfaceSource->id, "surface_b", kSurfaceOutputSlot));
 
         CompileSurfaceTextures(material.shaderGraph, primarySurface, false, material);
         CompileSurfaceTextures(material.shaderGraph, secondarySurface, true, material);
@@ -778,6 +748,5 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
 
     return MaterialGraphCompileResult{
         true,
-        BuildCompileMessage(material.shaderGraph, blendEnabled)
-    };
+        BuildCompileMessage(material.shaderGraph, blendEnabled)};
 }

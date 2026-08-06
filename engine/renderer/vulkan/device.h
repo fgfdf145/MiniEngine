@@ -4,7 +4,7 @@
 
 class VulkanDevice
 {
-public:
+  public:
     VulkanDevice(VkInstance instance, VkSurfaceKHR surface);
     ~VulkanDevice();
 
@@ -19,7 +19,7 @@ public:
     SwapchainSupportDetails QuerySwapchainSupport() const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
-private:
+  private:
     bool IsSuitable(VkPhysicalDevice device) const;
     QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
     SwapchainSupportDetails QuerySwapchainSupport(VkPhysicalDevice device) const;

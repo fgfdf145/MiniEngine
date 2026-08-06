@@ -11,13 +11,11 @@ constexpr float kHalfDefaultCubeSizeMeters = kDefaultCubeSizeMeters * 0.5f;
 constexpr glm::vec3 kDefaultCubeMinBoundsMeters(
     -kHalfDefaultCubeSizeMeters,
     -kHalfDefaultCubeSizeMeters,
-    -kHalfDefaultCubeSizeMeters
-);
+    -kHalfDefaultCubeSizeMeters);
 constexpr glm::vec3 kDefaultCubeMaxBoundsMeters(
     kHalfDefaultCubeSizeMeters,
     kHalfDefaultCubeSizeMeters,
-    kHalfDefaultCubeSizeMeters
-);
+    kHalfDefaultCubeSizeMeters);
 
 constexpr float kMinimumScale = 0.001f;
 constexpr glm::vec3 kMinimumScale3(kMinimumScale, kMinimumScale, kMinimumScale);

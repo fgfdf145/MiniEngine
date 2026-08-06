@@ -1,0 +1,15 @@
+$hash = @{
+    numeric = 1
+}
+ForEach-Object { $_ }
+Invoke-Command { Get-Date }
+switch ($value)
+{
+    default
+    {
+        $nestedHash = @{
+            key = "value"
+        }
+        ForEach-Object { $_ }
+    }
+}

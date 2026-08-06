@@ -89,8 +89,7 @@ std::optional<ImVec2> ProjectPreviewPoint(
     const glm::vec3& position,
     const glm::mat4& viewProjection,
     const ImVec2& canvasMin,
-    const ImVec2& canvasSize
-)
+    const ImVec2& canvasSize)
 {
     const glm::vec4 clip = viewProjection * glm::vec4(position, 1.0f);
     if (clip.w <= 0.001f)
@@ -108,8 +107,7 @@ std::optional<ImVec2> ProjectPreviewPoint(
 void DrawModelUvPreview(
     const LoadedModelData& loadedModel,
     int& selectedUvSubmeshIndex,
-    float uiScale
-)
+    float uiScale)
 {
     std::vector<size_t> uvSubmeshIndices;
     uvSubmeshIndices.reserve(loadedModel.submeshes.size());
@@ -133,8 +131,8 @@ void DrawModelUvPreview(
         const size_t submeshIndex = uvSubmeshIndices[uvListIndex];
         const ModelSubmeshData& submesh = loadedModel.submeshes[submeshIndex];
         const std::string name = submesh.name.empty()
-            ? ("Submesh " + std::to_string(submeshIndex))
-            : submesh.name;
+                                     ? ("Submesh " + std::to_string(submeshIndex))
+                                     : submesh.name;
         return name + "##uv_" + std::to_string(submeshIndex);
     };
 
@@ -218,13 +216,11 @@ void DrawModelUvPreview(
     drawList->AddText(
         ImVec2(canvasMin.x + 12.0f * uiScale, canvasMin.y + 12.0f * uiScale),
         IM_COL32(214, 223, 238, 255),
-        "UV 0-1 space"
-    );
+        "UV 0-1 space");
     drawList->AddText(
         ImVec2(canvasMin.x + 12.0f * uiScale, canvasMax.y - 24.0f * uiScale),
         IM_COL32(170, 182, 204, 255),
-        cappedUvPreview ? "Sampled wireframe preview for responsiveness" : "Full UV wireframe preview"
-    );
+        cappedUvPreview ? "Sampled wireframe preview for responsiveness" : "Full UV wireframe preview");
 }
 
 namespace
@@ -239,16 +235,16 @@ struct CachedPreviewTexture
 
 struct PreviewSurfaceVertex
 {
-    glm::vec3 position{ 0.0f };
-    glm::vec3 color{ 1.0f };
-    glm::vec2 uv{ 0.0f };
-    glm::vec3 normal{ 0.0f, 0.0f, 1.0f };
-    glm::vec4 tangent{ 1.0f, 0.0f, 0.0f, 1.0f };
+    glm::vec3 position{0.0f};
+    glm::vec3 color{1.0f};
+    glm::vec2 uv{0.0f};
+    glm::vec3 normal{0.0f, 0.0f, 1.0f};
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct PreviewRasterVertex
 {
-    ImVec2 screen{ 0.0f, 0.0f };
+    ImVec2 screen{0.0f, 0.0f};
     float depth = 0.0f;
     ImU32 color = IM_COL32_WHITE;
     bool visible = false;
@@ -378,8 +374,7 @@ bool IsMatchingMaterialShadedPreviewCache(
     float yaw,
     float pitch,
     float distance,
-    size_t materialSignature
-)
+    size_t materialSignature)
 {
     return cache.valid &&
            cache.canvasOriginX == static_cast<int>(std::lround(canvasMin.x)) &&
@@ -401,8 +396,7 @@ void StoreMaterialShadedPreviewCacheKey(
     float yaw,
     float pitch,
     float distance,
-    size_t materialSignature
-)
+    size_t materialSignature)
 {
     cache.canvasOriginX = static_cast<int>(std::lround(canvasMin.x));
     cache.canvasOriginY = static_cast<int>(std::lround(canvasMin.y));
@@ -468,8 +462,7 @@ glm::vec3 LinearToSrgb(const glm::vec3& value)
     return glm::vec3(
         std::pow(clamped.r, 1.0f / 2.2f),
         std::pow(clamped.g, 1.0f / 2.2f),
-        std::pow(clamped.b, 1.0f / 2.2f)
-    );
+        std::pow(clamped.b, 1.0f / 2.2f));
 }
 
 float WrapRepeat(float value)
@@ -509,8 +502,7 @@ glm::vec4 SampleTextureBilinear(const TextureData& texture, glm::vec2 uv)
             static_cast<float>(texture.pixels[offset + 0]) / 255.0f,
             static_cast<float>(texture.pixels[offset + 1]) / 255.0f,
             static_cast<float>(texture.pixels[offset + 2]) / 255.0f,
-            static_cast<float>(texture.pixels[offset + 3]) / 255.0f
-        );
+            static_cast<float>(texture.pixels[offset + 3]) / 255.0f);
     };
 
     const glm::vec4 top = glm::mix(fetchPixel(x0, y0), fetchPixel(x1, y0), tx);
@@ -522,8 +514,7 @@ glm::vec4 SamplePreviewTexture(
     const std::string& path,
     const glm::vec2& uv,
     const glm::vec4& fallback,
-    bool srgb
-)
+    bool srgb)
 {
     const TextureData* texture = ResolvePreviewTexture(path);
     if (texture == nullptr)
@@ -547,8 +538,7 @@ PreviewSurfaceVertex InterpolatePreviewSurfaceVertex(
     const PreviewSurfaceVertex& c,
     float barycentricA,
     float barycentricB,
-    float barycentricC
-)
+    float barycentricC)
 {
     PreviewSurfaceVertex result{};
     result.position = a.position * barycentricA + b.position * barycentricB + c.position * barycentricC;
@@ -562,8 +552,7 @@ PreviewSurfaceVertex InterpolatePreviewSurfaceVertex(
 glm::vec4 EvaluatePreviewMaterial(
     const ModelImportedMaterialInfo& material,
     const PreviewSurfaceVertex& vertex,
-    const glm::vec3& cameraPosition
-)
+    const glm::vec3& cameraPosition)
 {
     const glm::vec4 whiteLinear(1.0f, 1.0f, 1.0f, 1.0f);
     const glm::vec4 flatNormal(0.5f, 0.5f, 1.0f, 1.0f);
@@ -576,8 +565,7 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryBaseColorTexturePath,
         vertex.uv,
         primaryBaseColor,
-        true
-    );
+        true);
     const glm::vec4 primaryNormal =
         SamplePreviewTexture(material.normalTexturePath, vertex.uv, flatNormal, false);
     const glm::vec4 secondaryNormal = SamplePreviewTexture(
@@ -586,8 +574,7 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryNormalTexturePath,
         vertex.uv,
         primaryNormal,
-        false
-    );
+        false);
     const glm::vec4 primaryMetallic =
         SamplePreviewTexture(material.metallicTexturePath, vertex.uv, whiteLinear, false);
     const glm::vec4 secondaryMetallic = SamplePreviewTexture(
@@ -596,8 +583,7 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryMetallicTexturePath,
         vertex.uv,
         primaryMetallic,
-        false
-    );
+        false);
     const glm::vec4 primaryRoughness =
         SamplePreviewTexture(material.roughnessTexturePath, vertex.uv, whiteLinear, false);
     const glm::vec4 secondaryRoughness = SamplePreviewTexture(
@@ -606,8 +592,7 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryRoughnessTexturePath,
         vertex.uv,
         primaryRoughness,
-        false
-    );
+        false);
     const glm::vec4 primaryOcclusion =
         SamplePreviewTexture(material.occlusionTexturePath, vertex.uv, whiteLinear, false);
     const glm::vec4 secondaryOcclusion = SamplePreviewTexture(
@@ -616,8 +601,7 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryOcclusionTexturePath,
         vertex.uv,
         primaryOcclusion,
-        false
-    );
+        false);
     const glm::vec4 primaryEmissive =
         SamplePreviewTexture(material.emissiveTexturePath, vertex.uv, whiteLinear, true);
     const glm::vec4 secondaryEmissive = SamplePreviewTexture(
@@ -626,20 +610,18 @@ glm::vec4 EvaluatePreviewMaterial(
             : material.blendGraph.secondaryEmissiveTexturePath,
         vertex.uv,
         primaryEmissive,
-        true
-    );
+        true);
     const float blendMask = SamplePreviewTexture(
-        material.blendGraph.blendMaskTexturePath,
-        vertex.uv,
-        whiteLinear,
-        false
-    ).r;
+                                material.blendGraph.blendMaskTexturePath,
+                                vertex.uv,
+                                whiteLinear,
+                                false)
+                                .r;
 
     const float blendWeight = glm::clamp(
         (material.blendGraph.enabled ? material.blendGraph.blendFactor : 0.0f) * blendMask,
         0.0f,
-        1.0f
-    );
+        1.0f);
 
     const glm::vec4 sampledBaseColor = glm::mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     glm::vec4 albedo = sampledBaseColor;
@@ -661,8 +643,7 @@ glm::vec4 EvaluatePreviewMaterial(
     {
         tangent = glm::normalize(glm::cross(
             std::abs(geometricNormal.z) < 0.999f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f),
-            geometricNormal
-        ));
+            geometricNormal));
     }
     else
     {
@@ -685,8 +666,7 @@ glm::vec4 EvaluatePreviewMaterial(
     const glm::vec3 emissiveSample = glm::mix(
         glm::vec3(primaryEmissive),
         glm::vec3(secondaryEmissive),
-        blendWeight
-    );
+        blendWeight);
 
     const float metallic = glm::clamp(material.pbr.metallicFactor * metallicSample, 0.0f, 1.0f);
     const float roughness = glm::clamp(material.pbr.roughnessFactor * roughnessSample, 0.04f, 1.0f);
@@ -737,8 +717,7 @@ glm::vec4 EvaluatePreviewMaterial(
     const float previewAlpha = ResolveMaterialCoverageAlpha(
         material.pbr.alphaMode,
         albedo.a,
-        material.pbr.alphaCutoff
-    );
+        material.pbr.alphaCutoff);
     return glm::vec4(color, previewAlpha);
 }
 
@@ -749,16 +728,14 @@ ImU32 PackPreviewColor(const glm::vec4& color)
         static_cast<int>(std::round(clamped.r * 255.0f)),
         static_cast<int>(std::round(clamped.g * 255.0f)),
         static_cast<int>(std::round(clamped.b * 255.0f)),
-        static_cast<int>(std::round(clamped.a * 255.0f))
-    );
+        static_cast<int>(std::round(clamped.a * 255.0f)));
 }
 
 void AddGradientTriangle(
     ImDrawList* drawList,
     const PreviewRasterVertex& a,
     const PreviewRasterVertex& b,
-    const PreviewRasterVertex& c
-)
+    const PreviewRasterVertex& c)
 {
     if (drawList == nullptr || !a.visible || !b.visible || !c.visible)
     {
@@ -819,24 +796,21 @@ void RebuildMaterialShadedPreviewCache(
     const ImVec2& canvasSize,
     float yaw,
     float pitch,
-    float distance
-)
+    float distance)
 {
     const glm::vec3 center = ComputeLoadedModelCenter(loadedModel);
     const float radius = ComputeLoadedModelRadius(loadedModel, center);
     const glm::vec3 viewDirection(
         std::cos(pitch) * std::sin(yaw),
         std::sin(pitch),
-        std::cos(pitch) * std::cos(yaw)
-    );
+        std::cos(pitch) * std::cos(yaw));
     const glm::vec3 eye = center + viewDirection * distance;
     const glm::mat4 view = glm::lookAt(eye, center, glm::vec3(0.0f, 1.0f, 0.0f));
     const glm::mat4 projection = glm::perspective(
         glm::radians(45.0f),
         std::max(canvasSize.x / std::max(canvasSize.y, 1.0f), 0.1f),
         0.01f,
-        std::max(radius * 10.0f + distance, 10.0f)
-    );
+        std::max(radius * 10.0f + distance, 10.0f));
     const glm::mat4 viewProjection = projection * view;
 
     uint32_t totalTriangleCount = 0;
@@ -857,7 +831,7 @@ void RebuildMaterialShadedPreviewCache(
                                        bool dimmed)
     {
         PreviewTriangle triangle{};
-        const PreviewSurfaceVertex inputVertices[3] = { a, b, c };
+        const PreviewSurfaceVertex inputVertices[3] = {a, b, c};
         float accumulatedDepth = 0.0f;
 
         for (size_t vertexIndex = 0; vertexIndex < 3; ++vertexIndex)
@@ -899,8 +873,8 @@ void RebuildMaterialShadedPreviewCache(
 
         const ModelImportedMaterialInfo& material =
             submesh.materialIndex < materials.size()
-            ? materials[submesh.materialIndex]
-            : fallbackMaterial;
+                ? materials[submesh.materialIndex]
+                : fallbackMaterial;
         const bool dimmed = selectedMaterialIndex >= 0 &&
                             submesh.materialIndex != static_cast<uint32_t>(selectedMaterialIndex);
 
@@ -927,28 +901,21 @@ void RebuildMaterialShadedPreviewCache(
             const Vertex& rawVertex2 = submesh.mesh.vertices[index2];
 
             PreviewSurfaceVertex baseVertices[3] = {
-                {
-                    glm::vec3(rawVertex0.position[0], rawVertex0.position[1], rawVertex0.position[2]),
-                    glm::vec3(rawVertex0.color[0], rawVertex0.color[1], rawVertex0.color[2]),
-                    glm::vec2(rawVertex0.texCoord[0], rawVertex0.texCoord[1]),
-                    glm::vec3(rawVertex0.normal[0], rawVertex0.normal[1], rawVertex0.normal[2]),
-                    glm::vec4(rawVertex0.tangent[0], rawVertex0.tangent[1], rawVertex0.tangent[2], rawVertex0.tangent[3])
-                },
-                {
-                    glm::vec3(rawVertex1.position[0], rawVertex1.position[1], rawVertex1.position[2]),
-                    glm::vec3(rawVertex1.color[0], rawVertex1.color[1], rawVertex1.color[2]),
-                    glm::vec2(rawVertex1.texCoord[0], rawVertex1.texCoord[1]),
-                    glm::vec3(rawVertex1.normal[0], rawVertex1.normal[1], rawVertex1.normal[2]),
-                    glm::vec4(rawVertex1.tangent[0], rawVertex1.tangent[1], rawVertex1.tangent[2], rawVertex1.tangent[3])
-                },
-                {
-                    glm::vec3(rawVertex2.position[0], rawVertex2.position[1], rawVertex2.position[2]),
-                    glm::vec3(rawVertex2.color[0], rawVertex2.color[1], rawVertex2.color[2]),
-                    glm::vec2(rawVertex2.texCoord[0], rawVertex2.texCoord[1]),
-                    glm::vec3(rawVertex2.normal[0], rawVertex2.normal[1], rawVertex2.normal[2]),
-                    glm::vec4(rawVertex2.tangent[0], rawVertex2.tangent[1], rawVertex2.tangent[2], rawVertex2.tangent[3])
-                }
-            };
+                {glm::vec3(rawVertex0.position[0], rawVertex0.position[1], rawVertex0.position[2]),
+                 glm::vec3(rawVertex0.color[0], rawVertex0.color[1], rawVertex0.color[2]),
+                 glm::vec2(rawVertex0.texCoord[0], rawVertex0.texCoord[1]),
+                 glm::vec3(rawVertex0.normal[0], rawVertex0.normal[1], rawVertex0.normal[2]),
+                 glm::vec4(rawVertex0.tangent[0], rawVertex0.tangent[1], rawVertex0.tangent[2], rawVertex0.tangent[3])},
+                {glm::vec3(rawVertex1.position[0], rawVertex1.position[1], rawVertex1.position[2]),
+                 glm::vec3(rawVertex1.color[0], rawVertex1.color[1], rawVertex1.color[2]),
+                 glm::vec2(rawVertex1.texCoord[0], rawVertex1.texCoord[1]),
+                 glm::vec3(rawVertex1.normal[0], rawVertex1.normal[1], rawVertex1.normal[2]),
+                 glm::vec4(rawVertex1.tangent[0], rawVertex1.tangent[1], rawVertex1.tangent[2], rawVertex1.tangent[3])},
+                {glm::vec3(rawVertex2.position[0], rawVertex2.position[1], rawVertex2.position[2]),
+                 glm::vec3(rawVertex2.color[0], rawVertex2.color[1], rawVertex2.color[2]),
+                 glm::vec2(rawVertex2.texCoord[0], rawVertex2.texCoord[1]),
+                 glm::vec3(rawVertex2.normal[0], rawVertex2.normal[1], rawVertex2.normal[2]),
+                 glm::vec4(rawVertex2.tangent[0], rawVertex2.tangent[1], rawVertex2.tangent[2], rawVertex2.tangent[3])}};
 
             const auto projected0 = ProjectPreviewPoint(baseVertices[0].position, viewProjection, canvasMin, canvasSize);
             const auto projected1 = ProjectPreviewPoint(baseVertices[1].position, viewProjection, canvasMin, canvasSize);
@@ -959,9 +926,9 @@ void RebuildMaterialShadedPreviewCache(
             }
 
             const float triangleArea = std::abs(
-                ((*projected1).x - (*projected0).x) * ((*projected2).y - (*projected0).y) -
-                ((*projected2).x - (*projected0).x) * ((*projected1).y - (*projected0).y)
-            ) * 0.5f;
+                                           ((*projected1).x - (*projected0).x) * ((*projected2).y - (*projected0).y) -
+                                           ((*projected2).x - (*projected0).x) * ((*projected1).y - (*projected0).y)) *
+                                       0.5f;
             const size_t subdivisions = DeterminePreviewSubdivisions(triangleArea, totalTriangleCount);
             if (subdivisions <= 1)
             {
@@ -984,8 +951,7 @@ void RebuildMaterialShadedPreviewCache(
                         baseVertices[2],
                         barycentricA,
                         barycentricB,
-                        barycentricC
-                    ));
+                        barycentricC));
                 }
             }
 
@@ -1016,9 +982,9 @@ void RebuildMaterialShadedPreviewCache(
     }
 
     std::sort(cache.triangles.begin(), cache.triangles.end(), [](const PreviewTriangle& left, const PreviewTriangle& right)
-    {
-        return left.depth > right.depth;
-    });
+              {
+                  return left.depth > right.depth;
+              });
 }
 }
 
@@ -1032,14 +998,12 @@ void DrawMaterialShadedPreview(
     bool& autoFramePending,
     float uiScale,
     const char* canvasId,
-    const char* overlayLabel
-)
+    const char* overlayLabel)
 {
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const ImVec2 canvasSize(
         std::max(available.x, 260.0f * uiScale),
-        std::max(260.0f * uiScale, std::min(available.y, 360.0f * uiScale))
-    );
+        std::max(260.0f * uiScale, std::min(available.y, 360.0f * uiScale)));
 
     ImGui::InvisibleButton(canvasId, canvasSize, ImGuiButtonFlags_MouseButtonLeft);
     ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
@@ -1053,8 +1017,7 @@ void DrawMaterialShadedPreview(
         IM_COL32(12, 16, 24, 255),
         IM_COL32(18, 24, 36, 255),
         IM_COL32(28, 34, 48, 255),
-        IM_COL32(18, 20, 30, 255)
-    );
+        IM_COL32(18, 20, 30, 255));
     drawList->AddRect(canvasMin, canvasMax, IM_COL32(92, 108, 132, 255), 10.0f * uiScale, 0, 1.25f);
 
     const bool previewHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -1073,8 +1036,7 @@ void DrawMaterialShadedPreview(
         drawList->AddText(
             ImVec2(canvasMin.x + 14.0f * uiScale, canvasMin.y + 14.0f * uiScale),
             IM_COL32(218, 224, 236, 255),
-            "Unable to preview this model."
-        );
+            "Unable to preview this model.");
         return;
     }
 
@@ -1107,8 +1069,7 @@ void DrawMaterialShadedPreview(
             canvasSize,
             yaw,
             pitch,
-            distance
-        );
+            distance);
         StoreMaterialShadedPreviewCacheKey(
             previewCache,
             canvasMin,
@@ -1117,8 +1078,7 @@ void DrawMaterialShadedPreview(
             yaw,
             pitch,
             distance,
-            materialSignature
-        );
+            materialSignature);
     }
 
     for (const PreviewTriangle& triangle : previewCache.triangles)
@@ -1129,11 +1089,9 @@ void DrawMaterialShadedPreview(
     drawList->AddText(
         ImVec2(canvasMin.x + 12.0f * uiScale, canvasMin.y + 12.0f * uiScale),
         IM_COL32(218, 224, 236, 255),
-        overlayLabel
-    );
+        overlayLabel);
     drawList->AddText(
         ImVec2(canvasMin.x + 12.0f * uiScale, canvasMax.y - 26.0f * uiScale),
         IM_COL32(176, 188, 206, 255),
-        previewCache.cappedTriangles ? "Approximate preview capped for responsiveness" : "Drag to orbit, wheel to zoom"
-    );
+        previewCache.cappedTriangles ? "Approximate preview capped for responsiveness" : "Drag to orbit, wheel to zoom");
 }
