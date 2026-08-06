@@ -16,7 +16,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 
 以下项目应以当前源代码和测试目标为准，而不是作为本轮运行或 GUI 验收的声明。
 
-- 编辑器停靠界面与视口交互：场景面板、资产浏览器、模型处理与预览、材质图、主题、相机与输入监视；支持选择、gizmo、拖放放置、键鼠和手柄相机控制。
+- 编辑器停靠界面与视口交互：场景面板、资产浏览器、模型处理与预览、材质图、主题、相机与输入监视；支持选择、组合移动/旋转与缩放 gizmo、拖放放置、键鼠和手柄相机控制。
 - 统一场景：模型和灯光共享稳定的编辑器顺序；`ModelComponent`、`LightComponent`、变换、包围盒与 `SceneEntityIdComponent` 构成场景实体。场景采用 YAML v3，并保留旧 v1/v2 的加载兼容路径。
 - 资产工作流：资产浏览、复制、粘贴、重命名、删除与批量操作；资产树为可注册模型和纹理维护 UUID sidecar。
 - glTF 2.0：导入 `.gltf` 与 `.glb`、复制模型包与关联资源、三角化/法线/切线后处理、单位换算；每个已导入材质可保存 `.material.yaml` sidecar，并可编辑 PBR 材质图与材质贴图。
@@ -141,6 +141,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
+- 渲染端没有 `alphaMode` 分类与半透明排序、没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL；显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
@@ -163,6 +164,42 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-07-30 — 渲染管线缺口审查（静态核验，未构建未运行）
+
+本轮只通读了 `engine/renderer/vulkan/` 全部实现与 `shaders/vulkan/triangle.{vert,frag}`，没有构建、没有 CTest、没有 GUI 确认；以下条目是代码事实，不是运行结论。2026-07-16 审查记录的维护结论经复核仍然成立：背面剔除绕向、Debug 验证层、贴图生命周期与 cache key 配对、UBO std140 布局，以及按交换链镜像分配 `renderFinishedSemaphore`，都是已经落实且后续修改必须保持的约束；当时明确留下的负缩放镜像绕向问题仍未解决。mipmap 生成、各向异性采样（`device.cpp` 已在逻辑设备启用 `samplerAnisotropy`，`texture.cpp` 才据此建采样器）、贴图池与批量上传也都在位。其余缺口分三类：
+
+**正确性**
+
+- 没有 `alphaMode` 分类：`pipeline.cpp` 对所有材质无条件开混合且深度写入常开，`renderer.cpp` 按 submesh 插入顺序绘制。后果是 OPAQUE 材质的贴图 alpha 也参与混合（违反 glTF 规范，Sponza 的 `dirt_decal_*_Opacity` 会踩到）、BLEND 材质既不排序又写深度、不透明物体白付混合开销。补法是把 alphaMode 带到渲染端并拆成 opaque / mask / blend 三档变体（叠加单双面后为 6 条管线）。
+- 灯光超过 `kMaxSceneLights`（8）在 `uniform_buffer.cpp` 静默截断，既不按贡献排序也不告警。
+- 导入的 BLEND/MASK 材质 alpha 被平方：`gltf_model_loader.cpp` 把 glTF alpha 同时写入 `opacity` 与 `baseColor[3]`，而 `scene_renderables.cpp` 取两者乘积。`opacity` 是编辑器独立滑杆（默认 1.0），导入路径不应再写 `baseColor[3]`。
+- 环境项只有漫反射（`triangle.frag` 的 `ambient = albedo * ambientAccum * ao`），无环境镜面/IBL，也无 kD 能量分配，metallic=1 的表面在直射高光以外为纯黑。
+- 负缩放镜像仍未按对象翻转 `frontFace`（沿用 2026-07-16 记录的已知欠账）。
+
+**性能与架构**
+
+- 全仓库无视锥剔除，`BuildDrawItems` 每帧遍历全部 submesh（Sponza 405 次 draw）；`ModelComponent` 已拆出的包围盒足以支撑 CPU 剔除。
+- `buffer.cpp` 每个 submesh 顶点/索引各做一次 `vkAllocateMemory`，Sponza 约 810 次常驻分配，与 `maxMemoryAllocationCount` 同数量级；需要 VMA 或自建 suballocator。
+- `VulkanBuffer` 上传后仍持有顶点/索引 CPU 拷贝，与 `RendererWorld` 的 `CpuRenderSubmesh::mesh` 重复存一份。
+- `VkDescriptorSetLayout` 由 `VulkanUniformBuffer` 创建，导致每次内容变化都连带重建管线；管线又用静态 viewport/scissor，于是拖拽视口分隔条的每一帧都要 `vkDeviceWaitIdle` + 重建整套管线资源。改用 `VK_DYNAMIC_STATE_VIEWPORT/SCISSOR` 并把布局提为与内容无关的静态对象可消除该卡顿；另外全程无 `VkPipelineCache`。
+- 描述符规模按 材质数 × 交换链图像数 线性膨胀（每材质 13 个 combined image sampler），且 `renderer.cpp` 对每个 submesh 无条件新增一份 `MaterialTextureSlots`，相同材质未合并。终点是 bindless（`descriptorIndexing` + 贴图数组 + 材质 SSBO），中间态可先做材质去重。
+
+**缺失特性**
+
+- 无阴影；无抗锯齿（`rasterizationSamples = 1`，也无 FXAA/TAA）；无后处理链与独立 HDR 中间靶，色调映射是 `triangle.frag` 内硬编码的 Reinhard；`uniform_buffer.cpp` 的环境光 `(0.05, 0.05, 0.08)` 硬编码、编辑器不可改。
+- 无深度测试的 3D 调试绘制：灯光 gizmo 走 ImGui 2D 投影线，永远浮在最上层；无世界网格、线框模式与包围盒可视化。
+- 着色器是单一 uber shader、构建期 glslc 编译，无热重载与变体系统；无 timestamp query 与帧统计，上述各项收益目前无法量化。
+- 已知偏差（非缺陷）：视口与编辑器 pass 都用交换链的 `B8G8R8A8_SRGB`，ImGui 顶点颜色会被再编码一次导致 UI 偏亮；场景贴图路径的 sRGB 解码/编码是抵消的。
+
+建议补齐顺序：alphaMode 分类与半透明排序 → 视锥剔除 → 动态 viewport/scissor 与静态描述符布局 → 显存 suballocator → 灯光排序告警与 alpha 平方修正 → 之后才是阴影 / IBL / MSAA。
+
+### 2026-07-26 — 组合移动/旋转 Gizmo
+
+- 模型编辑默认使用一次 `ImGuizmo::Manipulate` 调用呈现 `TRANSLATE | ROTATE`：移动轴、平面手柄和旋转环同时可用；`R` 在 Combined/Scale 间切换，`W`/`E` 不再切换模式，拖拽期间忽略 `R`。Point 与 Ambient 灯光仍限制为仅平移。
+- 平移、旋转和缩放继续使用各自的吸附值；吸附族在拖拽开始时锁定到结束。平移与旋转手柄重叠时以平移优先，与 ImGuizmo 的内部命中顺序一致，避免界面操作和吸附步长不匹配。
+- YAML 只写 `operation: combined` 或 `operation: scale`；旧场景中的 `translate`、`rotate` 都按 Combined 读取，未知值沿用回退模式。
+- 功能分四个提交实现并快进合并到 `main`，最终提交为 `3884c98`。x64 Debug 构建通过，CTest 为 `3/3`，Vulkan 60 帧冒烟测试正常退出；用户完成 GUI 验收后才合并，覆盖组合手柄、模式切换、World/Local、各类吸附和灯光限制。
 
 ### 2026-07-22 — vcpkg 磁盘布局边界
 
