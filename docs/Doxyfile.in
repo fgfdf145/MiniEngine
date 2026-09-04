@@ -1,0 +1,104 @@
+# MiniEngine Doxygen configuration template.
+#
+# cmake/MiniEngineDocs.cmake expands the @...@ placeholders and writes the
+# result into the output directory. Generate the documentation through
+# scripts/build-docs.ps1 or scripts/build-docs.sh instead of pointing doxygen
+# at this template directly.
+#
+# Every tag below was checked against the `doxygen -g` template of Doxygen
+# 1.18. Only tags that differ from the 1.18 defaults are listed; everything
+# else keeps its default.
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "MiniEngine"
+PROJECT_BRIEF          = "Module structure and dependency graphs for the MiniEngine renderer"
+PROJECT_NUMBER         = "@MINIENGINE_DOCS_REVISION@"
+OUTPUT_DIRECTORY       = "@MINIENGINE_DOCS_OUTPUT@"
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+# tests/ and shaders/ stay out of the input set: they add nodes to every
+# dependency graph without telling you anything about how the engine modules
+# depend on each other. The two markdown files are listed so the links the
+# main page makes to them resolve instead of dangling.
+INPUT                  = "@MINIENGINE_ROOT@/engine" \
+                         "@MINIENGINE_ROOT@/app" \
+                         "@MINIENGINE_ROOT@/README.md" \
+                         "@MINIENGINE_ROOT@/docs/PROJECT_SUMMARY.md" \
+                         "@MINIENGINE_ROOT@/scripts/README.md"
+INPUT_ENCODING         = UTF-8
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.cpp *.md
+USE_MDFILE_AS_MAINPAGE = "@MINIENGINE_ROOT@/README.md"
+
+# Report repository-relative paths instead of absolute build-machine paths.
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = "@MINIENGINE_ROOT@"
+
+#---------------------------------------------------------------------------
+# Extraction
+#---------------------------------------------------------------------------
+# The engine sources carry no Doxygen comments yet, so everything shown has to
+# come from the declarations themselves.
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_ANON_NSPACES   = YES
+BUILTIN_STL_SUPPORT    = YES
+
+#---------------------------------------------------------------------------
+# Warnings
+#---------------------------------------------------------------------------
+# WARN_IF_UNDOCUMENTED would emit one warning per undocumented entity, which
+# with zero doc comments buries every real parse warning.
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO
+WARN_LOGFILE           = "@MINIENGINE_DOCS_OUTPUT@/doxygen-warnings.log"
+
+#---------------------------------------------------------------------------
+# HTML output
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_TREEVIEW      = YES
+HTML_COLORSTYLE        = TOGGLE
+GENERATE_LATEX         = NO
+
+# Cross-referenced source listings turn the graphs into navigation: click a
+# node, land on the declaration, follow who calls it.
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+#---------------------------------------------------------------------------
+# Graphviz
+#---------------------------------------------------------------------------
+HAVE_DOT               = YES
+DOT_PATH               = "@MINIENGINE_DOT_PATH@"
+DOT_NUM_THREADS        = @MINIENGINE_DOT_NUM_THREADS@
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+TEMPLATE_RELATIONS     = YES
+GRAPHICAL_HIERARCHY    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+DIRECTORY_GRAPH        = YES
+
+# HIDE_UNDOC_RELATIONS defaults to YES and would drop edges to entities that
+# only exist as declarations, which is most of this codebase.
+HIDE_UNDOC_RELATIONS   = NO
+
+# Graphs past ~100 nodes stop being readable; doxygen truncates and marks them
+# with a red box instead of emitting an unusable image.
+DOT_GRAPH_MAX_NODES    = 100
+MAX_DOT_GRAPH_DEPTH    = 0

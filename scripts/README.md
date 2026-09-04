@@ -99,3 +99,38 @@ If you prefer a shared/global checkout such as `C:\vcpkg`, pass it explicitly wi
 ## Model Import
 
 The bootstrap flow is cross-platform, and model import now uses `tinygltf` for glTF 2.0 assets (`.gltf`, `.glb`) on every supported desktop platform.
+
+## API Documentation
+
+`build-docs.ps1` / `build-docs.sh` run Doxygen with Graphviz enabled and write a browsable HTML tree to `out/docs/html`. The engine sources carry no Doxygen comments yet, so the output is a structural view: include and included-by graphs, class hierarchy and collaboration graphs, call and caller graphs, the directory dependency graph, and a cross-referenced source browser.
+
+Windows PowerShell:
+
+```powershell
+.\scripts\build-docs.ps1
+```
+
+Linux/macOS:
+
+```bash
+./scripts/build-docs.sh
+```
+
+Open the result in a browser as soon as it finishes:
+
+```powershell
+.\scripts\build-docs.ps1 -Open
+```
+
+Requirements are Doxygen 1.9.5 or newer and Graphviz. Both must be on `PATH`; on Windows the default `%ProgramFiles%\doxygen\bin` and `%ProgramFiles%\Graphviz\bin` install locations are also searched, so a shell opened before the installer ran still works.
+
+Documentation options:
+
+- `-OutputDirectory <path>` / `MINIENGINE_DOCS_OUTPUT=<path>`: write somewhere other than `out/docs`.
+- `-Doxygen <path>` / `DOXYGEN=<path>`: use a specific `doxygen` executable.
+- `-Dot <path>` / `DOT=<path>`: use a specific Graphviz `dot` executable.
+- `-Open`: open `index.html` after a successful build.
+
+The generated `Doxyfile` is written next to the HTML in `out/docs`; it is expanded from `docs/Doxyfile.in`, which is the file to edit when changing what gets documented. Parse warnings go to `out/docs/doxygen-warnings.log`, and the script prints how many there were. `out/` is git-ignored, so nothing generated here is committed.
+
+Each run deletes `out/docs/html` first, so symbols removed from the sources do not linger as stale pages. Call and caller graphs make a full run noticeably slower than a plain Doxygen build; that cost is the reason they are on.
