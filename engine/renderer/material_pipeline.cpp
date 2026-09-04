@@ -14,7 +14,6 @@ MaterialPipelineState GetMaterialPipelineState(MaterialPipelineKey key)
     state.alphaMaskEnabled = key.alphaMode == MaterialAlphaMode::Mask;
     state.blendEnabled = key.alphaMode == MaterialAlphaMode::Blend;
     state.depthWriteEnabled = key.alphaMode != MaterialAlphaMode::Blend;
-    state.writeAttachmentAlpha = key.alphaMode == MaterialAlphaMode::Blend;
     return state;
 }
 
@@ -31,6 +30,15 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
                                                   {
                                                       return keys[index].pipeline.alphaMode != MaterialAlphaMode::Blend;
                                                   });
+    // Opaque and Mask draws depth-test and depth-write, so their relative order does not change
+    // the image: group them by pipeline variant instead, which collapses the redundant
+    // vkCmdBindPipeline calls an interleaved submesh list would otherwise produce. Blend draws
+    // below keep their back-to-front order — correctness there outranks pipeline batching.
+    std::stable_sort(order.begin(), blendBegin, [&](size_t lhs, size_t rhs)
+                     {
+                         return GetMaterialPipelineIndex(keys[lhs].pipeline) <
+                                GetMaterialPipelineIndex(keys[rhs].pipeline);
+                     });
     std::stable_sort(blendBegin, order.end(), [&](size_t lhs, size_t rhs)
                      {
                          const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);

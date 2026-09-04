@@ -11,10 +11,12 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     uint32_t imageCount,
+    VkDescriptorSetLayout descriptorSetLayout,
     const std::vector<MaterialTextureBinding>& materialBindings)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
+      m_descriptorSetLayout(descriptorSetLayout),
       m_imageCount(imageCount)
 {
     if (m_materialBindings.empty())
@@ -22,7 +24,6 @@ VulkanUniformBuffer::VulkanUniformBuffer(
         throw std::runtime_error("Uniform buffer requires at least one material binding");
     }
 
-    CreateDescriptorSetLayout();
     CreateBuffers(imageCount);
     CreateDescriptorPool(imageCount);
     CreateDescriptorSets(imageCount);
@@ -50,16 +51,7 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
     {
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     }
-
-    if (m_descriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
-    }
-}
-
-VkDescriptorSetLayout VulkanUniformBuffer::GetDescriptorSetLayout() const
-{
-    return m_descriptorSetLayout;
+    // m_descriptorSetLayout is owned by VulkanMaterialDescriptorSetLayout, not by this buffer.
 }
 
 VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const
@@ -100,7 +92,8 @@ void VulkanUniformBuffer::Update(
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }
 
-void VulkanUniformBuffer::CreateDescriptorSetLayout()
+VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
+    : m_device(device)
 {
     VkDescriptorSetLayoutBinding uniformBinding{};
     uniformBinding.binding = 0;
@@ -124,7 +117,20 @@ void VulkanUniformBuffer::CreateDescriptorSetLayout()
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout), "Failed to create uniform descriptor set layout");
+    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout), "Failed to create uniform descriptor set layout");
+}
+
+VulkanMaterialDescriptorSetLayout::~VulkanMaterialDescriptorSetLayout()
+{
+    if (m_layout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_layout, nullptr);
+    }
+}
+
+VkDescriptorSetLayout VulkanMaterialDescriptorSetLayout::GetHandle() const
+{
+    return m_layout;
 }
 
 void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)

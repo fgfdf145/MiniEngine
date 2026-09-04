@@ -76,7 +76,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material = BuildDefaultMaterialForTag(tag.name);
         renderSubmesh.alphaMode = material.alphaMode;
         renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(renderSubmesh.mesh);
-        renderSubmesh.material.emissiveFactor[3] =
+        renderSubmesh.material.alphaCutoff =
             ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
         renderSubmesh.hasTexCoords = true;
         renderSubmesh.name = tag.name;
@@ -163,7 +163,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
         renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
         renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
-        renderSubmesh.material.emissiveFactor[3] = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
+        renderSubmesh.material.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
         renderSubmesh.material.surfaceFactors[0] = material.metallicFactor;
         renderSubmesh.material.surfaceFactors[1] = material.roughnessFactor;
         renderSubmesh.material.surfaceFactors[2] = material.normalScale;

@@ -964,7 +964,7 @@ void AppendPrimitive(
         // The node's world transform mirrors the geometry (negative determinant), which already
         // got baked into the vertex positions above. That mirroring reverses the apparent winding
         // of every triangle, so flip it back to CCW here to match the engine's backface-culling
-        // convention (see VulkanPipeline's frontFace/cullMode setup).
+        // convention (see VulkanPipelineSet's frontFace/cullMode setup).
         for (size_t index = 0; index + 2 < submeshData.mesh.indices.size(); index += 3)
         {
             std::swap(submeshData.mesh.indices[index + 1], submeshData.mesh.indices[index + 2]);

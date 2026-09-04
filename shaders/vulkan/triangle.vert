@@ -12,7 +12,8 @@ layout(push_constant) uniform DrawConstants
 {
     mat4 model;
     vec4 baseColorFactor;
-    vec4 emissiveFactor;
+    vec3 emissiveFactor;
+    float alphaCutoff;
     vec4 surfaceFactors;
     vec4 nodeGraphFactors;
 }

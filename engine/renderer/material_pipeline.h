@@ -23,7 +23,6 @@ struct MaterialPipelineState
     bool depthWriteEnabled = true;
     bool alphaMaskEnabled = false;
     bool cullBackFaces = true;
-    bool writeAttachmentAlpha = false;
 };
 
 struct MaterialDrawSortKey

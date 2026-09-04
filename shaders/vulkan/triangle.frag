@@ -21,7 +21,8 @@ layout(push_constant) uniform DrawConstants
 {
     mat4 model;
     vec4 baseColorFactor;
-    vec4 emissiveFactor;
+    vec3 emissiveFactor;
+    float alphaCutoff;
     vec4 surfaceFactors;
     vec4 nodeGraphFactors;
 }
@@ -225,8 +226,7 @@ void main()
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
 
-    float alphaCutoff = drawData.emissiveFactor.a;
-    if (kAlphaMask && albedo.a < alphaCutoff)
+    if (kAlphaMask && albedo.a < drawData.alphaCutoff)
         discard;
 
     // ---- Normal -----------------------------------------------------------
@@ -290,7 +290,7 @@ void main()
 
     // ---- Combine ----------------------------------------------------------
     vec3 ambient = albedo.rgb * ambientAccum * ao;
-    vec3 emissive = emissiveSample * drawData.emissiveFactor.rgb;
+    vec3 emissive = emissiveSample * drawData.emissiveFactor;
     vec3 color = ambient + directAccum + emissive;
 
     // Reinhard tonemapping

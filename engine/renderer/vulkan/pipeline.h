@@ -1,34 +1,28 @@
 #pragma once
 
 #include "common.h"
-#include <engine/renderer/material_pipeline.h>
+
+#include <filesystem>
 
 namespace me
 {
 
-class VulkanPipeline
+// RAII wrapper around a VkShaderModule loaded from a SPIR-V file. Modules are only needed while
+// vkCreateGraphicsPipelines runs, so VulkanPipelineSet loads each stage once, builds every
+// material variant from it, and lets the module go out of scope afterwards.
+class VulkanShaderModule
 {
   public:
-    VulkanPipeline(
-        VkDevice device,
-        VkExtent2D extent,
-        VkRenderPass renderPass,
-        VkDescriptorSetLayout descriptorSetLayout,
-        MaterialPipelineKey key);
-    ~VulkanPipeline();
+    VulkanShaderModule(VkDevice device, const std::filesystem::path& path);
+    ~VulkanShaderModule();
 
-    VulkanPipeline(const VulkanPipeline&) = delete;
-    VulkanPipeline& operator=(const VulkanPipeline&) = delete;
+    VulkanShaderModule(const VulkanShaderModule&) = delete;
+    VulkanShaderModule& operator=(const VulkanShaderModule&) = delete;
 
-    VkPipeline GetHandle() const;
-    VkPipelineLayout GetLayout() const;
+    VkShaderModule GetHandle() const;
 
   private:
-    std::vector<char> ReadFile(const std::string& path) const;
-    VkShaderModule CreateShaderModule(const std::vector<char>& code) const;
-
     VkDevice m_device = VK_NULL_HANDLE;
-    VkPipelineLayout m_layout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    VkShaderModule m_module = VK_NULL_HANDLE;
 };
 }

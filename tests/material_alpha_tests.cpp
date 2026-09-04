@@ -161,20 +161,17 @@ int main()
         Require(opaqueState.depthWriteEnabled, "Opaque depth writes were disabled");
         Require(!opaqueState.alphaMaskEnabled, "Opaque mask discard was enabled");
         Require(opaqueState.cullBackFaces, "single-sided Opaque stopped culling");
-        Require(!opaqueState.writeAttachmentAlpha, "Opaque wrote fractional viewport alpha");
 
         const MaterialPipelineState maskState = GetMaterialPipelineState({MaterialAlphaMode::Mask, true});
         Require(!maskState.blendEnabled, "Mask blending was enabled");
         Require(maskState.depthWriteEnabled, "Mask depth writes were disabled");
         Require(maskState.alphaMaskEnabled, "Mask discard was disabled");
         Require(!maskState.cullBackFaces, "double-sided Mask still culled");
-        Require(!maskState.writeAttachmentAlpha, "Mask wrote fractional viewport alpha");
 
         const MaterialPipelineState blendState = GetMaterialPipelineState({MaterialAlphaMode::Blend, false});
         Require(blendState.blendEnabled, "Blend blending was disabled");
         Require(!blendState.depthWriteEnabled, "Blend depth writes were enabled");
         Require(!blendState.alphaMaskEnabled, "Blend mask discard was enabled");
-        Require(blendState.writeAttachmentAlpha, "Blend did not write attachment alpha");
 
         const std::array<MaterialDrawSortKey, 6> sortKeys{{{{MaterialAlphaMode::Blend, false}, 2.0f},
                                                            {{MaterialAlphaMode::Mask, false}, 8.0f},
@@ -183,7 +180,34 @@ int main()
                                                            {{MaterialAlphaMode::Blend, false}, 9.0f},
                                                            {{MaterialAlphaMode::Blend, false}, 4.0f}}};
         const std::vector<size_t> order = BuildMaterialDrawOrder(sortKeys);
-        Require(order == std::vector<size_t>({1, 3, 2, 4, 5, 0}), "draw order mismatch");
+        Require(order == std::vector<size_t>({3, 1, 2, 4, 5, 0}), "draw order mismatch");
+
+        // Non-blend draws are grouped by pipeline variant so an interleaved submesh list does not
+        // thrash vkCmdBindPipeline; blend draws stay strictly back-to-front behind them.
+        const std::array<MaterialDrawSortKey, 7> groupingKeys{{{{MaterialAlphaMode::Opaque, false}, 0.0f},
+                                                               {{MaterialAlphaMode::Mask, true}, 0.0f},
+                                                               {{MaterialAlphaMode::Blend, false}, 1.0f},
+                                                               {{MaterialAlphaMode::Opaque, true}, 0.0f},
+                                                               {{MaterialAlphaMode::Mask, false}, 0.0f},
+                                                               {{MaterialAlphaMode::Opaque, false}, 0.0f},
+                                                               {{MaterialAlphaMode::Blend, true}, 5.0f}}};
+        const std::vector<size_t> groupingOrder = BuildMaterialDrawOrder(groupingKeys);
+        Require(
+            groupingOrder == std::vector<size_t>({0, 5, 3, 4, 1, 6, 2}),
+            "non-blend draws were not grouped by pipeline variant");
+
+        size_t pipelineBinds = 0;
+        size_t boundPipelineIndex = kMaterialPipelineVariantCount;
+        for (const size_t drawIndex : groupingOrder)
+        {
+            const size_t pipelineIndex = GetMaterialPipelineIndex(groupingKeys[drawIndex].pipeline);
+            if (pipelineIndex != boundPipelineIndex)
+            {
+                ++pipelineBinds;
+                boundPipelineIndex = pipelineIndex;
+            }
+        }
+        Require(pipelineBinds == 6, "grouped draw order did not minimize pipeline binds");
 
         const float nanDepth = std::numeric_limits<float>::quiet_NaN();
         const std::array<MaterialDrawSortKey, 6> nanSortKeys{{{{MaterialAlphaMode::Blend, false}, nanDepth},

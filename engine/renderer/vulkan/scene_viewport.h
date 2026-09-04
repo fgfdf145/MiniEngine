@@ -26,8 +26,18 @@ class VulkanSceneViewport
     VkRenderPass GetRenderPass() const;
     VkFramebuffer GetFramebuffer(uint32_t frameIndex) const;
     VkExtent2D GetExtent() const;
+    VkFormat GetColorFormat() const;
     ImTextureID GetTextureId(uint32_t frameIndex) const;
     bool MatchesExtent(VkExtent2D extent) const;
+
+    // The render pass and sampler depend only on the attachment formats, so they outlive both a
+    // viewport resize and a swapchain recreate — which is what keeps the material pipelines built
+    // against this render pass valid. Only the per-frame images, framebuffers and ImGui texture
+    // bindings below are rebuilt. Every caller must have waited for the in-flight frames first,
+    // and ReleaseFrames must run while ImGui's Vulkan backend is still alive.
+    void Resize(VkExtent2D extent);
+    void ReleaseFrames();
+    void BuildFrames(VkExtent2D extent, uint32_t frameCount);
 
   private:
     struct FrameResources

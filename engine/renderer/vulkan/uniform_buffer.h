@@ -67,6 +67,26 @@ static_assert(
     sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
+// The material descriptor set layout is fixed by the shader (one uniform buffer plus 13 combined
+// image samplers) and never varies with scene content or swapchain size. It is owned separately
+// from VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which
+// happens on every model import — does not invalidate the pipelines built against this layout.
+class VulkanMaterialDescriptorSetLayout
+{
+  public:
+    explicit VulkanMaterialDescriptorSetLayout(VkDevice device);
+    ~VulkanMaterialDescriptorSetLayout();
+
+    VulkanMaterialDescriptorSetLayout(const VulkanMaterialDescriptorSetLayout&) = delete;
+    VulkanMaterialDescriptorSetLayout& operator=(const VulkanMaterialDescriptorSetLayout&) = delete;
+
+    VkDescriptorSetLayout GetHandle() const;
+
+  private:
+    VkDevice m_device = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
+};
+
 class VulkanUniformBuffer
 {
   public:
@@ -74,13 +94,13 @@ class VulkanUniformBuffer
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         uint32_t imageCount,
+        VkDescriptorSetLayout descriptorSetLayout,
         const std::vector<MaterialTextureBinding>& materialBindings);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
     VulkanUniformBuffer& operator=(const VulkanUniformBuffer&) = delete;
 
-    VkDescriptorSetLayout GetDescriptorSetLayout() const;
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
     void Update(
         uint32_t imageIndex,
@@ -89,7 +109,6 @@ class VulkanUniformBuffer
         const std::vector<GpuLightData>& lights);
 
   private:
-    void CreateDescriptorSetLayout();
     void CreateBuffers(uint32_t imageCount);
     void CreateDescriptorPool(uint32_t imageCount);
     void CreateDescriptorSets(uint32_t imageCount);

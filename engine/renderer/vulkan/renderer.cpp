@@ -153,6 +153,7 @@ VulkanRenderer::VulkanRenderer(
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
         m_device->GetGraphicsQueue());
+    CreateDeviceResources();
     CreateSwapchainResources();
     UploadSceneResources();
 }
@@ -164,11 +165,14 @@ VulkanRenderer::~VulkanRenderer()
         vkDeviceWaitIdle(m_device->GetHandle());
     }
 
-    DestroyPipelineResources();
+    DestroyDescriptorResources();
+    m_graphicsPipelines.reset();
     DestroySwapchainResources();
+    m_sceneViewportLayer.reset();
     m_imguiLayer.reset();
     m_textures.clear();
     m_renderSubmeshes.clear();
+    DestroyDeviceResources();
     m_device.reset();
     m_instance.reset();
 }
@@ -262,7 +266,6 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetQueueFamilies(),
         supportDetails);
     m_renderPass = std::make_unique<VulkanRenderPass>(
-        m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
         m_swapchain->GetExtent(),
@@ -276,17 +279,38 @@ void VulkanRenderer::CreateSwapchainResources()
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
     }
-    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_swapchain->GetImageFormat(),
-        ToVkExtent(State().requestedViewportExtent),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+
+    const VkExtent2D viewportExtent = ToVkExtent(State().requestedViewportExtent);
+    const uint32_t frameCount = static_cast<uint32_t>(m_swapchain->GetImageViews().size());
+    if (m_sceneViewportLayer && m_sceneViewportLayer->GetColorFormat() == m_swapchain->GetImageFormat())
+    {
+        // The viewport render pass depends only on the attachment formats, so it survives the
+        // swapchain recreate and the material pipelines built against it stay valid. Only the
+        // per-frame images, framebuffers and ImGui texture bindings are rebuilt here.
+        m_sceneViewportLayer->BuildFrames(viewportExtent, frameCount);
+    }
+    else
+    {
+        m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            m_swapchain->GetImageFormat(),
+            viewportExtent,
+            frameCount);
+        // A new render pass invalidates the pipelines built against the old one.
+        m_graphicsPipelines.reset();
+    }
 }
 
 void VulkanRenderer::DestroySwapchainResources()
 {
-    m_sceneViewportLayer.reset();
+    // Keep the scene viewport object alive (and with it the render pass the pipelines were built
+    // against), but drop its per-frame resources: they are sized by the swapchain image count, and
+    // their ImGui texture bindings must be released before ImGui's descriptor pool goes away.
+    if (m_sceneViewportLayer)
+    {
+        m_sceneViewportLayer->ReleaseFrames();
+    }
     if (m_imguiLayer)
     {
         m_imguiLayer->DestroyVulkanResources();
@@ -296,38 +320,73 @@ void VulkanRenderer::DestroySwapchainResources()
     m_swapchain.reset();
 }
 
-void VulkanRenderer::CreatePipelineResources()
+void VulkanRenderer::CreateDeviceResources()
+{
+    // Both of these live as long as the logical device. The material descriptor set layout is
+    // fixed by the shader, so hoisting it out of VulkanUniformBuffer lets a scene reload rebuild
+    // descriptor sets without invalidating the pipelines. The pipeline cache outliving every
+    // VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader compilation.
+    m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
+
+    VkPipelineCacheCreateInfo cacheInfo{};
+    cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    CheckVulkan(
+        vkCreatePipelineCache(m_device->GetHandle(), &cacheInfo, nullptr, &m_pipelineCache),
+        "Failed to create pipeline cache");
+}
+
+void VulkanRenderer::DestroyDeviceResources()
+{
+    if (m_pipelineCache != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
+        m_pipelineCache = VK_NULL_HANDLE;
+    }
+    m_materialSetLayout.reset();
+}
+
+void VulkanRenderer::EnsureGraphicsPipelines()
+{
+    if (m_graphicsPipelines)
+    {
+        return;
+    }
+
+    m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_sceneViewportLayer->GetRenderPass(),
+        m_materialSetLayout->GetHandle());
+}
+
+void VulkanRenderer::CreateDescriptorResources()
 {
     if (m_textures.empty())
     {
-        throw std::runtime_error("Cannot create pipeline resources without at least one texture");
+        throw std::runtime_error("Cannot create descriptor resources without at least one texture");
     }
     if (m_materialTextureSlots.empty())
     {
-        throw std::runtime_error("Cannot create pipeline resources without at least one material texture binding");
+        throw std::runtime_error("Cannot create descriptor resources without at least one material texture binding");
     }
 
     m_uniformBuffer = std::make_unique<VulkanUniformBuffer>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+        m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(m_textures, m_materialTextureSlots));
-    m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
-        m_device->GetHandle(),
-        m_sceneViewportLayer->GetExtent(),
-        m_sceneViewportLayer->GetRenderPass(),
-        m_uniformBuffer->GetDescriptorSetLayout());
+    EnsureGraphicsPipelines();
 }
 
-void VulkanRenderer::DestroyPipelineResources()
+void VulkanRenderer::DestroyDescriptorResources()
 {
-    m_graphicsPipelines.reset();
     m_uniformBuffer.reset();
-    // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever
-    // the pipeline is torn down so nothing outlives the logical device. m_textureCacheKeys must
-    // NOT be cleared here: it stays index-paired with m_textures (which survives pipeline
-    // teardown), and wiping it makes the next UploadSceneResources destroy every live texture
-    // instead of pooling it — while in-flight frames may still be sampling them.
+    // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever the
+    // descriptor sets are torn down so nothing outlives the logical device. m_textureCacheKeys must
+    // NOT be cleared here: it stays index-paired with m_textures (which survives this teardown),
+    // and wiping it makes the next UploadSceneResources destroy every live texture instead of
+    // pooling it — while in-flight frames may still be sampling them.
     m_texturePool.clear();
 }
 
@@ -339,10 +398,10 @@ void VulkanRenderer::RecreateSwapchain()
     }
 
     vkDeviceWaitIdle(m_device->GetHandle());
-    DestroyPipelineResources();
+    DestroyDescriptorResources();
     DestroySwapchainResources();
     CreateSwapchainResources();
-    CreatePipelineResources();
+    CreateDescriptorResources();
 }
 
 void VulkanRenderer::SyncSceneViewportLayer()
@@ -362,15 +421,11 @@ void VulkanRenderer::SyncSceneViewportLayer()
         return;
     }
 
+    // Only the viewport's images and framebuffers depend on the extent. Its render pass and
+    // sampler survive, and the pipelines use dynamic viewport/scissor state, so neither they nor
+    // the uniform buffer have to be rebuilt while the user drags the viewport edge.
     vkDeviceWaitIdle(m_device->GetHandle());
-    DestroyPipelineResources();
-    m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_swapchain->GetImageFormat(),
-        ToVkExtent(State().requestedViewportExtent),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
-    CreatePipelineResources();
+    m_sceneViewportLayer->Resize(ToVkExtent(State().requestedViewportExtent));
 }
 
 void VulkanRenderer::UploadSceneResources()
@@ -688,27 +743,25 @@ void VulkanRenderer::ApplyRenderContent(
     std::vector<RenderSubmesh> newRenderSubmeshes)
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
-    std::unique_ptr<VulkanPipelineSet> newGraphicsPipelines;
 
     if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
+        // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
+        // against the renderer's fixed material set layout and the viewport render pass, neither
+        // of which a content reload touches, so they are left alone.
         newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+            m_materialSetLayout->GetHandle(),
             BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots));
-        newGraphicsPipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_sceneViewportLayer->GetExtent(),
-            m_sceneViewportLayer->GetRenderPass(),
-            newUniformBuffer->GetDescriptorSetLayout());
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
-        // present or transfer queues, and new UBO/pipeline above are built while the GPU
-        // may still be executing the previous frame (overlapping CPU and GPU work).
+        // present or transfer queues, and the new UBO above is built while the GPU may still
+        // be executing the previous frame (overlapping CPU and GPU work).
         m_commandContext->WaitForAllFrames();
-        m_graphicsPipelines = std::move(newGraphicsPipelines);
         m_uniformBuffer = std::move(newUniformBuffer);
+        EnsureGraphicsPipelines();
     }
 
     m_textures = std::move(newTextures);
@@ -774,16 +827,29 @@ void VulkanRenderer::RecordSceneLayer(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    const VulkanPipeline* boundPipeline = nullptr;
+    // Viewport and scissor are dynamic state on every material pipeline, so they are set once
+    // per pass instead of being baked into the pipelines (see VulkanPipelineSet).
+    VkViewport viewport{};
+    viewport.width = static_cast<float>(m_sceneViewportLayer->GetExtent().width);
+    viewport.height = static_cast<float>(m_sceneViewportLayer->GetExtent().height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.extent = m_sceneViewportLayer->GetExtent();
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    const VkPipelineLayout pipelineLayout = m_graphicsPipelines->GetLayout();
+    VkPipeline boundPipeline = VK_NULL_HANDLE;
 
     for (const VulkanDrawItem& drawItem : drawItems)
     {
-        const VulkanPipeline& requiredPipeline =
-            m_graphicsPipelines->Get(drawItem.pipelineKey);
-        if (&requiredPipeline != boundPipeline)
+        const VkPipeline requiredPipeline = m_graphicsPipelines->Get(drawItem.pipelineKey);
+        if (requiredPipeline != boundPipeline)
         {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline.GetHandle());
-            boundPipeline = &requiredPipeline;
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
+            boundPipeline = requiredPipeline;
         }
 
         const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer};
@@ -793,7 +859,7 @@ void VulkanRenderer::RecordSceneLayer(
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_GRAPHICS,
-            boundPipeline->GetLayout(),
+            pipelineLayout,
             0,
             1,
             &drawItem.descriptorSet,
@@ -801,7 +867,7 @@ void VulkanRenderer::RecordSceneLayer(
             nullptr);
         vkCmdPushConstants(
             commandBuffer,
-            boundPipeline->GetLayout(),
+            pipelineLayout,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
             sizeof(ObjectPushConstants),
@@ -814,9 +880,9 @@ void VulkanRenderer::RecordSceneLayer(
 
 void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const
 {
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.04f, 0.05f, 0.08f, 1.0f}};
-    clearValues[1].depthStencil = {1.0f, 0};
+    // Single color attachment: the ImGui pass has no depth buffer (see VulkanRenderPass).
+    VkClearValue clearValue{};
+    clearValue.color = {{0.04f, 0.05f, 0.08f, 1.0f}};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -824,8 +890,8 @@ void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t i
     renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearValue;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);

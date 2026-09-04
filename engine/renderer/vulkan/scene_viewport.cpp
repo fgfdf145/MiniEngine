@@ -2,6 +2,8 @@
 
 #include "../imgui/imgui_impl_vulkan.h"
 
+#include <engine/core/log/log.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -57,41 +59,7 @@ VulkanSceneViewport::VulkanSceneViewport(
 
 VulkanSceneViewport::~VulkanSceneViewport()
 {
-    for (FrameResources& frame : m_frames)
-    {
-        if (frame.textureDescriptorSet != VK_NULL_HANDLE)
-        {
-            ImGui_ImplVulkan_RemoveTexture(frame.textureDescriptorSet);
-        }
-        if (frame.framebuffer != VK_NULL_HANDLE)
-        {
-            vkDestroyFramebuffer(m_device, frame.framebuffer, nullptr);
-        }
-        if (frame.depthImageView != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, frame.depthImageView, nullptr);
-        }
-        if (frame.depthImage != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, frame.depthImage, nullptr);
-        }
-        if (frame.depthMemory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, frame.depthMemory, nullptr);
-        }
-        if (frame.colorImageView != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, frame.colorImageView, nullptr);
-        }
-        if (frame.colorImage != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, frame.colorImage, nullptr);
-        }
-        if (frame.colorMemory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, frame.colorMemory, nullptr);
-        }
-    }
+    ReleaseFrames();
 
     if (m_sampler != VK_NULL_HANDLE)
     {
@@ -118,6 +86,11 @@ VkExtent2D VulkanSceneViewport::GetExtent() const
     return m_extent;
 }
 
+VkFormat VulkanSceneViewport::GetColorFormat() const
+{
+    return m_colorFormat;
+}
+
 ImTextureID VulkanSceneViewport::GetTextureId(uint32_t frameIndex) const
 {
     return ToImTextureId(m_frames.at(frameIndex).textureDescriptorSet);
@@ -127,6 +100,27 @@ bool VulkanSceneViewport::MatchesExtent(VkExtent2D extent) const
 {
     return m_extent.width == std::max(extent.width, 1u) &&
            m_extent.height == std::max(extent.height, 1u);
+}
+
+void VulkanSceneViewport::Resize(VkExtent2D extent)
+{
+    // m_frames is empty between ReleaseFrames and BuildFrames (a swapchain recreate); the frame
+    // count is only known there, so leave the rebuild to that path.
+    if (m_frames.empty() || MatchesExtent(extent))
+    {
+        return;
+    }
+
+    const uint32_t frameCount = static_cast<uint32_t>(m_frames.size());
+    BuildFrames(extent, frameCount);
+    LOG_INFO("Scene viewport resized to {}x{}", m_extent.width, m_extent.height);
+}
+
+void VulkanSceneViewport::BuildFrames(VkExtent2D extent, uint32_t frameCount)
+{
+    ReleaseFrames();
+    m_extent = {std::max(extent.width, 1u), std::max(extent.height, 1u)};
+    CreateFrameResources(frameCount);
 }
 
 VkFormat VulkanSceneViewport::FindDepthFormat() const
@@ -299,6 +293,46 @@ void VulkanSceneViewport::CreateFrameResources(uint32_t frameCount)
             frame.colorImageView,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
+}
+
+void VulkanSceneViewport::ReleaseFrames()
+{
+    for (FrameResources& frame : m_frames)
+    {
+        if (frame.textureDescriptorSet != VK_NULL_HANDLE)
+        {
+            ImGui_ImplVulkan_RemoveTexture(frame.textureDescriptorSet);
+        }
+        if (frame.framebuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyFramebuffer(m_device, frame.framebuffer, nullptr);
+        }
+        if (frame.depthImageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(m_device, frame.depthImageView, nullptr);
+        }
+        if (frame.depthImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(m_device, frame.depthImage, nullptr);
+        }
+        if (frame.depthMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(m_device, frame.depthMemory, nullptr);
+        }
+        if (frame.colorImageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(m_device, frame.colorImageView, nullptr);
+        }
+        if (frame.colorImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(m_device, frame.colorImage, nullptr);
+        }
+        if (frame.colorMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(m_device, frame.colorMemory, nullptr);
+        }
+    }
+    m_frames.clear();
 }
 
 void VulkanSceneViewport::CreateImage(

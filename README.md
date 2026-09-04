@@ -147,7 +147,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
-- 渲染端没有 `alphaMode` 分类与半透明排序、没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL；显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录。
+- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
@@ -170,6 +170,47 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-09-03 — Vulkan 图形管线：动态状态、共享布局与资源寿命分层
+
+承接 2026-07-30 缺口清单中「性能与架构」的前两条。改动集中在 `engine/renderer/vulkan/`、`engine/renderer/material_pipeline.*` 与 `engine/renderer/material.h`，不改变渲染输出。
+
+**管线创建**
+
+- `VulkanPipeline` 类删除。原本 6 个变体各自读一次 SPIR-V、各建一对 shader module、各建一个内容完全相同的 `VkPipelineLayout`；现在 `VulkanPipelineSet` 统一持有一对 module 和一个 layout，6 条管线由单次 `vkCreateGraphicsPipelines` 批量创建。`pipeline.h/cpp` 保留为 `VulkanShaderModule` 这个 RAII 包装。
+- 各变体独有的状态放进一个 `PipelineVariantState` 数组就地填充。这些结构体内部互相取址（`pSpecializationInfo`、`pAttachments`），数组一旦被拷贝或移动就会悬空，不要换成可能重新分配的容器。
+- viewport/scissor 改为 `VK_DYNAMIC_STATE_VIEWPORT/SCISSOR`，在 `RecordSceneLayer` 每个 pass 设一次。
+- `VkPipelineCache` 由 `VulkanRenderer` 持有，与逻辑设备同寿命，跨管线重建复用。
+
+**资源寿命分层**
+
+`VulkanRenderer` 的资源按寿命分成三层，方法名同步改为 `Create/DestroyDeviceResources`、`Create/DestroySwapchainResources`、`Create/DestroyDescriptorResources` 加 `EnsureGraphicsPipelines`：
+
+- 设备级：`VulkanMaterialDescriptorSetLayout` 与 `VkPipelineCache`。描述符集布局由 shader 写死（1 个 UBO + 13 个 combined image sampler），与场景内容和交换链都无关，因此从 `VulkanUniformBuffer` 中提出。这是「内容变化不再重建管线」的关键：管线绑定的是这个常驻布局对象，重建描述符集不会使其失效——是结构上的保证，不是「两个布局定义相同所以兼容」的推理。
+- render pass 级：`VulkanPipelineSet`。`VulkanSceneViewport` 的 render pass 只依赖附件格式，因此拆出 `ReleaseFrames()` / `BuildFrames()`；交换链重建时只换逐帧图像、framebuffer 和 ImGui 纹理绑定，render pass 与 sampler 存活，管线不动。只有交换链颜色格式真的变化才整体重建视口并 `m_graphicsPipelines.reset()`。
+- 交换链/内容级：`VulkanUniformBuffer` 与视口逐帧资源。
+- 顺序约束：`ReleaseFrames()` 会调用 `ImGui_ImplVulkan_RemoveTexture`，必须早于 `m_imguiLayer->DestroyVulkanResources()`，否则释放的是已销毁描述符池里的集合。
+
+**绘制顺序**
+
+`BuildMaterialDrawOrder` 在把 Blend 分区到尾部之后，对非 Blend 前缀按 `GetMaterialPipelineIndex` 再做一次 `stable_sort`。Opaque 与 Mask 都做深度测试且写深度，相对顺序不影响成像，分组可消除交错 submesh 造成的 `vkCmdBindPipeline` 抖动；Blend 段仍严格 back-to-front，正确性优先于批处理。
+
+**交换链 render pass 去掉深度附件**
+
+ImGui 后端的 `depth_info` 是零初始化的，从不做深度测试，这个 pass 的深度附件属于死重量：一张全屏 D32 加每帧一次 clear。删除后顺带消除了「一张深度图被所有 framebuffer 共用、两帧并发同时 clear」的 WAW 隐患；`srcAccessMask = 0` 也不再是问题，交换链图像的可见性本来就由 acquire 信号量保证。
+
+**材质常量清理**
+
+- 删除 `MaterialPipelineState::writeAttachmentAlpha`。它实际是 no-op：视口清屏 alpha 为 1.0，Opaque/Mask 屏蔽 alpha 写入，Blend 的 `dstAlpha = ONE_MINUS_SRC_ALPHA` 算出来恒等于 `srcA + (1 - srcA) × 1 = 1`。现在所有变体统一只写 RGB。`srcAlphaBlendFactor` 等字段不能一并删除——`blendEnable` 为真时 Vulkan 要求它们是合法枚举值。这条 alpha 约束本身必须保持：ImGui 采样视口图像并合成到编辑器上，附件 alpha 一旦小于 1，编辑器背景就会透过 3D 视图。
+- `alphaCutoff` 从 `emissiveFactor.a` 提升为独立命名字段。`ObjectPushConstants` 已经卡在 128 字节的 Vulkan 下限，加不了第 5 个 vec4；做法是 C++ 侧拆成 `float emissiveFactor[3]` + `float alphaCutoff`，GLSL 侧拆成 `vec3 emissiveFactor; float alphaCutoff;`——vec3 后跟 float 的打包方式与 vec4 完全一致，GPU 字节布局逐字节不变。已用 `spirv-dis` 核对两个 stage 的成员偏移（`emissiveFactor` 80、`alphaCutoff` 92），并加 `offsetof` 静态断言锁住。写第一版断言时误把 `ObjectPushConstants` 内的偏移当成结构体内偏移，被编译直接挡下：结构体内正确值是 28 与 32。
+
+**验证**
+
+x64 Debug 构建通过，CTest `32/32`，`check-format` 通过。`tests/material_alpha_tests.cpp` 的 draw order 断言按新的分组语义更新，并新增一个 7 个 draw 的交错用例，除断言完整顺序外还直接计数 `vkCmdBindPipeline` 从 7 次降到 6 次；`writeAttachmentAlpha` 的三条断言随字段一并删除。开验证层启动编辑器并程序化多次 resize 窗口，全程无 `[error]` 日志，截图确认视口正常出图。日志可直接佐证寿命分层生效：一整个会话（含 1 次内容重载、5 次交换链重建、3 次视口缩放）只出现一次 `Created 6 material pipeline variants`，改动前同样操作会建 8 次管线组。未做人工 GUI 验收；带真实 MASK/BLEND 材质的视觉比对也未进行——`alphaCutoff` 改动的依据是 SPIR-V 偏移与 `offsetof` 断言证明字节布局未变，不是视觉确认。
+
+**仍未处理**
+
+视锥剔除、显存 suballocator、材质去重与 bindless、灯光排序告警、导入 alpha 平方、负缩放镜像绕向，以及阴影 / IBL / MSAA，均按 2026-07-30 的建议顺序保留。
 
 ### 2026-07-30 — 渲染管线缺口审查（静态核验，未构建未运行）
 
