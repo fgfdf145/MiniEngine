@@ -15,7 +15,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <log/log.h>
+#include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
 
 #include <nlohmann/json.hpp>
 
@@ -35,6 +36,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace me
+{
 
 namespace
 {
@@ -172,7 +176,7 @@ std::filesystem::path BuildEmbeddedTextureCacheDirectory(const std::filesystem::
 {
     const std::string folderName =
         SanitizeFileName(modelPath.stem().string()) + "_" + BuildCacheKey(modelPath);
-    return std::filesystem::path(MINIENGINE_PROJECT_DIR) / ".cache" / "tinygltf" / folderName;
+    return EnginePaths::CacheRoot() / "tinygltf" / folderName;
 }
 
 std::string BuildEmbeddedTextureFileName(const tinygltf::Image& image, size_t imageIndex)
@@ -1341,4 +1345,5 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
     }
     out << document.dump(2);
     return outPath;
+}
 }

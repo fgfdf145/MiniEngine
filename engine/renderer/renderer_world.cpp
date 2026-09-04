@@ -4,6 +4,9 @@
 #include <glm/common.hpp>
 #include <iterator>
 
+namespace me
+{
+
 glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
 {
     if (mesh.vertices.empty())
@@ -105,4 +108,5 @@ const std::vector<CpuRenderSubmesh>& RendererWorld::GetRenderSubmeshes() const
 glm::mat4 RendererWorld::GetModelMatrix(entt::entity entity) const
 {
     return GetSceneWorld().GetModelMatrix(entity);
+}
 }

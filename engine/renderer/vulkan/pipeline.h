@@ -1,7 +1,10 @@
 #pragma once
 
 #include "common.h"
-#include <material_pipeline.h>
+#include <engine/renderer/material_pipeline.h>
+
+namespace me
+{
 
 class VulkanPipeline
 {
@@ -28,3 +31,4 @@ class VulkanPipeline
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
 };
+}

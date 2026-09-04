@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <string>
 
+namespace me
+{
+
 struct KeyCode
 {
     constexpr KeyCode() = default;
@@ -179,3 +182,4 @@ class InputState
     bool m_hasTimestampBase = false;
     std::chrono::system_clock::time_point m_wallClockAtSdlTickZero{};
 };
+}

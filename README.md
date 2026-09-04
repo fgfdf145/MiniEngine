@@ -120,6 +120,12 @@ Windows 的根 [MiniEngine.slnx](MiniEngine.slnx) 对应 Debug/Release × x64/Wi
 
 macOS ARM64 沿用 `macos-debug`/`macos-release`（`arm64-osx` → `arm64/`），Intel macOS 使用 `macos-x64-debug`/`macos-x64-release`（`x64-osx` → `x64/`）。Linux x64 沿用 `linux-debug`（`x64-linux` → `x64/`），Linux ARM64 使用 `linux-arm64-debug`（`arm64-linux` → `arm64/`）。省略 Bash 构建脚本的 preset 时，会按这四种主机组合选择对应 Debug 入口。上述名称是当前配置入口，不代表本轮在对应平台完成了构建或 GUI 验收。
 
+### vcpkg overlay port
+
+`cmake/vcpkg-overlay-ports/` 通过所有 preset 的 `VCPKG_OVERLAY_PORTS` 生效，当前只覆盖 `tinygltf`。上游 port 用 `vcpkg_from_github` 拉取 GitHub 自动生成的源码归档并按 SHA512 固定；该归档被重新压缩后哈希不再匹配，port 直接下载失败。覆盖版改用 `vcpkg_from_git` 拉取 `v3.0.0` 对应的提交 `cfcadfa8d14eb489d97b6324838ae100410edcc7`，git 对象按内容寻址，不会像重新压缩的 tarball 那样漂移；除拉取方式外与上游 portfile 逐行一致。
+
+overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷新 baseline 后既不会切回上游，也拿不到 3.0.x 的后续修复。上游 port 记录的哈希与服务端一致后，删除 `cmake/vcpkg-overlay-ports/tinygltf/` 即可；overlay 目录清空后一并移除各 preset 的 `VCPKG_OVERLAY_PORTS`。
+
 运行参数由 `EditorApplication::ParseArgs()` 提供：
 
 ```text

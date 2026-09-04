@@ -5,6 +5,9 @@
 #include <utility>
 #include <vector>
 
+namespace me
+{
+
 // Accumulates GPU upload commands (buffer-to-buffer and buffer-to-image copies, image layout
 // transitions) from many resource uploads into a single command buffer, so the caller submits
 // and waits once instead of once per resource. Used by VulkanBuffer and VulkanTexture so that
@@ -36,3 +39,4 @@ class VulkanUploadBatch
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_stagingResources;
 };
+}

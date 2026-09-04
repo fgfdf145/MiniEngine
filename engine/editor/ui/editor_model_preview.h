@@ -3,10 +3,13 @@
 // Software-rasterized model previews used by the model processor window:
 // approximate PBR shaded preview, UV layout preview, and the preview cache.
 
-#include <model_loader.h>
-#include <scene_components.h>
+#include <engine/asset/model_loader.h>
+#include <engine/scene/scene_components.h>
 
 #include <vector>
+
+namespace me
+{
 
 void ResetMaterialShadedPreviewCache(const char* canvasId);
 
@@ -26,3 +29,4 @@ void DrawMaterialShadedPreview(
     float uiScale,
     const char* canvasId,
     const char* overlayLabel);
+}

@@ -6,6 +6,9 @@
 #include <utility>
 #include <vector>
 
+namespace me
+{
+
 class Log
 {
   public:
@@ -28,3 +31,4 @@ class Log
 #define LOG_INPUT_INFO(...) Log::InputInfo(__VA_ARGS__)
 #define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
 #define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
+}

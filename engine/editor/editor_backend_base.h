@@ -2,11 +2,14 @@
 
 #include "renderer_shared_state.h"
 
-#include <rhi/backend.h>
+#include <engine/renderer/rhi/backend.h>
 
 #include <memory>
 #include <optional>
 #include <string>
+
+namespace me
+{
 
 class Window;
 
@@ -51,3 +54,4 @@ class EditorRenderBackendBase : public IRenderBackend
     std::shared_ptr<RendererSharedState> m_sharedState;
     RenderBackendType m_backendType = RenderBackendType::Vulkan;
 };
+}

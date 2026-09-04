@@ -1,9 +1,12 @@
 #include "instance.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 #include <SDL3/SDL_vulkan.h>
 
 #include <cstring>
+
+namespace me
+{
 
 namespace
 {
@@ -236,4 +239,5 @@ void VulkanInstance::DestroyDebugMessenger()
         destroyFn(m_instance, m_debugMessenger, nullptr);
     }
     m_debugMessenger = VK_NULL_HANDLE;
+}
 }

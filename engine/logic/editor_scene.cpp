@@ -1,7 +1,7 @@
 #include "editor_scene.h"
 
-#include <log/log.h>
-#include <uuid/uuid.h>
+#include <engine/core/log/log.h>
+#include <engine/core/uuid/uuid.h>
 #include <yaml-cpp/yaml.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -17,6 +17,9 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+
+namespace me
+{
 
 namespace
 {
@@ -842,4 +845,5 @@ SerializedSceneData EditorScene::CaptureSceneData() const
     }
 
     return sceneData;
+}
 }

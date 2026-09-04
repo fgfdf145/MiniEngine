@@ -1,5 +1,6 @@
 #include "engine_settings.h"
 
+#include <engine/core/paths/engine_paths.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -9,6 +10,9 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
+
+namespace me
+{
 
 namespace
 {
@@ -172,7 +176,7 @@ void LoadThemeSettings(const YAML::Node& themeNode, EditorThemeSettings& theme)
 
 std::filesystem::path BuildEngineSettingsPath()
 {
-    return std::filesystem::path(MINIENGINE_PROJECT_DIR) / "miniengine.settings.json";
+    return EnginePaths::ProjectRoot() / "miniengine.settings.json";
 }
 
 bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& settings, std::string& errorMessage)
@@ -294,4 +298,5 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         errorMessage = error.what();
         return false;
     }
+}
 }

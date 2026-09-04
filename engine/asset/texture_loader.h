@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+namespace me
+{
+
 struct TextureData
 {
     int width = 0;
@@ -26,3 +29,4 @@ class TextureLoader
     // sources that store rows bottom-up.
     static TextureData LoadRGBA8(const std::string& path, bool flipVertically = false);
 };
+}

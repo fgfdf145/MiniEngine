@@ -3,12 +3,15 @@
 // Internal declarations shared between the editor UI panel translation units.
 // Not part of the public engine_editor interface.
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 
 #include <imgui.h>
 
 #include <filesystem>
 #include <string>
+
+namespace me
+{
 
 // Shared selection highlight color (viewport selection, material graph links).
 inline constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
@@ -32,3 +35,4 @@ void DrawTopToolbar(
     bool& showViewportWindow,
     float effectiveUiScale);
 ImGuiID DrawDockspaceBelowToolbar(float toolbarHeight);
+}

@@ -3,9 +3,14 @@
 #include "../imgui/imgui_impl_sdl3.h"
 #include "../imgui/imgui_impl_vulkan.h"
 
+#include <engine/core/paths/engine_paths.h>
+
 #include <imgui.h>
 #include <array>
 #include <filesystem>
+
+namespace me
+{
 
 namespace
 {
@@ -14,7 +19,7 @@ constexpr float kDefaultUiFontSizePixels = 16.0f;
 
 std::string BuildImGuiIniPath()
 {
-    return (std::filesystem::path(MINIENGINE_PROJECT_DIR) / "imgui.ini").string();
+    return (EnginePaths::ProjectRoot() / "imgui.ini").string();
 }
 
 std::filesystem::path FindPreferredUiFontPath()
@@ -320,4 +325,5 @@ void VulkanImGuiLayer::UploadFonts() const
 void VulkanImGuiLayer::CheckVkResult(VkResult result)
 {
     CheckVulkan(result, "ImGui Vulkan backend call failed");
+}
 }

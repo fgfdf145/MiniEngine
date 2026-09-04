@@ -1,8 +1,11 @@
 #include "device.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <set>
+
+namespace me
+{
 
 namespace
 {
@@ -236,4 +239,5 @@ bool VulkanDevice::HasRequiredExtensions(VkPhysicalDevice device) const
     }
 
     return requiredExtensions.empty();
+}
 }

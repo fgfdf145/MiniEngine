@@ -1,14 +1,17 @@
 #include "factory.h"
 
-#include <renderer_shared_state.h>
+#include <engine/editor/renderer_shared_state.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
-#include <window/window_platform.h>
+#include <engine/platform/window/window_platform.h>
 
-#include <vulkan/renderer.h>
+#include <engine/renderer/vulkan/renderer.h>
 
 #include <stdexcept>
+
+namespace me
+{
 
 namespace
 {
@@ -128,4 +131,5 @@ std::unique_ptr<IRenderBackend> CreateRenderBackend(
     default:
         throw std::runtime_error("Unsupported render backend");
     }
+}
 }

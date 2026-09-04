@@ -1,17 +1,17 @@
-﻿#include "editor_ui.h"
+﻿#include <engine/editor/editor_ui.h>
 #include "editor_ui_internal.h"
 #include "editor_material_graph.h"
 #include "editor_model_preview.h"
 
-#include <material_graph_runtime.h>
-#include <material_definition.h>
-#include <model_loader.h>
-#include <texture_loader.h>
+#include <engine/asset/material_graph_runtime.h>
+#include <engine/asset/material_definition.h>
+#include <engine/asset/model_loader.h>
+#include <engine/asset/texture_loader.h>
 
-#include <editor_world.h>
-#include <file_dialog/file_dialog.h>
-#include <log/log.h>
-#include <ui/ui_scale.h>
+#include <engine/logic/editor_world.h>
+#include <engine/platform/file_dialog/file_dialog.h>
+#include <engine/core/log/log.h>
+#include <engine/platform/ui/ui_scale.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
@@ -39,6 +39,9 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
+
+namespace me
+{
 
 namespace
 {
@@ -903,4 +906,5 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
     {
         CloseModelProcessorWindow();
     }
+}
 }

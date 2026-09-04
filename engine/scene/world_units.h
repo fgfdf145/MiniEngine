@@ -2,6 +2,9 @@
 
 #include <glm/glm.hpp>
 
+namespace me
+{
+
 namespace WorldUnits
 {
 constexpr float kMetersPerUnit = 1.0f;
@@ -44,4 +47,5 @@ constexpr float kUiTransformTranslationRangeMeters = 1000.0f;
 constexpr float kUiTransformScaleMax = 1000.0f;
 constexpr float kUiTranslationSnapMaxMeters = 100.0f;
 constexpr float kUiScaleSnapMax = 100.0f;
+}
 }

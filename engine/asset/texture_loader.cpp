@@ -12,6 +12,9 @@
 #include <string>
 #include <vector>
 
+namespace me
+{
+
 namespace
 {
 bool IsPortableMapExtension(const std::string& path)
@@ -131,4 +134,5 @@ TextureData TextureLoader::LoadRGBA8(const std::string& path, bool flipVerticall
 
     stbi_image_free(rawPixels);
     return texture;
+}
 }

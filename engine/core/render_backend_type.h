@@ -2,6 +2,9 @@
 
 #include <string_view>
 
+namespace me
+{
+
 enum class RenderBackendType
 {
     Vulkan
@@ -48,4 +51,5 @@ inline bool TryParseRenderBackendType(std::string_view value, RenderBackendType&
     }
 
     return false;
+}
 }

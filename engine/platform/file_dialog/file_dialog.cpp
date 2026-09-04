@@ -2,6 +2,9 @@
 
 #include "file_dialog_backend.h"
 
+namespace me
+{
+
 bool SupportsNativeFileDialogs()
 {
     return platform::file_dialog::SupportsNativeFileDialogs();
@@ -30,4 +33,5 @@ std::optional<std::string> OpenSceneFileDialog()
 std::optional<std::string> SaveSceneFileDialog()
 {
     return ShowFileDialog(FileDialogType::SaveScene);
+}
 }

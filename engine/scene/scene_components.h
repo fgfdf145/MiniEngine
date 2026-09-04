@@ -9,6 +9,9 @@
 #include <string>
 #include <vector>
 
+namespace me
+{
+
 enum class LightType : uint32_t
 {
     Directional = 0, // Global sun-like light, uses transform rotation for direction
@@ -110,3 +113,4 @@ struct EditorModelMetadataComponent
     std::vector<ModelImportedMaterialInfo> importedMaterials;
     std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
 };
+}

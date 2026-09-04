@@ -2,9 +2,14 @@
 
 #include "buffer.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
 
+#include <filesystem>
 #include <fstream>
+
+namespace me
+{
 
 VulkanPipeline::VulkanPipeline(
     VkDevice device,
@@ -19,9 +24,9 @@ VulkanPipeline::VulkanPipeline(
     VkShaderModule fragmentShaderModule = VK_NULL_HANDLE;
     try
     {
-        const std::string shaderDir = MINIENGINE_SHADER_DIR;
-        const auto vertexShaderCode = ReadFile(shaderDir + "/triangle.vert.spv");
-        const auto fragmentShaderCode = ReadFile(shaderDir + "/triangle.frag.spv");
+        const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
+        const auto vertexShaderCode = ReadFile((shaderDir / "triangle.vert.spv").string());
+        const auto fragmentShaderCode = ReadFile((shaderDir / "triangle.frag.spv").string());
 
         vertexShaderModule = CreateShaderModule(vertexShaderCode);
         fragmentShaderModule = CreateShaderModule(fragmentShaderCode);
@@ -234,4 +239,5 @@ VkShaderModule VulkanPipeline::CreateShaderModule(const std::vector<char>& code)
     VkShaderModule shaderModule = VK_NULL_HANDLE;
     CheckVulkan(vkCreateShaderModule(m_device, &createInfo, nullptr, &shaderModule), "Failed to create shader module");
     return shaderModule;
+}
 }

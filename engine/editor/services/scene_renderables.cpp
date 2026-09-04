@@ -1,11 +1,11 @@
 #include "scene_renderables.h"
 
-#include <renderer_shared_state.h>
+#include <engine/editor/renderer_shared_state.h>
 
-#include <mesh.h>
-#include <material_definition.h>
-#include <model_cache.h>
-#include <model_loader.h>
+#include <engine/asset/mesh.h>
+#include <engine/asset/material_definition.h>
+#include <engine/asset/model_cache.h>
+#include <engine/asset/model_loader.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -13,6 +13,9 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace me
+{
 
 namespace
 {
@@ -285,4 +288,5 @@ void MarkModelRenderablesDirtyForSourcePath(RendererSharedState& state, const st
             world.MarkModelRenderableDirty(entity);
         }
     }
+}
 }

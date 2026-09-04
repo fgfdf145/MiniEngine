@@ -4,6 +4,9 @@
 #include <optional>
 #include <string>
 
+namespace me
+{
+
 // Result of resolving a serialized asset reference (uuid + last-known path)
 // against the on-disk registry.
 struct ResolvedAssetReference
@@ -18,7 +21,7 @@ struct ResolvedAssetReference
 // "<file>.miniengine_asset.yaml" sidecars next to each asset (the suffix is
 // already hidden by the asset browser and skipped by scene scans). All
 // functions are thread-safe; the registry lazily initializes against
-// MINIENGINE_ASSET_DIR on first use.
+// EnginePaths::AssetsRoot() on first use.
 namespace AssetRegistry
 {
 // Point the registry at a different assets root and rescan immediately.
@@ -50,4 +53,5 @@ void OnAssetRemoved(const std::filesystem::path& path);
 
 bool IsRegistrableAsset(const std::filesystem::path& path);
 std::filesystem::path SidecarPathFor(const std::filesystem::path& assetPath);
+}
 }

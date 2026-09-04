@@ -6,6 +6,9 @@
 #include <optional>
 #include <utility>
 
+namespace me
+{
+
 namespace
 {
 template <size_t Count>
@@ -237,4 +240,5 @@ bool LoadMaterialDefinition(
         warning = exception.what();
         return false;
     }
+}
 }

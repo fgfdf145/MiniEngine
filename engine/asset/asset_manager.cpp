@@ -14,6 +14,9 @@
 #include <system_error>
 #include <unordered_set>
 
+namespace me
+{
+
 namespace
 {
 std::string ToLower(std::string s)
@@ -1156,4 +1159,5 @@ void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
         // Modal was dismissed without an explicit choice (e.g. Escape): treat as cancel.
         m_pendingDeletePaths.clear();
     }
+}
 }

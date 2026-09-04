@@ -8,6 +8,9 @@
 #include <stdexcept>
 #include <type_traits>
 
+namespace me
+{
+
 namespace
 {
 const std::array<VkFormat, 3> kDepthFormats = {
@@ -351,4 +354,5 @@ VkImageView VulkanSceneViewport::CreateImageView(VkImage image, VkFormat format,
     VkImageView imageView = VK_NULL_HANDLE;
     CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &imageView), "Failed to create viewport image view");
     return imageView;
+}
 }

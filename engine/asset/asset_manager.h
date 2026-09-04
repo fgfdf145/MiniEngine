@@ -6,6 +6,9 @@
 #include <unordered_set>
 #include <vector>
 
+namespace me
+{
+
 struct AssetManagerResult
 {
     struct PasteRequest
@@ -103,3 +106,4 @@ class AssetManager
     bool m_pendingDeleteHasDir = false;
     bool m_openDeleteModal = false;
 };
+}

@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace me
+{
+
 struct RenderExtent
 {
     uint32_t width = 0;
@@ -12,3 +15,4 @@ struct RenderExtent
         return width > 0 && height > 0;
     }
 };
+}

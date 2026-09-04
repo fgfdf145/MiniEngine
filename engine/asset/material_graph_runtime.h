@@ -1,12 +1,15 @@
 #pragma once
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 
 #include <yaml-cpp/yaml.h>
 
 #include <optional>
 #include <string>
 #include <string_view>
+
+namespace me
+{
 
 struct MaterialGraphCompileResult
 {
@@ -42,3 +45,4 @@ bool DeserializeMaterialShaderGraph(
     ModelImportedMaterialInfo& material);
 
 MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo& material);
+}

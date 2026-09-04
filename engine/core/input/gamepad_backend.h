@@ -6,6 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace me
+{
+
 struct PolledGamepadState
 {
     static constexpr size_t kButtonCount = static_cast<size_t>(SDL_GAMEPAD_BUTTON_COUNT);
@@ -18,3 +21,4 @@ struct PolledGamepadState
 };
 
 std::array<PolledGamepadState, 4> PollPlatformGamepads();
+}

@@ -1,5 +1,8 @@
 #pragma once
 
+namespace me
+{
+
 class ILogicLayer
 {
   public:
@@ -17,3 +20,4 @@ class IGameLogicLayer : public ILogicLayer
   public:
     ~IGameLogicLayer() override = default;
 };
+}

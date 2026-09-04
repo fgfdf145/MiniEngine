@@ -2,14 +2,14 @@
 
 #include "scene_renderables.h"
 
-#include <renderer_shared_state.h>
+#include <engine/editor/renderer_shared_state.h>
 
-#include <asset_registry.h>
-#include <log/log.h>
-#include <material_definition.h>
-#include <material_graph_runtime.h>
-#include <model_cache.h>
-#include <model_loader.h>
+#include <engine/asset/asset_registry.h>
+#include <engine/core/log/log.h>
+#include <engine/asset/material_definition.h>
+#include <engine/asset/material_graph_runtime.h>
+#include <engine/asset/model_cache.h>
+#include <engine/asset/model_loader.h>
 
 #include <yaml-cpp/yaml.h>
 
@@ -22,6 +22,9 @@
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+
+namespace me
+{
 
 namespace
 {
@@ -313,4 +316,5 @@ void UpdateImportedModelMaterialDefinitions(
         modelPathString);
 }
 
+}
 }

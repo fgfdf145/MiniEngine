@@ -53,3 +53,9 @@ function(miniengine_group_target_sources target_name)
         )
     endif()
 endfunction()
+
+# Canonical runtime directory defaults. These are baked into engine_core as the
+# last-resort fallbacks for EnginePaths; every other target resolves its paths
+# through EnginePaths at runtime instead of hardcoding a build-machine path.
+set(MINIENGINE_SHADER_OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders")
+set(MINIENGINE_DEFAULT_CACHE_DIR "${PROJECT_BINARY_DIR}/cache")

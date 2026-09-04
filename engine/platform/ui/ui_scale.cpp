@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+namespace me
+{
+
 namespace platform::ui
 {
 UiScaleConfiguration BuildDefaultUiScaleConfiguration()
@@ -124,5 +127,6 @@ void SetConfiguredUiScaleForCurrentPlatform(UiScaleConfiguration& configuration,
         configuration.fallback = clampedValue;
         return;
     }
+}
 }
 }

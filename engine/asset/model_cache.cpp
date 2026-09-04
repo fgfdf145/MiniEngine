@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <utility>
 
+namespace me
+{
+
 namespace
 {
 std::mutex s_modelCacheMutex;
@@ -73,5 +76,6 @@ void Invalidate(const std::string& path)
             ++it;
         }
     }
+}
 }
 }

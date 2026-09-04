@@ -1,8 +1,11 @@
 #include "swapchain.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <algorithm>
+
+namespace me
+{
 
 VulkanSwapchain::VulkanSwapchain(
     SDL_Window* window,
@@ -177,4 +180,5 @@ void VulkanSwapchain::CreateImageViews()
 
         CheckVulkan(vkCreateImageView(m_device, &createInfo, nullptr, &m_imageViews[i]), "Failed to create image view");
     }
+}
 }

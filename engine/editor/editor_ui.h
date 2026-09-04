@@ -2,14 +2,14 @@
 
 #include "engine_settings.h"
 
-#include <camera.h>
-#include <asset_manager.h>
-#include <gizmo_settings.h>
-#include <model_loader.h>
+#include <engine/renderer/camera.h>
+#include <engine/asset/asset_manager.h>
+#include <engine/logic/gizmo_settings.h>
+#include <engine/asset/model_loader.h>
 #include <optional>
 
-#include <scene_components.h>
-#include <rhi/backend.h>
+#include <engine/scene/scene_components.h>
+#include <engine/renderer/rhi/backend.h>
 #include <entt/entt.hpp>
 
 #include <SDL3/SDL.h>
@@ -19,6 +19,9 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace me
+{
 
 class IEditorWorld;
 
@@ -186,3 +189,4 @@ class EditorUiController
     bool m_showViewportWindow = true;
     bool m_inputMonitorAutoScroll = true;
 };
+}

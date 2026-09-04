@@ -12,13 +12,16 @@
 #include "texture.h"
 #include "uniform_buffer.h"
 
-#include <editor_backend_base.h>
+#include <engine/editor/editor_backend_base.h>
 
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace me
+{
 
 class Window;
 
@@ -103,3 +106,4 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
 };
+}

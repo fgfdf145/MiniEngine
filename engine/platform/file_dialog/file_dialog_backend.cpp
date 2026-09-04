@@ -13,6 +13,9 @@
 #include <commdlg.h>
 #endif
 
+namespace me
+{
+
 namespace
 {
 #ifdef _WIN32
@@ -116,5 +119,6 @@ std::optional<std::string> ShowFileDialog(FileDialogType type)
     static_cast<void>(type);
     return std::nullopt;
 #endif
+}
 }
 }

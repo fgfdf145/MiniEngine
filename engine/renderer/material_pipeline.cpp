@@ -4,6 +4,9 @@
 #include <cmath>
 #include <numeric>
 
+namespace me
+{
+
 MaterialPipelineState GetMaterialPipelineState(MaterialPipelineKey key)
 {
     MaterialPipelineState state{};
@@ -43,4 +46,5 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
                          return keys[lhs].viewDepth > keys[rhs].viewDepth;
                      });
     return order;
+}
 }

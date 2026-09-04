@@ -1,5 +1,8 @@
 #include "pipeline_set.h"
 
+namespace me
+{
+
 VulkanPipelineSet::VulkanPipelineSet(
     VkDevice device,
     VkExtent2D extent,
@@ -27,4 +30,5 @@ VulkanPipelineSet::VulkanPipelineSet(
 const VulkanPipeline& VulkanPipelineSet::Get(MaterialPipelineKey key) const
 {
     return *m_pipelines.at(GetMaterialPipelineIndex(key));
+}
 }

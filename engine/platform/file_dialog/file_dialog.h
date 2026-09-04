@@ -3,6 +3,9 @@
 #include <optional>
 #include <string>
 
+namespace me
+{
+
 enum class FileDialogType
 {
     OpenModel,
@@ -18,3 +21,4 @@ std::optional<std::string> OpenModelFileDialog();
 std::optional<std::string> OpenTextureFileDialog();
 std::optional<std::string> OpenSceneFileDialog();
 std::optional<std::string> SaveSceneFileDialog();
+}

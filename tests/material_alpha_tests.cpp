@@ -1,9 +1,9 @@
-#include <material_graph.h>
-#include <material_definition.h>
-#include <material_graph_runtime.h>
-#include <material_pipeline.h>
-#include <model_loader.h>
-#include <renderer_world.h>
+#include <engine/scene/material_graph.h>
+#include <engine/asset/material_definition.h>
+#include <engine/asset/material_graph_runtime.h>
+#include <engine/renderer/material_pipeline.h>
+#include <engine/asset/model_loader.h>
+#include <engine/renderer/renderer_world.h>
 
 #include <array>
 #include <chrono>
@@ -17,6 +17,9 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// main() stays in the global namespace; everything it drives lives in me::.
+using namespace me;
 
 namespace
 {

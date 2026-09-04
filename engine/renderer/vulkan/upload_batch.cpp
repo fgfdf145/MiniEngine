@@ -1,5 +1,8 @@
 #include "upload_batch.h"
 
+namespace me
+{
+
 VulkanUploadBatch::VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue)
     : m_device(device), m_graphicsQueue(graphicsQueue)
 {
@@ -74,4 +77,5 @@ void VulkanUploadBatch::Flush()
 
     CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset upload batch command pool");
     BeginRecording();
+}
 }

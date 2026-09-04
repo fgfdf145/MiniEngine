@@ -4,6 +4,9 @@
 
 #include <string>
 
+namespace me
+{
+
 class GltfModelLoader
 {
   public:
@@ -19,3 +22,4 @@ class GltfModelLoader
         const std::filesystem::path& gltfPath,
         const std::filesystem::path& targetDirectory);
 };
+}

@@ -5,10 +5,11 @@
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 
-#include <asset_registry.h>
-#include <log/log.h>
-#include <window/window.h>
-#include <world_units.h>
+#include <engine/asset/asset_registry.h>
+#include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
+#include <engine/platform/window/window.h>
+#include <engine/scene/world_units.h>
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +18,9 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+
+namespace me
+{
 
 EditorRenderBackendBase::EditorRenderBackendBase(
     Window& window,
@@ -608,7 +612,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
 
     // Deterministic first scan of the asset tree (uuid sidecars, duplicate
     // cleanup) before anything resolves asset references.
-    AssetRegistry::Initialize(MINIENGINE_ASSET_DIR);
+    AssetRegistry::Initialize(EnginePaths::AssetsRoot());
 
     State().editorWorld = CreateEditorWorld();
     RenderWorld().SetSceneWorld(EditorWorld());
@@ -627,7 +631,7 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
 
 void EditorRenderBackendBase::InitializeEditorScene()
 {
-    EditorWorld().LoadConfig(MINIENGINE_ASSET_DIR "/editor/default_scene.yaml");
+    EditorWorld().LoadConfig((EnginePaths::AssetsRoot() / "editor" / "default_scene.yaml").string());
 }
 
 void EditorRenderBackendBase::SaveEngineSettings()
@@ -638,7 +642,9 @@ void EditorRenderBackendBase::SaveEngineSettings()
     }
 
     std::string errorMessage;
-    if (!::SaveEngineSettings(State().engineSettingsPath, State().engineSettings, errorMessage))
+    // Qualified to pick the free function over the enclosing class's member of
+    // the same name.
+    if (!me::SaveEngineSettings(State().engineSettingsPath, State().engineSettings, errorMessage))
     {
         State().lastEngineSettingsError = errorMessage;
         LOG_ERROR(
@@ -650,4 +656,5 @@ void EditorRenderBackendBase::SaveEngineSettings()
 
     State().engineSettingsNeedsBootstrapSave = false;
     State().lastEngineSettingsError.clear();
+}
 }

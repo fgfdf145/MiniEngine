@@ -6,6 +6,9 @@
 #include <limits>
 #include <vector>
 
+namespace me
+{
+
 namespace
 {
 glm::vec3 ChooseOrthogonalTangent(const glm::vec3& normal)
@@ -192,4 +195,5 @@ void ModelPostProcess::FinalizeSubmeshData(ModelSubmeshData& submeshData)
         GenerateTangents(submeshData.mesh, submeshData.hasTexCoords);
         submeshData.hasTangents = true;
     }
+}
 }

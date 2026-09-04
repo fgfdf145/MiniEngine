@@ -1,13 +1,13 @@
 ﻿#include "renderer.h"
 
 #include "../imgui/imgui_impl_vulkan.h"
-#include <renderer_shared_state.h>
+#include <engine/editor/renderer_shared_state.h>
 
-#include <editor_world.h>
-#include <scene_components.h>
+#include <engine/logic/editor_world.h>
+#include <engine/scene/scene_components.h>
 #include <imgui.h>
-#include <log/log.h>
-#include <window/window.h>
+#include <engine/core/log/log.h>
+#include <engine/platform/window/window.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -21,6 +21,9 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+
+namespace me
+{
 
 namespace
 {
@@ -827,4 +830,5 @@ void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t i
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
     vkCmdEndRenderPass(commandBuffer);
+}
 }

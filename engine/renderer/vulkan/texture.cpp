@@ -4,6 +4,9 @@
 #include <cmath>
 #include <cstring>
 
+namespace me
+{
+
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
@@ -394,4 +397,5 @@ uint32_t VulkanTexture::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
     }
 
     throw std::runtime_error("Failed to find suitable texture memory type");
+}
 }

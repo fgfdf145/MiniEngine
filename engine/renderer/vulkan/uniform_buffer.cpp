@@ -4,6 +4,9 @@
 #include <cstring>
 #include <glm/geometric.hpp>
 
+namespace me
+{
+
 VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
@@ -258,4 +261,5 @@ uint32_t VulkanUniformBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryProper
     }
 
     throw std::runtime_error("Failed to find suitable uniform buffer memory type");
+}
 }

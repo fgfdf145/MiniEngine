@@ -1,10 +1,13 @@
 #include "window.h"
 #include "window_platform.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <algorithm>
 #include <stdexcept>
+
+namespace me
+{
 
 namespace
 {
@@ -131,4 +134,5 @@ void Window::CreateNativeWindow()
         m_width,
         m_height,
         ToString(m_backendType));
+}
 }

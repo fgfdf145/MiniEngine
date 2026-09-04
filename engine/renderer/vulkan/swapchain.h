@@ -2,6 +2,9 @@
 
 #include "common.h"
 
+namespace me
+{
+
 class VulkanSwapchain
 {
   public:
@@ -34,3 +37,4 @@ class VulkanSwapchain
     std::vector<VkImage> m_images;
     std::vector<VkImageView> m_imageViews;
 };
+}

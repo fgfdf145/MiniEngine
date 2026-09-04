@@ -1,10 +1,13 @@
 #pragma once
 
-#include <material_graph.h>
+#include <engine/scene/material_graph.h>
 
 #include <cstddef>
 #include <span>
 #include <vector>
+
+namespace me
+{
 
 struct MaterialPipelineKey
 {
@@ -34,3 +37,4 @@ inline constexpr size_t kMaterialPipelineVariantCount = 6;
 MaterialPipelineState GetMaterialPipelineState(MaterialPipelineKey key);
 size_t GetMaterialPipelineIndex(MaterialPipelineKey key);
 std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> keys);
+}

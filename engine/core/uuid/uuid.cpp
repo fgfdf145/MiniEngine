@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <random>
 
+namespace me
+{
+
 namespace Uuid
 {
 std::string GenerateV4()
@@ -33,5 +36,6 @@ std::string GenerateV4()
         static_cast<unsigned long long>(lo >> 48),
         static_cast<unsigned long long>(lo & 0xFFFFFFFFFFFFull));
     return std::string(buffer);
+}
 }
 }

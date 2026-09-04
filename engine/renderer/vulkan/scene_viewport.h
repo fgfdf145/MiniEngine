@@ -6,6 +6,9 @@
 
 #include <vector>
 
+namespace me
+{
+
 class VulkanSceneViewport
 {
   public:
@@ -62,3 +65,4 @@ class VulkanSceneViewport
     VkSampler m_sampler = VK_NULL_HANDLE;
     std::vector<FrameResources> m_frames;
 };
+}

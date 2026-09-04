@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <vector>
 
+namespace me
+{
+
 struct Vertex
 {
     float position[3];
@@ -24,3 +27,4 @@ struct MeshData
 };
 
 MeshData CreateDefaultCubeMesh();
+}

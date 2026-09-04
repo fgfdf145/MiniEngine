@@ -1,8 +1,11 @@
 #include <SDL3/SDL_main.h>
-#include <editor_application.h>
-#include <log/log.h>
+#include <engine/application/editor_application.h>
+#include <engine/core/log/log.h>
 
 #include <exception>
+
+// main() stays in the global namespace; everything it drives lives in me::.
+using namespace me;
 
 int main(int argc, char** argv)
 {

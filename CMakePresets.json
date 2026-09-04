@@ -11,7 +11,8 @@
                 "CMAKE_C_COMPILER": "cl.exe",
                 "CMAKE_CXX_COMPILER": "cl.exe",
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_MANIFEST_MODE": "ON"
+                "VCPKG_MANIFEST_MODE": "ON",
+                "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
             },
             "condition": {
                 "type": "equals",
@@ -27,7 +28,8 @@
             "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_MANIFEST_MODE": "ON"
+                "VCPKG_MANIFEST_MODE": "ON",
+                "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
             },
             "condition": {
                 "type": "equals",
@@ -114,6 +116,7 @@
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
                 "VCPKG_MANIFEST_MODE": "ON",
+                "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/arm64",
                 "VCPKG_TARGET_TRIPLET": "arm64-osx"
             },
@@ -166,6 +169,7 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/.deps/vcpkg/scripts/buildsystems/vcpkg.cmake",
                 "VCPKG_MANIFEST_MODE": "ON",
+                "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports",
                 "VCPKG_TARGET_TRIPLET": "x64-linux",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/.deps/vcpkg_installed/x64"
             },

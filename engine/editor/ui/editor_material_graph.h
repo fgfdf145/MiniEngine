@@ -3,7 +3,7 @@
 // Shader node graph editor primitives shared between the graph canvas
 // implementation and the model processor panel.
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 
 #include <imgui.h>
 
@@ -12,6 +12,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace me
+{
 
 inline constexpr float kMaterialGraphMinZoom = 0.55f;
 inline constexpr float kMaterialGraphMaxZoom = 1.8f;
@@ -142,3 +145,4 @@ void DrawNodeConnection(
     const ImVec2& to,
     ImU32 color,
     float thickness);
+}

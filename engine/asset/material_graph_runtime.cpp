@@ -6,6 +6,9 @@
 #include <sstream>
 #include <unordered_map>
 
+namespace me
+{
+
 namespace
 {
 constexpr const char* kSurfaceOutputSlot = "surface";
@@ -749,4 +752,5 @@ MaterialGraphCompileResult CompileMaterialShaderGraph(ModelImportedMaterialInfo&
     return MaterialGraphCompileResult{
         true,
         BuildCompileMessage(material.shaderGraph, blendEnabled)};
+}
 }

@@ -2,6 +2,9 @@
 
 #include <glm/glm.hpp>
 
+namespace me
+{
+
 struct alignas(16) MaterialPushConstants
 {
     float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -20,3 +23,4 @@ struct alignas(16) ObjectPushConstants
 // (maxPushConstantsSize); this struct sits exactly at that limit.
 static_assert(sizeof(MaterialPushConstants) == 64, "MaterialPushConstants must stay 4 x vec4");
 static_assert(sizeof(ObjectPushConstants) == 128, "ObjectPushConstants must not exceed the 128-byte push constant guarantee");
+}

@@ -6,6 +6,9 @@
 #include <string_view>
 #include <vector>
 
+namespace me
+{
+
 enum class MaterialAlphaMode
 {
     Opaque,
@@ -105,3 +108,4 @@ struct MaterialTextureBlendGraph
     std::string secondaryOcclusionTexturePath;
     std::string secondaryEmissiveTexturePath;
 };
+}

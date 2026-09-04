@@ -1,5 +1,8 @@
 #include "command.h"
 
+namespace me
+{
+
 VulkanCommandContext::VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount)
     : m_device(device)
 {
@@ -188,4 +191,5 @@ void VulkanCommandContext::CreateSyncObjects(size_t swapchainImageCount)
     }
 
     m_imagesInFlight.assign(swapchainImageCount, VK_NULL_HANDLE);
+}
 }

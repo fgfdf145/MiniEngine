@@ -1,6 +1,9 @@
 #include "mesh.h"
 
-#include <world_units.h>
+#include <engine/scene/world_units.h>
+
+namespace me
+{
 
 MeshData CreateDefaultCubeMesh()
 {
@@ -45,4 +48,5 @@ MeshData CreateDefaultCubeMesh()
         16, 17, 18, 18, 19, 16,
         20, 21, 22, 22, 23, 20};
     return meshData;
+}
 }

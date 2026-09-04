@@ -1,10 +1,13 @@
 ﻿#pragma once
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 
 #include <glm/vec3.hpp>
 
 #include <string>
+
+namespace me
+{
 
 struct RendererSharedState;
 
@@ -25,4 +28,5 @@ void ClearSelectedModelBaseColorTexture(RendererSharedState& state);
 
 // Applies a finished async model load, if any. Returns true when renderables changed.
 bool PumpAsyncModelLoad(RendererSharedState& state);
+}
 }

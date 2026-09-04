@@ -7,6 +7,9 @@
 
 #include <vector>
 
+namespace me
+{
+
 class ISceneWorld
 {
   public:
@@ -63,3 +66,4 @@ class ISceneWorld
         return IsValidEntity(entity) && Registry().all_of<ModelComponent>(entity);
     }
 };
+}

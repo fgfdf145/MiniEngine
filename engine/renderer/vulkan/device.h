@@ -2,6 +2,9 @@
 
 #include "common.h"
 
+namespace me
+{
+
 class VulkanDevice
 {
   public:
@@ -32,3 +35,4 @@ class VulkanDevice
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_presentQueue = VK_NULL_HANDLE;
 };
+}

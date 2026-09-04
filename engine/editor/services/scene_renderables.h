@@ -2,6 +2,9 @@
 
 #include <string>
 
+namespace me
+{
+
 struct RendererSharedState;
 
 // Converts the editor scene into CPU render submeshes and publishes them to
@@ -9,3 +12,4 @@ struct RendererSharedState;
 void RebuildSceneRenderables(RendererSharedState& state);
 bool RefreshDirtySceneRenderables(RendererSharedState& state);
 void MarkModelRenderablesDirtyForSourcePath(RendererSharedState& state, const std::string& sourcePath);
+}

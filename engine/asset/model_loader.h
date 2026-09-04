@@ -2,13 +2,16 @@
 
 #include "mesh.h"
 
-#include <material_graph.h>
+#include <engine/scene/material_graph.h>
 #include <glm/glm.hpp>
 
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
+
+namespace me
+{
 
 struct ModelMaterialData
 {
@@ -80,3 +83,4 @@ class ModelLoader
         const std::filesystem::path& modelPath,
         const std::filesystem::path& targetDirectory);
 };
+}

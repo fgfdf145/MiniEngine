@@ -1,5 +1,8 @@
 #include "gizmo_settings.h"
 
+namespace me
+{
+
 namespace
 {
 bool ContainsOperation(ImGuizmo::OPERATION operation, ImGuizmo::OPERATION expected)
@@ -77,4 +80,5 @@ void GizmoDragSnapState::FinishManipulate(bool gizmoIsUsing)
     {
         m_family = GizmoSnapFamily::None;
     }
+}
 }

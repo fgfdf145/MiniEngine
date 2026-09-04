@@ -1,9 +1,9 @@
 #pragma once
 
-#include <logic_layer.h>
-#include <gizmo_settings.h>
-#include <scene_components.h>
-#include <scene_world.h>
+#include <engine/logic/logic_layer.h>
+#include <engine/logic/gizmo_settings.h>
+#include <engine/scene/scene_components.h>
+#include <engine/scene/scene_world.h>
 
 #include <imgui.h>
 #include <entt/entt.hpp>
@@ -14,6 +14,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace me
+{
 
 struct SerializedEntityData
 {
@@ -151,3 +154,4 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
 std::unique_ptr<IEditorWorld> CreateEditorWorld();
 SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path);
 void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path);
+}

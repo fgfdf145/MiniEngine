@@ -3,11 +3,14 @@
 #include "gltf_model_loader.h"
 #include "material_definition.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <system_error>
+
+namespace me
+{
 
 namespace
 {
@@ -147,4 +150,5 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
         }
     }
     return modelData;
+}
 }

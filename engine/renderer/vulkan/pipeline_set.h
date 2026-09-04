@@ -5,6 +5,9 @@
 #include <array>
 #include <memory>
 
+namespace me
+{
+
 class VulkanPipelineSet
 {
   public:
@@ -19,3 +22,4 @@ class VulkanPipelineSet
   private:
     std::array<std::unique_ptr<VulkanPipeline>, kMaterialPipelineVariantCount> m_pipelines;
 };
+}

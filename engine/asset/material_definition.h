@@ -2,12 +2,15 @@
 
 #include "model_loader.h"
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 #include <yaml-cpp/yaml.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <string>
+
+namespace me
+{
 
 std::filesystem::path BuildMaterialDefinitionPath(
     const std::filesystem::path& modelPath,
@@ -19,3 +22,4 @@ bool LoadMaterialDefinition(
     const std::filesystem::path& path,
     ModelImportedMaterialInfo& material,
     std::string& warning);
+}

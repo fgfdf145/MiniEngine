@@ -1,10 +1,13 @@
-#include <editor_world.h>
+#include <engine/logic/editor_world.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+
+// main() stays in the global namespace; everything it drives lives in me::.
+using namespace me;
 
 namespace
 {

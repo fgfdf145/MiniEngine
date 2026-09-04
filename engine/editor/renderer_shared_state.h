@@ -3,12 +3,12 @@
 #include "editor_ui.h"
 #include "engine_settings.h"
 
-#include <camera.h>
-#include <render_types.h>
-#include <renderer_world.h>
+#include <engine/renderer/camera.h>
+#include <engine/renderer/render_types.h>
+#include <engine/renderer/renderer_world.h>
 
-#include <editor_world.h>
-#include <input/input.h>
+#include <engine/logic/editor_world.h>
+#include <engine/core/input/input.h>
 
 #include <atomic>
 #include <chrono>
@@ -18,6 +18,9 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+
+namespace me
+{
 
 struct ViewportDragPreviewState
 {
@@ -167,3 +170,4 @@ struct RendererSharedState
     RenderExtent requestedViewportExtent{};
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
 };
+}

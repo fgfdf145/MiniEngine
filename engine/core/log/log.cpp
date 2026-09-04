@@ -6,6 +6,9 @@
 #include <mutex>
 #include <vector>
 
+namespace me
+{
+
 namespace
 {
 constexpr size_t kMaxInputMessages = 256;
@@ -42,4 +45,5 @@ void Log::WriteInputLine(const std::string& message)
     {
         g_inputMessages.pop_front();
     }
+}
 }

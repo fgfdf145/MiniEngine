@@ -1,7 +1,7 @@
 #include "input.h"
 #include "gamepad_backend.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <algorithm>
 #include <cmath>
@@ -9,6 +9,9 @@
 #include <iomanip>
 #include <sstream>
 #include <string_view>
+
+namespace me
+{
 
 namespace
 {
@@ -667,4 +670,5 @@ void InputState::LogGamepadAxisEvent(Uint64 timestampNs, uint32_t playerIndex, G
         playerIndex,
         GetGamepadAxisName(axis),
         value);
+}
 }

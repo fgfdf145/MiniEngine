@@ -3,10 +3,13 @@
 #include "common.h"
 #include "upload_batch.h"
 
-#include <mesh.h>
+#include <engine/asset/mesh.h>
 
 #include <array>
 #include <vector>
+
+namespace me
+{
 
 VkVertexInputBindingDescription GetVertexBindingDescription();
 std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions();
@@ -55,3 +58,4 @@ class VulkanBuffer
     VkBuffer m_indexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_indexMemory = VK_NULL_HANDLE;
 };
+}

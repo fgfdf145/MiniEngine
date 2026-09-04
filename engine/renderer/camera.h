@@ -2,9 +2,12 @@
 
 #include "render_types.h"
 
-#include <world_units.h>
+#include <engine/scene/world_units.h>
 
 #include <glm/glm.hpp>
+
+namespace me
+{
 
 struct ViewportMatrices
 {
@@ -38,3 +41,4 @@ class Camera
     float yawDegrees = -90.0f;
     float pitchDegrees = 0.0f;
 };
+}

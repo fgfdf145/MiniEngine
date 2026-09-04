@@ -24,16 +24,10 @@ miniengine_group_target_sources(engine_asset)
 
 target_include_directories(engine_asset
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROJECT_SOURCE_DIR}"
     PRIVATE
         "${Stb_INCLUDE_DIR}"
         "${MINIENGINE_TINYGLTF_INCLUDE_DIR}"
-)
-
-target_compile_definitions(engine_asset
-    PRIVATE
-        MINIENGINE_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
-        MINIENGINE_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
 )
 
 target_link_libraries(engine_asset

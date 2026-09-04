@@ -2,9 +2,12 @@
 
 #include "common.h"
 #include "upload_batch.h"
-#include <texture_loader.h>
+#include <engine/asset/texture_loader.h>
 
 #include <string>
+
+namespace me
+{
 
 enum class VulkanTextureFormat
 {
@@ -59,3 +62,4 @@ class VulkanTexture
     VulkanTextureFormat m_textureFormat = VulkanTextureFormat::SrgbColor;
     uint32_t m_mipLevels = 1;
 };
+}

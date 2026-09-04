@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+namespace me
+{
+
 struct QueueFamilyIndices
 {
     std::optional<uint32_t> graphicsFamily;
@@ -34,4 +37,5 @@ inline void CheckVulkan(VkResult result, const char* message)
     {
         throw std::runtime_error(std::string(message) + " (VkResult=" + std::to_string(static_cast<int>(result)) + ")");
     }
+}
 }

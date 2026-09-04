@@ -7,6 +7,9 @@
 
 #include <vector>
 
+namespace me
+{
+
 struct TextureDescriptorBinding
 {
     VkImageView imageView = VK_NULL_HANDLE;
@@ -103,3 +106,4 @@ class VulkanUniformBuffer
     std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;
 };
+}

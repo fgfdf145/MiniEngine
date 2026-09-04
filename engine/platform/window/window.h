@@ -1,10 +1,13 @@
 #pragma once
 
-#include <render_backend_type.h>
+#include <engine/core/render_backend_type.h>
 #include <SDL3/SDL.h>
 
 #include <functional>
 #include <string>
+
+namespace me
+{
 
 class Window
 {
@@ -32,3 +35,4 @@ class Window
     RenderBackendType m_backendType = RenderBackendType::Vulkan;
     std::string m_title;
 };
+}

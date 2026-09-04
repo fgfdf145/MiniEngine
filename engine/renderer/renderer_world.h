@@ -1,13 +1,16 @@
 #pragma once
 
 #include "material.h"
-#include <mesh.h>
+#include <engine/asset/mesh.h>
 
-#include <scene_world.h>
+#include <engine/scene/scene_world.h>
 
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace me
+{
 
 struct MaterialTexturePaths
 {
@@ -60,3 +63,4 @@ class RendererWorld
     ISceneWorld* m_sceneWorld = nullptr;
     std::vector<CpuRenderSubmesh> m_renderSubmeshes;
 };
+}

@@ -2,12 +2,12 @@
 
 #include "scene_renderables.h"
 
-#include <renderer_shared_state.h>
+#include <engine/editor/renderer_shared_state.h>
 
-#include <asset_registry.h>
-#include <log/log.h>
-#include <model_cache.h>
-#include <model_loader.h>
+#include <engine/asset/asset_registry.h>
+#include <engine/core/log/log.h>
+#include <engine/asset/model_cache.h>
+#include <engine/asset/model_loader.h>
 
 #include <algorithm>
 #include <chrono>
@@ -15,6 +15,9 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+
+namespace me
+{
 
 namespace
 {
@@ -287,4 +290,5 @@ size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath)
     return refreshedSceneCount;
 }
 
+}
 }

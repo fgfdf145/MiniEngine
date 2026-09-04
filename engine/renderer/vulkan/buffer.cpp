@@ -1,9 +1,12 @@
 #include "buffer.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <cstddef>
 #include <cstring>
+
+namespace me
+{
 
 VkVertexInputBindingDescription GetVertexBindingDescription()
 {
@@ -226,4 +229,5 @@ void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
     vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_indexBuffer, 1, &copyRegion);
 
     uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
+}
 }

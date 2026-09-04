@@ -32,13 +32,7 @@ miniengine_group_target_sources(engine_editor)
 
 target_include_directories(engine_editor
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-target_compile_definitions(engine_editor
-    PRIVATE
-        MINIENGINE_ASSET_DIR="${PROJECT_SOURCE_DIR}/assets"
-        MINIENGINE_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
+        "${PROJECT_SOURCE_DIR}"
 )
 
 target_link_libraries(engine_editor

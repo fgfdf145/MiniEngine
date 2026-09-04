@@ -17,7 +17,7 @@ miniengine_group_target_sources(engine_render_core)
 
 target_include_directories(engine_render_core
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROJECT_SOURCE_DIR}"
 )
 
 target_link_libraries(engine_render_core
@@ -75,7 +75,8 @@ add_library(engine_renderer
 )
 miniengine_group_target_sources(engine_renderer)
 
-set(MINIENGINE_SHADER_OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders")
+# MINIENGINE_SHADER_OUTPUT_DIR is set in MiniEngineBuildOptions.cmake so that
+# engine_core can bake the same value in as the EnginePaths fallback.
 set(MINIENGINE_VERTEX_SHADER "${PROJECT_SOURCE_DIR}/shaders/vulkan/triangle.vert")
 set(MINIENGINE_FRAGMENT_SHADER "${PROJECT_SOURCE_DIR}/shaders/vulkan/triangle.frag")
 set(MINIENGINE_VERTEX_SPV "${MINIENGINE_SHADER_OUTPUT_DIR}/triangle.vert.spv")
@@ -98,12 +99,6 @@ add_custom_target(engine_renderer_shaders
     DEPENDS
         ${MINIENGINE_VERTEX_SPV}
         ${MINIENGINE_FRAGMENT_SPV}
-)
-
-target_compile_definitions(engine_renderer
-    PRIVATE
-        MINIENGINE_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
-        MINIENGINE_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
 )
 
 target_link_libraries(engine_renderer

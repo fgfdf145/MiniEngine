@@ -5,6 +5,9 @@
 #include <cmath>
 #include <string>
 
+namespace me
+{
+
 std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value)
 {
     std::string normalized(value);
@@ -59,4 +62,5 @@ float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cu
     default:
         return 1.0f;
     }
+}
 }

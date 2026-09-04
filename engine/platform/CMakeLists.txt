@@ -14,7 +14,7 @@ miniengine_group_target_sources(engine_platform)
 
 target_include_directories(engine_platform
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROJECT_SOURCE_DIR}"
 )
 
 target_link_libraries(engine_platform

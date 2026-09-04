@@ -1,7 +1,10 @@
 #pragma once
 
-#include <render_backend_type.h>
+#include <engine/core/render_backend_type.h>
 #include <SDL3/SDL_events.h>
+
+namespace me
+{
 
 struct RenderBackendDescriptor
 {
@@ -20,3 +23,4 @@ class IRenderBackend
     virtual void HandleEvent(const SDL_Event& event) = 0;
     virtual void DrawFrame() = 0;
 };
+}

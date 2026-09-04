@@ -4,6 +4,9 @@
 #include <filesystem>
 #include <string>
 
+namespace me
+{
+
 struct RendererSharedState;
 
 // Scene file load/save operations.
@@ -21,4 +24,5 @@ void SaveScene(RendererSharedState& state, const std::string& path);
 
 // Rewrites every scene file under the workspace that references the model.
 size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath);
+}
 }

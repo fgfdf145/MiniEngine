@@ -6,6 +6,9 @@
 #include <memory>
 #include <string>
 
+namespace me
+{
+
 struct RendererSharedState;
 class Window;
 
@@ -19,3 +22,4 @@ std::unique_ptr<IRenderBackend> CreateRenderBackend(
     std::shared_ptr<RendererSharedState> sharedState,
     RenderBackendType backendType,
     std::optional<std::string> startupModelPath = std::nullopt);
+}

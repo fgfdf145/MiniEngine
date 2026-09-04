@@ -11,6 +11,9 @@
 #include <Xinput.h>
 #endif
 
+namespace me
+{
+
 namespace
 {
 #ifdef _WIN32
@@ -247,4 +250,5 @@ std::array<PolledGamepadState, 4> PollPlatformGamepads()
 #endif
 
     return gamepads;
+}
 }

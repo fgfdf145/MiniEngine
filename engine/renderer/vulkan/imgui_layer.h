@@ -6,7 +6,11 @@
 
 #include <string>
 
+// ImGui's own type, declared in the global namespace like the rest of ImGui.
 struct ImDrawData;
+
+namespace me
+{
 
 class VulkanImGuiLayer
 {
@@ -47,3 +51,4 @@ class VulkanImGuiLayer
     bool m_vulkanBackendInitialized = false;
     std::string m_iniFilePath;
 };
+}

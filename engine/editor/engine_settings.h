@@ -1,12 +1,15 @@
 #pragma once
 
 #include <imgui.h>
-#include <ui/ui_scale.h>
+#include <engine/platform/ui/ui_scale.h>
 
 #include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
+
+namespace me
+{
 
 struct EditorWindowVisibilitySettings
 {
@@ -41,3 +44,4 @@ struct EngineSettings
 std::filesystem::path BuildEngineSettingsPath();
 bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& settings, std::string& errorMessage);
 bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings& settings, std::string& errorMessage);
+}

@@ -2,17 +2,22 @@
 
 #include "application.h"
 
-#include <render_backend_type.h>
+#include <engine/core/paths/engine_paths.h>
+#include <engine/core/render_backend_type.h>
 
 #include <cstdint>
 #include <optional>
 #include <string>
+
+namespace me
+{
 
 struct EditorApplicationOptions
 {
     RenderBackendType renderBackend = GetDefaultRenderBackendType();
     std::optional<std::string> startupModelPath;
     uint32_t maxFrames = 0;
+    EnginePaths::Overrides paths;
 };
 
 class EditorApplication final : public IApplication
@@ -27,3 +32,4 @@ class EditorApplication final : public IApplication
   private:
     EditorApplicationOptions m_options;
 };
+}

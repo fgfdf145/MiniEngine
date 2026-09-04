@@ -1,9 +1,12 @@
 #pragma once
 
 #include "common.h"
-#include <material_pipeline.h>
+#include <engine/renderer/material_pipeline.h>
 
 #include <functional>
+
+namespace me
+{
 
 struct VulkanDrawItem
 {
@@ -55,3 +58,4 @@ class VulkanCommandContext
 
     static constexpr size_t kMaxFramesInFlight = 2;
 };
+}

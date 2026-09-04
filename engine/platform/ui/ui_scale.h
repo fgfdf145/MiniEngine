@@ -4,6 +4,9 @@
 
 #include <optional>
 
+namespace me
+{
+
 namespace platform::ui
 {
 enum class OperatingSystem
@@ -32,4 +35,5 @@ const char* GetCurrentOperatingSystemName();
 float ResolveWindowUiScale(SDL_Window* window);
 float ResolveConfiguredUiScale(const UiScaleConfiguration& configuration);
 void SetConfiguredUiScaleForCurrentPlatform(UiScaleConfiguration& configuration, float value);
+}
 }

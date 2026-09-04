@@ -2,6 +2,9 @@
 
 #include "common.h"
 
+namespace me
+{
+
 class VulkanRenderPass
 {
   public:
@@ -33,3 +36,4 @@ class VulkanRenderPass
     VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;
     std::vector<VkFramebuffer> m_framebuffers;
 };
+}

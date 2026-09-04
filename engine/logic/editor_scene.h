@@ -4,6 +4,9 @@
 
 #include <unordered_map>
 
+namespace me
+{
+
 class EditorScene final : public IEditorWorld
 {
   public:
@@ -85,3 +88,4 @@ class EditorScene final : public IEditorWorld
     // listeners can never observe already-destroyed members above.
     entt::registry m_registry;
 };
+}

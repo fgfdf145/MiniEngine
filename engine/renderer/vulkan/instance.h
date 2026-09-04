@@ -2,6 +2,9 @@
 
 #include "common.h"
 
+namespace me
+{
+
 class VulkanInstance
 {
   public:
@@ -24,3 +27,4 @@ class VulkanInstance
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
 };
+}

@@ -1,7 +1,8 @@
 #include "asset_registry.h"
 
-#include <log/log.h>
-#include <uuid/uuid.h>
+#include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
+#include <engine/core/uuid/uuid.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -12,6 +13,9 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
+
+namespace me
+{
 
 namespace
 {
@@ -290,7 +294,7 @@ void EnsureInitializedLocked()
     {
         return;
     }
-    state.root = std::filesystem::path(MINIENGINE_ASSET_DIR).lexically_normal();
+    state.root = EnginePaths::AssetsRoot();
     state.initialized = true;
     ScanLocked();
 }
@@ -517,5 +521,6 @@ bool IsRegistrableAsset(const std::filesystem::path& path)
 std::filesystem::path SidecarPathFor(const std::filesystem::path& assetPath)
 {
     return SidecarPathForInternal(assetPath);
+}
 }
 }

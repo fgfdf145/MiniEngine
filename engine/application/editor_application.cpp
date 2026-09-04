@@ -1,9 +1,9 @@
 #include "editor_application.h"
 
-#include <log/log.h>
-#include <renderer_shared_state.h>
-#include <rhi/factory.h>
-#include <window/window.h>
+#include <engine/core/log/log.h>
+#include <engine/editor/renderer_shared_state.h>
+#include <engine/renderer/rhi/factory.h>
+#include <engine/platform/window/window.h>
 
 #include <ImGuizmo.h>
 #include <entt/entt.hpp>
@@ -15,6 +15,9 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+
+namespace me
+{
 
 namespace
 {
@@ -88,6 +91,30 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--project")
+        {
+            options.paths.projectRoot = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--assets")
+        {
+            options.paths.assetsRoot = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--cache")
+        {
+            options.paths.cacheRoot = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--shaders")
+        {
+            options.paths.shaderRoot = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
         throw std::runtime_error("Unknown argument: " + std::string(argument));
     }
 
@@ -114,6 +141,15 @@ EditorApplication::EditorApplication(EditorApplicationOptions options)
 
 int EditorApplication::Run()
 {
+    // Resolve the directory roots before any subsystem touches the filesystem.
+    EnginePaths::Initialize(m_options.paths);
+    LOG_INFO(
+        "Roots: project='{}' assets='{}' cache='{}' shaders='{}'",
+        EnginePaths::ProjectRoot().string(),
+        EnginePaths::AssetsRoot().string(),
+        EnginePaths::CacheRoot().string(),
+        EnginePaths::ShaderRoot().string());
+
     auto sharedState = std::make_shared<RendererSharedState>();
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     Window window(1920, 1080, "MiniEngine", m_options.renderBackend);
@@ -143,4 +179,5 @@ int EditorApplication::Run()
     }
 
     return 0;
+}
 }

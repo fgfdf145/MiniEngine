@@ -1,8 +1,11 @@
 #include "render_pass.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <array>
+
+namespace me
+{
 
 namespace
 {
@@ -216,4 +219,5 @@ uint32_t VulkanRenderPass::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyF
     }
 
     throw std::runtime_error("Failed to find suitable depth image memory type");
+}
 }

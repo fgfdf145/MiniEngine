@@ -1,6 +1,6 @@
 #include "window_platform.h"
 
-#include <log/log.h>
+#include <engine/core/log/log.h>
 
 #include <SDL3/SDL.h>
 #include <filesystem>
@@ -12,6 +12,9 @@
 #endif
 #include <windows.h>
 #endif
+
+namespace me
+{
 
 namespace platform::window
 {
@@ -59,5 +62,6 @@ void ApplyPlatformWindowHints()
         LOG_INFO("SDL Vulkan loader hint: using SDL default discovery");
     }
 #endif
+}
 }
 }

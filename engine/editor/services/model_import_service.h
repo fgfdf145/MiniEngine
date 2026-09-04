@@ -1,10 +1,13 @@
 ﻿#pragma once
 
-#include <scene_components.h>
+#include <engine/scene/scene_components.h>
 
 #include <cstdint>
 #include <string>
 #include <vector>
+
+namespace me
+{
 
 struct RendererSharedState;
 
@@ -38,4 +41,5 @@ void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
     const std::vector<ModelImportedMaterialInfo>& materials);
+}
 }

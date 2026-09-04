@@ -50,3 +50,10 @@ assets/**/*.exr
 assets/**/*.dds
 assets/**/*.ktx
 assets/**/*.ktx2
+
+# ImGui 运行时窗口布局：每次运行都会按当前分辨率写回，不进版本控制。
+# 缺失时由 EnsureDefaultDockLayout() 用代码构建默认布局。
+/imgui.ini
+
+# glTF 内嵌贴图解码缓存：由 gltf_model_loader 写入的派生数据，不进版本控制。
+/.cache/

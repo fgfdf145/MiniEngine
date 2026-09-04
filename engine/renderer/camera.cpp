@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cmath>
 
+namespace me
+{
+
 glm::mat4 Camera::GetViewMatrix() const
 {
     return glm::lookAt(position, position + GetForward(), worldUp);
@@ -90,4 +93,5 @@ void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
 
     nearPlane = std::max(WorldUnits::kUiCameraNearMinMeters, radius * 0.01f);
     farPlane = std::max(WorldUnits::kDefaultCameraFarPlaneMeters, distance + radius * 8.0f);
+}
 }
