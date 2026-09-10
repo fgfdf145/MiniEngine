@@ -15,7 +15,7 @@
 - Language standard is C++20. Formatting is Allman throughout; `scripts/check-format.ps1` is a gate.
 - All engine code lives in `namespace me`.
 - Target dependency direction may not be reversed. This work lands entirely inside `engine_renderer`, plus one new test target.
-- `CMakePresets.json` is the only source of truth for build parameters. Build with the `vs2026-x64-debug` preset.
+- `CMakePresets.json` is the only source of truth for build parameters. Configure with `cmake --preset vs2026-x64` and build with `cmake --build --preset vs2026-x64-debug --parallel`. `CMakePresets.json` defines no `testPresets`, so tests run as `ctest --test-dir out/build/vs2026-x64 -C Debug`. These are the forms README section 6 documents; `ctest --preset ...` does not work in this repo.
 - Texture loading applies no vertical flip: UV origin is top-left, row 0 is `v0`. Never introduce a `1 - v` compensation.
 - World units are metres, per `engine/scene/world_units.h`.
 - `ObjectPushConstants` must stay exactly 128 bytes; its existing `static_assert`s in `engine/renderer/material.h` may not be relaxed.
@@ -119,20 +119,20 @@ miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})
 
 - [ ] **Step 2: Configure and build**
 
-Run: `cmake --build --preset vs2026-x64-debug --target engine_renderer_shaders`
+Run: `cmake --build --preset vs2026-x64-debug --parallel --target engine_renderer_shaders`
 Expected: SUCCESS. `triangle.vert.spv` and `triangle.frag.spv` appear in the shader output directory.
 
 - [ ] **Step 3: Verify the compiled names did not change**
 
-Run: `git stash && cmake --build --preset vs2026-x64-debug --target engine_renderer_shaders && git stash pop`
-Expected: the same two `.spv` file names before and after. `VulkanPipelineSet` loads them by name from `EnginePaths::ShaderRoot()`, so a renamed output would break at runtime, not at build time.
+Run: `ls out/build/vs2026-x64/shaders/vulkan/` (or wherever `MINIENGINE_SHADER_OUTPUT_DIR` resolves to, which the configure output prints)
+Expected: exactly `triangle.vert.spv` and `triangle.frag.spv`. `VulkanPipelineSet` loads both by name from `EnginePaths::ShaderRoot()`, so a renamed output breaks at runtime rather than at build time. Do not use `git stash` to compare against the previous build: this checkout is shared with the user's IDE.
 
 - [ ] **Step 4: Build the whole preset and run the app**
 
-Run: `cmake --build --preset vs2026-x64-debug`
+Run: `cmake --build --preset vs2026-x64-debug --parallel`
 Expected: SUCCESS.
 
-Run: `miniengine_app.exe --frames 60`
+Run: `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60`
 Expected: exit code 0, no validation messages.
 
 - [ ] **Step 5: Commit**
@@ -463,7 +463,7 @@ set_target_properties(miniengine_scene_pass_tests PROPERTIES FOLDER "Tests")
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `cmake --build --preset vs2026-x64-debug --target miniengine_scene_pass_tests`
+Run: `cmake --build --preset vs2026-x64-debug --parallel --target miniengine_scene_pass_tests`
 Expected: FAIL — `render_target_layout.h` and `format_support.h` do not exist.
 
 - [ ] **Step 4: Write `render_target_layout.h`**
@@ -740,15 +740,15 @@ In `engine/renderer/CMakeLists.txt`, inside `add_library(engine_renderer ...)`, 
 
 - [ ] **Step 9: Run the tests to verify they pass**
 
-Run: `cmake --build --preset vs2026-x64-debug --target miniengine_scene_pass_tests`
+Run: `cmake --build --preset vs2026-x64-debug --parallel --target miniengine_scene_pass_tests`
 Expected: SUCCESS.
 
-Run: `ctest --preset vs2026-x64-debug -R miniengine.scene_pass --output-on-failure`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug -R miniengine.scene_pass --output-on-failure`
 Expected: PASS, output `scene pass tests passed`.
 
 - [ ] **Step 10: Run the whole suite and the format check**
 
-Run: `ctest --preset vs2026-x64-debug --output-on-failure`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug --output-on-failure`
 Expected: every test passes.
 
 Run: `scripts/check-format.ps1`
@@ -977,19 +977,19 @@ Add `std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;` to `rend
 
 - [ ] **Step 8: Build and run**
 
-Run: `cmake --build --preset vs2026-x64-debug`
+Run: `cmake --build --preset vs2026-x64-debug --parallel`
 Expected: SUCCESS.
 
-Run: `miniengine_app.exe --frames 60`
+Run: `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60`
 Expected: exit code 0, zero validation messages. A mismatch between the shader's declared sets and the bound sets surfaces here as a validation error, which is why this task is verified by running rather than by a unit test.
 
 - [ ] **Step 9: Confirm the image is unchanged**
 
-Launch `miniengine_app.exe` on the default scene. The viewport must be indistinguishable from before this task: same lighting, same textures on every material, same background. A set or binding mismatch typically shows as every surface sampling the wrong texture or turning black, so this check is decisive.
+Launch `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan` on the default scene. The viewport must be indistinguishable from before this task: same lighting, same textures on every material, same background. A set or binding mismatch typically shows as every surface sampling the wrong texture or turning black, so this check is decisive.
 
 - [ ] **Step 10: Run the suite and format check**
 
-Run: `ctest --preset vs2026-x64-debug --output-on-failure`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug --output-on-failure`
 Run: `scripts/check-format.ps1`
 Expected: both clean.
 
@@ -1313,13 +1313,13 @@ In `engine/renderer/CMakeLists.txt`, add to `add_library(engine_renderer ...)`:
 
 - [ ] **Step 5: Build**
 
-Run: `cmake --build --preset vs2026-x64-debug`
+Run: `cmake --build --preset vs2026-x64-debug --parallel`
 Expected: SUCCESS. Nothing constructs `SceneRenderTargets` yet, so the app's behavior is unchanged.
 
 - [ ] **Step 6: Run the suite and format check**
 
-Run: `ctest --preset vs2026-x64-debug --output-on-failure`
-Run: `miniengine_app.exe --frames 60`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug --output-on-failure`
+Run: `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60`
 Run: `scripts/check-format.ps1`
 Expected: all clean, image unchanged.
 
@@ -1652,10 +1652,10 @@ Remove both from the `engine_renderer` source list and add `vulkan/forward_pass.
 
 - [ ] **Step 9: Build and run**
 
-Run: `cmake --build --preset vs2026-x64-debug`
+Run: `cmake --build --preset vs2026-x64-debug --parallel`
 Expected: SUCCESS.
 
-Run: `miniengine_app.exe --frames 60`
+Run: `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60`
 Expected: exit code 0, zero validation messages. Missing or wrong barriers surface here as synchronization validation errors, which is the main thing this task can get wrong.
 
 - [ ] **Step 10: Confirm the image is unchanged**
@@ -1664,7 +1664,7 @@ Launch the app on the default scene. The viewport must be indistinguishable from
 
 - [ ] **Step 11: Run the suite and format check**
 
-Run: `ctest --preset vs2026-x64-debug --output-on-failure`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug --output-on-failure`
 Run: `scripts/check-format.ps1`
 Expected: both clean.
 
@@ -1896,10 +1896,10 @@ Delete `SceneRenderTargets::GetHdrTextureId` and set the HDR target's `bindToImG
 
 - [ ] **Step 10: Build and run**
 
-Run: `cmake --build --preset vs2026-x64-debug`
+Run: `cmake --build --preset vs2026-x64-debug --parallel`
 Expected: SUCCESS.
 
-Run: `miniengine_app.exe --frames 60`
+Run: `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60`
 Expected: exit code 0, zero validation messages.
 
 - [ ] **Step 11: Confirm the image is unchanged**
@@ -1915,7 +1915,7 @@ Launch the app on the default scene. The viewport must be indistinguishable from
 
 - [ ] **Step 12: Run the full verification**
 
-Run: `ctest --preset vs2026-x64-debug --output-on-failure`
+Run: `ctest --test-dir out/build/vs2026-x64 -C Debug --output-on-failure`
 Run: `scripts/check-format.ps1`
 Run: `git diff --check`
 Expected: all clean. Review the changed-file scope against this plan's File Structure table.
@@ -1934,6 +1934,6 @@ git commit -m "feat(vulkan): resolve the HDR target in a tone mapping pass"
 - The viewport image is indistinguishable from the pre-phase-one image on the default scene.
 - The frame records two `IScenePass` entries plus the ImGui pass, and every layout change in it is an explicit barrier produced by `RenderTargetLayoutTracker`.
 - `miniengine.scene_pass` passes, and so does every pre-existing test.
-- `miniengine_app.exe --frames 60` emits zero validation messages in a Debug build.
+- `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60` emits zero validation messages in a Debug build.
 - `VulkanSceneViewport` no longer exists.
 - Adding a pass means writing one `IScenePass` and appending to `m_scenePasses`.
