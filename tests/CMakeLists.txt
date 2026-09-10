@@ -126,3 +126,42 @@ foreach(miniengine_format_contract_case IN LISTS miniengine_format_contract_case
             -P "${CMAKE_CURRENT_SOURCE_DIR}/format_contract.cmake"
     )
 endforeach()
+
+# The two units under test call no Vulkan entry point, so their translation units are compiled
+# directly into the test rather than linking engine_renderer, which would drag the whole Vulkan
+# backend and the ImGui editor into a unit test. Vulkan::Vulkan is here for the headers only.
+add_executable(miniengine_scene_pass_tests
+    scene_pass_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/render_target_layout.cpp
+    ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/format_support.cpp
+)
+miniengine_group_target_sources(miniengine_scene_pass_tests)
+
+target_include_directories(miniengine_scene_pass_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(miniengine_scene_pass_tests
+    PRIVATE
+        Vulkan::Vulkan
+)
+
+add_test(
+    NAME miniengine.scene_pass
+    COMMAND miniengine_scene_pass_tests
+)
+
+if(WIN32)
+    # This target links only Vulkan::Vulkan for headers, so it has no runtime DLLs of its own;
+    # TARGET_RUNTIME_DLLS expands empty. copy_if_different rejects a call with no source files, so
+    # use the -t form instead: it accepts an empty file list as a no-op, unlike copy_if_different.
+    add_custom_command(TARGET miniengine_scene_pass_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy -t
+            $<TARGET_FILE_DIR:miniengine_scene_pass_tests>
+            $<TARGET_RUNTIME_DLLS:miniengine_scene_pass_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_scene_pass_tests PROPERTIES FOLDER "Tests")

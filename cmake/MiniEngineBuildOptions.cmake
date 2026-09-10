@@ -47,8 +47,25 @@ function(miniengine_group_target_sources target_name)
     endforeach()
 
     if(_miniengine_absolute_sources)
+        # source_group(TREE ...) requires every file to live under the tree root. Most targets'
+        # sources all sit under their own CMAKE_CURRENT_SOURCE_DIR, but a test target can compile
+        # another target's .cpp directly (see miniengine_scene_pass_tests) to avoid linking a
+        # whole backend into a unit test. Fall back to the project root, which is a common
+        # ancestor of everything, only when that mixed case shows up.
+        set(_miniengine_tree_root "${CMAKE_CURRENT_SOURCE_DIR}")
+        foreach(_miniengine_absolute_source IN LISTS _miniengine_absolute_sources)
+            cmake_path(
+                IS_PREFIX CMAKE_CURRENT_SOURCE_DIR "${_miniengine_absolute_source}"
+                NORMALIZE _miniengine_is_under_current_dir
+            )
+            if(NOT _miniengine_is_under_current_dir)
+                set(_miniengine_tree_root "${PROJECT_SOURCE_DIR}")
+                break()
+            endif()
+        endforeach()
+
         source_group(
-            TREE "${CMAKE_CURRENT_SOURCE_DIR}"
+            TREE "${_miniengine_tree_root}"
             FILES ${_miniengine_absolute_sources}
         )
     endif()

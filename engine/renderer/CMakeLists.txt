@@ -50,6 +50,8 @@ add_library(engine_renderer
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
+    vulkan/format_support.cpp
+    vulkan/format_support.h
     vulkan/imgui_layer.cpp
     vulkan/imgui_layer.h
     vulkan/instance.cpp
@@ -60,6 +62,8 @@ add_library(engine_renderer
     vulkan/pipeline_set.h
     vulkan/render_pass.cpp
     vulkan/render_pass.h
+    vulkan/render_target_layout.cpp
+    vulkan/render_target_layout.h
     vulkan/renderer.cpp
     vulkan/renderer.h
     vulkan/scene_viewport.cpp
