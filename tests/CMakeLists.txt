@@ -135,7 +135,11 @@ add_executable(miniengine_scene_pass_tests
     ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/render_target_layout.cpp
     ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/format_support.cpp
 )
-miniengine_group_target_sources(miniengine_scene_pass_tests)
+# No miniengine_group_target_sources here: that helper's source_group(TREE ...) requires every
+# file to sit under the calling directory, and this target deliberately compiles two .cpp files
+# from engine/renderer/vulkan/ so a unit test does not have to link the whole Vulkan backend.
+# The helper only organises IDE source folders, so skipping it for this one target costs nothing
+# but its folder grouping in the Visual Studio solution.
 
 target_include_directories(miniengine_scene_pass_tests
     PRIVATE
@@ -151,17 +155,5 @@ add_test(
     NAME miniengine.scene_pass
     COMMAND miniengine_scene_pass_tests
 )
-
-if(WIN32)
-    # This target links only Vulkan::Vulkan for headers, so it has no runtime DLLs of its own;
-    # TARGET_RUNTIME_DLLS expands empty. copy_if_different rejects a call with no source files, so
-    # use the -t form instead: it accepts an empty file list as a no-op, unlike copy_if_different.
-    add_custom_command(TARGET miniengine_scene_pass_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy -t
-            $<TARGET_FILE_DIR:miniengine_scene_pass_tests>
-            $<TARGET_RUNTIME_DLLS:miniengine_scene_pass_tests>
-        COMMAND_EXPAND_LISTS
-    )
-endif()
 
 set_target_properties(miniengine_scene_pass_tests PROPERTIES FOLDER "Tests")
