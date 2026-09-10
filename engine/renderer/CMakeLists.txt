@@ -77,29 +77,34 @@ miniengine_group_target_sources(engine_renderer)
 
 # MINIENGINE_SHADER_OUTPUT_DIR is set in MiniEngineBuildOptions.cmake so that
 # engine_core can bake the same value in as the EnginePaths fallback.
-set(MINIENGINE_VERTEX_SHADER "${PROJECT_SOURCE_DIR}/shaders/vulkan/triangle.vert")
-set(MINIENGINE_FRAGMENT_SHADER "${PROJECT_SOURCE_DIR}/shaders/vulkan/triangle.frag")
-set(MINIENGINE_VERTEX_SPV "${MINIENGINE_SHADER_OUTPUT_DIR}/triangle.vert.spv")
-set(MINIENGINE_FRAGMENT_SPV "${MINIENGINE_SHADER_OUTPUT_DIR}/triangle.frag.spv")
+#
+# Every shader stage the renderer loads is listed here by file name. The compiled name is the
+# source name plus ".spv", which is what VulkanShaderModule is given at load time.
+set(MINIENGINE_SHADER_SOURCES
+    triangle.vert
+    triangle.frag
+)
 
-function(_miniengine_compile_shader output_file source_file)
-    add_custom_command(
-        OUTPUT "${output_file}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-        COMMAND ${Vulkan_GLSLC_EXECUTABLE} "${source_file}" -o "${output_file}"
-        DEPENDS "${source_file}"
-        VERBATIM
-    )
+function(miniengine_add_shaders shader_target)
+    set(spv_outputs "")
+    foreach(shader_name IN LISTS ARGN)
+        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
+        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_name}.spv")
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}"
+            COMMENT "Compiling ${shader_name}"
+            VERBATIM
+        )
+        list(APPEND spv_outputs "${shader_output}")
+    endforeach()
+
+    add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
 
-_miniengine_compile_shader("${MINIENGINE_VERTEX_SPV}" "${MINIENGINE_VERTEX_SHADER}")
-_miniengine_compile_shader("${MINIENGINE_FRAGMENT_SPV}" "${MINIENGINE_FRAGMENT_SHADER}")
-
-add_custom_target(engine_renderer_shaders
-    DEPENDS
-        ${MINIENGINE_VERTEX_SPV}
-        ${MINIENGINE_FRAGMENT_SPV}
-)
+miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})
 
 target_link_libraries(engine_renderer
     PUBLIC
