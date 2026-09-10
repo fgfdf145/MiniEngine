@@ -146,6 +146,9 @@ target_include_directories(miniengine_scene_pass_tests
         "${PROJECT_SOURCE_DIR}"
 )
 
+# No POST_BUILD TARGET_RUNTIME_DLLS copy here, unlike the other test targets: this one links
+# only Vulkan::Vulkan for its headers and Vulkan-1.dll is a system library, so the runtime DLL
+# list is empty by construction and there is nothing to copy.
 target_link_libraries(miniengine_scene_pass_tests
     PRIVATE
         Vulkan::Vulkan

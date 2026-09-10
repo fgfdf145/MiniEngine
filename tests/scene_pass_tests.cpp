@@ -208,7 +208,9 @@ void ChooseFormatThrowsWhenNothingQualifies()
             candidates,
             VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
             [](VkFormat)
-            { return static_cast<VkFormatFeatureFlags>(0); });
+            {
+                return static_cast<VkFormatFeatureFlags>(0);
+            });
     }
     catch (const std::runtime_error&)
     {
