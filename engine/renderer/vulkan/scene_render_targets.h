@@ -24,8 +24,12 @@ namespace me
 //   * SceneLdr is sampled by ImGui, whose texture binding is handed out before the command buffer
 //     is recorded, so it keeps one copy per swapchain image, indexed by the acquired image index.
 //
-// Passing a frame slot where an image index belongs would silently sample the wrong target, so
-// GetImage / GetView assert the index against the count for the requested target's scheme.
+// Passing a frame slot where an image index belongs would silently sample the wrong target. What
+// prevents that is ResolveIndex: every caller holding both an index and a slot routes through it
+// rather than picking one itself. GetImage / GetView only call .at() on the target's own vector,
+// which catches an out-of-range index and nothing more — with two transient copies against
+// typically three swapchain images, the confusion that matters is in range and would pass
+// silently.
 class SceneRenderTargets
 {
   public:

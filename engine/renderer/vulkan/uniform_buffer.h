@@ -67,9 +67,11 @@ static_assert(
     sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
-// Set 0: the per-frame camera uniform buffer. Split out from the material set so that the
-// lighting and tone mapping passes — which have no material to bind — can still bind the camera
-// data, and so a material reload rebuilds only set 1.
+// Set 0: the per-frame camera uniform buffer. Split out from the material set so that the camera
+// write leaves the per-material loop entirely — it is written once per swapchain image instead of
+// once per image per material — and so a material reload rebuilds only set 1. The lighting pass
+// phase two adds will also need the camera data with no material to bind; the tone mapping pass
+// does not, and binds no camera set at all.
 class VulkanFrameDescriptorSetLayout
 {
   public:

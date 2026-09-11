@@ -67,14 +67,24 @@ struct TargetTransition
 // It is authoritative only because every render pass in the frame declares
 // initialLayout == finalLayout for its attachments. A render pass that transitions an attachment
 // implicitly would desynchronise this tracker silently.
+//
+// It is also frame-scoped by construction, which is the invariant a target author can break: the
+// tracker holds one layout per target, while a transient target holds one image per copy, so a
+// layout carried across frames would describe a different VkImage than the one being touched.
+// Reset therefore runs at the head of every command buffer. The consequence is that a target whose
+// contents must survive across frames cannot use this tracker unchanged; it would need its layout
+// tracked per copy rather than per target.
+//
+// This header stays ASCII: it is compiled into a unit test target that does not pass /utf-8.
 class RenderTargetLayoutTracker
 {
   public:
     RenderTargetLayoutTracker();
 
-    // Returns every target to VK_IMAGE_LAYOUT_UNDEFINED. Call this whenever the images
-    // themselves are recreated: a fresh VkImage is undefined regardless of what the destroyed
-    // one was in.
+    // Returns every target to VK_IMAGE_LAYOUT_UNDEFINED. Two call sites: the head of every command
+    // buffer, which is the one that makes the tracker frame-scoped and therefore correct against
+    // per-copy images; and whenever the images themselves are recreated, since a fresh VkImage is
+    // undefined regardless of what the destroyed one was in.
     void Reset();
 
     VkImageLayout GetLayout(RenderTargetId target) const;

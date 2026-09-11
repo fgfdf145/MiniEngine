@@ -18,6 +18,8 @@
 #include <cmath>
 #include <cstdint>
 #include <future>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -137,8 +139,16 @@ VkAccessFlags AccessMaskForLayout(VkImageLayout layout)
         return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
         return VK_ACCESS_SHADER_READ_BIT;
-    default:
+    case VK_IMAGE_LAYOUT_UNDEFINED:
         return 0;
+    default:
+        // An unhandled layout would otherwise yield an access mask of 0, producing a barrier that
+        // changes the layout with no memory dependency at all — the one failure mode this
+        // abstraction exists to prevent, and one validation layers do not flag. Throwing rather
+        // than asserting matches RenderTargetLayoutTracker, so the rule also holds in Release.
+        throw std::runtime_error(
+            "AccessMaskForLayout has no access mask for image layout " +
+            std::to_string(static_cast<int32_t>(layout)));
     }
 }
 

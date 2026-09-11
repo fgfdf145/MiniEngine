@@ -1,5 +1,9 @@
 #include "forward_pass.h"
 
+#include "command.h"
+
+#include <engine/renderer/material.h>
+
 #include <array>
 
 namespace me
@@ -8,30 +12,24 @@ namespace me
 VulkanForwardPass::VulkanForwardPass(VkDevice device, const SceneRenderTargets& targets)
     : m_device(device)
 {
-    CreateRenderPass(targets);
-
-    // A throw out of a constructor skips the destructor, so the render pass created above would
-    // leak with it. Unwind by hand rather than leave the handle orphaned.
+    // A throw out of a constructor skips the destructor, so everything created before the failure
+    // would leak with it. DestroyHandles skips null handles, so unwinding whatever got created is
+    // the same call the destructor makes.
     try
     {
+        CreateRenderPass(targets);
         CreateFramebuffers(targets);
     }
     catch (...)
     {
-        DestroyFramebuffers();
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+        DestroyHandles();
         throw;
     }
 }
 
 VulkanForwardPass::~VulkanForwardPass()
 {
-    DestroyFramebuffers();
-
-    if (m_renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-    }
+    DestroyHandles();
 }
 
 RenderPassIo VulkanForwardPass::Io() const
@@ -241,5 +239,17 @@ void VulkanForwardPass::DestroyFramebuffers()
         }
     }
     m_framebuffers.clear();
+}
+
+void VulkanForwardPass::DestroyHandles()
+{
+    DestroyFramebuffers();
+    // Nulled after destruction so the handle is never left dangling: the constructor's unwind path
+    // runs this and then throws, and GetRenderPass must not hand out a destroyed render pass.
+    if (m_renderPass != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+        m_renderPass = VK_NULL_HANDLE;
+    }
 }
 }

@@ -59,7 +59,7 @@ VulkanPipelineSet::VulkanPipelineSet(
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
         // The counts are still baked in, but the values come from vkCmdSetViewport/vkCmdSetScissor
-        // (see VulkanRenderer::RecordSceneLayer) so that resizing the scene viewport only rebuilds
+        // (see VulkanForwardPass::Record) so that resizing the scene viewport only rebuilds
         // its images and framebuffers, never the pipelines.
         VkPipelineViewportStateCreateInfo viewportState{};
         viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;

@@ -3,8 +3,8 @@
 
 #include <array>
 #include <iostream>
+#include <span>
 #include <stdexcept>
-#include <string>
 #include <vector>
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -140,6 +140,7 @@ void ChooseFormatTakesTheFirstSupportedCandidate()
         VK_FORMAT_R16G16B16A16_SFLOAT};
 
     const VkFormat chosen = ChooseFormat(
+        "HDR",
         candidates,
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT,
         [](VkFormat format)
@@ -159,6 +160,7 @@ void ChooseFormatFallsThroughToALaterCandidate()
         VK_FORMAT_R16G16B16A16_SFLOAT};
 
     const VkFormat chosen = ChooseFormat(
+        "HDR",
         candidates,
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT,
         [](VkFormat format)
@@ -182,6 +184,7 @@ void ChooseFormatRequiresEveryRequestedFeature()
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 
     const VkFormat chosen = ChooseFormat(
+        "depth",
         candidates,
         required,
         [](VkFormat format)
@@ -205,6 +208,7 @@ void ChooseFormatThrowsWhenNothingQualifies()
     try
     {
         ChooseFormat(
+            "depth",
             candidates,
             VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
             [](VkFormat)

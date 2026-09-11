@@ -37,6 +37,10 @@ class VulkanForwardPass : public IScenePass
     void CreateRenderPass(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
     void DestroyFramebuffers();
+    // Shared by the destructor and the constructor's unwind path, the way VulkanTonemapPass does
+    // it: a throw part way through construction skips the destructor, so both need the same
+    // teardown and keeping one list of it is what stops the two drifting apart.
+    void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;

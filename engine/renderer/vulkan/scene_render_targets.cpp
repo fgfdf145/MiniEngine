@@ -131,9 +131,20 @@ void SceneRenderTargets::Rebuild(VkExtent2D extent, uint32_t swapchainImageCount
     const VkExtent2D previousExtent = m_extent;
     const uint32_t previousImageCount = m_swapchainImageCount;
 
-    m_targets = previous;
-    for (TargetDescription& description : m_targets)
+    // Only the four scalar description fields are carried over; the images vectors start empty
+    // because CreateImages fills them. Copying whole TargetDescriptions instead would duplicate
+    // every live VkImage handle into a second owner, and the allocation that copy needs sits
+    // outside the try below — a throw there would leave m_targets moved-from with nothing able to
+    // restore it.
+    for (size_t index = 0; index < m_targets.size(); ++index)
     {
+        TargetDescription& description = m_targets[index];
+        description.format = previous[index].format;
+        description.usage = previous[index].usage;
+        description.aspect = previous[index].aspect;
+        description.bindToImGui = previous[index].bindToImGui;
+        // A moved-from vector is valid but unspecified, and clear() neither allocates nor throws,
+        // so this is what makes "starts empty" a guarantee rather than an observation.
         description.images.clear();
     }
     m_extent = clamped;
@@ -180,6 +191,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
 
     TargetDescription& depth = Describe(RenderTargetId::SceneDepth);
     depth.format = ChooseFormat(
+        "depth",
         kDepthCandidates,
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
         query);
@@ -193,6 +205,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
 
     TargetDescription& hdr = Describe(RenderTargetId::SceneHdr);
     hdr.format = ChooseFormat(
+        "HDR",
         kHdrCandidates,
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
         query);

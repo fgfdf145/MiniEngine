@@ -204,6 +204,9 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
+    // One pool serves both sets the split produced: imageCount uniform buffers for set 0 and
+    // thirteen samplers per material set for set 1. That is why neither its name nor its failure
+    // message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
                                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13}}};
@@ -214,7 +217,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = materialSetCount + imageCount;
 
-    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create uniform descriptor pool");
+    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create descriptor pool");
 }
 
 void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
@@ -243,7 +246,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
     allocateInfo.pSetLayouts = layouts.data();
 
     m_descriptorSets.resize(descriptorSetCount);
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate uniform descriptor sets");
+    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate material descriptor sets");
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
