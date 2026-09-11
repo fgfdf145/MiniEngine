@@ -123,6 +123,11 @@ VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swap
     return presentResult;
 }
 
+uint32_t VulkanCommandContext::GetCurrentFrame() const
+{
+    return m_currentFrame;
+}
+
 void VulkanCommandContext::WaitForAllFrames()
 {
     std::vector<VkFence> fences;

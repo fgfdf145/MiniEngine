@@ -27,6 +27,11 @@ struct VulkanFrameSyncObjects
 class VulkanCommandContext
 {
   public:
+    // How many frames may be recorded before the oldest must complete. AcquireNextImage waits on
+    // this slot's fence before acquiring, so any resource indexed by GetCurrentFrame() is free for
+    // reuse once that call returns. SceneRenderTargets sizes its transient targets against this.
+    static constexpr size_t kMaxFramesInFlight = 2;
+
     VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount);
     ~VulkanCommandContext();
 
@@ -38,6 +43,10 @@ class VulkanCommandContext
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
     void WaitForAllFrames();
+
+    // The slot the frame being recorded belongs to. Advances in Present, so it is stable for the
+    // whole of one AcquireNextImage / Submit / Present cycle.
+    uint32_t GetCurrentFrame() const;
 
   private:
     void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
@@ -55,7 +64,5 @@ class VulkanCommandContext
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
     std::vector<VkFence> m_imagesInFlight;
     uint32_t m_currentFrame = 0;
-
-    static constexpr size_t kMaxFramesInFlight = 2;
 };
 }
