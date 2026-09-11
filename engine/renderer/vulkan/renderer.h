@@ -3,11 +3,12 @@
 #include "buffer.h"
 #include "command.h"
 #include "device.h"
+#include "forward_pass.h"
 #include "imgui_layer.h"
 #include "instance.h"
 #include "pipeline_set.h"
 #include "render_pass.h"
-#include "scene_viewport.h"
+#include "scene_render_targets.h"
 #include "swapchain.h"
 #include "texture.h"
 #include "uniform_buffer.h"
@@ -81,14 +82,18 @@ class VulkanRenderer : public EditorRenderBackendBase
     void DestroyDescriptorResources();
     void EnsureGraphicsPipelines();
     void RecreateSwapchain();
-    void SyncSceneViewportLayer();
+    void SyncSceneTargets();
     void UploadSceneResources();
     void ApplyRenderContent(
         std::vector<std::unique_ptr<VulkanTexture>> newTextures,
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
         std::vector<RenderSubmesh> newRenderSubmeshes);
     std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex) const;
-    void RecordSceneLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, const std::vector<VulkanDrawItem>& drawItems) const;
+    void RecordTransitions(
+        VkCommandBuffer commandBuffer,
+        const RenderPassIo& io,
+        const ScenePassFrameContext& frame);
+    void RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame);
     void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const;
 
     std::unique_ptr<VulkanInstance> m_instance;
@@ -109,7 +114,14 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;
-    std::unique_ptr<VulkanSceneViewport> m_sceneViewportLayer;
+    std::unique_ptr<SceneRenderTargets> m_sceneTargets;
+    std::unique_ptr<VulkanForwardPass> m_forwardPass;
+    // Scoped to one command buffer: RecordScenePasses resets it per frame, because a target's
+    // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
+    // at the image lifetime boundaries keep it from describing a destroyed image even when no
+    // frame is recorded in between.
+    RenderTargetLayoutTracker m_layoutTracker;
+    std::vector<IScenePass*> m_scenePasses;
     std::unique_ptr<VulkanPipelineSet> m_graphicsPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;

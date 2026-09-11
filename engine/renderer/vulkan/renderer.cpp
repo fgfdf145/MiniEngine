@@ -124,6 +124,41 @@ RenderExtent FromVkExtent(VkExtent2D extent)
         extent.height};
 }
 
+// The access and stage masks a target's layout implies. A barrier is described entirely by the
+// layouts it moves between, so these two functions are all RecordTransitions needs to turn a
+// TargetTransition into a VkImageMemoryBarrier.
+VkAccessFlags AccessMaskForLayout(VkImageLayout layout)
+{
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        return VK_ACCESS_SHADER_READ_BIT;
+    default:
+        return 0;
+    }
+}
+
+VkPipelineStageFlags StageMaskForLayout(VkImageLayout layout)
+{
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    case VK_IMAGE_LAYOUT_UNDEFINED:
+        return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    default:
+        return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    }
+}
+
 void LogVulkanRuntimeInfo()
 {
     uint32_t apiVersion = 0;
@@ -168,7 +203,8 @@ VulkanRenderer::~VulkanRenderer()
     DestroyDescriptorResources();
     m_graphicsPipelines.reset();
     DestroySwapchainResources();
-    m_sceneViewportLayer.reset();
+    m_forwardPass.reset();
+    m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textures.clear();
     m_renderSubmeshes.clear();
@@ -191,7 +227,7 @@ void VulkanRenderer::DrawFrame()
 
     EditorWorld().FlushDirtyTransforms();
 
-    SyncSceneViewportLayer();
+    SyncSceneTargets();
 
     uint32_t imageIndex = 0;
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
@@ -206,13 +242,16 @@ void VulkanRenderer::DrawFrame()
         CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
 
-    UpdateViewportMatrices(FromVkExtent(m_sceneViewportLayer->GetExtent()));
+    UpdateViewportMatrices(FromVkExtent(m_sceneTargets->GetExtent()));
 
     m_imguiLayer->BeginFrame();
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
+    // Reinhard still lives in triangle.frag, so the HDR target already holds display-ready values
+    // and ImGui samples it directly. Task 6 moves the operator into the tone mapping pass and
+    // points this at the LDR target instead.
     const EditorUiFrameResult uiFrame = DrawEditorUi(
-        m_sceneViewportLayer->GetTextureId(imageIndex),
-        FromVkExtent(m_sceneViewportLayer->GetExtent()));
+        m_sceneTargets->GetHdrTextureId(m_commandContext->GetCurrentFrame()),
+        FromVkExtent(m_sceneTargets->GetExtent()));
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
     if (State().renderablesDirty)
@@ -226,9 +265,27 @@ void VulkanRenderer::DrawFrame()
         State().editorWorld ? CollectSceneLights(*State().editorWorld) : std::vector<GpuLightData>{};
     m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position, gpuLights);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
+
+    ScenePassFrameContext frame{};
+    frame.imageIndex = imageIndex;
+    frame.frameSlot = m_commandContext->GetCurrentFrame();
+    frame.extent = m_sceneTargets->GetExtent();
+    frame.drawItems = drawItems;
+    frame.pipelines = m_graphicsPipelines.get();
+    frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
+
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
-                                              RecordSceneLayer(commandBuffer, imageIndex, drawItems);
+                                              RecordScenePasses(commandBuffer, frame);
+
+                                              // Until the tone mapping pass exists, ImGui samples the HDR target
+                                              // directly. Task 6 replaces this with the tone mapping pass's own
+                                              // read declaration.
+                                              static constexpr std::array<RenderTargetId, 1> kImGuiReads = {RenderTargetId::SceneHdr};
+                                              RenderPassIo imguiIo{};
+                                              imguiIo.reads = kImGuiReads;
+                                              RecordTransitions(commandBuffer, imguiIo, frame);
+
                                               RecordEditorLayer(commandBuffer, imageIndex);
                                           });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
@@ -280,37 +337,56 @@ void VulkanRenderer::CreateSwapchainResources()
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
     }
 
+    // Anything that throws below propagates out of the frame path with m_scenePasses left empty
+    // (DestroySwapchainResources cleared it), so no half-built target set is ever recordable.
+    // SceneRenderTargets does not unwind the images it already created when its constructor
+    // throws, so recovering in place here is not possible; failing loudly is the whole handling.
     const VkExtent2D viewportExtent = ToVkExtent(State().requestedViewportExtent);
-    const uint32_t frameCount = static_cast<uint32_t>(m_swapchain->GetImageViews().size());
-    if (m_sceneViewportLayer && m_sceneViewportLayer->GetColorFormat() == m_swapchain->GetImageFormat())
+    const uint32_t swapchainImageCount = static_cast<uint32_t>(m_swapchain->GetImageViews().size());
+    if (m_sceneTargets)
     {
-        // The viewport render pass depends only on the attachment formats, so it survives the
-        // swapchain recreate and the material pipelines built against it stay valid. Only the
-        // per-frame images, framebuffers and ImGui texture bindings are rebuilt here.
-        m_sceneViewportLayer->BuildFrames(viewportExtent, frameCount);
+        m_sceneTargets->Rebuild(viewportExtent, swapchainImageCount);
     }
     else
     {
-        m_sceneViewportLayer = std::make_unique<VulkanSceneViewport>(
+        m_sceneTargets = std::make_unique<SceneRenderTargets>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
             m_swapchain->GetImageFormat(),
             viewportExtent,
-            frameCount);
-        // A new render pass invalidates the pipelines built against the old one.
-        m_graphicsPipelines.reset();
+            swapchainImageCount);
     }
+
+    // The forward pass renders into the HDR target, whose format is fixed and independent of the
+    // swapchain image format, so its render pass never needs recreating here and the material
+    // pipelines built against it stay valid across every swapchain recreate. Only its
+    // framebuffers follow the rebuilt views.
+    if (m_forwardPass)
+    {
+        m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
+    }
+    else
+    {
+        m_forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
+    }
+
+    m_layoutTracker.Reset();
+    m_scenePasses = {m_forwardPass.get()};
 }
 
 void VulkanRenderer::DestroySwapchainResources()
 {
-    // Keep the scene viewport object alive (and with it the render pass the pipelines were built
-    // against), but drop its per-frame resources: they are sized by the swapchain image count, and
-    // their ImGui texture bindings must be released before ImGui's descriptor pool goes away.
-    if (m_sceneViewportLayer)
+    // Keep the forward pass object alive (and with it the render pass the pipelines were built
+    // against), but drop the target images: the LDR copies are sized by the swapchain image
+    // count, and every ImGui texture binding must be released before ImGui's descriptor pool goes
+    // away. Nothing is recordable until CreateSwapchainResources repopulates the pass list, and a
+    // released image is undefined again, so the tracker goes back to square one with it.
+    m_scenePasses.clear();
+    if (m_sceneTargets)
     {
-        m_sceneViewportLayer->ReleaseFrames();
+        m_sceneTargets->ReleaseImages();
     }
+    m_layoutTracker.Reset();
     if (m_imguiLayer)
     {
         m_imguiLayer->DestroyVulkanResources();
@@ -358,7 +434,7 @@ void VulkanRenderer::EnsureGraphicsPipelines()
     m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_pipelineCache,
-        m_sceneViewportLayer->GetRenderPass(),
+        m_forwardPass->GetRenderPass(),
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle());
 }
@@ -409,28 +485,37 @@ void VulkanRenderer::RecreateSwapchain()
     CreateDescriptorResources();
 }
 
-void VulkanRenderer::SyncSceneViewportLayer()
+void VulkanRenderer::SyncSceneTargets()
 {
-    if (!m_swapchain || !m_sceneViewportLayer)
+    if (!m_swapchain || !m_sceneTargets)
     {
         return;
     }
 
     if (!State().requestedViewportExtent.IsValid())
     {
-        State().requestedViewportExtent = FromVkExtent(m_sceneViewportLayer->GetExtent());
+        State().requestedViewportExtent = FromVkExtent(m_sceneTargets->GetExtent());
     }
 
-    if (m_sceneViewportLayer->MatchesExtent(ToVkExtent(State().requestedViewportExtent)))
+    if (m_sceneTargets->MatchesExtent(ToVkExtent(State().requestedViewportExtent)))
     {
         return;
     }
 
-    // Only the viewport's images and framebuffers depend on the extent. Its render pass and
-    // sampler survive, and the pipelines use dynamic viewport/scissor state, so neither they nor
-    // the uniform buffer have to be rebuilt while the user drags the viewport edge.
+    // Only the target images and the framebuffers built from them depend on the extent. The
+    // forward pass's render pass and the targets' sampler survive, and the pipelines use dynamic
+    // viewport/scissor state, so neither they nor the uniform buffer have to be rebuilt while the
+    // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
     vkDeviceWaitIdle(m_device->GetHandle());
-    m_sceneViewportLayer->Resize(ToVkExtent(State().requestedViewportExtent));
+    m_sceneTargets->Rebuild(
+        ToVkExtent(State().requestedViewportExtent),
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
+    m_layoutTracker.Reset();
+    LOG_INFO(
+        "Scene render targets resized to {}x{}",
+        m_sceneTargets->GetExtent().width,
+        m_sceneTargets->GetExtent().height);
 }
 
 void VulkanRenderer::UploadSceneResources()
@@ -749,11 +834,11 @@ void VulkanRenderer::ApplyRenderContent(
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
 
-    if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
+    if (m_swapchain && m_renderPass && m_forwardPass && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
         // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
-        // against the renderer's fixed frame and material set layouts and the viewport render
-        // pass, none of which a content reload touches, so they are left alone.
+        // against the renderer's fixed frame and material set layouts and the forward pass's
+        // render pass, none of which a content reload touches, so they are left alone.
         newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
@@ -813,89 +898,60 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
     return ordered;
 }
 
-void VulkanRenderer::RecordSceneLayer(
+void VulkanRenderer::RecordTransitions(
     VkCommandBuffer commandBuffer,
-    uint32_t imageIndex,
-    const std::vector<VulkanDrawItem>& drawItems) const
+    const RenderPassIo& io,
+    const ScenePassFrameContext& frame)
 {
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.08f, 0.1f, 0.16f, 1.0f}};
-    clearValues[1].depthStencil = {1.0f, 0};
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_sceneViewportLayer->GetRenderPass();
-    renderPassInfo.framebuffer = m_sceneViewportLayer->GetFramebuffer(imageIndex);
-    renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = m_sceneViewportLayer->GetExtent();
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Viewport and scissor are dynamic state on every material pipeline, so they are set once
-    // per pass instead of being baked into the pipelines (see VulkanPipelineSet).
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(m_sceneViewportLayer->GetExtent().width);
-    viewport.height = static_cast<float>(m_sceneViewportLayer->GetExtent().height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.extent = m_sceneViewportLayer->GetExtent();
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-    const VkPipelineLayout pipelineLayout = m_graphicsPipelines->GetLayout();
-    VkPipeline boundPipeline = VK_NULL_HANDLE;
-
-    // Set 0 (the camera uniform buffer) is the same for every draw in this pass, so it is bound
-    // once here rather than per draw item. Set 1 (the material samplers) still varies per draw
-    // item and is bound inside the loop below.
-    const VkDescriptorSet frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        pipelineLayout,
-        0,
-        1,
-        &frameDescriptorSet,
-        0,
-        nullptr);
-
-    for (const VulkanDrawItem& drawItem : drawItems)
+    for (const TargetTransition& transition : m_layoutTracker.Transition(io))
     {
-        const VkPipeline requiredPipeline = m_graphicsPipelines->Get(drawItem.pipelineKey);
-        if (requiredPipeline != boundPipeline)
-        {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
-            boundPipeline = requiredPipeline;
-        }
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = transition.oldLayout;
+        barrier.newLayout = transition.newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = m_sceneTargets->GetImage(
+            transition.target,
+            m_sceneTargets->ResolveIndex(transition.target, frame.imageIndex, frame.frameSlot));
+        barrier.subresourceRange.aspectMask = m_sceneTargets->GetAspect(transition.target);
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = AccessMaskForLayout(transition.oldLayout);
+        barrier.dstAccessMask = AccessMaskForLayout(transition.newLayout);
 
-        const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer};
-        const VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdBindDescriptorSets(
+        vkCmdPipelineBarrier(
             commandBuffer,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            pipelineLayout,
-            1,
-            1,
-            &drawItem.descriptorSet,
+            StageMaskForLayout(transition.oldLayout),
+            StageMaskForLayout(transition.newLayout),
             0,
-            nullptr);
-        vkCmdPushConstants(
-            commandBuffer,
-            pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             0,
-            sizeof(ObjectPushConstants),
-            &drawItem.drawConstants);
-        vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, 0);
+            nullptr,
+            0,
+            nullptr,
+            1,
+            &barrier);
     }
+}
 
-    vkCmdEndRenderPass(commandBuffer);
+void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame)
+{
+    // The tracker holds one layout per target, but a target has one image per copy, so what it
+    // learned last frame describes a different VkImage than this frame touches. Start every
+    // command buffer from undefined rather than carry a layout across to the wrong image.
+    //
+    // That costs nothing: AcquireNextImage already waited on this frame slot's fence, so the
+    // previous use of these images has completed, and every target is cleared or fully rewritten
+    // before it is read, so discarding its contents is what we want anyway.
+    m_layoutTracker.Reset();
+
+    for (IScenePass* pass : m_scenePasses)
+    {
+        RecordTransitions(commandBuffer, pass->Io(), frame);
+        pass->Record(commandBuffer, *m_sceneTargets, frame);
+    }
 }
 
 void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const

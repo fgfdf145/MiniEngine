@@ -52,6 +52,8 @@ add_library(engine_renderer
     vulkan/device.h
     vulkan/format_support.cpp
     vulkan/format_support.h
+    vulkan/forward_pass.cpp
+    vulkan/forward_pass.h
     vulkan/imgui_layer.cpp
     vulkan/imgui_layer.h
     vulkan/instance.cpp
@@ -66,10 +68,9 @@ add_library(engine_renderer
     vulkan/render_target_layout.h
     vulkan/renderer.cpp
     vulkan/renderer.h
+    vulkan/scene_pass.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
-    vulkan/scene_viewport.cpp
-    vulkan/scene_viewport.h
     vulkan/swapchain.cpp
     vulkan/swapchain.h
     vulkan/texture.cpp
