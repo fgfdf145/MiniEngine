@@ -540,14 +540,24 @@ struct TargetTransition
 // It is authoritative only because every render pass in the frame declares
 // initialLayout == finalLayout for its attachments. A render pass that transitions an attachment
 // implicitly would desynchronise this tracker silently.
+//
+// It is also frame-scoped by construction, which is the invariant a target author can break: the
+// tracker holds one layout per target, while a transient target holds one image per copy, so a
+// layout carried across frames would describe a different VkImage than the one being touched.
+// Reset therefore runs at the head of every command buffer. The consequence is that a target whose
+// contents must survive across frames cannot use this tracker unchanged; it would need its layout
+// tracked per copy rather than per target.
+//
+// This header stays ASCII: it is compiled into a unit test target that does not pass /utf-8.
 class RenderTargetLayoutTracker
 {
   public:
     RenderTargetLayoutTracker();
 
-    // Returns every target to VK_IMAGE_LAYOUT_UNDEFINED. Call this whenever the images
-    // themselves are recreated: a fresh VkImage is undefined regardless of what the destroyed
-    // one was in.
+    // Returns every target to VK_IMAGE_LAYOUT_UNDEFINED. Two call sites: the head of every command
+    // buffer, which is the one that makes the tracker frame-scoped and therefore correct against
+    // per-copy images; and whenever the images themselves are recreated, since a fresh VkImage is
+    // undefined regardless of what the destroyed one was in.
     void Reset();
 
     VkImageLayout GetLayout(RenderTargetId target) const;
@@ -1086,8 +1096,12 @@ namespace me
 //   * SceneLdr is sampled by ImGui, whose texture binding is handed out before the command buffer
 //     is recorded, so it keeps one copy per swapchain image, indexed by the acquired image index.
 //
-// Passing a frame slot where an image index belongs would silently sample the wrong target, so
-// GetImage / GetView assert the index against the count for the requested target's scheme.
+// Passing a frame slot where an image index belongs would silently sample the wrong target. What
+// prevents that is ResolveIndex: every caller holding both an index and a slot routes through it
+// rather than picking one itself. GetImage / GetView only call .at() on the target's own vector,
+// which catches an out-of-range index and nothing more — with two transient copies against
+// typically three swapchain images, the confusion that matters is in range and would pass
+// silently.
 class SceneRenderTargets
 {
   public:
@@ -1359,7 +1373,7 @@ That intermediate state is genuinely image-equivalent, not approximately: today 
 ```cpp
 #pragma once
 
-#include "buffer.h"
+#include "command.h"
 #include "common.h"
 #include "pipeline_set.h"
 #include "render_target_layout.h"
@@ -1485,7 +1499,9 @@ RenderPassIo VulkanForwardPass::Io() const
 
 `CreateFramebuffers` is `CreateFrameResources`'s framebuffer half, sized by `targets.GetTransientCopyCount()` and attaching `targets.GetView(RenderTargetId::SceneHdr, slot)` and `targets.GetView(RenderTargetId::SceneDepth, slot)`.
 
-`Record` is `VulkanRenderer::RecordSceneLayer`'s body verbatim from Task 3, with `m_sceneViewportLayer->GetRenderPass()` becoming `m_renderPass`, `GetFramebuffer(imageIndex)` becoming `m_framebuffers[frame.frameSlot]`, the extent coming from `frame.extent`, `m_graphicsPipelines` becoming `frame.pipelines`, and the set 0 bind using `frame.frameDescriptorSet`. The clear values, the dynamic viewport and scissor, the pipeline rebind guard, the push constants and the draw call are unchanged.
+`Record` is `VulkanRenderer::RecordSceneLayer`'s body verbatim from Task 3, with `m_sceneViewportLayer->GetRenderPass()` becoming `m_renderPass`, `GetFramebuffer(imageIndex)` becoming `m_framebuffers[frame.frameSlot]`, the extent coming from `frame.extent`, `m_graphicsPipelines` becoming `frame.pipelines`, and the set 0 bind using `frame.frameDescriptorSet`. The dynamic viewport and scissor, the pipeline rebind guard, the push constants and the draw call are unchanged.
+
+The color clear value is not. Amended after the fact: this step originally said the clear values were unchanged too, but the clear now lands in the HDR target and is tone mapped with everything else, where before it bypassed the fragment shader and reached the display unmodified. It is pre-divided to `{0.086957f, 0.111111f, 0.190476f, 1.0f}` — `c / (1 - c)`, the inverse of Reinhard — so the displayed background stays `{0.08, 0.1, 0.16}`. The depth clear is unchanged at `{1.0f, 0}`.
 
 `OnTargetsRebuilt` calls `DestroyFramebuffers` then `CreateFramebuffers`. The destructor calls `DestroyFramebuffers` then destroys the render pass.
 
@@ -1730,7 +1746,9 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    vec3 color = texture(hdrTexture, fragTexCoord).rgb;
+    // Radiance is stored raw now, so clamp below fp16's maximum before the operator: +inf would
+    // make inf/(inf+1) produce NaN, turning an extremely bright pixel black instead of white.
+    vec3 color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
 
     // Reinhard, moved verbatim out of triangle.frag. The expression is unchanged so that this
     // pass produces the same values the forward shader used to produce.
@@ -1938,4 +1956,44 @@ git commit -m "feat(vulkan): resolve the HDR target in a tone mapping pass"
 - `miniengine.scene_pass` passes, and so does every pre-existing test.
 - `out/build/vs2026-x64/app/Debug/miniengine_app.exe --backend vulkan --frames 60` emits zero validation messages in a Debug build.
 - `VulkanSceneViewport` no longer exists.
-- Adding a pass means writing one `IScenePass` and appending to `m_scenePasses`.
+- Adding a pass means writing one `IScenePass` and editing five places in `VulkanRenderer`.
+
+**Amended against the shipped code.** That last criterion originally read
+"writing one `IScenePass` and appending to `m_scenePasses`". Measured against
+what landed, adding a pass is five renderer edit sites:
+
+1. A `std::unique_ptr<VulkanSomePass>` member in `renderer.h`.
+2. A `reset()` in the destructor, in the right order relative to
+   `m_sceneTargets`.
+3. A construct-or-`OnTargetsRebuilt` block in `CreateSwapchainResources`.
+4. The `m_scenePasses` initialiser at the end of `CreateSwapchainResources`.
+5. An `OnTargetsRebuilt` call in `SyncSceneTargets`.
+
+Only site 4 is the one line the criterion promised. The pass abstraction did
+what it was for — nobody reasons about layouts again, and `Io()` is the whole
+declaration — but ownership stayed hand-written per pass.
+
+**Phase two prerequisite.** Replace the two `unique_ptr` members plus
+`std::vector<IScenePass*> m_scenePasses` with a single
+`std::vector<std::unique_ptr<IScenePass>>` and a small `ForEachPass` helper.
+That collapses sites 1, 2, 4 and 5 into the one push into the vector, leaving
+only the construct-or-rebuild decision, which is genuinely per pass because
+the tone mapping pass cannot survive a swapchain format change while the
+forward pass can. It is cheapest now, with two passes; phase two adds a
+geometry pass and a lighting pass, which is when the five sites become ten.
+
+It also closes two findings deferred out of phase one, both of which are
+properties of the current ownership shape rather than separate bugs:
+
+- The stale-framebuffer window in `SyncSceneTargets` is wide. `Rebuild` runs,
+  then each pass is told separately; between those calls the pass list holds
+  passes whose framebuffers reference destroyed views. Nothing records in
+  that window today because the whole sequence is synchronous after
+  `vkDeviceWaitIdle`, but one early return or throw added between the calls
+  would leave it recordable. Rebuilding through one loop over the owned list
+  makes the window one statement.
+- `SyncSceneTargets` dereferences `m_forwardPass` and `m_tonemapPass`
+  unconditionally, while `CreateSwapchainResources` is written to tolerate
+  either being absent. Iterating an owned list removes the mismatch instead
+  of adding two null checks that then have to be kept in step with the member
+  list.

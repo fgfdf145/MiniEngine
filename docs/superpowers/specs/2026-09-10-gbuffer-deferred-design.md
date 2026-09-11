@@ -109,9 +109,24 @@ Two copies means `VulkanCommandContext::kMaxFramesInFlight`, which is
 currently private and must be promoted to the public section for
 `SceneRenderTargets` to size itself against it. The viewport target keeps the
 existing per-swapchain-image indexing because ImGui samples it after the
-scene passes complete. The two indexing schemes coexist deliberately;
-`SceneRenderTargets` exposes them through separate accessors so a caller
-cannot pass the wrong index.
+scene passes complete. The two indexing schemes coexist deliberately.
+
+**Amended after phase one.** This originally claimed that separate accessors
+mean "a caller cannot pass the wrong index". They do not. `GetImage` and
+`GetView` call `.at()` on the requested target's own vector, which catches an
+index that is out of range for that target and nothing else. With two
+transient copies against typically three swapchain images, the confusion that
+actually happens — a frame slot where an image index belongs — is in range
+and passes silently. What prevents it is `ResolveIndex`: every caller holding
+both an index and a slot routes through it instead of choosing one itself, so
+the rule lives in the one class that decided it.
+
+A phase-two consideration: making the two indices distinct types (rather than
+both `uint32_t`) is the only option that also catches passing the wrong
+`RenderTargetId` to `ResolveIndex`, since that call takes the target and the
+index separately and cannot check them against each other. That mistake has
+already occurred once during phase one and was caught by hand, not by the
+compiler.
 
 Format selection follows the existing `FindDepthFormat` pattern: query
 `vkGetPhysicalDeviceFormatProperties` and fall back rather than assume.
@@ -209,10 +224,22 @@ the default 32-bit entity type. A value read back from GB4 is converted with
 ### Background pixels
 
 The lighting pass runs over every pixel, including those no geometry wrote.
-A pixel whose depth equals `1.0` outputs the current clear color,
-`{0.08, 0.1, 0.16}`, with alpha `1.0`. Preserving that exact color and alpha
-is part of pixel equivalence: the viewport image's alpha channel is consumed
-by ImGui and has already been the subject of one fix.
+A pixel whose depth equals `1.0` outputs the background radiance
+`{0.086957, 0.111111, 0.190476}`, with alpha `1.0`.
+
+**Amended after phase one.** This section originally said `{0.08, 0.1, 0.16}`,
+the pre-phase-one clear color. That was correct only while the clear reached
+the display unmodified. It now lands in the HDR target and is tone mapped
+with everything else, so phase one pre-divided it: `c / (1 - c)` is the
+inverse of Reinhard, and those are the radiance values whose Reinhard result
+is `{0.08, 0.1, 0.16}`. The values above are what
+`VulkanForwardPass::Record` already clears to, and the lighting pass must
+output the same ones. Writing the displayed color here would reproduce
+exactly the bug phase one fixed, with the spec as its alibi.
+
+Preserving the displayed color and alpha is part of pixel equivalence: the
+viewport image's alpha channel is consumed by ImGui and has already been the
+subject of one fix.
 
 Shaded pixels also output alpha `1.0`. Opaque and Mask fragments are fully
 covered by definition, so no alpha value needs to survive the G-buffer.
@@ -267,13 +294,29 @@ include files do not justify that risk.
 
 | Set | Contents | Consumers |
 | --- | --- | --- |
-| 0 | Camera uniform buffer, extended with `invViewProj` | Every pass |
+| 0 | Camera uniform buffer, extended with `invViewProj` | Geometry pass, forward pass, lighting pass |
 | 1 | Thirteen material combined image samplers | Geometry pass, forward pass |
 | 2 | GB0 through GB3 plus depth, as combined image samplers | Lighting pass |
-| 3 | HDR target sampler | Tone mapping pass |
+| 0 (tone mapping pass's own layout) | HDR target sampler | Tone mapping pass |
 
-Set 0 and set 1 are allocated per swapchain image as today, set 2 and set 3
-per frame in flight, matching their targets' copy counts.
+Set 0 and set 1 are allocated per swapchain image as today, set 2 and the
+tone mapping pass's set per frame in flight, matching their targets' copy
+counts.
+
+**Amended after phase one.** This table originally locked the tone mapping
+pass's HDR sampler at set 3 and gave set 0's consumers as "Every pass". The
+shipped `VulkanTonemapPass` declares its sampler at set 0 of its own pipeline
+layout and binds no camera set: that pass consumes no camera data and no
+material data, so reaching index 3 would mean three filler set layouts for
+nothing. Set indices are per pipeline layout, not global, so nothing forces
+the two to agree.
+
+Phase two's tone mapping debug views change this. They are selected per
+G-buffer target, so that pass will want set 2 — the G-buffer inputs — and a
+pipeline layout covering 0 through 2 with a filler at 1, because Vulkan
+requires every set index below the highest used one to be declared. Moving
+the HDR sampler off set 0 at that point is a larger change than adding set 2
+beside it, so it stays at 0.
 
 `ObjectPushConstants` is unchanged and shared by the geometry and forward
 passes. The lighting and tone mapping passes use their own small push
@@ -337,7 +380,11 @@ behavioral gain.
 - Target creation is all-or-nothing per resize: new images are built before
   old ones are released, and a failure leaves the previous set live.
 - A pass declaring a target in both `reads` and `writes` is a programming
-  error and asserts in Debug builds.
+  error and throws `std::runtime_error`, in every configuration. Amended
+  after phase one: this originally said it asserts in Debug builds. An
+  assert is untestable, and a Release build would go on to record a
+  contradictory declaration in silence. Throwing also lets the rule be
+  covered by a unit test, which `TargetInBothSpansIsRejected` does.
 - An entity id read back from GB4 that fails `registry.valid()` is treated as
   no hit, not as a selection change. Entity recycling between the recording
   frame and the reading frame is the expected cause.
