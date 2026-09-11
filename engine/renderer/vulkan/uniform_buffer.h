@@ -67,10 +67,29 @@ static_assert(
     sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
-// The material descriptor set layout is fixed by the shader (one uniform buffer plus 13 combined
-// image samplers) and never varies with scene content or swapchain size. It is owned separately
-// from VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which
-// happens on every model import — does not invalidate the pipelines built against this layout.
+// Set 0: the per-frame camera uniform buffer. Split out from the material set so that the
+// lighting and tone mapping passes — which have no material to bind — can still bind the camera
+// data, and so a material reload rebuilds only set 1.
+class VulkanFrameDescriptorSetLayout
+{
+  public:
+    explicit VulkanFrameDescriptorSetLayout(VkDevice device);
+    ~VulkanFrameDescriptorSetLayout();
+
+    VulkanFrameDescriptorSetLayout(const VulkanFrameDescriptorSetLayout&) = delete;
+    VulkanFrameDescriptorSetLayout& operator=(const VulkanFrameDescriptorSetLayout&) = delete;
+
+    VkDescriptorSetLayout GetHandle() const;
+
+  private:
+    VkDevice m_device = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
+};
+
+// The material descriptor set layout is fixed by the shader (13 combined image samplers) and
+// never varies with scene content or swapchain size. It is owned separately from
+// VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which happens on
+// every model import — does not invalidate the pipelines built against this layout.
 class VulkanMaterialDescriptorSetLayout
 {
   public:
@@ -94,13 +113,15 @@ class VulkanUniformBuffer
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         uint32_t imageCount,
-        VkDescriptorSetLayout descriptorSetLayout,
+        VkDescriptorSetLayout frameSetLayout,
+        VkDescriptorSetLayout materialSetLayout,
         const std::vector<MaterialTextureBinding>& materialBindings);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
     VulkanUniformBuffer& operator=(const VulkanUniformBuffer&) = delete;
 
+    VkDescriptorSet GetFrameDescriptorSet(uint32_t imageIndex) const;
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
     void Update(
         uint32_t imageIndex,
@@ -117,11 +138,13 @@ class VulkanUniformBuffer
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     std::vector<MaterialTextureBinding> m_materialBindings;
-    VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_buffers;
     std::vector<VkDeviceMemory> m_memories;
     std::vector<void*> m_mappedBuffers;
+    std::vector<VkDescriptorSet> m_frameDescriptorSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;
 };

@@ -34,7 +34,8 @@ VulkanPipelineSet::VulkanPipelineSet(
     VkDevice device,
     VkPipelineCache pipelineCache,
     VkRenderPass renderPass,
-    VkDescriptorSetLayout descriptorSetLayout)
+    VkDescriptorSetLayout frameSetLayout,
+    VkDescriptorSetLayout materialSetLayout)
     : m_device(device)
 {
     try
@@ -83,10 +84,12 @@ VulkanPipelineSet::VulkanPipelineSet(
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(ObjectPushConstants);
 
+        const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, materialSetLayout};
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+        pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+        pipelineLayoutInfo.pSetLayouts = setLayouts.data();
         pipelineLayoutInfo.pushConstantRangeCount = 1;
         pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 

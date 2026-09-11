@@ -11,12 +11,14 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     uint32_t imageCount,
-    VkDescriptorSetLayout descriptorSetLayout,
+    VkDescriptorSetLayout frameSetLayout,
+    VkDescriptorSetLayout materialSetLayout,
     const std::vector<MaterialTextureBinding>& materialBindings)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
-      m_descriptorSetLayout(descriptorSetLayout),
+      m_frameSetLayout(frameSetLayout),
+      m_materialSetLayout(materialSetLayout),
       m_imageCount(imageCount)
 {
     if (m_materialBindings.empty())
@@ -51,7 +53,18 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
     {
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     }
-    // m_descriptorSetLayout is owned by VulkanMaterialDescriptorSetLayout, not by this buffer.
+    // m_frameSetLayout and m_materialSetLayout are owned by VulkanFrameDescriptorSetLayout and
+    // VulkanMaterialDescriptorSetLayout respectively, not by this buffer.
+}
+
+VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) const
+{
+    if (imageIndex >= m_imageCount)
+    {
+        throw std::runtime_error("Frame descriptor set image index is out of range");
+    }
+
+    return m_frameDescriptorSets[imageIndex];
 }
 
 VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const
@@ -92,7 +105,7 @@ void VulkanUniformBuffer::Update(
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }
 
-VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
+VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
     VkDescriptorSetLayoutBinding uniformBinding{};
@@ -101,10 +114,34 @@ VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice de
     uniformBinding.descriptorCount = 1;
     uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 14> bindings{};
-    bindings[0] = uniformBinding;
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uniformBinding;
 
-    for (uint32_t bindingIndex = 1; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
+    CheckVulkan(
+        vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
+        "Failed to create frame descriptor set layout");
+}
+
+VulkanFrameDescriptorSetLayout::~VulkanFrameDescriptorSetLayout()
+{
+    if (m_layout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_layout, nullptr);
+    }
+}
+
+VkDescriptorSetLayout VulkanFrameDescriptorSetLayout::GetHandle() const
+{
+    return m_layout;
+}
+
+VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
+    : m_device(device)
+{
+    std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
+    for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
     {
         bindings[bindingIndex].binding = bindingIndex;
         bindings[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -117,7 +154,9 @@ VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice de
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout), "Failed to create uniform descriptor set layout");
+    CheckVulkan(
+        vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
+        "Failed to create material descriptor set layout");
 }
 
 VulkanMaterialDescriptorSetLayout::~VulkanMaterialDescriptorSetLayout()
@@ -165,23 +204,38 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
-    const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorSetCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorSetCount * 13}}};
+    const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = descriptorSetCount;
+    poolInfo.maxSets = materialSetCount + imageCount;
 
     CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create uniform descriptor pool");
 }
 
 void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
 {
+    // Set 0: one frame descriptor set per swapchain image, allocated from the frame set layout.
+    std::vector<VkDescriptorSetLayout> frameLayouts(imageCount, m_frameSetLayout);
+    VkDescriptorSetAllocateInfo frameAllocateInfo{};
+    frameAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    frameAllocateInfo.descriptorPool = m_descriptorPool;
+    frameAllocateInfo.descriptorSetCount = imageCount;
+    frameAllocateInfo.pSetLayouts = frameLayouts.data();
+
+    m_frameDescriptorSets.resize(imageCount);
+    CheckVulkan(
+        vkAllocateDescriptorSets(m_device, &frameAllocateInfo, m_frameDescriptorSets.data()),
+        "Failed to allocate frame descriptor sets");
+
+    // Set 1: one material descriptor set per swapchain image per material, allocated from the
+    // material set layout.
     const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
-    std::vector<VkDescriptorSetLayout> layouts(descriptorSetCount, m_descriptorSetLayout);
+    std::vector<VkDescriptorSetLayout> layouts(descriptorSetCount, m_materialSetLayout);
     VkDescriptorSetAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocateInfo.descriptorPool = m_descriptorPool;
@@ -197,6 +251,19 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         bufferInfo.buffer = m_buffers[i];
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(CameraUniformData);
+
+        // The camera uniform buffer is written once per image here, into the set 0 allocated for
+        // that image — not once per material, which is what made the old single-set layout
+        // wasteful and is the whole point of this split.
+        VkWriteDescriptorSet frameWrite{};
+        frameWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrite.dstSet = m_frameDescriptorSets[i];
+        frameWrite.dstBinding = 0;
+        frameWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        frameWrite.descriptorCount = 1;
+        frameWrite.pBufferInfo = &bufferInfo;
+
+        vkUpdateDescriptorSets(m_device, 1, &frameWrite, 0, nullptr);
 
         for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
         {
@@ -228,22 +295,15 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 imageInfos[textureBindingIndex].sampler = textureBindings[textureBindingIndex].sampler;
             }
 
-            std::array<VkWriteDescriptorSet, 14> descriptorWrites{};
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = m_descriptorSets[descriptorIndex];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &bufferInfo;
-
-            for (uint32_t bindingIndex = 1; bindingIndex < static_cast<uint32_t>(descriptorWrites.size()); ++bindingIndex)
+            std::array<VkWriteDescriptorSet, 13> descriptorWrites{};
+            for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(descriptorWrites.size()); ++bindingIndex)
             {
                 descriptorWrites[bindingIndex].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[bindingIndex].dstSet = m_descriptorSets[descriptorIndex];
                 descriptorWrites[bindingIndex].dstBinding = bindingIndex;
                 descriptorWrites[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 descriptorWrites[bindingIndex].descriptorCount = 1;
-                descriptorWrites[bindingIndex].pImageInfo = &imageInfos[bindingIndex - 1];
+                descriptorWrites[bindingIndex].pImageInfo = &imageInfos[bindingIndex];
             }
 
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);

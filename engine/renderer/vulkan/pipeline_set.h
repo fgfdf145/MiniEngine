@@ -15,9 +15,9 @@ namespace me
 // vkCreateGraphicsPipelines call. The pipeline cache is owned by the renderer and outlives this
 // set, so a rebuild reuses the driver's earlier shader compilation.
 //
-// Viewport and scissor are dynamic state, set at record time, and the descriptor set layout is
-// the renderer's fixed material layout. The pipelines therefore depend on nothing but the render
-// pass: they survive both a scene-viewport resize and a scene content reload untouched.
+// Viewport and scissor are dynamic state, set at record time, and the descriptor set layouts are
+// the renderer's fixed frame and material layouts. The pipelines therefore depend on nothing but
+// the render pass: they survive both a scene-viewport resize and a scene content reload untouched.
 class VulkanPipelineSet
 {
   public:
@@ -25,7 +25,8 @@ class VulkanPipelineSet
         VkDevice device,
         VkPipelineCache pipelineCache,
         VkRenderPass renderPass,
-        VkDescriptorSetLayout descriptorSetLayout);
+        VkDescriptorSetLayout frameSetLayout,
+        VkDescriptorSetLayout materialSetLayout);
     ~VulkanPipelineSet();
 
     VulkanPipelineSet(const VulkanPipelineSet&) = delete;

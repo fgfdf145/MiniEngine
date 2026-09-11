@@ -39,19 +39,19 @@ layout(set = 0, binding = 0) uniform CameraBuffer
 }
 ubo;
 
-layout(set = 0, binding = 1) uniform sampler2D baseColorTexture;
-layout(set = 0, binding = 2) uniform sampler2D normalTexture;
-layout(set = 0, binding = 3) uniform sampler2D metallicTexture;
-layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
-layout(set = 0, binding = 5) uniform sampler2D occlusionTexture;
-layout(set = 0, binding = 6) uniform sampler2D emissiveTexture;
-layout(set = 0, binding = 7) uniform sampler2D secondaryBaseColorTexture;
-layout(set = 0, binding = 8) uniform sampler2D secondaryNormalTexture;
-layout(set = 0, binding = 9) uniform sampler2D secondaryMetallicTexture;
-layout(set = 0, binding = 10) uniform sampler2D secondaryRoughnessTexture;
-layout(set = 0, binding = 11) uniform sampler2D secondaryOcclusionTexture;
-layout(set = 0, binding = 12) uniform sampler2D secondaryEmissiveTexture;
-layout(set = 0, binding = 13) uniform sampler2D blendMaskTexture;
+layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
+layout(set = 1, binding = 1) uniform sampler2D normalTexture;
+layout(set = 1, binding = 2) uniform sampler2D metallicTexture;
+layout(set = 1, binding = 3) uniform sampler2D roughnessTexture;
+layout(set = 1, binding = 4) uniform sampler2D occlusionTexture;
+layout(set = 1, binding = 5) uniform sampler2D emissiveTexture;
+layout(set = 1, binding = 6) uniform sampler2D secondaryBaseColorTexture;
+layout(set = 1, binding = 7) uniform sampler2D secondaryNormalTexture;
+layout(set = 1, binding = 8) uniform sampler2D secondaryMetallicTexture;
+layout(set = 1, binding = 9) uniform sampler2D secondaryRoughnessTexture;
+layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
+layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
+layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;

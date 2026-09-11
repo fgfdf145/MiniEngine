@@ -101,8 +101,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::vector<std::string> m_textureCacheKeys;
     std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_texturePool;
     std::vector<MaterialTextureSlots> m_materialTextureSlots;
-    // Device-lifetime resources: the shader-fixed material set layout and the pipeline cache both
-    // outlive every swapchain, viewport and scene reload (see CreateDeviceResources).
+    // Device-lifetime resources: the shader-fixed frame and material set layouts and the pipeline
+    // cache all outlive every swapchain, viewport and scene reload (see CreateDeviceResources).
+    std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;
     std::unique_ptr<VulkanMaterialDescriptorSetLayout> m_materialSetLayout;
     VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;

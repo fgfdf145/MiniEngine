@@ -322,10 +322,12 @@ void VulkanRenderer::DestroySwapchainResources()
 
 void VulkanRenderer::CreateDeviceResources()
 {
-    // Both of these live as long as the logical device. The material descriptor set layout is
-    // fixed by the shader, so hoisting it out of VulkanUniformBuffer lets a scene reload rebuild
-    // descriptor sets without invalidating the pipelines. The pipeline cache outliving every
-    // VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader compilation.
+    // All three live as long as the logical device. The frame and material descriptor set
+    // layouts are fixed by the shader, so hoisting them out of VulkanUniformBuffer lets a scene
+    // reload rebuild descriptor sets without invalidating the pipelines. The pipeline cache
+    // outliving every VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader
+    // compilation.
+    m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_device->GetHandle());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
 
     VkPipelineCacheCreateInfo cacheInfo{};
@@ -343,6 +345,7 @@ void VulkanRenderer::DestroyDeviceResources()
         m_pipelineCache = VK_NULL_HANDLE;
     }
     m_materialSetLayout.reset();
+    m_frameSetLayout.reset();
 }
 
 void VulkanRenderer::EnsureGraphicsPipelines()
@@ -356,6 +359,7 @@ void VulkanRenderer::EnsureGraphicsPipelines()
         m_device->GetHandle(),
         m_pipelineCache,
         m_sceneViewportLayer->GetRenderPass(),
+        m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle());
 }
 
@@ -374,6 +378,7 @@ void VulkanRenderer::CreateDescriptorResources()
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+        m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(m_textures, m_materialTextureSlots));
     EnsureGraphicsPipelines();
@@ -747,12 +752,13 @@ void VulkanRenderer::ApplyRenderContent(
     if (m_swapchain && m_renderPass && m_sceneViewportLayer && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
         // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
-        // against the renderer's fixed material set layout and the viewport render pass, neither
-        // of which a content reload touches, so they are left alone.
+        // against the renderer's fixed frame and material set layouts and the viewport render
+        // pass, none of which a content reload touches, so they are left alone.
         newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+            m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
             BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots));
         // Wait only for our in-flight render frames to finish before destroying old resources.
@@ -843,6 +849,20 @@ void VulkanRenderer::RecordSceneLayer(
     const VkPipelineLayout pipelineLayout = m_graphicsPipelines->GetLayout();
     VkPipeline boundPipeline = VK_NULL_HANDLE;
 
+    // Set 0 (the camera uniform buffer) is the same for every draw in this pass, so it is bound
+    // once here rather than per draw item. Set 1 (the material samplers) still varies per draw
+    // item and is bound inside the loop below.
+    const VkDescriptorSet frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
+    vkCmdBindDescriptorSets(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        pipelineLayout,
+        0,
+        1,
+        &frameDescriptorSet,
+        0,
+        nullptr);
+
     for (const VulkanDrawItem& drawItem : drawItems)
     {
         const VkPipeline requiredPipeline = m_graphicsPipelines->Get(drawItem.pipelineKey);
@@ -860,7 +880,7 @@ void VulkanRenderer::RecordSceneLayer(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             pipelineLayout,
-            0,
+            1,
             1,
             &drawItem.descriptorSet,
             0,
