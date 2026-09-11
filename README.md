@@ -76,7 +76,7 @@ engine_platform -> engine_core
 | `engine/application/` | `EditorApplication` 生命周期和命令行解析。 |
 | `assets/` | 项目资产、导入模型包、材质 sidecar 和默认场景。 |
 | `shaders/` | Vulkan 着色器源文件。 |
-| `tests/` | 场景身份/YAML 兼容回归测试，见 [tests/CMakeLists.txt](tests/CMakeLists.txt)。 |
+| `tests/` | 场景身份/YAML 兼容、Gizmo 设置、材质 alpha 与渲染器纯逻辑单元测试，外加 vcpkg 布局和格式化两组契约测试，见 [tests/CMakeLists.txt](tests/CMakeLists.txt)。 |
 | `scripts/` | 依赖引导、构建和解决方案生成脚本，详见 [scripts/README.md](scripts/README.md)。 |
 | `docs/` | 设计和历史资料；`PROJECT_SUMMARY.md` 只作为历史阶段性分析。 |
 | `miniengine.settings.json` | 编辑器设置持久化文件。 |
@@ -91,6 +91,7 @@ engine_platform -> engine_core
 - **资产 UUID**：可注册资产限于 `assets/` 根下的模型和纹理。sidecar 命名为 `<完整文件名>.miniengine_asset.yaml`，资产浏览和场景扫描会忽略该后缀。场景保存 `source_path` 与 `source_uuid`：加载时 UUID 优先，保存时路径优先；重复 UUID 通过 sidecar 的 `file` 与实际文件名仲裁，副本获得新 UUID。
 - **场景身份**：场景 YAML v3 写 `entity_uuid` 和 `selected_entity_uuid`。`entt::entity` 仅在 registry 生命周期内有效，不能持久化或作为跨加载引用；旧 v1/v2 可按旧模型索引加载后升级。
 - **场景写入边界**：`ISceneWorld::Registry()` 对外只读。实体生命周期、组件编辑、变换刷新和 Renderable 脏标记必须调用场景接口，以保持顺序、选择、UUID 索引和缓存同步。
+- **Vulkan 帧内布局转换**：帧内所有图像布局变更都是显式 `vkCmdPipelineBarrier`，由 `RenderTargetLayoutTracker` 按各 pass 的 `Io()` 声明推出。每个 render pass 的每个附件都必须声明 `initialLayout == finalLayout`，不得让 render pass 在 tracker 背后隐式转换附件布局。新增 pass 时把 `finalLayout` 改成一个顺手的值，就会静默破坏布局跟踪：Vulkan 不报错，验证层也不报，tracker 之后发出的 barrier 起点已经是错的。
 - **CMake 与 IDE**：依赖方向不可反转。根 [MiniEngine.slnx](MiniEngine.slnx) 与 `MiniEngine.vcxproj` 只是 IDE/Makefile 包装层；[CMakePresets.json](CMakePresets.json) 是构建参数、依赖和输出目录的唯一事实来源。
 
 ## 6. 构建、运行与验证
@@ -147,7 +148,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
-- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理。
+- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
@@ -170,6 +171,39 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-09-12 — Vulkan 帧结构重组：HDR 中间靶、显式 barrier 与独立色调映射 pass
+
+G-Buffer 延迟着色三阶段的第一阶段，只重组帧结构，不引入延迟着色路径。改动集中在 `engine/renderer/vulkan/` 与 `shaders/vulkan/`；设计见 [docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md](docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md)。
+
+**HDR 中间靶与色调映射**
+
+- 场景改为渲染到 `R16G16B16A16_SFLOAT` 的 HDR 靶，`triangle.frag` 只输出线性辐亮度。Reinhard 从 uber shader 移出，落到独立的 `tonemap.frag` 与 `VulkanTonemapPass`：全屏三角形由 `fullscreen.vert` 按 `gl_VertexIndex` 生成，无顶点缓冲也无顶点输入状态。算子表达式逐字未改，成像等价的依据就在此。
+- 背景清屏值改为预除后的 `(0.086957, 0.111111, 0.190476)`。清屏现在落进 HDR 靶、和其他像素一起被色调映射，而此前它绕过片元着色器直达显示；`c / (1 - c)` 是 Reinhard 的逆，所以成像后仍是原来的 `(0.08, 0.1, 0.16)`。改动清屏值的人必须同时改这个反函数，否则背景色会漂。
+- `tonemap.frag` 在算子前用 `min(..., vec3(65504.0))` 夹到 fp16 上限。辐亮度现在是裸存的，`+inf` 会让 `inf / (inf + 1)` 算出 NaN，把极亮像素变成黑而不是白。
+
+**显式 barrier 纪律**
+
+- `SceneRenderTargets` 持有全部离屏图像、视图、内存与 ImGui 纹理绑定；render pass 和 framebuffer 归使用它们的 pass。`VulkanSceneViewport` 删除，职责按这条线拆开。
+- 帧内所有布局变更都是显式 `vkCmdPipelineBarrier`，由 `RenderTargetLayoutTracker` 从各 pass 的 `Io()` 声明推出；每个 render pass 的附件都声明 `initialLayout == finalLayout`。原 `VulkanSceneViewport` 的两条 `VK_SUBPASS_EXTERNAL` 依赖随之删除——显式 barrier 已经承担那份次序，留着只是对不再变化的布局重复一遍。这条约定已记入第 5 节，不只存在于已完成阶段的计划里。
+- tracker 按帧作用域构造，不是可选的实现细节：它每个靶只存一个布局，而瞬时靶每个副本各有一张图像，跨帧留下的布局描述的是另一张 `VkImage`。`Reset()` 因此在每个命令缓冲开头执行。这不花成本——acquire 已等过该帧槽的 fence，且每个靶在被读取前都已清屏或整幅重写。反过来说，内容需要跨帧存活的靶不能照用这个 tracker。
+- 两套索引并存：瞬时靶（深度、HDR）按帧槽索引，各 `kMaxFramesInFlight`（2）份；LDR 靶被 ImGui 采样，而纹理绑定在命令缓冲录制之前就交了出去，因此按交换链图像索引，一图一份。两者都经 `SceneRenderTargets::ResolveIndex` 取用，规则只存在一处；访问器只用 `.at()` 拦越界下标，索引搞混但恰好在范围内是拦不住的。
+
+**描述符集拆分**
+
+原本 14 个绑定的单一布局按更新频率拆成 set 0（逐帧相机 UBO）与 set 1（13 个材质采样器）。相机数据由此每交换链图像写一次，而不再是每图像每材质写一次；材质重载只重建 set 1。色调映射 pass 不绑定相机集——它的 set 0 是自己的 HDR 采样器。
+
+**成像**
+
+Opaque 与 Mask 像素逐位相同：这两档完全覆盖，`triangle.frag` 的算术未动，只是 Reinhard 挪到了后一个 pass。Blend 像素不同：混合现在发生在色调映射之前的线性辐亮度空间，此前是在已被 Reinhard 压过的值上混合，因此半透明像素偏亮。这是本阶段的预期结果而非回归，但本轮未做视觉验收。
+
+**验证**
+
+x64 Debug 构建通过，CTest `33/33`，`check-format` 通过，`--frames 60` 退出码 0 且无验证层输出。新增 `miniengine_scene_pass_tests`（`miniengine.scene_pass`），覆盖 `RenderTargetLayoutTracker` 与 `ChooseFormat` 两个不调用任何 Vulkan 入口的纯逻辑单元；这是本仓库第一个渲染器单元测试目标。未做人工 GUI 验收，上述成像结论来自代码与算子等价性，不是截图比对。
+
+**仍未处理**
+
+五张 G-Buffer 靶、几何与延迟光照 pass、前向对比开关和 GB4 实体 id 拾取都属于第二、三阶段。同步验证（synchronization validation）未开启，是一条独立的待决项。pass 列表目前是 `std::vector<IScenePass*>`，新增一个 pass 要改 `VulkanRenderer` 的五处；改成持有 `std::unique_ptr` 的列表加一个 `ForEachPass` 可以收掉其中四处，记在第一阶段计划的退出准则里作为第二阶段前置项。
 
 ### 2026-09-03 — Vulkan 图形管线：动态状态、共享布局与资源寿命分层
 
