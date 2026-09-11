@@ -112,11 +112,6 @@ ImTextureID SceneRenderTargets::GetLdrTextureId(uint32_t imageIndex) const
     return ToImTextureId(Describe(RenderTargetId::SceneLdr).images.at(imageIndex).imguiBinding);
 }
 
-ImTextureID SceneRenderTargets::GetHdrTextureId(uint32_t frameSlot) const
-{
-    return ToImTextureId(Describe(RenderTargetId::SceneHdr).images.at(frameSlot).imguiBinding);
-}
-
 void SceneRenderTargets::ReleaseImages()
 {
     DestroyImages(m_targets);
@@ -203,7 +198,9 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         query);
     hdr.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     hdr.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-    hdr.bindToImGui = true;
+    // Nothing displays the HDR target: the tone mapping pass samples it through its own
+    // descriptor sets, and ImGui shows the LDR result instead.
+    hdr.bindToImGui = false;
 
     TargetDescription& ldr = Describe(RenderTargetId::SceneLdr);
     ldr.format = ldrFormat;

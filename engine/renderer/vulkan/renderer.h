@@ -11,6 +11,7 @@
 #include "scene_render_targets.h"
 #include "swapchain.h"
 #include "texture.h"
+#include "tonemap_pass.h"
 #include "uniform_buffer.h"
 
 #include <engine/editor/editor_backend_base.h>
@@ -116,7 +117,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanRenderPass> m_renderPass;
     std::unique_ptr<SceneRenderTargets> m_sceneTargets;
     std::unique_ptr<VulkanForwardPass> m_forwardPass;
-    // Scoped to one command buffer: RecordScenePasses resets it per frame, because a target's
+    std::unique_ptr<VulkanTonemapPass> m_tonemapPass;
+    // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
     // at the image lifetime boundaries keep it from describing a destroyed image even when no
     // frame is recorded in between.

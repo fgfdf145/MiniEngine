@@ -75,6 +75,8 @@ add_library(engine_renderer
     vulkan/swapchain.h
     vulkan/texture.cpp
     vulkan/texture.h
+    vulkan/tonemap_pass.cpp
+    vulkan/tonemap_pass.h
     vulkan/uniform_buffer.cpp
     vulkan/uniform_buffer.h
     vulkan/upload_batch.cpp
@@ -90,6 +92,8 @@ miniengine_group_target_sources(engine_renderer)
 set(MINIENGINE_SHADER_SOURCES
     triangle.vert
     triangle.frag
+    fullscreen.vert
+    tonemap.frag
 )
 
 function(miniengine_add_shaders shader_target)

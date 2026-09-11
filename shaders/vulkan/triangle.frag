@@ -293,8 +293,7 @@ void main()
     vec3 emissive = emissiveSample * drawData.emissiveFactor;
     vec3 color = ambient + directAccum + emissive;
 
-    // Reinhard tonemapping
-    color = color / (color + vec3(1.0));
-
+    // Tone mapping happens in the tonemap pass, which is the only consumer of this target. This
+    // shader writes linear radiance.
     outColor = vec4(color, albedo.a);
 }

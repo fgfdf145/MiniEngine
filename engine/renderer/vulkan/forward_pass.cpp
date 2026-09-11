@@ -57,7 +57,7 @@ void VulkanForwardPass::Record(
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = m_renderPass;
-    renderPassInfo.framebuffer = m_framebuffers[frame.frameSlot];
+    renderPassInfo.framebuffer = m_framebuffers.at(frame.frameSlot);
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = frame.extent;
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());

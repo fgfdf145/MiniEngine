@@ -203,6 +203,7 @@ VulkanRenderer::~VulkanRenderer()
     DestroyDescriptorResources();
     m_graphicsPipelines.reset();
     DestroySwapchainResources();
+    m_tonemapPass.reset();
     m_forwardPass.reset();
     m_sceneTargets.reset();
     m_imguiLayer.reset();
@@ -246,11 +247,11 @@ void VulkanRenderer::DrawFrame()
 
     m_imguiLayer->BeginFrame();
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
-    // Reinhard still lives in triangle.frag, so the HDR target already holds display-ready values
-    // and ImGui samples it directly. Task 6 moves the operator into the tone mapping pass and
-    // points this at the LDR target instead.
+    // ImGui samples the tone mapped image, which is the LDR target and so is indexed by
+    // swapchain image: its texture binding is handed out here, before the command buffer that
+    // writes it is recorded.
     const EditorUiFrameResult uiFrame = DrawEditorUi(
-        m_sceneTargets->GetHdrTextureId(m_commandContext->GetCurrentFrame()),
+        m_sceneTargets->GetLdrTextureId(imageIndex),
         FromVkExtent(m_sceneTargets->GetExtent()));
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -276,12 +277,27 @@ void VulkanRenderer::DrawFrame()
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
+                                              // The tracker holds one layout per target, but a target has one
+                                              // image per copy, so what it learned last frame describes a
+                                              // different VkImage than this frame touches. Every command buffer
+                                              // therefore starts from undefined rather than carry a layout
+                                              // across to the wrong image, which is why the reset lives here,
+                                              // where the command buffer begins, and covers the ImGui
+                                              // declaration below as well as the scene passes.
+                                              //
+                                              // That costs nothing: AcquireNextImage already waited on this
+                                              // frame slot's fence, so the previous use of these images has
+                                              // completed, and every target is cleared or fully rewritten
+                                              // before it is read, so discarding its contents is what we want
+                                              // anyway.
+                                              m_layoutTracker.Reset();
+
                                               RecordScenePasses(commandBuffer, frame);
 
-                                              // Until the tone mapping pass exists, ImGui samples the HDR target
-                                              // directly. Task 6 replaces this with the tone mapping pass's own
-                                              // read declaration.
-                                              static constexpr std::array<RenderTargetId, 1> kImGuiReads = {RenderTargetId::SceneHdr};
+                                              // ImGui samples the tone mapped image in the editor pass, which is
+                                              // not an IScenePass because it writes the swapchain rather than a
+                                              // scene target.
+                                              static constexpr std::array<RenderTargetId, 1> kImGuiReads = {RenderTargetId::SceneLdr};
                                               RenderPassIo imguiIo{};
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(commandBuffer, imguiIo, frame);
@@ -343,7 +359,16 @@ void VulkanRenderer::CreateSwapchainResources()
     // throws, so recovering in place here is not possible; failing loudly is the whole handling.
     const VkExtent2D viewportExtent = ToVkExtent(State().requestedViewportExtent);
     const uint32_t swapchainImageCount = static_cast<uint32_t>(m_swapchain->GetImageViews().size());
-    if (m_sceneTargets)
+    // Rebuild re-creates the images at a new size and image count but never re-runs format
+    // selection, so it can only carry the target set across a swapchain recreate while the LDR
+    // target's format still matches the swapchain's. A surface format change is rare but real,
+    // and it has to reach the LDR target: the tone mapping pass builds its render pass on that
+    // format and ImGui samples the image, so a stale one would be a wrong-format viewport. Only
+    // a fresh SceneRenderTargets re-runs the selection, so that case is reconstructed outright.
+    const bool ldrFormatMatchesSwapchain =
+        m_sceneTargets != nullptr &&
+        m_sceneTargets->GetFormat(RenderTargetId::SceneLdr) == m_swapchain->GetImageFormat();
+    if (ldrFormatMatchesSwapchain)
     {
         m_sceneTargets->Rebuild(viewportExtent, swapchainImageCount);
     }
@@ -358,9 +383,9 @@ void VulkanRenderer::CreateSwapchainResources()
     }
 
     // The forward pass renders into the HDR target, whose format is fixed and independent of the
-    // swapchain image format, so its render pass never needs recreating here and the material
-    // pipelines built against it stay valid across every swapchain recreate. Only its
-    // framebuffers follow the rebuilt views.
+    // swapchain image format, so its render pass never needs recreating here — not even when the
+    // swapchain format moved — and the material pipelines built against it stay valid across
+    // every swapchain recreate. Only its framebuffers follow the rebuilt views.
     if (m_forwardPass)
     {
         m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
@@ -370,13 +395,28 @@ void VulkanRenderer::CreateSwapchainResources()
         m_forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
     }
 
+    // The tone mapping pass owns the only render pass in the frame that references the LDR
+    // format, so unlike the forward pass it cannot survive a swapchain format change: when the
+    // format moved it is replaced rather than pointed at the new views.
+    if (m_tonemapPass && ldrFormatMatchesSwapchain)
+    {
+        m_tonemapPass->OnTargetsRebuilt(*m_sceneTargets);
+    }
+    else
+    {
+        m_tonemapPass = std::make_unique<VulkanTonemapPass>(
+            m_device->GetHandle(),
+            m_pipelineCache,
+            *m_sceneTargets);
+    }
+
     m_layoutTracker.Reset();
-    m_scenePasses = {m_forwardPass.get()};
+    m_scenePasses = {m_forwardPass.get(), m_tonemapPass.get()};
 }
 
 void VulkanRenderer::DestroySwapchainResources()
 {
-    // Keep the forward pass object alive (and with it the render pass the pipelines were built
+    // Keep the pass objects alive (and with them the render pass the pipelines were built
     // against), but drop the target images: the LDR copies are sized by the swapchain image
     // count, and every ImGui texture binding must be released before ImGui's descriptor pool goes
     // away. Nothing is recordable until CreateSwapchainResources repopulates the pass list, and a
@@ -502,8 +542,8 @@ void VulkanRenderer::SyncSceneTargets()
         return;
     }
 
-    // Only the target images and the framebuffers built from them depend on the extent. The
-    // forward pass's render pass and the targets' sampler survive, and the pipelines use dynamic
+    // Only the target images and the per-image resources built from them depend on the extent.
+    // Both passes' render passes and the targets' sampler survive, and the pipelines use dynamic
     // viewport/scissor state, so neither they nor the uniform buffer have to be rebuilt while the
     // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
     vkDeviceWaitIdle(m_device->GetHandle());
@@ -511,6 +551,7 @@ void VulkanRenderer::SyncSceneTargets()
         ToVkExtent(State().requestedViewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
+    m_tonemapPass->OnTargetsRebuilt(*m_sceneTargets);
     m_layoutTracker.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",
@@ -938,15 +979,7 @@ void VulkanRenderer::RecordTransitions(
 
 void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame)
 {
-    // The tracker holds one layout per target, but a target has one image per copy, so what it
-    // learned last frame describes a different VkImage than this frame touches. Start every
-    // command buffer from undefined rather than carry a layout across to the wrong image.
-    //
-    // That costs nothing: AcquireNextImage already waited on this frame slot's fence, so the
-    // previous use of these images has completed, and every target is cleared or fully rewritten
-    // before it is read, so discarding its contents is what we want anyway.
-    m_layoutTracker.Reset();
-
+    // The layout tracker is reset by the caller, at the head of the command buffer it describes.
     for (IScenePass* pass : m_scenePasses)
     {
         RecordTransitions(commandBuffer, pass->Io(), frame);

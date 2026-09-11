@@ -58,11 +58,13 @@ class SceneRenderTargets
     uint32_t ResolveIndex(RenderTargetId target, uint32_t imageIndex, uint32_t frameSlot) const;
 
     ImTextureID GetLdrTextureId(uint32_t imageIndex) const;
-    // Only used while the tone mapping pass does not exist yet; see the phase one plan, Task 5.
-    ImTextureID GetHdrTextureId(uint32_t frameSlot) const;
 
     // Both must run with the in-flight frames already waited on, and ReleaseImages must run while
     // ImGui's Vulkan backend is still alive because it removes ImGui texture bindings.
+    //
+    // Rebuild re-creates the images at a new extent and swapchain image count; it does not re-run
+    // format selection, so a caller whose swapchain format may have moved must construct a new
+    // instance instead (see VulkanRenderer::CreateSwapchainResources).
     void ReleaseImages();
     void Rebuild(VkExtent2D extent, uint32_t swapchainImageCount);
 
