@@ -51,13 +51,17 @@ void VulkanForwardPass::Record(
     const ScenePassFrameContext& frame) const
 {
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.08f, 0.1f, 0.16f, 1.0f}};
+    // The clear now lands in the HDR target and is tone mapped with everything else, where before
+    // it bypassed the fragment shader and reached the display unmodified. These are the radiance
+    // values whose Reinhard result is the original {0.08, 0.1, 0.16} background: c / (1 - c).
+    clearValues[0].color = {{0.086957f, 0.111111f, 0.190476f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = m_renderPass;
-    renderPassInfo.framebuffer = m_framebuffers.at(frame.frameSlot);
+    renderPassInfo.framebuffer = m_framebuffers.at(
+        targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot));
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = frame.extent;
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());

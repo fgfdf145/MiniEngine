@@ -8,7 +8,9 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    vec3 color = texture(hdrTexture, fragTexCoord).rgb;
+    // Radiance is stored raw now, so clamp below fp16's maximum before the operator: +inf would
+    // make inf/(inf+1) produce NaN, turning an extremely bright pixel black instead of white.
+    vec3 color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
 
     // Reinhard, moved verbatim out of triangle.frag. The expression is unchanged so that this
     // pass produces the same values the forward shader used to produce.
