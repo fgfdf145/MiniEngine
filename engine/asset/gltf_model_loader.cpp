@@ -1,4 +1,4 @@
-#include "gltf_model_loader.h"
+﻿#include "gltf_model_loader.h"
 
 #include "model_post_process.h"
 
@@ -16,7 +16,6 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <engine/core/log/log.h>
-#include <engine/core/paths/engine_paths.h>
 
 #include <nlohmann/json.hpp>
 
@@ -155,28 +154,6 @@ std::string EncodeUriPath(std::string_view path)
     }
 
     return encoded;
-}
-
-std::string BuildCacheKey(const std::filesystem::path& modelPath)
-{
-    const std::string normalizedPath = modelPath.lexically_normal().string();
-    uint64_t hash = 1469598103934665603ull;
-    for (unsigned char character : normalizedPath)
-    {
-        hash ^= static_cast<uint64_t>(character);
-        hash *= 1099511628211ull;
-    }
-
-    std::ostringstream stream;
-    stream << std::hex << hash;
-    return stream.str();
-}
-
-std::filesystem::path BuildEmbeddedTextureCacheDirectory(const std::filesystem::path& modelPath)
-{
-    const std::string folderName =
-        SanitizeFileName(modelPath.stem().string()) + "_" + BuildCacheKey(modelPath);
-    return EnginePaths::CacheRoot() / "tinygltf" / folderName;
 }
 
 std::string BuildEmbeddedTextureFileName(const tinygltf::Image& image, size_t imageIndex)
@@ -619,46 +596,6 @@ bool WriteUnpackedImage(const tinygltf::Image& image, const std::filesystem::pat
     return true;
 }
 
-std::string ExportEmbeddedImage(
-    const std::filesystem::path& modelPath,
-    const tinygltf::Image& image,
-    size_t imageIndex)
-{
-    if (image.image.empty() || image.width <= 0 || image.height <= 0 || image.component <= 0 || image.component > 4)
-    {
-        return {};
-    }
-    if (image.bits > 8)
-    {
-        LOG_WARN(
-            "Skipping embedded image export for '{}' because {}-bit textures are not yet supported.",
-            modelPath.string(),
-            image.bits);
-        return {};
-    }
-
-    const std::filesystem::path cacheDirectory = BuildEmbeddedTextureCacheDirectory(modelPath);
-    std::filesystem::create_directories(cacheDirectory);
-    const std::filesystem::path outputPath = cacheDirectory / BuildEmbeddedTextureFileName(image, imageIndex);
-
-    if (!std::filesystem::exists(outputPath))
-    {
-        const int writeResult = stbi_write_png(
-            outputPath.string().c_str(),
-            image.width,
-            image.height,
-            image.component,
-            image.image.data(),
-            image.width * image.component);
-        if (writeResult == 0)
-        {
-            throw std::runtime_error("Failed to export embedded glTF texture: " + outputPath.string());
-        }
-    }
-
-    return outputPath.string();
-}
-
 std::string ResolveImagePath(
     const tinygltf::Model& model,
     const std::filesystem::path& modelPath,
@@ -684,7 +621,33 @@ std::string ResolveImagePath(
         return externalPath;
     }
 
-    return ExportEmbeddedImage(modelPath, image, static_cast<size_t>(texture.source));
+    if (!IsEmbeddedImage(image))
+    {
+        // A remote URI the engine cannot fetch. Nothing to point at.
+        LOG_WARN("Ignoring remote texture URI '{}' in '{}'", image.uri, modelPath.string());
+        return {};
+    }
+
+    // Embedded: import unpacked this image into the bundle. Derive the same
+    // name import wrote and confirm it is there, so a bundle imported before
+    // unpacking existed degrades to an untextured material with one warning
+    // rather than to a path that resolves to nothing.
+    const std::string relativePath =
+        (std::filesystem::path(kUnpackedTextureDirectory) /
+         BuildEmbeddedTextureFileName(image, static_cast<size_t>(texture.source)))
+            .generic_string();
+
+    std::error_code ec;
+    if (std::filesystem::exists(modelPath.parent_path() / relativePath, ec) && !ec)
+    {
+        return relativePath;
+    }
+
+    LOG_WARN(
+        "'{}' has an embedded texture that was never unpacked (expected '{}'); re-import the model",
+        modelPath.string(),
+        relativePath);
+    return {};
 }
 
 ModelMaterialData BuildMaterialData(

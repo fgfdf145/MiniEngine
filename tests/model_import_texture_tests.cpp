@@ -156,6 +156,59 @@ void UnpackIsIdempotent()
         std::filesystem::last_write_time(unpacked, ec) == firstWrite,
         "second unpack rewrote an existing texture instead of skipping it");
 }
+
+void LoadReportsModelRelativeTexturePath()
+{
+    ScopedDir scope("relative");
+    const std::filesystem::path source = scope.Path() / "source" / "fixture.gltf";
+    WriteFixtureTo(source);
+
+    const std::filesystem::path bundle = scope.Path() / "bundle";
+    std::error_code ec;
+    std::filesystem::create_directories(bundle, ec);
+    const std::filesystem::path imported = ModelLoader::CopyModelWithSortedReferences(source, bundle);
+
+    const LoadedModelData data = ModelLoader::LoadModel(imported.string());
+    Require(!data.materials.empty(), "loaded model carried no material");
+
+    const std::string& texturePath = data.materials[0].baseColorTexturePath;
+    Require(!texturePath.empty(), "embedded base color texture resolved to nothing");
+    Require(
+        !std::filesystem::path(texturePath).is_absolute(),
+        "embedded texture path is absolute; it must be relative to the model");
+    Require(
+        std::filesystem::exists(imported.parent_path() / texturePath, ec) && !ec,
+        "texture path did not resolve against the model directory");
+}
+
+// The property Task 3 establishes: parsing a model writes nothing.
+void LoadWritesNothing()
+{
+    ScopedDir scope("readonly");
+    const std::filesystem::path source = scope.Path() / "source" / "fixture.gltf";
+    WriteFixtureTo(source);
+
+    const std::filesystem::path bundle = scope.Path() / "bundle";
+    std::error_code ec;
+    std::filesystem::create_directories(bundle, ec);
+    const std::filesystem::path imported = ModelLoader::CopyModelWithSortedReferences(source, bundle);
+
+    size_t before = 0;
+    for (std::filesystem::recursive_directory_iterator it(bundle, ec), end; !ec && it != end; it.increment(ec))
+    {
+        ++before;
+    }
+
+    ModelLoader::LoadModel(imported.string());
+
+    size_t after = 0;
+    for (std::filesystem::recursive_directory_iterator it(bundle, ec), end; !ec && it != end; it.increment(ec))
+    {
+        ++after;
+    }
+
+    Require(before == after, "loading a model created or removed files in the bundle");
+}
 }
 
 int main()
@@ -164,6 +217,8 @@ int main()
     {
         ImportUnpacksEmbeddedTextures();
         UnpackIsIdempotent();
+        LoadReportsModelRelativeTexturePath();
+        LoadWritesNothing();
 
         std::cout << "model import texture tests passed\n";
         return 0;
