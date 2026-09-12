@@ -212,10 +212,14 @@ tree afterwards.
 | Rename | File rename keeps the uuid and moves the sidecar; directory rename keeps every uuid beneath it |
 | Removal | Entry and sidecar both go; removing a directory prunes its whole subtree |
 
-`engine_asset` currently links `imgui::imgui` PUBLIC because
-`asset_manager.cpp` is an ImGui panel living in the asset layer. The test
-target therefore links imgui transitively. That is accepted here; moving
-`AssetManager` into `engine/editor/ui/` is separate work.
+`engine_asset` links `imgui::imgui` PUBLIC because `asset_manager.cpp` is an
+ImGui panel living in the asset layer. `asset_registry.cpp` depends only on
+`engine_core` and yaml-cpp, so the registry test compiles that one translation
+unit directly and links neither — the same technique
+`miniengine_scene_pass_tests` already uses. The import test does link
+`engine_asset`, because listing the glTF loader's tinygltf, stb and
+nlohmann::json dependencies by hand would be brittle. Moving `AssetManager`
+into `engine/editor/ui/` is separate work.
 
 ### Disk and documentation
 

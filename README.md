@@ -87,7 +87,7 @@ engine_platform -> engine_core
 
 - **Vulkan UV**：贴图加载不做垂直翻转；UV 原点为左上角，行 0 对应 `v0`。不要引入 OpenGL 风格的全局翻转或 `1 - v` 补偿。
 - **单位**：世界单位为米，常量在 `engine/scene/world_units.h`；导入和编辑器 UI 都以此为基准。
-- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。
+- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。导入还会把模型文件内部的图片（`.glb` 负载、`data:` URI）解包成 `<bundle>/textures/` 下的真实文件；加载只读取，不写盘。因此贴图路径一律相对于模型文件所在目录——外部 URI 和嵌入图片没有例外。`--model` 指向 `assets/` 之外时会先自动导入，再加载导入后的副本。
 - **资产 UUID**：可注册资产限于 `assets/` 根下的模型和纹理。sidecar 命名为 `<完整文件名>.miniengine_asset.yaml`，资产浏览和场景扫描会忽略该后缀。场景保存 `source_path` 与 `source_uuid`：加载时 UUID 优先，保存时路径优先；重复 UUID 通过 sidecar 的 `file` 与实际文件名仲裁，副本获得新 UUID。
 - **场景身份**：场景 YAML v3 写 `entity_uuid` 和 `selected_entity_uuid`。`entt::entity` 仅在 registry 生命周期内有效，不能持久化或作为跨加载引用；旧 v1/v2 可按旧模型索引加载后升级。
 - **场景写入边界**：`ISceneWorld::Registry()` 对外只读。实体生命周期、组件编辑、变换刷新和 Renderable 脏标记必须调用场景接口，以保持顺序、选择、UUID 索引和缓存同步。
@@ -146,7 +146,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 - RHI 目前只有 Vulkan 后端，且后端仍承载 `EditorRenderBackendBase` 的编辑器流程。
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
-- 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
+- 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径；材质内的贴图引用是纯路径，没有 UUID 参与，重命名贴图会静默打断引用。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
 - 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
@@ -171,6 +171,18 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-09-12 — 嵌入式贴图改为导入时解包
+
+嵌入图片此前在**加载时**导出到 `.cache/tinygltf/<stem>_<模型绝对路径的 FNV1a>/`。缓存键是路径，所以每次导入、复制或重命名都新建一份全尺寸副本且从不清理——工作区里曾经是同一个模型的五份 101 MB 目录，共 501 MB。导出返回的还是绝对路径，而外部 URI 返回的是模型相对路径：同一个 `ModelMaterialData` 字段承载两种语义，`.material.yaml`（在 `assets/` 下，可提交）于是会持久化指向 gitignored 派生数据的本机路径。
+
+- 解包移到 `ModelLoader::CopyModelWithSortedReferences` 末尾，`.glb` 与 `.gltf` 两条分支合流后统一调 `GltfModelLoader::UnpackEmbeddedTextures`，写进 `<bundle>/textures/`。命名由 `BuildEmbeddedTextureFileName` 一处决定，导入和加载从同一个输入推出同一个名字。
+- `ResolveImagePath` 改为推导相对路径并确认存在，`LoadModel` 因此不再写任何文件。解包之前导入的旧包会退化成无贴图材质加一条明确的 warning，而不是指向不存在的路径。
+- `.glb` 仍原样保留，是源文件的忠实副本，贴图在磁盘上有两份（包内嵌一份、解包一份）。这是一次性有界成本，不随路径变化增长；把 `.glb` 转写成 `.gltf` 能省掉那一份，但导入产物就不再是副本，且要冒 tinygltf 写回丢 extension、漂精度的风险。
+- 解包只在导入时发生，所以 `--model` 指向 `assets/` 外的模型会先自动导入。守卫放在 `editor_backend_base.cpp` 的 `pendingModelLoads` 出口——所有加载请求的唯一收口，一处覆盖 `--model`、UI 加载和批量加载。由此确立不变式：能渲染的模型一定在 `assets/` 下。
+- `AssetRegistry` 补上首批测试：UUID 铸造与持久化、边界拒绝、重复 UUID 仲裁（**两种扫描顺序都断言**，因为扫描顺序决定归属正是 sidecar 文件名仲裁要防的事）、孤儿 sidecar 清理、引用解析三级回退、重命名与删除。
+
+`EnginePaths::CacheRoot()` 保留（启动日志仍在报告它），只是 `tinygltf/` 子目录和那套键推导没有了。设计见 [docs/superpowers/specs/2026-09-12-embedded-texture-unpacking-design.md](docs/superpowers/specs/2026-09-12-embedded-texture-unpacking-design.md)。
 
 ### 2026-09-12 — Vulkan 帧结构重组：HDR 中间靶、显式 barrier 与独立色调映射 pass
 
