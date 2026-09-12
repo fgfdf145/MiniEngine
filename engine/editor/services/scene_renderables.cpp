@@ -84,7 +84,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         return renderSubmeshes;
     }
 
-    std::shared_ptr<LoadedModelData> modelDataPtr = ModelCache::Get(model.sourcePath);
+    std::shared_ptr<const LoadedModelData> modelDataPtr = ModelCache::Get(model.sourcePath);
     if (!modelDataPtr)
     {
         // Don't do a synchronous load while an async loader is running on another thread:
@@ -93,8 +93,9 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             return renderSubmeshes;
         }
-        modelDataPtr = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
-        ModelCache::Store(model.sourcePath, modelDataPtr);
+        auto loaded = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
+        ModelCache::Store(model.sourcePath, loaded);
+        modelDataPtr = loaded;
     }
     const LoadedModelData& modelData = *modelDataPtr;
 

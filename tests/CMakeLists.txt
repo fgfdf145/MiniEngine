@@ -231,3 +231,32 @@ add_test(
 )
 
 set_target_properties(miniengine_model_import_texture_tests PROPERTIES FOLDER "Tests")
+
+# model_cache.cpp calls ApplyImportedMaterialInfo, whose translation unit pulls in
+# material_graph_runtime and yaml-cpp. Listing that chain by hand would be brittle, so this
+# target links engine_asset, like miniengine_model_import_texture_tests.
+add_executable(miniengine_model_cache_tests
+    model_cache_tests.cpp
+)
+miniengine_group_target_sources(miniengine_model_cache_tests)
+
+target_link_libraries(miniengine_model_cache_tests
+    PRIVATE
+        engine_asset
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_model_cache_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_model_cache_tests>
+            $<TARGET_FILE_DIR:miniengine_model_cache_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.model_cache
+    COMMAND miniengine_model_cache_tests
+)
+
+set_target_properties(miniengine_model_cache_tests PROPERTIES FOLDER "Tests")

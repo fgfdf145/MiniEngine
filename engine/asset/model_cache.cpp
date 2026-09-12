@@ -1,5 +1,8 @@
 #include "model_cache.h"
 
+#include "material_definition.h"
+
+#include <algorithm>
 #include <filesystem>
 #include <mutex>
 #include <system_error>
@@ -43,7 +46,7 @@ bool IsCached(const std::string& path)
     return s_modelCache.count(key) > 0;
 }
 
-std::shared_ptr<LoadedModelData> Get(const std::string& path)
+std::shared_ptr<const LoadedModelData> Get(const std::string& path)
 {
     const std::string key = NormalizeKey(path);
     std::lock_guard<std::mutex> lock(s_modelCacheMutex);
@@ -56,6 +59,34 @@ void Store(const std::string& path, std::shared_ptr<LoadedModelData> data)
     const std::string key = NormalizeKey(path);
     std::lock_guard<std::mutex> lock(s_modelCacheMutex);
     s_modelCache[key] = std::move(data);
+}
+
+void UpdateMaterial(const std::string& path, uint32_t materialIndex, const ModelImportedMaterialInfo& material)
+{
+    const std::string key = NormalizeKey(path);
+    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
+    const auto it = s_modelCache.find(key);
+    if (it == s_modelCache.end() || !it->second || materialIndex >= it->second->materials.size())
+    {
+        return;
+    }
+    ApplyImportedMaterialInfo(material, it->second->materials[materialIndex]);
+}
+
+void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMaterialInfo>& materials)
+{
+    const std::string key = NormalizeKey(path);
+    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
+    const auto it = s_modelCache.find(key);
+    if (it == s_modelCache.end() || !it->second)
+    {
+        return;
+    }
+    const size_t count = std::min(materials.size(), it->second->materials.size());
+    for (size_t i = 0; i < count; ++i)
+    {
+        ApplyImportedMaterialInfo(materials[i], it->second->materials[i]);
+    }
 }
 
 void Invalidate(const std::string& path)
