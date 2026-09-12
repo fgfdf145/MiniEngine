@@ -62,6 +62,16 @@ class AssetManager
         AssetType type = AssetType::Other;
     };
 
+    // A rename whose target is referenced by other documents is staged until
+    // the user confirms it, mirroring the delete flow. Paths, not indices: the
+    // entry list can be rescanned between staging and confirming.
+    struct PendingRename
+    {
+        std::string sourcePath;
+        std::string newName;
+        bool isDir = false;
+    };
+
     void ScanCurrentDir();
     void DrawToolbar(AssetManagerResult& result);
     void DrawBreadcrumb();
@@ -75,6 +85,8 @@ class AssetManager
 
     void BeginRename(int index);
     void CommitRename();
+    void PerformRename(const PendingRename& rename);
+    void DrawRenameConfirmModal();
     void CancelRename();
     void CreateNewFolder();
 
@@ -112,5 +124,9 @@ class AssetManager
     std::vector<std::string> m_pendingDeleteWarnings; // "'x.png' is referenced by ..." lines
     bool m_pendingDeleteHasDir = false;
     bool m_openDeleteModal = false;
+
+    std::optional<PendingRename> m_pendingRename;
+    std::vector<std::string> m_pendingRenameWarnings;
+    bool m_openRenameModal = false;
 };
 }

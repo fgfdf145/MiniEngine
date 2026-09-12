@@ -2,6 +2,7 @@
 
 #include "asset_references.h"
 #include "asset_registry.h"
+#include "model_cache.h"
 
 #include <imgui.h>
 
@@ -170,6 +171,7 @@ AssetManagerResult AssetManager::Draw()
     DrawEntryList(result);
     DrawPreviewPanel(result);
     DrawDeleteConfirmModal(result);
+    DrawRenameConfirmModal();
 
     return result;
 }
@@ -954,14 +956,48 @@ void AssetManager::CommitRename()
     {
         return; // never clobber an existing file/folder
     }
-    std::filesystem::rename(entry.path, target, ec);
+
+    const PendingRename rename{entry.path.string(), newName, entry.isDir};
+
+    // Renaming a file breaks every path-based reference to its old name, the
+    // same breakage deleting it causes. Delete warns; rename used to go
+    // through silently.
+    const std::vector<AssetReference> references =
+        FindReferencesTo(m_root, {entry.name}, {entry.path.lexically_normal().string()});
+    if (!references.empty())
+    {
+        m_pendingRenameWarnings.clear();
+        for (const AssetReference& reference : references)
+        {
+            m_pendingRenameWarnings.push_back(
+                "'" + reference.referencedName + "' is referenced by " + reference.referencedBy);
+        }
+        m_pendingRename = rename;
+        m_openRenameModal = true;
+        return; // the modal performs the rename on confirmation
+    }
+
+    PerformRename(rename);
+}
+
+void AssetManager::PerformRename(const PendingRename& rename)
+{
+    const std::filesystem::path source(rename.sourcePath);
+    const std::filesystem::path target = source.parent_path() / rename.newName;
+
+    std::error_code ec;
+    std::filesystem::rename(source, target, ec);
     if (!ec)
     {
+        // Parsed model data is keyed on path. Without this, a model re-imported
+        // later at the old path is served the previous file's data.
+        ModelCache::Invalidate(rename.sourcePath);
+
         // Keep the uuid registry and companion sidecars pointing at the new name.
-        AssetRegistry::OnAssetRenamed(entry.path, target);
-        if (!entry.isDir)
+        AssetRegistry::OnAssetRenamed(source, target);
+        if (!rename.isDir)
         {
-            RenameModelMaterialSidecars(entry.path, target);
+            RenameModelMaterialSidecars(source, target);
         }
     }
     m_needsScan = true;
@@ -1115,6 +1151,64 @@ void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
     {
         // Modal was dismissed without an explicit choice (e.g. Escape): treat as cancel.
         m_pendingDeletePaths.clear();
+    }
+}
+
+void AssetManager::DrawRenameConfirmModal()
+{
+    constexpr const char* kTitle = "Rename Referenced Asset?";
+
+    if (m_openRenameModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openRenameModal = false;
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (m_pendingRename.has_value())
+        {
+            ImGui::Text(
+                "Rename '%s' to '%s'?",
+                std::filesystem::path(m_pendingRename->sourcePath).filename().string().c_str(),
+                m_pendingRename->newName.c_str());
+        }
+        ImGui::Spacing();
+
+        for (const std::string& warning : m_pendingRenameWarnings)
+        {
+            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "%s", warning.c_str());
+        }
+        ImGui::TextDisabled("Those references are paths, not uuids: renaming breaks them.");
+        ImGui::Separator();
+
+        if (ImGui::Button("Rename Anyway", ImVec2(140.0f, 0.0f)))
+        {
+            if (m_pendingRename.has_value())
+            {
+                PerformRename(*m_pendingRename);
+            }
+            m_pendingRename.reset();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+        {
+            m_pendingRename.reset();
+            m_needsScan = true; // refresh the list; the inline edit already closed
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+
+        ImGui::EndPopup();
+    }
+    else if (m_pendingRename.has_value())
+    {
+        // Dismissed without an explicit choice (e.g. Escape): treat as cancel.
+        m_pendingRename.reset();
+        m_needsScan = true;
     }
 }
 }
