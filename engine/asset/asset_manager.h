@@ -89,6 +89,13 @@ class AssetManager
     std::vector<Entry> m_entries;
     std::unordered_set<int> m_selectedIndices;
     int m_anchorIdx = -1; // anchor for shift-range, also the focused preview item
+
+    // The focused entry's uuid, recomputed only when the focus moves or the
+    // entry list is rebuilt. GetOrCreateUuid takes the global registry mutex
+    // and hits the filesystem; a background import holds that same mutex
+    // across a whole-tree rescan, so calling it per frame stalls the UI.
+    int m_previewUuidIndex = -1;
+    std::string m_previewUuid;
     std::string m_clipboard;
     bool m_needsScan = true;
 

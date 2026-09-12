@@ -182,6 +182,8 @@ void AssetManager::ScanCurrentDir()
     m_selectedIndices.clear();
     m_anchorIdx = -1;
     m_renamingIndex = -1;
+    m_previewUuidIndex = -1;
+    m_previewUuid.clear();
 
     std::error_code ec;
     if (!std::filesystem::exists(m_currentDir, ec) || !std::filesystem::is_directory(m_currentDir, ec))
@@ -752,10 +754,14 @@ void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
 
     if (!entry.isDir && AssetRegistry::IsRegistrableAsset(entry.path))
     {
-        const std::string uuid = AssetRegistry::GetOrCreateUuid(entry.path);
-        if (!uuid.empty())
+        if (m_previewUuidIndex != focusIdx)
         {
-            ImGui::TextDisabled("UUID: %s", uuid.c_str());
+            m_previewUuid = AssetRegistry::GetOrCreateUuid(entry.path);
+            m_previewUuidIndex = focusIdx;
+        }
+        if (!m_previewUuid.empty())
+        {
+            ImGui::TextDisabled("UUID: %s", m_previewUuid.c_str());
         }
     }
 
