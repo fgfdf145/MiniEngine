@@ -195,5 +195,9 @@ void ModelPostProcess::FinalizeSubmeshData(ModelSubmeshData& submeshData)
         GenerateTangents(submeshData.mesh, submeshData.hasTexCoords);
         submeshData.hasTangents = true;
     }
+
+    // Last, so it sees the final vertex set: the renderable built from this submesh reads
+    // the cached value instead of walking the vertices again on the main thread.
+    submeshData.boundsCenter = ComputeMeshBoundsCenter(submeshData.mesh);
 }
 }

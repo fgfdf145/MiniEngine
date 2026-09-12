@@ -157,7 +157,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
         renderSubmesh.doubleSided = material.doubleSided;
         renderSubmesh.alphaMode = material.alphaMode;
-        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(*renderSubmesh.mesh);
+        renderSubmesh.localBoundsCenter = submesh.boundsCenter;
         renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
         renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
         renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];

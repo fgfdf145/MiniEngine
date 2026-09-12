@@ -30,8 +30,6 @@ struct MaterialTexturePaths
     std::string blendMask;
 };
 
-glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh);
-
 struct CpuRenderSubmesh
 {
     entt::entity entity = entt::null;
