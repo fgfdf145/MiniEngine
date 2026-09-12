@@ -172,6 +172,31 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
 
+### 2026-09-12 — 资产生命周期加固
+
+同一轮审查里的六条缺陷，分三组，组内耦合、组间独立。
+
+**注册表安全性**
+
+- 资产浏览器预览面板此前**每帧**调 `GetOrCreateUuid`：全局注册表互斥锁 + 一次 `is_regular_file` + 可能写 sidecar。而后台导入线程在同一把锁上跑整棵资产树的 `RescanAssetTree`，UI 线程被它按住。UUID 在文件生命周期内不变，现在只在焦点移动或条目列表重建时算一次。
+- 孤儿 sidecar 的判定此前是 `exists()` 返回 false，而它在"无法判断"时同样返回 false——一次瞬时 IO 错误就永久丢掉 UUID。现在要求 `error_code` 干净才算证据。
+- `WriteSidecar` 此前截断后直接流式写，中途崩溃留下空文件，读回来就是"没有 UUID"。改成写临时文件 + `rename` 覆盖。临时文件名以 `.tmp` 结尾，不匹配 sidecar 后缀，因此不会被扫描误认。
+
+**缓存生命周期**
+
+- `ModelCache::Get` 此前返回可变 `shared_ptr`，两处调用方直接改缓存里的材质。今天两处都在主线程，没有真的 data race，但接口没这么说，而后台线程随时可以 `Store` 覆盖同一个键。`Get` 改为返回 `shared_ptr<const LoadedModelData>`，新增 `UpdateMaterial`/`UpdateMaterials` 两个显式写入口，在缓存锁内应用，路径缺失或索引越界时是 no-op——正是调用方原先自己带的那两个守卫。
+- 缓存此前无上限无淘汰，Sponza 级别的一个包就是几百 MB，进去就常驻到进程退出。现在按字节计量 + LRU 淘汰，预算 1 GiB。**场景仍引用的条目永不淘汰**，无论预算：淘汰它只会在下次重建 renderable 时触发一次同步重新加载，那是体验倒退不是节省。淘汰在 live set 真正可能变化的两个点评估——`RebuildSceneRenderables` 末尾，以及报告了变化的 `RefreshDirtySceneRenderables` 末尾——而不是每帧空跑。
+- 预览贴图缓存（解码后的全分辨率 RGBA8，一张 4K 基色图解码就是 32 MB）用同样的计数器 LRU，预算 256 MB，但没有 live set——预览面板对任何一张贴图都没有持久占有。
+
+**引用完整性**
+
+- 点一次 Delete 此前是主线程同步把资产树下每个 ≤64 MB 的 `.gltf`/`.yaml` 全文读进内存，对最多 256 个文件名逐个子串搜索。这对删除已经慢，对重命名（F2 高频操作）根本不可行。
+- 扫描提取成 `engine/asset/asset_references.{h,cpp}` 的 `FindReferencesTo`，背后是按 `last_write_time` 索引的文档内容缓存：首次仍走全树，重复扫描只重读变化的文档。时间戳读不到的文档会重读而不是信任索引。
+- 重命名由此能用上同一个检查：有引用就弹和删除同款的确认框。材质里的贴图引用是纯路径（见第 7 节），重命名必然打断它们——此前是静默打断。
+- 重命名还会 `ModelCache::Invalidate`，此前只有删除路径做了。否则之后在老路径上重新导入的模型会被喂上一个文件的解析数据。
+
+设计见 [docs/superpowers/specs/2026-09-12-asset-lifecycle-hardening-design.md](docs/superpowers/specs/2026-09-12-asset-lifecycle-hardening-design.md)。给材质贴图引用加 UUID 能让重命名经注册表自动修复、彻底不需要扫描，但那要改 `.material.yaml` 格式、`ModelMaterialData` 和解析路径，比其余五项加起来还大，仍是已知缺口。
+
 ### 2026-09-12 — 嵌入式贴图改为导入时解包
 
 嵌入图片此前在**加载时**导出到 `.cache/tinygltf/<stem>_<模型绝对路径的 FNV1a>/`。缓存键是路径，所以每次导入、复制或重命名都新建一份全尺寸副本且从不清理——工作区里曾经是同一个模型的五份 101 MB 目录，共 501 MB。导出返回的还是绝对路径，而外部 URI 返回的是模型相对路径：同一个 `ModelMaterialData` 字段承载两种语义，`.material.yaml`（在 `assets/` 下，可提交）于是会持久化指向 gitignored 派生数据的本机路径。
