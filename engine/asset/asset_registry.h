@@ -51,6 +51,10 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
 void OnAssetRenamed(const std::filesystem::path& oldPath, const std::filesystem::path& newPath);
 void OnAssetRemoved(const std::filesystem::path& path);
 
+// True only for paths strictly beneath the assets root. The root itself is
+// not "under" itself.
+bool IsUnderAssetsRoot(const std::filesystem::path& path);
+
 bool IsRegistrableAsset(const std::filesystem::path& path);
 std::filesystem::path SidecarPathFor(const std::filesystem::path& assetPath);
 }

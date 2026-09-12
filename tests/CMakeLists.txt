@@ -160,3 +160,44 @@ add_test(
 )
 
 set_target_properties(miniengine_scene_pass_tests PROPERTIES FOLDER "Tests")
+
+# asset_registry.cpp depends only on engine_core and yaml-cpp, so it is compiled directly into
+# the test rather than linking engine_asset. engine_asset links imgui PUBLIC because
+# asset_manager.cpp is an ImGui panel that still lives in the asset layer; compiling the one
+# translation unit under test keeps that out of a unit test. Same reasoning as
+# miniengine_scene_pass_tests above.
+add_executable(miniengine_asset_registry_tests
+    asset_registry_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/asset/asset_registry.cpp
+)
+
+# No miniengine_group_target_sources: that helper's source_group(TREE ...) requires every file
+# to sit under the calling directory, and this target deliberately compiles one .cpp from
+# engine/asset/.
+
+target_include_directories(miniengine_asset_registry_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(miniengine_asset_registry_tests
+    PRIVATE
+        engine_core
+        yaml-cpp::yaml-cpp
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_asset_registry_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_asset_registry_tests>
+            $<TARGET_FILE_DIR:miniengine_asset_registry_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.asset_registry
+    COMMAND miniengine_asset_registry_tests
+)
+
+set_target_properties(miniengine_asset_registry_tests PROPERTIES FOLDER "Tests")

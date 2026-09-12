@@ -513,6 +513,13 @@ void OnAssetRemoved(const std::filesystem::path& path)
     }
 }
 
+bool IsUnderAssetsRoot(const std::filesystem::path& path)
+{
+    std::lock_guard lock(State().mutex);
+    EnsureInitializedLocked();
+    return IsUnderRootLocked(NormalizeKey(path));
+}
+
 bool IsRegistrableAsset(const std::filesystem::path& path)
 {
     return HasRegistrableExtension(path);
