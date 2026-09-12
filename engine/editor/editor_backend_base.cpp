@@ -107,14 +107,26 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 
         try
         {
-            LOG_INFO("Loading model: {}", request.path);
+            std::string path = request.path;
+
+            // Unpacking embedded textures happens at import, so a model that
+            // was never imported has none. Import it first; the invariant is
+            // that anything reaching the loader lives under the assets root.
+            if (!AssetRegistry::IsUnderAssetsRoot(path))
+            {
+                LOG_INFO("Model '{}' is outside the assets root; importing it first", path);
+                path = ModelImportService::ImportModelIntoAssetDirectory(
+                    path, (EnginePaths::AssetsRoot() / "models").string());
+            }
+
+            LOG_INFO("Loading model: {}", path);
             if (!request.placeAsNewEntity && EditorWorld().HasSelection())
             {
-                EntityEditService::LoadSelectedModel(State(), request.path);
+                EntityEditService::LoadSelectedModel(State(), path);
             }
             else
             {
-                EntityEditService::PlaceModelIntoScene(State(), request.path, glm::vec3(0.0f));
+                EntityEditService::PlaceModelIntoScene(State(), path, glm::vec3(0.0f));
             }
             renderablesDirty = true;
         }
