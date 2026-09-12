@@ -21,5 +21,13 @@ class GltfModelLoader
     static std::filesystem::path CopyWithSortedReferences(
         const std::filesystem::path& gltfPath,
         const std::filesystem::path& targetDirectory);
+
+    // Writes every image whose pixels live inside the model file (.glb
+    // payloads and data: URIs) into "<model directory>/textures/", naming each
+    // file the way ResolveImagePath derives it at load time. External URIs are
+    // left alone. A destination that already exists is kept, never rewritten.
+    // Does nothing for a model with no embedded images. Throws only if the
+    // model itself cannot be parsed.
+    static void UnpackEmbeddedTextures(const std::filesystem::path& modelPath);
 };
 }

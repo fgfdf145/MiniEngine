@@ -551,6 +551,18 @@ void ExpandBounds(const glm::vec3& position, LoadedModelData& modelData)
     modelData.maxBounds = glm::max(modelData.maxBounds, position);
 }
 
+// True when the image's pixels live inside the model file rather than in a
+// companion file: a .glb bufferView, or a data: URI. A remote URI ("://") is
+// neither embedded nor a local companion — the engine cannot fetch it, so it
+// resolves to no texture at all.
+bool IsEmbeddedImage(const tinygltf::Image& image)
+{
+    return image.uri.empty() || image.uri.starts_with("data:");
+}
+
+// The subdirectory embedded images are unpacked into, relative to the model.
+constexpr const char* kUnpackedTextureDirectory = "textures";
+
 // Returns the texture path relative to the model file's directory, or an
 // absolute path if the URI was already absolute. Callers are responsible for
 // resolving relative paths against the model's current location at load time.
@@ -566,6 +578,45 @@ std::string ResolveExternalImagePath(const std::filesystem::path& /*modelPath*/,
     }
 
     return std::filesystem::path(DecodeUriPath(image.uri)).lexically_normal().string();
+}
+
+// Writes one decoded image to disk as PNG. Returns false when the image
+// carries nothing writable, which is not an error: the caller reports the
+// resulting texture as missing.
+bool WriteUnpackedImage(const tinygltf::Image& image, const std::filesystem::path& outputPath)
+{
+    if (image.image.empty() || image.width <= 0 || image.height <= 0 ||
+        image.component <= 0 || image.component > 4)
+    {
+        return false;
+    }
+    if (image.bits > 8)
+    {
+        LOG_WARN(
+            "Skipping embedded image '{}' because {}-bit textures are not yet supported.",
+            outputPath.string(),
+            image.bits);
+        return false;
+    }
+
+    std::error_code existsEc;
+    if (std::filesystem::exists(outputPath, existsEc) && !existsEc)
+    {
+        return true; // already unpacked; never overwrite
+    }
+
+    const int writeResult = stbi_write_png(
+        outputPath.string().c_str(),
+        image.width,
+        image.height,
+        image.component,
+        image.image.data(),
+        image.width * image.component);
+    if (writeResult == 0)
+    {
+        throw std::runtime_error("Failed to unpack embedded glTF texture: " + outputPath.string());
+    }
+    return true;
 }
 
 std::string ExportEmbeddedImage(
@@ -1232,6 +1283,72 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     }
 
     return BuildLoadedModelData(tinyModel, modelPath, progress);
+}
+
+void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelPath)
+{
+    const std::string extension = ToLowerCopy(modelPath.extension().string());
+
+    tinygltf::TinyGLTF loader;
+    loader.SetPreserveImageChannels(true);
+
+    tinygltf::Model model;
+    std::string warnings;
+    std::string errors;
+    bool loaded = false;
+
+    if (extension == ".glb")
+    {
+        loaded = loader.LoadBinaryFromFile(&model, &errors, &warnings, modelPath.string());
+    }
+    else if (extension == ".gltf")
+    {
+        loaded = loader.LoadASCIIFromFile(&model, &errors, &warnings, modelPath.string());
+    }
+    else
+    {
+        return; // nothing else carries embedded glTF images
+    }
+
+    if (!loaded)
+    {
+        throw std::runtime_error(
+            "Failed to parse '" + modelPath.string() + "' while unpacking embedded textures" +
+            (errors.empty() ? std::string{} : ": " + errors));
+    }
+
+    const std::filesystem::path textureDirectory =
+        modelPath.parent_path() / kUnpackedTextureDirectory;
+
+    size_t unpacked = 0;
+    for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
+    {
+        const tinygltf::Image& image = model.images[imageIndex];
+        if (!IsEmbeddedImage(image))
+        {
+            continue;
+        }
+
+        std::error_code mkdirEc;
+        std::filesystem::create_directories(textureDirectory, mkdirEc);
+        if (mkdirEc)
+        {
+            throw std::runtime_error(
+                "Failed to create '" + textureDirectory.string() + "': " + mkdirEc.message());
+        }
+
+        const std::filesystem::path outputPath =
+            textureDirectory / BuildEmbeddedTextureFileName(image, imageIndex);
+        if (WriteUnpackedImage(image, outputPath))
+        {
+            ++unpacked;
+        }
+    }
+
+    if (unpacked > 0)
+    {
+        LOG_INFO("Unpacked {} embedded texture(s) for '{}'", unpacked, modelPath.string());
+    }
 }
 
 std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
