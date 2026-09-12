@@ -161,6 +161,62 @@ void OrphanSidecarPruning()
     Require(!Exists(sidecar), "orphaned sidecar survived a rescan");
 }
 
+// A sidecar whose asset is present must survive a rescan. The orphan rule
+// keys on "the asset file is absent", and std::filesystem::exists also
+// returns false when it could not tell — that must not count as absence.
+void OrphanJudgmentRequiresCleanEvidence()
+{
+    ScopedAssetRoot scope("orphan_evidence");
+    const std::filesystem::path present = scope.Root() / "present.png";
+    WriteFile(present, "x");
+    AssetRegistry::GetOrCreateUuid(present);
+    const std::filesystem::path presentSidecar = AssetRegistry::SidecarPathFor(present);
+    Require(Exists(presentSidecar), "sidecar was not created");
+
+    AssetRegistry::RescanAssetTree();
+    Require(Exists(presentSidecar), "a sidecar whose asset is present was deleted as an orphan");
+
+    // The genuine orphan case still deletes.
+    const std::filesystem::path gone = scope.Root() / "gone.png";
+    WriteFile(gone, "x");
+    AssetRegistry::GetOrCreateUuid(gone);
+    const std::filesystem::path goneSidecar = AssetRegistry::SidecarPathFor(gone);
+
+    std::error_code ec;
+    std::filesystem::remove(gone, ec);
+    AssetRegistry::RescanAssetTree();
+    Require(!Exists(goneSidecar), "a genuinely orphaned sidecar survived");
+}
+
+// The sidecar write must be atomic: either the old content or the new one,
+// never a truncated file, and never a stray temporary left behind.
+void SidecarWriteIsAtomic()
+{
+    ScopedAssetRoot scope("atomic_write");
+    const std::filesystem::path asset = scope.Root() / "tex.png";
+    WriteFile(asset, "x");
+
+    const std::string uuid = AssetRegistry::GetOrCreateUuid(asset);
+    Require(!uuid.empty(), "asset did not receive a uuid");
+
+    const std::filesystem::path sidecar = AssetRegistry::SidecarPathFor(asset);
+    Require(Exists(sidecar), "sidecar was not written");
+
+    // No temporary file may be left in the directory.
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(scope.Root(), ec), end; !ec && it != end; it.increment(ec))
+    {
+        const std::string name = it->path().filename().string();
+        Require(
+            name.find(".tmp") == std::string::npos,
+            "an atomic-write temporary file was left behind");
+    }
+
+    // And the sidecar must round-trip: a rescan re-reads it and keeps the uuid.
+    AssetRegistry::RescanAssetTree();
+    Require(AssetRegistry::GetOrCreateUuid(asset) == uuid, "sidecar did not round-trip through a rescan");
+}
+
 void ReferenceResolution()
 {
     ScopedAssetRoot scope("resolve");
@@ -265,6 +321,8 @@ int main()
         DuplicateArbitration(true);
         DuplicateArbitration(false);
         OrphanSidecarPruning();
+        OrphanJudgmentRequiresCleanEvidence();
+        SidecarWriteIsAtomic();
         ReferenceResolution();
         RenameKeepsIdentity();
         RemovalPrunes();
