@@ -551,16 +551,21 @@ void ExpandBounds(const glm::vec3& position, LoadedModelData& modelData)
     modelData.maxBounds = glm::max(modelData.maxBounds, position);
 }
 
+// True when the image is a plain companion file of the glTF, i.e. the only case
+// where the loader keeps the URI and never looks at the decoded pixels. Embedded
+// images (data: URIs, buffer views) and remote URLs are not: those go through
+// ExportEmbeddedImage, which needs tinygltf to have decoded them.
+bool IsExternalImageFileReference(const std::string& uri)
+{
+    return !uri.empty() && !uri.starts_with("data:") && uri.find("://") == std::string::npos;
+}
+
 // Returns the texture path relative to the model file's directory, or an
 // absolute path if the URI was already absolute. Callers are responsible for
 // resolving relative paths against the model's current location at load time.
 std::string ResolveExternalImagePath(const std::filesystem::path& /*modelPath*/, const tinygltf::Image& image)
 {
-    if (image.uri.empty() || image.uri.starts_with("data:"))
-    {
-        return {};
-    }
-    if (image.uri.find("://") != std::string::npos)
+    if (!IsExternalImageFileReference(image.uri))
     {
         return {};
     }
@@ -991,17 +996,18 @@ constexpr float kProgressParseStarted = 0.02f;
 constexpr float kProgressParseDone = 0.55f;
 constexpr float kProgressMaterialsDone = 0.60f;
 
-// tinygltf decodes every referenced image inside its single parse call, which is
-// where most of the time goes for textured models. The image-loader hook lets us
-// keep the bar moving during that phase; the total image count is unknown
-// mid-parse, so the fraction approaches the parse-done milestone asymptotically.
+// tinygltf decodes every referenced image inside its single parse call. The
+// image-loader hook overrides that: companion texture files are left undecoded
+// (see below), and the hook doubles as the only place where the UI can be told
+// that the parse is progressing. The total image count is unknown mid-parse, so
+// the fraction approaches the parse-done milestone asymptotically.
 struct GltfParseProgressContext
 {
     const ModelLoadProgressCallback& callback;
     int imagesLoaded = 0;
 };
 
-bool LoadImageDataWithProgress(
+bool LoadGltfImageData(
     tinygltf::Image* image,
     const int imageIndex,
     std::string* error,
@@ -1020,6 +1026,19 @@ bool LoadImageDataWithProgress(
         const float asymptoticFraction = imageCount / (imageCount + 4.0f);
         context->callback(
             kProgressParseStarted + (kProgressParseDone - kProgressParseStarted) * asymptoticFraction);
+    }
+
+    // A texture stored as a companion file keeps only its path in the loaded model
+    // (ResolveExternalImagePath), and the renderer decodes those files in parallel
+    // when it uploads them. Decoding them here as well would be the same work done
+    // twice, the second time serialized on this single parse thread - which is most
+    // of the parse cost for an asset like Sponza (~70 external PNGs). tinygltf fills
+    // in image->uri before calling this hook for exactly that case, so an empty uri
+    // still falls through to the decode below; leaving image->image empty is safe
+    // because nothing reads the pixels of an image that resolves to a path.
+    if (image != nullptr && IsExternalImageFileReference(image->uri))
+    {
+        return true;
     }
 
     // Installing a custom image loader bypasses TinyGLTF::SetPreserveImageChannels,
@@ -1191,11 +1210,10 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     tinygltf::TinyGLTF loader;
     loader.SetPreserveImageChannels(true);
 
+    // Always installed, with or without a progress callback: the hook is also what
+    // keeps tinygltf from decoding companion texture files the loader never reads.
     GltfParseProgressContext parseProgressContext{progress};
-    if (progress)
-    {
-        loader.SetImageLoader(&LoadImageDataWithProgress, &parseProgressContext);
-    }
+    loader.SetImageLoader(&LoadGltfImageData, &parseProgressContext);
 
     tinygltf::Model tinyModel;
     std::string warnings;
