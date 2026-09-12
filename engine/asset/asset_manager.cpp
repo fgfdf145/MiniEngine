@@ -1,5 +1,6 @@
-#include "asset_manager.h"
+﻿#include "asset_manager.h"
 
+#include "asset_references.h"
 #include "asset_registry.h"
 
 #include <imgui.h>
@@ -1035,65 +1036,15 @@ void AssetManager::BuildPendingDeleteWarnings()
         return;
     }
 
-    // Look through the files that can hold references (.gltf URIs, material /
-    // scene YAML paths) for mentions of any doomed file name. Substring search
-    // on the filename is a heuristic — it can flag a same-named file in another
-    // folder — but a spurious warning is cheap next to a silently broken
-    // reference.
-    constexpr std::uintmax_t kMaxScanFileBytes = 64ull * 1024 * 1024;
+    // Delegated so the rename flow can ask the same question without paying
+    // for a second whole-tree read.
     constexpr size_t kMaxWarnings = 6;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(
-             m_root, std::filesystem::directory_options::skip_permission_denied, ec))
+    const std::vector<AssetReference> references =
+        FindReferencesTo(m_root, deletedNames, deletedPaths, kMaxWarnings);
+    for (const AssetReference& reference : references)
     {
-        if (ec || m_pendingDeleteWarnings.size() >= kMaxWarnings)
-        {
-            break;
-        }
-        if (!item.is_regular_file(ec))
-        {
-            continue;
-        }
-        const std::string ext = ToLower(item.path().extension().string());
-        if (ext != ".gltf" && ext != ".yaml" && ext != ".yml")
-        {
-            continue;
-        }
-        // Uuid sidecars name their own asset by design; they are not references.
-        if (IsHiddenAsset(item.path()))
-        {
-            continue;
-        }
-        if (deletedPaths.count(item.path().lexically_normal().string()) > 0)
-        {
-            continue;
-        }
-        std::error_code sizeEc;
-        if (std::filesystem::file_size(item.path(), sizeEc) > kMaxScanFileBytes || sizeEc)
-        {
-            continue;
-        }
-
-        std::ifstream file(item.path(), std::ios::binary);
-        if (!file)
-        {
-            continue;
-        }
-        const std::string content(
-            (std::istreambuf_iterator<char>(file)),
-            std::istreambuf_iterator<char>());
-        for (const std::string& name : deletedNames)
-        {
-            if (content.find(name) == std::string::npos)
-            {
-                continue;
-            }
-            m_pendingDeleteWarnings.push_back(
-                "'" + name + "' is referenced by " + item.path().filename().string());
-            if (m_pendingDeleteWarnings.size() >= kMaxWarnings)
-            {
-                break;
-            }
-        }
+        m_pendingDeleteWarnings.push_back(
+            "'" + reference.referencedName + "' is referenced by " + reference.referencedBy);
     }
 }
 

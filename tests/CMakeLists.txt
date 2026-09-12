@@ -260,3 +260,41 @@ add_test(
 )
 
 set_target_properties(miniengine_model_cache_tests PROPERTIES FOLDER "Tests")
+
+# asset_references.cpp depends only on engine_core, so it is compiled directly into the test
+# rather than linking engine_asset, keeping imgui out of a unit test. Same reasoning as
+# miniengine_asset_registry_tests above.
+add_executable(miniengine_asset_references_tests
+    asset_references_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/asset/asset_references.cpp
+)
+
+# No miniengine_group_target_sources: that helper's source_group(TREE ...) requires every file
+# to sit under the calling directory, and this target deliberately compiles one .cpp from
+# engine/asset/.
+
+target_include_directories(miniengine_asset_references_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(miniengine_asset_references_tests
+    PRIVATE
+        engine_core
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_asset_references_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_asset_references_tests>
+            $<TARGET_FILE_DIR:miniengine_asset_references_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.asset_references
+    COMMAND miniengine_asset_references_tests
+)
+
+set_target_properties(miniengine_asset_references_tests PROPERTIES FOLDER "Tests")

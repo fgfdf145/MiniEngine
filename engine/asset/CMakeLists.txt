@@ -1,6 +1,8 @@
 ﻿add_library(engine_asset
     asset_manager.cpp
     asset_manager.h
+    asset_references.cpp
+    asset_references.h
     asset_registry.cpp
     asset_registry.h
     gltf_model_loader.cpp
