@@ -72,10 +72,10 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         const ModelMaterialData material{};
         CpuRenderSubmesh renderSubmesh{};
         renderSubmesh.entity = entity;
-        renderSubmesh.mesh = CreateDefaultCubeMesh();
+        renderSubmesh.mesh = std::make_shared<const MeshData>(CreateDefaultCubeMesh());
         renderSubmesh.material = BuildDefaultMaterialForTag(tag.name);
         renderSubmesh.alphaMode = material.alphaMode;
-        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(renderSubmesh.mesh);
+        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(*renderSubmesh.mesh);
         renderSubmesh.material.alphaCutoff =
             ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
         renderSubmesh.hasTexCoords = true;
@@ -149,13 +149,15 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
     {
         CpuRenderSubmesh renderSubmesh{};
         renderSubmesh.entity = entity;
-        renderSubmesh.mesh = submesh.mesh;
+        // Aliasing shared_ptr: aims at this submesh's mesh while sharing ownership of the
+        // cached model it lives in, so the geometry is never copied out of the cache.
+        renderSubmesh.mesh = std::shared_ptr<const MeshData>(modelDataPtr, &submesh.mesh);
         renderSubmesh.hasTexCoords = submesh.hasTexCoords;
 
         const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
         renderSubmesh.doubleSided = material.doubleSided;
         renderSubmesh.alphaMode = material.alphaMode;
-        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(renderSubmesh.mesh);
+        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(*renderSubmesh.mesh);
         renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
         renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
         renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];

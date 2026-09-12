@@ -6,7 +6,7 @@
 #include <engine/asset/mesh.h>
 
 #include <array>
-#include <vector>
+#include <cstdint>
 
 namespace me
 {
@@ -46,13 +46,15 @@ class VulkanBuffer
   private:
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
-    void UploadVertices(VulkanUploadBatch& uploadBatch);
-    void UploadIndices(VulkanUploadBatch& uploadBatch);
+    void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
+    void UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    std::vector<Vertex> m_vertices;
-    std::vector<uint32_t> m_indices;
+    // Only the counts outlive the upload. The mesh itself is owned by the model cache and
+    // staged straight from there, so the GPU buffers don't shadow a second host-side copy.
+    uint32_t m_vertexCount = 0;
+    uint32_t m_indexCount = 0;
     VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_vertexMemory = VK_NULL_HANDLE;
     VkBuffer m_indexBuffer = VK_NULL_HANDLE;

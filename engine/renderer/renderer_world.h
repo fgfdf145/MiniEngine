@@ -5,6 +5,7 @@
 
 #include <engine/scene/scene_world.h>
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -34,7 +35,10 @@ glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh);
 struct CpuRenderSubmesh
 {
     entt::entity entity = entt::null;
-    MeshData mesh;
+    // Shared with the model cache rather than copied out of it: a scene like Sponza has
+    // hundreds of submeshes, nothing here mutates the geometry, and the entry this aliases
+    // keeps the whole cached model alive for as long as any submesh references it.
+    std::shared_ptr<const MeshData> mesh;
     MaterialPushConstants material;
     MaterialTexturePaths textures;
     bool hasTexCoords = false;

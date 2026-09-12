@@ -686,7 +686,7 @@ void VulkanRenderer::UploadSceneResources()
         renderSubmesh.entity = cpuRenderSubmesh.entity;
         renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            cpuRenderSubmesh.mesh, uploadBatch);
+            *cpuRenderSubmesh.mesh, uploadBatch);
         flushUploadBatchIfNeeded();
         renderSubmesh.material = cpuRenderSubmesh.material;
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
