@@ -100,6 +100,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Meters the histogram the given frame slot last wrote and moves the camera's EV100 toward
     // it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(uint32_t frameSlot);
+    // Logs when the number of lights left out by the light limit changes.
+    void ReportDroppedLights(uint32_t droppedCount);
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
@@ -125,6 +127,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // False until auto exposure has metered its first frame, which it then snaps to instead of
     // fading in from the default EV.
     bool m_hasMeteredExposure = false;
+    uint32_t m_droppedLightCount = 0;
     std::unique_ptr<VulkanTonemapPass> m_tonemapPass;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets

@@ -16,6 +16,8 @@ struct EditorApplicationOptions
 {
     RenderBackendType renderBackend = GetDefaultRenderBackendType();
     std::optional<std::string> startupModelPath;
+    // A scene file loaded in place of the two-cube test scene, the way File > Open would load it.
+    std::optional<std::string> startupScenePath;
     uint32_t maxFrames = 0;
     EnginePaths::Overrides paths;
 };

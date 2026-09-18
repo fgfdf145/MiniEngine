@@ -1,22 +1,9 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 layout(constant_id = 0) const bool kAlphaMask = false;
 
-// Light type constants — must match C++ LightType enum
-#define LIGHT_DIRECTIONAL 0
-#define LIGHT_POINT 1
-#define LIGHT_SPOT 2
-#define LIGHT_AREA 3
-#define LIGHT_AMBIENT 4
-
-struct SceneLightData
-{
-    vec4 positionAndRange;  // xyz = world position, w = range (metres)
-    vec4 colorAndIntensity; // xyz = linear RGB color, w = intensity (lumens or lux)
-    vec4 directionAndType;  // xyz = world direction the light travels (an area light's emitting normal), w = LightType
-    vec4 spotAndArea;       // x = cos(inner), y = cos(outer), z = areaW, w = areaH
-    vec4 areaRightAxis;     // xyz = world axis along areaW (area lights only)
-};
+#include "scene_common.glsl"
 
 layout(push_constant) uniform DrawConstants
 {
@@ -28,17 +15,6 @@ layout(push_constant) uniform DrawConstants
     vec4 nodeGraphFactors;
 }
 drawData;
-
-layout(set = 0, binding = 0) uniform CameraBuffer
-{
-    mat4 view;
-    mat4 proj;
-    vec4 cameraWorldPosition;
-    vec4 ambientColorAndIntensity; // xyz = color, w = luminance scale; rgb * w is cd/m^2
-    SceneLightData lights[8];
-    uvec4 sceneLightCount; // x = active light count
-}
-ubo;
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -128,7 +104,7 @@ vec3 EvaluateBRDF(
 }
 
 // ---------------------------------------------------------------------------
-// UE4-style smooth distance attenuation
+// Distance attenuation: inverse square, windowed to zero at the light's range
 // ---------------------------------------------------------------------------
 // The windowing half on its own: 1 near the light, falling smoothly to 0 at the range.
 float RangeWindow(float distance, float range)
@@ -139,9 +115,15 @@ float RangeWindow(float distance, float range)
     return num * num;
 }
 
+// Physical 1 / d^2. The floor stops the singularity at the light's position: 1 cm, far below any
+// distance a lit surface sits at. The "+ 1" some engines put in the denominator instead halves the
+// light at one metre and cuts it to a tenth at thirty centimetres, which does not hold up once
+// intensities are in lumens.
+const float kMinLightDistanceSquared = 1e-4;
+
 float SmoothDistanceAttenuation(float distance, float range)
 {
-    return RangeWindow(distance, range) / (distance * distance + 1.0);
+    return RangeWindow(distance, range) / max(distance * distance, kMinLightDistanceSquared);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +232,39 @@ vec3 EvaluateAreaLight(
 }
 
 // ---------------------------------------------------------------------------
+// Uniform ambient
+// ---------------------------------------------------------------------------
+
+// Karis' analytic fit of the split-sum environment BRDF ("Physically Based Shading on Mobile",
+// 2014). Returns the scale and bias that turn F0 into the directional albedo of the GGX lobe:
+// specular albedo = F0 * x + y.
+vec2 EnvironmentBrdfApprox(float roughness, float NdV)
+{
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NdV)) * r.x + r.y;
+    return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
+// Outgoing radiance from an environment of the same luminance in every direction. For that
+// environment the split sum is exact apart from the BRDF fit: the prefiltered radiance is the
+// luminance itself whatever the roughness. Metals get only the specular lobe, tinted by their F0,
+// and the diffuse lobe keeps whatever energy the specular one did not reflect.
+vec3 EvaluateUniformAmbient(
+    vec3 N, vec3 V,
+    vec3 albedo, float metallic, float roughness,
+    vec3 luminance)
+{
+    float NdV = max(dot(N, V), 0.0);
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec2 environmentBrdf = EnvironmentBrdfApprox(roughness, NdV);
+    vec3 specularAlbedo = F0 * environmentBrdf.x + environmentBrdf.y;
+    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+    return (diffuseAlbedo + specularAlbedo) * luminance;
+}
+
+// ---------------------------------------------------------------------------
 // Per-light contribution
 // ---------------------------------------------------------------------------
 vec3 EvaluateSceneLight(
@@ -297,8 +312,10 @@ vec3 EvaluateSceneLight(
         float spotAtt = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.0001), 0.0, 1.0);
         spotAtt *= spotAtt;
 
-        // Approximate solid angle of the spot cone.
-        float coneOmega = max(2.0 * PI * (1.0 - innerCos), 0.0001);
+        // Lumens to candela over the solid angle of the outer cone. Light keeps reaching out to the
+        // outer angle, so dividing by the inner cone alone would emit more flux than authored, and
+        // more the softer the edge.
+        float coneOmega = max(2.0 * PI * (1.0 - outerCos), 0.0001);
         radiance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / coneOmega) * att * spotAtt;
     }
     else if (lightType == LIGHT_AREA)
@@ -378,18 +395,12 @@ void main()
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
 
     // ---- Ambient ----------------------------------------------------------
-    // Start from the UBO fallback ambient, accumulate ambient-type lights.
-    vec3 ambientAccum = ubo.ambientColorAndIntensity.rgb * ubo.ambientColorAndIntensity.w;
-    uint lightCount = ubo.sceneLightCount.x;
-    for (uint i = 0u; i < lightCount; ++i)
-    {
-        if (int(ubo.lights[i].directionAndType.w) == LIGHT_AMBIENT)
-        {
-            ambientAccum += ubo.lights[i].colorAndIntensity.rgb * ubo.lights[i].colorAndIntensity.w;
-        }
-    }
+    // The ambient light is a uniform environment of this luminance. The CPU has already summed the
+    // scene's Ambient lights into it, or put the fallback there when there are none.
+    vec3 ambient = EvaluateUniformAmbient(N, V, albedo.rgb, metallic, roughness, ubo.ambientLuminance.rgb) * ao;
 
     // ---- Direct lighting --------------------------------------------------
+    uint lightCount = ubo.sceneLightCount.x;
     vec3 directAccum = vec3(0.0);
     for (uint i = 0u; i < lightCount; ++i)
     {
@@ -401,7 +412,6 @@ void main()
     }
 
     // ---- Combine ----------------------------------------------------------
-    vec3 ambient = albedo.rgb * ambientAccum * ao;
     vec3 emissive = emissiveSample * drawData.emissiveFactor;
     vec3 color = ambient + directAccum + emissive;
 

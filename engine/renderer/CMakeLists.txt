@@ -14,6 +14,8 @@ add_library(engine_render_core
     render_types.h
     renderer_world.cpp
     renderer_world.h
+    scene_lighting.cpp
+    scene_lighting.h
 )
 miniengine_group_target_sources(engine_render_core)
 
@@ -106,6 +108,7 @@ set(MINIENGINE_SHADER_SOURCES
 set(MINIENGINE_SHADER_INCLUDES
     exposure_histogram.glsl
     gt7_tonemap.glsl
+    scene_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)

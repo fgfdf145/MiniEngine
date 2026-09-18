@@ -132,6 +132,7 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 ```text
 --backend vulkan    选择 Vulkan 后端（当前唯一实现）
 --model <path>      启动后请求加载指定模型
+--scene <path>      启动后加载指定场景文件，替换默认的双立方体测试场景
 --frames <count>    渲染指定正整数帧后退出
 ```
 

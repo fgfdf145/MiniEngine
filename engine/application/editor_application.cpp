@@ -3,6 +3,7 @@
 #include <engine/core/log/log.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/editor/services/scene_io_service.h>
 #include <engine/renderer/rhi/factory.h>
 #include <engine/platform/window/window.h>
 
@@ -77,6 +78,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--model")
         {
             options.startupModelPath = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--scene")
+        {
+            options.startupScenePath = ReadRequiredArgument(i, argc, argv, argument);
             continue;
         }
 
@@ -160,6 +167,12 @@ int EditorApplication::Run()
         sharedState,
         m_options.renderBackend,
         m_options.startupModelPath);
+    if (m_options.startupScenePath.has_value())
+    {
+        // Loaded asynchronously and applied by the frame loop, exactly like a scene opened from the
+        // editor, so it replaces the test scene a few frames in.
+        SceneIoService::StartAsyncSceneLoad(*sharedState, *m_options.startupScenePath);
+    }
     uint32_t renderedFrameCount = 0;
 
     while (!window.ShouldClose())

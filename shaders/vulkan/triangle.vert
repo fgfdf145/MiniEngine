@@ -1,13 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-struct SceneLightData
-{
-    vec4 positionAndRange;
-    vec4 colorAndIntensity;
-    vec4 directionAndType;
-    vec4 spotAndArea;
-    vec4 areaRightAxis;
-};
+#include "scene_common.glsl"
 
 layout(push_constant) uniform DrawConstants
 {
@@ -19,17 +13,6 @@ layout(push_constant) uniform DrawConstants
     vec4 nodeGraphFactors;
 }
 drawData;
-
-layout(set = 0, binding = 0) uniform CameraBuffer
-{
-    mat4 view;
-    mat4 proj;
-    vec4 cameraWorldPosition;
-    vec4 ambientColorAndIntensity;
-    SceneLightData lights[8];
-    uvec4 sceneLightCount;
-}
-ubo;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;

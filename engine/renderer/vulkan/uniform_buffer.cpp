@@ -87,18 +87,14 @@ void VulkanUniformBuffer::Update(
     uint32_t imageIndex,
     const ViewportMatrices& matrices,
     const glm::vec3& cameraPosition,
-    const std::vector<GpuLightData>& lights)
+    const glm::vec3& ambientLuminance,
+    std::span<const GpuLightData> lights)
 {
     CameraUniformData data{};
     data.view = matrices.view;
     data.proj = matrices.renderProjection;
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
-    // Fallback ambient luminance in cd/m^2, the unit an Ambient light's intensity is in too. It is
-    // the pre-exposure {0.05, 0.05, 0.08} this term used to be, scaled so that at the default EV100
-    // a scene without lights looks exactly as it did before exposure existed (about 15 to 25
-    // cd/m^2).
-    data.ambientColorAndIntensity =
-        glm::vec4(0.05f, 0.05f, 0.08f, 1.0f / ExposureFromEv100(kDefaultExposureEv100));
+    data.ambientLuminance = glm::vec4(ambientLuminance, 0.0f);
 
     const uint32_t lightCount = std::min(static_cast<uint32_t>(lights.size()), kMaxSceneLights);
     data.sceneLightCount = glm::uvec4(lightCount, 0u, 0u, 0u);

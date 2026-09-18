@@ -2,6 +2,7 @@
 
 #include "../imgui/imgui_impl_vulkan.h"
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/renderer/scene_lighting.h>
 
 #include <engine/logic/editor_world.h>
 #include <engine/scene/scene_components.h>
@@ -42,9 +43,17 @@ glm::mat3 BuildLightRotation(const TransformComponent& transform)
     return glm::mat3(rotMat);
 }
 
-std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
+// Every light in the scene, in scene order, as the shader wants it and as the light selection
+// ranks it. The two vectors are parallel.
+struct CollectedSceneLights
 {
     std::vector<GpuLightData> gpuLights;
+    std::vector<SceneLightCandidate> candidates;
+};
+
+CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
+{
+    CollectedSceneLights collected;
     world.ForEachLight([&](
                            entt::entity,
                            const TagComponent&,
@@ -75,9 +84,16 @@ std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
                                light.areaSize.x * scale.x,
                                light.areaSize.y * scale.y);
 
-                           gpuLights.push_back(gpu);
+                           SceneLightCandidate candidate{};
+                           candidate.type = light.type;
+                           candidate.position = transform.translation;
+                           candidate.color = light.color;
+                           candidate.intensity = light.intensity;
+
+                           collected.gpuLights.push_back(gpu);
+                           collected.candidates.push_back(candidate);
                        });
-    return gpuLights;
+    return collected;
 }
 
 TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha)
@@ -292,9 +308,23 @@ void VulkanRenderer::DrawFrame()
     }
     ImGui::Render();
 
-    const std::vector<GpuLightData> gpuLights =
-        State().editorWorld ? CollectSceneLights(*State().editorWorld) : std::vector<GpuLightData>{};
-    m_uniformBuffer->Update(imageIndex, State().viewportMatrices, State().camera.position, gpuLights);
+    const CollectedSceneLights sceneLights =
+        State().editorWorld ? CollectSceneLights(*State().editorWorld) : CollectedSceneLights{};
+    const SceneLightSelection lightSelection =
+        SelectSceneLights(sceneLights.candidates, State().camera.position, kMaxSceneLights);
+    ReportDroppedLights(lightSelection.droppedCount);
+    std::vector<GpuLightData> selectedLights;
+    selectedLights.reserve(lightSelection.selected.size());
+    for (uint32_t index : lightSelection.selected)
+    {
+        selectedLights.push_back(sceneLights.gpuLights[index]);
+    }
+    m_uniformBuffer->Update(
+        imageIndex,
+        State().viewportMatrices,
+        State().camera.position,
+        lightSelection.ambientLuminance,
+        selectedLights);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
 
     ScenePassFrameContext frame{};
@@ -1033,6 +1063,27 @@ void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const Scen
     {
         RecordTransitions(commandBuffer, pass->Io(), frame);
         pass->Record(commandBuffer, *m_sceneTargets, frame);
+    }
+}
+
+void VulkanRenderer::ReportDroppedLights(uint32_t droppedCount)
+{
+    // Logged when the count changes rather than every frame, which would bury everything else.
+    if (droppedCount == m_droppedLightCount)
+    {
+        return;
+    }
+    m_droppedLightCount = droppedCount;
+    if (droppedCount > 0)
+    {
+        LOG_WARN(
+            "The scene has {} more non-ambient lights than the {} the renderer evaluates; the dimmest at the camera are left out",
+            droppedCount,
+            kMaxSceneLights);
+    }
+    else
+    {
+        LOG_INFO("Every scene light fits in the renderer's light limit again");
     }
 }
 

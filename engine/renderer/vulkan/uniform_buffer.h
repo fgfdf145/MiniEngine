@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 
+#include <span>
 #include <vector>
 
 namespace me
@@ -33,7 +34,7 @@ struct MaterialTextureBinding
     TextureDescriptorBinding blendMask;
 };
 
-// Per-light GPU data — 4 × vec4 = 64 bytes, matches GLSL std140 struct layout.
+// Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
 // positionAndRange : xyz = world position, w = effective range (metres)
 // colorAndIntensity: xyz = linear RGB color, w = intensity (lumens or lux)
 // directionAndType : xyz = world direction (normalized), w = LightType enum cast to float
@@ -56,7 +57,8 @@ struct alignas(16) CameraUniformData
     glm::mat4 view{1.0f};
     glm::mat4 proj{1.0f};
     glm::vec4 cameraWorldPosition{0.0f, 0.0f, 0.0f, 1.0f};
-    glm::vec4 ambientColorAndIntensity{0.05f, 0.05f, 0.08f, 1.0f};
+    // xyz = ambient luminance in cd/m^2 (see SceneLightSelection::ambientLuminance), w unused.
+    glm::vec4 ambientLuminance{0.0f};
     GpuLightData lights[kMaxSceneLights];
     glm::uvec4 sceneLightCount{0u, 0u, 0u, 0u};
 };
@@ -132,7 +134,8 @@ class VulkanUniformBuffer
         uint32_t imageIndex,
         const ViewportMatrices& matrices,
         const glm::vec3& cameraPosition,
-        const std::vector<GpuLightData>& lights);
+        const glm::vec3& ambientLuminance,
+        std::span<const GpuLightData> lights);
 
   private:
     void CreateBuffers(uint32_t imageCount);

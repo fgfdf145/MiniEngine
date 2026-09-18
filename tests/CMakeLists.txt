@@ -131,6 +131,32 @@ endif()
 
 set_target_properties(miniengine_tonemap_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_scene_lighting_tests
+    scene_lighting_tests.cpp
+)
+miniengine_group_target_sources(miniengine_scene_lighting_tests)
+
+target_link_libraries(miniengine_scene_lighting_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.scene_lighting
+    COMMAND miniengine_scene_lighting_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_scene_lighting_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_scene_lighting_tests>
+            $<TARGET_FILE_DIR:miniengine_scene_lighting_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_scene_lighting_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}
