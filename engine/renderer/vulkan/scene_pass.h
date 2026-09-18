@@ -4,6 +4,7 @@
 #include "common.h"
 #include "pipeline_set.h"
 #include "render_target_layout.h"
+#include "scene_pass_order.h"
 #include "scene_render_targets.h"
 
 #include <span>
@@ -38,6 +39,11 @@ class IScenePass
   public:
     virtual ~IScenePass() = default;
 
+    // Which pass this is. The renderer owns its passes in one list and records them in the order
+    // BuildScenePassOrder returns, so the list has to be addressable by id rather than by
+    // position: a pass absent from one order is still owned, and still has to follow a rebuilt
+    // target set.
+    virtual ScenePassId Id() const = 0;
     virtual RenderPassIo Io() const = 0;
     virtual void Record(
         VkCommandBuffer commandBuffer,

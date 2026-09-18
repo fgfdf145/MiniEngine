@@ -30,6 +30,7 @@ class VulkanExposureHistogramPass : public IScenePass
     VulkanExposureHistogramPass(const VulkanExposureHistogramPass&) = delete;
     VulkanExposureHistogramPass& operator=(const VulkanExposureHistogramPass&) = delete;
 
+    ScenePassId Id() const override;
     RenderPassIo Io() const override;
     void Record(
         VkCommandBuffer commandBuffer,

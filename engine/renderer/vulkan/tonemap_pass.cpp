@@ -41,6 +41,11 @@ VulkanTonemapPass::~VulkanTonemapPass()
     DestroyHandles();
 }
 
+ScenePassId VulkanTonemapPass::Id() const
+{
+    return ScenePassId::Tonemap;
+}
+
 RenderPassIo VulkanTonemapPass::Io() const
 {
     static constexpr std::array<RenderTargetId, 1> kReads = {RenderTargetId::SceneHdr};

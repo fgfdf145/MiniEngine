@@ -251,9 +251,8 @@ VulkanRenderer::~VulkanRenderer()
     DestroyDescriptorResources();
     m_graphicsPipelines.reset();
     DestroySwapchainResources();
-    m_tonemapPass.reset();
-    m_exposurePass.reset();
-    m_forwardPass.reset();
+    m_scenePasses.clear();
+    m_exposurePass = nullptr;
     m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textures.clear();
@@ -491,63 +490,21 @@ void VulkanRenderer::CreateSwapchainResources()
             swapchainImageCount);
     }
 
-    // The forward pass renders into the HDR target, whose format is fixed and independent of the
-    // swapchain image format, so its render pass never needs recreating here — not even when the
-    // swapchain format moved — and the material pipelines built against it stay valid across
-    // every swapchain recreate. Only its framebuffers follow the rebuilt views.
-    if (m_forwardPass)
-    {
-        m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
-    }
-    else
-    {
-        m_forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
-    }
-
-    // Compute only, so nothing about it depends on a format; it follows the new views like the
-    // forward pass.
-    if (m_exposurePass)
-    {
-        m_exposurePass->OnTargetsRebuilt(*m_sceneTargets);
-    }
-    else
-    {
-        m_exposurePass = std::make_unique<VulkanExposureHistogramPass>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            m_pipelineCache,
-            *m_sceneTargets);
-    }
-
-    // The tone mapping pass owns the only render pass in the frame that references the LDR
-    // format, so unlike the forward pass it cannot survive a swapchain format change: when the
-    // format moved it is replaced rather than pointed at the new views.
-    if (m_tonemapPass && ldrFormatMatchesSwapchain)
-    {
-        m_tonemapPass->OnTargetsRebuilt(*m_sceneTargets);
-    }
-    else
-    {
-        m_tonemapPass = std::make_unique<VulkanTonemapPass>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            *m_sceneTargets);
-    }
-
     m_layoutTracker.Reset();
-    // The histogram reads the HDR target the forward pass wrote and must be recorded before the
-    // tone mapping pass samples the same image, which the tracker then finds already readable.
-    m_scenePasses = {m_forwardPass.get(), m_exposurePass.get(), m_tonemapPass.get()};
+    CreateScenePasses();
 }
 
 void VulkanRenderer::DestroySwapchainResources()
 {
-    // Keep the pass objects alive (and with them the render pass the pipelines were built
-    // against), but drop the target images: the LDR copies are sized by the swapchain image
-    // count, and every ImGui texture binding must be released before ImGui's descriptor pool goes
-    // away. Nothing is recordable until CreateSwapchainResources repopulates the pass list, and a
-    // released image is undefined again, so the tracker goes back to square one with it.
+    // Destroying the passes takes their render passes with them, so the pipelines built against
+    // them go too; CreateScenePasses rebuilds both together. The target images are released
+    // rather than destroyed: the LDR copies are sized by the swapchain image count, and every
+    // ImGui texture binding must be released before ImGui's descriptor pool goes away. Nothing is
+    // recordable until CreateSwapchainResources repopulates the pass list, and a released image
+    // is undefined again, so the tracker goes back to square one with it.
     m_scenePasses.clear();
+    m_exposurePass = nullptr;
+    m_graphicsPipelines.reset();
     if (m_sceneTargets)
     {
         m_sceneTargets->ReleaseImages();
@@ -599,19 +556,65 @@ void VulkanRenderer::DestroyDeviceResources()
     m_frameSetLayout.reset();
 }
 
-void VulkanRenderer::EnsureGraphicsPipelines()
+void VulkanRenderer::CreateScenePasses()
 {
-    if (m_graphicsPipelines)
-    {
-        return;
-    }
+    // Passes are built fresh here rather than carried across a swapchain recreate. The tone
+    // mapping pass could never survive a swapchain format change anyway, and rebuilding the
+    // material pipelines alongside them costs almost nothing: m_pipelineCache outlives every
+    // pipeline set, so the driver reuses its earlier shader compilation. What that buys is the
+    // disappearance of every construct-or-rebuild branch, and with it the window in which the
+    // pass list held passes whose framebuffers referenced destroyed views.
+    //
+    // A viewport resize does NOT come through here. That path rebuilds only the images and tells
+    // every owned pass to follow them; see SyncSceneTargets.
+    m_scenePasses.clear();
+    m_exposurePass = nullptr;
+    m_graphicsPipelines.reset();
 
+    auto forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
+
+    // Built here, while the typed pointer is still in hand, rather than through a separate
+    // Ensure step: the pipelines depend on nothing but this render pass and the two device
+    // lifetime set layouts, and this is the one place the render pass is created.
     m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_pipelineCache,
-        m_forwardPass->GetRenderPass(),
+        forwardPass->GetRenderPass(),
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle());
+
+    // A rebuilt exposure pass starts with zeroed histograms, which meter as empty, so auto
+    // exposure holds its current EV for the kMaxFramesInFlight frames until real ones arrive.
+    auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets);
+    m_exposurePass = exposurePass.get();
+
+    m_scenePasses.push_back(std::move(forwardPass));
+    m_scenePasses.push_back(std::move(exposurePass));
+    m_scenePasses.push_back(std::make_unique<VulkanTonemapPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets));
+}
+
+IScenePass* VulkanRenderer::FindScenePass(ScenePassId id) const
+{
+    for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
+    {
+        if (pass->Id() == id)
+        {
+            return pass.get();
+        }
+    }
+
+    // A pass named by an order the renderer built but never constructed is a programming error,
+    // and returning null here would surface as a crash inside recording instead.
+    throw std::runtime_error(
+        "No scene pass is registered for scene pass id " +
+        std::to_string(static_cast<int32_t>(id)));
 }
 
 void VulkanRenderer::CreateDescriptorResources()
@@ -633,7 +636,6 @@ void VulkanRenderer::CreateDescriptorResources()
         m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(m_textures, m_materialTextureSlots),
         m_shadowPass->GetSampledBinding());
-    EnsureGraphicsPipelines();
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
@@ -686,9 +688,10 @@ void VulkanRenderer::SyncSceneTargets()
     m_sceneTargets->Rebuild(
         ToVkExtent(State().requestedViewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
-    m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
-    m_exposurePass->OnTargetsRebuilt(*m_sceneTargets);
-    m_tonemapPass->OnTargetsRebuilt(*m_sceneTargets);
+    for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
+    {
+        pass->OnTargetsRebuilt(*m_sceneTargets);
+    }
     m_layoutTracker.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",
@@ -1013,7 +1016,7 @@ void VulkanRenderer::ApplyRenderContent(
 {
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
 
-    if (m_swapchain && m_renderPass && m_forwardPass && !newTextures.empty() && !newMaterialTextureSlots.empty())
+    if (m_swapchain && m_renderPass && !m_scenePasses.empty() && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
         // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
         // against the renderer's fixed frame and material set layouts and the forward pass's
@@ -1032,7 +1035,6 @@ void VulkanRenderer::ApplyRenderContent(
         // be executing the previous frame (overlapping CPU and GPU work).
         m_commandContext->WaitForAllFrames();
         m_uniformBuffer = std::move(newUniformBuffer);
-        EnsureGraphicsPipelines();
     }
 
     m_textures = std::move(newTextures);
@@ -1160,7 +1162,7 @@ void VulkanRenderer::RecordTransitions(
 void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame)
 {
     // The layout tracker is reset by the caller, at the head of the command buffer it describes.
-    for (IScenePass* pass : m_scenePasses)
+    for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
     {
         RecordTransitions(commandBuffer, pass->Io(), frame);
         pass->Record(commandBuffer, *m_sceneTargets, frame);

@@ -61,6 +61,11 @@ VulkanExposureHistogramPass::~VulkanExposureHistogramPass()
     DestroyHandles();
 }
 
+ScenePassId VulkanExposureHistogramPass::Id() const
+{
+    return ScenePassId::ExposureHistogram;
+}
+
 RenderPassIo VulkanExposureHistogramPass::Io() const
 {
     static constexpr std::array<RenderTargetId, 2> kReads = {

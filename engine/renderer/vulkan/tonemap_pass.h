@@ -25,6 +25,7 @@ class VulkanTonemapPass : public IScenePass
     VulkanTonemapPass(const VulkanTonemapPass&) = delete;
     VulkanTonemapPass& operator=(const VulkanTonemapPass&) = delete;
 
+    ScenePassId Id() const override;
     RenderPassIo Io() const override;
     void Record(
         VkCommandBuffer commandBuffer,

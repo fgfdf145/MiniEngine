@@ -33,6 +33,11 @@ VulkanForwardPass::~VulkanForwardPass()
     DestroyHandles();
 }
 
+ScenePassId VulkanForwardPass::Id() const
+{
+    return ScenePassId::Forward;
+}
+
 RenderPassIo VulkanForwardPass::Io() const
 {
     static constexpr std::array<RenderTargetId, 2> kWrites = {

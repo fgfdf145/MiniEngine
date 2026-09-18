@@ -22,6 +22,7 @@ class VulkanForwardPass : public IScenePass
     VulkanForwardPass(const VulkanForwardPass&) = delete;
     VulkanForwardPass& operator=(const VulkanForwardPass&) = delete;
 
+    ScenePassId Id() const override;
     RenderPassIo Io() const override;
     void Record(
         VkCommandBuffer commandBuffer,

@@ -81,10 +81,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CreateDeviceResources();
     void DestroyDeviceResources();
     void CreateSwapchainResources();
+    void CreateScenePasses();
+    IScenePass* FindScenePass(ScenePassId id) const;
     void DestroySwapchainResources();
     void CreateDescriptorResources();
     void DestroyDescriptorResources();
-    void EnsureGraphicsPipelines();
     void RecreateSwapchain();
     void SyncSceneTargets();
     void UploadSceneResources();
@@ -128,19 +129,23 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;
     std::unique_ptr<SceneRenderTargets> m_sceneTargets;
-    std::unique_ptr<VulkanForwardPass> m_forwardPass;
-    std::unique_ptr<VulkanExposureHistogramPass> m_exposurePass;
     // False until auto exposure has metered its first frame, which it then snaps to instead of
     // fading in from the default EV.
     bool m_hasMeteredExposure = false;
     uint32_t m_droppedLightCount = 0;
-    std::unique_ptr<VulkanTonemapPass> m_tonemapPass;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
     // at the image lifetime boundaries keep it from describing a destroyed image even when no
     // frame is recorded in between.
     RenderTargetLayoutTracker m_layoutTracker;
-    std::vector<IScenePass*> m_scenePasses;
+    // Every scene pass, owned, in construction order. Record order is decided per frame by
+    // BuildScenePassOrder and resolved through FindScenePass, so this list is only ever walked
+    // whole — when the targets are rebuilt. Adding a pass is one push_back in CreateScenePasses.
+    std::vector<std::unique_ptr<IScenePass>> m_scenePasses;
+    // Non-owning: the exposure pass inside m_scenePasses, kept typed because UpdateAutoExposure
+    // reads its histograms. Set and cleared together with the list, so it is null exactly when
+    // the list is empty, which UpdateAutoExposure already checks for.
+    VulkanExposureHistogramPass* m_exposurePass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_graphicsPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
