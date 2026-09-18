@@ -62,6 +62,8 @@ add_library(engine_renderer
     vulkan/format_support.h
     vulkan/forward_pass.cpp
     vulkan/forward_pass.h
+    vulkan/geometry_pass.cpp
+    vulkan/geometry_pass.h
     vulkan/imgui_layer.cpp
     vulkan/imgui_layer.h
     vulkan/instance.cpp
@@ -106,6 +108,7 @@ miniengine_group_target_sources(engine_renderer)
 set(MINIENGINE_SHADER_SOURCES
     triangle.vert
     triangle.frag
+    gbuffer.frag
     fullscreen.vert
     tonemap.frag
     exposure_histogram.comp
@@ -120,6 +123,7 @@ set(MINIENGINE_SHADER_INCLUDES
     gt7_tonemap.glsl
     scene_common.glsl
     pbr_common.glsl
+    gbuffer_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)

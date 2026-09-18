@@ -5,6 +5,7 @@
 #include "device.h"
 #include "exposure_histogram_pass.h"
 #include "forward_pass.h"
+#include "geometry_pass.h"
 #include "imgui_layer.h"
 #include "instance.h"
 #include "pipeline_set.h"
@@ -147,6 +148,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the list is empty, which UpdateAutoExposure already checks for.
     VulkanExposureHistogramPass* m_exposurePass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
+    std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
 };

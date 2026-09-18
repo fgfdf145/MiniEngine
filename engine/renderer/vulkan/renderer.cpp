@@ -250,6 +250,7 @@ VulkanRenderer::~VulkanRenderer()
 
     DestroyDescriptorResources();
     m_forwardPipelines.reset();
+    m_geometryPipelines.reset();
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
@@ -381,6 +382,7 @@ void VulkanRenderer::DrawFrame()
             }) -
         drawItems.begin());
     frame.forwardPipelines = m_forwardPipelines.get();
+    frame.geometryPipelines = m_geometryPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
     frame.exposure = State().camera.GetExposure();
 
@@ -514,6 +516,7 @@ void VulkanRenderer::DestroySwapchainResources()
     m_scenePasses.clear();
     m_exposurePass = nullptr;
     m_forwardPipelines.reset();
+    m_geometryPipelines.reset();
     if (m_sceneTargets)
     {
         m_sceneTargets->ReleaseImages();
@@ -579,13 +582,27 @@ void VulkanRenderer::CreateScenePasses()
     m_scenePasses.clear();
     m_exposurePass = nullptr;
     m_forwardPipelines.reset();
+    m_geometryPipelines.reset();
 
+    auto geometryPass = std::make_unique<VulkanGeometryPass>(m_device->GetHandle(), *m_sceneTargets);
     auto forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
 
-    // Built here, while the typed pointer is still in hand, rather than through a separate
-    // Ensure step: the pipelines depend on nothing but this render pass and the two device
-    // lifetime set layouts, and this is the one place the render pass is created. The default
-    // config is the forward shape: triangle.frag, one HDR attachment, RGB writes.
+    MaterialPipelineSetConfig geometryConfig{};
+    geometryConfig.fragmentShader = "gbuffer.frag.spv";
+    geometryConfig.colorAttachmentCount = VulkanGeometryPass::kColorAttachmentCount;
+    geometryConfig.writeAlpha = true;
+    geometryConfig.allowBlending = false;
+
+    // Both sets are built here, while the typed pass pointers are in hand: the pipelines depend on
+    // nothing but these render passes and the two device lifetime set layouts.
+    m_geometryPipelines = std::make_unique<VulkanPipelineSet>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        geometryPass->GetRenderPass(),
+        m_frameSetLayout->GetHandle(),
+        m_materialSetLayout->GetHandle(),
+        geometryConfig);
+    // The default config is the forward shape: triangle.frag, one HDR attachment, RGB writes.
     m_forwardPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -603,6 +620,8 @@ void VulkanRenderer::CreateScenePasses()
         *m_sceneTargets);
     m_exposurePass = exposurePass.get();
 
+    // RecordScenePasses walks this list in order, so the geometry pass must come first.
+    m_scenePasses.push_back(std::move(geometryPass));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::move(exposurePass));
     m_scenePasses.push_back(std::make_unique<VulkanTonemapPass>(

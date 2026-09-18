@@ -27,6 +27,8 @@ struct ScenePassFrameContext
     size_t blendDrawItemBegin = 0;
     // triangle.frag against the HDR target.
     const VulkanPipelineSet* forwardPipelines = nullptr;
+    // gbuffer.frag against GB0-GB3.
+    const VulkanPipelineSet* geometryPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
     // Scale from physical scene radiance to the pre-exposed values the tone mapping operator takes
     // (see ExposureFromEv100). Always positive.
