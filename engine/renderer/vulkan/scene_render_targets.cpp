@@ -8,7 +8,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
 
 namespace me
@@ -226,6 +229,52 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     ldr.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ldr.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     ldr.bindToImGui = true;
+
+    // Written by the geometry pass; sampled by the lighting pass and the tone mapping debug views;
+    // never bound to ImGui. Formats and channel contents follow the spec's G-buffer encoding table
+    // as amended, and shaders/vulkan/gbuffer.frag is the writer. Only emissive has a fallback:
+    // B10G11R11 is the one format in the table a desktop driver might plausibly lack as a color
+    // attachment.
+    //
+    // GB1 is four channels, not the spec's two: .rg is the shading normal and .ba the geometric
+    // normal, both octahedral. The lighting pass needs the geometric one for the shadow lookup's
+    // normal offset, which triangle.frag takes along the interpolated vertex normal.
+    static constexpr std::array<VkFormat, 1> kAlbedoCandidates = {VK_FORMAT_R8G8B8A8_SRGB};
+    static constexpr std::array<VkFormat, 1> kNormalCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
+    static constexpr std::array<VkFormat, 1> kSurfaceCandidates = {VK_FORMAT_R8G8B8A8_UNORM};
+    static constexpr std::array<VkFormat, 2> kEmissiveCandidates = {
+        VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+        VK_FORMAT_R16G16B16A16_SFLOAT};
+
+    const auto describeGBufferTarget = [&](RenderTargetId target, std::string_view label, std::span<const VkFormat> candidates)
+    {
+        TargetDescription& description = Describe(target);
+        description.format = ChooseFormat(
+            label,
+            candidates,
+            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+            query);
+        description.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        description.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        description.bindToImGui = false;
+    };
+
+    describeGBufferTarget(RenderTargetId::GBufferAlbedo, "G-buffer albedo", kAlbedoCandidates);
+    describeGBufferTarget(RenderTargetId::GBufferNormal, "G-buffer normal", kNormalCandidates);
+    describeGBufferTarget(RenderTargetId::GBufferSurface, "G-buffer surface", kSurfaceCandidates);
+    describeGBufferTarget(RenderTargetId::GBufferEmissive, "G-buffer emissive", kEmissiveCandidates);
+
+    // CreateImages makes an image for every id in the enum. A target appended without a
+    // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
+    // cause; phase three appends GB4, so name the omission at the point it happens.
+    for (size_t index = 0; index < m_targets.size(); ++index)
+    {
+        if (m_targets[index].format == VK_FORMAT_UNDEFINED)
+        {
+            throw std::runtime_error(
+                "SelectFormats left render target " + std::to_string(index) + " without a format");
+        }
+    }
 }
 
 void SceneRenderTargets::CreateSampler()

@@ -246,6 +246,46 @@ void ForwardOnlyOrderSkipsTheDeferredPasses()
     Require(order[1] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
     Require(order[2] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
 }
+
+void GBufferTargetsAreColorTargets()
+{
+    constexpr std::array<RenderTargetId, 4> gbuffer = {
+        RenderTargetId::GBufferAlbedo,
+        RenderTargetId::GBufferNormal,
+        RenderTargetId::GBufferSurface,
+        RenderTargetId::GBufferEmissive};
+
+    for (const RenderTargetId target : gbuffer)
+    {
+        Require(GetRenderTargetKind(target) == RenderTargetKind::Color, "every G-buffer target must be a color target");
+        Require(
+            GetWriteLayout(target) == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            "a G-buffer write must use the color attachment layout");
+    }
+}
+
+void DepthFollowsTheDeferredWriteReadWriteSequence()
+{
+    // The geometry pass writes depth, the lighting pass samples it, then the forward blend pass
+    // depth-tests against it again. Phase one never read depth, so this sequence is new.
+    RenderTargetLayoutTracker tracker;
+    const std::array<RenderTargetId, 1> depth = {RenderTargetId::SceneDepth};
+
+    tracker.Transition(MakeIo({}, depth));
+    const std::vector<TargetTransition> toRead = tracker.Transition(MakeIo(depth, {}));
+    const std::vector<TargetTransition> backToWrite = tracker.Transition(MakeIo({}, depth));
+
+    Require(toRead.size() == 1, "sampling written depth must issue exactly one transition");
+    Require(
+        toRead[0].oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+            toRead[0].newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        "sampling depth must move it from the attachment layout to shader read");
+    Require(backToWrite.size() == 1, "depth-testing sampled depth must issue exactly one transition");
+    Require(
+        backToWrite[0].oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+            backToWrite[0].newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        "writing sampled depth again must return it to the attachment layout");
+}
 }
 
 int main()
@@ -265,6 +305,8 @@ int main()
         ChooseFormatThrowsWhenNothingQualifies();
         DeferredOrderRunsGeometryLightingForwardExposureThenTonemap();
         ForwardOnlyOrderSkipsTheDeferredPasses();
+        GBufferTargetsAreColorTargets();
+        DepthFollowsTheDeferredWriteReadWriteSequence();
 
         std::cout << "scene pass tests passed\n";
         return 0;

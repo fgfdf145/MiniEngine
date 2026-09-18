@@ -362,7 +362,7 @@ void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)
     {
         VkDescriptorImageInfo imageInfo{};
         imageInfo.sampler = m_sampler;
-        imageInfo.imageView = targets.GetView(RenderTargetId::SceneHdr, slot);
+        imageInfo.imageView = targets.GetSampledView(RenderTargetId::SceneHdr, slot);
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkWriteDescriptorSet write{};

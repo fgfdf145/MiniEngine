@@ -19,8 +19,9 @@ namespace me
 //
 // Two indexing schemes coexist, which is deliberate and is why the accessors are separate:
 //
-//   * SceneDepth and SceneHdr are transient. They are written and read inside one command buffer,
-//     so kMaxFramesInFlight copies suffice, indexed by VulkanCommandContext::GetCurrentFrame().
+//   * SceneDepth, SceneHdr and the four G-buffer targets are transient. They are written and read
+//     inside one command buffer, so kMaxFramesInFlight copies suffice, indexed by
+//     VulkanCommandContext::GetCurrentFrame().
 //   * SceneLdr is sampled by ImGui, whose texture binding is handed out before the command buffer
 //     is recorded, so it keeps one copy per swapchain image, indexed by the acquired image index.
 //
