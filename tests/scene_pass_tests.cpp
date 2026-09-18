@@ -79,15 +79,34 @@ void WrittenThenReadBecomesShaderRead()
         "a read must target the shader read only layout");
 }
 
-void AlreadyCorrectLayoutProducesNothing()
+void ReadAfterReadProducesNothing()
 {
+    RenderTargetLayoutTracker tracker;
+    const std::array<RenderTargetId, 1> hdr = {RenderTargetId::SceneHdr};
+    tracker.Transition(MakeIo({}, hdr));
+    tracker.Transition(MakeIo(hdr, {}));
+
+    const std::vector<TargetTransition> transitions = tracker.Transition(MakeIo(hdr, {}));
+
+    Require(transitions.empty(), "a second read of a target already in the read layout needs no barrier");
+}
+
+void WriteAfterWriteProducesAMemoryBarrier()
+{
+    // Two passes writing the same attachment back to back (the geometry pass then the forward pass
+    // on depth, the lighting pass then the forward blend pass on HDR) must still be ordered. The
+    // layout does not change, so this is a barrier with oldLayout == newLayout: memory only.
     RenderTargetLayoutTracker tracker;
     const std::array<RenderTargetId, 1> hdr = {RenderTargetId::SceneHdr};
     tracker.Transition(MakeIo({}, hdr));
 
     const std::vector<TargetTransition> transitions = tracker.Transition(MakeIo({}, hdr));
 
-    Require(transitions.empty(), "a target already in the required layout must not be transitioned");
+    Require(transitions.size() == 1, "a write after a write must produce one barrier");
+    Require(
+        transitions[0].oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+            transitions[0].newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        "a write after a write keeps the layout and only orders memory");
 }
 
 void RepeatedDeclarationIsIdempotent()
@@ -100,7 +119,12 @@ void RepeatedDeclarationIsIdempotent()
     const std::vector<TargetTransition> second = tracker.Transition(MakeIo(reads, writes));
 
     Require(first.size() == 2, "the first application must transition both targets");
-    Require(second.empty(), "applying the same declaration twice must transition once");
+    // The read target needs nothing the second time; the written one needs a memory-only barrier
+    // so the second write is ordered after the first.
+    Require(second.size() == 1, "applying the same declaration twice must order only the write");
+    Require(
+        second[0].target == RenderTargetId::SceneLdr && second[0].oldLayout == second[0].newLayout,
+        "the repeated write must get a memory-only barrier");
 }
 
 void ResetReturnsEveryTargetToUndefined()
@@ -295,7 +319,8 @@ int main()
         UndefinedColorWriteBecomesColorAttachment();
         DepthWriteBecomesDepthAttachment();
         WrittenThenReadBecomesShaderRead();
-        AlreadyCorrectLayoutProducesNothing();
+        ReadAfterReadProducesNothing();
+        WriteAfterWriteProducesAMemoryBarrier();
         RepeatedDeclarationIsIdempotent();
         ResetReturnsEveryTargetToUndefined();
         TargetInBothSpansIsRejected();

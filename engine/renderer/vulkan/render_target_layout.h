@@ -66,6 +66,12 @@ struct TargetTransition
 
 // Tracks the layout every target is currently in and works out the barriers a pass needs.
 //
+// A barrier is also needed when nothing changes layout: a target written by one pass and written
+// again by the next (depth by the geometry pass and then the forward pass, HDR by the lighting pass
+// and then the forward blend pass) must have the second write ordered after the first. Transition
+// reports that as a TargetTransition whose oldLayout equals its newLayout, a memory-only barrier.
+// A read after a read needs nothing and produces nothing.
+//
 // This class calls no Vulkan entry point. Transition records the new layouts and returns the
 // barriers the caller must issue; recording and bookkeeping are one call so a caller cannot
 // update the tracker without issuing the barriers or the reverse.
@@ -103,8 +109,12 @@ class RenderTargetLayoutTracker
     void Accumulate(
         std::span<const RenderTargetId> targets,
         VkImageLayout (*resolve)(RenderTargetId),
+        bool isWrite,
         std::vector<TargetTransition>& transitions);
 
     std::array<VkImageLayout, kRenderTargetCount> m_layouts{};
+    // Whether the last pass to touch each target wrote it, so a following write can be ordered
+    // after it even though the layout stays the same.
+    std::array<bool, kRenderTargetCount> m_lastAccessWasWrite{};
 };
 }
