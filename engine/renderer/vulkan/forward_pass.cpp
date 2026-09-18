@@ -19,7 +19,8 @@ VulkanForwardPass::VulkanForwardPass(VkDevice device, const SceneRenderTargets& 
     // the same call the destructor makes.
     try
     {
-        CreateRenderPass(targets);
+        m_clearRenderPass = CreateRenderPass(targets, VK_ATTACHMENT_LOAD_OP_CLEAR);
+        m_loadRenderPass = CreateRenderPass(targets, VK_ATTACHMENT_LOAD_OP_LOAD);
         CreateFramebuffers(targets);
     }
     catch (...)
@@ -55,11 +56,12 @@ void VulkanForwardPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
+    const bool ownsFrame = frame.forwardFilter == ForwardDrawFilter::All;
+
     std::array<VkClearValue, 2> clearValues{};
-    // The clear lands in the HDR target and is exposed and tone mapped with everything else.
-    // Dividing the exposed background by the exposure keeps it fixed while the exposure moves,
-    // since it stands for no physical light.
-    const glm::vec3 background = kViewportBackgroundExposed / frame.exposure;
+    // The clear lands in the HDR target and is exposed and tone mapped with everything else. The
+    // lighting pass writes the same value for background pixels in the deferred order.
+    const glm::vec3 background = GetBackgroundRadiance(frame.exposure);
     clearValues[0].color.float32[0] = background.r;
     clearValues[0].color.float32[1] = background.g;
     clearValues[0].color.float32[2] = background.b;
@@ -68,19 +70,21 @@ void VulkanForwardPass::Record(
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass;
+    renderPassInfo.renderPass = ownsFrame ? m_clearRenderPass : m_loadRenderPass;
     renderPassInfo.framebuffer = m_framebuffers.at(
         targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot));
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = frame.extent;
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
+    renderPassInfo.clearValueCount = ownsFrame ? static_cast<uint32_t>(clearValues.size()) : 0;
+    renderPassInfo.pClearValues = ownsFrame ? clearValues.data() : nullptr;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
     SetViewportAndScissor(commandBuffer, frame.extent);
-    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.drawItems);
-
+    RecordMaterialDrawItems(
+        commandBuffer,
+        *frame.forwardPipelines,
+        frame.frameDescriptorSet,
+        ownsFrame ? frame.drawItems : frame.BlendDrawItems());
     vkCmdEndRenderPass(commandBuffer);
 }
 
@@ -92,10 +96,10 @@ void VulkanForwardPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 
 VkRenderPass VulkanForwardPass::GetRenderPass() const
 {
-    return m_renderPass;
+    return m_clearRenderPass;
 }
 
-void VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets)
+VkRenderPass VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets, VkAttachmentLoadOp loadOp) const
 {
     // Both attachments keep the layout the tracker's barriers already put them in: this pass
     // performs no implicit transition, which is what keeps RenderTargetLayoutTracker the single
@@ -103,7 +107,7 @@ void VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets)
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = targets.GetFormat(RenderTargetId::SceneHdr);
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.loadOp = loadOp;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -117,7 +121,7 @@ void VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets)
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format = targets.GetFormat(RenderTargetId::SceneDepth);
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.loadOp = loadOp;
     // Stored, not discarded: SceneDepth is created sampleable so that a later pass in the frame
     // (deferred lighting, and anything else that reconstructs position from depth) can read it,
     // and DONT_CARE would leave that pass reading undefined contents. Stencil is never written.
@@ -153,7 +157,9 @@ void VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets)
     renderPassInfo.dependencyCount = 0;
     renderPassInfo.pDependencies = nullptr;
 
-    CheckVulkan(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass), "Failed to create forward pass render pass");
+    VkRenderPass renderPass = VK_NULL_HANDLE;
+    CheckVulkan(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &renderPass), "Failed to create forward pass render pass");
+    return renderPass;
 }
 
 void VulkanForwardPass::CreateFramebuffers(const SceneRenderTargets& targets)
@@ -170,7 +176,7 @@ void VulkanForwardPass::CreateFramebuffers(const SceneRenderTargets& targets)
 
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = m_renderPass;
+        framebufferInfo.renderPass = m_clearRenderPass;
         framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
         framebufferInfo.pAttachments = attachments.data();
         framebufferInfo.width = extent.width;
@@ -202,10 +208,13 @@ void VulkanForwardPass::DestroyHandles()
     DestroyFramebuffers();
     // Nulled after destruction so the handle is never left dangling: the constructor's unwind path
     // runs this and then throws, and GetRenderPass must not hand out a destroyed render pass.
-    if (m_renderPass != VK_NULL_HANDLE)
+    for (VkRenderPass* renderPass : {&m_clearRenderPass, &m_loadRenderPass})
     {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        m_renderPass = VK_NULL_HANDLE;
+        if (*renderPass != VK_NULL_HANDLE)
+        {
+            vkDestroyRenderPass(m_device, *renderPass, nullptr);
+            *renderPass = VK_NULL_HANDLE;
+        }
     }
 }
 }

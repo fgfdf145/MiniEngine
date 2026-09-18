@@ -386,7 +386,13 @@ void VulkanRenderer::DrawFrame()
     frame.geometryPipelines = m_geometryPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
     frame.gbufferDescriptorSet = m_gbufferDescriptors->GetSet(*m_sceneTargets, imageIndex, frame.frameSlot);
-    frame.gbufferView = State().renderDebug.gbufferView;
+    // The order and the forward filter both derive from this one switch, here, so they cannot
+    // disagree. The forward-only order never runs the geometry pass and leaves the G-buffer
+    // undefined, so its debug views are forced off rather than trusted to the UI's disabled state.
+    const RenderDebugSettings renderDebug = State().renderDebug;
+    const std::span<const ScenePassId> passOrder = BuildScenePassOrder(renderDebug.forwardOnly);
+    frame.forwardFilter = renderDebug.forwardOnly ? ForwardDrawFilter::All : ForwardDrawFilter::BlendOnly;
+    frame.gbufferView = renderDebug.forwardOnly ? GBufferDebugView::Off : renderDebug.gbufferView;
     frame.exposure = State().camera.GetExposure();
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -414,7 +420,7 @@ void VulkanRenderer::DrawFrame()
                                                   shadowDrawItems,
                                                   shadowCascades.has_value() ? &*shadowCascades : nullptr);
 
-                                              RecordScenePasses(commandBuffer, frame);
+                                              RecordScenePasses(commandBuffer, frame, passOrder);
 
                                               // ImGui samples the tone mapped image in the editor pass, which is
                                               // not an IScenePass because it writes the swapchain rather than a
@@ -625,8 +631,15 @@ void VulkanRenderer::CreateScenePasses()
         *m_sceneTargets);
     m_exposurePass = exposurePass.get();
 
-    // RecordScenePasses walks this list in order, so the geometry pass must come first.
+    // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
     m_scenePasses.push_back(std::move(geometryPass));
+    m_scenePasses.push_back(std::make_unique<VulkanLightingPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        m_gbufferDescriptors->GetEmptySetLayout(),
+        m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::move(exposurePass));
     m_scenePasses.push_back(std::make_unique<VulkanTonemapPass>(
@@ -1197,11 +1210,17 @@ void VulkanRenderer::RecordTransitions(
     }
 }
 
-void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame)
+void VulkanRenderer::RecordScenePasses(
+    VkCommandBuffer commandBuffer,
+    const ScenePassFrameContext& frame,
+    std::span<const ScenePassId> passOrder)
 {
     // The layout tracker is reset by the caller, at the head of the command buffer it describes.
-    for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
+    // Only the passes in this frame's order record, but every owned pass follows a target rebuild
+    // (see SyncSceneTargets), so flipping the switch never meets a stale framebuffer.
+    for (const ScenePassId id : passOrder)
     {
+        const IScenePass* pass = FindScenePass(id);
         RecordTransitions(commandBuffer, pass->Io(), frame);
         pass->Record(commandBuffer, *m_sceneTargets, frame);
     }

@@ -142,6 +142,9 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
 
         ImGui::Separator();
         ImGui::TextUnformatted("Renderer");
+        ImGui::Checkbox("Forward only (comparison)", &m_renderDebug.forwardOnly);
+        // The forward-only order never writes the G-buffer, so there is nothing to view.
+        ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
         static constexpr std::array<const char*, 6> kGBufferViewNames = {
             "Shaded",
@@ -159,6 +162,7 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         {
             m_renderDebug.gbufferView = static_cast<GBufferDebugView>(gbufferView);
         }
+        ImGui::EndDisabled();
     }
     ImGui::End();
 }

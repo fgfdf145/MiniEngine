@@ -70,6 +70,8 @@ add_library(engine_renderer
     vulkan/imgui_layer.h
     vulkan/instance.cpp
     vulkan/instance.h
+    vulkan/lighting_pass.cpp
+    vulkan/lighting_pass.h
     vulkan/material_draw.cpp
     vulkan/material_draw.h
     vulkan/pipeline.cpp
@@ -111,6 +113,7 @@ set(MINIENGINE_SHADER_SOURCES
     triangle.vert
     triangle.frag
     gbuffer.frag
+    deferred_lighting.frag
     fullscreen.vert
     tonemap.frag
     exposure_histogram.comp

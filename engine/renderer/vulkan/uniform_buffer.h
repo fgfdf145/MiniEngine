@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <span>
 #include <vector>
 
@@ -79,6 +80,9 @@ struct alignas(16) CameraUniformData
     GpuLightData lights[kMaxSceneLights];
     glm::uvec4 sceneLightCount{0u, 0u, 0u, 0u};
     ShadowUniformData shadow;
+    // Inverse of proj * view, for reconstructing world position from depth in the lighting pass.
+    // Appended last so no earlier member's offset moves.
+    glm::mat4 invViewProj{1.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -87,15 +91,19 @@ struct alignas(16) CameraUniformData
 // to std140 without relying on GLM alignment macros.
 static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
-    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16,
+    sizeof(CameraUniformData) ==
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, invViewProj) ==
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16,
+    "invViewProj must follow the shadow block with no padding, where std140 places it");
 
 // Set 0: the per-frame camera uniform buffer at binding 0 and the directional shadow map at
 // binding 1. Split out from the material set so that the camera write leaves the per-material
 // loop entirely — it is written once per swapchain image instead of once per image per material —
-// and so a material reload rebuilds only set 1. The lighting pass
-// phase two adds will also need the camera data with no material to bind; the tone mapping pass
-// does not, and binds no camera set at all.
+// and so a material reload rebuilds only set 1. The deferred lighting pass binds this same set
+// with no material at all; the tone mapping pass binds no camera set.
 class VulkanFrameDescriptorSetLayout
 {
   public:

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstring>
 #include <glm/geometric.hpp>
+#include <glm/matrix.hpp>
 
 namespace me
 {
@@ -96,6 +97,9 @@ void VulkanUniformBuffer::Update(
     CameraUniformData data{};
     data.view = matrices.view;
     data.proj = matrices.renderProjection;
+    // renderProjection, not projection: it is the Y-flipped matrix the shaders actually use, and
+    // inverting the other one would reconstruct every position mirrored.
+    data.invViewProj = glm::inverse(matrices.renderProjection * matrices.view);
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
     data.ambientLuminance = glm::vec4(ambientLuminance, 0.0f);
 

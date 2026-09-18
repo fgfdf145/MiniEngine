@@ -7,12 +7,23 @@
 #include "scene_pass_order.h"
 #include "scene_render_targets.h"
 
+#include <engine/renderer/exposure.h>
 #include <engine/renderer/render_types.h>
 
 #include <span>
 
 namespace me
 {
+
+// Which draw items the forward pass records, and whether it owns the frame. The deferred order
+// gives it only Blend items to composite over the lighting result; the forward-only comparison
+// order gives it everything. It lives in the frame context because the switch flips between
+// frames while the pass object stays the same.
+enum class ForwardDrawFilter
+{
+    BlendOnly,
+    All
+};
 
 // Everything a pass may need about the frame being recorded. Passes hold no per-frame state of
 // their own, so a pass object is reusable across frames and owns only its render pass and
@@ -29,6 +40,7 @@ struct ScenePassFrameContext
     size_t blendDrawItemBegin = 0;
     // triangle.frag against the HDR target.
     const VulkanPipelineSet* forwardPipelines = nullptr;
+    ForwardDrawFilter forwardFilter = ForwardDrawFilter::All;
     // gbuffer.frag against GB0-GB3.
     const VulkanPipelineSet* geometryPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
@@ -65,6 +77,15 @@ inline void SetViewportAndScissor(VkCommandBuffer commandBuffer, VkExtent2D exte
     VkRect2D scissor{};
     scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+}
+
+// What a pixel no geometry covered holds in the HDR target: the viewport background, divided by
+// the exposure so it stays fixed on screen while the exposure moves, since it stands for no
+// physical light. The forward pass clears to it and the lighting pass writes it, from this one
+// function, so the forward-only and deferred orders cannot disagree about the background.
+inline glm::vec3 GetBackgroundRadiance(float exposure)
+{
+    return kViewportBackgroundExposed / exposure;
 }
 
 // One pass in the scene frame. Io() is the declaration the layout tracker turns into barriers;

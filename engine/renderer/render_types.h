@@ -33,5 +33,8 @@ enum class GBufferDebugView : uint32_t
 struct RenderDebugSettings
 {
     GBufferDebugView gbufferView = GBufferDebugView::Off;
+    // Records the forward-only order instead of the deferred one: the comparison switch that makes
+    // pixel equivalence something a reviewer flips rather than judges.
+    bool forwardOnly = false;
 };
 }
