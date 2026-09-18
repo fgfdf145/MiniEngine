@@ -158,6 +158,7 @@ EditorUiFrameResult EditorUiController::Draw(
         previousShowThemeWindow != m_showThemeWindow ||
         previousShowViewportWindow != m_showViewportWindow;
 
+    result.renderDebug = m_renderDebug;
     return result;
 }
 

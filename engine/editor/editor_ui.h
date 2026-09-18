@@ -89,6 +89,7 @@ struct EditorUiFrameResult
     SDL_FRect viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
+    RenderDebugSettings renderDebug;
 };
 
 class EditorUiController
@@ -182,6 +183,7 @@ class EditorUiController
     uint8_t m_materialGraphResizeEdges = 0;
     std::optional<AssetManager> m_assetManager;
     bool m_showCameraWindow = true;
+    RenderDebugSettings m_renderDebug;
     bool m_showAssetManagerWindow = false;
     bool m_showInputMonitorWindow = false;
     bool m_showSceneWindow = true;

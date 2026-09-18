@@ -5,6 +5,7 @@
 #include "device.h"
 #include "exposure_histogram_pass.h"
 #include "forward_pass.h"
+#include "gbuffer_inputs.h"
 #include "geometry_pass.h"
 #include "imgui_layer.h"
 #include "instance.h"
@@ -139,6 +140,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // at the image lifetime boundaries keep it from describing a destroyed image even when no
     // frame is recorded in between.
     RenderTargetLayoutTracker m_layoutTracker;
+    // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes
+    // on a swapchain recreate, and rewritten before them on a viewport resize.
+    std::unique_ptr<VulkanGBufferDescriptors> m_gbufferDescriptors;
     // Every scene pass, owned, in construction order. Record order is decided per frame by
     // BuildScenePassOrder and resolved through FindScenePass, so this list is only ever walked
     // whole — when the targets are rebuilt. Adding a pass is one push_back in CreateScenePasses.

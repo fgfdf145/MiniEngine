@@ -2,13 +2,25 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "gt7_tonemap.glsl"
+#include "gbuffer_common.glsl"
+#include "gbuffer_inputs.glsl"
 
 layout(set = 0, binding = 0) uniform sampler2D hdrTexture;
 
+// Must match GBufferDebugView in engine/renderer/render_types.h.
+const uint GBUFFER_VIEW_OFF = 0u;
+const uint GBUFFER_VIEW_ALBEDO = 1u;
+const uint GBUFFER_VIEW_NORMAL = 2u;
+const uint GBUFFER_VIEW_GEOMETRIC_NORMAL = 3u;
+const uint GBUFFER_VIEW_SURFACE = 4u;
+const uint GBUFFER_VIEW_EMISSIVE = 5u;
+
+// Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
 {
     // Physical radiance to pre-exposed value, from the camera's EV100 (see ExposureFromEv100).
     float exposure;
+    uint gbufferView;
 }
 constants;
 
@@ -18,17 +30,51 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    // Radiance is stored raw, so clamp below fp16's maximum before the operator: an infinite
-    // input would turn into NaN inside it and show a very bright pixel as black.
-    vec3 color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
+    vec3 color;
 
-    // The HDR target holds radiance in physical units, where a sunlit surface is in the hundreds
-    // or thousands, so the operator below only sees a usable range once the exposure is applied.
-    color *= constants.exposure;
+    if (constants.gbufferView == GBUFFER_VIEW_ALBEDO)
+    {
+        // Sampled through the _SRGB format, so already linear; the sRGB LDR target re-encodes it.
+        // Shows albedo as stored: unshaded, unexposed and not tone mapped.
+        color = texture(gbufferAlbedo, fragTexCoord).rgb;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_NORMAL)
+    {
+        // World-space shading normal mapped to [0, 1]. Unwritten pixels decode to +Z and read as
+        // blue.
+        color = DecodeNormalOctahedral(texture(gbufferNormal, fragTexCoord).rg) * 0.5 + 0.5;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_GEOMETRIC_NORMAL)
+    {
+        // The interpolated, face-flipped vertex normal the shadow lookup offsets along.
+        color = DecodeNormalOctahedral(texture(gbufferNormal, fragTexCoord).ba) * 0.5 + 0.5;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_SURFACE)
+    {
+        // r = metallic, g = roughness, b = occlusion.
+        color = texture(gbufferSurface, fragTexCoord).rgb;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_EMISSIVE)
+    {
+        // Emissive is radiance, so it is exposed and tone mapped exactly as the shaded image is.
+        vec3 emissive = min(texture(gbufferEmissive, fragTexCoord).rgb, vec3(65504.0));
+        color = TonemapExposedRec709(emissive * constants.exposure);
+    }
+    else
+    {
+        // Radiance is stored raw, so clamp below fp16's maximum before the operator: an infinite
+        // input would turn into NaN inside it and show a very bright pixel as black.
+        color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
 
-    // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709; the
-    // LDR target's sRGB format applies the transfer function on write.
-    color = TonemapExposedRec709(color);
+        // The HDR target holds radiance in physical units, where a sunlit surface is in the
+        // hundreds or thousands, so the operator below only sees a usable range once the exposure
+        // is applied.
+        color *= constants.exposure;
+
+        // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
+        // the LDR target's sRGB format applies the transfer function on write.
+        color = TonemapExposedRec709(color);
+    }
 
     // This pass is the sole writer of the LDR target and knows coverage is total, so it writes
     // alpha explicitly rather than relying on the RGB-only color write mask the material

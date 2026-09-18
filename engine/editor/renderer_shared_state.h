@@ -168,6 +168,9 @@ struct RendererSharedState
     EngineSettings engineSettings;
     bool engineSettingsNeedsBootstrapSave = false;
     RenderExtent requestedViewportExtent{};
+    // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
+    // the frame. Not persisted: a debug view left on should not survive a restart.
+    RenderDebugSettings renderDebug;
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.

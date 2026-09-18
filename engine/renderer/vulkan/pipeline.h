@@ -25,4 +25,21 @@ class VulkanShaderModule
     VkDevice m_device = VK_NULL_HANDLE;
     VkShaderModule m_module = VK_NULL_HANDLE;
 };
+
+// The render pass every full-screen pass uses: one color attachment of the given format, not
+// cleared because the triangle covers every pixel, stored, and initialLayout == finalLayout ==
+// COLOR_ATTACHMENT_OPTIMAL so RenderTargetLayoutTracker stays the only authority on layouts.
+// label names the pass in the failure message.
+VkRenderPass CreateFullscreenRenderPass(VkDevice device, VkFormat colorFormat, const char* label);
+
+// The pipeline every full-screen pass uses: fullscreen.vert with no vertex input, no culling, no
+// depth test, dynamic viewport and scissor, and all four channels written without blending. Only
+// the fragment stage, the layout and the render pass vary.
+VkPipeline CreateFullscreenPipeline(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    VkRenderPass renderPass,
+    VkPipelineLayout layout,
+    const char* fragmentShaderName,
+    const char* label);
 }

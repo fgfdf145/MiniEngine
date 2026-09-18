@@ -139,6 +139,26 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
                 autoExposure = AutoExposureSettings{};
             }
         }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Renderer");
+        // Order matches GBufferDebugView's numeric values.
+        static constexpr std::array<const char*, 6> kGBufferViewNames = {
+            "Shaded",
+            "G-buffer: albedo",
+            "G-buffer: shading normal",
+            "G-buffer: geometric normal",
+            "G-buffer: metallic / roughness / occlusion",
+            "G-buffer: emissive"};
+        int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
+        if (ImGui::Combo(
+                "Viewport output",
+                &gbufferView,
+                kGBufferViewNames.data(),
+                static_cast<int>(kGBufferViewNames.size())))
+        {
+            m_renderDebug.gbufferView = static_cast<GBufferDebugView>(gbufferView);
+        }
     }
     ImGui::End();
 }

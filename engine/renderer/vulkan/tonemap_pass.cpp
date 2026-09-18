@@ -1,5 +1,6 @@
 #include "tonemap_pass.h"
 
+#include "gbuffer_inputs.h"
 #include "pipeline.h"
 
 #include <engine/core/paths/engine_paths.h>
@@ -11,10 +12,24 @@
 namespace me
 {
 
+namespace
+{
+// The tone mapping push constant block. Must match TonemapConstants in shaders/vulkan/tonemap.frag.
+struct TonemapPushConstants
+{
+    float exposure = 1.0f;
+    uint32_t gbufferView = 0;
+};
+
+static_assert(sizeof(TonemapPushConstants) == 8, "TonemapPushConstants must match the shader's block");
+}
+
 VulkanTonemapPass::VulkanTonemapPass(
     VkDevice device,
     VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets)
+    const SceneRenderTargets& targets,
+    VkDescriptorSetLayout gbufferSetLayout,
+    VkDescriptorSetLayout emptySetLayout)
     : m_device(device)
 {
     // A throw out of a constructor skips the destructor, so everything created before the failure
@@ -25,7 +40,7 @@ VulkanTonemapPass::VulkanTonemapPass(
         CreateDescriptorSetLayout();
         CreateSampler();
         CreateRenderPass(targets);
-        CreatePipeline(pipelineCache);
+        CreatePipeline(pipelineCache, gbufferSetLayout, emptySetLayout);
         CreateDescriptorSets(targets);
         CreateFramebuffers(targets);
     }
@@ -48,7 +63,17 @@ ScenePassId VulkanTonemapPass::Id() const
 
 RenderPassIo VulkanTonemapPass::Io() const
 {
-    static constexpr std::array<RenderTargetId, 1> kReads = {RenderTargetId::SceneHdr};
+    // Binding set 2 requires every image in it to be in the read layout whenever this pass
+    // records, whether or not the selected view samples it, so all five G-buffer inputs are
+    // declared reads alongside the HDR target. In an order that never wrote them their contents
+    // are undefined, and the renderer forces the view off.
+    static constexpr std::array<RenderTargetId, 6> kReads = {
+        RenderTargetId::SceneHdr,
+        RenderTargetId::GBufferAlbedo,
+        RenderTargetId::GBufferNormal,
+        RenderTargetId::GBufferSurface,
+        RenderTargetId::GBufferEmissive,
+        RenderTargetId::SceneDepth};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneLdr};
 
     RenderPassIo io{};
@@ -93,13 +118,28 @@ void VulkanTonemapPass::Record(
         &descriptorSet,
         0,
         nullptr);
+
+    // Set 1 is never bound: its layout is empty.
+    vkCmdBindDescriptorSets(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_pipelineLayout,
+        2,
+        1,
+        &frame.gbufferDescriptorSet,
+        0,
+        nullptr);
+
+    TonemapPushConstants constants{};
+    constants.exposure = frame.exposure;
+    constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,
         VK_SHADER_STAGE_FRAGMENT_BIT,
         0,
-        sizeof(frame.exposure),
-        &frame.exposure);
+        sizeof(constants),
+        &constants);
 
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
@@ -159,153 +199,40 @@ void VulkanTonemapPass::CreateSampler()
 
 void VulkanTonemapPass::CreateRenderPass(const SceneRenderTargets& targets)
 {
-    // initialLayout == finalLayout, as every render pass in the frame declares, so the pass
-    // performs no implicit transition and RenderTargetLayoutTracker stays the single authority on
-    // layouts.
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = targets.GetFormat(RenderTargetId::SceneLdr);
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkAttachmentReference colorAttachmentRef{};
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    // No depth attachment: the full-screen triangle is not depth tested.
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-
-    // No subpass dependencies, for the same reason the forward pass has none: the explicit
-    // barriers the layout tracker produces carry the ordering.
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 0;
-    renderPassInfo.pDependencies = nullptr;
-
-    CheckVulkan(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass), "Failed to create tone mapping render pass");
+    m_renderPass = CreateFullscreenRenderPass(m_device, targets.GetFormat(RenderTargetId::SceneLdr), "tone mapping");
 }
 
-void VulkanTonemapPass::CreatePipeline(VkPipelineCache pipelineCache)
+void VulkanTonemapPass::CreatePipeline(
+    VkPipelineCache pipelineCache,
+    VkDescriptorSetLayout gbufferSetLayout,
+    VkDescriptorSetLayout emptySetLayout)
 {
-    const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
-    const VulkanShaderModule vertexShader(m_device, shaderDir / "fullscreen.vert.spv");
-    const VulkanShaderModule fragmentShader(m_device, shaderDir / "tonemap.frag.spv");
+    const std::array<VkDescriptorSetLayout, 3> setLayouts = {m_setLayout, emptySetLayout, gbufferSetLayout};
 
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertexShader.GetHandle();
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragmentShader.GetHandle();
-    stages[1].pName = "main";
-
-    // Every count left at zero: the vertex shader generates its triangle from gl_VertexIndex and
-    // reads no attributes, so there is no vertex buffer to bind and nothing to describe.
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    // The counts are baked in, the values come from vkCmdSetViewport/vkCmdSetScissor at record
-    // time. That is what lets a viewport resize leave this pipeline alone.
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    const std::array<VkDynamicState, 2> dynamicStates = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR};
-
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    // The generated triangle has no meaningful winding, so culling it by face would be a coin
-    // flip.
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-
-    // Required whenever the pipeline rasterizes, and the LDR attachment is single sampled.
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_FALSE;
-    depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.stencilTestEnable = VK_FALSE;
-
-    // Unlike the material pipelines, this pass writes alpha deliberately: ImGui composites the
-    // viewport image over the editor, so the LDR target's alpha has to be 1.0 everywhere.
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT |
-        VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT |
-        VK_COLOR_COMPONENT_A_BIT;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-
-    // The exposure changes every frame the user drags the slider, so it is a push constant rather
-    // than something that would force the descriptor sets to be rewritten.
+    // The exposure changes every frame the user drags the slider, and the view whenever they pick
+    // one, so both are push constants rather than something that would force the descriptor sets
+    // to be rewritten.
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(float);
+    pushConstantRange.size = sizeof(TonemapPushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_setLayout;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create tone mapping pipeline layout");
 
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
-    pipelineInfo.pStages = stages.data();
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = m_pipelineLayout;
-    pipelineInfo.renderPass = m_renderPass;
-    pipelineInfo.subpass = 0;
-
-    CheckVulkan(
-        vkCreateGraphicsPipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_pipeline),
-        "Failed to create tone mapping pipeline");
+    m_pipeline = CreateFullscreenPipeline(
+        m_device,
+        pipelineCache,
+        m_renderPass,
+        m_pipelineLayout,
+        "tonemap.frag.spv",
+        "tone mapping");
 }
 
 void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)

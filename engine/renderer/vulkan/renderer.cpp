@@ -254,6 +254,7 @@ VulkanRenderer::~VulkanRenderer()
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_gbufferDescriptors.reset();
     m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textures.clear();
@@ -384,6 +385,8 @@ void VulkanRenderer::DrawFrame()
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
+    frame.gbufferDescriptorSet = m_gbufferDescriptors->GetSet(*m_sceneTargets, imageIndex, frame.frameSlot);
+    frame.gbufferView = State().renderDebug.gbufferView;
     frame.exposure = State().camera.GetExposure();
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -517,6 +520,7 @@ void VulkanRenderer::DestroySwapchainResources()
     m_exposurePass = nullptr;
     m_forwardPipelines.reset();
     m_geometryPipelines.reset();
+    m_gbufferDescriptors.reset();
     if (m_sceneTargets)
     {
         m_sceneTargets->ReleaseImages();
@@ -583,6 +587,7 @@ void VulkanRenderer::CreateScenePasses()
     m_exposurePass = nullptr;
     m_forwardPipelines.reset();
     m_geometryPipelines.reset();
+    m_gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *m_sceneTargets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(m_device->GetHandle(), *m_sceneTargets);
     auto forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
@@ -627,7 +632,9 @@ void VulkanRenderer::CreateScenePasses()
     m_scenePasses.push_back(std::make_unique<VulkanTonemapPass>(
         m_device->GetHandle(),
         m_pipelineCache,
-        *m_sceneTargets));
+        *m_sceneTargets,
+        m_gbufferDescriptors->GetSetLayout(),
+        m_gbufferDescriptors->GetEmptySetLayout()));
 }
 
 IScenePass* VulkanRenderer::FindScenePass(ScenePassId id) const
@@ -718,6 +725,7 @@ void VulkanRenderer::SyncSceneTargets()
     m_sceneTargets->Rebuild(
         ToVkExtent(State().requestedViewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    m_gbufferDescriptors->OnTargetsRebuilt(*m_sceneTargets);
     for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
     {
         pass->OnTargetsRebuilt(*m_sceneTargets);

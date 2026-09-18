@@ -13,13 +13,19 @@ namespace me
 // Its framebuffers are indexed by swapchain image because the LDR target is, while its descriptor
 // sets are indexed by frame slot because the HDR target is. That split is the whole reason
 // SceneRenderTargets exposes two copy counts.
+//
+// It also serves the G-buffer debug views: its layout is set 0 its HDR sampler, set 1 the empty
+// filler, set 2 the G-buffer inputs, plus a push constant carrying the exposure and the selected
+// view.
 class VulkanTonemapPass : public IScenePass
 {
   public:
     VulkanTonemapPass(
         VkDevice device,
         VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets);
+        const SceneRenderTargets& targets,
+        VkDescriptorSetLayout gbufferSetLayout,
+        VkDescriptorSetLayout emptySetLayout);
     ~VulkanTonemapPass() override;
 
     VulkanTonemapPass(const VulkanTonemapPass&) = delete;
@@ -37,7 +43,7 @@ class VulkanTonemapPass : public IScenePass
     void CreateDescriptorSetLayout();
     void CreateSampler();
     void CreateRenderPass(const SceneRenderTargets& targets);
-    void CreatePipeline(VkPipelineCache pipelineCache);
+    void CreatePipeline(VkPipelineCache pipelineCache, VkDescriptorSetLayout gbufferSetLayout, VkDescriptorSetLayout emptySetLayout);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
     void DestroyFramebuffers();

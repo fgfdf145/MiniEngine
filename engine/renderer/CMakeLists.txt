@@ -64,6 +64,8 @@ add_library(engine_renderer
     vulkan/forward_pass.h
     vulkan/geometry_pass.cpp
     vulkan/geometry_pass.h
+    vulkan/gbuffer_inputs.cpp
+    vulkan/gbuffer_inputs.h
     vulkan/imgui_layer.cpp
     vulkan/imgui_layer.h
     vulkan/instance.cpp
@@ -124,6 +126,7 @@ set(MINIENGINE_SHADER_INCLUDES
     scene_common.glsl
     pbr_common.glsl
     gbuffer_common.glsl
+    gbuffer_inputs.glsl
 )
 
 function(miniengine_add_shaders shader_target)

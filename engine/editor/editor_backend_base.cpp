@@ -139,6 +139,7 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
     State().requestedViewportExtent = uiFrame.viewportExtent;
+    State().renderDebug = uiFrame.renderDebug;
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,
         uiFrame.viewportAllowsMouseInteraction);

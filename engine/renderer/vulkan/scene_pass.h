@@ -7,6 +7,8 @@
 #include "scene_pass_order.h"
 #include "scene_render_targets.h"
 
+#include <engine/renderer/render_types.h>
+
 #include <span>
 
 namespace me
@@ -33,6 +35,10 @@ struct ScenePassFrameContext
     // Scale from physical scene radiance to the pre-exposed values the tone mapping operator takes
     // (see ExposureFromEv100). Always positive.
     float exposure = 1.0f;
+    // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors.
+    VkDescriptorSet gbufferDescriptorSet = VK_NULL_HANDLE;
+    // What the tone mapping pass writes to the viewport.
+    GBufferDebugView gbufferView = GBufferDebugView::Off;
 
     std::span<const VulkanDrawItem> OpaqueDrawItems() const
     {
