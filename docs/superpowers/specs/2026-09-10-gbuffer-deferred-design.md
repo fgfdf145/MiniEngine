@@ -141,6 +141,8 @@ target 4 bytes per pixel across three, roughly 110 MB against the 35 MB the
 current two targets use. The viewport is an ImGui panel and is usually
 smaller than the window, but the ratio holds.
 
+> **Amended after phase two.** GB1 is `R16G16B16A16_SFLOAT`, not `R16G16_SFLOAT`: `.ba` carries the geometric normal (see G-Buffer Encoding). That adds 4 bytes per pixel per transient copy, about 11.5 MB at 1600x900 with two copies. `SceneRenderTargets::GetSampledView`, which hands out a depth-only view when the depth format also carries stencil, shipped before this phase with auto exposure; every descriptor write that samples a target goes through it. `SelectFormats` also throws if any id is left without a format, so the GB4 id phase three appends cannot reach image creation undescribed.
+
 ## Pass Interface and Barriers
 
 ```cpp
@@ -184,6 +186,10 @@ the second.
 
 Adding a pass later means writing one class and inserting one line in the
 pass list. It does not mean reasoning about layouts again.
+
+> **Amended after phase two.** `IScenePass` gained `Id()`. The renderer owns every pass in one `std::vector<std::unique_ptr<IScenePass>>` and records the sequence `BuildScenePassOrder` returns, looking each id up in that list. Both orders end in the exposure histogram pass, which shipped between this spec and phase two, and then tone mapping: Geometry, Lighting, Forward (Blend only), ExposureHistogram, Tonemap for deferred, and Forward, ExposureHistogram, Tonemap for the comparison. The directional shadow pass, also shipped in between, is not a scene pass; it records before either order and orders itself through its own render pass dependencies. Ownership and order are therefore separate: a viewport resize walks the whole list, so a pass absent from the current order still follows the rebuilt targets. `BuildScenePassOrder` returns a span over static storage and allocates nothing per frame. Passes and both material pipeline sets are rebuilt together on a swapchain recreate instead of each carrying a construct-or-rebuild branch; the pipeline cache makes that cheap.
+
+> **Amended after phase two.** `RenderTargetLayoutTracker` also orders a write that follows a write. Phase one only ever wrote each target once per frame, so the tracker emitted a barrier only on a layout change. Phase two writes two targets twice in a row: depth by the geometry pass and then the forward pass, and HDR by the lighting pass and then the forward blend pass. With the layout unchanged, neither got a barrier, and synchronization validation is not enabled to report it. `Transition` now returns a `TargetTransition` with `oldLayout == newLayout` for a write after a write, which `RecordTransitions` issues as a memory-only barrier; a read after a read still produces nothing. This was not in the phase two plan and was added during execution.
 
 ## G-Buffer Encoding
 
@@ -260,6 +266,8 @@ Y flip is applied here: the projection matrix already negates `[1][1]`, so
 the image's top row is `ndc.y == -1` and this expression is consistent with
 it. Depth is `0..1` because the projection is `perspectiveRH_ZO`.
 
+> **Amended after phase two.** GB1.ba holds the geometric normal, octahedral encoded and already flipped for back faces. The forward path's shadow lookup offsets along that normal rather than the normal-mapped one, and the deferred path must do the same or shadow boundaries move wherever a normal map is strong; reconstructing it from depth derivatives would be wrong at every silhouette. Pixel equivalence holds up to the precision of the targets: albedo passes through 8-bit sRGB, metallic, roughness and occlusion through 8-bit unorm and both normals through fp16 before shading, and world position is reconstructed rather than interpolated. The lighting pass re-clamps roughness to `[0.04, 1]` because 8-bit storage can round the floor down.
+
 ## Shader Decomposition
 
 `triangle.frag` splits at the boundary between resolving material values and
@@ -287,6 +295,8 @@ a list. Included `.glsl` files are listed explicitly in each compile
 command's `DEPENDS` rather than generated through `glslc -MD` and CMake's
 `DEPFILE`, whose Visual Studio generator support is version-dependent. Three
 include files do not justify that risk.
+
+> **Amended after phase two.** Four include files serve the deferred path, where this section's prose counted three. `scene_common.glsl`, which shipped before this phase, holds the light type constants, `SceneLightData` and the set 0 `CameraBuffer` block, now with an include guard and `invViewProj` appended after the shadow members. `pbr_common.glsl` declares the shadow map at set 0 binding 1 and exposes `ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao)`: uniform ambient plus every direct light, the directional caster's contribution multiplied by its shadow. Both lighting shaders call it rather than repeating its loops. `gbuffer_inputs.glsl` declares set 2 once for `deferred_lighting.frag` and `tonemap.frag`. Every shader compile depends on every include.
 
 ## Descriptor Sets
 
@@ -326,6 +336,8 @@ This split is the single most error-prone step in the project, which is why
 it lands in phase one while the forward path is still the only path and any
 mistake is immediately visible.
 
+> **Amended after phase two.** Set 2 and an empty set 1 layout are owned by `VulkanGBufferDescriptors`, which the renderer holds and both full-screen consumers build against. The lighting pass's layout is set 0 camera and shadow map, set 1 empty, set 2 G-buffer, plus a 16-byte push constant carrying the background radiance. The tone mapping pass's is set 0 its HDR sampler, set 1 empty, set 2 G-buffer, plus an eight-byte push constant: the exposure, which it already had, and the debug view. Both put the G-buffer at set 2 so `gbuffer_inputs.glsl` serves both unchanged. Because binding a set requires every image in it to be in the read layout, the tone mapping pass declares all five G-buffer inputs as reads whether or not the selected view samples them.
+
 ## Forward Comparison Toggle
 
 `RendererSharedState` gains a boolean, surfaced as an editor checkbox. It
@@ -343,6 +355,8 @@ and never confounds them with tone mapping.
 
 `BuildScenePassOrder` is a free function over a pass id enum, independent of
 any Vulkan object, so the two orders are unit testable.
+
+> **Amended after phase two.** A draw filter alone was not enough. In the deferred order the forward pass must load the HDR target and the geometry pass's depth; in the forward-only order it must clear them; and `loadOp` is baked into a render pass. `VulkanForwardPass` therefore owns a clear variant and a load variant, which differ only in `loadOp`, so one set of framebuffers and one pipeline set serve both. The switch is `RenderDebugSettings::forwardOnly` in `engine/renderer/render_types.h`, not a bare boolean on `RendererSharedState`, so the editor names it without depending on the Vulkan backend; it is not persisted. `DrawFrame` derives both the order and the filter from it at one site, and forces the debug view off in the forward-only order, which never writes the G-buffer.
 
 ## Entity Id Picking
 

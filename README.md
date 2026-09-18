@@ -149,7 +149,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
-- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。
+- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。不透明与 Mask 几何已改走 G-Buffer 延迟着色（第二阶段），Blend 仍走前向并合成在光照结果之上；GB4 实体 id 拾取（第三阶段）尚未实现。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
@@ -172,6 +172,57 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-09-19 — G-Buffer 延迟着色第二阶段：几何 pass、延迟光照与前向对比开关
+
+G-Buffer 延迟着色三阶段的第二阶段。不透明与 Mask 几何改走延迟路径，不引入新视觉效果；设计见 [docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md](docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md)，与设计的出入已在该文档内以 "Amended after phase two" 记录。
+
+**帧结构**
+
+- 延迟顺序为 Geometry → Lighting → Forward（仅 Blend）→ ExposureHistogram → Tonemap，对比顺序为 Forward（全部）→ ExposureHistogram → Tonemap，由纯函数 `BuildScenePassOrder` 给出。两条顺序共用同一个直方图 pass 与色调映射 pass，对比只隔离着色差异。方向光阴影 pass 不在列表里，仍在两条顺序之前录制。
+- pass 所有权收进 `std::vector<std::unique_ptr<IScenePass>>`，按 `ScenePassId` 查找；自动曝光通过一个非拥有指针读直方图。交换链重建时 pass 与两套材质管线整体重建，管线缓存使其廉价，重建后的直方图从空开始，曝光保持两帧；视口 resize 只让每个 pass 跟随新图像。第一阶段记下的"新增 pass 改五处"与 stale framebuffer 窗口随之收掉。
+- 前向 pass 持有 clear 与 load 两个 render pass：延迟顺序下必须保留光照结果与几何 pass 的深度。二者只差 `loadOp`，render pass 兼容性不看它，因此共用 framebuffer 与管线。
+
+**G-Buffer 与光照**
+
+- GB0 `R8G8B8A8_SRGB` 反照率，GB1 `R16G16B16A16_SFLOAT`：`.rg` 着色法线、`.ba` 几何法线，均为八面体编码（直接存 [-1, 1]，不做 0.5 映射），GB2 `R8G8B8A8_UNORM` 金属度/粗糙度/AO，GB3 `B10G11R11_UFLOAT_PACK32` 自发光（回退 `R16G16B16A16_SFLOAT`）。几何 pass 的深度 `storeOp` 为 STORE。
+- GB1 比设计多出两个通道：前向路径的阴影法线偏移沿插值后、已按背面翻转的几何法线，延迟路径必须用同一条法线，否则法线贴图强的地方阴影边界会移动。每像素每份多 4 字节，1600x900、两份约 11.5 MB。
+- 世界坐标由深度与相机 UBO 末尾（阴影块之后）新增的 `invViewProj` 重建，不存储；`invViewProj` 取 `renderProjection`，取错会把位置镜像。深度 1.0 的像素输出 `GetBackgroundRadiance(exposure)`（`kViewportBackgroundExposed / exposure`），由 push constant 传入，与前向清屏走同一个函数。
+- 光照 pass 与材质 pass 绑定同一个 set 0，阴影图（binding 1）不需要额外绑定；阴影 pass 的外部依赖覆盖其后所有片元着色器读取。
+
+**着色器**
+
+- 新增三个 include：`pbr_common.glsl`（阴影图声明、BRDF、面光源、阴影查询、均匀环境光与 `ShadeSurface`）、`gbuffer_common.glsl`、`gbuffer_inputs.glsl`；此前已有的 `scene_common.glsl` 加了 include guard。每条着色器编译命令依赖全部 include。
+- `gbuffer.frag` 是 `triangle.frag` 的材质半段，含双面背面的 TBN 翻转；`deferred_lighting.frag` 与 `triangle.frag` 调用同一个 `ShadeSurface`，两条路径的光照与阴影算术只有一份。
+
+**调试视图与开关**
+
+相机面板新增 "Forward only (comparison)" 复选框与 G-Buffer 视图下拉框（反照率、着色法线、几何法线、金属度/粗糙度/AO、自发光），设置为 `render_types.h` 的 `RenderDebugSettings`，不持久化。色调映射的 push constant 由曝光扩成曝光加视图编号，着色视图仍是 GT7；自发光视图同样经过曝光与 GT7。对比顺序不写 G-Buffer，渲染器在该顺序下强制关闭调试视图，而不依赖 UI 的禁用状态。
+
+**成像**
+
+按设计像素等价，精度边界如下：反照率经 8 位 sRGB、金属度/粗糙度/AO 经 8 位 unorm、两条法线经 fp16 量化后才参与着色，世界坐标由深度重建，阴影边缘可能有 texel 级差异。光照 pass 对粗糙度重新夹到 [0.04, 1]。
+
+**与计划的出入**
+
+执行中发现并修复了一个计划没有覆盖的同步问题：`RenderTargetLayoutTracker` 只在布局变化时产生屏障，而第二阶段有两处同一目标被连续两个 pass 写入（深度：几何 pass → 前向 pass；HDR：光照 pass → 前向混合 pass），布局不变便没有任何屏障。现在写后写会产生 `oldLayout == newLayout` 的纯内存屏障，读后读仍不产生屏障；原先把"写后写不产生屏障"固定下来的两个测试随之更新。单独提交为 `fix(vulkan): order back-to-back writes of the same render target`，并已记入设计文档的修订。
+
+**验证**
+
+x64 Debug 从全新 configure 构建通过，CTest `37/37`，`check-format` 通过，`git diff --check` 无输出。Debug 开验证层 `--frames 60`（默认场景，走延迟顺序）与带太阳场景 `--frames 300` 均退出码 0，无验证层输出。同步验证仍未开启。
+
+每个任务都用脚本截取了引擎窗口，与改动前的前向截图逐像素比对（比对区域为视口，去掉左上角文字）：
+- 任务 1–6 期间着色画面不变：测试场景逐像素相同，缩放窗口触发两次交换链重建后仍相同；NewSponza 只有自动曝光时点带来的 ±1 级噪声，同一构建两次运行之间也会出现。
+- 延迟顺序对前向：测试场景 3.4% 的像素差 1 级（8 位目标量化），NewSponza 16% 的像素差 1–2 级、单个像素差 3 级。差值放大 80 倍后是均匀噪声，亮处略强，阴影边缘、轮廓、级联边界和法线贴图细节处没有结构性差异。
+- 对比开关：用临时环境变量强制前向顺序（未提交），测试场景与前向基线逐像素相同，NewSponza 只有 ±1 级噪声。
+- 调试视图：同样用临时开关在 NewSponza 上截取五个视图，反照率、着色法线、几何法线、金属度/粗糙度/AO、自发光均与计划的预期一致。
+- Release、RTX 4070 Laptop、NewSponza、1920×936：延迟顺序有阴影 156.4 FPS、无太阳 451.7 FPS；阴影提交时的前向顺序为 153.5 / 427.8 FPS。
+
+以上截图检查由脚本完成。Task 7 Step 12 的九项人工 GUI 检查（在面板里实际切换开关、拖动视口、载入场景、删除后撤销等）尚未由人确认，第二阶段的视觉验收仍待用户完成。Blend 材质的叠加没有单独验证：测试场景没有 Blend 材质，NewSponza 的差异图里没有局部异常，但不能据此断定其中有 Blend 材质被画到。
+
+**仍未处理**
+
+GB4 实体 id、单像素读回与混合拾取属于第三阶段。八灯上限、IBL、抗锯齿不变；只有主方向光有阴影。同步验证仍未开启。
 
 ### 2026-09-18 — 光照修正与方向光级联阴影
 
