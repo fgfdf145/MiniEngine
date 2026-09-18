@@ -58,12 +58,12 @@ VulkanBuffer::VulkanBuffer(
       m_device(device)
 {
     const MeshData defaultMesh = CreateDefaultCubeMesh();
-    m_vertices = defaultMesh.vertices;
-    m_indices = defaultMesh.indices;
+    m_vertexCount = static_cast<uint32_t>(defaultMesh.vertices.size());
+    m_indexCount = static_cast<uint32_t>(defaultMesh.indices.size());
 
     VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
-    UploadVertices(uploadBatch);
-    UploadIndices(uploadBatch);
+    UploadVertices(defaultMesh, uploadBatch);
+    UploadIndices(defaultMesh, uploadBatch);
     uploadBatch.Flush();
     LOG_INFO("Vertex buffer created successfully");
 }
@@ -75,11 +75,11 @@ VulkanBuffer::VulkanBuffer(
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_vertices(meshData.vertices),
-      m_indices(meshData.indices)
+      m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
+      m_indexCount(static_cast<uint32_t>(meshData.indices.size()))
 {
-    UploadVertices(uploadBatch);
-    UploadIndices(uploadBatch);
+    UploadVertices(meshData, uploadBatch);
+    UploadIndices(meshData, uploadBatch);
 }
 
 VulkanBuffer::~VulkanBuffer()
@@ -114,12 +114,12 @@ VkBuffer VulkanBuffer::GetIndexHandle() const
 
 uint32_t VulkanBuffer::GetVertexCount() const
 {
-    return static_cast<uint32_t>(m_vertices.size());
+    return m_vertexCount;
 }
 
 uint32_t VulkanBuffer::GetIndexCount() const
 {
-    return static_cast<uint32_t>(m_indices.size());
+    return m_indexCount;
 }
 
 void VulkanBuffer::CreateBuffer(
@@ -167,9 +167,9 @@ uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
     throw std::runtime_error("Failed to find suitable vertex buffer memory type");
 }
 
-void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
+void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
 {
-    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(Vertex) * m_vertices.size());
+    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size());
 
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -182,7 +182,7 @@ void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map staging buffer memory");
-    std::memcpy(data, m_vertices.data(), static_cast<size_t>(bufferSize));
+    std::memcpy(data, meshData.vertices.data(), static_cast<size_t>(bufferSize));
     vkUnmapMemory(m_device, stagingMemory);
 
     CreateBuffer(
@@ -199,9 +199,9 @@ void VulkanBuffer::UploadVertices(VulkanUploadBatch& uploadBatch)
     uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 }
 
-void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
+void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
 {
-    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(uint32_t) * m_indices.size());
+    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(uint32_t) * meshData.indices.size());
 
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -214,7 +214,7 @@ void VulkanBuffer::UploadIndices(VulkanUploadBatch& uploadBatch)
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map index staging buffer memory");
-    std::memcpy(data, m_indices.data(), static_cast<size_t>(bufferSize));
+    std::memcpy(data, meshData.indices.data(), static_cast<size_t>(bufferSize));
     vkUnmapMemory(m_device, stagingMemory);
 
     CreateBuffer(
