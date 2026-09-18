@@ -81,8 +81,8 @@ void LocalLightsRankByIlluminanceAtTheCamera()
 {
     const std::vector<SceneLightCandidate> lights = {
         MakeLight(LightType::Point, glm::vec3(100.0f, 0.0f, 0.0f), 1000.0f), // 0.1
-        MakeLight(LightType::Spot, glm::vec3(2.0f, 0.0f, 0.0f), 1000.0f),   // 250
-        MakeLight(LightType::Area, glm::vec3(10.0f, 0.0f, 0.0f), 1000.0f)}; // 10
+        MakeLight(LightType::Spot, glm::vec3(2.0f, 0.0f, 0.0f), 1000.0f),    // 250
+        MakeLight(LightType::Area, glm::vec3(10.0f, 0.0f, 0.0f), 1000.0f)};  // 10
     const SceneLightSelection selection = SelectSceneLights(lights, glm::vec3(0.0f), 2);
 
     Require(selection.selected.size() == 2, "the selection must stop at the light limit");
