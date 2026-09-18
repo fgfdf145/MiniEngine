@@ -146,7 +146,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // reads its histograms. Set and cleared together with the list, so it is null exactly when
     // the list is empty, which UpdateAutoExposure already checks for.
     VulkanExposureHistogramPass* m_exposurePass = nullptr;
-    std::unique_ptr<VulkanPipelineSet> m_graphicsPipelines;
+    std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
 };

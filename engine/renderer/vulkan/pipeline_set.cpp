@@ -25,7 +25,7 @@ struct PipelineVariantState
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    std::array<VkPipelineColorBlendAttachmentState, kMaxMaterialColorAttachments> colorBlendAttachments{};
     VkPipelineColorBlendStateCreateInfo colorBlending{};
 };
 }
@@ -35,14 +35,22 @@ VulkanPipelineSet::VulkanPipelineSet(
     VkPipelineCache pipelineCache,
     VkRenderPass renderPass,
     VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout materialSetLayout)
+    VkDescriptorSetLayout materialSetLayout,
+    const MaterialPipelineSetConfig& config)
     : m_device(device)
 {
     try
     {
+        if (config.fragmentShader == nullptr ||
+            config.colorAttachmentCount == 0 ||
+            config.colorAttachmentCount > kMaxMaterialColorAttachments)
+        {
+            throw std::runtime_error("MaterialPipelineSetConfig needs a fragment shader and 1 to 4 color attachments");
+        }
+
         const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
         const VulkanShaderModule vertexShader(m_device, shaderDir / "triangle.vert.spv");
-        const VulkanShaderModule fragmentShader(m_device, shaderDir / "triangle.frag.spv");
+        const VulkanShaderModule fragmentShader(m_device, shaderDir / config.fragmentShader);
 
         const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
         const auto attributeDescriptions = GetVertexAttributeDescriptions();
@@ -149,26 +157,34 @@ VulkanPipelineSet::VulkanPipelineSet(
                 variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
                 variant.depthStencil.stencilTestEnable = VK_FALSE;
 
-                variant.colorBlendAttachment.blendEnable = state.blendEnabled ? VK_TRUE : VK_FALSE;
-                variant.colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-                variant.colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                variant.colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-                // Vulkan requires valid alpha blend enums whenever blending is enabled, but no
-                // variant writes the alpha channel: ImGui samples the viewport image and composites
-                // it over the editor, so the attachment alpha has to stay at the clear value 1.0.
-                // Letting a material write albedo.a there would make the editor background show
-                // through the 3D view.
-                variant.colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                variant.colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                variant.colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-                variant.colorBlendAttachment.colorWriteMask =
+                // Vulkan requires valid alpha blend enums whenever blending is enabled. Whether
+                // alpha is written at all is the config's call: the forward set keeps the HDR
+                // target's clear alpha, the geometry set writes every G-buffer channel.
+                VkColorComponentFlags writeMask =
                     VK_COLOR_COMPONENT_R_BIT |
                     VK_COLOR_COMPONENT_G_BIT |
                     VK_COLOR_COMPONENT_B_BIT;
+                if (config.writeAlpha)
+                {
+                    writeMask |= VK_COLOR_COMPONENT_A_BIT;
+                }
+
+                for (uint32_t attachment = 0; attachment < config.colorAttachmentCount; ++attachment)
+                {
+                    VkPipelineColorBlendAttachmentState& blend = variant.colorBlendAttachments[attachment];
+                    blend.blendEnable = (state.blendEnabled && config.allowBlending) ? VK_TRUE : VK_FALSE;
+                    blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                    blend.colorBlendOp = VK_BLEND_OP_ADD;
+                    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                    blend.alphaBlendOp = VK_BLEND_OP_ADD;
+                    blend.colorWriteMask = writeMask;
+                }
 
                 variant.colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-                variant.colorBlending.attachmentCount = 1;
-                variant.colorBlending.pAttachments = &variant.colorBlendAttachment;
+                variant.colorBlending.attachmentCount = config.colorAttachmentCount;
+                variant.colorBlending.pAttachments = variant.colorBlendAttachments.data();
 
                 VkGraphicsPipelineCreateInfo& pipelineInfo = pipelineInfos[index];
                 pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -197,7 +213,7 @@ VulkanPipelineSet::VulkanPipelineSet(
                 nullptr,
                 m_pipelines.data()),
             "Failed to create graphics pipelines");
-        LOG_INFO("Created {} material pipeline variants", m_pipelines.size());
+        LOG_INFO("Created {} material pipeline variants for {}", m_pipelines.size(), config.fragmentShader);
     }
     catch (...)
     {

@@ -78,18 +78,7 @@ void VulkanTonemapPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Viewport and scissor are dynamic state on this pipeline too, which is what lets a viewport
-    // resize rebuild only the framebuffers and descriptor sets.
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(frame.extent.width);
-    viewport.height = static_cast<float>(frame.extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.extent = frame.extent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    SetViewportAndScissor(commandBuffer, frame.extent);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 

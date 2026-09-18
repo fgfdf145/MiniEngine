@@ -249,7 +249,7 @@ VulkanRenderer::~VulkanRenderer()
     }
 
     DestroyDescriptorResources();
-    m_graphicsPipelines.reset();
+    m_forwardPipelines.reset();
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
@@ -371,7 +371,16 @@ void VulkanRenderer::DrawFrame()
     frame.frameSlot = m_commandContext->GetCurrentFrame();
     frame.extent = m_sceneTargets->GetExtent();
     frame.drawItems = drawItems;
-    frame.pipelines = m_graphicsPipelines.get();
+    frame.blendDrawItemBegin = static_cast<size_t>(
+        std::partition_point(
+            drawItems.begin(),
+            drawItems.end(),
+            [](const VulkanDrawItem& item)
+            {
+                return item.pipelineKey.alphaMode != MaterialAlphaMode::Blend;
+            }) -
+        drawItems.begin());
+    frame.forwardPipelines = m_forwardPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
     frame.exposure = State().camera.GetExposure();
 
@@ -504,7 +513,7 @@ void VulkanRenderer::DestroySwapchainResources()
     // is undefined again, so the tracker goes back to square one with it.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
-    m_graphicsPipelines.reset();
+    m_forwardPipelines.reset();
     if (m_sceneTargets)
     {
         m_sceneTargets->ReleaseImages();
@@ -569,19 +578,21 @@ void VulkanRenderer::CreateScenePasses()
     // every owned pass to follow them; see SyncSceneTargets.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
-    m_graphicsPipelines.reset();
+    m_forwardPipelines.reset();
 
     auto forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
 
     // Built here, while the typed pointer is still in hand, rather than through a separate
     // Ensure step: the pipelines depend on nothing but this render pass and the two device
-    // lifetime set layouts, and this is the one place the render pass is created.
-    m_graphicsPipelines = std::make_unique<VulkanPipelineSet>(
+    // lifetime set layouts, and this is the one place the render pass is created. The default
+    // config is the forward shape: triangle.frag, one HDR attachment, RGB writes.
+    m_forwardPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
         m_pipelineCache,
         forwardPass->GetRenderPass(),
         m_frameSetLayout->GetHandle(),
-        m_materialSetLayout->GetHandle());
+        m_materialSetLayout->GetHandle(),
+        MaterialPipelineSetConfig{});
 
     // A rebuilt exposure pass starts with zeroed histograms, which meter as empty, so auto
     // exposure holds its current EV for the kMaxFramesInFlight frames until real ones arrive.

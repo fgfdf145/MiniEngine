@@ -18,6 +18,25 @@ namespace me
 // Viewport and scissor are dynamic state, set at record time, and the descriptor set layouts are
 // the renderer's fixed frame and material layouts. The pipelines therefore depend on nothing but
 // the render pass: they survive both a scene-viewport resize and a scene content reload untouched.
+inline constexpr uint32_t kMaxMaterialColorAttachments = 4;
+
+// What differs between the pipeline sets that draw material items. Everything else (vertex
+// shader, vertex input, descriptor set layouts, push constants, depth and cull policy per
+// variant) is shared by construction.
+struct MaterialPipelineSetConfig
+{
+    // The compiled fragment stage, relative to EnginePaths::ShaderRoot().
+    const char* fragmentShader = "triangle.frag.spv";
+    uint32_t colorAttachmentCount = 1;
+    // The forward pass writes RGB only and leaves the HDR target's alpha at its clear value; the
+    // geometry pass owns every channel of every G-buffer target.
+    bool writeAlpha = false;
+    // False for the geometry pass. Blend items never reach it, but the set still builds all six
+    // variants so GetMaterialPipelineIndex needs no second mapping; turning blending off keeps
+    // those unused variants from declaring blend state against G-buffer attachments.
+    bool allowBlending = true;
+};
+
 class VulkanPipelineSet
 {
   public:
@@ -26,7 +45,8 @@ class VulkanPipelineSet
         VkPipelineCache pipelineCache,
         VkRenderPass renderPass,
         VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout materialSetLayout);
+        VkDescriptorSetLayout materialSetLayout,
+        const MaterialPipelineSetConfig& config);
     ~VulkanPipelineSet();
 
     VulkanPipelineSet(const VulkanPipelineSet&) = delete;

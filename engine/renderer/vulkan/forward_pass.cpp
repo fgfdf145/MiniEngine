@@ -1,6 +1,7 @@
 #include "forward_pass.h"
 
 #include "command.h"
+#include "material_draw.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/material.h>
@@ -77,66 +78,8 @@ void VulkanForwardPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Viewport and scissor are dynamic state on every material pipeline, so they are set once
-    // per pass instead of being baked into the pipelines (see VulkanPipelineSet).
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(frame.extent.width);
-    viewport.height = static_cast<float>(frame.extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.extent = frame.extent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-    const VkPipelineLayout pipelineLayout = frame.pipelines->GetLayout();
-    VkPipeline boundPipeline = VK_NULL_HANDLE;
-
-    // Set 0 (the camera uniform buffer) is the same for every draw in this pass, so it is bound
-    // once here rather than per draw item. Set 1 (the material samplers) still varies per draw
-    // item and is bound inside the loop below.
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        pipelineLayout,
-        0,
-        1,
-        &frame.frameDescriptorSet,
-        0,
-        nullptr);
-
-    for (const VulkanDrawItem& drawItem : frame.drawItems)
-    {
-        const VkPipeline requiredPipeline = frame.pipelines->Get(drawItem.pipelineKey);
-        if (requiredPipeline != boundPipeline)
-        {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
-            boundPipeline = requiredPipeline;
-        }
-
-        const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer};
-        const VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            pipelineLayout,
-            1,
-            1,
-            &drawItem.descriptorSet,
-            0,
-            nullptr);
-        vkCmdPushConstants(
-            commandBuffer,
-            pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            0,
-            sizeof(ObjectPushConstants),
-            &drawItem.drawConstants);
-        vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, 0);
-    }
+    SetViewportAndScissor(commandBuffer, frame.extent);
+    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.drawItems);
 
     vkCmdEndRenderPass(commandBuffer);
 }

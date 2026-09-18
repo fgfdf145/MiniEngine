@@ -66,6 +66,8 @@ add_library(engine_renderer
     vulkan/imgui_layer.h
     vulkan/instance.cpp
     vulkan/instance.h
+    vulkan/material_draw.cpp
+    vulkan/material_draw.h
     vulkan/pipeline.cpp
     vulkan/pipeline.h
     vulkan/pipeline_set.cpp
