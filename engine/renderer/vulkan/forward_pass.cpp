@@ -2,6 +2,7 @@
 
 #include "command.h"
 
+#include <engine/renderer/camera.h>
 #include <engine/renderer/material.h>
 
 #include <array>
@@ -49,10 +50,14 @@ void VulkanForwardPass::Record(
     const ScenePassFrameContext& frame) const
 {
     std::array<VkClearValue, 2> clearValues{};
-    // The clear now lands in the HDR target and is tone mapped with everything else, where before
-    // it bypassed the fragment shader and reached the display unmodified. These are the radiance
-    // values whose Reinhard result is the original {0.08, 0.1, 0.16} background: c / (1 - c).
-    clearValues[0].color = {{0.086957f, 0.111111f, 0.190476f, 1.0f}};
+    // The clear lands in the HDR target and is exposed and tone mapped with everything else.
+    // Dividing the exposed background by the exposure keeps it fixed while the exposure moves,
+    // since it stands for no physical light.
+    const glm::vec3 background = kViewportBackgroundExposed / frame.exposure;
+    clearValues[0].color.float32[0] = background.r;
+    clearValues[0].color.float32[1] = background.g;
+    clearValues[0].color.float32[2] = background.b;
+    clearValues[0].color.float32[3] = 1.0f;
     clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
@@ -165,7 +170,10 @@ void VulkanForwardPass::CreateRenderPass(const SceneRenderTargets& targets)
     depthAttachment.format = targets.GetFormat(RenderTargetId::SceneDepth);
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // Stored, not discarded: SceneDepth is created sampleable so that a later pass in the frame
+    // (deferred lighting, and anything else that reconstructs position from depth) can read it,
+    // and DONT_CARE would leave that pass reading undefined contents. Stencil is never written.
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;

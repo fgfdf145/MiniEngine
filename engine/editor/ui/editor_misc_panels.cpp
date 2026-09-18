@@ -89,6 +89,56 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
             WorldUnits::kUiCameraFarMinMeters,
             WorldUnits::kUiCameraFarMaxMeters,
             "%.1f");
+        ImGui::Separator();
+        AutoExposureSettings& autoExposure = camera.autoExposure;
+        ImGui::Checkbox("Auto Exposure", &autoExposure.enabled);
+
+        // In auto mode the renderer writes exposureEv100 every frame, so the slider only shows it.
+        ImGui::BeginDisabled(autoExposure.enabled);
+        ImGui::SliderFloat(
+            "Exposure (EV100)",
+            &camera.exposureEv100,
+            kMinExposureEv100,
+            kMaxExposureEv100,
+            "%.2f");
+        camera.exposureEv100 = std::clamp(camera.exposureEv100, kMinExposureEv100, kMaxExposureEv100);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##exposure"))
+        {
+            camera.exposureEv100 = kDefaultExposureEv100;
+        }
+        ImGui::EndDisabled();
+
+        if (autoExposure.enabled)
+        {
+            ImGui::SliderFloat("Compensation (EV)", &autoExposure.compensationEv, -5.0f, 5.0f, "%+.1f");
+            ImGui::DragFloatRange2(
+                "EV100 Range",
+                &autoExposure.minEv100,
+                &autoExposure.maxEv100,
+                0.1f,
+                kMinExposureEv100,
+                kMaxExposureEv100,
+                "Min %.1f",
+                "Max %.1f",
+                ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat(
+                "Adapt to Brighter (1/s)",
+                &autoExposure.adaptToBrighterPerSecond,
+                0.1f,
+                10.0f,
+                "%.1f");
+            ImGui::SliderFloat(
+                "Adapt to Darker (1/s)",
+                &autoExposure.adaptToDarkerPerSecond,
+                0.1f,
+                10.0f,
+                "%.1f");
+            if (ImGui::SmallButton("Reset##autoexposure"))
+            {
+                autoExposure = AutoExposureSettings{};
+            }
+        }
     }
     ImGui::End();
 }

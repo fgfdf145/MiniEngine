@@ -2,6 +2,7 @@
 #include "window_platform.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/version/engine_version.h>
 
 #include <algorithm>
 #include <stdexcept>
@@ -43,7 +44,7 @@ Window::Window(int width, int height, const char* title, RenderBackendType backe
       m_backendType(backendType),
       m_title(title)
 {
-    if (!SDL_SetAppMetadata("MiniEngine", "0.1.0", "com.miniengine.editor"))
+    if (!SDL_SetAppMetadata("MiniEngine", EngineVersion::String(), "com.miniengine.editor"))
     {
         LOG_WARN("SDL_SetAppMetadata failed: {}", SDL_GetError());
     }

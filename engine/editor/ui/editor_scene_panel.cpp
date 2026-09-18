@@ -244,7 +244,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     if (light.type == LightType::Directional)
         intensityUnit = "lx";
     if (light.type == LightType::Ambient)
-        intensityUnit = "x";
+        intensityUnit = "cd/m^2";
 
     const std::string intensityLabel = std::string("Intensity (") + intensityUnit + ")";
     ImGui::DragFloat(intensityLabel.c_str(), &light.intensity, 10.0f, 0.0f, 1000000.0f, "%.1f");
@@ -272,6 +272,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     {
         ImGui::DragFloat2("Area Size (m)", &light.areaSize.x, 0.05f, 0.01f, 100.0f, "%.2f");
         light.areaSize = glm::max(light.areaSize, glm::vec2(0.01f));
+        ImGui::TextDisabled("One-sided: emits along the gizmo's arrow (local -Z); W along local X, H along local Y.");
     }
 
     // Tip

@@ -1,6 +1,7 @@
 #include "editor_application.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/version/engine_version.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/renderer/rhi/factory.h>
 #include <engine/platform/window/window.h>
@@ -152,7 +153,8 @@ int EditorApplication::Run()
 
     auto sharedState = std::make_shared<RendererSharedState>();
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
-    Window window(1920, 1080, "MiniEngine", m_options.renderBackend);
+    const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
+    Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);
     std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(
         window,
         sharedState,

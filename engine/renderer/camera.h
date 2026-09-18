@@ -1,5 +1,6 @@
 #pragma once
 
+#include "exposure.h"
 #include "render_types.h"
 
 #include <engine/scene/world_units.h>
@@ -40,5 +41,11 @@ class Camera
     float mouseSensitivity = 0.1f;
     float yawDegrees = -90.0f;
     float pitchDegrees = 0.0f;
+    // The exposure the frame renders with. Written by the user in manual mode and by the renderer
+    // every frame while auto exposure is enabled.
+    float exposureEv100 = kDefaultExposureEv100;
+    AutoExposureSettings autoExposure;
+
+    float GetExposure() const;
 };
 }

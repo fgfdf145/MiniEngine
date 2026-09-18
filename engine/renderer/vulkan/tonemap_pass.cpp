@@ -99,6 +99,13 @@ void VulkanTonemapPass::Record(
         &descriptorSet,
         0,
         nullptr);
+    vkCmdPushConstants(
+        commandBuffer,
+        m_pipelineLayout,
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+        0,
+        sizeof(frame.exposure),
+        &frame.exposure);
 
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
@@ -270,11 +277,19 @@ void VulkanTonemapPass::CreatePipeline(VkPipelineCache pipelineCache)
     colorBlending.attachmentCount = 1;
     colorBlending.pAttachments = &colorBlendAttachment;
 
-    // No push constant range: the pass is described entirely by its one sampler binding.
+    // The exposure changes every frame the user drags the slider, so it is a push constant rather
+    // than something that would force the descriptor sets to be rewritten.
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(float);
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &m_setLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create tone mapping pipeline layout");
 

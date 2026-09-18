@@ -66,6 +66,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const auto currentFrameTime = std::chrono::steady_clock::now();
     const float deltaTime = std::chrono::duration<float>(currentFrameTime - State().lastFrameTime).count();
     State().lastFrameTime = currentFrameTime;
+    State().frameDeltaSeconds = deltaTime;
 
     State().input.Update();
     UpdateCameraFromInput(State().camera, State().input, deltaTime, WantsKeyboardCapture());

@@ -29,14 +29,17 @@ namespace me
 
 namespace
 {
-// Build a direction vector from a transform's Euler rotation (XYZ order, same as BuildTransformMatrix).
-glm::vec3 BuildLightDirection(const TransformComponent& transform)
+// A transform's Euler rotation (XYZ order, same as BuildTransformMatrix). Directional and spot
+// lights shine along local -Y. An area light is the rectangle DrawLightAreaGizmo draws: it lies in
+// the local XY plane, width along +X and height along Y, and emits along local -Z, the gizmo's
+// normal arrow.
+glm::mat3 BuildLightRotation(const TransformComponent& transform)
 {
     glm::mat4 rotMat(1.0f);
     rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
     rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
     rotMat = glm::rotate(rotMat, glm::radians(transform.rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
-    return glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)));
+    return glm::mat3(rotMat);
 }
 
 std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
@@ -52,12 +55,25 @@ std::vector<GpuLightData> CollectSceneLights(const IEditorWorld& world)
                            gpu.positionAndRange = glm::vec4(transform.translation, light.range);
                            gpu.colorAndIntensity = glm::vec4(light.color, light.intensity);
 
-                           const glm::vec3 direction = BuildLightDirection(transform);
+                           const glm::mat3 rotation = BuildLightRotation(transform);
+                           const glm::vec3 localDirection = light.type == LightType::Area
+                                                                ? glm::vec3(0.0f, 0.0f, -1.0f)
+                                                                : glm::vec3(0.0f, -1.0f, 0.0f);
+                           const glm::vec3 direction = glm::normalize(rotation * localDirection);
                            gpu.directionAndType = glm::vec4(direction, static_cast<float>(light.type));
+                           gpu.areaRightAxis = glm::vec4(glm::normalize(rotation * glm::vec3(1.0f, 0.0f, 0.0f)), 0.0f);
 
                            const float innerCos = std::cos(glm::radians(light.spotInnerAngleDegrees));
                            const float outerCos = std::cos(glm::radians(light.spotOuterAngleDegrees));
-                           gpu.spotAndArea = glm::vec4(innerCos, outerCos, light.areaSize.x, light.areaSize.y);
+                           // The area gizmo draws the rectangle through the whole transform, scale
+                           // included, so the lit rectangle is scaled the same way to match it. The
+                           // clamp is BuildTransformMatrix's.
+                           const glm::vec3 scale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
+                           gpu.spotAndArea = glm::vec4(
+                               innerCos,
+                               outerCos,
+                               light.areaSize.x * scale.x,
+                               light.areaSize.y * scale.y);
 
                            gpuLights.push_back(gpu);
                        });
@@ -161,7 +177,9 @@ VkPipelineStageFlags StageMaskForLayout(VkImageLayout layout)
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
         return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-        return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        // Sampled by fragment shaders (tone mapping, ImGui) and by the exposure histogram's
+        // compute shader, so a transition into or out of this layout has to cover both.
+        return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     case VK_IMAGE_LAYOUT_UNDEFINED:
         return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     default:
@@ -214,6 +232,7 @@ VulkanRenderer::~VulkanRenderer()
     m_graphicsPipelines.reset();
     DestroySwapchainResources();
     m_tonemapPass.reset();
+    m_exposurePass.reset();
     m_forwardPass.reset();
     m_sceneTargets.reset();
     m_imguiLayer.reset();
@@ -253,6 +272,7 @@ void VulkanRenderer::DrawFrame()
         CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
 
+    UpdateAutoExposure(m_commandContext->GetCurrentFrame());
     UpdateViewportMatrices(FromVkExtent(m_sceneTargets->GetExtent()));
 
     m_imguiLayer->BeginFrame();
@@ -284,6 +304,7 @@ void VulkanRenderer::DrawFrame()
     frame.drawItems = drawItems;
     frame.pipelines = m_graphicsPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
+    frame.exposure = State().camera.GetExposure();
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
@@ -405,6 +426,21 @@ void VulkanRenderer::CreateSwapchainResources()
         m_forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
     }
 
+    // Compute only, so nothing about it depends on a format; it follows the new views like the
+    // forward pass.
+    if (m_exposurePass)
+    {
+        m_exposurePass->OnTargetsRebuilt(*m_sceneTargets);
+    }
+    else
+    {
+        m_exposurePass = std::make_unique<VulkanExposureHistogramPass>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            m_pipelineCache,
+            *m_sceneTargets);
+    }
+
     // The tone mapping pass owns the only render pass in the frame that references the LDR
     // format, so unlike the forward pass it cannot survive a swapchain format change: when the
     // format moved it is replaced rather than pointed at the new views.
@@ -421,7 +457,9 @@ void VulkanRenderer::CreateSwapchainResources()
     }
 
     m_layoutTracker.Reset();
-    m_scenePasses = {m_forwardPass.get(), m_tonemapPass.get()};
+    // The histogram reads the HDR target the forward pass wrote and must be recorded before the
+    // tone mapping pass samples the same image, which the tracker then finds already readable.
+    m_scenePasses = {m_forwardPass.get(), m_exposurePass.get(), m_tonemapPass.get()};
 }
 
 void VulkanRenderer::DestroySwapchainResources()
@@ -561,6 +599,7 @@ void VulkanRenderer::SyncSceneTargets()
         ToVkExtent(State().requestedViewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     m_forwardPass->OnTargetsRebuilt(*m_sceneTargets);
+    m_exposurePass->OnTargetsRebuilt(*m_sceneTargets);
     m_tonemapPass->OnTargetsRebuilt(*m_sceneTargets);
     m_layoutTracker.Reset();
     LOG_INFO(
@@ -995,6 +1034,31 @@ void VulkanRenderer::RecordScenePasses(VkCommandBuffer commandBuffer, const Scen
         RecordTransitions(commandBuffer, pass->Io(), frame);
         pass->Record(commandBuffer, *m_sceneTargets, frame);
     }
+}
+
+void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)
+{
+    Camera& camera = State().camera;
+    const AutoExposureSettings& settings = camera.autoExposure;
+    if (!settings.enabled || !m_exposurePass)
+    {
+        // Manual mode: exposureEv100 is the user's. When auto exposure is turned back on it
+        // adapts from that value rather than snapping.
+        return;
+    }
+
+    // The slot's fence has signaled, so its histogram is the one it recorded kMaxFramesInFlight
+    // frames ago. Empty means nothing but background was visible; the exposure then holds.
+    const std::optional<float> target = MeterTargetEv100(m_exposurePass->GetHistogram(frameSlot), settings);
+    if (!target.has_value())
+    {
+        return;
+    }
+
+    camera.exposureEv100 = m_hasMeteredExposure
+                               ? AdaptEv100(camera.exposureEv100, *target, State().frameDeltaSeconds, settings)
+                               : *target;
+    m_hasMeteredExposure = true;
 }
 
 void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const

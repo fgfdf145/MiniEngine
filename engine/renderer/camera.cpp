@@ -10,6 +10,11 @@
 namespace me
 {
 
+float Camera::GetExposure() const
+{
+    return ExposureFromEv100(exposureEv100);
+}
+
 glm::mat4 Camera::GetViewMatrix() const
 {
     return glm::lookAt(position, position + GetForward(), worldUp);

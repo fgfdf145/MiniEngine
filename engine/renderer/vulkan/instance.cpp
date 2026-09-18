@@ -1,6 +1,7 @@
 #include "instance.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/version/engine_version.h>
 #include <SDL3/SDL_vulkan.h>
 
 #include <cstring>
@@ -95,9 +96,10 @@ VulkanInstance::VulkanInstance(SDL_Window* window)
     VkApplicationInfo applicationInfo{};
     applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     applicationInfo.pApplicationName = "MiniEngine";
-    applicationInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    const uint32_t version = VK_MAKE_API_VERSION(0, EngineVersion::Major(), EngineVersion::Minor(), EngineVersion::Patch());
+    applicationInfo.applicationVersion = version;
     applicationInfo.pEngineName = "MiniEngine";
-    applicationInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    applicationInfo.engineVersion = version;
     applicationInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};

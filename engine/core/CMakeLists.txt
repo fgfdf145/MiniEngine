@@ -10,6 +10,8 @@ add_library(engine_core
     render_backend_type.h
     uuid/uuid.cpp
     uuid/uuid.h
+    version/engine_version.cpp
+    version/engine_version.h
 )
 miniengine_group_target_sources(engine_core)
 
@@ -26,6 +28,14 @@ target_compile_definitions(engine_core
         MINIENGINE_DEFAULT_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
         MINIENGINE_DEFAULT_CACHE_DIR="${MINIENGINE_DEFAULT_CACHE_DIR}"
         MINIENGINE_DEFAULT_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
+)
+
+# The version is read from project(VERSION) and compiled into engine_version.cpp alone, so bumping
+# it rebuilds one translation unit rather than everything that includes the header.
+set_source_files_properties(version/engine_version.cpp
+    PROPERTIES
+        COMPILE_DEFINITIONS
+            "MINIENGINE_VERSION_MAJOR=${PROJECT_VERSION_MAJOR};MINIENGINE_VERSION_MINOR=${PROJECT_VERSION_MINOR};MINIENGINE_VERSION_PATCH=${PROJECT_VERSION_PATCH};MINIENGINE_VERSION_STRING=\"${PROJECT_VERSION}\""
 )
 
 target_link_libraries(engine_core

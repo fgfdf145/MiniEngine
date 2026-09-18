@@ -22,6 +22,9 @@ struct ScenePassFrameContext
     std::span<const VulkanDrawItem> drawItems;
     const VulkanPipelineSet* pipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
+    // Scale from physical scene radiance to the pre-exposed values the tone mapping operator takes
+    // (see ExposureFromEv100). Always positive.
+    float exposure = 1.0f;
 };
 
 // One pass in the scene frame. Io() is the declaration the layout tracker turns into barriers;

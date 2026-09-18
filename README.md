@@ -172,6 +172,63 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
 
+### 2026-09-18 — 曝光与自动曝光、GT7 色调映射、双面背面法线、前向深度保存、矩形面光源与版本号
+
+来自一次管线基础审查。LDR 靶跟随交换链格式（UNORM 回退时缺 sRGB 编码）、每资源独立 `vkAllocateMemory` 两条记录在案，未处理；深度回退到带模板格式时采样视图含两个 aspect 一条随自动曝光一并修复（见下）。
+
+**GT7 色调映射**
+
+- Reinhard 换成 Polyphony Digital 公开的 GT7 算子（MIT，2025-08-10 版 1.0），只用 SDR 和默认的 ICtCp。
+- `shaders/vulkan/gt7_tonemap.glsl` 用 GLSL 与 C++/GLM 的公共子集编写，同一份源码由 glslc 编进 `tonemap.frag`，也在 `miniengine_tonemap_tests` 里以 C++ 编译。测试与 `tests/third_party/gt7/` 下原样保留的参考实现对拍：10 万组随机输入最大差 0（逐位一致）。这两个文件的写法约束见文件头注释。
+- 引擎渲染的是线性 Rec.709，而参考实现的 ICtCp 系数要求线性 Rec.2020，所以进出算子各做一次 BT.2087 原色转换。
+- 曝光后的 1.0（传感器饱和点）映射到 GT 的 SDR 纸白 250 cd/m²，即帧缓冲值 2.5。这样中灰的显示值与原 Reinhard 相差不到 0.005，高光则真正收敛到白色。
+- 编辑器背景色对应的曝光后值改为对新算子数值求解，放在 `exposure.h` 的 `kViewportBackgroundExposed`，由测试核对仍映射到 {0.08, 0.1, 0.16}。
+- 着色器新增 `#include` 支持：`MINIENGINE_SHADER_INCLUDES` 里的文件变化时，全部着色器重新编译。
+
+**自动曝光**
+
+- 新的 compute pass `VulkanExposureHistogramPass` 排在前向 pass 与色调映射之间，把 HDR 像素按 log2 亮度计入 256 个 bin（-12 到 +18 档）。深度为 1.0 的背景像素不计：背景清屏值除以了曝光，计入会形成反馈。直方图写入每帧槽一份的主机可见 buffer。
+- CPU 在 `AcquireNextImage` 等完该帧槽的 fence 后读回（结果晚两帧），GPU 从不等待 CPU。
+- 测光取 60%–95% 分位的平均 log 亮度，按反射式测光（K = 12.5）换成 EV100，加补偿、限定范围，再按指数方式向目标靠近：变亮 3/s，变暗 1.5/s，与帧率无关。第一次测到结果时直接跳到该值。
+- 分箱规则 `exposure_histogram.glsl` 同样由着色器与 `engine/renderer/exposure.cpp` 共用。测光、换算、平滑都是纯函数，由 `miniengine.exposure` 覆盖。
+- Camera 面板默认开启 Auto Exposure，可调补偿、EV 范围和两个适应速度；关闭后回到手动 EV 滑块。设置不存盘。
+- 为此：布局追踪器的采样读取阶段加上 compute；图形队列族要求同时支持 compute；带模板的深度靶另建只含 depth aspect 的采样视图（`SceneRenderTargets::GetSampledView`）；`RendererSharedState` 新增 `frameDeltaSeconds`。
+
+**矩形面光源**
+
+- 此前面光源在着色器里就是中心处的点光源：`lm / (π · 面积)` 算出亮度后按点光源的 1/d² 衰减，没有乘回面积。所以面积越小越亮，照明形状与点光源无从区分，且向所有方向发光。
+- 现在是单面朗伯矩形，几何与视口里已有的 `DrawLightAreaGizmo` 一致：矩形在本地 XY 平面内，宽沿 X、高沿 Y，沿 gizmo 法线箭头方向（本地 -Z）发光，背面不发光。尺寸为 `areaSize` 乘以变换的 X/Y 缩放，与 gizmo 画出的矩形大小一致。方向光和聚光灯仍沿本地 -Y。漫反射用多边形的余弦加权立体角闭式解（Lambert，每条边一项），接收面地平线以下的部分不裁剪，只把负值钳到 0。高光取反射射线落在矩形上的最近点作代表点，GGX 按矩形等面积圆盘的张角乘 `(α/α')²` 归一化。
+- 矩形缩小时收敛到沿法线发出 `lm / π` 坎德拉、余弦衰减的点光源。闭式解经 Python 数值核对：小矩形与点近似一致，无限大矩形趋于 π，离轴随机点与 40 万样本蒙特卡洛积分相差 0.02%。
+- 半径衰减只保留窗口项（`RangeWindow`），距离衰减由积分本身给出。
+- `GpuLightData` 由 4 个 vec4 增为 5 个，新增 `areaRightAxis`；`triangle.vert`、`triangle.frag` 的 `SceneLightData` 同步修改。第一版误把矩形放在本地 XZ 平面、朝 -Y 发光，与已有 gizmo 的朝向垂直，另加的选中轮廓也画成了 XZ；已按 gizmo 的约定改正，并删掉了那个多余的轮廓。
+
+**版本号**
+
+根 `CMakeLists.txt` 的 `project(MiniEngine VERSION ...)` 是唯一来源，只编译进 `engine/core/version/engine_version.cpp`，改版本只重编这一个文件。窗口标题显示为 `MiniEngine v<版本>`，`SDL_SetAppMetadata` 和 `VkApplicationInfo` 的应用与引擎版本也从这里读取（此前分别硬编码为 `0.1.0` 与 `1.0.0`）。本轮改动作为 0.1.1 提交。
+
+**曝光**
+
+- 灯光强度是物理单位（lx、lm），此前辐亮度直接进 Reinhard，默认 1000 lx 方向光照在白色漫反射面上约 318 cd/m²，色调映射后贴近纯白。现在 `Camera::exposureEv100`（默认 8，范围 -2 至 18，相机面板可调）经 `ExposureFromEv100`（ISO 100 饱和度法，`1 / (1.2 * 2^EV100)`）换成乘数，以 push constant 交给 `tonemap.frag`，在 Reinhard 之前乘上。
+- EV 不进场景文件，每次启动回到默认值。默认值是按默认太阳选的：同样 1000 lm 的点光源在几米外会暗得多，这是物理上正确的结果，室内场景把 EV 降到 3 左右。
+- 环境光统一为亮度单位 cd/m²：Ambient 类型灯光的强度标签由倍数改为 `cd/m^2`，UBO 兜底环境光按默认 EV 的曝光倒数放大，所以没有灯光的场景在默认 EV 下与改动前一致，只差浮点舍入。
+- 前向 pass 的清屏值除以曝光，编辑器背景色不随 EV 变化。最高 EV 18 下清屏值约 6.0e4，仍在 fp16 的 65504 以内；上调 `kMaxExposureEv100` 前要先处理这一点。
+
+**双面材质背面**
+
+`triangle.frag` 按 `gl_FrontFacing` 整体翻转切线空间（法线、切线、副切线），与 glTF Sample Viewer 做法一致。副切线必须单独取反：`cross(-N, -T) == cross(N, T)`。单面管线剔除背面，这段代码对它们不起作用。
+
+**前向深度**
+
+`SceneDepth` 的 `storeOp` 由 `DONT_CARE` 改为 `STORE`，后续 pass 采样深度时不会读到未定义内容。
+
+**与 phase two 计划的冲突**
+
+`docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 写于本轮之前，照原文执行会回退或破坏上述改动：几何 pass 着色器沿用未翻转的 TBN；`tonemap.frag` 自带一个 `uint32_t` push constant，需要与曝光的 `float` 合并排布；延迟光照在深度 1.0 处输出的背景预除值和前向清屏片段都没有除以曝光；计划中的 `scene_common.glsl` 与 `ShadeSurface` 仍是 4 个 vec4 的 `SceneLightData`，也没有新的面光源函数。计划里的 `tonemap.frag` 仍是 Reinhard，没有 GT7 的 include，场景 pass 列表里也没有直方图 pass。执行前需要修订计划。
+
+**验证**
+
+x64 Debug 构建通过，CTest `34/34`，`check-format` 通过（新文件另用 clang-format 22 单独核对），`--frames 60` 退出码 0 且开验证层无错误输出；启动时加载 NewSponza（406 个 submesh）同样无验证层错误，从进程读到的窗口标题为 `MiniEngine v0.1.1`。面光源路径只有着色器编译和管线创建经过验证层，没有在含面光源的场景中运行过。自动曝光加入后 CTest `35/35`。验证期间临时加过日志：默认场景约 1.55 万个非背景像素，收敛到 EV 6.53；Sponza 加载后收敛到 5.26。全程无验证层错误，唯一一次例外是窗口被最小化时，交换链以 0×0 重建报错。该问题是既有问题：`HasDrawableArea` 看的是 SDL 窗口尺寸，交换链用的是 surface 的 `currentExtent`，与本轮改动无关，未修。临时日志已删除。新增 `miniengine_exposure_tests`（`miniengine.exposure`），覆盖 EV 换算、每档减半、默认 EV 让默认太阳下的白面不到显示白，以及最高 EV 下清屏值不溢出 fp16；自动曝光的分箱、测光、补偿与平滑也在这个目标里。用户已完成 GUI 验收。
+
 ### 2026-09-12 — Vulkan 帧结构重组：HDR 中间靶、显式 barrier 与独立色调映射 pass
 
 G-Buffer 延迟着色三阶段的第一阶段，只重组帧结构，不引入延迟着色路径。改动集中在 `engine/renderer/vulkan/` 与 `shaders/vulkan/`；设计见 [docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md](docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md)。

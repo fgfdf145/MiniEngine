@@ -81,6 +81,12 @@ VkImageView SceneRenderTargets::GetView(RenderTargetId target, uint32_t index) c
     return Describe(target).images.at(index).view;
 }
 
+VkImageView SceneRenderTargets::GetSampledView(RenderTargetId target, uint32_t index) const
+{
+    const TargetImage& image = Describe(target).images.at(index);
+    return image.sampledView != VK_NULL_HANDLE ? image.sampledView : image.view;
+}
+
 VkExtent2D SceneRenderTargets::GetExtent() const
 {
     return m_extent;
@@ -261,6 +267,10 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
         {
             CreateImage(description.format, description.usage, image);
             image.view = CreateImageView(image.image, description.format, description.aspect);
+            if ((description.aspect & VK_IMAGE_ASPECT_STENCIL_BIT) != 0)
+            {
+                image.sampledView = CreateImageView(image.image, description.format, VK_IMAGE_ASPECT_DEPTH_BIT);
+            }
             if (description.bindToImGui)
             {
                 image.imguiBinding = ImGui_ImplVulkan_AddTexture(
@@ -281,6 +291,10 @@ void SceneRenderTargets::DestroyImages(std::array<TargetDescription, kRenderTarg
             if (image.imguiBinding != VK_NULL_HANDLE)
             {
                 ImGui_ImplVulkan_RemoveTexture(image.imguiBinding);
+            }
+            if (image.sampledView != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(m_device, image.sampledView, nullptr);
             }
             if (image.view != VK_NULL_HANDLE)
             {

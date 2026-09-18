@@ -184,7 +184,11 @@ QueueFamilyIndices VulkanDevice::FindQueueFamilies(VkPhysicalDevice device) cons
 
     for (uint32_t i = 0; i < queueFamilyCount; ++i)
     {
-        if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+        // The frame records compute work (the exposure histogram) into the same command buffer as
+        // its graphics passes, so the family has to support both. Vulkan guarantees a device with
+        // graphics has such a family.
+        constexpr VkQueueFlags kRequiredFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+        if ((queueFamilies[i].queueFlags & kRequiredFlags) == kRequiredFlags)
         {
             indices.graphicsFamily = i;
         }

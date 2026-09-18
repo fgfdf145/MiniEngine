@@ -13,8 +13,9 @@ struct SceneLightData
 {
     vec4 positionAndRange;  // xyz = world position, w = range (metres)
     vec4 colorAndIntensity; // xyz = linear RGB color, w = intensity (lumens or lux)
-    vec4 directionAndType;  // xyz = world direction (toward light), w = LightType
+    vec4 directionAndType;  // xyz = world direction the light travels (an area light's emitting normal), w = LightType
     vec4 spotAndArea;       // x = cos(inner), y = cos(outer), z = areaW, w = areaH
+    vec4 areaRightAxis;     // xyz = world axis along areaW (area lights only)
 };
 
 layout(push_constant) uniform DrawConstants
@@ -33,7 +34,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
-    vec4 ambientColorAndIntensity; // xyz = color, w = intensity multiplier
+    vec4 ambientColorAndIntensity; // xyz = color, w = luminance scale; rgb * w is cd/m^2
     SceneLightData lights[8];
     uvec4 sceneLightCount; // x = active light count
 }
@@ -129,12 +130,123 @@ vec3 EvaluateBRDF(
 // ---------------------------------------------------------------------------
 // UE4-style smooth distance attenuation
 // ---------------------------------------------------------------------------
-float SmoothDistanceAttenuation(float distance, float range)
+// The windowing half on its own: 1 near the light, falling smoothly to 0 at the range.
+float RangeWindow(float distance, float range)
 {
     float ratio = distance / max(range, 0.001);
     float ratio4 = ratio * ratio * ratio * ratio;
     float num = clamp(1.0 - ratio4, 0.0, 1.0);
-    return (num * num) / (distance * distance + 1.0);
+    return num * num;
+}
+
+float SmoothDistanceAttenuation(float distance, float range)
+{
+    return RangeWindow(distance, range) / (distance * distance + 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Rectangular area light
+// ---------------------------------------------------------------------------
+
+// The cosine-weighted solid angle of a polygon, the integral of dot(N, w) over the directions w
+// it covers, in Lambert's closed form: one term per edge. Corners must wind counterclockwise
+// about the light's emitting normal. Polygons crossing the receiver's horizon are not clipped,
+// which overestimates slightly there; the clamp only keeps the result from going negative.
+float RectangleFormFactor(vec3 worldPos, vec3 N, vec3 corners[4])
+{
+    float sum = 0.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        vec3 a = normalize(corners[i] - worldPos);
+        vec3 b = normalize(corners[(i + 1) % 4] - worldPos);
+        vec3 edgeNormal = cross(b, a);
+        float sinAngle = length(edgeNormal);
+        if (sinAngle > 1e-7)
+        {
+            // atan rather than acos(dot): for a small or distant light the edge subtends a tiny
+            // angle, where acos near 1 loses most of its precision in fp32.
+            sum += atan(sinAngle, dot(a, b)) * dot(edgeNormal / sinAngle, N);
+        }
+    }
+    return max(0.5 * sum, 0.0);
+}
+
+// A one-sided Lambertian rectangle. Diffuse uses the exact irradiance from RectangleFormFactor.
+// Specular uses a representative point, the point on the rectangle closest to the reflection
+// ray, renormalized for the angle the light subtends so the enlarged highlight does not add
+// energy. As the rectangle shrinks this converges to a point light emitting
+// flux / pi along its normal with a cosine falloff.
+vec3 EvaluateAreaLight(
+    SceneLightData light,
+    vec3 worldPos,
+    vec3 N, vec3 V,
+    vec3 albedo, float metallic, float roughness)
+{
+    vec3 center = light.positionAndRange.xyz;
+    vec3 lightNormal = normalize(light.directionAndType.xyz);
+    vec3 rightAxis = normalize(light.areaRightAxis.xyz);
+    vec3 upAxis = cross(lightNormal, rightAxis);
+    vec2 halfSize = 0.5 * max(light.spotAndArea.zw, vec2(0.001));
+
+    // One sided: the back of the rectangle emits nothing.
+    if (dot(worldPos - center, lightNormal) <= 0.0)
+        return vec3(0.0);
+
+    vec3 corners[4];
+    corners[0] = center - rightAxis * halfSize.x - upAxis * halfSize.y;
+    corners[1] = center + rightAxis * halfSize.x - upAxis * halfSize.y;
+    corners[2] = center + rightAxis * halfSize.x + upAxis * halfSize.y;
+    corners[3] = center - rightAxis * halfSize.x + upAxis * halfSize.y;
+
+    float formFactor = RectangleFormFactor(worldPos, N, corners);
+    if (formFactor <= 0.0)
+        return vec3(0.0);
+
+    // Lumens to luminance for a Lambertian emitter: flux / (pi * area).
+    float area = 4.0 * halfSize.x * halfSize.y;
+    vec3 luminance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area));
+    float window = RangeWindow(distance(worldPos, center), light.positionAndRange.w);
+    vec3 irradiance = luminance * formFactor * window;
+
+    // Representative point: where the reflection ray meets the light's plane, clamped into the
+    // rectangle. A ray that never reaches the plane falls back to the receiver's projection onto it.
+    vec3 R = reflect(-V, N);
+    float rayDotNormal = dot(R, lightNormal);
+    vec3 planePoint = rayDotNormal < -1e-4
+                          ? worldPos + R * (dot(center - worldPos, lightNormal) / rayDotNormal)
+                          : worldPos - lightNormal * dot(worldPos - center, lightNormal);
+    vec3 local = planePoint - center;
+    vec3 closest = center +
+                   rightAxis * clamp(dot(local, rightAxis), -halfSize.x, halfSize.x) +
+                   upAxis * clamp(dot(local, upAxis), -halfSize.y, halfSize.y);
+
+    vec3 toLight = closest - worldPos;
+    float lightDistance = max(length(toLight), 0.0001);
+    vec3 L = toLight / lightDistance;
+
+    vec3 H = normalize(V + L);
+    float NdV = max(dot(N, V), 0.0);
+    float NdL = max(dot(N, L), 0.0);
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    // Moving L to the representative point already spreads the highlight over the light's shape,
+    // so the lobe itself is left alone and only renormalized: (alpha / widened)^2, with alpha
+    // widened by the half angle of a disc with the rectangle's area. Without it the highlight's
+    // peak would stay a point light's while its footprint grew, adding energy.
+    float alpha = roughness * roughness;
+    float equivalentRadius = sqrt(area / PI);
+    float widenedAlpha = clamp(alpha + equivalentRadius / (2.0 * lightDistance), alpha, 1.0);
+    float energyNormalization = (alpha * alpha) / (widenedAlpha * widenedAlpha);
+
+    float D = DistributionGGX(N, H, roughness) * energyNormalization;
+    float G = GeometrySmith(N, V, L, roughness);
+    vec3 specular = NdL > 0.0 ? (D * G * F) / max(4.0 * NdV * NdL, 0.0001) : vec3(0.0);
+
+    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+
+    return (diffuse + specular) * irradiance;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,15 +303,8 @@ vec3 EvaluateSceneLight(
     }
     else if (lightType == LIGHT_AREA)
     {
-        // Treat the area light as a point at its centre (representative point).
-        vec3 toLight = light.positionAndRange.xyz - worldPos;
-        float dist = length(toLight);
-        L = toLight / max(dist, 0.0001);
-
-        float att = SmoothDistanceAttenuation(dist, light.positionAndRange.w);
-        float area = max(light.spotAndArea.z * light.spotAndArea.w, 0.0001);
-        // Lumens → luminance: I / (π × area), then attenuate.
-        radiance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area)) * att;
+        // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
+        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness);
     }
     else
     {
@@ -230,9 +335,16 @@ void main()
         discard;
 
     // ---- Normal -----------------------------------------------------------
-    vec3 geoNormal = normalize(fragWorldNormal);
-    vec3 tangent = normalize(fragWorldTangent.xyz - geoNormal * dot(geoNormal, fragWorldTangent.xyz));
-    vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w);
+    // A back face is only rasterized by a double-sided pipeline, and it is seen from the side the
+    // vertex normal points away from. Mirroring the whole tangent frame, bitangent included, shades
+    // it as the front face would be from the other side, with the normal map's perturbation
+    // mirrored along with it. Single-sided pipelines cull back faces, so this is a no-op for them.
+    float faceSign = gl_FrontFacing ? 1.0 : -1.0;
+    vec3 geoNormal = normalize(fragWorldNormal) * faceSign;
+    vec3 faceTangent = fragWorldTangent.xyz * faceSign;
+    vec3 tangent = normalize(faceTangent - geoNormal * dot(geoNormal, faceTangent));
+    // cross(-N, -T) == cross(N, T), so the flip has to be applied to the bitangent explicitly.
+    vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w) * faceSign;
     mat3 TBN = mat3(tangent, bitangent, geoNormal);
 
     vec3 nrmPrimary = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;

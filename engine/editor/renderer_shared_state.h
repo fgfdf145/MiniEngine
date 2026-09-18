@@ -169,5 +169,8 @@ struct RendererSharedState
     bool engineSettingsNeedsBootstrapSave = false;
     RenderExtent requestedViewportExtent{};
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
+    // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
+    // exposure adaptation.
+    float frameDeltaSeconds = 0.0f;
 };
 }

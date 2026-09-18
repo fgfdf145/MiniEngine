@@ -6,6 +6,8 @@
 add_library(engine_render_core
     camera.cpp
     camera.h
+    exposure.cpp
+    exposure.h
     material.h
     material_pipeline.cpp
     material_pipeline.h
@@ -50,6 +52,8 @@ add_library(engine_renderer
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
+    vulkan/exposure_histogram_pass.cpp
+    vulkan/exposure_histogram_pass.h
     vulkan/format_support.cpp
     vulkan/format_support.h
     vulkan/forward_pass.cpp
@@ -94,10 +98,22 @@ set(MINIENGINE_SHADER_SOURCES
     triangle.frag
     fullscreen.vert
     tonemap.frag
+    exposure_histogram.comp
+)
+
+# Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
+# which is coarser than a per-shader depfile but cannot miss a dependency.
+set(MINIENGINE_SHADER_INCLUDES
+    exposure_histogram.glsl
+    gt7_tonemap.glsl
 )
 
 function(miniengine_add_shaders shader_target)
     set(spv_outputs "")
+    set(shader_includes "")
+    foreach(include_name IN LISTS MINIENGINE_SHADER_INCLUDES)
+        list(APPEND shader_includes "${PROJECT_SOURCE_DIR}/shaders/vulkan/${include_name}")
+    endforeach()
     foreach(shader_name IN LISTS ARGN)
         set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
         set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_name}.spv")
@@ -105,7 +121,7 @@ function(miniengine_add_shaders shader_target)
             OUTPUT "${shader_output}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
             COMMAND ${Vulkan_GLSLC_EXECUTABLE} "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}"
+            DEPENDS "${shader_source}" ${shader_includes}
             COMMENT "Compiling ${shader_name}"
             VERBATIM
         )

@@ -78,6 +78,59 @@ endif()
 
 set_target_properties(miniengine_material_alpha_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_exposure_tests
+    exposure_tests.cpp
+)
+miniengine_group_target_sources(miniengine_exposure_tests)
+
+target_link_libraries(miniengine_exposure_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.exposure
+    COMMAND miniengine_exposure_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_exposure_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_exposure_tests>
+            $<TARGET_FILE_DIR:miniengine_exposure_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_exposure_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_tonemap_tests
+    tonemap_tests.cpp
+    third_party/gt7/gt7_tone_mapping_reference.h
+)
+miniengine_group_target_sources(miniengine_tonemap_tests)
+
+target_link_libraries(miniengine_tonemap_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.tonemap
+    COMMAND miniengine_tonemap_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_tonemap_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_tonemap_tests>
+            $<TARGET_FILE_DIR:miniengine_tonemap_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_tonemap_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}

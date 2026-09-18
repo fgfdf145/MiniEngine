@@ -25,7 +25,7 @@ struct LightComponent
 {
     LightType type = LightType::Point;
     glm::vec3 color{1.0f, 1.0f, 1.0f};
-    float intensity = 1000.0f;           // Lumens (point/spot/area) or lux (directional)
+    float intensity = 1000.0f;           // Lumens (point/spot/area), lux (directional) or cd/m^2 (ambient)
     float range = 10.0f;                 // Effective range in meters
     float spotInnerAngleDegrees = 15.0f; // Spot inner cone half-angle
     float spotOuterAngleDegrees = 30.0f; // Spot outer cone half-angle

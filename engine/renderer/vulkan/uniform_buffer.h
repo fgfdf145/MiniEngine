@@ -44,6 +44,9 @@ struct GpuLightData
     glm::vec4 colorAndIntensity{1.0f, 1.0f, 1.0f, 1000.0f};
     glm::vec4 directionAndType{0.0f, -1.0f, 0.0f, 1.0f}; // type 1 = point
     glm::vec4 spotAndArea{0.97f, 0.87f, 1.0f, 1.0f};
+    // xyz = the world axis the area light's width runs along; its height runs along
+    // cross(direction, right). Only area lights read it.
+    glm::vec4 areaRightAxis{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 static constexpr uint32_t kMaxSceneLights = 8;
@@ -62,9 +65,9 @@ struct alignas(16) CameraUniformData
 // the shader's std140 CameraBuffer block exactly. Every member is a 16-byte multiple (mat4/vec4
 // only — never add vec3/scalars without manual padding), which keeps the C++ layout identical
 // to std140 without relying on GLM alignment macros.
-static_assert(sizeof(GpuLightData) == 64, "GpuLightData must stay 4 x vec4 to match std140");
+static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
-    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 64 + 16,
+    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
 // Set 0: the per-frame camera uniform buffer. Split out from the material set so that the camera

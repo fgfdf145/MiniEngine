@@ -1,0 +1,59 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "exposure_histogram.glsl"
+
+// One invocation per pixel, and one per bin: the workgroup has exactly
+// kExposureHistogramBinCount invocations, so each clears and flushes one shared bin.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D hdrTexture;
+layout(set = 0, binding = 1) uniform sampler2D depthTexture;
+
+// Cleared by the pass before this dispatch and read back on the CPU once the frame's fence has
+// signaled.
+layout(set = 0, binding = 2, std430) buffer HistogramBuffer
+{
+    uint bins[kExposureHistogramBinCount];
+}
+histogram;
+
+layout(push_constant) uniform HistogramConstants
+{
+    uvec2 extent;
+}
+constants;
+
+shared uint localBins[kExposureHistogramBinCount];
+
+void main()
+{
+    localBins[gl_LocalInvocationIndex] = 0u;
+    barrier();
+
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (all(lessThan(gl_GlobalInvocationID.xy, constants.extent)))
+    {
+        // Background pixels are skipped: the forward pass clears them to a value divided by the
+        // current exposure, so metering them would feed the exposure back into itself.
+        float depth = texelFetch(depthTexture, pixel, 0).r;
+        if (depth < 1.0)
+        {
+            vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0));
+            float luminance = ExposureLuminance(radiance);
+            // NaN fails every comparison; such a pixel is left out rather than binned arbitrarily.
+            if (luminance >= 0.0)
+            {
+                atomicAdd(localBins[ExposureHistogramBin(luminance)], 1u);
+            }
+        }
+    }
+
+    barrier();
+
+    uint count = localBins[gl_LocalInvocationIndex];
+    if (count != 0u)
+    {
+        atomicAdd(histogram.bins[gl_LocalInvocationIndex], count);
+    }
+}

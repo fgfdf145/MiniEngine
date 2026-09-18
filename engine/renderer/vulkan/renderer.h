@@ -3,6 +3,7 @@
 #include "buffer.h"
 #include "command.h"
 #include "device.h"
+#include "exposure_histogram_pass.h"
 #include "forward_pass.h"
 #include "imgui_layer.h"
 #include "instance.h"
@@ -96,6 +97,9 @@ class VulkanRenderer : public EditorRenderBackendBase
         const ScenePassFrameContext& frame);
     void RecordScenePasses(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame);
     void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const;
+    // Meters the histogram the given frame slot last wrote and moves the camera's EV100 toward
+    // it. Must run after AcquireNextImage has waited on that slot's fence.
+    void UpdateAutoExposure(uint32_t frameSlot);
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
@@ -117,6 +121,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanRenderPass> m_renderPass;
     std::unique_ptr<SceneRenderTargets> m_sceneTargets;
     std::unique_ptr<VulkanForwardPass> m_forwardPass;
+    std::unique_ptr<VulkanExposureHistogramPass> m_exposurePass;
+    // False until auto exposure has metered its first frame, which it then snaps to instead of
+    // fading in from the default EV.
+    bool m_hasMeteredExposure = false;
     std::unique_ptr<VulkanTonemapPass> m_tonemapPass;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets

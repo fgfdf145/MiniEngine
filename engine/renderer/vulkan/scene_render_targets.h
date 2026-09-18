@@ -48,6 +48,10 @@ class SceneRenderTargets
     VkImageAspectFlags GetAspect(RenderTargetId target) const;
     VkImage GetImage(RenderTargetId target, uint32_t index) const;
     VkImageView GetView(RenderTargetId target, uint32_t index) const;
+    // The view a shader samples. For every target but a depth target with a stencil component it
+    // is GetView; for that one it is a depth-only view, because a sampled view may carry only one
+    // aspect while the attachment view needs both.
+    VkImageView GetSampledView(RenderTargetId target, uint32_t index) const;
 
     VkExtent2D GetExtent() const;
     bool MatchesExtent(VkExtent2D extent) const;
@@ -78,6 +82,8 @@ class SceneRenderTargets
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
+        // Only created when the target's aspect has more than one bit; see GetSampledView.
+        VkImageView sampledView = VK_NULL_HANDLE;
         VkDescriptorSet imguiBinding = VK_NULL_HANDLE;
     };
 

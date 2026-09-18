@@ -6,6 +6,7 @@ struct SceneLightData
     vec4 colorAndIntensity;
     vec4 directionAndType;
     vec4 spotAndArea;
+    vec4 areaRightAxis;
 };
 
 layout(push_constant) uniform DrawConstants
