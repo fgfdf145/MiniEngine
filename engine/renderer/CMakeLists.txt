@@ -117,6 +117,7 @@ set(MINIENGINE_SHADER_INCLUDES
     exposure_histogram.glsl
     gt7_tonemap.glsl
     scene_common.glsl
+    pbr_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)

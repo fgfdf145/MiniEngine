@@ -2,6 +2,9 @@
 // is CameraUniformData in engine/renderer/vulkan/uniform_buffer.h; the two must stay byte for byte
 // identical under std140.
 
+#ifndef SCENE_COMMON_GLSL
+#define SCENE_COMMON_GLSL
+
 // Light type constants: must match the C++ LightType enum.
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
@@ -39,3 +42,5 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 shadowParams;                                      // x = index into lights[] of the caster, -1 for none; y = 1 / resolution
 }
 ubo;
+
+#endif
