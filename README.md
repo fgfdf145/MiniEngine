@@ -199,7 +199,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - 只有一盏方向光投影；点光、聚光、面光没有阴影。没有逐灯的 Cast Shadows 开关。
 - 开销：Release、RTX 4070 Laptop、NewSponza、1920×936 视口下，有阴影 153.5 FPS，把太阳换成点光 427.8 FPS，阴影约 4.2 ms。NewSponza 的子网格多是大块合并网格，包围球剔除基本剔不掉，每级几乎重画整个场景。可能的后续：更细粒度剔除、远级隔帧更新、减少级数。
 - 仅有兜底环境光的场景里，阴影区接近纯黑。这是没有天空光的正常结果，不是阴影本身的问题。
-- `docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 仍按修正前的着色器写成：其中的 `scene_common.glsl`、`ShadeSurface` 没有新的衰减、聚光立体角、split-sum 环境光和阴影采样，延迟光照 pass 还要绑定 set 0 binding 1 的阴影图。执行前需要修订计划。
+- `docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 原按修正前的着色器写成，已于 2026-09-18 按 `4b50e17` 修订（见计划开头的 Revision 一节）：`ShadeSurface` 移入 `pbr_common.glsl` 并带上新的衰减、聚光立体角、split-sum 环境光与阴影采样；GB1 扩为 `R16G16B16A16_SFLOAT`，`.ba` 存几何法线，供延迟路径做与前向相同的阴影法线偏移；光照 pass 经已绑定的 set 0 读取阴影图。
 
 **验证**
 
@@ -256,7 +256,7 @@ x64 Debug 与 Release 构建通过，CTest `37/37`（新增 `miniengine.scene_li
 
 **与 phase two 计划的冲突**
 
-`docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 写于本轮之前，照原文执行会回退或破坏上述改动：几何 pass 着色器沿用未翻转的 TBN；`tonemap.frag` 自带一个 `uint32_t` push constant，需要与曝光的 `float` 合并排布；延迟光照在深度 1.0 处输出的背景预除值和前向清屏片段都没有除以曝光；计划中的 `scene_common.glsl` 与 `ShadeSurface` 仍是 4 个 vec4 的 `SceneLightData`，也没有新的面光源函数。计划里的 `tonemap.frag` 仍是 Reinhard，没有 GT7 的 include，场景 pass 列表里也没有直方图 pass。执行前需要修订计划。
+`docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 写于本轮之前，照原文执行会回退或破坏上述改动：几何 pass 着色器沿用未翻转的 TBN；`tonemap.frag` 自带一个 `uint32_t` push constant，需要与曝光的 `float` 合并排布；延迟光照在深度 1.0 处输出的背景预除值和前向清屏片段都没有除以曝光；计划中的 `scene_common.glsl` 与 `ShadeSurface` 仍是 4 个 vec4 的 `SceneLightData`，也没有新的面光源函数。计划里的 `tonemap.frag` 仍是 Reinhard，没有 GT7 的 include，场景 pass 列表里也没有直方图 pass。以上各点已在 2026-09-18 的计划修订中处理（见计划开头的 Revision 一节）。
 
 **验证**
 
