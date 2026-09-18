@@ -232,16 +232,17 @@ foreach(miniengine_format_contract_case IN LISTS miniengine_format_contract_case
     )
 endforeach()
 
-# The two units under test call no Vulkan entry point, so their translation units are compiled
+# The three units under test call no Vulkan entry point, so their translation units are compiled
 # directly into the test rather than linking engine_renderer, which would drag the whole Vulkan
 # backend and the ImGui editor into a unit test. Vulkan::Vulkan is here for the headers only.
 add_executable(miniengine_scene_pass_tests
     scene_pass_tests.cpp
     ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/render_target_layout.cpp
     ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/format_support.cpp
+    ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/scene_pass_order.cpp
 )
 # No miniengine_group_target_sources here: that helper's source_group(TREE ...) requires every
-# file to sit under the calling directory, and this target deliberately compiles two .cpp files
+# file to sit under the calling directory, and this target deliberately compiles three .cpp files
 # from engine/renderer/vulkan/ so a unit test does not have to link the whole Vulkan backend.
 # The helper only organises IDE source folders, so skipping it for this one target costs nothing
 # but its folder grouping in the Visual Studio solution.

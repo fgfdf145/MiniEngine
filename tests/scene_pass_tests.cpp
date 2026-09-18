@@ -1,5 +1,6 @@
 #include <engine/renderer/vulkan/format_support.h>
 #include <engine/renderer/vulkan/render_target_layout.h>
+#include <engine/renderer/vulkan/scene_pass_order.h>
 
 #include <array>
 #include <iostream>
@@ -223,6 +224,28 @@ void ChooseFormatThrowsWhenNothingQualifies()
 
     Require(threw, "no qualifying candidate must throw rather than return an undefined format");
 }
+
+void DeferredOrderRunsGeometryLightingForwardExposureThenTonemap()
+{
+    const std::span<const ScenePassId> order = BuildScenePassOrder(false);
+
+    Require(order.size() == 5, "the deferred order must contain five passes");
+    Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
+    Require(order[1] == ScenePassId::Lighting, "lighting must follow the geometry pass");
+    Require(order[2] == ScenePassId::Forward, "the forward blend pass must follow lighting");
+    Require(order[3] == ScenePassId::ExposureHistogram, "the histogram must meter the finished HDR image");
+    Require(order[4] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+}
+
+void ForwardOnlyOrderSkipsTheDeferredPasses()
+{
+    const std::span<const ScenePassId> order = BuildScenePassOrder(true);
+
+    Require(order.size() == 3, "the forward-only order must contain three passes");
+    Require(order[0] == ScenePassId::Forward, "the forward-only order must start with the forward pass");
+    Require(order[1] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
+    Require(order[2] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
+}
 }
 
 int main()
@@ -240,6 +263,8 @@ int main()
         ChooseFormatFallsThroughToALaterCandidate();
         ChooseFormatRequiresEveryRequestedFeature();
         ChooseFormatThrowsWhenNothingQualifies();
+        DeferredOrderRunsGeometryLightingForwardExposureThenTonemap();
+        ForwardOnlyOrderSkipsTheDeferredPasses();
 
         std::cout << "scene pass tests passed\n";
         return 0;

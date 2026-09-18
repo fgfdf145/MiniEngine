@@ -77,6 +77,8 @@ add_library(engine_renderer
     vulkan/renderer.cpp
     vulkan/renderer.h
     vulkan/scene_pass.h
+    vulkan/scene_pass_order.cpp
+    vulkan/scene_pass_order.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
     vulkan/shadow_pass.cpp
