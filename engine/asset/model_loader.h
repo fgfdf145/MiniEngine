@@ -44,6 +44,7 @@ struct ModelSubmeshData
     // Computed once on the loading thread (ModelPostProcess::FinalizeSubmeshData) so that
     // building renderables doesn't have to walk every vertex again on the main thread.
     glm::vec3 boundsCenter{0.0f};
+    float boundsRadius = 0.0f;
     uint32_t materialIndex = 0;
     bool hasTexCoords = false;
     bool hasNormals = false;

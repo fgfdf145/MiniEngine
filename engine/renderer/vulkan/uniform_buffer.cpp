@@ -13,10 +13,12 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     uint32_t imageCount,
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout materialSetLayout,
-    const std::vector<MaterialTextureBinding>& materialBindings)
+    const std::vector<MaterialTextureBinding>& materialBindings,
+    TextureDescriptorBinding shadowMap)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
+      m_shadowMap(shadowMap),
       m_frameSetLayout(frameSetLayout),
       m_materialSetLayout(materialSetLayout),
       m_imageCount(imageCount)
@@ -88,7 +90,8 @@ void VulkanUniformBuffer::Update(
     const ViewportMatrices& matrices,
     const glm::vec3& cameraPosition,
     const glm::vec3& ambientLuminance,
-    std::span<const GpuLightData> lights)
+    std::span<const GpuLightData> lights,
+    const ShadowUniformData& shadow)
 {
     CameraUniformData data{};
     data.view = matrices.view;
@@ -102,6 +105,7 @@ void VulkanUniformBuffer::Update(
     {
         data.lights[i] = lights[i];
     }
+    data.shadow = shadow;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }
@@ -109,16 +113,21 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    VkDescriptorSetLayoutBinding uniformBinding{};
-    uniformBinding.binding = 0;
-    uniformBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uniformBinding.descriptorCount = 1;
-    uniformBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // The shadow map, sampled with depth comparison by the material fragment shader.
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uniformBinding;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
 
     CheckVulkan(
         vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
@@ -205,12 +214,12 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
-    // One pool serves both sets the split produced: imageCount uniform buffers for set 0 and
-    // thirteen samplers per material set for set 1. That is why neither its name nor its failure
-    // message belongs to either half.
+    // One pool serves both sets the split produced: imageCount uniform buffers and shadow map
+    // samplers for set 0 and thirteen samplers per material set for set 1. That is why neither its
+    // name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13}}};
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -259,15 +268,26 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         // The camera uniform buffer is written once per image here, into the set 0 allocated for
         // that image — not once per material, which is what made the old single-set layout
         // wasteful and is the whole point of this split.
-        VkWriteDescriptorSet frameWrite{};
-        frameWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrite.dstSet = m_frameDescriptorSets[i];
-        frameWrite.dstBinding = 0;
-        frameWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        frameWrite.descriptorCount = 1;
-        frameWrite.pBufferInfo = &bufferInfo;
+        VkDescriptorImageInfo shadowInfo{};
+        shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shadowInfo.imageView = m_shadowMap.imageView;
+        shadowInfo.sampler = m_shadowMap.sampler;
 
-        vkUpdateDescriptorSets(m_device, 1, &frameWrite, 0, nullptr);
+        std::array<VkWriteDescriptorSet, 2> frameWrites{};
+        frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[0].dstSet = m_frameDescriptorSets[i];
+        frameWrites[0].dstBinding = 0;
+        frameWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        frameWrites[0].descriptorCount = 1;
+        frameWrites[0].pBufferInfo = &bufferInfo;
+        frameWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[1].dstSet = m_frameDescriptorSets[i];
+        frameWrites[1].dstBinding = 1;
+        frameWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        frameWrites[1].descriptorCount = 1;
+        frameWrites[1].pImageInfo = &shadowInfo;
+
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 
         for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
         {

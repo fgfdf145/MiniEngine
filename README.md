@@ -20,7 +20,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 - 统一场景：模型和灯光共享稳定的编辑器顺序；`ModelComponent`、`LightComponent`、变换、包围盒与 `SceneEntityIdComponent` 构成场景实体。场景采用 YAML v3，并保留旧 v1/v2 的加载兼容路径。
 - 资产工作流：资产浏览、复制、粘贴、重命名、删除与批量操作；资产树为可注册模型和纹理维护 UUID sidecar。
 - glTF 2.0：导入 `.gltf` 与 `.glb`、复制模型包与关联资源、三角化/法线/切线后处理、单位换算；每个已导入材质可保存 `.material.yaml` sidecar，并可编辑 PBR 材质图与材质贴图。
-- 渲染：Cook-Torrance PBR、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient）及灯光 gizmo。
+- 渲染：Cook-Torrance PBR、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient）及灯光 gizmo；最亮的方向光投射 4 级级联阴影（CSM，每级 2048²，3×3 双线性 PCF）。
 - 后台任务：模型和场景使用异步加载状态机，资产导入在后台执行；主线程在逐帧阶段泵送结果并刷新 UI 或 CPU Renderable。
 - 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性和主题等设置。
 
@@ -149,7 +149,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
-- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除、没有阴影与抗锯齿、没有环境镜面/IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。
+- 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
@@ -172,6 +172,38 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 ## 10. 决策与开发记录
 
 以下为历史记录，不是本轮验证结果；保留它们是为了说明仍影响维护决策的原因与踩坑。
+
+### 2026-09-18 — 光照修正与方向光级联阴影
+
+来自对光照系统的一次审查。分两次提交：先修光照公式和灯光选择，再加阴影。
+
+**光照修正**
+
+- 点光与聚光的距离衰减由 `window / (d² + 1)` 改为 `window / max(d², 1 cm²)`。原式在 1 m 处只有物理值的一半、0.3 m 处约十分之一，与以流明为单位的强度不符。
+- 聚光把流明摊到外锥立体角 `2π(1 − cos outer)`，此前用的是内锥，内外角差越大，实际发出的光通量越多于标称值。
+- 环境光按亮度均匀的环境处理，用 Karis 的 split-sum 解析拟合（`EnvironmentBrdfApprox`）：金属不再有 albedo 色的漫反射环境光，所有表面补上了原本缺失的环境镜面项与菲涅尔。对均匀环境而言，除拟合误差外 split-sum 是精确的。
+- Ambient 灯在 CPU 上求和（`SelectSceneLights`），不再占着色器的 8 个灯位；兜底环境光只在场景没有任何 Ambient 灯时生效，放一盏强度为 0 的 Ambient 灯即可得到全黑环境。
+- 超过 8 盏时不再按 ECS 迭代顺序截断：方向光按强度优先，其余按在相机处的照度 `I / max(d², 1)` 排序，并列保持场景顺序；被丢弃数量变化时打一条警告。纯逻辑在 `engine/renderer/scene_lighting.*`，由 `miniengine.scene_lighting` 覆盖。
+- 相机 uniform 块的声明集中到 `shaders/vulkan/scene_common.glsl`。
+- 新增启动参数 `--scene <path>`，以异步方式加载场景，替换双立方体测试场景。
+
+**方向光级联阴影**
+
+- 投影光源：选中灯里最亮的方向光（强度大于 0）。每帧由 `BuildShadowCascades`（`engine/renderer/shadow_cascades.*`，纯函数，`miniengine.shadow_cascades` 覆盖）按 λ = 0.8 的对数/均匀混合切 4 级，阴影距离取 80 m 与相机远平面中较小者。每级拟合到视锥切片的包围球（半径量化到 1/16 m），光空间原点对齐到整 texel，相机平移、转向时阴影边缘不爬动。近平面沿光线方向后拉 200 m，视野外的遮挡物也能投影。
+- `VulkanShadowPass`（`engine/renderer/vulkan/shadow_pass.*`）持有一张 4 层的 2D array 深度图（优先 D32，退回 D16），设备生命周期，所有在途帧共用一张。它不是 `IScenePass`，也不经过 `RenderTargetLayoutTracker`：每层一个 render pass，从 UNDEFINED 清屏，结束于 SHADER_READ_ONLY；与上一帧的读取、本帧材质 pass 的读取之间的顺序由 render pass 的两条外部依赖保证。没有投影光时仍逐层清屏，因为材质 pass 总会绑定这张图，清屏保证它处于描述符声明的布局。
+- 投影物：Opaque 只画深度、无片元着色器；Mask 跑与 `triangle.frag` 相同的双层 alpha 测试；Blend 不投影。不做背面剔除（单面墙从背后也要挡光），用光栅化 slope bias（常数 1、斜率 2）加着色器里 1.5 texel 的法线偏移防止阴影痤疮。每级按包围球剔除投影物；为此子网格新增包围球半径（`ComputeMeshBounds`，与中心一样在加载线程算好缓存）。
+- 采样：set 0 binding 1 的 `sampler2DArrayShadow`，比较采样器 LESS_OR_EQUAL，线性过滤可用时 3×3 次采样构成 4×4 texel 平滑滤波；每级最后 10% 深度范围与下一级混合，最后一级淡出到无阴影。查询在非统一控制流里，用零梯度的 `textureGrad`。
+
+**已知限制**
+
+- 只有一盏方向光投影；点光、聚光、面光没有阴影。没有逐灯的 Cast Shadows 开关。
+- 开销：Release、RTX 4070 Laptop、NewSponza、1920×936 视口下，有阴影 153.5 FPS，把太阳换成点光 427.8 FPS，阴影约 4.2 ms。NewSponza 的子网格多是大块合并网格，包围球剔除基本剔不掉，每级几乎重画整个场景。可能的后续：更细粒度剔除、远级隔帧更新、减少级数。
+- 仅有兜底环境光的场景里，阴影区接近纯黑。这是没有天空光的正常结果，不是阴影本身的问题。
+- `docs/superpowers/plans/2026-09-13-gbuffer-phase2-deferred-shading.md` 仍按修正前的着色器写成：其中的 `scene_common.glsl`、`ShadeSurface` 没有新的衰减、聚光立体角、split-sum 环境光和阴影采样，延迟光照 pass 还要绑定 set 0 binding 1 的阴影图。执行前需要修订计划。
+
+**验证**
+
+x64 Debug 与 Release 构建通过，CTest `37/37`（新增 `miniengine.scene_lighting`、`miniengine.shadow_cascades`），`check-format` 通过。Debug 开验证层运行默认场景 200 帧、含太阳的测试场景 300 帧，均退出码 0，无验证层输出。同步验证仍未开启，跨帧共用阴影图的正确性依赖对 render pass 外部依赖的推理，没有经过同步验证层检查。截取了引擎窗口：测试场景里阴影方向与太阳方向一致，与投影物底部相接，地面无痤疮；NewSponza 中拱廊在地面和柱子上投下的阴影形状正确。截图由脚本拍摄，未经人工 GUI 验收。
 
 ### 2026-09-18 — 曝光与自动曝光、GT7 色调映射、双面背面法线、前向深度保存、矩形面光源与版本号
 

@@ -10,6 +10,7 @@
 #include "pipeline_set.h"
 #include "render_pass.h"
 #include "scene_render_targets.h"
+#include "shadow_pass.h"
 #include "swapchain.h"
 #include "texture.h"
 #include "tonemap_pass.h"
@@ -37,6 +38,7 @@ struct RenderSubmesh
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     glm::vec3 localBoundsCenter{0.0f};
+    float localBoundsRadius = 0.0f;
     std::string name;
 };
 
@@ -91,6 +93,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
         std::vector<RenderSubmesh> newRenderSubmeshes);
     std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex) const;
+    std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         const RenderPassIo& io,
@@ -118,6 +121,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;
     std::unique_ptr<VulkanMaterialDescriptorSetLayout> m_materialSetLayout;
     VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
+    // Device lifetime too: its image has a fixed size and is shared by every frame in flight, and
+    // every VulkanUniformBuffer binds it into set 0.
+    std::unique_ptr<VulkanShadowPass> m_shadowPass;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;

@@ -16,6 +16,9 @@ layout(push_constant) uniform DrawConstants
 }
 drawData;
 
+// One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
+layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
+
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
 layout(set = 1, binding = 2) uniform sampler2D metallicTexture;
@@ -232,6 +235,76 @@ vec3 EvaluateAreaLight(
 }
 
 // ---------------------------------------------------------------------------
+// Directional shadow
+// ---------------------------------------------------------------------------
+
+// How far, in texels of the cascade in use, the lookup moves off the surface along its geometric
+// normal. Moving the receiver rather than biasing its depth keeps acne off surfaces at grazing
+// angles to the light without detaching shadows from the casters' feet ("peter panning").
+const float kShadowNormalOffsetTexels = 1.5;
+
+// The last fraction of each cascade's depth range fades into the next cascade, or into no shadow
+// after the last one, so neither the cascade switch nor the shadow distance shows as a hard line.
+const float kShadowCascadeBlendFraction = 0.1;
+
+// 3x3 taps, each a bilinear comparison: an even 4x4 texel filter.
+float SampleShadowCascade(int cascade, vec3 worldPos, vec3 geoNormal)
+{
+    vec3 offsetPos = worldPos + geoNormal * (ubo.shadowCascadeTexelSizes[cascade] * kShadowNormalOffsetTexels);
+    vec4 lightClip = ubo.shadowCascadeViewProjection[cascade] * vec4(offsetPos, 1.0);
+    vec2 uv = lightClip.xy * 0.5 + 0.5;
+    float texel = ubo.shadowParams.y;
+
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            // Explicit zero gradients: the lookup runs in non-uniform control flow, where implicit
+            // derivatives are undefined, and the map has a single mip level anyway.
+            lit += textureGrad(
+                shadowMap,
+                vec4(uv + vec2(x, y) * texel, float(cascade), lightClip.z),
+                vec2(0.0),
+                vec2(0.0));
+        }
+    }
+    return lit / 9.0;
+}
+
+// The fraction of the shadow casting light that reaches this point: 1 lit, 0 in shadow.
+float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
+{
+    float viewDepth = -(ubo.view * vec4(worldPos, 1.0)).z;
+    int cascade = -1;
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; ++i)
+    {
+        if (viewDepth <= ubo.shadowCascadeSplits[i])
+        {
+            cascade = i;
+            break;
+        }
+    }
+    if (cascade < 0)
+        return 1.0;
+
+    float lit = SampleShadowCascade(cascade, worldPos, geoNormal);
+
+    float splitFar = ubo.shadowCascadeSplits[cascade];
+    float splitNear = cascade == 0 ? 0.0 : ubo.shadowCascadeSplits[cascade - 1];
+    float blendWidth = (splitFar - splitNear) * kShadowCascadeBlendFraction;
+    float blend = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0, 1.0);
+    if (blend > 0.0)
+    {
+        float nextLit = cascade + 1 < SHADOW_CASCADE_COUNT
+                            ? SampleShadowCascade(cascade + 1, worldPos, geoNormal)
+                            : 1.0;
+        lit = mix(lit, nextLit, blend);
+    }
+    return lit;
+}
+
+// ---------------------------------------------------------------------------
 // Uniform ambient
 // ---------------------------------------------------------------------------
 
@@ -401,14 +474,22 @@ void main()
 
     // ---- Direct lighting --------------------------------------------------
     uint lightCount = ubo.sceneLightCount.x;
+    int shadowLightIndex = int(ubo.shadowParams.x);
     vec3 directAccum = vec3(0.0);
     for (uint i = 0u; i < lightCount; ++i)
     {
-        directAccum += EvaluateSceneLight(
+        vec3 contribution = EvaluateSceneLight(
             ubo.lights[i],
             fragWorldPosition,
             N, V,
             albedo.rgb, metallic, roughness);
+        // Skipped where the light contributes nothing, which includes every surface facing away
+        // from it: those are dark already, and the lookup is the most expensive part of the loop.
+        if (int(i) == shadowLightIndex && any(greaterThan(contribution, vec3(0.0))))
+        {
+            contribution *= EvaluateDirectionalShadow(fragWorldPosition, geoNormal);
+        }
+        directAccum += contribution;
     }
 
     // ---- Combine ----------------------------------------------------------

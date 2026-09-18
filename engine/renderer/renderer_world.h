@@ -43,6 +43,7 @@ struct CpuRenderSubmesh
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     glm::vec3 localBoundsCenter{0.0f};
+    float localBoundsRadius = 0.0f;
     std::string name;
 };
 

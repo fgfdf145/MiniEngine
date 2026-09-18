@@ -30,8 +30,16 @@ struct MeshData
 
 MeshData CreateDefaultCubeMesh();
 
-// Midpoint of the mesh's axis-aligned bounds, in the mesh's own space. Walks every
-// vertex, so prefer the value a loader already cached (ModelSubmeshData::boundsCenter)
-// over calling this on model geometry.
+// A sphere around the mesh, in the mesh's own space: centered on the midpoint of its
+// axis-aligned bounds, with half their diagonal as the radius.
+struct MeshBounds
+{
+    glm::vec3 center{0.0f};
+    float radius = 0.0f;
+};
+
+// Walks every vertex, so prefer the values a loader already cached
+// (ModelSubmeshData::boundsCenter and boundsRadius) over calling these on model geometry.
+MeshBounds ComputeMeshBounds(const MeshData& mesh);
 glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh);
 }

@@ -75,7 +75,9 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.mesh = std::make_shared<const MeshData>(CreateDefaultCubeMesh());
         renderSubmesh.material = BuildDefaultMaterialForTag(tag.name);
         renderSubmesh.alphaMode = material.alphaMode;
-        renderSubmesh.localBoundsCenter = ComputeMeshBoundsCenter(*renderSubmesh.mesh);
+        const MeshBounds bounds = ComputeMeshBounds(*renderSubmesh.mesh);
+        renderSubmesh.localBoundsCenter = bounds.center;
+        renderSubmesh.localBoundsRadius = bounds.radius;
         renderSubmesh.material.alphaCutoff =
             ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
         renderSubmesh.hasTexCoords = true;
@@ -158,6 +160,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.doubleSided = material.doubleSided;
         renderSubmesh.alphaMode = material.alphaMode;
         renderSubmesh.localBoundsCenter = submesh.boundsCenter;
+        renderSubmesh.localBoundsRadius = submesh.boundsRadius;
         renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
         renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
         renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];

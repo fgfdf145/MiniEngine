@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../camera.h"
+#include "../shadow_cascades.h"
 #include "common.h"
 
 #include <glm/glm.hpp>
@@ -52,6 +53,22 @@ struct GpuLightData
 
 static constexpr uint32_t kMaxSceneLights = 8;
 
+// The directional shadow map as the shader reads it. Mirrors the shadow members at the end of
+// CameraBuffer in shaders/vulkan/scene_common.glsl.
+struct ShadowUniformData
+{
+    glm::mat4 cascadeViewProjection[kShadowCascadeCount]{};
+    // Component i: the view distance where cascade i ends.
+    glm::vec4 cascadeSplits{0.0f};
+    // Component i: the world size of one texel of cascade i.
+    glm::vec4 cascadeTexelSizes{0.0f};
+    // x = index into the uploaded lights of the light that casts shadows, or -1 for none;
+    // y = 1 / shadow map resolution.
+    glm::vec4 params{-1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+static_assert(kShadowCascadeCount == 4, "ShadowUniformData packs one cascade per vec4 component");
+
 struct alignas(16) CameraUniformData
 {
     glm::mat4 view{1.0f};
@@ -61,6 +78,7 @@ struct alignas(16) CameraUniformData
     glm::vec4 ambientLuminance{0.0f};
     GpuLightData lights[kMaxSceneLights];
     glm::uvec4 sceneLightCount{0u, 0u, 0u, 0u};
+    ShadowUniformData shadow;
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -69,12 +87,13 @@ struct alignas(16) CameraUniformData
 // to std140 without relying on GLM alignment macros.
 static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
-    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16,
+    sizeof(CameraUniformData) == 2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 
-// Set 0: the per-frame camera uniform buffer. Split out from the material set so that the camera
-// write leaves the per-material loop entirely — it is written once per swapchain image instead of
-// once per image per material — and so a material reload rebuilds only set 1. The lighting pass
+// Set 0: the per-frame camera uniform buffer at binding 0 and the directional shadow map at
+// binding 1. Split out from the material set so that the camera write leaves the per-material
+// loop entirely — it is written once per swapchain image instead of once per image per material —
+// and so a material reload rebuilds only set 1. The lighting pass
 // phase two adds will also need the camera data with no material to bind; the tone mapping pass
 // does not, and binds no camera set at all.
 class VulkanFrameDescriptorSetLayout
@@ -122,7 +141,8 @@ class VulkanUniformBuffer
         uint32_t imageCount,
         VkDescriptorSetLayout frameSetLayout,
         VkDescriptorSetLayout materialSetLayout,
-        const std::vector<MaterialTextureBinding>& materialBindings);
+        const std::vector<MaterialTextureBinding>& materialBindings,
+        TextureDescriptorBinding shadowMap);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -135,7 +155,8 @@ class VulkanUniformBuffer
         const ViewportMatrices& matrices,
         const glm::vec3& cameraPosition,
         const glm::vec3& ambientLuminance,
-        std::span<const GpuLightData> lights);
+        std::span<const GpuLightData> lights,
+        const ShadowUniformData& shadow);
 
   private:
     void CreateBuffers(uint32_t imageCount);
@@ -146,6 +167,7 @@ class VulkanUniformBuffer
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     std::vector<MaterialTextureBinding> m_materialBindings;
+    TextureDescriptorBinding m_shadowMap;
     VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;

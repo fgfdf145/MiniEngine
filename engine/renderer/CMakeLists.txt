@@ -16,6 +16,8 @@ add_library(engine_render_core
     renderer_world.h
     scene_lighting.cpp
     scene_lighting.h
+    shadow_cascades.cpp
+    shadow_cascades.h
 )
 miniengine_group_target_sources(engine_render_core)
 
@@ -77,6 +79,8 @@ add_library(engine_renderer
     vulkan/scene_pass.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
+    vulkan/shadow_pass.cpp
+    vulkan/shadow_pass.h
     vulkan/swapchain.cpp
     vulkan/swapchain.h
     vulkan/texture.cpp
@@ -101,6 +105,8 @@ set(MINIENGINE_SHADER_SOURCES
     fullscreen.vert
     tonemap.frag
     exposure_histogram.comp
+    shadow.vert
+    shadow.frag
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,

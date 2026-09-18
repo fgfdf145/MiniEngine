@@ -157,6 +157,32 @@ endif()
 
 set_target_properties(miniengine_scene_lighting_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_shadow_cascades_tests
+    shadow_cascades_tests.cpp
+)
+miniengine_group_target_sources(miniengine_shadow_cascades_tests)
+
+target_link_libraries(miniengine_shadow_cascades_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.shadow_cascades
+    COMMAND miniengine_shadow_cascades_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_shadow_cascades_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_shadow_cascades_tests>
+            $<TARGET_FILE_DIR:miniengine_shadow_cascades_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_shadow_cascades_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}

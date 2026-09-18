@@ -7,11 +7,11 @@
 namespace me
 {
 
-glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
+MeshBounds ComputeMeshBounds(const MeshData& mesh)
 {
     if (mesh.vertices.empty())
     {
-        return glm::vec3(0.0f);
+        return MeshBounds{};
     }
     glm::vec3 minimum(mesh.vertices.front().position[0], mesh.vertices.front().position[1], mesh.vertices.front().position[2]);
     glm::vec3 maximum = minimum;
@@ -21,7 +21,12 @@ glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
         minimum = glm::min(minimum, position);
         maximum = glm::max(maximum, position);
     }
-    return (minimum + maximum) * 0.5f;
+    return MeshBounds{(minimum + maximum) * 0.5f, glm::length(maximum - minimum) * 0.5f};
+}
+
+glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
+{
+    return ComputeMeshBounds(mesh).center;
 }
 
 MeshData CreateDefaultCubeMesh()

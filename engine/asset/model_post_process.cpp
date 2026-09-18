@@ -198,6 +198,8 @@ void ModelPostProcess::FinalizeSubmeshData(ModelSubmeshData& submeshData)
 
     // Last, so it sees the final vertex set: the renderable built from this submesh reads
     // the cached value instead of walking the vertices again on the main thread.
-    submeshData.boundsCenter = ComputeMeshBoundsCenter(submeshData.mesh);
+    const MeshBounds bounds = ComputeMeshBounds(submeshData.mesh);
+    submeshData.boundsCenter = bounds.center;
+    submeshData.boundsRadius = bounds.radius;
 }
 }

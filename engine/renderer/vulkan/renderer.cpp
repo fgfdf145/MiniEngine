@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <future>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -30,6 +31,9 @@ namespace me
 
 namespace
 {
+// Per cascade. Four 2048 x 2048 32-bit layers are 64 MiB.
+constexpr uint32_t kShadowMapResolution = 2048;
+
 // A transform's Euler rotation (XYZ order, same as BuildTransformMatrix). Directional and spot
 // lights shine along local -Y. An area light is the rectangle DrawLightAreaGizmo draws: it lies in
 // the local XY plane, width along +X and height along Y, and emits along local -Z, the gizmo's
@@ -319,13 +323,49 @@ void VulkanRenderer::DrawFrame()
     {
         selectedLights.push_back(sceneLights.gpuLights[index]);
     }
+
+    ShadowUniformData shadowData{};
+    std::optional<ShadowCascades> shadowCascades;
+    const int32_t shadowLightIndex = SelectShadowCasterLight(sceneLights.candidates, lightSelection);
+    if (shadowLightIndex >= 0)
+    {
+        const VkExtent2D extent = m_sceneTargets->GetExtent();
+        ShadowCameraInput shadowCamera{};
+        shadowCamera.view = State().viewportMatrices.view;
+        shadowCamera.verticalFovRadians = glm::radians(State().camera.fovDegrees);
+        shadowCamera.aspect = static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
+        shadowCamera.nearPlane = State().camera.nearPlane;
+        shadowCamera.farPlane = State().camera.farPlane;
+        ShadowCascadeSettings shadowSettings{};
+        shadowSettings.resolution = m_shadowPass->GetResolution();
+        shadowCascades = BuildShadowCascades(
+            shadowCamera,
+            glm::vec3(selectedLights[shadowLightIndex].directionAndType),
+            shadowSettings);
+
+        for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
+        {
+            shadowData.cascadeViewProjection[cascade] = (*shadowCascades)[cascade].viewProjection;
+            shadowData.cascadeSplits[cascade] = (*shadowCascades)[cascade].splitFar;
+            shadowData.cascadeTexelSizes[cascade] = (*shadowCascades)[cascade].texelWorldSize;
+        }
+        shadowData.params = glm::vec4(
+            static_cast<float>(shadowLightIndex),
+            1.0f / static_cast<float>(m_shadowPass->GetResolution()),
+            0.0f,
+            0.0f);
+    }
+
     m_uniformBuffer->Update(
         imageIndex,
         State().viewportMatrices,
         State().camera.position,
         lightSelection.ambientLuminance,
-        selectedLights);
+        selectedLights,
+        shadowData);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
+    const std::vector<ShadowDrawItem> shadowDrawItems =
+        shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
 
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
@@ -352,6 +392,14 @@ void VulkanRenderer::DrawFrame()
                                               // before it is read, so discarding its contents is what we want
                                               // anyway.
                                               m_layoutTracker.Reset();
+
+                                              // Ahead of the scene passes, whose material pass samples it. It
+                                              // orders itself through its render pass dependencies and never
+                                              // goes through the layout tracker (see VulkanShadowPass).
+                                              m_shadowPass->Record(
+                                                  commandBuffer,
+                                                  shadowDrawItems,
+                                                  shadowCascades.has_value() ? &*shadowCascades : nullptr);
 
                                               RecordScenePasses(commandBuffer, frame);
 
@@ -529,10 +577,19 @@ void VulkanRenderer::CreateDeviceResources()
     CheckVulkan(
         vkCreatePipelineCache(m_device->GetHandle(), &cacheInfo, nullptr, &m_pipelineCache),
         "Failed to create pipeline cache");
+
+    m_shadowPass = std::make_unique<VulkanShadowPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_materialSetLayout->GetHandle(),
+        kShadowMapResolution);
 }
 
 void VulkanRenderer::DestroyDeviceResources()
 {
+    // Its pipelines were built against the material set layout released below.
+    m_shadowPass.reset();
     if (m_pipelineCache != VK_NULL_HANDLE)
     {
         vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
@@ -574,7 +631,8 @@ void VulkanRenderer::CreateDescriptorResources()
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
-        BuildMaterialTextureBindings(m_textures, m_materialTextureSlots));
+        BuildMaterialTextureBindings(m_textures, m_materialTextureSlots),
+        m_shadowPass->GetSampledBinding());
     EnsureGraphicsPipelines();
 }
 
@@ -902,6 +960,7 @@ void VulkanRenderer::UploadSceneResources()
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
         renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
         renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
+        renderSubmesh.localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
         renderSubmesh.name = cpuRenderSubmesh.name;
 
         if (!cpuRenderSubmesh.hasTexCoords)
@@ -965,7 +1024,8 @@ void VulkanRenderer::ApplyRenderContent(
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
             m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
-            BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots));
+            BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots),
+            m_shadowPass->GetSampledBinding());
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and the new UBO above is built while the GPU may still
@@ -1016,6 +1076,47 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
         ordered.push_back(std::move(unsorted[index]));
     }
     return ordered;
+}
+
+std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex) const
+{
+    std::vector<ShadowDrawItem> items;
+    items.reserve(m_renderSubmeshes.size());
+    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    {
+        // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
+        // wrong more often than none, so they cast none.
+        if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend)
+        {
+            continue;
+        }
+
+        ShadowDrawItem item{};
+        item.vertexBuffer = renderSubmesh.buffer->GetVertexHandle();
+        item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
+        item.indexCount = renderSubmesh.buffer->GetIndexCount();
+        item.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);
+        item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+        // The largest axis scale keeps the sphere enclosing under non-uniform scale.
+        item.worldBoundsRadius =
+            renderSubmesh.localBoundsRadius *
+            std::max({glm::length(glm::vec3(item.model[0])),
+                      glm::length(glm::vec3(item.model[1])),
+                      glm::length(glm::vec3(item.model[2]))});
+        item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
+        item.materialDescriptorSet = m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex);
+        item.material = renderSubmesh.material;
+        items.push_back(item);
+    }
+    // Opaque first, then mask, so the pass switches pipeline once.
+    std::stable_partition(
+        items.begin(),
+        items.end(),
+        [](const ShadowDrawItem& item)
+        {
+            return !item.alphaMask;
+        });
+    return items;
 }
 
 void VulkanRenderer::RecordTransitions(
