@@ -175,7 +175,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 ### 2026-09-19 — G-Buffer 延迟着色第二阶段：几何 pass、延迟光照与前向对比开关
 
-G-Buffer 延迟着色三阶段的第二阶段。不透明与 Mask 几何改走延迟路径，不引入新视觉效果；设计见 [docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md](docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md)，与设计的出入已在该文档内以 "Amended after phase two" 记录。
+G-Buffer 延迟着色三阶段的第二阶段，连同 2026-09-18 的光照修正与方向光级联阴影一起作为 0.1.2 提交。不透明与 Mask 几何改走延迟路径，不引入新视觉效果；设计见 [docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md](docs/superpowers/specs/2026-09-10-gbuffer-deferred-design.md)，与设计的出入已在该文档内以 "Amended after phase two" 记录。
 
 **帧结构**
 

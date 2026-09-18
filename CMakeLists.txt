@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 include(cmake/MiniEngineVcpkg.cmake)
 
-project(MiniEngine VERSION 0.1.1 LANGUAGES CXX)
+project(MiniEngine VERSION 0.1.2 LANGUAGES CXX)
 
 if(DEFINED CMAKE_TOOLCHAIN_FILE)
     miniengine_is_vcpkg_toolchain(
