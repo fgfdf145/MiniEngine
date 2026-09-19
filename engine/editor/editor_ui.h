@@ -130,6 +130,7 @@ class EditorUiController
 
     // Per-panel draw methods, one translation unit each under ui/.
     void DrawCameraPanel(Camera& camera);
+    void DrawGraphicsDebugPanel();
     void DrawInputMonitorPanel();
     void DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result);
     void DrawScenePanel(IEditorWorld& scene, const std::string& lastSceneIoError, EditorUiFrameResult& result);
@@ -189,6 +190,7 @@ class EditorUiController
     bool m_showSceneWindow = true;
     bool m_showThemeWindow = true;
     bool m_showViewportWindow = true;
+    bool m_showGraphicsDebugWindow = false;
     bool m_inputMonitorAutoScroll = true;
 };
 }

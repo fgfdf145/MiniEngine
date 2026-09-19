@@ -139,9 +139,16 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
                 autoExposure = AutoExposureSettings{};
             }
         }
+    }
+    ImGui::End();
+}
 
-        ImGui::Separator();
-        ImGui::TextUnformatted("Renderer");
+void EditorUiController::DrawGraphicsDebugPanel()
+{
+    // The settings keep applying while this window is closed, as they did when they lived in the
+    // Camera panel: closing a debug window hides its controls, it does not reset the renderer.
+    if (ImGui::Begin("Graphics Debug", &m_showGraphicsDebugWindow))
+    {
         ImGui::Checkbox("Forward only (comparison)", &m_renderDebug.forwardOnly);
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);

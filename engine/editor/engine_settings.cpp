@@ -136,6 +136,7 @@ void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVis
     windows.scene = ReadBoolOrDefault(windowsNode["scene"], windows.scene);
     windows.theme = ReadBoolOrDefault(windowsNode["theme"], windows.theme);
     windows.viewport = ReadBoolOrDefault(windowsNode["viewport"], windows.viewport);
+    windows.graphicsDebug = ReadBoolOrDefault(windowsNode["graphics_debug"], windows.graphicsDebug);
 }
 
 void LoadThemeSettings(const YAML::Node& themeNode, EditorThemeSettings& theme)
@@ -263,7 +264,8 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "      \"input_monitor\": " << JsonBool(settings.editorUi.windows.inputMonitor) << ",\n";
         output << "      \"scene\": " << JsonBool(settings.editorUi.windows.scene) << ",\n";
         output << "      \"theme\": " << JsonBool(settings.editorUi.windows.theme) << ",\n";
-        output << "      \"viewport\": " << JsonBool(settings.editorUi.windows.viewport) << "\n";
+        output << "      \"viewport\": " << JsonBool(settings.editorUi.windows.viewport) << ",\n";
+        output << "      \"graphics_debug\": " << JsonBool(settings.editorUi.windows.graphicsDebug) << "\n";
         output << "    },\n";
         output << "    \"theme\": {\n";
         output << "      \"colors\": {\n";

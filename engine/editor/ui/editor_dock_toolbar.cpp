@@ -74,6 +74,7 @@ void EnsureDefaultDockLayout(ImGuiID dockspaceId, const ImVec2& dockspaceSize)
 
     ImGui::DockBuilderDockWindow("Scene", leftNode);
     ImGui::DockBuilderDockWindow("Camera", lowerRightNode);
+    ImGui::DockBuilderDockWindow("Graphics Debug", lowerRightNode);
     ImGui::DockBuilderDockWindow("Viewport", centerNode);
     ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -86,6 +87,7 @@ void DrawTopToolbar(
     bool& showSceneWindow,
     bool& showThemeWindow,
     bool& showViewportWindow,
+    bool& showGraphicsDebugWindow,
     float effectiveUiScale)
 {
     const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
@@ -165,6 +167,14 @@ void DrawTopToolbar(
     ImGui::EndDisabled();
 
     ImGui::SameLine();
+    ImGui::BeginDisabled(showGraphicsDebugWindow);
+    if (ImGui::Button("Graphics Debug"))
+    {
+        showGraphicsDebugWindow = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
     if (ImGui::Button("Show All"))
     {
         showCameraWindow = true;
@@ -173,6 +183,7 @@ void DrawTopToolbar(
         showSceneWindow = true;
         showThemeWindow = true;
         showViewportWindow = true;
+        showGraphicsDebugWindow = true;
     }
 
     ImGui::SameLine();

@@ -19,6 +19,7 @@ struct EditorWindowVisibilitySettings
     bool scene = true;
     bool theme = true;
     bool viewport = true;
+    bool graphicsDebug = false;
 };
 
 struct EditorThemeSettings

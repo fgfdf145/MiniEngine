@@ -86,6 +86,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const bool previousShowSceneWindow = m_showSceneWindow;
     const bool previousShowThemeWindow = m_showThemeWindow;
     const bool previousShowViewportWindow = m_showViewportWindow;
+    const bool previousShowGraphicsDebugWindow = m_showGraphicsDebugWindow;
 
     if (m_showModelProcessorWindow)
     {
@@ -110,11 +111,17 @@ EditorUiFrameResult EditorUiController::Draw(
         m_showSceneWindow,
         m_showThemeWindow,
         m_showViewportWindow,
+        m_showGraphicsDebugWindow,
         m_effectiveUiScale);
 
     if (m_showCameraWindow)
     {
         DrawCameraPanel(camera);
+    }
+
+    if (m_showGraphicsDebugWindow)
+    {
+        DrawGraphicsDebugPanel();
     }
 
     bool themeChanged = false;
@@ -156,7 +163,8 @@ EditorUiFrameResult EditorUiController::Draw(
         previousShowInputMonitorWindow != m_showInputMonitorWindow ||
         previousShowSceneWindow != m_showSceneWindow ||
         previousShowThemeWindow != m_showThemeWindow ||
-        previousShowViewportWindow != m_showViewportWindow;
+        previousShowViewportWindow != m_showViewportWindow ||
+        previousShowGraphicsDebugWindow != m_showGraphicsDebugWindow;
 
     result.renderDebug = m_renderDebug;
     return result;
@@ -171,6 +179,7 @@ void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)
     m_showSceneWindow = settings.editorUi.windows.scene;
     m_showThemeWindow = settings.editorUi.windows.theme;
     m_showViewportWindow = settings.editorUi.windows.viewport;
+    m_showGraphicsDebugWindow = settings.editorUi.windows.graphicsDebug;
 
     if (settings.editorUi.theme.hasCustomColors)
     {
@@ -197,6 +206,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     settings.editorUi.windows.scene = m_showSceneWindow;
     settings.editorUi.windows.theme = m_showThemeWindow;
     settings.editorUi.windows.viewport = m_showViewportWindow;
+    settings.editorUi.windows.graphicsDebug = m_showGraphicsDebugWindow;
     settings.editorUi.theme.hasCustomColors = true;
 
     const ImGuiStyle& style = ImGui::GetStyle();
