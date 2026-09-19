@@ -209,6 +209,35 @@ endif()
 
 set_target_properties(miniengine_motion_history_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_texture_compression_tests
+    texture_compression_tests.cpp
+)
+miniengine_group_target_sources(miniengine_texture_compression_tests)
+
+# The encoder library is linked directly as well: the tests decode what engine_asset encoded.
+target_link_libraries(miniengine_texture_compression_tests
+    PRIVATE
+        engine_asset
+        unofficial::bc7enc-rdo::bc7enc-rdo
+)
+target_include_directories(miniengine_texture_compression_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+add_test(
+    NAME miniengine.texture_compression
+    COMMAND miniengine_texture_compression_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_texture_compression_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_texture_compression_tests>
+            $<TARGET_FILE_DIR:miniengine_texture_compression_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_texture_compression_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}

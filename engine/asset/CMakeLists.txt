@@ -17,6 +17,8 @@
     model_loader.h
     model_post_process.cpp
     model_post_process.h
+    texture_compression.cpp
+    texture_compression.h
     texture_loader.cpp
     texture_loader.h
 )
@@ -37,4 +39,6 @@ target_link_libraries(engine_asset
         glm::glm
         imgui::imgui
         yaml-cpp::yaml-cpp
+    PRIVATE
+        unofficial::bc7enc-rdo::bc7enc-rdo
 )

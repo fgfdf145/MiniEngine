@@ -1,0 +1,17 @@
+{
+  "name": "bc7enc-rdo",
+  "version-string": "2026-07-30",
+  "description": "BC1-5 and BC7 CPU texture encoders by Richard Geldreich (bc7enc.cpp, rgbcx.cpp, bc7decomp.cpp only).",
+  "homepage": "https://github.com/richgel999/bc7enc_rdo",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}
