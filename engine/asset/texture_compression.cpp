@@ -7,8 +7,10 @@
 #include <rgbcx.h>
 
 #include <algorithm>
+#include <future>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 
 namespace me
 {
@@ -67,24 +69,53 @@ CompressedTextureLevel EncodeLevel(const TextureData& level, TextureUsage usage,
     const uint32_t blocksY = BlockCount(encoded.height);
     encoded.blocks.resize(static_cast<size_t>(blocksX) * blocksY * kCompressedBlockBytes);
 
-    uint8_t block[16 * 4];
-    for (uint32_t by = 0; by < blocksY; ++by)
+    const auto encodeRows = [&](uint32_t firstRow, uint32_t endRow)
     {
-        for (uint32_t bx = 0; bx < blocksX; ++bx)
+        uint8_t block[16 * 4];
+        for (uint32_t by = firstRow; by < endRow; ++by)
         {
-            GatherBlock(level, bx, by, block);
-            uint8_t* destination = &encoded.blocks[(static_cast<size_t>(by) * blocksX + bx) * kCompressedBlockBytes];
-            if (usage == TextureUsage::Normal)
+            for (uint32_t bx = 0; bx < blocksX; ++bx)
             {
-                // The high-quality BC5 search was measured at about 230 times the encode time on
-                // Sponza normal maps for no better maximum error, so the standard encoder is used.
-                rgbcx::encode_bc5(destination, block, 0, 1, 4);
-            }
-            else
-            {
-                bc7enc_compress_block(destination, block, &params);
+                GatherBlock(level, bx, by, block);
+                uint8_t* destination = &encoded.blocks[(static_cast<size_t>(by) * blocksX + bx) * kCompressedBlockBytes];
+                if (usage == TextureUsage::Normal)
+                {
+                    // The high-quality BC5 search was measured at about 230 times the encode time
+                    // on Sponza normal maps for no better maximum error, so the standard encoder
+                    // is used.
+                    rgbcx::encode_bc5(destination, block, 0, 1, 4);
+                }
+                else
+                {
+                    bc7enc_compress_block(destination, block, &params);
+                }
             }
         }
+    };
+
+    // Blocks are independent, so large levels are split into bands of rows encoded concurrently.
+    // Callers may compress several textures in parallel as well; a model with one or two large
+    // textures would otherwise encode each on a single thread. Small levels are not worth a thread.
+    constexpr uint32_t kMinRowsPerBand = 16;
+    const uint32_t hardwareThreads = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t bandCount = std::min(hardwareThreads, blocksY / kMinRowsPerBand);
+    if (bandCount <= 1)
+    {
+        encodeRows(0, blocksY);
+        return encoded;
+    }
+
+    std::vector<std::future<void>> bands;
+    bands.reserve(bandCount);
+    for (uint32_t band = 0; band < bandCount; ++band)
+    {
+        const uint32_t firstRow = blocksY * band / bandCount;
+        const uint32_t endRow = blocksY * (band + 1) / bandCount;
+        bands.push_back(std::async(std::launch::async, encodeRows, firstRow, endRow));
+    }
+    for (std::future<void>& band : bands)
+    {
+        band.get();
     }
     return encoded;
 }

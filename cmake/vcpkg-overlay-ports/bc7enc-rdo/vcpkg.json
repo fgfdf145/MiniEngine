@@ -1,6 +1,7 @@
 {
   "name": "bc7enc-rdo",
   "version-string": "2026-07-30",
+  "port-version": 1,
   "description": "BC1-5 and BC7 CPU texture encoders by Richard Geldreich (bc7enc.cpp, rgbcx.cpp, bc7decomp.cpp only).",
   "homepage": "https://github.com/richgel999/bc7enc_rdo",
   "license": "MIT",

@@ -14,6 +14,17 @@ target_include_directories(bc7enc-rdo PUBLIC
     "$<INSTALL_INTERFACE:include/bc7enc_rdo>")
 target_compile_features(bc7enc-rdo PUBLIC cxx_std_11)
 
+# The encoders run for seconds on a 4K texture when optimized and for most of a minute when not,
+# which in a Debug editor is long enough for Windows to report it as hung. Optimize the Debug
+# library too; it still links against the Debug runtime. MSVC's run-time checks cannot be combined
+# with optimization, so they are dropped for this library.
+if(MSVC)
+    string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    target_compile_options(bc7enc-rdo PRIVATE "$<$<CONFIG:Debug>:/O2;/Ob2>")
+else()
+    target_compile_options(bc7enc-rdo PRIVATE "$<$<CONFIG:Debug>:-O2>")
+endif()
+
 install(TARGETS bc7enc-rdo EXPORT unofficial-bc7enc-rdo-targets
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
