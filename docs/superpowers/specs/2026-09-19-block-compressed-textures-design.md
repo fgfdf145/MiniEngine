@@ -44,6 +44,14 @@ that failure recoverable, and this design removes its cause for scenes of this s
 
    Data textures stay four-channel because glTF packs metallic and roughness (and often
    occlusion) into one file that different slots sample different channels of.
+
+   > **Amended during implementation.** The first cold Sponza load took 141 s (1896 s of encoding
+   > across threads). Measured on Sponza textures: BC7 without two-subset partitions
+   > (`m_max_partitions = 0`) encodes 5.5 times faster for 0.23 dB (45.9 to 45.7 dB), and the
+   > standard BC5 encoder is about 230 times faster than `encode_bc5_hq` with a lower maximum
+   > error. Both are now used; the cold load takes 23.5 s, and `kTextureCacheVersion` is 2. A
+   > synthetic planar colour gradient, the worst case for single-subset modes, scores about 37 dB,
+   > so the round-trip test asserts 35 dB rather than 40.
 4. **Normals are reconstructed in the shader:** `xy = n.rg * 2 - 1`,
    `z = sqrt(max(1 - dot(xy, xy), 0))`. The same code is exact for the uncompressed fallback,
    since stored normal maps hold unit vectors, so there is one shader path, not two.

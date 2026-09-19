@@ -76,7 +76,9 @@ CompressedTextureLevel EncodeLevel(const TextureData& level, TextureUsage usage,
             uint8_t* destination = &encoded.blocks[(static_cast<size_t>(by) * blocksX + bx) * kCompressedBlockBytes];
             if (usage == TextureUsage::Normal)
             {
-                rgbcx::encode_bc5_hq(destination, block, 0, 1, 4);
+                // The high-quality BC5 search was measured at about 230 times the encode time on
+                // Sponza normal maps for no better maximum error, so the standard encoder is used.
+                rgbcx::encode_bc5(destination, block, 0, 1, 4);
             }
             else
             {
@@ -142,8 +144,9 @@ CompressedTexture CompressTexture(const TextureData& image, TextureUsage usage)
 {
     InitializeEncoders();
 
-    // Uber level 0 is the encoder's fastest setting; its quality is well above what a material
-    // texture needs and higher levels cost several times the encode time.
+    // The fastest settings: uber level 0 and no two-subset partitions (mode 1). Measured on a Sponza
+    // base colour texture, dropping the partitions encodes 5.5 times faster for 0.23 dB of PSNR
+    // (45.9 to 45.7 dB), which is what makes compressing a whole scene on first load tolerable.
     bc7enc_compress_block_params params{};
     bc7enc_compress_block_params_init(&params);
     if (usage != TextureUsage::Color)
@@ -151,6 +154,7 @@ CompressedTexture CompressTexture(const TextureData& image, TextureUsage usage)
         bc7enc_compress_block_params_init_linear_weights(&params);
     }
     params.m_uber_level = 0;
+    params.m_max_partitions = 0;
 
     CompressedTexture compressed{};
     compressed.format = FormatForUsage(usage);

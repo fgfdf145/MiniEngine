@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "gbuffer_common.glsl"
+#include "normal_map.glsl"
 
 layout(constant_id = 0) const bool kAlphaMask = false;
 
@@ -79,8 +80,8 @@ void main()
     vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w) * faceSign;
     mat3 TBN = mat3(tangent, bitangent, geoNormal);
 
-    vec3 nrmPrimary = texture(normalTexture, fragTexCoord).xyz * 2.0 - 1.0;
-    vec3 nrmSecondary = texture(secondaryNormalTexture, fragTexCoord).xyz * 2.0 - 1.0;
+    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, fragTexCoord));
+    vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
     nrmSample.xy *= drawData.surfaceFactors.z; // normal scale
     vec3 N = normalize(TBN * nrmSample);

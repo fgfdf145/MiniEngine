@@ -132,6 +132,7 @@ set(MINIENGINE_SHADER_INCLUDES
     pbr_common.glsl
     gbuffer_common.glsl
     gbuffer_inputs.glsl
+    normal_map.glsl
 )
 
 function(miniengine_add_shaders shader_target)

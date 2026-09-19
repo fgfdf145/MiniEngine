@@ -7,7 +7,9 @@
 #include <engine/logic/editor_world.h>
 #include <engine/scene/scene_components.h>
 #include <imgui.h>
+#include <engine/asset/compressed_texture_cache.h>
 #include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
 #include <engine/platform/window/window.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -16,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <future>
@@ -115,9 +118,62 @@ TextureData CreateFlatNormalTexture()
     return CreateSolidTexture(128, 128, 255, 255);
 }
 
-std::string BuildTextureCacheKey(const std::string& path, VulkanTextureFormat textureFormat)
+// Live textures are reused by this key. The usage is part of it because the same file can be two
+// textures: a normal map uploaded as BC5 is not the same image as that file uploaded as BC7 data.
+std::string BuildTextureCacheKey(const std::string& path, TextureUsage usage)
 {
-    return path + (textureFormat == VulkanTextureFormat::SrgbColor ? "|srgb" : "|linear");
+    switch (usage)
+    {
+    case TextureUsage::Color:
+        return path + "|color";
+    case TextureUsage::Normal:
+        return path + "|normal";
+    case TextureUsage::Data:
+        return path + "|data";
+    }
+    throw std::runtime_error("Unknown texture usage");
+}
+
+VulkanTextureFormat ToVulkanTextureFormat(TextureUsage usage)
+{
+    return usage == TextureUsage::Color ? VulkanTextureFormat::SrgbColor : VulkanTextureFormat::LinearData;
+}
+
+// A material texture file ready to upload: block-compressed when the device samples BC formats,
+// RGBA8 otherwise.
+struct PreparedTexture
+{
+    std::optional<CompressedTexture> compressed;
+    TextureData rgba;
+    bool fromCache = false;
+    double compressSeconds = 0.0;
+};
+
+// The CPU half of loading one texture file; safe to run on any thread. A texture that cannot be
+// compressed or cached is uploaded as RGBA8 instead, on its own; one that cannot be decoded at all
+// throws, and the caller falls back to the slot's default texture as before.
+PreparedTexture PrepareTexture(const std::string& path, TextureUsage usage, bool compress)
+{
+    PreparedTexture prepared{};
+    if (compress)
+    {
+        try
+        {
+            const auto start = std::chrono::steady_clock::now();
+            CompressedTextureLoad load = LoadOrCompressTexture(path, usage, EnginePaths::CacheRoot() / "textures");
+            prepared.fromCache = load.cacheHit;
+            prepared.compressSeconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            prepared.compressed = std::move(load.texture);
+            return prepared;
+        }
+        catch (const std::exception& error)
+        {
+            LOG_ERROR("Could not compress texture '{}', uploading it uncompressed: {}", path, error.what());
+        }
+    }
+    prepared.rgba = TextureLoader::LoadRGBA8(path);
+    return prepared;
 }
 
 // True for the one failure a content upload recovers from: running out of memory. Everything else
@@ -826,6 +882,35 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
+    // Material texture files are uploaded block-compressed whenever the device allows it.
+    const bool compressTextures = m_device->SupportsBlockCompression();
+    size_t texturesFromCache = 0;
+    size_t texturesCompressedNow = 0;
+    size_t texturesUncompressed = 0;
+    double compressSecondsTotal = 0.0;
+    auto uploadPrepared = [&](const PreparedTexture& prepared, TextureUsage usage) -> std::unique_ptr<VulkanTexture>
+    {
+        if (!prepared.compressed)
+        {
+            ++texturesUncompressed;
+            return std::make_unique<VulkanTexture>(
+                m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
+        }
+        if (prepared.fromCache)
+        {
+            ++texturesFromCache;
+        }
+        else
+        {
+            ++texturesCompressedNow;
+            compressSecondsTotal += prepared.compressSeconds;
+        }
+        return std::make_unique<VulkanTexture>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            *prepared.compressed, uploadBatch);
+    };
+
     // Appends a reference to the live texture with this key, if there is one, and returns its new
     // index. The live texture stays in m_textures; ApplyRenderContent moves it across on commit.
     auto reuseLiveTexture = [&](const std::string& key) -> std::optional<uint32_t>
@@ -861,12 +946,12 @@ void VulkanRenderer::UploadSceneResources()
         return idx;
     };
 
-    auto loadTextureIndex = [&](const std::string& texturePath, VulkanTextureFormat textureFormat, uint32_t fallbackIndex) -> uint32_t
+    auto loadTextureIndex = [&](const std::string& texturePath, TextureUsage usage, uint32_t fallbackIndex) -> uint32_t
     {
         if (texturePath.empty())
             return fallbackIndex;
 
-        const std::string key = BuildTextureCacheKey(texturePath, textureFormat);
+        const std::string key = BuildTextureCacheKey(texturePath, usage);
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
             return it->second;
 
@@ -881,9 +966,7 @@ void VulkanRenderer::UploadSceneResources()
         try
         {
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
-                m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                texturePath, uploadBatch, textureFormat)});
+            newTextures.push_back(PendingTexture{uploadPrepared(PrepareTexture(texturePath, usage, compressTextures), usage)});
             newCacheKeys.push_back(key);
             keyToIndex.emplace(key, idx);
             flushUploadBatchIfNeeded();
@@ -927,26 +1010,26 @@ void VulkanRenderer::UploadSceneResources()
         {
             std::string cacheKey;
             std::string path;
-            VulkanTextureFormat format;
-            TextureData decoded;
+            TextureUsage usage = TextureUsage::Color;
+            PreparedTexture prepared;
             bool decodeFailed = false;
             std::string decodeError;
         };
 
         std::vector<PendingTextureLoad> pendingLoads;
         std::unordered_set<std::string> seenKeys;
-        auto considerPath = [&](const std::string& path, VulkanTextureFormat format)
+        auto considerPath = [&](const std::string& path, TextureUsage usage)
         {
             if (path.empty())
             {
                 return;
             }
-            const std::string key = BuildTextureCacheKey(path, format);
+            const std::string key = BuildTextureCacheKey(path, usage);
             if (liveTextureByKey.count(key) != 0 || !seenKeys.insert(key).second)
             {
                 return;
             }
-            pendingLoads.push_back(PendingTextureLoad{key, path, format, {}, false, {}});
+            pendingLoads.push_back(PendingTextureLoad{key, path, usage, {}, false, {}});
         };
 
         for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
@@ -956,25 +1039,26 @@ void VulkanRenderer::UploadSceneResources()
                 continue;
             }
             const MaterialTexturePaths& textures = cpuRenderSubmesh.textures;
-            considerPath(textures.baseColor, VulkanTextureFormat::SrgbColor);
-            considerPath(textures.normal, VulkanTextureFormat::LinearData);
-            considerPath(textures.metallic, VulkanTextureFormat::LinearData);
-            considerPath(textures.roughness, VulkanTextureFormat::LinearData);
-            considerPath(textures.occlusion, VulkanTextureFormat::LinearData);
-            considerPath(textures.emissive, VulkanTextureFormat::SrgbColor);
-            considerPath(textures.secondaryBaseColor, VulkanTextureFormat::SrgbColor);
-            considerPath(textures.secondaryNormal, VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryMetallic, VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryRoughness, VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryOcclusion, VulkanTextureFormat::LinearData);
-            considerPath(textures.secondaryEmissive, VulkanTextureFormat::SrgbColor);
-            considerPath(textures.blendMask, VulkanTextureFormat::LinearData);
+            considerPath(textures.baseColor, TextureUsage::Color);
+            considerPath(textures.normal, TextureUsage::Normal);
+            considerPath(textures.metallic, TextureUsage::Data);
+            considerPath(textures.roughness, TextureUsage::Data);
+            considerPath(textures.occlusion, TextureUsage::Data);
+            considerPath(textures.emissive, TextureUsage::Color);
+            considerPath(textures.secondaryBaseColor, TextureUsage::Color);
+            considerPath(textures.secondaryNormal, TextureUsage::Normal);
+            considerPath(textures.secondaryMetallic, TextureUsage::Data);
+            considerPath(textures.secondaryRoughness, TextureUsage::Data);
+            considerPath(textures.secondaryOcclusion, TextureUsage::Data);
+            considerPath(textures.secondaryEmissive, TextureUsage::Color);
+            considerPath(textures.blendMask, TextureUsage::Data);
         }
 
-        // Decode in bounded chunks rather than all at once, so we don't hold dozens of huge
+        // Prepare in bounded chunks rather than all at once, so we don't hold dozens of huge
         // decoded RGBA8 buffers in host memory simultaneously (a 40 MB source PNG can decode to
-        // 100+ MB of raw pixels).
-        const size_t chunkSize = std::max<size_t>(8, static_cast<size_t>(std::thread::hardware_concurrency()) * 2);
+        // 100+ MB of raw pixels, and compressing it holds its mip chain as well). One task per
+        // hardware thread: compression keeps each of them busy.
+        const size_t chunkSize = std::max<size_t>(4, static_cast<size_t>(std::thread::hardware_concurrency()));
         for (size_t chunkStart = 0; chunkStart < pendingLoads.size(); chunkStart += chunkSize)
         {
             const size_t chunkEnd = std::min(chunkStart + chunkSize, pendingLoads.size());
@@ -986,11 +1070,11 @@ void VulkanRenderer::UploadSceneResources()
             decodeTasks.reserve(chunkEnd - chunkStart);
             for (size_t i = chunkStart; i < chunkEnd; ++i)
             {
-                decodeTasks.push_back(std::async(std::launch::async, [&pending = pendingLoads[i]]()
+                decodeTasks.push_back(std::async(std::launch::async, [&pending = pendingLoads[i], compressTextures]()
                                                  {
                                                      try
                                                      {
-                                                         pending.decoded = TextureLoader::LoadRGBA8(pending.path);
+                                                         pending.prepared = PrepareTexture(pending.path, pending.usage, compressTextures);
                                                      }
                                                      catch (const std::exception& error)
                                                      {
@@ -1016,9 +1100,7 @@ void VulkanRenderer::UploadSceneResources()
                 try
                 {
                     const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-                    newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
-                        m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                        pending.decoded, uploadBatch, pending.format)});
+                    newTextures.push_back(PendingTexture{uploadPrepared(pending.prepared, pending.usage)});
                     newCacheKeys.push_back(pending.cacheKey);
                     keyToIndex.emplace(pending.cacheKey, idx);
                     flushUploadBatchIfNeeded();
@@ -1034,10 +1116,9 @@ void VulkanRenderer::UploadSceneResources()
                     LOG_ERROR("Failed to upload prefetched model texture '{}': {}", pending.path, error.what());
                 }
 
-                // Release the decoded pixels promptly instead of waiting for pendingLoads itself
+                // Release the prepared pixels promptly instead of waiting for pendingLoads itself
                 // to go out of scope at the end of the prefetch block.
-                pending.decoded.pixels.clear();
-                pending.decoded.pixels.shrink_to_fit();
+                pending.prepared = PreparedTexture{};
             }
         }
     }
@@ -1065,19 +1146,19 @@ void VulkanRenderer::UploadSceneResources()
         }
 
         MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
-        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, VulkanTextureFormat::SrgbColor, defaultBaseColorIndex);
-        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, VulkanTextureFormat::LinearData, defaultNormalIndex);
-        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, VulkanTextureFormat::LinearData, defaultMetallicIndex);
-        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, VulkanTextureFormat::LinearData, defaultRoughnessIndex);
-        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, VulkanTextureFormat::LinearData, defaultOcclusionIndex);
-        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, VulkanTextureFormat::SrgbColor, defaultEmissiveIndex);
-        slots.secondaryBaseColor = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor, VulkanTextureFormat::SrgbColor, slots.baseColor);
-        slots.secondaryNormal = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal, VulkanTextureFormat::LinearData, slots.normal);
-        slots.secondaryMetallic = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic, VulkanTextureFormat::LinearData, slots.metallic);
-        slots.secondaryRoughness = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness, VulkanTextureFormat::LinearData, slots.roughness);
-        slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, VulkanTextureFormat::LinearData, slots.occlusion);
-        slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, VulkanTextureFormat::SrgbColor, slots.emissive);
-        slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, VulkanTextureFormat::LinearData, defaultBlendMaskIndex);
+        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, TextureUsage::Color, defaultBaseColorIndex);
+        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, TextureUsage::Normal, defaultNormalIndex);
+        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, TextureUsage::Data, defaultMetallicIndex);
+        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, TextureUsage::Data, defaultRoughnessIndex);
+        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, TextureUsage::Data, defaultOcclusionIndex);
+        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, TextureUsage::Color, defaultEmissiveIndex);
+        slots.secondaryBaseColor = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor, TextureUsage::Color, slots.baseColor);
+        slots.secondaryNormal = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal, TextureUsage::Normal, slots.normal);
+        slots.secondaryMetallic = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic, TextureUsage::Data, slots.metallic);
+        slots.secondaryRoughness = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness, TextureUsage::Data, slots.roughness);
+        slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, TextureUsage::Data, slots.occlusion);
+        slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, TextureUsage::Color, slots.emissive);
+        slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, TextureUsage::Data, defaultBlendMaskIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
@@ -1085,6 +1166,15 @@ void VulkanRenderer::UploadSceneResources()
     }
     uploadBatch.Flush();
     LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
+    if (texturesFromCache + texturesCompressedNow + texturesUncompressed > 0)
+    {
+        LOG_INFO(
+            "Texture files: {} block-compressed from the cache, {} compressed now ({:.1f} s of encoding across threads), {} uncompressed",
+            texturesFromCache,
+            texturesCompressedNow,
+            compressSecondsTotal,
+            texturesUncompressed);
+    }
 
     ApplyRenderContent(
         std::move(newTextures),

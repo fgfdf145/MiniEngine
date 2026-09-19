@@ -12,7 +12,7 @@ namespace me
 
 // Bump whenever the encoder settings or the cache file layout change: every existing cache file
 // then becomes a miss and is rebuilt.
-inline constexpr uint32_t kTextureCacheVersion = 1;
+inline constexpr uint32_t kTextureCacheVersion = 2;
 
 // Identifies one compressed form of one image file: its canonical path, size, last write time and
 // usage, plus kTextureCacheVersion. Editing, replacing or touching the file changes the key.
