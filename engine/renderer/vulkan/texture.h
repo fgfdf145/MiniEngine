@@ -43,6 +43,8 @@ class VulkanTexture
     VkSampler GetSampler() const;
 
   private:
+    // Shared by the destructor and the constructors' unwind path. Skips null handles.
+    void DestroyHandles();
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;

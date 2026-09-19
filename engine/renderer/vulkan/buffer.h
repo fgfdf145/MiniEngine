@@ -44,6 +44,8 @@ class VulkanBuffer
     uint32_t GetIndexCount() const;
 
   private:
+    // Shared by the destructor and the constructors' unwind path. Skips null handles.
+    void DestroyHandles();
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);

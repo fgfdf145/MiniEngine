@@ -61,10 +61,18 @@ VulkanBuffer::VulkanBuffer(
     m_vertexCount = static_cast<uint32_t>(defaultMesh.vertices.size());
     m_indexCount = static_cast<uint32_t>(defaultMesh.indices.size());
 
-    VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
-    UploadVertices(defaultMesh, uploadBatch);
-    UploadIndices(defaultMesh, uploadBatch);
-    uploadBatch.Flush();
+    try
+    {
+        VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
+        UploadVertices(defaultMesh, uploadBatch);
+        UploadIndices(defaultMesh, uploadBatch);
+        uploadBatch.Flush();
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
     LOG_INFO("Vertex buffer created successfully");
 }
 
@@ -78,27 +86,47 @@ VulkanBuffer::VulkanBuffer(
       m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
       m_indexCount(static_cast<uint32_t>(meshData.indices.size()))
 {
-    UploadVertices(meshData, uploadBatch);
-    UploadIndices(meshData, uploadBatch);
+    // A throw out of a constructor skips the destructor, so whatever was created before the
+    // failure is released here with the same call the destructor makes. The copies recorded into
+    // the batch are never submitted in that case: the batch is abandoned along with this buffer.
+    try
+    {
+        UploadVertices(meshData, uploadBatch);
+        UploadIndices(meshData, uploadBatch);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
 }
 
 VulkanBuffer::~VulkanBuffer()
 {
+    DestroyHandles();
+}
+
+void VulkanBuffer::DestroyHandles()
+{
     if (m_indexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
+        m_indexBuffer = VK_NULL_HANDLE;
     }
     if (m_indexMemory != VK_NULL_HANDLE)
     {
         vkFreeMemory(m_device, m_indexMemory, nullptr);
+        m_indexMemory = VK_NULL_HANDLE;
     }
     if (m_vertexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
+        m_vertexBuffer = VK_NULL_HANDLE;
     }
     if (m_vertexMemory != VK_NULL_HANDLE)
     {
         vkFreeMemory(m_device, m_vertexMemory, nullptr);
+        m_vertexMemory = VK_NULL_HANDLE;
     }
 }
 
@@ -137,16 +165,29 @@ void VulkanBuffer::CreateBuffer(
 
     CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create Vulkan buffer");
 
-    VkMemoryRequirements memoryRequirements{};
-    vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+    // Either both handles come back valid or neither does, so no caller has to clean up after a
+    // half-built buffer: running out of memory here is expected on large scenes.
+    try
+    {
+        VkMemoryRequirements memoryRequirements{};
+        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
 
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = memoryRequirements.size;
+        allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
 
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate Vulkan buffer memory");
-    CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind Vulkan buffer memory");
+        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate Vulkan buffer memory");
+        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind Vulkan buffer memory");
+    }
+    catch (...)
+    {
+        vkFreeMemory(m_device, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+        vkDestroyBuffer(m_device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        throw;
+    }
 }
 
 uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
@@ -179,6 +220,7 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
         stagingMemory);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map staging buffer memory");
@@ -195,8 +237,6 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
     vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_vertexBuffer, 1, &copyRegion);
-
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 }
 
 void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
@@ -211,6 +251,7 @@ void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& up
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
         stagingMemory);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     void* data = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map index staging buffer memory");
@@ -227,7 +268,5 @@ void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& up
     VkBufferCopy copyRegion{};
     copyRegion.size = bufferSize;
     vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_indexBuffer, 1, &copyRegion);
-
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 }
 }

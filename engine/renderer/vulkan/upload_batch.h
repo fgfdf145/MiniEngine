@@ -13,6 +13,11 @@ namespace me
 // and waits once instead of once per resource. Used by VulkanBuffer and VulkanTexture so that
 // loading a model with hundreds of submeshes/textures (e.g. Sponza) doesn't serialize hundreds
 // of individual GPU round-trips. Flush() resets the batch so it can keep being reused.
+//
+// Destroying a batch without a final Flush() discards whatever was recorded since the last one:
+// the commands are never submitted, and the staging buffers tracked for them are freed. That is
+// the unwind path of an upload that failed part way, and it is safe precisely because nothing
+// recorded since the last Flush() ever reached the GPU.
 class VulkanUploadBatch
 {
   public:
@@ -23,6 +28,8 @@ class VulkanUploadBatch
     VulkanUploadBatch& operator=(const VulkanUploadBatch&) = delete;
 
     VkCommandBuffer GetCommandBuffer() const;
+    // Takes ownership. Track a staging buffer as soon as it exists, before anything else that can
+    // throw, so a later failure in the same upload cannot leak it. Either handle may be null.
     void TrackStagingResource(VkBuffer buffer, VkDeviceMemory memory);
 
     // Submits everything recorded so far, waits for the GPU to finish, frees the staging

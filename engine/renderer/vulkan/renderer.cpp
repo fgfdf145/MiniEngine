@@ -120,8 +120,27 @@ std::string BuildTextureCacheKey(const std::string& path, VulkanTextureFormat te
     return path + (textureFormat == VulkanTextureFormat::SrgbColor ? "|srgb" : "|linear");
 }
 
+// True for the one failure a content upload recovers from: running out of memory. Everything else
+// (a lost device, a driver bug) keeps propagating.
+bool IsOutOfMemoryError(const std::exception& error)
+{
+    const VulkanError* vulkanError = dynamic_cast<const VulkanError*>(&error);
+    return vulkanError != nullptr && vulkanError->IsOutOfMemory();
+}
+
+std::vector<const VulkanTexture*> ViewTextures(const std::vector<std::unique_ptr<VulkanTexture>>& textures)
+{
+    std::vector<const VulkanTexture*> views;
+    views.reserve(textures.size());
+    for (const std::unique_ptr<VulkanTexture>& texture : textures)
+    {
+        views.push_back(texture.get());
+    }
+    return views;
+}
+
 std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
-    const std::vector<std::unique_ptr<VulkanTexture>>& textures,
+    std::span<const VulkanTexture* const> textures,
     const std::vector<MaterialTextureSlots>& materialTextureSlots)
 {
     std::vector<MaterialTextureBinding> bindings;
@@ -273,7 +292,7 @@ void VulkanRenderer::DrawFrame()
 
     if (ProcessPendingOperations())
     {
-        UploadSceneResources();
+        UploadSceneResourcesOrKeepPrevious();
     }
 
     EditorWorld().FlushDirtyTransforms();
@@ -308,7 +327,7 @@ void VulkanRenderer::DrawFrame()
     EditorWorld().FlushDirtyTransforms();
     if (State().renderablesDirty)
     {
-        UploadSceneResources();
+        UploadSceneResourcesOrKeepPrevious();
         State().renderablesDirty = false;
     }
     ImGui::Render();
@@ -699,7 +718,7 @@ void VulkanRenderer::CreateDescriptorResources()
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
-        BuildMaterialTextureBindings(m_textures, m_materialTextureSlots),
+        BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots),
         m_shadowPass->GetSampledBinding(),
         static_cast<uint32_t>(m_renderSubmeshes.size()));
 }
@@ -707,12 +726,9 @@ void VulkanRenderer::CreateDescriptorResources()
 void VulkanRenderer::DestroyDescriptorResources()
 {
     m_uniformBuffer.reset();
-    // The pool holds VulkanTexture objects that reference VkImage/VkSampler; clear it whenever the
-    // descriptor sets are torn down so nothing outlives the logical device. m_textureCacheKeys must
-    // NOT be cleared here: it stays index-paired with m_textures (which survives this teardown),
-    // and wiping it makes the next UploadSceneResources destroy every live texture instead of
-    // pooling it — while in-flight frames may still be sampling them.
-    m_texturePool.clear();
+    // m_textureCacheKeys is deliberately not cleared here: it stays index-paired with m_textures,
+    // which survives this teardown, and wiping it makes the next UploadSceneResources upload every
+    // live texture again instead of reusing it.
 }
 
 void VulkanRenderer::RecreateSwapchain()
@@ -769,29 +785,21 @@ void VulkanRenderer::SyncSceneTargets()
 
 void VulkanRenderer::UploadSceneResources()
 {
-    // Move live textures into the pool so they can be reused without re-uploading.
-    // This prevents 2x peak VRAM usage when rebuilding an unchanged texture set.
-    // Anything that can't be pooled is parked in retiredTextures instead of being destroyed
-    // here: the GPU may still be sampling it through the old descriptor sets, so its
-    // destruction must wait until after ApplyRenderContent has waited for in-flight frames.
-    std::vector<std::unique_ptr<VulkanTexture>> retiredTextures;
-    for (size_t i = 0; i < m_textures.size(); ++i)
+    // Live textures are reused by cache key rather than uploaded again, which keeps peak memory at
+    // one copy of an unchanged texture set. They are only looked up here: nothing leaves
+    // m_textures until ApplyRenderContent commits, so a throw anywhere below (running out of GPU
+    // memory, typically) unwinds this upload's own new resources and leaves every live texture
+    // exactly where the current descriptor sets expect it.
+    std::unordered_map<std::string, size_t> liveTextureByKey;
+    for (size_t i = 0; i < m_textures.size() && i < m_textureCacheKeys.size(); ++i)
     {
-        if (!m_textures[i])
+        if (m_textures[i] && !m_textureCacheKeys[i].empty())
         {
-            continue;
+            liveTextureByKey.emplace(m_textureCacheKeys[i], i);
         }
-        if (i < m_textureCacheKeys.size() && !m_textureCacheKeys[i].empty() &&
-            m_texturePool.emplace(m_textureCacheKeys[i], std::move(m_textures[i])).second)
-        {
-            continue;
-        }
-        retiredTextures.push_back(std::move(m_textures[i]));
     }
-    m_textures.clear();
-    m_textureCacheKeys.clear();
 
-    std::vector<std::unique_ptr<VulkanTexture>> newTextures;
+    std::vector<PendingTexture> newTextures;
     std::vector<std::string> newCacheKeys;
     std::vector<MaterialTextureSlots> newMaterialTextureSlots;
     std::vector<RenderSubmesh> newRenderSubmeshes;
@@ -818,29 +826,38 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
-    // Acquire a texture by cache key: reuse from pool when available, else use createFn().
-    // Returns UINT32_MAX on failure (createFn threw), caller should use fallback.
+    // Appends a reference to the live texture with this key, if there is one, and returns its new
+    // index. The live texture stays in m_textures; ApplyRenderContent moves it across on commit.
+    auto reuseLiveTexture = [&](const std::string& key) -> std::optional<uint32_t>
+    {
+        const auto liveIt = liveTextureByKey.find(key);
+        if (liveIt == liveTextureByKey.end())
+        {
+            return std::nullopt;
+        }
+        const uint32_t idx = static_cast<uint32_t>(newTextures.size());
+        newTextures.push_back(PendingTexture{nullptr, liveIt->second});
+        newCacheKeys.push_back(key);
+        keyToIndex.emplace(key, idx);
+        return idx;
+    };
+
+    // Acquire a built-in texture by cache key: reuse the live one when there is one, else upload.
     auto acquireDefault = [&](const std::string& id, const TextureData& data, VulkanTextureFormat fmt) -> uint32_t
     {
         const std::string key = id + (fmt == VulkanTextureFormat::SrgbColor ? "|srgb" : "|linear");
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
             return it->second;
+        if (const std::optional<uint32_t> reused = reuseLiveTexture(key))
+            return *reused;
 
         const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-        if (auto poolIt = m_texturePool.find(key); poolIt != m_texturePool.end())
-        {
-            newTextures.push_back(std::move(poolIt->second));
-            m_texturePool.erase(poolIt);
-        }
-        else
-        {
-            newTextures.push_back(std::make_unique<VulkanTexture>(
-                m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                data, uploadBatch, fmt));
-            flushUploadBatchIfNeeded();
-        }
+        newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            data, uploadBatch, fmt)});
         newCacheKeys.push_back(key);
         keyToIndex.emplace(key, idx);
+        flushUploadBatchIfNeeded();
         return idx;
     };
 
@@ -853,31 +870,31 @@ void VulkanRenderer::UploadSceneResources()
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
             return it->second;
 
-        // Pool hit: reuse existing GPU texture 鈥?no disk I/O, no upload, no extra VRAM.
-        if (auto poolIt = m_texturePool.find(key); poolIt != m_texturePool.end())
-        {
-            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(std::move(poolIt->second));
-            m_texturePool.erase(poolIt);
-            newCacheKeys.push_back(key);
-            keyToIndex.emplace(key, idx);
-            return idx;
-        }
+        // Live hit: reuse the existing GPU texture, with no disk I/O, no upload and no extra memory.
+        if (const std::optional<uint32_t> reused = reuseLiveTexture(key))
+            return *reused;
 
-        // Pool miss: load from disk and upload.
+        // Miss: load from disk and upload. A texture that cannot be decoded falls back to the
+        // default, but running out of memory fails the whole upload: substituting white for a
+        // texture the GPU had no room for would hide the problem and still leave no room for the
+        // geometry that follows.
         try
         {
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(std::make_unique<VulkanTexture>(
+            newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
                 m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                texturePath, uploadBatch, textureFormat));
-            flushUploadBatchIfNeeded();
+                texturePath, uploadBatch, textureFormat)});
             newCacheKeys.push_back(key);
             keyToIndex.emplace(key, idx);
+            flushUploadBatchIfNeeded();
             return idx;
         }
         catch (const std::exception& error)
         {
+            if (IsOutOfMemoryError(error))
+            {
+                throw;
+            }
             LOG_ERROR("Failed to load model texture '{}': {}", texturePath, error.what());
             return fallbackIndex;
         }
@@ -925,7 +942,7 @@ void VulkanRenderer::UploadSceneResources()
                 return;
             }
             const std::string key = BuildTextureCacheKey(path, format);
-            if (m_texturePool.count(key) != 0 || !seenKeys.insert(key).second)
+            if (liveTextureByKey.count(key) != 0 || !seenKeys.insert(key).second)
             {
                 return;
             }
@@ -999,15 +1016,21 @@ void VulkanRenderer::UploadSceneResources()
                 try
                 {
                     const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-                    newTextures.push_back(std::make_unique<VulkanTexture>(
+                    newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
                         m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                        pending.decoded, uploadBatch, pending.format));
-                    flushUploadBatchIfNeeded();
+                        pending.decoded, uploadBatch, pending.format)});
                     newCacheKeys.push_back(pending.cacheKey);
                     keyToIndex.emplace(pending.cacheKey, idx);
+                    flushUploadBatchIfNeeded();
                 }
                 catch (const std::exception& error)
                 {
+                    // As in loadTextureIndex: a bad texture falls back, running out of memory
+                    // fails the upload.
+                    if (IsOutOfMemoryError(error))
+                    {
+                        throw;
+                    }
                     LOG_ERROR("Failed to upload prefetched model texture '{}': {}", pending.path, error.what());
                 }
 
@@ -1063,25 +1086,78 @@ void VulkanRenderer::UploadSceneResources()
     uploadBatch.Flush();
     LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
 
-    ApplyRenderContent(std::move(newTextures), std::move(newMaterialTextureSlots), std::move(newRenderSubmeshes));
+    ApplyRenderContent(
+        std::move(newTextures),
+        std::move(newCacheKeys),
+        std::move(newMaterialTextureSlots),
+        std::move(newRenderSubmeshes));
+}
 
-    // Textures remaining in the pool (and the retired ones) are no longer referenced; destroy
-    // them only now that ApplyRenderContent has waited for the in-flight frames and destroyed
-    // the old descriptor sets. Clearing earlier destroys samplers/image views the GPU may still
-    // be reading through the old descriptor sets (caught by validation as
-    // vkDestroySampler-while-in-use).
-    m_texturePool.clear();
-    retiredTextures.clear();
+void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
+{
+    // What the editor shows while a change is missing from the screen. Kept as one constant so
+    // a later successful upload can tell its own report apart from other load errors.
+    static constexpr const char* kOutOfMemoryReport =
+        "Not enough GPU memory to show the latest scene change. The scene on screen is from before it; "
+        "remove models to free memory, and the next change will try again.";
 
-    // Track the cache keys for the textures now in m_textures, so the next upload can pool them.
-    m_textureCacheKeys = std::move(newCacheKeys);
+    try
+    {
+        UploadSceneResources();
+    }
+    catch (const std::exception& error)
+    {
+        if (!IsOutOfMemoryError(error))
+        {
+            throw;
+        }
+        LOG_ERROR("Keeping the previous scene content, the upload ran out of GPU memory: {}", error.what());
+        State().lastModelLoadError = kOutOfMemoryReport;
+        DropSubmeshesOfRemovedEntities();
+        return;
+    }
+
+    // The screen matches the scene again, so a report of it not matching is now stale.
+    if (State().lastModelLoadError == kOutOfMemoryReport)
+    {
+        State().lastModelLoadError.clear();
+    }
+}
+
+void VulkanRenderer::DropSubmeshesOfRemovedEntities()
+{
+    const ISceneWorld& sceneWorld = State().rendererWorld.GetSceneWorld();
+    const auto isRemoved = [&sceneWorld](const RenderSubmesh& renderSubmesh)
+    {
+        return !sceneWorld.IsValidEntity(renderSubmesh.entity);
+    };
+    if (std::none_of(m_renderSubmeshes.begin(), m_renderSubmeshes.end(), isRemoved))
+    {
+        return;
+    }
+
+    // The frames in flight may still draw from the buffers about to be destroyed. What remains is
+    // a subset of the list the uniform buffer was sized for, so its motion slots still cover it;
+    // material binding indices and motion keys are per submesh and stay valid.
+    m_commandContext->WaitForAllFrames();
+    std::erase_if(m_renderSubmeshes, isRemoved);
 }
 
 void VulkanRenderer::ApplyRenderContent(
-    std::vector<std::unique_ptr<VulkanTexture>> newTextures,
+    std::vector<PendingTexture> newTextures,
+    std::vector<std::string> newTextureCacheKeys,
     std::vector<MaterialTextureSlots> newMaterialTextureSlots,
     std::vector<RenderSubmesh> newRenderSubmeshes)
 {
+    // Everything before the uniform buffer swap may throw and must leave the renderer untouched;
+    // everything after it only moves ownership.
+    std::vector<const VulkanTexture*> textureViews;
+    textureViews.reserve(newTextures.size());
+    for (const PendingTexture& texture : newTextures)
+    {
+        textureViews.push_back(texture.created ? texture.created.get() : m_textures.at(texture.reusedIndex).get());
+    }
+
     // A submesh's motion key is its entity and its position among that entity's submeshes, so a
     // reload that reorders the list still finds each draw's own history.
     std::unordered_map<uint32_t, uint32_t> nextSubmeshOrdinal;
@@ -1104,7 +1180,7 @@ void VulkanRenderer::ApplyRenderContent(
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
             m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
-            BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots),
+            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots),
             m_shadowPass->GetSampledBinding(),
             static_cast<uint32_t>(newRenderSubmeshes.size()));
         // Wait only for our in-flight render frames to finish before destroying old resources.
@@ -1115,7 +1191,21 @@ void VulkanRenderer::ApplyRenderContent(
         m_uniformBuffer = std::move(newUniformBuffer);
     }
 
-    m_textures = std::move(newTextures);
+    // Commit. Reused textures move across from the live list; whatever is left behind in it is no
+    // longer referenced and is destroyed at the end of this function, after the wait above and
+    // after the old descriptor sets went with the old uniform buffer. Destroying it earlier would
+    // free image views the GPU may still sample (validation reports it as
+    // vkDestroySampler-while-in-use).
+    std::vector<std::unique_ptr<VulkanTexture>> textures;
+    textures.reserve(newTextures.size());
+    for (PendingTexture& texture : newTextures)
+    {
+        textures.push_back(texture.created ? std::move(texture.created) : std::move(m_textures.at(texture.reusedIndex)));
+    }
+    std::vector<std::unique_ptr<VulkanTexture>> retiredTextures = std::move(m_textures);
+
+    m_textures = std::move(textures);
+    m_textureCacheKeys = std::move(newTextureCacheKeys);
     m_materialTextureSlots = std::move(newMaterialTextureSlots);
     m_renderSubmeshes = std::move(newRenderSubmeshes);
 }

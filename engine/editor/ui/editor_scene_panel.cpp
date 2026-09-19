@@ -281,10 +281,24 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
 }
 }
 
-void EditorUiController::DrawScenePanel(IEditorWorld& scene, const std::string& lastSceneIoError, EditorUiFrameResult& result)
+void EditorUiController::DrawScenePanel(
+    IEditorWorld& scene,
+    const std::string& lastLoadError,
+    const std::string& lastSceneIoError,
+    EditorUiFrameResult& result)
 {
     if (ImGui::Begin("Scene", &m_showSceneWindow))
     {
+        // Model loads and uploads fail without interrupting the editor, so this line is the only
+        // place the user learns that the scene on screen is not the one they asked for.
+        if (!lastLoadError.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextWrapped("Error: %s", lastLoadError.c_str());
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
+
         const size_t modelCount = scene.Registry().view<const ModelComponent>().size();
         const size_t lightCount = scene.Registry().view<const LightComponent>().size();
         ImGui::Text("Models: %u  Lights: %u",

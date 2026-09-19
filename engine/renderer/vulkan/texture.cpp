@@ -17,7 +17,15 @@ VulkanTexture::VulkanTexture(
       m_device(device),
       m_textureFormat(textureFormat)
 {
-    UploadTexture(TextureLoader::LoadRGBA8(path), uploadBatch);
+    try
+    {
+        UploadTexture(TextureLoader::LoadRGBA8(path), uploadBatch);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
 }
 
 VulkanTexture::VulkanTexture(
@@ -30,7 +38,17 @@ VulkanTexture::VulkanTexture(
       m_device(device),
       m_textureFormat(textureFormat)
 {
-    UploadTexture(textureData, uploadBatch);
+    // A throw out of a constructor skips the destructor, so whatever was created before the
+    // failure is released here with the same call the destructor makes.
+    try
+    {
+        UploadTexture(textureData, uploadBatch);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
 }
 
 void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch)
@@ -54,6 +72,7 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
         stagingMemory);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     void* mappedData = nullptr;
     CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mappedData), "Failed to map texture staging buffer");
@@ -95,8 +114,6 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
     {
         TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     }
-
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -146,21 +163,30 @@ VkFormat VulkanTexture::GetVkFormat() const
 
 VulkanTexture::~VulkanTexture()
 {
+    DestroyHandles();
+}
+
+void VulkanTexture::DestroyHandles()
+{
     if (m_sampler != VK_NULL_HANDLE)
     {
         vkDestroySampler(m_device, m_sampler, nullptr);
+        m_sampler = VK_NULL_HANDLE;
     }
     if (m_imageView != VK_NULL_HANDLE)
     {
         vkDestroyImageView(m_device, m_imageView, nullptr);
+        m_imageView = VK_NULL_HANDLE;
     }
     if (m_image != VK_NULL_HANDLE)
     {
         vkDestroyImage(m_device, m_image, nullptr);
+        m_image = VK_NULL_HANDLE;
     }
     if (m_memory != VK_NULL_HANDLE)
     {
         vkFreeMemory(m_device, m_memory, nullptr);
+        m_memory = VK_NULL_HANDLE;
     }
 }
 
@@ -188,15 +214,28 @@ void VulkanTexture::CreateBuffer(
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create texture buffer");
 
-    VkMemoryRequirements memoryRequirements{};
-    vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+    // Either both handles come back valid or neither does: the caller only takes ownership of a
+    // complete staging buffer.
+    try
+    {
+        VkMemoryRequirements memoryRequirements{};
+        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
 
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate texture buffer memory");
-    CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind texture buffer memory");
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = memoryRequirements.size;
+        allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
+        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate texture buffer memory");
+        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind texture buffer memory");
+    }
+    catch (...)
+    {
+        vkFreeMemory(m_device, memory, nullptr);
+        memory = VK_NULL_HANDLE;
+        vkDestroyBuffer(m_device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        throw;
+    }
 }
 
 void VulkanTexture::CreateImage(

@@ -33,12 +33,27 @@ VulkanUniformBuffer::VulkanUniformBuffer(
         throw std::runtime_error("Uniform buffer requires at least one material binding");
     }
 
-    CreateBuffers(imageCount);
-    CreateDescriptorPool(imageCount);
-    CreateDescriptorSets(imageCount);
+    // A content upload builds this object while the previous one is still live, so running out of
+    // memory here is a recoverable failure; release whatever was created before rethrowing.
+    try
+    {
+        CreateBuffers(imageCount);
+        CreateDescriptorPool(imageCount);
+        CreateDescriptorSets(imageCount);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
 }
 
 VulkanUniformBuffer::~VulkanUniformBuffer()
+{
+    DestroyHandles();
+}
+
+void VulkanUniformBuffer::DestroyHandles()
 {
     for (size_t i = 0; i < m_buffers.size(); ++i)
     {
@@ -68,9 +83,17 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
         }
     }
 
+    m_buffers.clear();
+    m_memories.clear();
+    m_mappedBuffers.clear();
+    m_motionBuffers.clear();
+    m_motionMemories.clear();
+    m_mappedMotionBuffers.clear();
+
     if (m_descriptorPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+        m_descriptorPool = VK_NULL_HANDLE;
     }
     // m_frameSetLayout and m_materialSetLayout are owned by VulkanFrameDescriptorSetLayout and
     // VulkanMaterialDescriptorSetLayout respectively, not by this buffer.

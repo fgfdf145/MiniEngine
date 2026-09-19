@@ -178,6 +178,8 @@ class VulkanUniformBuffer
         std::span<const glm::mat4> prevModels);
 
   private:
+    // Shared by the destructor and the constructor's unwind path. Skips null handles.
+    void DestroyHandles();
     void CreateBuffers(uint32_t imageCount);
     void CreateDescriptorPool(uint32_t imageCount);
     void CreateDescriptorSets(uint32_t imageCount);

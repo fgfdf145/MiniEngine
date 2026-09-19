@@ -24,6 +24,14 @@ VulkanUploadBatch::VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFami
 
 VulkanUploadBatch::~VulkanUploadBatch()
 {
+    // Only reached with resources still tracked when an upload was abandoned without a final
+    // Flush(). Their copies were recorded but never submitted, so nothing on the GPU reads them.
+    for (const auto& [stagingBuffer, stagingMemory] : m_stagingResources)
+    {
+        vkDestroyBuffer(m_device, stagingBuffer, nullptr);
+        vkFreeMemory(m_device, stagingMemory, nullptr);
+    }
+
     if (m_commandPool != VK_NULL_HANDLE)
     {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);

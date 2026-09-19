@@ -133,7 +133,11 @@ class EditorUiController
     void DrawGraphicsDebugPanel();
     void DrawInputMonitorPanel();
     void DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result);
-    void DrawScenePanel(IEditorWorld& scene, const std::string& lastSceneIoError, EditorUiFrameResult& result);
+    void DrawScenePanel(
+        IEditorWorld& scene,
+        const std::string& lastLoadError,
+        const std::string& lastSceneIoError,
+        EditorUiFrameResult& result);
     void DrawViewportPanel(
         Camera& camera,
         ViewportMatrices& matrices,

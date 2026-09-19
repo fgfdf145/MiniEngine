@@ -67,6 +67,17 @@ struct MaterialTextureSlots
     uint32_t blendMask = 0;
 };
 
+// One texture of a content upload in progress: either created by that upload, or a live texture
+// it reuses, named by its index in VulkanRenderer::m_textures. Reuse is by index rather than by
+// taking ownership, so the live list stays intact until the whole upload has succeeded.
+struct PendingTexture
+{
+    static constexpr size_t kNotReused = static_cast<size_t>(-1);
+
+    std::unique_ptr<VulkanTexture> created;
+    size_t reusedIndex = kNotReused;
+};
+
 class VulkanRenderer : public EditorRenderBackendBase
 {
   public:
@@ -96,9 +107,19 @@ class VulkanRenderer : public EditorRenderBackendBase
     void DestroyDescriptorResources();
     void RecreateSwapchain();
     void SyncSceneTargets();
+    // Builds the GPU content for the scene as it now is and swaps it in. Transactional: when it
+    // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources();
+    // UploadSceneResources for a change made while the editor runs. Running out of GPU memory is
+    // reported in the editor and leaves the previous content on screen instead of ending the
+    // program; any other failure still propagates.
+    void UploadSceneResourcesOrKeepPrevious();
+    // After a failed upload the previous content may still name entities the change deleted.
+    // Drawing one would read a destroyed entity's transform, so those submeshes are dropped.
+    void DropSubmeshesOfRemovedEntities();
     void ApplyRenderContent(
-        std::vector<std::unique_ptr<VulkanTexture>> newTextures,
+        std::vector<PendingTexture> newTextures,
+        std::vector<std::string> newTextureCacheKeys,
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
         std::vector<RenderSubmesh> newRenderSubmeshes);
     // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh.
@@ -123,11 +144,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanDevice> m_device;
     std::vector<RenderSubmesh> m_renderSubmeshes;
     std::vector<std::unique_ptr<VulkanTexture>> m_textures;
-    // Parallel to m_textures: the cache key ("path|srgb" or "__id__|linear") for each slot.
-    // Used to move live textures into the pool before a rebuild so they can be reused without
-    // re-uploading them to the GPU.
+    // Parallel to m_textures: the cache key ("path|srgb" or "__id__|linear") for each slot. A
+    // rebuild looks live textures up by it and reuses them instead of uploading them again.
     std::vector<std::string> m_textureCacheKeys;
-    std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_texturePool;
     std::vector<MaterialTextureSlots> m_materialTextureSlots;
     // Device-lifetime resources: the shader-fixed frame and material set layouts and the pipeline
     // cache all outlive every swapchain, viewport and scene reload (see CreateDeviceResources).

@@ -75,7 +75,6 @@ EditorUiFrameResult EditorUiController::Draw(
     RenderBackendType currentBackendType)
 {
     static_cast<void>(currentModelPath);
-    static_cast<void>(lastLoadError);
 
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
@@ -142,7 +141,7 @@ EditorUiFrameResult EditorUiController::Draw(
 
     if (m_showSceneWindow)
     {
-        DrawScenePanel(scene, lastSceneIoError, result);
+        DrawScenePanel(scene, lastLoadError, lastSceneIoError, result);
     }
 
     if (m_showViewportWindow)
