@@ -82,6 +82,23 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
 
+    // BC textures need the feature and, for each format material textures use, sampling with
+    // linear filtering. Anything less and every texture stays RGBA8.
+    m_supportsBlockCompression = supportedFeatures.textureCompressionBC == VK_TRUE;
+    for (const VkFormat format : {VK_FORMAT_BC7_SRGB_BLOCK, VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK})
+    {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
+        constexpr VkFormatFeatureFlags kRequired =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        m_supportsBlockCompression =
+            m_supportsBlockCompression && (properties.optimalTilingFeatures & kRequired) == kRequired;
+    }
+    deviceFeatures.textureCompressionBC = m_supportsBlockCompression ? VK_TRUE : VK_FALSE;
+    LOG_INFO(
+        "Block-compressed textures: {}",
+        m_supportsBlockCompression ? "BC7/BC5" : "unsupported, textures stay RGBA8");
+
     std::vector<const char*> enabledExtensions = kRequiredExtensions;
     for (const auto& extension : EnumerateDeviceExtensions(m_physicalDevice))
     {
@@ -119,6 +136,11 @@ VulkanDevice::~VulkanDevice()
 VkDevice VulkanDevice::GetHandle() const
 {
     return m_device;
+}
+
+bool VulkanDevice::SupportsBlockCompression() const
+{
+    return m_supportsBlockCompression;
 }
 
 VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const

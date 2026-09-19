@@ -21,6 +21,9 @@ class VulkanDevice
     VkQueue GetPresentQueue() const;
     SwapchainSupportDetails QuerySwapchainSupport() const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    // Whether material textures can be uploaded as BC7 and BC5: the textureCompressionBC feature
+    // is enabled and all three formats sample with linear filtering. Decided once, at creation.
+    bool SupportsBlockCompression() const;
 
   private:
     bool IsSuitable(VkPhysicalDevice device) const;
@@ -34,5 +37,6 @@ class VulkanDevice
     VkDevice m_device = VK_NULL_HANDLE;
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_presentQueue = VK_NULL_HANDLE;
+    bool m_supportsBlockCompression = false;
 };
 }

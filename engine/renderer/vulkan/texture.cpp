@@ -51,6 +51,25 @@ VulkanTexture::VulkanTexture(
     }
 }
 
+VulkanTexture::VulkanTexture(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
+    const CompressedTexture& texture,
+    VulkanUploadBatch& uploadBatch)
+    : m_physicalDevice(physicalDevice),
+      m_device(device)
+{
+    try
+    {
+        UploadCompressedTexture(texture, uploadBatch);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
+}
+
 void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch)
 {
     if (!textureData.IsValid())
@@ -115,6 +134,97 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
         TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     }
 
+    CreateViewAndSampler(vkFormat);
+}
+
+void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch)
+{
+    if (texture.levels.empty())
+    {
+        throw std::runtime_error("Cannot create a Vulkan texture from a compressed texture with no levels");
+    }
+
+    // Every level goes into one staging buffer, back to back. Each level is a whole number of
+    // 16-byte blocks, so every level's offset meets the block-size alignment copies require.
+    VkDeviceSize totalSize = 0;
+    for (const CompressedTextureLevel& level : texture.levels)
+    {
+        totalSize += static_cast<VkDeviceSize>(level.blocks.size());
+    }
+
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    CreateBuffer(
+        totalSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer,
+        stagingMemory);
+    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
+
+    std::vector<VkBufferImageCopy> regions;
+    regions.reserve(texture.levels.size());
+    void* mappedData = nullptr;
+    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, totalSize, 0, &mappedData), "Failed to map compressed texture staging buffer");
+    VkDeviceSize offset = 0;
+    for (uint32_t levelIndex = 0; levelIndex < static_cast<uint32_t>(texture.levels.size()); ++levelIndex)
+    {
+        const CompressedTextureLevel& level = texture.levels[levelIndex];
+        std::memcpy(static_cast<uint8_t*>(mappedData) + offset, level.blocks.data(), level.blocks.size());
+
+        // The extent is the level's pixel size, which a partial edge block may exceed; Vulkan
+        // accepts that for block formats when the extent reaches the edge of the level.
+        VkBufferImageCopy region{};
+        region.bufferOffset = offset;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, levelIndex, 0, 1};
+        region.imageExtent = {level.width, level.height, 1};
+        regions.push_back(region);
+        offset += static_cast<VkDeviceSize>(level.blocks.size());
+    }
+    vkUnmapMemory(m_device, stagingMemory);
+
+    const VkFormat vkFormat = ToVkFormat(texture.format);
+    m_mipLevels = static_cast<uint32_t>(texture.levels.size());
+    CreateImage(
+        texture.levels[0].width,
+        texture.levels[0].height,
+        m_mipLevels,
+        vkFormat,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        m_image,
+        m_memory);
+
+    // The whole chain arrives in one copy: no blits, which block formats could not do anyway.
+    const VkCommandBuffer commandBuffer = uploadBatch.GetCommandBuffer();
+    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, m_mipLevels);
+    vkCmdCopyBufferToImage(
+        commandBuffer,
+        stagingBuffer,
+        m_image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        static_cast<uint32_t>(regions.size()),
+        regions.data());
+    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, m_mipLevels);
+
+    CreateViewAndSampler(vkFormat);
+}
+
+VkFormat VulkanTexture::ToVkFormat(CompressedTextureFormat format)
+{
+    switch (format)
+    {
+    case CompressedTextureFormat::Bc7Srgb:
+        return VK_FORMAT_BC7_SRGB_BLOCK;
+    case CompressedTextureFormat::Bc7Unorm:
+        return VK_FORMAT_BC7_UNORM_BLOCK;
+    case CompressedTextureFormat::Bc5Unorm:
+        return VK_FORMAT_BC5_UNORM_BLOCK;
+    }
+    throw std::runtime_error("Unknown compressed texture format");
+}
+
+void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat)
+{
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = m_image;

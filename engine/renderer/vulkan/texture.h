@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "upload_batch.h"
+#include <engine/asset/texture_compression.h>
 #include <engine/asset/texture_loader.h>
 
 #include <string>
@@ -34,6 +35,14 @@ class VulkanTexture
         const TextureData& textureData,
         VulkanUploadBatch& uploadBatch,
         VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
+    // Uploads a block-compressed texture with its whole mip chain, as prepared by
+    // CompressTexture. The device must support block compression (see
+    // VulkanDevice::SupportsBlockCompression).
+    VulkanTexture(
+        VkPhysicalDevice physicalDevice,
+        VkDevice device,
+        const CompressedTexture& texture,
+        VulkanUploadBatch& uploadBatch);
     ~VulkanTexture();
 
     VulkanTexture(const VulkanTexture&) = delete;
@@ -46,6 +55,10 @@ class VulkanTexture
     // Shared by the destructor and the constructors' unwind path. Skips null handles.
     void DestroyHandles();
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
+    void UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch);
+    // Shared by both upload paths once the image holds every level in shader read layout.
+    void CreateViewAndSampler(VkFormat vkFormat);
+    static VkFormat ToVkFormat(CompressedTextureFormat format);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;
     void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format, VkImageUsageFlags usage, VkImage& image, VkDeviceMemory& memory) const;
