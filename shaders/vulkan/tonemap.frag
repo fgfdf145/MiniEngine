@@ -64,9 +64,11 @@ void main()
     else if (constants.gbufferView == GBUFFER_VIEW_MOTION_VECTORS)
     {
         // Mid-grey is still. Red grows with rightward motion and green with downward motion,
-        // saturating at 16 pixels per frame. Background pixels hold no vector and read grey.
+        // saturating at 4 pixels per frame: the editor runs at hundreds of frames per second, where
+        // walking the camera moves a surface only a pixel or two per frame. Background pixels hold
+        // no vector and read grey.
         vec2 pixels = texture(gbufferVelocity, fragTexCoord).rg * vec2(textureSize(gbufferVelocity, 0));
-        color = vec3(clamp(0.5 + pixels / 32.0, 0.0, 1.0), 0.5);
+        color = vec3(clamp(0.5 + pixels / 8.0, 0.0, 1.0), 0.5);
     }
     else
     {

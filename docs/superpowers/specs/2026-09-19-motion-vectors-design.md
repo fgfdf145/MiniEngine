@@ -136,9 +136,13 @@ order.
 
 `GBufferDebugView::MotionVectors = 6`, listed in the Graphics Debug window as
 "G-buffer: motion vectors". `tonemap.frag` converts the vector to pixels and shows
-`rg = clamp(0.5 + pixels / 32, 0, 1)`, `b = 0.5`: mid-grey is still, red grows with rightward
-motion, green with downward motion, and the scale saturates at 16 pixels per frame. The view is
+`rg = clamp(0.5 + pixels / 8, 0, 1)`, `b = 0.5`: mid-grey is still, red grows with rightward
+motion, green with downward motion, and the scale saturates at 4 pixels per frame. The view is
 forced off in the forward-only order like every other G-buffer view.
+
+> **Amended during implementation.** The scale first saturated at 16 pixels. Verification showed
+> that at the editor's frame rate (hundreds of frames per second) walking the camera moves a
+> surface only a pixel or two per frame, which read as near-grey, so the view now saturates at 4.
 
 Set 2 (`VulkanGBufferDescriptors::kInputs`, `gbuffer_inputs.glsl`) gains `gbufferVelocity` at
 binding 5. The tone mapping pass declares it among its reads; the lighting pass already declares

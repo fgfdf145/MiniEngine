@@ -150,6 +150,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
 - 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。不透明与 Mask 几何已改走 G-Buffer 延迟着色（第二阶段），Blend 仍走前向并合成在光照结果之上；GB4 实体 id 拾取（第三阶段）尚未实现。
+- G-Buffer 带有相机与物体运动的 motion vector（`R16G16_SFLOAT`，当前 UV 减上一帧 UV；上一帧 model 矩阵经 set 0 binding 2 的 SSBO 按 `firstInstance` 索引），可在 Graphics Debug 窗口查看；Blend 表面与背景像素没有速度。目前还没有使用它的功能，TAA 与时域 AO 尚未实现。设计见 [docs/superpowers/specs/2026-09-19-motion-vectors-design.md](docs/superpowers/specs/2026-09-19-motion-vectors-design.md)。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
