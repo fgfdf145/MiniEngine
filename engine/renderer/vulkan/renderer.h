@@ -20,6 +20,7 @@
 #include "uniform_buffer.h"
 
 #include <engine/editor/editor_backend_base.h>
+#include <engine/renderer/motion_history.h>
 
 #include <memory>
 #include <optional>
@@ -145,6 +146,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // at the image lifetime boundaries keep it from describing a destroyed image even when no
     // frame is recorded in between.
     RenderTargetLayoutTracker m_layoutTracker;
+    // Last frame's matrices for motion vectors. Reset wherever the scene targets are rebuilt,
+    // because a new extent is a new projection and would otherwise read as full-screen motion.
+    MotionHistory m_motionHistory;
     // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes
     // on a swapchain recreate, and rewritten before them on a viewport resize.
     std::unique_ptr<VulkanGBufferDescriptors> m_gbufferDescriptors;

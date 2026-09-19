@@ -83,6 +83,9 @@ struct alignas(16) CameraUniformData
     // Inverse of proj * view, for reconstructing world position from depth in the lighting pass.
     // Appended last so no earlier member's offset moves.
     glm::mat4 invViewProj{1.0f};
+    // Last frame's proj * view, for motion vectors. Equal to this frame's when there is no history
+    // (the first frame, or the first after the scene targets were rebuilt).
+    glm::mat4 prevViewProj{1.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -92,12 +95,16 @@ struct alignas(16) CameraUniformData
 static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
     sizeof(CameraUniformData) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
     offsetof(CameraUniformData, invViewProj) ==
         2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16,
     "invViewProj must follow the shadow block with no padding, where std140 places it");
+static_assert(
+    offsetof(CameraUniformData, prevViewProj) ==
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
+    "prevViewProj must follow invViewProj with no padding");
 
 // Set 0: the per-frame camera uniform buffer at binding 0 and the directional shadow map at
 // binding 1. Split out from the material set so that the camera write leaves the per-material
@@ -164,7 +171,8 @@ class VulkanUniformBuffer
         const glm::vec3& cameraPosition,
         const glm::vec3& ambientLuminance,
         std::span<const GpuLightData> lights,
-        const ShadowUniformData& shadow);
+        const ShadowUniformData& shadow,
+        const glm::mat4& prevViewProj);
 
   private:
     void CreateBuffers(uint32_t imageCount);

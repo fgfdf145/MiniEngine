@@ -14,9 +14,10 @@ namespace me
 {
 
 // Every offscreen target the scene passes read or write. The first three arrived in phase one,
-// the four G-buffer targets in phase two, and GB4 (entity id) is appended in phase three, which is
-// why Count stays last. Only SceneLdr is indexed by swapchain image; every other target is
-// transient and indexed by frame slot (see SceneRenderTargets::ResolveIndex).
+// the four G-buffer targets in phase two, then GBufferVelocity (motion vectors); GB4 (entity id)
+// is appended in phase three, which is why Count stays last. Only SceneLdr is indexed by swapchain
+// image; every other target is transient and indexed by frame slot (see
+// SceneRenderTargets::ResolveIndex).
 enum class RenderTargetId : uint32_t
 {
     SceneDepth,
@@ -26,6 +27,7 @@ enum class RenderTargetId : uint32_t
     GBufferNormal,
     GBufferSurface,
     GBufferEmissive,
+    GBufferVelocity,
     Count
 };
 

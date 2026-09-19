@@ -41,6 +41,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 shadowCascadeTexelSizes;                           // world size of one texel per cascade
     vec4 shadowParams;                                      // x = index into lights[] of the caster, -1 for none; y = 1 / resolution
     mat4 invViewProj;                                       // inverse(proj * view), for reconstructing world position from depth
+    mat4 prevViewProj;                                      // last frame's proj * view, for motion vectors
 }
 ubo;
 

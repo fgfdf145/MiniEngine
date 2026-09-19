@@ -357,13 +357,17 @@ void VulkanRenderer::DrawFrame()
             0.0f);
     }
 
+    const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
+    const MotionFrame motion = m_motionHistory.Advance(viewProjection, {}, {});
+
     m_uniformBuffer->Update(
         imageIndex,
         State().viewportMatrices,
         State().camera.position,
         lightSelection.ambientLuminance,
         selectedLights,
-        shadowData);
+        shadowData,
+        motion.previousViewProjection);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
@@ -511,6 +515,7 @@ void VulkanRenderer::CreateSwapchainResources()
     }
 
     m_layoutTracker.Reset();
+    m_motionHistory.Reset();
     CreateScenePasses();
 }
 
@@ -744,6 +749,7 @@ void VulkanRenderer::SyncSceneTargets()
         pass->OnTargetsRebuilt(*m_sceneTargets);
     }
     m_layoutTracker.Reset();
+    m_motionHistory.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",
         m_sceneTargets->GetExtent().width,

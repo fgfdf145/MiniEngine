@@ -8,24 +8,26 @@
 namespace me
 {
 
-// Writes the G-buffer: every Opaque and Mask draw item into GB0-GB3 plus depth. Blend items never
-// enter it; the forward pass composites them over the lighting result.
+// Writes the G-buffer: every Opaque and Mask draw item into GB0-GB3, the motion vectors and depth.
+// Blend items never enter it; the forward pass composites them over the lighting result.
 //
-// Unlike the forward pass, every attachment including depth is stored, because the lighting pass
-// samples all five and the forward blend pass depth-tests against this depth. Framebuffers are
-// indexed by frame slot because every attachment is a transient target.
+// Unlike the forward pass, every attachment including depth is stored, because later passes
+// sample them and the forward blend pass depth-tests against this depth. Framebuffers are
+// indexed by frame slot because every attachment is a transient target. The velocity clear value
+// is zero, which is also what a pixel no geometry covered reads: no motion vector.
 class VulkanGeometryPass : public IScenePass
 {
   public:
-    // Framebuffer attachment order: the four colors, then depth. gbuffer.frag's output locations
-    // 0-3 are the first four entries.
-    static constexpr std::array<RenderTargetId, 5> kAttachments = {
+    // Framebuffer attachment order: the five colors, then depth. gbuffer.frag's output locations
+    // 0-4 are the first five entries.
+    static constexpr std::array<RenderTargetId, 6> kAttachments = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
         RenderTargetId::GBufferEmissive,
+        RenderTargetId::GBufferVelocity,
         RenderTargetId::SceneDepth};
-    static constexpr uint32_t kColorAttachmentCount = 4;
+    static constexpr uint32_t kColorAttachmentCount = 5;
 
     VulkanGeometryPass(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGeometryPass() override;

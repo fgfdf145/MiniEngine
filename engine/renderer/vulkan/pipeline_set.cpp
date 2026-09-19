@@ -45,7 +45,7 @@ VulkanPipelineSet::VulkanPipelineSet(
             config.colorAttachmentCount == 0 ||
             config.colorAttachmentCount > kMaxMaterialColorAttachments)
         {
-            throw std::runtime_error("MaterialPipelineSetConfig needs a fragment shader and 1 to 4 color attachments");
+            throw std::runtime_error("MaterialPipelineSetConfig needs a fragment shader and 1 to 5 color attachments");
         }
 
         const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();

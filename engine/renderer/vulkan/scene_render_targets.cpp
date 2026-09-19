@@ -264,6 +264,11 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeGBufferTarget(RenderTargetId::GBufferSurface, "G-buffer surface", kSurfaceCandidates);
     describeGBufferTarget(RenderTargetId::GBufferEmissive, "G-buffer emissive", kEmissiveCandidates);
 
+    // Motion vectors: current UV minus previous UV, written by the geometry pass. Both of the
+    // features ChooseFormat asks for are mandatory for this format, so it has no fallback.
+    static constexpr std::array<VkFormat, 1> kVelocityCandidates = {VK_FORMAT_R16G16_SFLOAT};
+    describeGBufferTarget(RenderTargetId::GBufferVelocity, "G-buffer velocity", kVelocityCandidates);
+
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
     // cause; phase three appends GB4, so name the omission at the point it happens.

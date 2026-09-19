@@ -18,7 +18,7 @@ namespace me
 // Viewport and scissor are dynamic state, set at record time, and the descriptor set layouts are
 // the renderer's fixed frame and material layouts. The pipelines therefore depend on nothing but
 // the render pass: they survive both a scene-viewport resize and a scene content reload untouched.
-inline constexpr uint32_t kMaxMaterialColorAttachments = 4;
+inline constexpr uint32_t kMaxMaterialColorAttachments = 5;
 
 // What differs between the pipeline sets that draw material items. Everything else (vertex
 // shader, vertex input, descriptor set layouts, push constants, depth and cull policy per

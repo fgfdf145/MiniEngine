@@ -92,7 +92,8 @@ void VulkanUniformBuffer::Update(
     const glm::vec3& cameraPosition,
     const glm::vec3& ambientLuminance,
     std::span<const GpuLightData> lights,
-    const ShadowUniformData& shadow)
+    const ShadowUniformData& shadow,
+    const glm::mat4& prevViewProj)
 {
     CameraUniformData data{};
     data.view = matrices.view;
@@ -110,6 +111,7 @@ void VulkanUniformBuffer::Update(
         data.lights[i] = lights[i];
     }
     data.shadow = shadow;
+    data.prevViewProj = prevViewProj;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
 }

@@ -25,7 +25,8 @@ enum class GBufferDebugView : uint32_t
     Normal = 2,
     GeometricNormal = 3,
     Surface = 4,
-    Emissive = 5
+    Emissive = 5,
+    MotionVectors = 6
 };
 
 // Renderer switches the editor owns and the backend reads when it builds each frame. Plain data,

@@ -10,8 +10,8 @@
 namespace me
 {
 
-// Set 2 of every pipeline that samples the G-buffer: GB0-GB3 and depth as combined image
-// samplers, one set per frame slot because all five are transient targets. The lighting pass and
+// Set 2 of every pipeline that samples the G-buffer: GB0-GB3, depth and the motion vectors as
+// combined image samplers, one set per frame slot because all six are transient targets. The lighting pass and
 // the tone mapping debug views both bind it, which is why the renderer owns it and not either
 // pass.
 //
@@ -22,12 +22,13 @@ class VulkanGBufferDescriptors
 {
   public:
     // Binding order: binding N samples kInputs[N]. gbuffer_inputs.glsl declares the same order.
-    static constexpr std::array<RenderTargetId, 5> kInputs = {
+    static constexpr std::array<RenderTargetId, 6> kInputs = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
         RenderTargetId::GBufferEmissive,
-        RenderTargetId::SceneDepth};
+        RenderTargetId::SceneDepth,
+        RenderTargetId::GBufferVelocity};
 
     VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();

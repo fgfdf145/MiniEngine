@@ -25,6 +25,10 @@ layout(location = 1) out vec2 fragTexCoord;
 layout(location = 2) out vec3 fragWorldNormal;
 layout(location = 3) out vec4 fragWorldTangent;
 layout(location = 4) out vec3 fragWorldPosition;
+// Clip positions of this vertex this frame and last frame, divided per fragment by gbuffer.frag
+// for motion vectors. triangle.frag does not declare them.
+layout(location = 5) out vec4 fragCurrClip;
+layout(location = 6) out vec4 fragPrevClip;
 
 void main()
 {
@@ -44,6 +48,8 @@ void main()
     vec3 worldTangent = normalize(mat3(drawData.model) * inTangent.xyz);
 
     gl_Position = ubo.proj * ubo.view * worldPosition;
+    fragCurrClip = gl_Position;
+    fragPrevClip = ubo.prevViewProj * (drawData.model * vec4(inPosition, 1.0));
     fragColor = inColor;
     fragTexCoord = inTexCoord;
     fragWorldNormal = normalize(normalMatrix * inNormal);

@@ -153,13 +153,14 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 6> kGBufferViewNames = {
+        static constexpr std::array<const char*, 7> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
             "G-buffer: geometric normal",
             "G-buffer: metallic / roughness / occlusion",
-            "G-buffer: emissive"};
+            "G-buffer: emissive",
+            "G-buffer: motion vectors"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",

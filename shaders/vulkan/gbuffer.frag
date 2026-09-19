@@ -38,13 +38,16 @@ layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 fragWorldNormal;
 layout(location = 3) in vec4 fragWorldTangent;
+layout(location = 5) in vec4 fragCurrClip;
+layout(location = 6) in vec4 fragPrevClip;
 
-// Locations match VulkanGeometryPass::kAttachments. All four are vec4 so no attachment receives
+// Locations match VulkanGeometryPass::kAttachments. All five are vec4 so no attachment receives
 // fewer components than it has; channels the encoding table marks unused are written as stated.
 layout(location = 0) out vec4 outAlbedo;   // GB0 R8G8B8A8_SRGB: rgb albedo, a = 1
 layout(location = 1) out vec4 outNormal;   // GB1 R16G16B16A16_SFLOAT: rg shading normal, ba geometric normal, both octahedral
 layout(location = 2) out vec4 outSurface;  // GB2 R8G8B8A8_UNORM: metallic, roughness, occlusion, a = 0
 layout(location = 3) out vec4 outEmissive; // GB3 B10G11R11_UFLOAT: rgb emissive
+layout(location = 4) out vec4 outVelocity; // R16G16_SFLOAT: current uv - previous uv
 
 void main()
 {
@@ -114,4 +117,10 @@ void main()
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
     outSurface = vec4(metallic, roughness, ao, 0.0);
     outEmissive = vec4(emissiveSample * drawData.emissiveFactor, 0.0);
+
+    // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is
+    // the motion in UV units. A consumer finds the previous position at uv - velocity.
+    vec2 currNdc = fragCurrClip.xy / fragCurrClip.w;
+    vec2 prevNdc = fragPrevClip.xy / fragPrevClip.w;
+    outVelocity = vec4((currNdc - prevNdc) * 0.5, 0.0, 0.0);
 }
