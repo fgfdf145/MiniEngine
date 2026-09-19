@@ -123,9 +123,11 @@ macOS ARM64 沿用 `macos-debug`/`macos-release`（`arm64-osx` → `arm64/`）�
 
 ### vcpkg overlay port
 
-`cmake/vcpkg-overlay-ports/` 通过所有 preset 的 `VCPKG_OVERLAY_PORTS` 生效，当前只覆盖 `tinygltf`。上游 port 用 `vcpkg_from_github` 拉取 GitHub 自动生成的源码归档并按 SHA512 固定；该归档被重新压缩后哈希不再匹配，port 直接下载失败。覆盖版改用 `vcpkg_from_git` 拉取 `v3.0.0` 对应的提交 `cfcadfa8d14eb489d97b6324838ae100410edcc7`，git 对象按内容寻址，不会像重新压缩的 tarball 那样漂移；除拉取方式外与上游 portfile 逐行一致。
+`cmake/vcpkg-overlay-ports/` 通过所有 preset 的 `VCPKG_OVERLAY_PORTS` 生效，当前有 `tinygltf` 与 `bc7enc-rdo` 两个 port。上游 port 用 `vcpkg_from_github` 拉取 GitHub 自动生成的源码归档并按 SHA512 固定；该归档被重新压缩后哈希不再匹配，port 直接下载失败。覆盖版改用 `vcpkg_from_git` 拉取 `v3.0.0` 对应的提交 `cfcadfa8d14eb489d97b6324838ae100410edcc7`，git 对象按内容寻址，不会像重新压缩的 tarball 那样漂移；除拉取方式外与上游 portfile 逐行一致。
 
 overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷新 baseline 后既不会切回上游，也拿不到 3.0.x 的后续修复。上游 port 记录的哈希与服务端一致后，删除 `cmake/vcpkg-overlay-ports/tinygltf/` 即可；overlay 目录清空后一并移除各 preset 的 `VCPKG_OVERLAY_PORTS`。
+
+`bc7enc-rdo` 不是遮蔽：vcpkg 没有这个库的 port。它用 `vcpkg_from_git` 按提交 `b9438627eef73a1157e84201b6fa6eb2ffd6d9f0` 拉取 richgel999/bc7enc_rdo，只把 `bc7enc.cpp`、`rgbcx.cpp`、`bc7decomp.cpp` 编成静态库 `unofficial::bc7enc-rdo::bc7enc-rdo`（CMakeLists 随 port 提供），不构建上游的示例程序、ISPC 编码器与 RDO 编码器。
 
 运行参数由 `EditorApplication::ParseArgs()` 提供：
 
@@ -151,6 +153,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
 - 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。不透明与 Mask 几何已改走 G-Buffer 延迟着色（第二阶段），Blend 仍走前向并合成在光照结果之上；GB4 实体 id 拾取（第三阶段）尚未实现。
 - G-Buffer 带有相机与物体运动的 motion vector（`R16G16_SFLOAT`，当前 UV 减上一帧 UV；上一帧 model 矩阵经 set 0 binding 2 的 SSBO 按 `firstInstance` 索引），可在 Graphics Debug 窗口查看；Blend 表面与背景像素没有速度。目前还没有使用它的功能，TAA 与时域 AO 尚未实现。设计见 [docs/superpowers/specs/2026-09-19-motion-vectors-design.md](docs/superpowers/specs/2026-09-19-motion-vectors-design.md)。
+- 材质纹理文件在设备支持时以块压缩格式上传（基础色与自发光 BC7 sRGB、法线 BC5、金属度/粗糙度/AO/混合遮罩 BC7 unorm），首次加载时在 CPU 上生成 mip 并压缩，结果缓存在 `CacheRoot()/textures`，文件路径、大小、修改时间或编码设置变化都会重新压缩；内置默认纹理仍是 RGBA8。NewSponza 的显存占用由约 6.2 GB 降到约 2.0 GB，首次加载压缩约 24 s，之后从缓存加载约 3 s。设计见 [docs/superpowers/specs/2026-09-19-block-compressed-textures-design.md](docs/superpowers/specs/2026-09-19-block-compressed-textures-design.md)。
 - 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
 
 ## 8. 路线图
