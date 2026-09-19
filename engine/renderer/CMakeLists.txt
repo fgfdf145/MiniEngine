@@ -11,6 +11,8 @@ add_library(engine_render_core
     material.h
     material_pipeline.cpp
     material_pipeline.h
+    motion_history.cpp
+    motion_history.h
     render_types.h
     renderer_world.cpp
     renderer_world.h
