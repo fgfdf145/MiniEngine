@@ -3,6 +3,8 @@
     asset_manager.h
     asset_registry.cpp
     asset_registry.h
+    compressed_texture_cache.cpp
+    compressed_texture_cache.h
     gltf_model_loader.cpp
     gltf_model_loader.h
     material_definition.cpp

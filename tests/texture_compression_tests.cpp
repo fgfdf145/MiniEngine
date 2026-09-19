@@ -1,13 +1,19 @@
+#include <engine/asset/compressed_texture_cache.h>
 #include <engine/asset/texture_compression.h>
 
 #include <bc7decomp.h>
 #include <rgbcx.h>
+#include <stb_image_write.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -197,6 +203,127 @@ void OddSizesEncodeWholeBlocks()
     Require(compressed.levels[0].blocks.size() == 2 * 1 * kCompressedBlockBytes, "5x3 is 2x1 blocks");
     Require(compressed.levels[2].blocks.size() == kCompressedBlockBytes, "1x1 is one block");
 }
+
+// A fresh directory per test run, removed when the object goes out of scope.
+class ScratchDirectory
+{
+  public:
+    ScratchDirectory()
+    {
+        std::random_device random;
+        m_path = std::filesystem::temp_directory_path() / ("miniengine_texture_cache_" + std::to_string(random()));
+        std::filesystem::create_directories(m_path);
+    }
+    ~ScratchDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(m_path, ignored);
+    }
+    const std::filesystem::path& Path() const
+    {
+        return m_path;
+    }
+
+  private:
+    std::filesystem::path m_path;
+};
+
+std::filesystem::path WritePng(const std::filesystem::path& directory, const std::string& name)
+{
+    const TextureData image = MakeGradient(20);
+    const std::filesystem::path path = directory / name;
+    Require(
+        stbi_write_png(path.string().c_str(), image.width, image.height, 4, image.pixels.data(), image.width * 4) != 0,
+        "could not write the test image");
+    return path;
+}
+
+size_t CountCacheFiles(const std::filesystem::path& cacheDirectory)
+{
+    size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(cacheDirectory))
+    {
+        count += entry.path().extension() == ".metex" ? 1 : 0;
+    }
+    return count;
+}
+
+bool SameTexture(const CompressedTexture& a, const CompressedTexture& b)
+{
+    if (a.format != b.format || a.levels.size() != b.levels.size())
+    {
+        return false;
+    }
+    for (size_t i = 0; i < a.levels.size(); ++i)
+    {
+        if (a.levels[i].width != b.levels[i].width || a.levels[i].height != b.levels[i].height ||
+            a.levels[i].blocks != b.levels[i].blocks)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void CacheMissThenHit()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path image = WritePng(scratch.Path(), "gradient.png");
+    const std::filesystem::path cache = scratch.Path() / "cache";
+
+    const CompressedTextureLoad first = LoadOrCompressTexture(image, TextureUsage::Color, cache);
+    Require(!first.cacheHit, "the first load must compress");
+    Require(CountCacheFiles(cache) == 1, "the first load must write one cache file");
+
+    const CompressedTextureLoad second = LoadOrCompressTexture(image, TextureUsage::Color, cache);
+    Require(second.cacheHit, "the second load must come from the cache");
+    Require(SameTexture(first.texture, second.texture), "the cached texture must equal the compressed one");
+}
+
+void ChangedFileMisses()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path image = WritePng(scratch.Path(), "gradient.png");
+    const std::filesystem::path cache = scratch.Path() / "cache";
+    LoadOrCompressTexture(image, TextureUsage::Color, cache);
+
+    std::filesystem::last_write_time(image, std::filesystem::last_write_time(image) + std::chrono::hours(1));
+    Require(!LoadOrCompressTexture(image, TextureUsage::Color, cache).cacheHit, "an edited file must be compressed again");
+}
+
+void UsageIsPartOfTheKey()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path image = WritePng(scratch.Path(), "gradient.png");
+    const std::filesystem::path cache = scratch.Path() / "cache";
+    LoadOrCompressTexture(image, TextureUsage::Color, cache);
+
+    Require(!LoadOrCompressTexture(image, TextureUsage::Data, cache).cacheHit, "another usage is another texture");
+    Require(CountCacheFiles(cache) == 2, "each usage has its own cache file");
+    Require(
+        BuildCompressedTextureKey(image, TextureUsage::Color) != BuildCompressedTextureKey(image, TextureUsage::Data),
+        "usage must be part of the key");
+}
+
+void DamagedFilesMiss()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path image = WritePng(scratch.Path(), "gradient.png");
+    const std::filesystem::path cache = scratch.Path() / "cache";
+    const CompressedTexture texture = LoadOrCompressTexture(image, TextureUsage::Color, cache).texture;
+    const std::string key = BuildCompressedTextureKey(image, TextureUsage::Color);
+    const std::filesystem::path file = CompressedTextureCacheFile(cache, key);
+    Require(ReadCompressedTexture(file, key).has_value(), "an intact file must read back");
+
+    Require(!ReadCompressedTexture(file, key + "x").has_value(), "a file written under another key must be a miss");
+
+    std::filesystem::resize_file(file, std::filesystem::file_size(file) - 7);
+    Require(!ReadCompressedTexture(file, key).has_value(), "a truncated file must be a miss");
+
+    Require(WriteCompressedTexture(file, key, texture), "rewriting the file must succeed");
+    Require(ReadCompressedTexture(file, key).has_value(), "a rewritten file must read back");
+    Require(!ReadCompressedTexture(scratch.Path() / "missing.metex", key).has_value(), "a missing file must be a miss");
+}
 }
 
 int main()
@@ -209,6 +336,10 @@ int main()
         Bc7KeepsAlpha();
         Bc5RoundTripIsAccurate();
         OddSizesEncodeWholeBlocks();
+        CacheMissThenHit();
+        ChangedFileMisses();
+        UsageIsPartOfTheKey();
+        DamagedFilesMiss();
     }
     catch (const std::exception& error)
     {
