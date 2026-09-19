@@ -106,11 +106,12 @@ static_assert(
         2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
     "prevViewProj must follow invViewProj with no padding");
 
-// Set 0: the per-frame camera uniform buffer at binding 0 and the directional shadow map at
-// binding 1. Split out from the material set so that the camera write leaves the per-material
-// loop entirely — it is written once per swapchain image instead of once per image per material —
-// and so a material reload rebuilds only set 1. The deferred lighting pass binds this same set
-// with no material at all; the tone mapping pass binds no camera set.
+// Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
+// 1 and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// motion vectors). Split out from the material set so that the camera write leaves the
+// per-material loop entirely — it is written once per swapchain image instead of once per image
+// per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
+// this same set with no material at all; the tone mapping pass binds no camera set.
 class VulkanFrameDescriptorSetLayout
 {
   public:
@@ -157,7 +158,8 @@ class VulkanUniformBuffer
         VkDescriptorSetLayout frameSetLayout,
         VkDescriptorSetLayout materialSetLayout,
         const std::vector<MaterialTextureBinding>& materialBindings,
-        TextureDescriptorBinding shadowMap);
+        TextureDescriptorBinding shadowMap,
+        uint32_t motionSlotCount);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -172,7 +174,8 @@ class VulkanUniformBuffer
         const glm::vec3& ambientLuminance,
         std::span<const GpuLightData> lights,
         const ShadowUniformData& shadow,
-        const glm::mat4& prevViewProj);
+        const glm::mat4& prevViewProj,
+        std::span<const glm::mat4> prevModels);
 
   private:
     void CreateBuffers(uint32_t imageCount);
@@ -190,6 +193,12 @@ class VulkanUniformBuffer
     std::vector<VkBuffer> m_buffers;
     std::vector<VkDeviceMemory> m_memories;
     std::vector<void*> m_mappedBuffers;
+    // Set 0 binding 2: each draw's previous model matrix, indexed by its firstInstance. One
+    // host-visible buffer per swapchain image, sized to the draw list this object was built for.
+    std::vector<VkBuffer> m_motionBuffers;
+    std::vector<VkDeviceMemory> m_motionMemories;
+    std::vector<void*> m_mappedMotionBuffers;
+    uint32_t m_motionSlotCount = 0;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;

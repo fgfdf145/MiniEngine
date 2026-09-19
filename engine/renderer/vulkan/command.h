@@ -16,6 +16,9 @@ struct VulkanDrawItem
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     ObjectPushConstants drawConstants;
     MaterialPipelineKey pipelineKey;
+    // Index into the previous model matrix buffer (set 0 binding 2), passed to the draw as
+    // firstInstance so triangle.vert can read it through gl_InstanceIndex.
+    uint32_t motionSlot = 0;
 };
 
 struct VulkanFrameSyncObjects

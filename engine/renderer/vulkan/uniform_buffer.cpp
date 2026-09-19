@@ -1,5 +1,6 @@
 #include "uniform_buffer.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <glm/geometric.hpp>
@@ -15,13 +16,16 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout materialSetLayout,
     const std::vector<MaterialTextureBinding>& materialBindings,
-    TextureDescriptorBinding shadowMap)
+    TextureDescriptorBinding shadowMap,
+    uint32_t motionSlotCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
       m_shadowMap(shadowMap),
       m_frameSetLayout(frameSetLayout),
       m_materialSetLayout(materialSetLayout),
+      // A zero-sized storage buffer is invalid, and a scene with no submeshes still binds set 0.
+      m_motionSlotCount(std::max(motionSlotCount, 1u)),
       m_imageCount(imageCount)
 {
     if (m_materialBindings.empty())
@@ -49,6 +53,18 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
         if (m_memories[i] != VK_NULL_HANDLE)
         {
             vkFreeMemory(m_device, m_memories[i], nullptr);
+        }
+    }
+    for (size_t i = 0; i < m_motionBuffers.size(); ++i)
+    {
+        if (m_motionBuffers[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(m_device, m_motionBuffers[i], nullptr);
+        }
+        // Freeing mapped memory unmaps it implicitly.
+        if (m_motionMemories[i] != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(m_device, m_motionMemories[i], nullptr);
         }
     }
 
@@ -93,8 +109,16 @@ void VulkanUniformBuffer::Update(
     const glm::vec3& ambientLuminance,
     std::span<const GpuLightData> lights,
     const ShadowUniformData& shadow,
-    const glm::mat4& prevViewProj)
+    const glm::mat4& prevViewProj,
+    std::span<const glm::mat4> prevModels)
 {
+    // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
+    // robustness feature is enabled to catch it, so a mismatch is refused here instead.
+    if (prevModels.size() > m_motionSlotCount)
+    {
+        throw std::runtime_error("More previous model matrices than motion slots");
+    }
+
     CameraUniformData data{};
     data.view = matrices.view;
     data.proj = matrices.renderProjection;
@@ -114,12 +138,13 @@ void VulkanUniformBuffer::Update(
     data.prevViewProj = prevViewProj;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
+    std::memcpy(m_mappedMotionBuffers[imageIndex], prevModels.data(), prevModels.size_bytes());
 }
 
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -129,6 +154,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // Each draw's previous model matrix, read by triangle.vert for motion vectors.
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -216,16 +246,49 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         CheckVulkan(vkBindBufferMemory(m_device, m_buffers[i], m_memories[i], 0), "Failed to bind uniform buffer memory");
         CheckVulkan(vkMapMemory(m_device, m_memories[i], 0, sizeof(CameraUniformData), 0, &m_mappedBuffers[i]), "Failed to map uniform buffer memory");
     }
+
+    const VkDeviceSize motionBytes = sizeof(glm::mat4) * m_motionSlotCount;
+    m_motionBuffers.assign(imageCount, VK_NULL_HANDLE);
+    m_motionMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_mappedMotionBuffers.assign(imageCount, nullptr);
+
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = motionBytes;
+        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_motionBuffers[i]), "Failed to create previous model buffer");
+
+        VkMemoryRequirements memoryRequirements{};
+        vkGetBufferMemoryRequirements(m_device, m_motionBuffers[i], &memoryRequirements);
+
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = memoryRequirements.size;
+        allocateInfo.memoryTypeIndex = FindMemoryType(
+            memoryRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_motionMemories[i]), "Failed to allocate previous model buffer memory");
+        CheckVulkan(vkBindBufferMemory(m_device, m_motionBuffers[i], m_motionMemories[i], 0), "Failed to bind previous model buffer memory");
+        CheckVulkan(vkMapMemory(m_device, m_motionMemories[i], 0, motionBytes, 0, &m_mappedMotionBuffers[i]), "Failed to map previous model buffer memory");
+
+        // Identity until the first Update, so nothing ever reads uninitialised memory.
+        const std::vector<glm::mat4> identities(m_motionSlotCount, glm::mat4(1.0f));
+        std::memcpy(m_mappedMotionBuffers[i], identities.data(), static_cast<size_t>(motionBytes));
+    }
 }
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
-    // One pool serves both sets the split produced: imageCount uniform buffers and shadow map
-    // samplers for set 0 and thirteen samplers per material set for set 1. That is why neither its
-    // name nor its failure message belongs to either half.
+    // One pool serves both sets the split produced: imageCount uniform buffers, shadow map
+    // samplers and previous model buffers for set 0 and thirteen samplers per material set for
+    // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount}}};
+    const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount},
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -279,7 +342,12 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         shadowInfo.imageView = m_shadowMap.imageView;
         shadowInfo.sampler = m_shadowMap.sampler;
 
-        std::array<VkWriteDescriptorSet, 2> frameWrites{};
+        VkDescriptorBufferInfo motionInfo{};
+        motionInfo.buffer = m_motionBuffers[i];
+        motionInfo.offset = 0;
+        motionInfo.range = VK_WHOLE_SIZE;
+
+        std::array<VkWriteDescriptorSet, 3> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -292,6 +360,12 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         frameWrites[1].descriptorCount = 1;
         frameWrites[1].pImageInfo = &shadowInfo;
+        frameWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[2].dstSet = m_frameDescriptorSets[i];
+        frameWrites[2].dstBinding = 2;
+        frameWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        frameWrites[2].descriptorCount = 1;
+        frameWrites[2].pBufferInfo = &motionInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

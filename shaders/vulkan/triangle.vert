@@ -14,6 +14,14 @@ layout(push_constant) uniform DrawConstants
 }
 drawData;
 
+// Each draw's model matrix from last frame, indexed by the draw's firstInstance (see
+// VulkanDrawItem::motionSlot). Push constants are full, so it cannot ride with the current one.
+layout(set = 0, binding = 2) readonly buffer PreviousModelBuffer
+{
+    mat4 previousModels[];
+}
+previousModelData;
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 layout(location = 2) in vec2 inTexCoord;
@@ -49,7 +57,7 @@ void main()
 
     gl_Position = ubo.proj * ubo.view * worldPosition;
     fragCurrClip = gl_Position;
-    fragPrevClip = ubo.prevViewProj * (drawData.model * vec4(inPosition, 1.0));
+    fragPrevClip = ubo.prevViewProj * (previousModelData.previousModels[gl_InstanceIndex] * vec4(inPosition, 1.0));
     fragColor = inColor;
     fragTexCoord = inTexCoord;
     fragWorldNormal = normalize(normalMatrix * inNormal);

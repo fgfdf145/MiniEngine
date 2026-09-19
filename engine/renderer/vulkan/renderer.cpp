@@ -357,8 +357,17 @@ void VulkanRenderer::DrawFrame()
             0.0f);
     }
 
+    std::vector<glm::mat4> models;
+    std::vector<MotionKey> motionKeys;
+    models.reserve(m_renderSubmeshes.size());
+    motionKeys.reserve(m_renderSubmeshes.size());
+    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    {
+        models.push_back(State().rendererWorld.GetModelMatrix(renderSubmesh.entity));
+        motionKeys.push_back(renderSubmesh.motionKey);
+    }
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
-    const MotionFrame motion = m_motionHistory.Advance(viewProjection, {}, {});
+    const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
 
     m_uniformBuffer->Update(
         imageIndex,
@@ -367,8 +376,9 @@ void VulkanRenderer::DrawFrame()
         lightSelection.ambientLuminance,
         selectedLights,
         shadowData,
-        motion.previousViewProjection);
-    const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex);
+        motion.previousViewProjection,
+        motion.previousModels);
+    const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
 
@@ -690,7 +700,8 @@ void VulkanRenderer::CreateDescriptorResources()
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(m_textures, m_materialTextureSlots),
-        m_shadowPass->GetSampledBinding());
+        m_shadowPass->GetSampledBinding(),
+        static_cast<uint32_t>(m_renderSubmeshes.size()));
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
@@ -1071,6 +1082,15 @@ void VulkanRenderer::ApplyRenderContent(
     std::vector<MaterialTextureSlots> newMaterialTextureSlots,
     std::vector<RenderSubmesh> newRenderSubmeshes)
 {
+    // A submesh's motion key is its entity and its position among that entity's submeshes, so a
+    // reload that reorders the list still finds each draw's own history.
+    std::unordered_map<uint32_t, uint32_t> nextSubmeshOrdinal;
+    for (RenderSubmesh& renderSubmesh : newRenderSubmeshes)
+    {
+        const uint32_t entity = static_cast<uint32_t>(entt::to_integral(renderSubmesh.entity));
+        renderSubmesh.motionKey = MotionKey{entity, nextSubmeshOrdinal[entity]++};
+    }
+
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
 
     if (m_swapchain && m_renderPass && !m_scenePasses.empty() && !newTextures.empty() && !newMaterialTextureSlots.empty())
@@ -1085,7 +1105,8 @@ void VulkanRenderer::ApplyRenderContent(
             m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
             BuildMaterialTextureBindings(newTextures, newMaterialTextureSlots),
-            m_shadowPass->GetSampledBinding());
+            m_shadowPass->GetSampledBinding(),
+            static_cast<uint32_t>(newRenderSubmeshes.size()));
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and the new UBO above is built while the GPU may still
@@ -1099,17 +1120,18 @@ void VulkanRenderer::ApplyRenderContent(
     m_renderSubmeshes = std::move(newRenderSubmeshes);
 }
 
-std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) const
+std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
 {
     std::vector<VulkanDrawItem> unsorted;
     std::vector<MaterialDrawSortKey> sortKeys;
     unsorted.reserve(m_renderSubmeshes.size());
     sortKeys.reserve(m_renderSubmeshes.size());
 
-    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
+        const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
         ObjectPushConstants drawConstants{};
-        drawConstants.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);
+        drawConstants.model = models[submeshIndex];
         drawConstants.material = renderSubmesh.material;
         const MaterialPipelineKey pipelineKey{
             renderSubmesh.alphaMode,
@@ -1125,7 +1147,10 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex) 
             renderSubmesh.buffer->GetIndexCount(),
             m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
             drawConstants,
-            pipelineKey});
+            pipelineKey,
+            // The slot is the submesh index, which is also where DrawFrame put this submesh's
+            // previous model matrix.
+            static_cast<uint32_t>(submeshIndex)});
     }
 
     std::vector<VulkanDrawItem> ordered;

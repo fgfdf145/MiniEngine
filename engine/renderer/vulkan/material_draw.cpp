@@ -58,7 +58,7 @@ void RecordMaterialDrawItems(
             0,
             sizeof(ObjectPushConstants),
             &drawItem.drawConstants);
-        vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffer, drawItem.indexCount, 1, 0, 0, drawItem.motionSlot);
     }
 }
 }

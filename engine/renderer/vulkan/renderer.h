@@ -45,6 +45,9 @@ struct RenderSubmesh
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
+    // Assigned in ApplyRenderContent: the entity and this submesh's position among that entity's
+    // submeshes, which is what MotionHistory finds last frame's model matrix by.
+    MotionKey motionKey;
 };
 
 struct MaterialTextureSlots
@@ -98,7 +101,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         std::vector<std::unique_ptr<VulkanTexture>> newTextures,
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
         std::vector<RenderSubmesh> newRenderSubmeshes);
-    std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex) const;
+    // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh.
+    std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
     std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
