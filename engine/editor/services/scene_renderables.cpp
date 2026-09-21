@@ -86,7 +86,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         return renderSubmeshes;
     }
 
-    std::shared_ptr<LoadedModelData> modelDataPtr = ModelCache::Get(model.sourcePath);
+    std::shared_ptr<const LoadedModelData> modelDataPtr = ModelCache::Get(model.sourcePath);
     if (!modelDataPtr)
     {
         // Don't do a synchronous load while an async loader is running on another thread:
@@ -95,8 +95,9 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             return renderSubmeshes;
         }
-        modelDataPtr = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
-        ModelCache::Store(model.sourcePath, modelDataPtr);
+        auto loaded = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(model.sourcePath));
+        ModelCache::Store(model.sourcePath, loaded);
+        modelDataPtr = loaded;
     }
     const LoadedModelData& modelData = *modelDataPtr;
 
@@ -223,6 +224,24 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         importedSubmeshes);
     return renderSubmeshes;
 }
+
+// The scene's live set only changes when renderables are rebuilt or refreshed,
+// so eviction is evaluated there rather than per frame, where it would almost
+// always be a no-op.
+void TrimModelCache(RendererSharedState& state)
+{
+    const entt::registry& registry = state.GetEditorWorld().Registry();
+    std::unordered_set<std::string> liveKeys;
+    for (entt::entity entity : registry.view<const ModelComponent>())
+    {
+        const ModelComponent& model = registry.get<ModelComponent>(entity);
+        if (!model.sourcePath.empty())
+        {
+            liveKeys.insert(model.sourcePath);
+        }
+    }
+    ModelCache::Trim(liveKeys, kDefaultModelCacheBudgetBytes);
+}
 }
 
 void RebuildSceneRenderables(RendererSharedState& state)
@@ -241,6 +260,7 @@ void RebuildSceneRenderables(RendererSharedState& state)
     state.rendererWorld.SetRenderSubmeshes(std::move(newRenderSubmeshes));
     world.ClearAllModelRenderableDirty();
     state.renderablesDirty = true;
+    TrimModelCache(state);
 }
 
 bool RefreshDirtySceneRenderables(RendererSharedState& state)
@@ -277,6 +297,10 @@ bool RefreshDirtySceneRenderables(RendererSharedState& state)
     }
 
     state.renderablesDirty |= changed;
+    if (changed)
+    {
+        TrimModelCache(state);
+    }
     return changed;
 }
 

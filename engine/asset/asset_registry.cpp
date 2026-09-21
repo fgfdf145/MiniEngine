@@ -124,14 +124,44 @@ bool WriteSidecar(const std::filesystem::path& sidecarPath, const std::string& u
     YAML::Node root(YAML::NodeType::Map);
     root["asset"] = asset;
 
-    std::ofstream out(sidecarPath, std::ios::trunc);
-    if (!out)
+    // Write to a temporary and rename over the destination: a crash then
+    // leaves either the old sidecar or the new one, never a truncated file
+    // that reads back as "no uuid". The temporary's name ends in ".tmp", which
+    // does not match kSidecarSuffix, so ScanLocked never mistakes a stray one
+    // for a sidecar.
+    const std::filesystem::path tempPath = sidecarPath.parent_path() /
+                                           (sidecarPath.filename().string() + ".tmp");
     {
-        LOG_WARN("Could not write asset sidecar '{}'", sidecarPath.string());
+        std::ofstream out(tempPath, std::ios::trunc);
+        if (!out)
+        {
+            LOG_WARN("Could not write asset sidecar '{}'", tempPath.string());
+            return false;
+        }
+        out << root;
+        out.flush();
+        if (!out.good())
+        {
+            out.close();
+            std::error_code removeEc;
+            std::filesystem::remove(tempPath, removeEc);
+            LOG_WARN("Could not write asset sidecar '{}'", tempPath.string());
+            return false;
+        }
+    }
+
+    std::error_code renameEc;
+    std::filesystem::rename(tempPath, sidecarPath, renameEc);
+    if (renameEc)
+    {
+        std::error_code removeEc;
+        std::filesystem::remove(tempPath, removeEc);
+        LOG_WARN(
+            "Could not replace asset sidecar '{}': {}",
+            sidecarPath.string(), renameEc.message());
         return false;
     }
-    out << root;
-    return out.good();
+    return true;
 }
 
 void EraseEntryLocked(const std::string& key)
@@ -261,7 +291,12 @@ void ScanLocked()
             // A sidecar whose asset file is gone is an orphan and gets removed.
             const std::string assetName = name.substr(0, name.size() - std::strlen(kSidecarSuffix));
             std::error_code existsEc;
-            if (assetName.empty() || !std::filesystem::exists(path.parent_path() / assetName, existsEc))
+            const bool assetPresent =
+                !assetName.empty() && std::filesystem::exists(path.parent_path() / assetName, existsEc);
+            // `exists` returns false both for "absent" and for "could not
+            // tell". Only the first is evidence of an orphan; deleting on the
+            // second loses the uuid permanently to a transient IO error.
+            if (assetName.empty() || (!assetPresent && !existsEc))
             {
                 orphanedSidecars.push_back(path);
             }
@@ -511,6 +546,13 @@ void OnAssetRemoved(const std::filesystem::path& path)
     {
         std::filesystem::remove(sidecar, ec);
     }
+}
+
+bool IsUnderAssetsRoot(const std::filesystem::path& path)
+{
+    std::lock_guard lock(State().mutex);
+    EnsureInitializedLocked();
+    return IsUnderRootLocked(NormalizeKey(path));
 }
 
 bool IsRegistrableAsset(const std::filesystem::path& path)

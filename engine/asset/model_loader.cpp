@@ -89,20 +89,29 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::filesystem::path& targetDirectory)
 {
     const std::string extension = ToLowerCopy(modelPath.extension().string());
+
+    std::filesystem::path dst;
     if (extension == ".gltf")
     {
-        return GltfModelLoader::CopyWithSortedReferences(modelPath, targetDirectory);
+        dst = GltfModelLoader::CopyWithSortedReferences(modelPath, targetDirectory);
+    }
+    else
+    {
+        // .glb (and anything else) is self-contained: plain copy into the folder.
+        dst = targetDirectory / modelPath.filename();
+        std::error_code ec;
+        std::filesystem::copy_file(modelPath, dst, std::filesystem::copy_options::skip_existing, ec);
+        if (ec)
+        {
+            throw std::runtime_error(
+                "Failed to copy '" + modelPath.string() + "' to '" + dst.string() + "': " + ec.message());
+        }
     }
 
-    // .glb (and anything else) is self-contained: plain copy into the folder.
-    const std::filesystem::path dst = targetDirectory / modelPath.filename();
-    std::error_code ec;
-    std::filesystem::copy_file(modelPath, dst, std::filesystem::copy_options::skip_existing, ec);
-    if (ec)
-    {
-        throw std::runtime_error(
-            "Failed to copy '" + modelPath.string() + "' to '" + dst.string() + "': " + ec.message());
-    }
+    // Images whose pixels live inside the model file become real files in the
+    // bundle, so every texture path the loader produces is model-relative and
+    // loading never has to write anything.
+    GltfModelLoader::UnpackEmbeddedTextures(dst);
     return dst;
 }
 

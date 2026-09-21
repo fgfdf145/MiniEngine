@@ -87,7 +87,7 @@ engine_platform -> engine_core
 
 - **Vulkan UV**：贴图加载不做垂直翻转；UV 原点为左上角，行 0 对应 `v0`。不要引入 OpenGL 风格的全局翻转或 `1 - v` 补偿。
 - **单位**：世界单位为米，常量在 `engine/scene/world_units.h`；导入和编辑器 UI 都以此为基准。
-- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。
+- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。导入还会把模型文件内部的图片（`.glb` 负载、`data:` URI）解包成 `<bundle>/textures/` 下的真实文件；加载只读取，不写盘。因此贴图路径一律相对于模型文件所在目录——外部 URI 和嵌入图片没有例外。`--model` 指向 `assets/` 之外时会先自动导入，再加载导入后的副本。
 - **资产 UUID**：可注册资产限于 `assets/` 根下的模型和纹理。sidecar 命名为 `<完整文件名>.miniengine_asset.yaml`，资产浏览和场景扫描会忽略该后缀。场景保存 `source_path` 与 `source_uuid`：加载时 UUID 优先，保存时路径优先；重复 UUID 通过 sidecar 的 `file` 与实际文件名仲裁，副本获得新 UUID。
 - **场景身份**：场景 YAML v3 写 `entity_uuid` 和 `selected_entity_uuid`。`entt::entity` 仅在 registry 生命周期内有效，不能持久化或作为跨加载引用；旧 v1/v2 可按旧模型索引加载后升级。
 - **场景写入边界**：`ISceneWorld::Registry()` 对外只读。实体生命周期、组件编辑、变换刷新和 Renderable 脏标记必须调用场景接口，以保持顺序、选择、UUID 索引和缓存同步。
@@ -149,7 +149,7 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 
 - RHI 目前只有 Vulkan 后端，且后端仍承载 `EditorRenderBackendBase` 的编辑器流程。
 - glTF 尚未完整处理额外 UV 集、sampler wrap 和 `KHR_texture_transform`。
-- 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径。
+- 启动默认场景配置与部分引用刷新仍以路径为主，未覆盖所有 UUID 解析路径；材质内的贴图引用是纯路径，没有 UUID 参与，重命名贴图会静默打断引用。
 - CPU Renderable 支持按实体增量更新；Vulkan GPU 资源仍在内容变化时整批上传。
 - 渲染端已有 `alphaMode` 分类（opaque / mask / blend × 单双面共 6 条管线变体）与半透明 back-to-front 排序；仍没有视锥剔除和抗锯齿；阴影只有最亮的一盏方向光有，点光、聚光和面光不投影；环境光是均匀环境（split-sum 近似），没有 IBL，显存按每 submesh 独立分配。缺口清单见 2026-07-30 的开发记录，其中管线相关两条已在 2026-09-03 处理，「缺失特性」中无独立 HDR 中间靶、色调映射硬编码在 `triangle.frag` 一条已在 2026-09-12 处理。不透明与 Mask 几何已改走 G-Buffer 延迟着色（第二阶段），Blend 仍走前向并合成在光照结果之上；GB4 实体 id 拾取（第三阶段）尚未实现。
 - G-Buffer 带有相机与物体运动的 motion vector（`R16G16_SFLOAT`，当前 UV 减上一帧 UV；上一帧 model 矩阵经 set 0 binding 2 的 SSBO 按 `firstInstance` 索引），可在 Graphics Debug 窗口查看；Blend 表面与背景像素没有速度。目前还没有使用它的功能，TAA 与时域 AO 尚未实现。设计见 [docs/superpowers/specs/2026-09-19-motion-vectors-design.md](docs/superpowers/specs/2026-09-19-motion-vectors-design.md)。
@@ -316,6 +316,43 @@ x64 Debug 与 Release 构建通过，CTest `37/37`（新增 `miniengine.scene_li
 **验证**
 
 x64 Debug 构建通过，CTest `34/34`，`check-format` 通过（新文件另用 clang-format 22 单独核对），`--frames 60` 退出码 0 且开验证层无错误输出；启动时加载 NewSponza（406 个 submesh）同样无验证层错误，从进程读到的窗口标题为 `MiniEngine v0.1.1`。面光源路径只有着色器编译和管线创建经过验证层，没有在含面光源的场景中运行过。自动曝光加入后 CTest `35/35`。验证期间临时加过日志：默认场景约 1.55 万个非背景像素，收敛到 EV 6.53；Sponza 加载后收敛到 5.26。全程无验证层错误，唯一一次例外是窗口被最小化时，交换链以 0×0 重建报错。该问题是既有问题：`HasDrawableArea` 看的是 SDL 窗口尺寸，交换链用的是 surface 的 `currentExtent`，与本轮改动无关，未修。临时日志已删除。新增 `miniengine_exposure_tests`（`miniengine.exposure`），覆盖 EV 换算、每档减半、默认 EV 让默认太阳下的白面不到显示白，以及最高 EV 下清屏值不溢出 fp16；自动曝光的分箱、测光、补偿与平滑也在这个目标里。用户已完成 GUI 验收。
+
+### 2026-09-12 — 资产生命周期加固
+
+同一轮审查里的六条缺陷，分三组，组内耦合、组间独立。
+
+**注册表安全性**
+
+- 资产浏览器预览面板此前**每帧**调 `GetOrCreateUuid`：全局注册表互斥锁 + 一次 `is_regular_file` + 可能写 sidecar。而后台导入线程在同一把锁上跑整棵资产树的 `RescanAssetTree`，UI 线程被它按住。UUID 在文件生命周期内不变，现在只在焦点移动或条目列表重建时算一次。
+- 孤儿 sidecar 的判定此前是 `exists()` 返回 false，而它在"无法判断"时同样返回 false——一次瞬时 IO 错误就永久丢掉 UUID。现在要求 `error_code` 干净才算证据。
+- `WriteSidecar` 此前截断后直接流式写，中途崩溃留下空文件，读回来就是"没有 UUID"。改成写临时文件 + `rename` 覆盖。临时文件名以 `.tmp` 结尾，不匹配 sidecar 后缀，因此不会被扫描误认。
+
+**缓存生命周期**
+
+- `ModelCache::Get` 此前返回可变 `shared_ptr`，两处调用方直接改缓存里的材质。今天两处都在主线程，没有真的 data race，但接口没这么说，而后台线程随时可以 `Store` 覆盖同一个键。`Get` 改为返回 `shared_ptr<const LoadedModelData>`，新增 `UpdateMaterial`/`UpdateMaterials` 两个显式写入口，在缓存锁内应用，路径缺失或索引越界时是 no-op——正是调用方原先自己带的那两个守卫。
+- 缓存此前无上限无淘汰，Sponza 级别的一个包就是几百 MB，进去就常驻到进程退出。现在按字节计量 + LRU 淘汰，预算 1 GiB。**场景仍引用的条目永不淘汰**，无论预算：淘汰它只会在下次重建 renderable 时触发一次同步重新加载，那是体验倒退不是节省。淘汰在 live set 真正可能变化的两个点评估——`RebuildSceneRenderables` 末尾，以及报告了变化的 `RefreshDirtySceneRenderables` 末尾——而不是每帧空跑。
+- 预览贴图缓存（解码后的全分辨率 RGBA8，一张 4K 基色图解码就是 32 MB）用同样的计数器 LRU，预算 256 MB，但没有 live set——预览面板对任何一张贴图都没有持久占有。
+
+**引用完整性**
+
+- 点一次 Delete 此前是主线程同步把资产树下每个 ≤64 MB 的 `.gltf`/`.yaml` 全文读进内存，对最多 256 个文件名逐个子串搜索。这对删除已经慢，对重命名（F2 高频操作）根本不可行。
+- 扫描提取成 `engine/asset/asset_references.{h,cpp}` 的 `FindReferencesTo`，背后是按 `last_write_time` 索引的文档内容缓存：首次仍走全树，重复扫描只重读变化的文档。时间戳读不到的文档会重读而不是信任索引。
+- 重命名由此能用上同一个检查：有引用就弹和删除同款的确认框。材质里的贴图引用是纯路径（见第 7 节），重命名必然打断它们——此前是静默打断。
+- 重命名还会 `ModelCache::Invalidate`，此前只有删除路径做了。否则之后在老路径上重新导入的模型会被喂上一个文件的解析数据。
+
+设计见 [docs/superpowers/specs/2026-09-12-asset-lifecycle-hardening-design.md](docs/superpowers/specs/2026-09-12-asset-lifecycle-hardening-design.md)。给材质贴图引用加 UUID 能让重命名经注册表自动修复、彻底不需要扫描，但那要改 `.material.yaml` 格式、`ModelMaterialData` 和解析路径，比其余五项加起来还大，仍是已知缺口。
+
+### 2026-09-12 — 嵌入式贴图改为导入时解包
+
+嵌入图片此前在**加载时**导出到 `.cache/tinygltf/<stem>_<模型绝对路径的 FNV1a>/`。缓存键是路径，所以每次导入、复制或重命名都新建一份全尺寸副本且从不清理——工作区里曾经是同一个模型的五份 101 MB 目录，共 501 MB。导出返回的还是绝对路径，而外部 URI 返回的是模型相对路径：同一个 `ModelMaterialData` 字段承载两种语义，`.material.yaml`（在 `assets/` 下，可提交）于是会持久化指向 gitignored 派生数据的本机路径。
+
+- 解包移到 `ModelLoader::CopyModelWithSortedReferences` 末尾，`.glb` 与 `.gltf` 两条分支合流后统一调 `GltfModelLoader::UnpackEmbeddedTextures`，写进 `<bundle>/textures/`。命名由 `BuildEmbeddedTextureFileName` 一处决定，导入和加载从同一个输入推出同一个名字。
+- `ResolveImagePath` 改为推导相对路径并确认存在，`LoadModel` 因此不再写任何文件。解包之前导入的旧包会退化成无贴图材质加一条明确的 warning，而不是指向不存在的路径。
+- `.glb` 仍原样保留，是源文件的忠实副本，贴图在磁盘上有两份（包内嵌一份、解包一份）。这是一次性有界成本，不随路径变化增长；把 `.glb` 转写成 `.gltf` 能省掉那一份，但导入产物就不再是副本，且要冒 tinygltf 写回丢 extension、漂精度的风险。
+- 解包只在导入时发生，所以 `--model` 指向 `assets/` 外的模型会先自动导入。守卫放在 `editor_backend_base.cpp` 的 `pendingModelLoads` 出口——所有加载请求的唯一收口，一处覆盖 `--model`、UI 加载和批量加载。由此确立不变式：能渲染的模型一定在 `assets/` 下。
+- `AssetRegistry` 补上首批测试：UUID 铸造与持久化、边界拒绝、重复 UUID 仲裁（**两种扫描顺序都断言**，因为扫描顺序决定归属正是 sidecar 文件名仲裁要防的事）、孤儿 sidecar 清理、引用解析三级回退、重命名与删除。
+
+`EnginePaths::CacheRoot()` 保留（启动日志仍在报告它），只是 `tinygltf/` 子目录和那套键推导没有了。设计见 [docs/superpowers/specs/2026-09-12-embedded-texture-unpacking-design.md](docs/superpowers/specs/2026-09-12-embedded-texture-unpacking-design.md)。
 
 ### 2026-09-12 — Vulkan 帧结构重组：HDR 中间靶、显式 barrier 与独立色调映射 pass
 

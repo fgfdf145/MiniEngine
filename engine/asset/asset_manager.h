@@ -62,6 +62,16 @@ class AssetManager
         AssetType type = AssetType::Other;
     };
 
+    // A rename whose target is referenced by other documents is staged until
+    // the user confirms it, mirroring the delete flow. Paths, not indices: the
+    // entry list can be rescanned between staging and confirming.
+    struct PendingRename
+    {
+        std::string sourcePath;
+        std::string newName;
+        bool isDir = false;
+    };
+
     void ScanCurrentDir();
     void DrawToolbar(AssetManagerResult& result);
     void DrawBreadcrumb();
@@ -75,6 +85,8 @@ class AssetManager
 
     void BeginRename(int index);
     void CommitRename();
+    void PerformRename(const PendingRename& rename);
+    void DrawRenameConfirmModal();
     void CancelRename();
     void CreateNewFolder();
 
@@ -89,6 +101,13 @@ class AssetManager
     std::vector<Entry> m_entries;
     std::unordered_set<int> m_selectedIndices;
     int m_anchorIdx = -1; // anchor for shift-range, also the focused preview item
+
+    // The focused entry's uuid, recomputed only when the focus moves or the
+    // entry list is rebuilt. GetOrCreateUuid takes the global registry mutex
+    // and hits the filesystem; a background import holds that same mutex
+    // across a whole-tree rescan, so calling it per frame stalls the UI.
+    int m_previewUuidIndex = -1;
+    std::string m_previewUuid;
     std::string m_clipboard;
     bool m_needsScan = true;
 
@@ -105,5 +124,9 @@ class AssetManager
     std::vector<std::string> m_pendingDeleteWarnings; // "'x.png' is referenced by ..." lines
     bool m_pendingDeleteHasDir = false;
     bool m_openDeleteModal = false;
+
+    std::optional<PendingRename> m_pendingRename;
+    std::vector<std::string> m_pendingRenameWarnings;
+    bool m_openRenameModal = false;
 };
 }

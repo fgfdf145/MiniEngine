@@ -255,11 +255,7 @@ void UpdateImportedMaterialDefinition(
     }
 
     // Update the single material at the given index in the model cache.
-    std::shared_ptr<LoadedModelData> cached = ModelCache::Get(modelPath);
-    if (cached && materialIndex < cached->materials.size())
-    {
-        ApplyImportedMaterialInfo(material, cached->materials[materialIndex]);
-    }
+    ModelCache::UpdateMaterial(modelPath, materialIndex, material);
 
     WriteMaterialYamlFile(
         std::filesystem::path(modelPath),
@@ -288,15 +284,7 @@ void UpdateImportedModelMaterialDefinitions(
 
     // Propagate user edits into the cached raw model data so that
     // Dirty renderable refresh picks up the new blend graphs and PBR factors.
-    std::shared_ptr<LoadedModelData> cached = ModelCache::Get(modelPathString);
-    if (cached)
-    {
-        const size_t count = std::min(materials.size(), cached->materials.size());
-        for (size_t i = 0; i < count; ++i)
-        {
-            ApplyImportedMaterialInfo(materials[i], cached->materials[i]);
-        }
-    }
+    ModelCache::UpdateMaterials(modelPathString, materials);
 
     // Persist each material as a sidecar .material.yaml file alongside the model.
     for (size_t i = 0; i < materials.size(); ++i)

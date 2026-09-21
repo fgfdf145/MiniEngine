@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cmath>
 #include <cfloat>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -35,6 +36,7 @@
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -234,6 +236,7 @@ struct CachedPreviewTexture
     std::filesystem::file_time_type lastWriteTime{};
     bool resolved = false;
     bool available = false;
+    uint64_t lastAccess = 0;
 };
 
 struct PreviewSurfaceVertex
@@ -279,6 +282,53 @@ std::unordered_map<std::string, CachedPreviewTexture>& GetPreviewTextureCache()
 {
     static std::unordered_map<std::string, CachedPreviewTexture> cache;
     return cache;
+}
+
+// Decoded full-resolution RGBA8. A 4K base color map is 32 MB decoded, and the
+// panel touches a new one every time the user clicks a different material.
+constexpr size_t kPreviewTextureBudgetBytes = 256ull * 1024 * 1024;
+
+uint64_t& PreviewTextureAccessCounter()
+{
+    static uint64_t counter = 0;
+    return counter;
+}
+
+// Same policy as ModelCache::Trim, minus the live set: the preview panel has
+// no persistent claim on any texture.
+void TrimPreviewTextureCache()
+{
+    auto& cache = GetPreviewTextureCache();
+
+    size_t total = 0;
+    std::vector<std::pair<uint64_t, std::string>> evictable;
+    evictable.reserve(cache.size());
+    for (const auto& [key, entry] : cache)
+    {
+        total += entry.texture.pixels.size();
+        evictable.emplace_back(entry.lastAccess, key);
+    }
+
+    if (total <= kPreviewTextureBudgetBytes)
+    {
+        return;
+    }
+
+    std::sort(evictable.begin(), evictable.end());
+    for (const auto& [lastAccess, key] : evictable)
+    {
+        if (total <= kPreviewTextureBudgetBytes)
+        {
+            break;
+        }
+        const auto it = cache.find(key);
+        if (it == cache.end())
+        {
+            continue;
+        }
+        total -= it->second.texture.pixels.size();
+        cache.erase(it);
+    }
 }
 
 std::unordered_map<std::string, MaterialShadedPreviewCache>& GetMaterialShadedPreviewCaches()
@@ -425,6 +475,7 @@ const TextureData* ResolvePreviewTexture(const std::string& path)
     const bool exists = std::filesystem::exists(normalizedPath, errorCode) && !errorCode;
     auto& cache = GetPreviewTextureCache();
     CachedPreviewTexture& cached = cache[normalizedPath.string()];
+    cached.lastAccess = ++PreviewTextureAccessCounter();
 
     if (!exists)
     {
@@ -454,6 +505,12 @@ const TextureData* ResolvePreviewTexture(const std::string& path)
             cached.resolved = true;
             cached.available = false;
         }
+
+        // Trim can erase map entries, so re-look-up afterwards rather than
+        // holding `cached` across it.
+        TrimPreviewTextureCache();
+        const auto it = cache.find(normalizedPath.string());
+        return (it != cache.end() && it->second.available) ? &it->second.texture : nullptr;
     }
 
     return cached.available ? &cached.texture : nullptr;
