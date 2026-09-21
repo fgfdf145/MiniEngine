@@ -59,7 +59,11 @@ bool DrawThemeColorSection(const char* title, const ThemeColorEntry* entries, si
     ImGuiStyle& style = ImGui::GetStyle();
     for (size_t index = 0; index < entryCount; ++index)
     {
-        changed |= ImGui::ColorEdit4(entries[index].label, &style.Colors[entries[index].colorId].x);
+        // Palette entries are mostly translucent white overlays; drawing the swatch over the real window background
+        // (no checkerboard) shows the color as it actually appears in the editor.
+        changed |= ImGui::ColorEdit4(entries[index].label,
+                                     &style.Colors[entries[index].colorId].x,
+                                     ImGuiColorEditFlags_AlphaNoBg | ImGuiColorEditFlags_AlphaBar);
     }
     return changed;
 }
@@ -92,11 +96,13 @@ constexpr std::array<ThemeColorEntry, 7> kThemeChromeEntries = {{{"Title Backgro
                                                                  {"Resize Grip Hovered", ImGuiCol_ResizeGripHovered},
                                                                  {"Resize Grip Active", ImGuiCol_ResizeGripActive}}};
 
-constexpr std::array<ThemeColorEntry, 7> kThemeTabDockEntries = {{{"Tab", ImGuiCol_Tab},
+constexpr std::array<ThemeColorEntry, 9> kThemeTabDockEntries = {{{"Tab", ImGuiCol_Tab},
                                                                   {"Tab Hovered", ImGuiCol_TabHovered},
-                                                                  {"Tab Active", ImGuiCol_TabActive},
-                                                                  {"Tab Unfocused", ImGuiCol_TabUnfocused},
-                                                                  {"Tab Unfocused Active", ImGuiCol_TabUnfocusedActive},
+                                                                  {"Tab Selected", ImGuiCol_TabSelected},
+                                                                  {"Tab Selected Overline", ImGuiCol_TabSelectedOverline},
+                                                                  {"Tab Dimmed", ImGuiCol_TabDimmed},
+                                                                  {"Tab Dimmed Selected", ImGuiCol_TabDimmedSelected},
+                                                                  {"Tab Dimmed Selected Overline", ImGuiCol_TabDimmedSelectedOverline},
                                                                   {"Docking Preview", ImGuiCol_DockingPreview},
                                                                   {"Docking Empty Background", ImGuiCol_DockingEmptyBg}}};
 
@@ -110,10 +116,13 @@ constexpr std::array<ThemeColorEntry, 9> kThemeStateEntries = {{{"Text", ImGuiCo
                                                                 {"Table Border Light", ImGuiCol_TableBorderLight},
                                                                 {"Table Row Alt", ImGuiCol_TableRowBgAlt}}};
 
-constexpr std::array<ThemeColorEntry, 5> kThemeFeedbackEntries = {{{"Text Selection", ImGuiCol_TextSelectedBg},
+constexpr std::array<ThemeColorEntry, 8> kThemeFeedbackEntries = {{{"Text Selection", ImGuiCol_TextSelectedBg},
+                                                                   {"Text Link", ImGuiCol_TextLink},
+                                                                   {"Input Text Cursor", ImGuiCol_InputTextCursor},
                                                                    {"Drag Drop Target", ImGuiCol_DragDropTarget},
                                                                    {"Navigation Cursor", ImGuiCol_NavCursor},
                                                                    {"Navigation Highlight", ImGuiCol_NavWindowingHighlight},
+                                                                   {"Modal Dim Background", ImGuiCol_ModalWindowDimBg},
                                                                    {"Separator Hovered", ImGuiCol_SeparatorHovered}}};
 
 constexpr std::array<ThemeColorEntry, 1> kThemeFeedbackActiveEntries = {{{"Separator Active", ImGuiCol_SeparatorActive}}};

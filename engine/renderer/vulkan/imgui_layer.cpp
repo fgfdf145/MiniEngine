@@ -80,62 +80,94 @@ void ConfigureImGuiStyle()
     style.DisplaySafeAreaPadding = ImVec2(6.0f, 6.0f);
     style.DockingSeparatorSize = 2.0f;
 
+    // Colors mirror the Claude desktop app's dark theme design tokens (--cds-*).
+    auto rgb = [](int r, int g, int b, float a = 1.0f)
+    {
+        return ImVec4(static_cast<float>(r) / 255.0f, static_cast<float>(g) / 255.0f, static_cast<float>(b) / 255.0f, a);
+    };
+    auto white = [](float a)
+    {
+        return ImVec4(1.0f, 1.0f, 1.0f, a);
+    };
+
+    const ImVec4 surface0 = rgb(11, 11, 11);          // --cds-surface-0
+    const ImVec4 surface1 = rgb(21, 21, 21);          // --cds-surface-1
+    const ImVec4 surface2 = rgb(26, 26, 25);          // --cds-surface-2 / panel
+    const ImVec4 surface3 = rgb(32, 32, 31);          // --cds-surface-3 / popover
+    const ImVec4 textPrimary = rgb(240, 239, 236);    // --cds-text-primary
+    const ImVec4 textSecondary = rgb(195, 194, 183);  // --cds-text-secondary
+    const ImVec4 textMuted = rgb(137, 135, 129);      // --cds-text-muted
+    const ImVec4 textAccent = rgb(217, 119, 87);      // --cds-fill-brand-hover
+    const ImVec4 fillAccent = rgb(198, 97, 63);       // --cds-fill-brand
+    const ImVec4 fillAccentHover = rgb(217, 119, 87); // --cds-fill-brand-hover
+    const ImVec4 fillBrandHover = rgb(217, 119, 87);  // --cds-fill-brand-hover
+    const ImVec4 fillWarning = rgb(250, 178, 25);     // --cds-fill-warning
+    const ImVec4 fillWarningHover = rgb(237, 161, 0); // --cds-fill-warning-hover
+    const ImVec4 clear = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+
     ImVec4* colors = style.Colors;
-    const ImVec4 baseBg = ImVec4(0.141f, 0.141f, 0.141f, 1.0f);     // #242424
-    const ImVec4 elevatedBg = ImVec4(0.165f, 0.165f, 0.165f, 1.0f); // #2a2a2a
-    const ImVec4 activeBg = ImVec4(0.188f, 0.188f, 0.188f, 1.0f);   // #303030
-    const ImVec4 hoverBg = ImVec4(0.212f, 0.212f, 0.212f, 1.0f);    // #363636
-    const ImVec4 strongBg = ImVec4(0.251f, 0.251f, 0.251f, 1.0f);   // #404040
-    const ImVec4 border = ImVec4(0.314f, 0.314f, 0.314f, 1.0f);     // #505050
-    const ImVec4 accent = ImVec4(0.380f, 0.380f, 0.380f, 1.0f);     // #616161
-    colors[ImGuiCol_Text] = ImVec4(0.86f, 0.86f, 0.86f, 1.0f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.56f, 0.56f, 0.56f, 1.0f);
-    colors[ImGuiCol_WindowBg] = baseBg;
-    colors[ImGuiCol_ChildBg] = baseBg;
-    colors[ImGuiCol_PopupBg] = ImVec4(0.141f, 0.141f, 0.141f, 0.98f);
-    colors[ImGuiCol_Border] = border;
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_FrameBg] = elevatedBg;
-    colors[ImGuiCol_FrameBgHovered] = hoverBg;
-    colors[ImGuiCol_FrameBgActive] = strongBg;
-    colors[ImGuiCol_TitleBg] = baseBg;
-    colors[ImGuiCol_TitleBgActive] = elevatedBg;
-    colors[ImGuiCol_TitleBgCollapsed] = baseBg;
-    colors[ImGuiCol_MenuBarBg] = elevatedBg;
-    colors[ImGuiCol_ScrollbarBg] = baseBg;
-    colors[ImGuiCol_ScrollbarGrab] = activeBg;
-    colors[ImGuiCol_ScrollbarGrabHovered] = hoverBg;
-    colors[ImGuiCol_ScrollbarGrabActive] = strongBg;
-    colors[ImGuiCol_CheckMark] = accent;
-    colors[ImGuiCol_SliderGrab] = accent;
-    colors[ImGuiCol_SliderGrabActive] = strongBg;
-    colors[ImGuiCol_Button] = elevatedBg;
-    colors[ImGuiCol_ButtonHovered] = hoverBg;
-    colors[ImGuiCol_ButtonActive] = strongBg;
-    colors[ImGuiCol_Header] = elevatedBg;
-    colors[ImGuiCol_HeaderHovered] = hoverBg;
-    colors[ImGuiCol_HeaderActive] = strongBg;
-    colors[ImGuiCol_Separator] = border;
-    colors[ImGuiCol_SeparatorHovered] = hoverBg;
-    colors[ImGuiCol_SeparatorActive] = strongBg;
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.380f, 0.380f, 0.380f, 0.25f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.380f, 0.380f, 0.380f, 0.55f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.380f, 0.380f, 0.380f, 0.90f);
-    colors[ImGuiCol_Tab] = baseBg;
-    colors[ImGuiCol_TabHovered] = hoverBg;
-    colors[ImGuiCol_TabActive] = elevatedBg;
-    colors[ImGuiCol_TabUnfocused] = baseBg;
-    colors[ImGuiCol_TabUnfocusedActive] = activeBg;
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.380f, 0.380f, 0.380f, 0.24f);
-    colors[ImGuiCol_DockingEmptyBg] = baseBg;
-    colors[ImGuiCol_TableHeaderBg] = elevatedBg;
-    colors[ImGuiCol_TableBorderStrong] = border;
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.220f, 0.220f, 0.220f, 1.0f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.03f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.380f, 0.380f, 0.380f, 0.35f);
-    colors[ImGuiCol_DragDropTarget] = ImVec4(0.380f, 0.380f, 0.380f, 0.90f);
-    colors[ImGuiCol_NavCursor] = ImVec4(0.380f, 0.380f, 0.380f, 1.0f);
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.380f, 0.380f, 0.380f, 0.70f);
+    colors[ImGuiCol_Text] = textPrimary;
+    colors[ImGuiCol_TextDisabled] = textMuted;
+    colors[ImGuiCol_WindowBg] = surface1;
+    colors[ImGuiCol_ChildBg] = clear;
+    colors[ImGuiCol_PopupBg] = surface3;
+    colors[ImGuiCol_Border] = white(0.10f); // --cds-border
+    colors[ImGuiCol_BorderShadow] = clear;
+    colors[ImGuiCol_FrameBg] = white(0.05f);         // --cds-fill-field
+    colors[ImGuiCol_FrameBgHovered] = white(0.075f); // --cds-fill-ghost-hover
+    colors[ImGuiCol_FrameBgActive] = white(0.10f);   // --cds-fill-control
+    colors[ImGuiCol_TitleBg] = surface0;
+    colors[ImGuiCol_TitleBgActive] = surface0;
+    colors[ImGuiCol_TitleBgCollapsed] = surface0;
+    colors[ImGuiCol_MenuBarBg] = surface0;
+    colors[ImGuiCol_ScrollbarBg] = clear;
+    colors[ImGuiCol_ScrollbarGrab] = white(0.20f);        // --cds-alpha-3
+    colors[ImGuiCol_ScrollbarGrabHovered] = white(0.35f); // --cds-alpha-4
+    colors[ImGuiCol_ScrollbarGrabActive] = white(0.50f);  // --cds-alpha-5
+    colors[ImGuiCol_CheckMark] = fillAccent;
+    colors[ImGuiCol_SliderGrab] = fillAccent;
+    colors[ImGuiCol_SliderGrabActive] = fillAccentHover;
+    colors[ImGuiCol_Button] = white(0.10f);         // --cds-fill-secondary
+    colors[ImGuiCol_ButtonHovered] = white(0.14f);  // --cds-fill-secondary-hover
+    colors[ImGuiCol_ButtonActive] = white(0.20f);   // --cds-fill-control-hover
+    colors[ImGuiCol_Header] = white(0.10f);         // --cds-bg-neutral-hover
+    colors[ImGuiCol_HeaderHovered] = white(0.075f); // --cds-fill-ghost-hover
+    colors[ImGuiCol_HeaderActive] = white(0.15f);   // --cds-fill-ghost-selected
+    colors[ImGuiCol_Separator] = white(0.10f);
+    colors[ImGuiCol_SeparatorHovered] = white(0.40f); // --cds-border-stronger
+    colors[ImGuiCol_SeparatorActive] = fillAccent;
+    colors[ImGuiCol_ResizeGrip] = white(0.10f);
+    colors[ImGuiCol_ResizeGripHovered] = white(0.20f);
+    colors[ImGuiCol_ResizeGripActive] = fillAccent;
+    colors[ImGuiCol_InputTextCursor] = textPrimary;
+    colors[ImGuiCol_TabHovered] = white(0.075f);
+    colors[ImGuiCol_Tab] = surface0;
+    colors[ImGuiCol_TabSelected] = surface1;
+    colors[ImGuiCol_TabSelectedOverline] = fillAccent;
+    colors[ImGuiCol_TabDimmed] = surface0;
+    colors[ImGuiCol_TabDimmedSelected] = surface2;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = clear;
+    colors[ImGuiCol_DockingPreview] = ImVec4(fillAccent.x, fillAccent.y, fillAccent.z, 0.35f);
+    colors[ImGuiCol_DockingEmptyBg] = surface0;
+    colors[ImGuiCol_PlotLines] = textSecondary;
+    colors[ImGuiCol_PlotLinesHovered] = fillBrandHover;
+    colors[ImGuiCol_PlotHistogram] = fillWarning;
+    colors[ImGuiCol_PlotHistogramHovered] = fillWarningHover;
+    colors[ImGuiCol_TableHeaderBg] = surface3;
+    colors[ImGuiCol_TableBorderStrong] = white(0.20f); // --cds-border-strong
+    colors[ImGuiCol_TableBorderLight] = white(0.10f);
+    colors[ImGuiCol_TableRowBg] = clear;
+    colors[ImGuiCol_TableRowBgAlt] = white(0.05f); // --cds-alpha-1
+    colors[ImGuiCol_TextLink] = textAccent;
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(fillAccent.x, fillAccent.y, fillAccent.z, 0.35f);
+    colors[ImGuiCol_TreeLines] = white(0.20f);
+    colors[ImGuiCol_DragDropTarget] = fillAccent;
+    colors[ImGuiCol_DragDropTargetBg] = clear;
+    colors[ImGuiCol_UnsavedMarker] = textPrimary;
+    colors[ImGuiCol_NavCursor] = fillAccent;
+    colors[ImGuiCol_NavWindowingHighlight] = white(0.70f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.50f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.50f);
 }
 
 void ConfigureImGuiFonts(ImGuiIO& io)
