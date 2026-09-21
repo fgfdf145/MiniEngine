@@ -161,6 +161,9 @@ struct RendererSharedState
     AsyncAssetImport asyncImport;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
+    // Progress of a scene change waiting on background texture preparation, such as
+    // "Preparing textures: 12 of 72"; empty when nothing is pending. Written by the render backend.
+    std::string sceneUploadStatus;
     std::string lastEngineSettingsError;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;

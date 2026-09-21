@@ -238,6 +238,32 @@ endif()
 
 set_target_properties(miniengine_texture_compression_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_texture_preparation_tests
+    texture_preparation_tests.cpp
+)
+miniengine_group_target_sources(miniengine_texture_preparation_tests)
+
+target_link_libraries(miniengine_texture_preparation_tests
+    PRIVATE
+        engine_asset
+)
+
+add_test(
+    NAME miniengine.texture_preparation
+    COMMAND miniengine_texture_preparation_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_texture_preparation_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_texture_preparation_tests>
+            $<TARGET_FILE_DIR:miniengine_texture_preparation_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_texture_preparation_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}

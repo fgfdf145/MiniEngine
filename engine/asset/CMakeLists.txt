@@ -23,6 +23,8 @@
     texture_compression.h
     texture_loader.cpp
     texture_loader.h
+    texture_preparation.cpp
+    texture_preparation.h
 )
 miniengine_group_target_sources(engine_asset)
 

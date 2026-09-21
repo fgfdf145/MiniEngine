@@ -285,10 +285,17 @@ void EditorUiController::DrawScenePanel(
     IEditorWorld& scene,
     const std::string& lastLoadError,
     const std::string& lastSceneIoError,
+    const std::string& sceneUploadStatus,
     EditorUiFrameResult& result)
 {
     if (ImGui::Begin("Scene", &m_showSceneWindow))
     {
+        // Texture files prepare in the background; the scene on screen changes once they are ready.
+        if (!sceneUploadStatus.empty())
+        {
+            ImGui::TextDisabled("%s", sceneUploadStatus.c_str());
+        }
+
         // Model loads and uploads fail without interrupting the editor, so this line is the only
         // place the user learns that the scene on screen is not the one they asked for.
         if (!lastLoadError.empty())

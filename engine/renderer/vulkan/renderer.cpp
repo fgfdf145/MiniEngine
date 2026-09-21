@@ -8,6 +8,7 @@
 #include <engine/scene/scene_components.h>
 #include <imgui.h>
 #include <engine/asset/compressed_texture_cache.h>
+#include <engine/asset/texture_preparation.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/platform/window/window.h>
@@ -139,42 +140,56 @@ VulkanTextureFormat ToVulkanTextureFormat(TextureUsage usage)
     return usage == TextureUsage::Color ? VulkanTextureFormat::SrgbColor : VulkanTextureFormat::LinearData;
 }
 
-// A material texture file ready to upload: block-compressed when the device samples BC formats,
-// RGBA8 otherwise.
-struct PreparedTexture
+// Where compressed material textures are cached between runs.
+std::filesystem::path TextureCacheDirectory()
 {
-    std::optional<CompressedTexture> compressed;
-    TextureData rgba;
-    bool fromCache = false;
-    double compressSeconds = 0.0;
-};
+    return EnginePaths::CacheRoot() / "textures";
+}
 
-// The CPU half of loading one texture file; safe to run on any thread. A texture that cannot be
-// compressed or cached is uploaded as RGBA8 instead, on its own; one that cannot be decoded at all
-// throws, and the caller falls back to the slot's default texture as before.
-PreparedTexture PrepareTexture(const std::string& path, TextureUsage usage, bool compress)
+// Every material texture file a textured submesh samples, with the usage its slot gives it.
+// UploadSceneResources assigns the same thirteen slots with the same usages.
+template <typename Visit>
+void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
 {
-    PreparedTexture prepared{};
-    if (compress)
+    const MaterialTexturePaths& textures = submesh.textures;
+    visit(textures.baseColor, TextureUsage::Color);
+    visit(textures.normal, TextureUsage::Normal);
+    visit(textures.metallic, TextureUsage::Data);
+    visit(textures.roughness, TextureUsage::Data);
+    visit(textures.occlusion, TextureUsage::Data);
+    visit(textures.emissive, TextureUsage::Color);
+    visit(textures.secondaryBaseColor, TextureUsage::Color);
+    visit(textures.secondaryNormal, TextureUsage::Normal);
+    visit(textures.secondaryMetallic, TextureUsage::Data);
+    visit(textures.secondaryRoughness, TextureUsage::Data);
+    visit(textures.secondaryOcclusion, TextureUsage::Data);
+    visit(textures.secondaryEmissive, TextureUsage::Color);
+    visit(textures.blendMask, TextureUsage::Data);
+}
+
+// What the editor shows while a change is missing from the screen. Kept as one constant so a later
+// successful upload can tell its own report apart from other load errors.
+constexpr const char* kOutOfMemoryReport =
+    "Not enough GPU memory to show the latest scene change. The scene on screen is from before it; "
+    "remove models to free memory, and the next change will try again.";
+
+// Logs a frame long enough to have stalled the editor. Texture work belongs on the preparation
+// queue; this is where a regression back onto the frame loop shows up.
+class FrameStallReporter
+{
+  public:
+    ~FrameStallReporter()
     {
-        try
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start).count();
+        if (seconds > 1.0)
         {
-            const auto start = std::chrono::steady_clock::now();
-            CompressedTextureLoad load = LoadOrCompressTexture(path, usage, EnginePaths::CacheRoot() / "textures");
-            prepared.fromCache = load.cacheHit;
-            prepared.compressSeconds =
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            prepared.compressed = std::move(load.texture);
-            return prepared;
-        }
-        catch (const std::exception& error)
-        {
-            LOG_ERROR("Could not compress texture '{}', uploading it uncompressed: {}", path, error.what());
+            LOG_WARN("A frame took {:.1f} s", seconds);
         }
     }
-    prepared.rgba = TextureLoader::LoadRGBA8(path);
-    return prepared;
-}
+
+  private:
+    std::chrono::steady_clock::time_point m_start = std::chrono::steady_clock::now();
+};
 
 // True for the one failure a content upload recovers from: running out of memory. Everything else
 // (a lost device, a driver bug) keeps propagating.
@@ -312,12 +327,26 @@ VulkanRenderer::VulkanRenderer(
         m_device->GetQueueFamilies().graphicsFamily.value(),
         m_device->GetGraphicsQueue());
     CreateDeviceResources();
+    // Half the hardware threads: the rest stay free for the frame loop and for the band-parallel
+    // encoding inside each texture.
+    const bool compressTextures = m_device->SupportsBlockCompression();
+    m_texturePreparation = std::make_unique<TexturePreparationQueue>(
+        [compressTextures, cacheDirectory = TextureCacheDirectory()](const std::string& path, TextureUsage usage)
+        {
+            return PrepareTexture(path, usage, compressTextures, cacheDirectory);
+        },
+        std::max(1u, std::thread::hardware_concurrency() / 2));
     CreateSwapchainResources();
+    // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
+    // and it has no texture files.
     UploadSceneResources();
 }
 
 VulkanRenderer::~VulkanRenderer()
 {
+    // Joins the workers before anything they might still be preparing for is torn down.
+    m_texturePreparation.reset();
+
     if (m_device)
     {
         vkDeviceWaitIdle(m_device->GetHandle());
@@ -333,6 +362,7 @@ VulkanRenderer::~VulkanRenderer()
     m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textures.clear();
+    m_stagedTextures.clear();
     m_renderSubmeshes.clear();
     DestroyDeviceResources();
     m_device.reset();
@@ -341,6 +371,8 @@ VulkanRenderer::~VulkanRenderer()
 
 void VulkanRenderer::DrawFrame()
 {
+    const FrameStallReporter stallReporter;
+
     if (!TickSharedFrame())
     {
         return;
@@ -348,8 +380,11 @@ void VulkanRenderer::DrawFrame()
 
     if (ProcessPendingOperations())
     {
-        UploadSceneResourcesOrKeepPrevious();
+        RequestSceneUpload();
     }
+    // Every frame: stages textures the workers finished, and commits a pending change once its
+    // last texture is ready.
+    PumpSceneUpload();
 
     EditorWorld().FlushDirtyTransforms();
 
@@ -383,7 +418,9 @@ void VulkanRenderer::DrawFrame()
     EditorWorld().FlushDirtyTransforms();
     if (State().renderablesDirty)
     {
-        UploadSceneResourcesOrKeepPrevious();
+        // A change that needs no new texture file commits right here, in this frame.
+        RequestSceneUpload();
+        PumpSceneUpload();
         State().renderablesDirty = false;
     }
     ImGui::Render();
@@ -884,32 +921,6 @@ void VulkanRenderer::UploadSceneResources()
 
     // Material texture files are uploaded block-compressed whenever the device allows it.
     const bool compressTextures = m_device->SupportsBlockCompression();
-    size_t texturesFromCache = 0;
-    size_t texturesCompressedNow = 0;
-    size_t texturesUncompressed = 0;
-    double compressSecondsTotal = 0.0;
-    auto uploadPrepared = [&](const PreparedTexture& prepared, TextureUsage usage) -> std::unique_ptr<VulkanTexture>
-    {
-        if (!prepared.compressed)
-        {
-            ++texturesUncompressed;
-            return std::make_unique<VulkanTexture>(
-                m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
-        }
-        if (prepared.fromCache)
-        {
-            ++texturesFromCache;
-        }
-        else
-        {
-            ++texturesCompressedNow;
-            compressSecondsTotal += prepared.compressSeconds;
-        }
-        return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            *prepared.compressed, uploadBatch);
-    };
 
     // Appends a reference to the live texture with this key, if there is one, and returns its new
     // index. The live texture stays in m_textures; ApplyRenderContent moves it across on commit.
@@ -959,14 +970,33 @@ void VulkanRenderer::UploadSceneResources()
         if (const std::optional<uint32_t> reused = reuseLiveTexture(key))
             return *reused;
 
-        // Miss: load from disk and upload. A texture that cannot be decoded falls back to the
-        // default, but running out of memory fails the whole upload: substituting white for a
-        // texture the GPU had no room for would hide the problem and still leave no room for the
-        // geometry that follows.
+        // Staged: prepared by the workers and already uploaded, waiting for this commit.
+        if (auto stagedIt = m_stagedTextures.find(key); stagedIt != m_stagedTextures.end())
+        {
+            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
+            newTextures.push_back(PendingTexture{std::move(stagedIt->second)});
+            m_stagedTextures.erase(stagedIt);
+            newCacheKeys.push_back(key);
+            keyToIndex.emplace(key, idx);
+            return idx;
+        }
+
+        // The workers could not decode it and logged why; the default stands in, as it always has.
+        if (m_failedTextureKeys.count(key) != 0)
+            return fallbackIndex;
+
+        // Miss: prepare and upload here. Only the startup upload, or a texture the preparation
+        // queue somehow never saw, gets this far, so correctness never depends on the queue. A
+        // texture that cannot be decoded falls back to the default, but running out of memory fails
+        // the whole upload: substituting white for a texture the GPU had no room for would hide
+        // the problem and still leave no room for the geometry that follows.
         try
         {
             const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(PendingTexture{uploadPrepared(PrepareTexture(texturePath, usage, compressTextures), usage)});
+            newTextures.push_back(PendingTexture{UploadPreparedTexture(
+                PrepareTexture(texturePath, usage, compressTextures, TextureCacheDirectory()),
+                usage,
+                uploadBatch)});
             newCacheKeys.push_back(key);
             keyToIndex.emplace(key, idx);
             flushUploadBatchIfNeeded();
@@ -997,131 +1027,6 @@ void VulkanRenderer::UploadSceneResources()
         defaultOcclusionIndex, defaultEmissiveIndex,
         defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
         defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex});
-
-    // Prefetch: decode every not-yet-cached material texture file in parallel before the main
-    // loop below loads them one at a time on this thread. Some source assets (e.g. Sponza) ship
-    // 40+ MB source PNGs that take real CPU time to decode, and stb_image's per-call state is
-    // thread_local in this build, so concurrent decodes from different threads are safe. This
-    // only warms keyToIndex/newTextures; the main loop's loadTextureIndex() below is unchanged
-    // and transparently picks up the prefetched entries via its existing cache-hit check, so any
-    // texture this pass misses (or fails to decode) just falls back to loading inline as before.
-    {
-        struct PendingTextureLoad
-        {
-            std::string cacheKey;
-            std::string path;
-            TextureUsage usage = TextureUsage::Color;
-            PreparedTexture prepared;
-            bool decodeFailed = false;
-            std::string decodeError;
-        };
-
-        std::vector<PendingTextureLoad> pendingLoads;
-        std::unordered_set<std::string> seenKeys;
-        auto considerPath = [&](const std::string& path, TextureUsage usage)
-        {
-            if (path.empty())
-            {
-                return;
-            }
-            const std::string key = BuildTextureCacheKey(path, usage);
-            if (liveTextureByKey.count(key) != 0 || !seenKeys.insert(key).second)
-            {
-                return;
-            }
-            pendingLoads.push_back(PendingTextureLoad{key, path, usage, {}, false, {}});
-        };
-
-        for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
-        {
-            if (!cpuRenderSubmesh.hasTexCoords)
-            {
-                continue;
-            }
-            const MaterialTexturePaths& textures = cpuRenderSubmesh.textures;
-            considerPath(textures.baseColor, TextureUsage::Color);
-            considerPath(textures.normal, TextureUsage::Normal);
-            considerPath(textures.metallic, TextureUsage::Data);
-            considerPath(textures.roughness, TextureUsage::Data);
-            considerPath(textures.occlusion, TextureUsage::Data);
-            considerPath(textures.emissive, TextureUsage::Color);
-            considerPath(textures.secondaryBaseColor, TextureUsage::Color);
-            considerPath(textures.secondaryNormal, TextureUsage::Normal);
-            considerPath(textures.secondaryMetallic, TextureUsage::Data);
-            considerPath(textures.secondaryRoughness, TextureUsage::Data);
-            considerPath(textures.secondaryOcclusion, TextureUsage::Data);
-            considerPath(textures.secondaryEmissive, TextureUsage::Color);
-            considerPath(textures.blendMask, TextureUsage::Data);
-        }
-
-        // Prepare in bounded chunks rather than all at once, so we don't hold dozens of huge
-        // decoded RGBA8 buffers in host memory simultaneously (a 40 MB source PNG can decode to
-        // 100+ MB of raw pixels, and compressing it holds its mip chain as well). One task per
-        // hardware thread: compression keeps each of them busy.
-        const size_t chunkSize = std::max<size_t>(4, static_cast<size_t>(std::thread::hardware_concurrency()));
-        for (size_t chunkStart = 0; chunkStart < pendingLoads.size(); chunkStart += chunkSize)
-        {
-            const size_t chunkEnd = std::min(chunkStart + chunkSize, pendingLoads.size());
-
-            // std::async instead of std::execution::par: libc++ on macOS has no
-            // parallel algorithm support, and the chunk size already bounds the
-            // number of concurrent decode threads.
-            std::vector<std::future<void>> decodeTasks;
-            decodeTasks.reserve(chunkEnd - chunkStart);
-            for (size_t i = chunkStart; i < chunkEnd; ++i)
-            {
-                decodeTasks.push_back(std::async(std::launch::async, [&pending = pendingLoads[i], compressTextures]()
-                                                 {
-                                                     try
-                                                     {
-                                                         pending.prepared = PrepareTexture(pending.path, pending.usage, compressTextures);
-                                                     }
-                                                     catch (const std::exception& error)
-                                                     {
-                                                         pending.decodeFailed = true;
-                                                         pending.decodeError = error.what();
-                                                     }
-                                                 }));
-            }
-            for (std::future<void>& decodeTask : decodeTasks)
-            {
-                decodeTask.wait();
-            }
-
-            for (size_t i = chunkStart; i < chunkEnd; ++i)
-            {
-                PendingTextureLoad& pending = pendingLoads[i];
-                if (pending.decodeFailed)
-                {
-                    LOG_ERROR("Failed to prefetch model texture '{}': {}", pending.path, pending.decodeError);
-                    continue;
-                }
-
-                try
-                {
-                    const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-                    newTextures.push_back(PendingTexture{uploadPrepared(pending.prepared, pending.usage)});
-                    newCacheKeys.push_back(pending.cacheKey);
-                    keyToIndex.emplace(pending.cacheKey, idx);
-                    flushUploadBatchIfNeeded();
-                }
-                catch (const std::exception& error)
-                {
-                    // As in loadTextureIndex: a bad texture falls back, running out of memory
-                    // fails the upload.
-                    if (IsOutOfMemoryError(error))
-                    {
-                        throw;
-                    }
-                    LOG_ERROR("Failed to upload prefetched model texture '{}': {}", pending.path, error.what());
-                }
-
-                // Release the prepared pixels promptly instead of waiting for pendingLoads itself
-                // to go out of scope at the end of the prefetch block.
-                pending.prepared = PreparedTexture{};
-            }
-        }
-    }
 
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
@@ -1166,14 +1071,15 @@ void VulkanRenderer::UploadSceneResources()
     }
     uploadBatch.Flush();
     LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
-    if (texturesFromCache + texturesCompressedNow + texturesUncompressed > 0)
+    const TextureUploadStats& stats = m_textureUploadStats;
+    if (stats.fromCache + stats.compressedNow + stats.uncompressed > 0)
     {
         LOG_INFO(
             "Texture files: {} block-compressed from the cache, {} compressed now ({:.1f} s of encoding across threads), {} uncompressed",
-            texturesFromCache,
-            texturesCompressedNow,
-            compressSecondsTotal,
-            texturesUncompressed);
+            stats.fromCache,
+            stats.compressedNow,
+            stats.compressSeconds,
+            stats.uncompressed);
     }
 
     ApplyRenderContent(
@@ -1185,12 +1091,6 @@ void VulkanRenderer::UploadSceneResources()
 
 void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
 {
-    // What the editor shows while a change is missing from the screen. Kept as one constant so
-    // a later successful upload can tell its own report apart from other load errors.
-    static constexpr const char* kOutOfMemoryReport =
-        "Not enough GPU memory to show the latest scene change. The scene on screen is from before it; "
-        "remove models to free memory, and the next change will try again.";
-
     try
     {
         UploadSceneResources();
@@ -1203,15 +1103,154 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
         }
         LOG_ERROR("Keeping the previous scene content, the upload ran out of GPU memory: {}", error.what());
         State().lastModelLoadError = kOutOfMemoryReport;
+        AbandonPendingTextures();
         DropSubmeshesOfRemovedEntities();
         return;
     }
+
+    // Staged textures the scene no longer needed are released with the change they were for.
+    m_stagedTextures.clear();
+    m_failedTextureKeys.clear();
+    m_texturesRequested = 0;
+    m_textureUploadStats = TextureUploadStats{};
 
     // The screen matches the scene again, so a report of it not matching is now stale.
     if (State().lastModelLoadError == kOutOfMemoryReport)
     {
         State().lastModelLoadError.clear();
     }
+}
+
+void VulkanRenderer::RequestSceneUpload()
+{
+    // The previous content stays on screen until the change commits, so it must stop drawing any
+    // entity the change deleted right away.
+    DropSubmeshesOfRemovedEntities();
+
+    const std::unordered_set<std::string> liveKeys(m_textureCacheKeys.begin(), m_textureCacheKeys.end());
+    for (const CpuRenderSubmesh& submesh : State().rendererWorld.GetRenderSubmeshes())
+    {
+        if (!submesh.hasTexCoords)
+        {
+            continue;
+        }
+        ForEachMaterialTexture(submesh, [&](const std::string& path, TextureUsage usage)
+                               {
+                                   if (path.empty())
+                                   {
+                                       return;
+                                   }
+                                   std::string key = BuildTextureCacheKey(path, usage);
+                                   if (liveKeys.count(key) != 0 || m_stagedTextures.count(key) != 0 ||
+                                       m_failedTextureKeys.count(key) != 0)
+                                   {
+                                       return;
+                                   }
+                                   if (m_texturePreparation->Enqueue(TexturePreparationRequest{std::move(key), path, usage}))
+                                   {
+                                       ++m_texturesRequested;
+                                   }
+                               });
+    }
+    m_sceneUploadPending = true;
+}
+
+void VulkanRenderer::PumpSceneUpload()
+{
+    // A few per frame: each upload copies megabytes and waits for the queue, and the frame loop
+    // should keep its pace while a large scene streams in.
+    constexpr size_t kStagedTexturesPerFrame = 4;
+    std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerFrame);
+
+    // Results of a change that was abandoned are dropped; a later change prepares what it needs
+    // again, from the compressed texture cache.
+    if (m_sceneUploadPending && !completed.empty())
+    {
+        try
+        {
+            VulkanUploadBatch uploadBatch(
+                m_device->GetHandle(),
+                m_device->GetQueueFamilies().graphicsFamily.value(),
+                m_device->GetGraphicsQueue());
+            for (TexturePreparationResult& result : completed)
+            {
+                if (!result.texture)
+                {
+                    LOG_ERROR("Failed to load model texture '{}': {}", result.key, result.error);
+                    m_failedTextureKeys.insert(result.key);
+                    continue;
+                }
+                m_stagedTextures[result.key] = UploadPreparedTexture(*result.texture, result.usage, uploadBatch);
+            }
+            uploadBatch.Flush();
+        }
+        catch (const std::exception& error)
+        {
+            if (!IsOutOfMemoryError(error))
+            {
+                throw;
+            }
+            LOG_ERROR("Keeping the previous scene content, staging a texture ran out of GPU memory: {}", error.what());
+            State().lastModelLoadError = kOutOfMemoryReport;
+            AbandonPendingTextures();
+        }
+    }
+
+    if (m_sceneUploadPending && m_texturePreparation->IsIdle())
+    {
+        m_sceneUploadPending = false;
+        UploadSceneResourcesOrKeepPrevious();
+    }
+
+    if (m_sceneUploadPending)
+    {
+        const size_t pending = m_texturePreparation->PendingCount();
+        const size_t done = m_texturesRequested > pending ? m_texturesRequested - pending : 0;
+        State().sceneUploadStatus =
+            "Preparing textures: " + std::to_string(done) + " of " + std::to_string(m_texturesRequested);
+    }
+    else
+    {
+        State().sceneUploadStatus.clear();
+    }
+}
+
+void VulkanRenderer::AbandonPendingTextures()
+{
+    // Staged textures were uploaded by batches that have completed and are referenced by no
+    // descriptor set, so they can go at once.
+    m_sceneUploadPending = false;
+    m_stagedTextures.clear();
+    m_failedTextureKeys.clear();
+    m_texturesRequested = 0;
+    m_textureUploadStats = TextureUploadStats{};
+}
+
+std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
+    const PreparedTexture& prepared,
+    TextureUsage usage,
+    VulkanUploadBatch& uploadBatch)
+{
+    TextureUploadStats& stats = m_textureUploadStats;
+    if (!prepared.compressed)
+    {
+        ++stats.uncompressed;
+        return std::make_unique<VulkanTexture>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
+    }
+    if (prepared.fromCache)
+    {
+        ++stats.fromCache;
+    }
+    else
+    {
+        ++stats.compressedNow;
+        stats.compressSeconds += prepared.compressSeconds;
+    }
+    return std::make_unique<VulkanTexture>(
+        m_device->GetPhysicalDevice(), m_device->GetHandle(),
+        *prepared.compressed, uploadBatch);
 }
 
 void VulkanRenderer::DropSubmeshesOfRemovedEntities()

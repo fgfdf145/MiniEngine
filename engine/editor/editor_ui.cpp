@@ -70,6 +70,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const std::string& currentModelPath,
     const std::string& lastLoadError,
     const std::string& lastSceneIoError,
+    const std::string& sceneUploadStatus,
     ImTextureID viewportTextureId,
     RenderExtent viewportExtent,
     RenderBackendType currentBackendType)
@@ -141,7 +142,7 @@ EditorUiFrameResult EditorUiController::Draw(
 
     if (m_showSceneWindow)
     {
-        DrawScenePanel(scene, lastLoadError, lastSceneIoError, result);
+        DrawScenePanel(scene, lastLoadError, lastSceneIoError, sceneUploadStatus, result);
     }
 
     if (m_showViewportWindow)

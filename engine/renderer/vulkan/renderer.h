@@ -20,6 +20,7 @@
 #include "uniform_buffer.h"
 
 #include <engine/editor/editor_backend_base.h>
+#include <engine/asset/texture_preparation.h>
 #include <engine/renderer/motion_history.h>
 
 #include <memory>
@@ -27,6 +28,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace me
@@ -114,6 +116,19 @@ class VulkanRenderer : public EditorRenderBackendBase
     // reported in the editor and leaves the previous content on screen instead of ending the
     // program; any other failure still propagates.
     void UploadSceneResourcesOrKeepPrevious();
+    // A renderables change: queues the texture files it needs that are not already on the GPU, and
+    // marks an upload pending. The upload itself happens in PumpSceneUpload.
+    void RequestSceneUpload();
+    // Called every frame: uploads a few textures the workers finished into the staged set and, once
+    // a pending change has every texture it needs, commits it with UploadSceneResourcesOrKeepPrevious.
+    // Also keeps State().sceneUploadStatus current.
+    void PumpSceneUpload();
+    // Forgets a pending change's staged textures and failures, after it ran out of memory.
+    void AbandonPendingTextures();
+    std::unique_ptr<VulkanTexture> UploadPreparedTexture(
+        const PreparedTexture& prepared,
+        TextureUsage usage,
+        VulkanUploadBatch& uploadBatch);
     // After a failed upload the previous content may still name entities the change deleted.
     // Drawing one would read a destroyed entity's transform, so those submeshes are dropped.
     void DropSubmeshesOfRemovedEntities();
@@ -147,6 +162,25 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Parallel to m_textures: the cache key ("path|srgb" or "__id__|linear") for each slot. A
     // rebuild looks live textures up by it and reuses them instead of uploading them again.
     std::vector<std::string> m_textureCacheKeys;
+    // Prepares texture files on worker threads; see RequestSceneUpload and PumpSceneUpload.
+    std::unique_ptr<TexturePreparationQueue> m_texturePreparation;
+    // Textures prepared and uploaded for a change that has not committed yet, by cache key. The
+    // commit moves the ones it uses into m_textures and releases the rest.
+    std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_stagedTextures;
+    // Keys the workers could not decode; their slots use the default texture.
+    std::unordered_set<std::string> m_failedTextureKeys;
+    bool m_sceneUploadPending = false;
+    // Texture files requested since the last commit, for the progress status.
+    size_t m_texturesRequested = 0;
+    struct TextureUploadStats
+    {
+        size_t fromCache = 0;
+        size_t compressedNow = 0;
+        size_t uncompressed = 0;
+        double compressSeconds = 0.0;
+    };
+    // Counted as textures upload, logged and reset when a change commits.
+    TextureUploadStats m_textureUploadStats;
     std::vector<MaterialTextureSlots> m_materialTextureSlots;
     // Device-lifetime resources: the shader-fixed frame and material set layouts and the pipeline
     // cache all outlive every swapchain, viewport and scene reload (see CreateDeviceResources).

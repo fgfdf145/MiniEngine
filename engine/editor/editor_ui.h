@@ -104,6 +104,7 @@ class EditorUiController
         const std::string& currentModelPath,
         const std::string& lastLoadError,
         const std::string& lastSceneIoError,
+        const std::string& sceneUploadStatus,
         ImTextureID viewportTextureId,
         RenderExtent viewportExtent,
         RenderBackendType currentBackendType);
@@ -137,6 +138,7 @@ class EditorUiController
         IEditorWorld& scene,
         const std::string& lastLoadError,
         const std::string& lastSceneIoError,
+        const std::string& sceneUploadStatus,
         EditorUiFrameResult& result);
     void DrawViewportPanel(
         Camera& camera,

@@ -398,6 +398,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         selectedModelPath,
         State().lastModelLoadError,
         State().lastSceneIoError,
+        State().sceneUploadStatus,
         viewportTextureId,
         viewportExtent,
         m_backendType);
