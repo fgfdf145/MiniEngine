@@ -21,30 +21,6 @@ namespace me
 
 namespace
 {
-std::filesystem::path NormalizePath(const std::filesystem::path& path)
-{
-    std::error_code errorCode;
-    const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
-    return errorCode ? path.lexically_normal() : absolutePath.lexically_normal();
-}
-
-bool IsSceneAssetPath(const std::filesystem::path& path)
-{
-    const std::string extension = path.extension().string();
-    if (extension != ".yaml" && extension != ".yml")
-    {
-        return false;
-    }
-
-    const std::string fileName = path.filename().string();
-    if (fileName.ends_with(".material.yaml") || fileName.ends_with(".miniengine_asset.yaml"))
-    {
-        return false;
-    }
-
-    return true;
-}
-
 // Load side: the uuid recorded in the scene file wins over the stored path,
 // so references survive asset renames/moves done since the scene was saved.
 void ResolveSerializedReference(std::string& path, std::string& uuid, const char* what)
@@ -117,27 +93,6 @@ void ResolveSceneAssetReferences(SerializedSceneData& sceneData)
     }
 }
 
-bool SceneDataReferencesModel(SerializedSceneData& sceneData, const std::filesystem::path& modelPath)
-{
-    bool referenced = false;
-    for (SerializedEntityData& entity : sceneData.entities)
-    {
-        if (entity.modelSourcePath.empty())
-        {
-            continue;
-        }
-
-        if (NormalizePath(entity.modelSourcePath) != modelPath)
-        {
-            continue;
-        }
-
-        referenced = true;
-        entity.modelDisplayName = modelPath.filename().string();
-    }
-
-    return referenced;
-}
 }
 
 namespace SceneIoService
@@ -248,47 +203,5 @@ void SaveScene(RendererSharedState& state, const std::string& path)
     state.lastSceneIoError.clear();
     LOG_INFO("Saved scene successfully: {}", path);
 }
-
-size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath)
-{
-    size_t refreshedSceneCount = 0;
-    std::error_code iteratorError;
-    const std::filesystem::path workspaceRoot = NormalizePath(std::filesystem::current_path());
-
-    for (std::filesystem::recursive_directory_iterator iterator(workspaceRoot, iteratorError), end;
-         !iteratorError && iterator != end;
-         iterator.increment(iteratorError))
-    {
-        if (!iterator->is_regular_file(iteratorError) || iteratorError)
-        {
-            continue;
-        }
-
-        const std::filesystem::path candidatePath = NormalizePath(iterator->path());
-        if (!IsSceneAssetPath(candidatePath))
-        {
-            continue;
-        }
-
-        try
-        {
-            SerializedSceneData sceneData = LoadEditorSceneDataFromFile(candidatePath.string());
-            if (!SceneDataReferencesModel(sceneData, modelPath))
-            {
-                continue;
-            }
-
-            SaveEditorSceneDataToFile(sceneData, candidatePath.string());
-            ++refreshedSceneCount;
-        }
-        catch (...)
-        {
-            // Ignore non-scene YAML files and malformed sidecar data while scanning the workspace.
-        }
-    }
-
-    return refreshedSceneCount;
-}
-
 }
 }

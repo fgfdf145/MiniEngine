@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include <cstddef>
-#include <filesystem>
 #include <string>
 
 namespace me
@@ -21,8 +19,5 @@ void StartAsyncSceneLoad(RendererSharedState& state, const std::string& path);
 bool PumpAsyncSceneLoad(RendererSharedState& state);
 
 void SaveScene(RendererSharedState& state, const std::string& path);
-
-// Rewrites every scene file under the workspace that references the model.
-size_t RefreshReferencedSceneFiles(const std::filesystem::path& modelPath);
 }
 }

@@ -34,13 +34,6 @@ struct EditorUiActions
         glm::vec3 worldPosition{0.0f, 0.0f, 0.0f};
     };
 
-    struct ImportedMaterialUpdate
-    {
-        std::string modelPath;
-        uint32_t materialIndex = 0;
-        ModelImportedMaterialInfo material;
-    };
-
     struct ImportedModelMaterialsUpdate
     {
         std::string modelPath;
@@ -75,7 +68,6 @@ struct EditorUiActions
     std::vector<std::string> deleteAssetPaths;
     std::optional<AssetPasteRequest> pastedAsset;
     std::vector<AssetManagerResult::RenamedAsset> renamedAssets; // completed on disk
-    std::optional<ImportedMaterialUpdate> updatedImportedMaterial;
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;
     std::optional<ViewportModelPlacement> droppedViewportModel;

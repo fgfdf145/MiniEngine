@@ -51,11 +51,6 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
 // Points scene entities that referenced a renamed file, or anything inside a
 // renamed folder, at the new path.
 void OnAssetRenamed(RendererSharedState& state, const std::string& oldPath, const std::string& newPath);
-void UpdateImportedMaterialDefinition(
-    RendererSharedState& state,
-    const std::string& modelPath,
-    uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material);
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,

@@ -374,33 +374,6 @@ void OnAssetRenamed(RendererSharedState& state, const std::string& oldPath, cons
     }
 }
 
-void UpdateImportedMaterialDefinition(
-    RendererSharedState& state,
-    const std::string& modelPath,
-    uint32_t materialIndex,
-    const ModelImportedMaterialInfo& material)
-{
-    if (modelPath.empty())
-    {
-        return;
-    }
-
-    // Update the single material at the given index in the model cache.
-    ModelCache::UpdateMaterial(modelPath, materialIndex, material);
-    MarkModelRenderablesDirtyForSourcePath(state, modelPath);
-    RefreshDirtySceneRenderables(state);
-
-    // Persisted last: the edit stays visible even when saving it fails.
-    WriteMaterialYamlFile(
-        std::filesystem::path(modelPath),
-        materialIndex,
-        material);
-    LOG_INFO(
-        "Updated material {} for model '{}'",
-        materialIndex,
-        modelPath);
-}
-
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,

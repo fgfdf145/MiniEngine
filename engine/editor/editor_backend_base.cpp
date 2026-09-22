@@ -269,26 +269,6 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 error.what());
         }
     }
-    if (uiFrame.actions.updatedImportedMaterial.has_value())
-    {
-        try
-        {
-            ModelImportService::UpdateImportedMaterialDefinition(
-                State(),
-                uiFrame.actions.updatedImportedMaterial->modelPath,
-                uiFrame.actions.updatedImportedMaterial->materialIndex,
-                uiFrame.actions.updatedImportedMaterial->material);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to update imported material '{}' index {}: {}",
-                uiFrame.actions.updatedImportedMaterial->modelPath,
-                uiFrame.actions.updatedImportedMaterial->materialIndex,
-                error.what());
-        }
-    }
     if (uiFrame.actions.updatedImportedModelMaterials.has_value())
     {
         try
