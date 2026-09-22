@@ -242,6 +242,38 @@ void CopyRefusesExistingTarget()
     Require(threw, "importing over an existing model reported success");
 }
 
+// A companion that cannot be copied used to leave its original URI in the
+// imported glTF, pointing at a file the new folder does not have.
+void CompanionCopyFailureFailsTheImport()
+{
+    ScopedDir scope("companion_failure");
+    const std::filesystem::path source = scope.Path() / "source" / "model.gltf";
+    std::error_code ec;
+    std::filesystem::create_directories(source.parent_path(), ec);
+    {
+        std::ofstream(source.parent_path() / "bark.png", std::ios::binary) << "png";
+        std::ofstream out(source, std::ios::binary);
+        out << R"({ "asset": { "version": "2.0" }, "images": [ { "uri": "bark.png" } ] })";
+    }
+
+    // A file where the textures/ folder must go makes the companion copy fail.
+    const std::filesystem::path bundle = scope.Path() / "bundle";
+    std::filesystem::create_directories(bundle, ec);
+    std::ofstream(bundle / "textures", std::ios::binary) << "blocker";
+
+    bool threw = false;
+    try
+    {
+        GltfModelLoader::CopyWithSortedReferences(source, bundle);
+    }
+    catch (const std::runtime_error&)
+    {
+        threw = true;
+    }
+    Require(threw, "a failed companion copy still produced an imported glTF");
+    Require(!std::filesystem::exists(bundle / "model.gltf", ec), "a glTF with a dangling URI was written");
+}
+
 // The file dialog hands the engine UTF-8 paths as std::string. They must reach
 // the disk as the same characters, which on Windows needs the UTF-8 process
 // code page from miniengine_utf8.manifest.
@@ -281,6 +313,7 @@ int main()
         LoadReportsModelRelativeTexturePath();
         LoadWritesNothing();
         CopyRefusesExistingTarget();
+        CompanionCopyFailureFailsTheImport();
         ImportFromNonAsciiPath();
 
         std::cout << "model import texture tests passed\n";

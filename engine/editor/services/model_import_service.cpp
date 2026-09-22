@@ -87,6 +87,8 @@ std::string ImportModelIntoAssetDirectory(
     // leaves the existing model untouched.
     const std::filesystem::path copyFolder =
         overwrite ? ModelImportTarget::StagingFolderFor(modelFolder) : modelFolder;
+    std::error_code existsEc;
+    const bool copyFolderExisted = std::filesystem::exists(copyFolder, existsEc);
 
     std::error_code mkdirEc;
     std::filesystem::create_directories(copyFolder, mkdirEc);
@@ -103,9 +105,21 @@ std::string ImportModelIntoAssetDirectory(
     }
     catch (...)
     {
-        if (overwrite)
+        // The folder held nothing before this import (an occupied one was
+        // refused, staged or skipped above), so whatever is in it now is the
+        // failed import's partial copy.
+        std::error_code cleanupEc;
+        if (copyFolderExisted)
         {
-            std::error_code cleanupEc;
+            for (std::filesystem::directory_iterator it(copyFolder, cleanupEc), end; !cleanupEc && it != end;
+                 it.increment(cleanupEc))
+            {
+                std::error_code removeEc;
+                std::filesystem::remove_all(it->path(), removeEc);
+            }
+        }
+        else
+        {
             std::filesystem::remove_all(copyFolder, cleanupEc);
         }
         throw;

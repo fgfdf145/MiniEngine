@@ -1406,15 +1406,19 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
             claimedRelPaths.insert(newRel);
 
             const std::filesystem::path companionDst = targetDirectory / std::filesystem::path(newRel);
-            std::error_code mkdirEc;
-            std::filesystem::create_directories(companionDst.parent_path(), mkdirEc);
             std::error_code copyEc;
-            std::filesystem::copy_file(companionSrc, companionDst,
-                                       std::filesystem::copy_options::skip_existing, copyEc);
+            std::filesystem::create_directories(companionDst.parent_path(), copyEc);
+            if (!copyEc)
+            {
+                std::filesystem::copy_file(companionSrc, companionDst, copyEc);
+            }
             if (copyEc)
             {
-                LOG_WARN("Could not copy companion file '{}': {}", companionSrc.string(), copyEc.message());
-                continue; // keep the original URI: the copy did not happen
+                // The original URI would resolve against the new folder, where
+                // the file is not: fail rather than import a broken model.
+                throw std::runtime_error(
+                    "Failed to copy '" + companionSrc.string() + "' to '" + companionDst.string() +
+                    "': " + copyEc.message());
             }
             LOG_INFO("Copied companion: {} -> {}", companionSrc.string(), companionDst.string());
 

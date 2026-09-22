@@ -179,6 +179,22 @@ void FailedOverwriteKeepsTheOldModel()
     Require(!Exists(tree.Assets() / "fixture.importing"), "a failed overwrite left its staging folder");
 }
 
+// A failed first import must not leave a half-filled folder behind: the next
+// attempt would then be reported as a conflict with it.
+void FailedImportLeavesNoFolder()
+{
+    ScratchTree tree("import_failure");
+    ScratchTree::WriteFile(tree.Source(), "this is not json");
+
+    Require(
+        Throws([&]
+               {
+                   Import(tree, ImportConflictPolicy::FailIfExists);
+               }),
+        "importing a broken model reported success");
+    Require(!Exists(tree.Assets() / "fixture"), "a failed import left its model folder behind");
+}
+
 void PastedModelBringsItsCompanions()
 {
     ScratchTree tree("paste_model");
@@ -300,6 +316,7 @@ int main()
         SecondImportAsksAndKeepsBoth();
         OverwriteReplacesFilesAndKeepsUuid();
         FailedOverwriteKeepsTheOldModel();
+        FailedImportLeavesNoFolder();
         PastedModelBringsItsCompanions();
         PastedFileNeverOverwrites();
         FolderCannotBePastedIntoItself();
