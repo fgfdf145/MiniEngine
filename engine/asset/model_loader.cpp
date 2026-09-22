@@ -4,10 +4,14 @@
 #include "material_definition.h"
 
 #include <engine/core/log/log.h>
+
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+#include <unordered_map>
 
 namespace me
 {
@@ -66,6 +70,88 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.opacity = ClampMaterialAlphaValue(pbr.opacity, 1.0f);
 }
 
+struct MaterialDefinitionFile
+{
+    std::filesystem::path path;
+    std::optional<std::string> materialName; // nullopt: saved before names were checked
+};
+
+// Material definitions are named by index, but a glTF edited or replaced
+// outside the editor can reorder its materials. Each definition records the
+// name of the material it was saved for, so it is applied only to a material
+// of that name: at its own index when the names agree, otherwise to the one
+// material that carries the name. A definition that fits nowhere is skipped
+// rather than dressing the wrong material.
+void ApplyMaterialDefinitions(const std::filesystem::path& modelPath, LoadedModelData& modelData)
+{
+    std::unordered_map<uint32_t, MaterialDefinitionFile> definitions;
+    for (const std::filesystem::path& file : FindMaterialDefinitionFiles(modelPath))
+    {
+        if (const std::optional<uint32_t> index = MaterialDefinitionIndex(modelPath, file))
+        {
+            definitions[*index] = MaterialDefinitionFile{file, ReadMaterialDefinitionName(file)};
+        }
+    }
+    if (definitions.empty())
+    {
+        return;
+    }
+
+    std::unordered_map<std::string, size_t> materialNameCounts;
+    for (const ModelMaterialData& material : modelData.materials)
+    {
+        ++materialNameCounts[material.name];
+    }
+
+    for (size_t materialIndex = 0; materialIndex < modelData.materials.size(); ++materialIndex)
+    {
+        ModelMaterialData& rawMaterial = modelData.materials[materialIndex];
+        const MaterialDefinitionFile* chosen = nullptr;
+
+        const auto own = definitions.find(static_cast<uint32_t>(materialIndex));
+        if (own != definitions.end() &&
+            (!own->second.materialName.has_value() || *own->second.materialName == rawMaterial.name))
+        {
+            chosen = &own->second;
+        }
+        else if (!rawMaterial.name.empty() && materialNameCounts[rawMaterial.name] == 1)
+        {
+            for (const auto& [index, definition] : definitions)
+            {
+                if (definition.materialName == rawMaterial.name)
+                {
+                    chosen = &definition;
+                    break;
+                }
+            }
+        }
+
+        if (chosen == nullptr)
+        {
+            if (own != definitions.end())
+            {
+                LOG_WARN(
+                    "'{}' was saved for material '{}', but material {} is '{}'; not applied",
+                    own->second.path.string(),
+                    own->second.materialName.value_or(""),
+                    materialIndex,
+                    rawMaterial.name);
+            }
+            continue;
+        }
+
+        ModelImportedMaterialInfo editable = BuildImportedMaterialInfo(rawMaterial);
+        std::string warning;
+        if (LoadMaterialDefinition(chosen->path, editable, warning))
+        {
+            ApplyImportedMaterialInfo(editable, rawMaterial);
+        }
+        if (!warning.empty())
+        {
+            LOG_WARN("{}: {}", chosen->path.string(), warning);
+        }
+    }
+}
 }
 
 bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
@@ -132,35 +218,7 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     {
         ApplyPbrSettings(material, BuildPbrSettingsFromMaterial(material));
     }
-    for (size_t materialIndex = 0; materialIndex < modelData.materials.size(); ++materialIndex)
-    {
-        ModelMaterialData& rawMaterial = modelData.materials[materialIndex];
-        ModelImportedMaterialInfo editable = BuildImportedMaterialInfo(rawMaterial);
-        const std::filesystem::path sidecar =
-            BuildMaterialDefinitionPath(modelPath, static_cast<uint32_t>(materialIndex));
-        std::error_code probeError;
-        const bool sidecarExists = std::filesystem::exists(sidecar, probeError);
-        if (probeError)
-        {
-            LOG_WARN(
-                "Unable to probe optional material sidecar '{}': {}; using imported glTF material",
-                sidecar.string(),
-                probeError.message());
-            continue;
-        }
-        if (sidecarExists)
-        {
-            std::string warning;
-            if (LoadMaterialDefinition(sidecar, editable, warning))
-            {
-                ApplyImportedMaterialInfo(editable, rawMaterial);
-            }
-            if (!warning.empty())
-            {
-                LOG_WARN("{}: {}", sidecar.string(), warning);
-            }
-        }
-    }
+    ApplyMaterialDefinitions(modelPath, modelData);
     return modelData;
 }
 }

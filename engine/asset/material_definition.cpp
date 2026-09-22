@@ -3,6 +3,7 @@
 #include "material_graph_runtime.h"
 
 #include <algorithm>
+#include <exception>
 #include <cctype>
 #include <optional>
 #include <string_view>
@@ -85,6 +86,44 @@ std::vector<std::filesystem::path> FindMaterialDefinitionFiles(const std::filesy
         }
     }
     return files;
+}
+
+std::optional<uint32_t> MaterialDefinitionIndex(
+    const std::filesystem::path& modelPath,
+    const std::filesystem::path& definitionPath)
+{
+    const std::string prefix = modelPath.stem().string() + "_";
+    constexpr std::string_view kSuffix = ".material.yaml";
+    const std::string name = definitionPath.filename().string();
+    if (!name.starts_with(prefix) || !name.ends_with(kSuffix) || name.size() <= prefix.size() + kSuffix.size())
+    {
+        return std::nullopt;
+    }
+    try
+    {
+        return static_cast<uint32_t>(
+            std::stoul(name.substr(prefix.size(), name.size() - prefix.size() - kSuffix.size())));
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::string> ReadMaterialDefinitionName(const std::filesystem::path& definitionPath)
+{
+    try
+    {
+        const YAML::Node name = YAML::LoadFile(definitionPath.string())["material"]["name"];
+        if (name && name.IsScalar())
+        {
+            return name.as<std::string>();
+        }
+    }
+    catch (const YAML::Exception&)
+    {
+    }
+    return std::nullopt;
 }
 
 ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)

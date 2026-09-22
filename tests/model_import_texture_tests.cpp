@@ -274,6 +274,64 @@ void CompanionCopyFailureFailsTheImport()
     Require(!std::filesystem::exists(bundle / "model.gltf", ec), "a glTF with a dangling URI was written");
 }
 
+// Two named materials, "Bark" then "Leaf", so their definition files can be
+// swapped relative to the glTF's order.
+std::string BuildTwoMaterialGltf()
+{
+    std::string gltf = BuildFixtureGltf();
+    const std::string single =
+        R"("materials": [ { "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } } ])";
+    const size_t at = gltf.find(single);
+    Require(at != std::string::npos, "fixture materials block changed; update the test");
+    gltf.replace(at, single.size(), R"("materials": [ { "name": "Bark" }, { "name": "Leaf" } ])");
+    return gltf;
+}
+
+void WriteDefinition(const std::filesystem::path& path, const char* materialName, float metallic)
+{
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << "material:\n  name: " << materialName << "\n  pbr:\n    metallic_factor: " << metallic << "\n";
+}
+
+// Definitions are files named by index. When the glTF's materials are
+// reordered outside the editor, each definition must follow its material by
+// name instead of dressing whatever now sits at its index.
+void MaterialDefinitionsFollowTheirMaterialByName()
+{
+    ScopedDir scope("definitions_by_name");
+    const std::filesystem::path model = scope.Path() / "tree.gltf";
+    {
+        std::ofstream out(model, std::ios::binary);
+        out << BuildTwoMaterialGltf();
+    }
+
+    // Saved when the order was Leaf, Bark.
+    WriteDefinition(scope.Path() / "tree_0.material.yaml", "Leaf", 0.25f);
+    WriteDefinition(scope.Path() / "tree_1.material.yaml", "Bark", 0.75f);
+
+    const LoadedModelData data = ModelLoader::LoadModel(model.string());
+    Require(data.materials.size() == 2, "fixture did not load two materials");
+    Require(data.materials[0].name == "Bark" && data.materials[0].metallicFactor == 0.75f,
+            "Bark did not get its own definition");
+    Require(data.materials[1].name == "Leaf" && data.materials[1].metallicFactor == 0.25f,
+            "Leaf did not get its own definition");
+}
+
+void MaterialDefinitionForAnotherMaterialIsSkipped()
+{
+    ScopedDir scope("definition_mismatch");
+    const std::filesystem::path model = scope.Path() / "tree.gltf";
+    {
+        std::ofstream out(model, std::ios::binary);
+        out << BuildTwoMaterialGltf();
+    }
+    WriteDefinition(scope.Path() / "tree_0.material.yaml", "Stone", 0.5f);
+
+    const LoadedModelData data = ModelLoader::LoadModel(model.string());
+    Require(data.materials[0].name == "Bark", "a definition for another material renamed Bark");
+    Require(data.materials[0].metallicFactor != 0.5f, "a definition for another material was applied to Bark");
+}
+
 // The file dialog hands the engine UTF-8 paths as std::string. They must reach
 // the disk as the same characters, which on Windows needs the UTF-8 process
 // code page from miniengine_utf8.manifest.
@@ -314,6 +372,8 @@ int main()
         LoadWritesNothing();
         CopyRefusesExistingTarget();
         CompanionCopyFailureFailsTheImport();
+        MaterialDefinitionsFollowTheirMaterialByName();
+        MaterialDefinitionForAnotherMaterialIsSkipped();
         ImportFromNonAsciiPath();
 
         std::cout << "model import texture tests passed\n";
