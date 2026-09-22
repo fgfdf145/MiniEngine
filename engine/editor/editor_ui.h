@@ -4,6 +4,7 @@
 
 #include <engine/renderer/camera.h>
 #include <engine/asset/asset_manager.h>
+#include <engine/asset/model_import_target.h>
 #include <engine/logic/gizmo_settings.h>
 #include <engine/asset/model_loader.h>
 #include <optional>
@@ -56,6 +57,7 @@ struct EditorUiActions
     {
         std::string sourcePath;
         std::string destinationDirectory;
+        ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists;
     };
 
     struct LightCreate
@@ -148,6 +150,7 @@ class EditorUiController
         RenderBackendType currentBackendType,
         EditorUiFrameResult& result);
     void DrawAssetBrowserPanel(EditorUiFrameResult& result);
+    void DrawImportConflictModal(EditorUiFrameResult& result);
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;
@@ -189,6 +192,17 @@ class EditorUiController
     uint32_t m_materialGraphLinkDragFromNodeId = 0;
     uint8_t m_materialGraphResizeEdges = 0;
     std::optional<AssetManager> m_assetManager;
+    // An import whose model folder already holds files, waiting for the user
+    // to choose keep-both, overwrite or cancel.
+    struct PendingImportConflict
+    {
+        std::string sourcePath;
+        std::string destinationDirectory;
+        std::string existingFolderName;
+        std::string keepBothFolderName;
+    };
+    std::optional<PendingImportConflict> m_pendingImportConflict;
+    bool m_openImportConflictModal = false;
     bool m_showCameraWindow = true;
     RenderDebugSettings m_renderDebug;
     bool m_showAssetManagerWindow = false;

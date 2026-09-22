@@ -10,6 +10,7 @@
 #include <engine/asset/material_definition.h>
 #include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/model_cache.h>
+#include <engine/asset/model_import_target.h>
 #include <engine/asset/model_loader.h>
 
 #include <yaml-cpp/yaml.h>
@@ -52,7 +53,10 @@ std::filesystem::path WriteMaterialYamlFile(
 
 namespace ModelImportService
 {
-std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const std::string& destinationDirectory)
+std::string ImportModelIntoAssetDirectory(
+    const std::string& sourcePath,
+    const std::string& destinationDirectory,
+    ImportConflictPolicy policy)
 {
     const std::filesystem::path src = std::filesystem::path(sourcePath);
     if (!std::filesystem::exists(src))
@@ -62,32 +66,70 @@ std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const s
 
     // Each import gets its own folder named after the model; a .gltf's
     // companion files are sorted into subfolders (buffers/, textures/) with
-    // the glTF's URIs rewritten to match. Importing directly into a folder
-    // that already carries the model's name reuses it instead of nesting
-    // another level.
-    const std::filesystem::path dstDir = std::filesystem::path(destinationDirectory);
-    const std::filesystem::path modelFolder =
-        dstDir.filename() == src.stem() ? dstDir : dstDir / src.stem();
+    // the glTF's URIs rewritten to match.
+    std::filesystem::path modelFolder =
+        ModelImportTarget::DefaultFolder(src, std::filesystem::path(destinationDirectory));
+    const bool occupied = ModelImportTarget::IsOccupied(modelFolder);
+    if (occupied && policy == ImportConflictPolicy::FailIfExists)
+    {
+        throw std::runtime_error("'" + modelFolder.string() + "' already exists");
+    }
+    if (occupied && policy == ImportConflictPolicy::KeepBoth)
+    {
+        modelFolder = ModelImportTarget::NextFreeFolder(modelFolder);
+    }
+    const bool overwrite = occupied && policy == ImportConflictPolicy::Overwrite;
+
+    // An overwrite imports into a staging sibling first, so a failed import
+    // leaves the existing model untouched.
+    const std::filesystem::path copyFolder =
+        overwrite ? ModelImportTarget::StagingFolderFor(modelFolder) : modelFolder;
 
     std::error_code mkdirEc;
-    std::filesystem::create_directories(modelFolder, mkdirEc);
+    std::filesystem::create_directories(copyFolder, mkdirEc);
     if (mkdirEc)
     {
         throw std::runtime_error(
-            "Failed to create model folder '" + modelFolder.string() + "': " + mkdirEc.message());
+            "Failed to create model folder '" + copyFolder.string() + "': " + mkdirEc.message());
     }
 
-    const std::filesystem::path dst = ModelLoader::CopyModelWithSortedReferences(src, modelFolder);
+    std::filesystem::path dst;
+    try
+    {
+        dst = ModelLoader::CopyModelWithSortedReferences(src, copyFolder);
+    }
+    catch (...)
+    {
+        if (overwrite)
+        {
+            std::error_code cleanupEc;
+            std::filesystem::remove_all(copyFolder, cleanupEc);
+        }
+        throw;
+    }
+
+    if (overwrite)
+    {
+        ModelImportTarget::ReplaceContents(modelFolder, copyFolder);
+        dst = modelFolder / dst.filename();
+        // Parsed data of the replaced model is keyed on the same path.
+        ModelCache::Invalidate(modelFolder.string());
+    }
 
     // Register the freshly imported bundle (model + copied textures) so it has
-    // stable uuids from the very first reference.
+    // stable uuids from the very first reference; this also prunes the uuid
+    // sidecars of files an overwrite removed.
     AssetRegistry::RescanAssetTree();
 
     LOG_INFO("Imported model '{}' -> '{}'", src.string(), dst.string());
     return dst.string();
 }
 
-void StartAsyncImport(RendererSharedState& state, const std::string& sourcePath, const std::string& destinationDirectory)
+void StartAsyncImport(
+    RendererSharedState& state,
+    const std::string& sourcePath,
+    const std::string& destinationDirectory,
+    ImportConflictPolicy policy)
 {
     if (state.asyncImport.IsLoading())
     {
@@ -96,9 +138,10 @@ void StartAsyncImport(RendererSharedState& state, const std::string& sourcePath,
 
     state.asyncImport.sourcePath = sourcePath;
     state.asyncImport.destinationDirectory = destinationDirectory;
-    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory]()
+    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory, policy]()
                                           {
-                                              return ImportModelIntoAssetDirectory(sourcePath, destinationDirectory);
+                                              return ImportModelIntoAssetDirectory(
+                                                  sourcePath, destinationDirectory, policy);
                                           });
 
     LOG_INFO("Started async import: {} -> {}", sourcePath, destinationDirectory);
@@ -113,8 +156,14 @@ void PumpAsyncImport(RendererSharedState& state)
 
     try
     {
-        state.asyncImport.future.get();
+        const std::string importedPath = state.asyncImport.future.get();
         state.lastModelLoadError.clear();
+
+        // An overwrite replaced a model the scene may already use; placed
+        // instances pick up the new mesh and materials. A fresh import has no
+        // instances yet, so this does nothing.
+        MarkModelRenderablesDirtyForSourcePath(state, importedPath);
+        RefreshDirtySceneRenderables(state);
     }
     catch (const std::exception& error)
     {

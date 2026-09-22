@@ -100,7 +100,10 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
         // .glb (and anything else) is self-contained: plain copy into the folder.
         dst = targetDirectory / modelPath.filename();
         std::error_code ec;
-        std::filesystem::copy_file(modelPath, dst, std::filesystem::copy_options::skip_existing, ec);
+        // copy_options::none fails on an existing file: the caller resolves
+        // conflicts before copying, and a silent skip would report the old
+        // file as the new import.
+        std::filesystem::copy_file(modelPath, dst, std::filesystem::copy_options::none, ec);
         if (ec)
         {
             throw std::runtime_error(

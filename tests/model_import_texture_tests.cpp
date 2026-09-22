@@ -217,6 +217,31 @@ void LoadWritesNothing()
     Require(before == after, "loading a model created or removed files in the bundle");
 }
 
+// A second import into the same folder used to keep the old model and report
+// success. The copy now refuses, so conflicts are resolved before copying.
+void CopyRefusesExistingTarget()
+{
+    ScopedDir scope("existing");
+    const std::filesystem::path source = scope.Path() / "source" / "fixture.gltf";
+    WriteFixtureTo(source);
+
+    const std::filesystem::path bundle = scope.Path() / "bundle";
+    std::error_code ec;
+    std::filesystem::create_directories(bundle, ec);
+    ModelLoader::CopyModelWithSortedReferences(source, bundle);
+
+    bool threw = false;
+    try
+    {
+        ModelLoader::CopyModelWithSortedReferences(source, bundle);
+    }
+    catch (const std::runtime_error&)
+    {
+        threw = true;
+    }
+    Require(threw, "importing over an existing model reported success");
+}
+
 // The file dialog hands the engine UTF-8 paths as std::string. They must reach
 // the disk as the same characters, which on Windows needs the UTF-8 process
 // code page from miniengine_utf8.manifest.
@@ -255,6 +280,7 @@ int main()
         UnpackIsIdempotent();
         LoadReportsModelRelativeTexturePath();
         LoadWritesNothing();
+        CopyRefusesExistingTarget();
         ImportFromNonAsciiPath();
 
         std::cout << "model import texture tests passed\n";

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <engine/asset/model_import_target.h>
 #include <engine/scene/scene_components.h>
 
 #include <cstdint>
@@ -16,14 +17,22 @@ namespace ModelImportService
 {
 // Imports a model into its own folder (named after the model) under the
 // destination directory. A .gltf's referenced companions are sorted into
-// buffers/ and textures/ subfolders and its URIs rewritten to match. Returns
-// the imported model path. Blocking; prefer StartAsyncImport from the UI
-// thread.
-std::string ImportModelIntoAssetDirectory(const std::string& sourcePath, const std::string& destinationDirectory);
+// buffers/ and textures/ subfolders and its URIs rewritten to match. `policy`
+// decides what happens when that folder already holds files; see
+// ModelImportTarget. Returns the imported model path. Blocking; prefer
+// StartAsyncImport from the UI thread.
+std::string ImportModelIntoAssetDirectory(
+    const std::string& sourcePath,
+    const std::string& destinationDirectory,
+    ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists);
 
 // Runs ImportModelIntoAssetDirectory on a background thread via
 // state.asyncImport. Throws if another import is still in flight.
-void StartAsyncImport(RendererSharedState& state, const std::string& sourcePath, const std::string& destinationDirectory);
+void StartAsyncImport(
+    RendererSharedState& state,
+    const std::string& sourcePath,
+    const std::string& destinationDirectory,
+    ImportConflictPolicy policy);
 
 // Polls the in-flight import once per frame. On completion, reports the
 // outcome (state.lastModelLoadError on failure) and refreshes the asset

@@ -183,7 +183,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             ModelImportService::StartAsyncImport(
                 State(),
                 uiFrame.actions.importedModelRequest->sourcePath,
-                uiFrame.actions.importedModelRequest->destinationDirectory);
+                uiFrame.actions.importedModelRequest->destinationDirectory,
+                uiFrame.actions.importedModelRequest->policy);
         }
         catch (const std::exception& error)
         {

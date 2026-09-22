@@ -512,3 +512,26 @@ add_test(
 )
 
 set_target_properties(miniengine_atomic_file_tests PROPERTIES FOLDER "Tests")
+
+# model_import_target.cpp depends only on the standard library, so it is compiled directly into
+# the test, like miniengine_asset_references_tests.
+add_executable(miniengine_model_import_target_tests
+    model_import_target_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/asset/model_import_target.cpp
+)
+
+# No miniengine_group_target_sources: that helper's source_group(TREE ...) requires every file
+# to sit under the calling directory, and this target deliberately compiles one .cpp from
+# engine/asset/.
+
+target_include_directories(miniengine_model_import_target_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME miniengine.model_import_target
+    COMMAND miniengine_model_import_target_tests
+)
+
+set_target_properties(miniengine_model_import_target_tests PROPERTIES FOLDER "Tests")

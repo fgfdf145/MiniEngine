@@ -54,11 +54,28 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         {
             if (const std::optional<std::string> sourcePath = OpenModelFileDialog(); sourcePath.has_value())
             {
-                // The import runs on a background thread; the backend calls
-                // RequestAssetBrowserRefresh() once the files are on disk.
-                result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
-                    *sourcePath,
-                    m_assetManager->GetCurrentDirectory().string()};
+                const std::string destination = m_assetManager->GetCurrentDirectory().string();
+                const std::filesystem::path modelFolder =
+                    ModelImportTarget::DefaultFolder(std::filesystem::path(*sourcePath), destination);
+                if (ModelImportTarget::IsOccupied(modelFolder))
+                {
+                    // Same-named models are common (every Sketchfab download is
+                    // "scene.gltf"): ask rather than silently reuse the old one.
+                    m_pendingImportConflict = PendingImportConflict{
+                        *sourcePath,
+                        destination,
+                        modelFolder.filename().string(),
+                        ModelImportTarget::NextFreeFolder(modelFolder).filename().string()};
+                    m_openImportConflictModal = true;
+                }
+                else
+                {
+                    // The import runs on a background thread; the backend calls
+                    // RequestAssetBrowserRefresh() once the files are on disk.
+                    result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
+                        *sourcePath,
+                        destination};
+                }
             }
         }
         if (assetResult.selectedModelPath.has_value())
@@ -84,7 +101,81 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
                 assetResult.pasteRequest->destinationDirectory};
             m_assetManager->Refresh();
         }
+        DrawImportConflictModal(result);
     }
     ImGui::End();
+}
+
+void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
+{
+    constexpr const char* kTitle = "Model Already Imported";
+
+    if (m_openImportConflictModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openImportConflictModal = false;
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (m_pendingImportConflict.has_value())
+        {
+            const PendingImportConflict& conflict = *m_pendingImportConflict;
+            ImGui::Text("The folder '%s' already holds files.", conflict.existingFolderName.c_str());
+            ImGui::Spacing();
+            ImGui::TextDisabled("Keep Both imports into '%s' and leaves the existing model alone.",
+                                conflict.keepBothFolderName.c_str());
+            ImGui::TextColored(
+                ImVec4(1.00f, 0.55f, 0.35f, 1.0f),
+                "Overwrite deletes everything in '%s', including material edits.",
+                conflict.existingFolderName.c_str());
+            ImGui::TextDisabled("Scenes that use the replaced model keep referencing it.");
+            ImGui::Separator();
+
+            const auto request = [&](ImportConflictPolicy policy)
+            {
+                result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
+                    conflict.sourcePath,
+                    conflict.destinationDirectory,
+                    policy};
+            };
+
+            const std::string keepBothLabel = "Import as '" + conflict.keepBothFolderName + "'";
+            if (ImGui::Button(keepBothLabel.c_str()))
+            {
+                request(ImportConflictPolicy::KeepBoth);
+                m_pendingImportConflict.reset();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SetItemDefaultFocus();
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+            const bool overwrite = ImGui::Button("Overwrite", ImVec2(120.0f, 0.0f));
+            ImGui::PopStyleColor(3);
+            if (overwrite)
+            {
+                request(ImportConflictPolicy::Overwrite);
+                m_pendingImportConflict.reset();
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+            {
+                m_pendingImportConflict.reset();
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+    else if (m_pendingImportConflict.has_value())
+    {
+        // Dismissed without an explicit choice (e.g. Escape): treat as cancel.
+        m_pendingImportConflict.reset();
+    }
 }
 }

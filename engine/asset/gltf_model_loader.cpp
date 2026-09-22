@@ -1431,9 +1431,9 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
     std::error_code existsEc;
     if (std::filesystem::exists(outPath, existsEc))
     {
-        // Same skip-existing policy as the companion copies: never clobber.
-        LOG_WARN("Import target already exists, keeping it: {}", outPath.string());
-        return outPath;
+        // Never clobber, and never report the old file as the new import: the
+        // caller resolves conflicts before copying.
+        throw std::runtime_error("Import target already exists: " + outPath.string());
     }
 
     std::ofstream out(outPath, std::ios::binary);
