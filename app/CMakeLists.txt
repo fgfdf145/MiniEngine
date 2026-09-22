@@ -2,6 +2,7 @@ add_executable(miniengine_app
     main.cpp
 )
 miniengine_group_target_sources(miniengine_app)
+miniengine_enable_utf8_code_page(miniengine_app)
 
 target_link_libraries(miniengine_app
     PRIVATE

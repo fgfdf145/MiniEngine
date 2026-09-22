@@ -23,6 +23,15 @@ if(MSVC)
     endif()
 endif()
 
+# Every executable that touches the filesystem needs this: paths travel through
+# the engine as UTF-8 std::string, which MSVC's std::filesystem only decodes as
+# UTF-8 when the process code page is UTF-8.
+function(miniengine_enable_utf8_code_page target_name)
+    if(MSVC)
+        target_sources(${target_name} PRIVATE "${PROJECT_SOURCE_DIR}/cmake/miniengine_utf8.manifest")
+    endif()
+endfunction()
+
 # Keep the generated Visual Studio solution navigable without maintaining a
 # second source tree in an IDE-specific project file.
 function(miniengine_group_target_sources target_name)

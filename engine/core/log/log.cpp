@@ -2,6 +2,13 @@
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <deque>
 #include <mutex>
 #include <vector>
@@ -19,6 +26,11 @@ std::deque<std::string> g_inputMessages;
 
 void Log::Init()
 {
+#ifdef _WIN32
+    // Log text is UTF-8 (paths included); the console defaults to the OEM code
+    // page and would print it as mojibake.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     auto logger = spdlog::stdout_color_mt("MiniEngine");
     spdlog::set_default_logger(logger);
     spdlog::set_pattern("[%T] [%^%l%$] %v");

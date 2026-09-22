@@ -8,6 +8,13 @@
 #include <string>
 #include <system_error>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 // main() stays in the global namespace; everything it drives lives in me::.
 using namespace me;
 
@@ -209,6 +216,35 @@ void LoadWritesNothing()
 
     Require(before == after, "loading a model created or removed files in the bundle");
 }
+
+// The file dialog hands the engine UTF-8 paths as std::string. They must reach
+// the disk as the same characters, which on Windows needs the UTF-8 process
+// code page from miniengine_utf8.manifest.
+void ImportFromNonAsciiPath()
+{
+#ifdef _WIN32
+    Require(GetACP() == CP_UTF8, "process code page is not UTF-8; the manifest was not embedded");
+#endif
+    ScopedDir scope("non_ascii");
+
+    // U+6A21 U+578B ("model") as a wide path, so the fixture lands at the real
+    // characters regardless of how narrow strings are decoded.
+    const std::filesystem::path sourceDir = scope.Path() / L"\u6a21\u578b";
+    WriteFixtureTo(sourceDir / "fixture.gltf");
+
+    // What the dialog returns: the same path as UTF-8 bytes.
+    const std::string utf8SourcePath =
+        scope.Path().string() + "\\\xE6\xA8\xA1\xE5\x9E\x8B"
+                                "\\fixture.gltf";
+    const std::filesystem::path bundle = scope.Path() / "bundle";
+    std::error_code ec;
+    std::filesystem::create_directories(bundle, ec);
+    const std::filesystem::path imported =
+        ModelLoader::CopyModelWithSortedReferences(std::filesystem::path(utf8SourcePath), bundle);
+
+    const LoadedModelData data = ModelLoader::LoadModel(imported.string());
+    Require(!data.submeshes.empty(), "model imported from a non-ASCII path did not load");
+}
 }
 
 int main()
@@ -219,6 +255,7 @@ int main()
         UnpackIsIdempotent();
         LoadReportsModelRelativeTexturePath();
         LoadWritesNothing();
+        ImportFromNonAsciiPath();
 
         std::cout << "model import texture tests passed\n";
         return 0;

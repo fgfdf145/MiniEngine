@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Makes the process ANSI code page UTF-8 (Windows 10 1903+). The engine keeps
+  paths in UTF-8 std::string and builds std::filesystem::path from them; without
+  this, MSVC decodes those bytes with the system code page (e.g. 936), so any
+  non-ASCII path fails to open.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

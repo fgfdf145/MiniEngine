@@ -397,6 +397,7 @@ add_executable(miniengine_model_import_texture_tests
     model_import_texture_tests.cpp
 )
 miniengine_group_target_sources(miniengine_model_import_texture_tests)
+miniengine_enable_utf8_code_page(miniengine_model_import_texture_tests)
 
 target_link_libraries(miniengine_model_import_texture_tests
     PRIVATE
