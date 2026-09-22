@@ -285,6 +285,29 @@ void RenameKeepsIdentity()
         "directory rename did not preserve a nested uuid");
 }
 
+// "Tree.png" -> "tree.png": on Windows both names are the same file, and the
+// uuid must survive the case change like any other rename.
+void CaseOnlyRenameKeepsIdentity()
+{
+    ScopedAssetRoot scope("case_rename");
+    const std::filesystem::path before = scope.Root() / "Tree.png";
+    WriteFile(before, "x");
+    const std::string uuid = AssetRegistry::GetOrCreateUuid(before);
+
+    const std::filesystem::path after = scope.Root() / "tree.png";
+    std::error_code ec;
+    std::filesystem::rename(before, after, ec);
+    Require(!ec, "test could not rename the file");
+    AssetRegistry::OnAssetRenamed(before, after);
+
+    Require(AssetRegistry::GetOrCreateUuid(after) == uuid, "case-only rename did not preserve the uuid");
+    Require(Exists(AssetRegistry::SidecarPathFor(after)), "sidecar did not survive the case-only rename");
+    const std::optional<std::filesystem::path> resolved = AssetRegistry::ResolveUuid(uuid);
+    Require(
+        resolved.has_value() && resolved->filename() == "tree.png",
+        "uuid does not resolve to the new spelling");
+}
+
 void RemovalPrunes()
 {
     ScopedAssetRoot scope("removal");
@@ -325,6 +348,7 @@ int main()
         SidecarWriteIsAtomic();
         ReferenceResolution();
         RenameKeepsIdentity();
+        CaseOnlyRenameKeepsIdentity();
         RemovalPrunes();
 
         std::cout << "asset registry tests passed\n";

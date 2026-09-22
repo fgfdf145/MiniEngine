@@ -134,7 +134,10 @@ void SecondImportAsksAndKeepsBoth()
     Require(first == tree.Assets() / "fixture" / "fixture.gltf", "first import landed in the wrong folder");
 
     Require(
-        Throws([&] { Import(tree, ImportConflictPolicy::FailIfExists); }),
+        Throws([&]
+               {
+                   Import(tree, ImportConflictPolicy::FailIfExists);
+               }),
         "a second import silently reused the existing folder");
 
     const std::filesystem::path second = Import(tree, ImportConflictPolicy::KeepBoth);
@@ -167,7 +170,10 @@ void FailedOverwriteKeepsTheOldModel()
 
     ScratchTree::WriteFile(tree.Source(), "this is not json");
     Require(
-        Throws([&] { Import(tree, ImportConflictPolicy::Overwrite); }),
+        Throws([&]
+               {
+                   Import(tree, ImportConflictPolicy::Overwrite);
+               }),
         "importing a broken model reported success");
     Require(ReadAll(model) == before, "a failed overwrite damaged the existing model");
     Require(!Exists(tree.Assets() / "fixture.importing"), "a failed overwrite left its staging folder");
@@ -213,7 +219,10 @@ void FolderCannotBePastedIntoItself()
     ScratchTree::WriteFile(folder / "leaves" / "a.txt", "x");
 
     Require(
-        Throws([&] { ModelImportService::PasteAsset(folder.string(), (folder / "leaves").string()); }),
+        Throws([&]
+               {
+                   ModelImportService::PasteAsset(folder.string(), (folder / "leaves").string());
+               }),
         "a folder was pasted into its own child");
     Require(!Exists(folder / "leaves" / "Tree"), "the refused paste still copied something");
 }
@@ -231,7 +240,10 @@ void DeleteRemovesModelThenMaterialEdits()
         // material edits must still be there afterwards.
         std::ifstream holder(model, std::ios::binary);
         Require(
-            Throws([&] { ModelImportService::DeleteAssetPath(model.string()); }),
+            Throws([&]
+                   {
+                       ModelImportService::DeleteAssetPath(model.string());
+                   }),
             "deleting a model held open reported success");
         Require(Exists(edits), "a failed model delete took its material edits");
     }

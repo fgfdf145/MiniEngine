@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace me
@@ -80,14 +81,47 @@ std::optional<std::filesystem::path> Rebase(
     return (newPath / relative).lexically_normal();
 }
 
+RenameableName SplitRenameableName(const std::string& name, bool isDirectory)
+{
+    if (isDirectory)
+    {
+        return RenameableName{name, {}};
+    }
+
+    // Suffixes that span two dots and carry meaning as a whole.
+    for (const std::string_view compound : {std::string_view(".material.yaml"), std::string_view(".miniengine_asset.yaml")})
+    {
+        if (name.size() > compound.size() && name.ends_with(compound))
+        {
+            return RenameableName{name.substr(0, name.size() - compound.size()), std::string(compound)};
+        }
+    }
+
+    // path::extension() already treats ".gitignore" as a stem without one.
+    const std::string extension = std::filesystem::path(name).extension().string();
+    return RenameableName{name.substr(0, name.size() - extension.size()), extension};
+}
+
+bool RenameWouldClobber(const std::filesystem::path& source, const std::filesystem::path& target)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(target, ec) && !ec)
+    {
+        return false;
+    }
+    std::error_code sameEc;
+    return !std::filesystem::equivalent(source, target, sameEc) || sameEc;
+}
+
 std::filesystem::path UniqueCopyPath(const std::filesystem::path& path)
 {
-    const std::string stem = path.stem().string();
-    const std::string extension = path.extension().string();
+    std::error_code dirEc;
+    const bool isDirectory = std::filesystem::is_directory(path, dirEc) && !dirEc;
+    const RenameableName name = SplitRenameableName(path.filename().string(), isDirectory);
     for (int index = 1;; ++index)
     {
-        const std::string suffix = index == 1 ? "_copy" : "_copy" + std::to_string(index);
-        std::filesystem::path candidate = path.parent_path() / (stem + suffix + extension);
+        const std::string copyTag = index == 1 ? "_copy" : "_copy" + std::to_string(index);
+        std::filesystem::path candidate = path.parent_path() / (name.editable + copyTag + name.suffix);
         std::error_code ec;
         if (!std::filesystem::exists(candidate, ec) && !ec)
         {

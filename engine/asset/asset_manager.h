@@ -123,6 +123,7 @@ class AssetManager
     int m_renamingIndex = -1;
     bool m_renameFocusPending = false;
     char m_renameBuffer[256] = {};
+    std::string m_renameSuffix; // kept extension, e.g. ".glb": a rename edits only the name before it
     std::string m_pendingRenameName;
 
     // Delete requests are staged here until the user confirms them in a modal;

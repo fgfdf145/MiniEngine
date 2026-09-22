@@ -57,6 +57,45 @@ void RebaseLeavesUnrelatedPaths()
     Require(!AssetPaths::Rebase("", "C:/assets/Tree", "C:/assets/Oak").has_value(), "an empty path was rebased");
 }
 
+void RenameEditsOnlyTheName()
+{
+    const AssetPaths::RenameableName model = AssetPaths::SplitRenameableName("tree.glb", false);
+    Require(model.editable == "tree" && model.suffix == ".glb", "a model's extension is editable");
+
+    const AssetPaths::RenameableName material = AssetPaths::SplitRenameableName("tree_0.material.yaml", false);
+    Require(
+        material.editable == "tree_0" && material.suffix == ".material.yaml",
+        "a material definition's compound suffix is editable");
+
+    const AssetPaths::RenameableName dotted = AssetPaths::SplitRenameableName("oak.v2.png", false);
+    Require(dotted.editable == "oak.v2" && dotted.suffix == ".png", "only the last extension is kept");
+
+    const AssetPaths::RenameableName folder = AssetPaths::SplitRenameableName("my.textures", true);
+    Require(folder.editable == "my.textures" && folder.suffix.empty(), "a folder name lost its dotted part");
+
+    const AssetPaths::RenameableName hidden = AssetPaths::SplitRenameableName(".gitignore", false);
+    Require(hidden.editable == ".gitignore" && hidden.suffix.empty(), "a dot file was split into an empty name");
+}
+
+void CaseOnlyRenameIsNotAClash()
+{
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "miniengine_asset_paths_clobber";
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(dir / "Tree.glb") << "x";
+    std::ofstream(dir / "Oak.glb") << "x";
+
+    const bool free = AssetPaths::RenameWouldClobber(dir / "Tree.glb", dir / "Pine.glb");
+    const bool other = AssetPaths::RenameWouldClobber(dir / "Tree.glb", dir / "Oak.glb");
+    const bool caseOnly = AssetPaths::RenameWouldClobber(dir / "Tree.glb", dir / "tree.glb");
+    std::filesystem::remove_all(dir, ec);
+
+    Require(!free, "a free name counted as a clash");
+    Require(other, "renaming onto another file was allowed");
+    Require(!caseOnly, "a case-only rename was refused");
+}
+
 void UniqueCopyPathSkipsTakenNames()
 {
     std::error_code ec;
@@ -66,9 +105,16 @@ void UniqueCopyPathSkipsTakenNames()
     std::ofstream(dir / "bark.png") << "x";
     std::ofstream(dir / "bark_copy.png") << "x";
 
+    std::ofstream(dir / "tree_0.material.yaml") << "x";
+    std::filesystem::create_directories(dir / "my.textures", ec);
+
     const std::filesystem::path copy = AssetPaths::UniqueCopyPath(dir / "bark.png");
+    const std::filesystem::path materialCopy = AssetPaths::UniqueCopyPath(dir / "tree_0.material.yaml");
+    const std::filesystem::path folderCopy = AssetPaths::UniqueCopyPath(dir / "my.textures");
     std::filesystem::remove_all(dir, ec);
     Require(copy == dir / "bark_copy2.png", "the copy did not take the first free name");
+    Require(materialCopy == dir / "tree_0_copy.material.yaml", "a material definition copy broke its suffix");
+    Require(folderCopy == dir / "my.textures_copy", "a dotted folder copy was split like a file");
 }
 }
 
@@ -80,6 +126,8 @@ int main()
         RebaseRenamedFile();
         RebaseFileInsideRenamedFolder();
         RebaseLeavesUnrelatedPaths();
+        RenameEditsOnlyTheName();
+        CaseOnlyRenameIsNotAClash();
         UniqueCopyPathSkipsTakenNames();
 
         std::cout << "asset paths tests passed\n";

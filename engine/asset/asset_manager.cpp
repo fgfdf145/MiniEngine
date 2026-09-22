@@ -1,5 +1,6 @@
 ﻿#include "asset_manager.h"
 
+#include "asset_paths.h"
 #include "asset_references.h"
 #include "asset_registry.h"
 #include "material_definition.h"
@@ -901,7 +902,11 @@ void AssetManager::BeginRename(int index)
 
     m_renamingIndex = index;
     m_renameFocusPending = true;
-    std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", entry.name.c_str());
+    // Only the name is edited; the extension is kept, so a rename cannot turn
+    // a model into an unknown file type by accident.
+    const AssetPaths::RenameableName name = AssetPaths::SplitRenameableName(entry.name, entry.isDir);
+    std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", name.editable.c_str());
+    m_renameSuffix = name.suffix;
 
     m_selectedIndices.clear();
     m_selectedIndices.insert(index);
@@ -918,20 +923,23 @@ void AssetManager::CommitRename()
     }
     const Entry& entry = m_entries[static_cast<size_t>(index)];
 
-    std::string newName(m_renameBuffer);
-    const size_t first = newName.find_first_not_of(" \t");
-    const size_t last = newName.find_last_not_of(" \t");
-    newName = (first == std::string::npos) ? std::string{} : newName.substr(first, last - first + 1);
+    std::string editedName(m_renameBuffer);
+    const size_t first = editedName.find_first_not_of(" \t");
+    const size_t last = editedName.find_last_not_of(" \t");
+    editedName = (first == std::string::npos) ? std::string{} : editedName.substr(first, last - first + 1);
+    if (editedName.empty() || editedName.find_first_of("\\/:*?\"<>|") != std::string::npos)
+    {
+        return;
+    }
 
-    if (newName.empty() || newName == entry.name ||
-        newName.find_first_of("\\/:*?\"<>|") != std::string::npos)
+    const std::string newName = editedName + m_renameSuffix;
+    if (newName == entry.name)
     {
         return;
     }
 
     const std::filesystem::path target = entry.path.parent_path() / newName;
-    std::error_code ec;
-    if (std::filesystem::exists(target, ec))
+    if (AssetPaths::RenameWouldClobber(entry.path, target))
     {
         return; // never clobber an existing file/folder
     }
@@ -941,16 +949,21 @@ void AssetManager::CommitRename()
     // Renaming a file breaks every path-based reference to its old name, the
     // same breakage deleting it causes. Delete warns; rename used to go
     // through silently.
-    const std::vector<AssetReference> references =
-        FindReferencesTo(m_root, {entry.name}, {entry.path.lexically_normal().string()});
-    if (!references.empty())
+    // Scenes are left out: they reference assets by uuid and open scenes
+    // follow the rename, so only glTF files and material definitions, which
+    // hold plain paths, actually break.
+    std::vector<std::string> warnings;
+    for (const AssetReference& reference :
+         FindReferencesTo(m_root, {entry.name}, {entry.path.lexically_normal().string()}))
     {
-        m_pendingRenameWarnings.clear();
-        for (const AssetReference& reference : references)
+        if (!IsSceneFile(reference.referencedBy))
         {
-            m_pendingRenameWarnings.push_back(
-                "'" + reference.referencedName + "' is referenced by " + reference.referencedBy);
+            warnings.push_back("'" + reference.referencedName + "' is referenced by " + reference.referencedBy);
         }
+    }
+    if (!warnings.empty())
+    {
+        m_pendingRenameWarnings = std::move(warnings);
         m_pendingRename = rename;
         m_openRenameModal = true;
         return; // the modal performs the rename on confirmation
@@ -1162,7 +1175,7 @@ void AssetManager::DrawRenameConfirmModal()
         {
             ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "%s", warning.c_str());
         }
-        ImGui::TextDisabled("Those references are paths, not uuids: renaming breaks them.");
+        ImGui::TextDisabled("Those files reference it by path: renaming breaks them. Scenes are not affected.");
         ImGui::Separator();
 
         if (ImGui::Button("Rename Anyway", ImVec2(140.0f, 0.0f)))
