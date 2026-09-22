@@ -1,5 +1,6 @@
 #include "asset_registry.h"
 
+#include <engine/core/file/atomic_file.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/uuid/uuid.h>
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <fstream>
 #include <mutex>
 #include <system_error>
 #include <unordered_map>
@@ -124,41 +124,14 @@ bool WriteSidecar(const std::filesystem::path& sidecarPath, const std::string& u
     YAML::Node root(YAML::NodeType::Map);
     root["asset"] = asset;
 
-    // Write to a temporary and rename over the destination: a crash then
-    // leaves either the old sidecar or the new one, never a truncated file
-    // that reads back as "no uuid". The temporary's name ends in ".tmp", which
-    // does not match kSidecarSuffix, so ScanLocked never mistakes a stray one
-    // for a sidecar.
-    const std::filesystem::path tempPath = sidecarPath.parent_path() /
-                                           (sidecarPath.filename().string() + ".tmp");
+    // Atomic: a crash leaves either the old sidecar or the new one, never a
+    // truncated file that reads back as "no uuid".
+    YAML::Emitter emitter;
+    emitter << root;
+    std::string error;
+    if (!AtomicFile::Write(sidecarPath, emitter.c_str(), &error))
     {
-        std::ofstream out(tempPath, std::ios::trunc);
-        if (!out)
-        {
-            LOG_WARN("Could not write asset sidecar '{}'", tempPath.string());
-            return false;
-        }
-        out << root;
-        out.flush();
-        if (!out.good())
-        {
-            out.close();
-            std::error_code removeEc;
-            std::filesystem::remove(tempPath, removeEc);
-            LOG_WARN("Could not write asset sidecar '{}'", tempPath.string());
-            return false;
-        }
-    }
-
-    std::error_code renameEc;
-    std::filesystem::rename(tempPath, sidecarPath, renameEc);
-    if (renameEc)
-    {
-        std::error_code removeEc;
-        std::filesystem::remove(tempPath, removeEc);
-        LOG_WARN(
-            "Could not replace asset sidecar '{}': {}",
-            sidecarPath.string(), renameEc.message());
+        LOG_WARN("Could not write asset sidecar: {}", error);
         return false;
     }
     return true;

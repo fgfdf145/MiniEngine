@@ -1,4 +1,6 @@
 add_library(engine_core
+    file/atomic_file.cpp
+    file/atomic_file.h
     input/gamepad_backend.cpp
     input/gamepad_backend.h
     input/input.cpp

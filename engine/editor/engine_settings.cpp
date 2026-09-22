@@ -1,10 +1,10 @@
 #include "engine_settings.h"
 
+#include <engine/core/file/atomic_file.h>
 #include <engine/core/paths/engine_paths.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -226,12 +226,9 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
     {
         std::filesystem::create_directories(path.parent_path());
 
-        std::ofstream output(path, std::ios::binary | std::ios::trunc);
-        if (!output.is_open())
-        {
-            throw std::runtime_error("Failed to open engine settings file for writing");
-        }
-
+        // Built in memory and written atomically: a failed save keeps the
+        // previous settings file intact.
+        std::ostringstream output;
         output << "{\n";
         output << "  \"version\": " << settings.version << ",\n";
         output << "  \"ui\": {\n";
@@ -288,9 +285,10 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "  }\n";
         output << "}\n";
 
-        if (!output.good())
+        std::string writeError;
+        if (!AtomicFile::Write(path, output.str(), &writeError))
         {
-            throw std::runtime_error("Failed to flush engine settings file");
+            throw std::runtime_error("Failed to save engine settings: " + writeError);
         }
 
         return true;

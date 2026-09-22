@@ -5,6 +5,7 @@
 #include <engine/editor/renderer_shared_state.h>
 
 #include <engine/asset/asset_registry.h>
+#include <engine/core/file/atomic_file.h>
 #include <engine/core/log/log.h>
 #include <engine/asset/material_definition.h>
 #include <engine/asset/material_graph_runtime.h>
@@ -17,9 +18,7 @@
 #include <array>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <future>
-#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -28,8 +27,9 @@ namespace me
 
 namespace
 {
-// Writes a single material's YAML to disk. Returns the output path on success.
-std::optional<std::filesystem::path> WriteMaterialYamlFile(
+// Writes a single material's YAML to disk atomically, so a failed save keeps
+// the previous edits. Returns the output path; throws when it cannot be saved.
+std::filesystem::path WriteMaterialYamlFile(
     const std::filesystem::path& modelPath,
     uint32_t materialIndex,
     const ModelImportedMaterialInfo& material)
@@ -38,14 +38,14 @@ std::optional<std::filesystem::path> WriteMaterialYamlFile(
 
     YAML::Node root(YAML::NodeType::Map);
     root["material"] = SerializeMaterialDefinition(material);
+    YAML::Emitter emitter;
+    emitter << root;
 
-    std::ofstream outFile(outPath);
-    if (!outFile)
+    std::string error;
+    if (!AtomicFile::Write(outPath, emitter.c_str(), &error))
     {
-        LOG_ERROR("Failed to open material file for writing: '{}'", outPath.string());
-        return std::nullopt;
+        throw std::runtime_error("Material edit applied but not saved: " + error);
     }
-    outFile << root;
     return outPath;
 }
 }
@@ -256,14 +256,14 @@ void UpdateImportedMaterialDefinition(
 
     // Update the single material at the given index in the model cache.
     ModelCache::UpdateMaterial(modelPath, materialIndex, material);
+    MarkModelRenderablesDirtyForSourcePath(state, modelPath);
+    RefreshDirtySceneRenderables(state);
 
+    // Persisted last: the edit stays visible even when saving it fails.
     WriteMaterialYamlFile(
         std::filesystem::path(modelPath),
         materialIndex,
         material);
-
-    MarkModelRenderablesDirtyForSourcePath(state, modelPath);
-    RefreshDirtySceneRenderables(state);
     LOG_INFO(
         "Updated material {} for model '{}'",
         materialIndex,
@@ -285,19 +285,29 @@ void UpdateImportedModelMaterialDefinitions(
     // Propagate user edits into the cached raw model data so that
     // Dirty renderable refresh picks up the new blend graphs and PBR factors.
     ModelCache::UpdateMaterials(modelPathString, materials);
-
-    // Persist each material as a sidecar .material.yaml file alongside the model.
-    for (size_t i = 0; i < materials.size(); ++i)
-    {
-        const auto outPath = WriteMaterialYamlFile(modelPath, static_cast<uint32_t>(i), materials[i]);
-        if (outPath.has_value())
-        {
-            LOG_INFO("Saved material '{}' -> '{}'", materials[i].name, outPath->string());
-        }
-    }
-
     MarkModelRenderablesDirtyForSourcePath(state, modelPathString);
     RefreshDirtySceneRenderables(state);
+
+    // Persist each material as a sidecar .material.yaml file alongside the
+    // model. One failure must not stop the others from being saved.
+    std::string failures;
+    for (size_t i = 0; i < materials.size(); ++i)
+    {
+        try
+        {
+            const std::filesystem::path outPath =
+                WriteMaterialYamlFile(modelPath, static_cast<uint32_t>(i), materials[i]);
+            LOG_INFO("Saved material '{}' -> '{}'", materials[i].name, outPath.string());
+        }
+        catch (const std::exception& error)
+        {
+            failures += failures.empty() ? error.what() : std::string("; ") + error.what();
+        }
+    }
+    if (!failures.empty())
+    {
+        throw std::runtime_error(failures);
+    }
     LOG_INFO(
         "Saved {} material(s) for model '{}'",
         materials.size(),

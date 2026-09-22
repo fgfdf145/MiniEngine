@@ -1,5 +1,6 @@
 #include "editor_scene.h"
 
+#include <engine/core/file/atomic_file.h>
 #include <engine/core/log/log.h>
 #include <engine/core/uuid/uuid.h>
 #include <yaml-cpp/yaml.h>
@@ -15,7 +16,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <fstream>
 #include <stdexcept>
 
 namespace me
@@ -315,16 +315,11 @@ SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path)
 
 void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path)
 {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output.is_open())
+    // Atomic: a failed save must never destroy the scene already on disk.
+    std::string error;
+    if (!AtomicFile::Write(path, EmitSceneYaml(sceneData), &error))
     {
-        throw std::runtime_error("Failed to open scene file for writing: " + path);
-    }
-
-    output << EmitSceneYaml(sceneData);
-    if (!output.good())
-    {
-        throw std::runtime_error("Failed to write scene file: " + path);
+        throw std::runtime_error("Failed to save scene: " + error);
     }
 }
 
