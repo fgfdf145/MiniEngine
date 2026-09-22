@@ -74,6 +74,7 @@ struct EditorUiActions
     std::optional<std::string> selectedSceneSavePath;
     std::vector<std::string> deleteAssetPaths;
     std::optional<AssetPasteRequest> pastedAsset;
+    std::vector<AssetManagerResult::RenamedAsset> renamedAssets; // completed on disk
     std::optional<ImportedMaterialUpdate> updatedImportedMaterial;
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;

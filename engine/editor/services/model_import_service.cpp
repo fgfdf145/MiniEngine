@@ -4,6 +4,7 @@
 
 #include <engine/editor/renderer_shared_state.h>
 
+#include <engine/asset/asset_paths.h>
 #include <engine/asset/asset_registry.h>
 #include <engine/core/file/atomic_file.h>
 #include <engine/core/log/log.h>
@@ -20,8 +21,10 @@
 #include <cctype>
 #include <filesystem>
 #include <future>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace me
 {
@@ -188,57 +191,34 @@ void DeleteAssetPath(const std::string& path)
 
     const std::filesystem::path target(path);
     std::error_code ec;
-
-    // Deleting a model also removes its "<stem>_<index>.material.yaml"
-    // sidecars: they are meaningless without the model and would otherwise be
-    // left behind as orphans.
-    if (!std::filesystem::is_directory(target, ec) && ModelLoader::IsSupportedModelPath(target))
-    {
-        const std::string sidecarPrefix = target.stem().string() + "_";
-        constexpr std::string_view kSidecarSuffix = ".material.yaml";
-
-        std::error_code iterEc;
-        for (const auto& item : std::filesystem::directory_iterator(target.parent_path(), iterEc))
-        {
-            if (iterEc)
-            {
-                break;
-            }
-            const std::string name = item.path().filename().string();
-            if (!name.starts_with(sidecarPrefix) || !name.ends_with(kSidecarSuffix))
-            {
-                continue;
-            }
-            const std::string indexPart =
-                name.substr(sidecarPrefix.size(), name.size() - sidecarPrefix.size() - kSidecarSuffix.size());
-            const bool isMaterialIndex =
-                !indexPart.empty() &&
-                std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c)
-                            {
-                                return std::isdigit(c) != 0;
-                            });
-            if (!isMaterialIndex)
-            {
-                continue;
-            }
-
-            std::error_code removeEc;
-            std::filesystem::remove(item.path(), removeEc);
-            if (removeEc)
-            {
-                LOG_WARN("Could not delete material sidecar '{}': {}", item.path().string(), removeEc.message());
-            }
-            else
-            {
-                LOG_INFO("Deleted material sidecar: {}", item.path().string());
-            }
-        }
-    }
+    const bool isModelFile =
+        !std::filesystem::is_directory(target, ec) && ModelLoader::IsSupportedModelPath(target);
+    // Listed before the model goes; the listing only needs the name.
+    const std::vector<std::filesystem::path> materialDefinitions =
+        isModelFile ? FindMaterialDefinitionFiles(target) : std::vector<std::filesystem::path>{};
 
     std::filesystem::remove_all(target, ec);
     if (ec)
     {
+        // A folder may be partly gone: resync the registry with what is left.
+        AssetRegistry::RescanAssetTree();
         throw std::runtime_error("Failed to delete '" + path + "': " + ec.message());
+    }
+
+    // The model's material edits go only once the model itself is gone: when
+    // its deletion fails (e.g. the file is open elsewhere) the edits survive.
+    for (const std::filesystem::path& definition : materialDefinitions)
+    {
+        std::error_code removeEc;
+        std::filesystem::remove(definition, removeEc);
+        if (removeEc)
+        {
+            LOG_WARN("Could not delete material definition '{}': {}", definition.string(), removeEc.message());
+        }
+        else
+        {
+            LOG_INFO("Deleted material definition: {}", definition.string());
+        }
     }
 
     // Drop registry entries and the now-orphaned uuid sidecar.
@@ -249,29 +229,36 @@ void DeleteAssetPath(const std::string& path)
 
 void PasteAsset(const std::string& sourcePath, const std::string& destinationDirectory)
 {
-    const std::filesystem::path src = std::filesystem::path(sourcePath);
-    const std::filesystem::path dst = std::filesystem::path(destinationDirectory) / src.filename();
-    std::error_code eqEc;
-    if (std::filesystem::equivalent(src, dst, eqEc) && !eqEc)
-    {
-        return;
-    }
+    const std::filesystem::path src(sourcePath);
+    const std::filesystem::path destination(destinationDirectory);
     std::error_code ec;
-    std::filesystem::copy(src, dst,
-                          std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
-                          ec);
-    if (ec)
+    if (!std::filesystem::exists(src, ec) || ec)
     {
-        throw std::runtime_error(
-            "Failed to copy '" + sourcePath + "' to '" + destinationDirectory + "': " + ec.message());
+        throw std::runtime_error("Nothing to paste: '" + sourcePath + "' no longer exists");
     }
 
-    // Copied uuid sidecars would duplicate their source's identity, and rescan
-    // order must not decide who keeps the uuid: strip the sidecars from the
-    // copy so the originals stay authoritative and the copies get fresh uuids.
-    std::error_code sidecarEc;
-    if (std::filesystem::is_directory(dst, sidecarEc))
+    std::filesystem::path dst;
+    if (std::filesystem::is_directory(src, ec))
     {
+        if (AssetPaths::IsSameOrInside(destination, src))
+        {
+            throw std::runtime_error("Cannot paste folder '" + src.filename().string() + "' into itself");
+        }
+        dst = destination / src.filename();
+        if (std::filesystem::exists(dst, ec))
+        {
+            dst = AssetPaths::UniqueCopyPath(dst);
+        }
+        std::filesystem::copy(src, dst, std::filesystem::copy_options::recursive, ec);
+        if (ec)
+        {
+            throw std::runtime_error("Failed to copy '" + sourcePath + "' to '" + dst.string() + "': " + ec.message());
+        }
+
+        // Copied uuid sidecars would duplicate their source's identity, and
+        // rescan order must not decide who keeps the uuid: strip them from the
+        // copy so the originals stay authoritative and the copies get fresh uuids.
+        std::error_code sidecarEc;
         for (std::filesystem::recursive_directory_iterator
                  it(dst, std::filesystem::directory_options::skip_permission_denied, sidecarEc),
              end;
@@ -287,9 +274,90 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
             }
         }
     }
+    else if (ModelLoader::IsSupportedModelPath(src))
+    {
+        // A model is more than its file: buffers, textures (unpacked ones
+        // included) and material edits. It is copied the way it is imported,
+        // into its own folder, so the copy is complete.
+        std::filesystem::path modelFolder = destination / src.stem();
+        if (ModelImportTarget::IsOccupied(modelFolder))
+        {
+            modelFolder = ModelImportTarget::NextFreeFolder(modelFolder);
+        }
+        std::filesystem::create_directories(modelFolder, ec);
+        if (ec)
+        {
+            throw std::runtime_error("Failed to create '" + modelFolder.string() + "': " + ec.message());
+        }
+        dst = ModelLoader::CopyModelWithSortedReferences(src, modelFolder);
+
+        for (const std::filesystem::path& definition : FindMaterialDefinitionFiles(src))
+        {
+            std::error_code copyEc;
+            std::filesystem::copy_file(definition, modelFolder / definition.filename(), copyEc);
+            if (copyEc)
+            {
+                LOG_WARN("Could not copy material definition '{}': {}", definition.string(), copyEc.message());
+            }
+        }
+    }
+    else
+    {
+        dst = destination / src.filename();
+        if (std::filesystem::exists(dst, ec))
+        {
+            dst = AssetPaths::UniqueCopyPath(dst);
+        }
+        std::filesystem::copy_file(src, dst, ec);
+        if (ec)
+        {
+            throw std::runtime_error("Failed to copy '" + sourcePath + "' to '" + dst.string() + "': " + ec.message());
+        }
+    }
+
     AssetRegistry::RescanAssetTree();
 
     LOG_INFO("Copied asset '{}' -> '{}'", sourcePath, dst.string());
+}
+
+void OnAssetRenamed(RendererSharedState& state, const std::string& oldPath, const std::string& newPath)
+{
+    // Entities keep their paths in memory. Left alone, a renamed model's next
+    // reload fails and its material edits are saved under the old name.
+    IEditorWorld& world = state.GetEditorWorld();
+    std::vector<entt::entity> entities;
+    for (entt::entity entity : world.Registry().view<const ModelComponent>())
+    {
+        entities.push_back(entity);
+    }
+
+    size_t retargeted = 0;
+    for (entt::entity entity : entities)
+    {
+        ModelComponent& model = world.EditModel(entity);
+        if (const std::optional<std::filesystem::path> rebased =
+                AssetPaths::Rebase(model.sourcePath, oldPath, newPath))
+        {
+            const std::string oldFileName = std::filesystem::path(model.sourcePath).filename().string();
+            if (model.displayName == oldFileName)
+            {
+                model.displayName = rebased->filename().string();
+            }
+            model.sourcePath = rebased->string();
+            ++retargeted;
+        }
+        if (const std::optional<std::filesystem::path> rebased =
+                AssetPaths::Rebase(model.baseColorTextureOverridePath, oldPath, newPath))
+        {
+            model.baseColorTextureOverridePath = rebased->string();
+            ++retargeted;
+        }
+    }
+
+    if (retargeted > 0)
+    {
+        LOG_INFO("Retargeted {} scene reference(s) from '{}' to '{}'", retargeted, oldPath, newPath);
+    }
 }
 
 void UpdateImportedMaterialDefinition(

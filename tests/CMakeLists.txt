@@ -535,3 +535,54 @@ add_test(
 )
 
 set_target_properties(miniengine_model_import_target_tests PROPERTIES FOLDER "Tests")
+
+# asset_paths.cpp depends only on the standard library, so it is compiled directly into the test.
+add_executable(miniengine_asset_paths_tests
+    asset_paths_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/asset/asset_paths.cpp
+)
+
+# No miniengine_group_target_sources: that helper's source_group(TREE ...) requires every file
+# to sit under the calling directory, and this target deliberately compiles one .cpp from
+# engine/asset/.
+
+target_include_directories(miniengine_asset_paths_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME miniengine.asset_paths
+    COMMAND miniengine_asset_paths_tests
+)
+
+set_target_properties(miniengine_asset_paths_tests PROPERTIES FOLDER "Tests")
+
+# Drives ModelImportService's import, paste and delete against a scratch asset tree. Those live in
+# engine_editor, so this target links it; none of the renderer code runs.
+add_executable(miniengine_asset_file_operations_tests
+    asset_file_operations_tests.cpp
+)
+miniengine_group_target_sources(miniengine_asset_file_operations_tests)
+miniengine_enable_utf8_code_page(miniengine_asset_file_operations_tests)
+
+target_link_libraries(miniengine_asset_file_operations_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_asset_file_operations_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_asset_file_operations_tests>
+            $<TARGET_FILE_DIR:miniengine_asset_file_operations_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.asset_file_operations
+    COMMAND miniengine_asset_file_operations_tests
+)
+
+set_target_properties(miniengine_asset_file_operations_tests PROPERTIES FOLDER "Tests")

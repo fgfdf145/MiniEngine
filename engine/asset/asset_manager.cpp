@@ -2,6 +2,7 @@
 
 #include "asset_references.h"
 #include "asset_registry.h"
+#include "material_definition.h"
 #include "model_cache.h"
 
 #include <imgui.h>
@@ -75,37 +76,13 @@ void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, cons
 
     const std::string oldPrefix = oldModelPath.stem().string() + "_";
     const std::string newPrefix = newModelPath.stem().string() + "_";
-    constexpr std::string_view kSuffix = ".material.yaml";
-
-    std::error_code iterEc;
-    for (const auto& item : std::filesystem::directory_iterator(oldModelPath.parent_path(), iterEc))
+    for (const std::filesystem::path& definition : FindMaterialDefinitionFiles(oldModelPath))
     {
-        if (iterEc)
-        {
-            break;
-        }
-        const std::string name = item.path().filename().string();
-        if (!name.starts_with(oldPrefix) || !name.ends_with(kSuffix))
-        {
-            continue;
-        }
-        const std::string indexPart =
-            name.substr(oldPrefix.size(), name.size() - oldPrefix.size() - kSuffix.size());
-        const bool isMaterialIndex =
-            !indexPart.empty() &&
-            std::all_of(indexPart.begin(), indexPart.end(), [](unsigned char c)
-                        {
-                            return std::isdigit(c) != 0;
-                        });
-        if (!isMaterialIndex)
-        {
-            continue;
-        }
-
+        const std::string name = definition.filename().string();
         std::error_code renameEc;
         std::filesystem::rename(
-            item.path(),
-            item.path().parent_path() / (newPrefix + indexPart + std::string(kSuffix)),
+            definition,
+            definition.parent_path() / (newPrefix + name.substr(oldPrefix.size())),
             renameEc);
     }
 }
@@ -173,6 +150,8 @@ AssetManagerResult AssetManager::Draw()
     DrawDeleteConfirmModal(result);
     DrawRenameConfirmModal();
 
+    result.renamedAssets = std::move(m_completedRenames);
+    m_completedRenames.clear();
     return result;
 }
 
@@ -999,6 +978,9 @@ void AssetManager::PerformRename(const PendingRename& rename)
         {
             RenameModelMaterialSidecars(source, target);
         }
+
+        // Reported so open scenes and editors can follow the asset.
+        m_completedRenames.push_back(AssetManagerResult::RenamedAsset{source.string(), target.string()});
     }
     m_needsScan = true;
 }

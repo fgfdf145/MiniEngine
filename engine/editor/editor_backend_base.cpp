@@ -352,6 +352,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
             LOG_ERROR("Failed to save scene '{}': {}", *uiFrame.actions.selectedSceneSavePath, error.what());
         }
     }
+    for (const AssetManagerResult::RenamedAsset& renamed : uiFrame.actions.renamedAssets)
+    {
+        ModelImportService::OnAssetRenamed(State(), renamed.oldPath, renamed.newPath);
+    }
     for (const std::string& deletePath : uiFrame.actions.deleteAssetPaths)
     {
         try

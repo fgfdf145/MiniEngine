@@ -1,6 +1,8 @@
 ﻿add_library(engine_asset
     asset_manager.cpp
     asset_manager.h
+    asset_paths.cpp
+    asset_paths.h
     asset_references.cpp
     asset_references.h
     asset_registry.cpp

@@ -3,7 +3,10 @@
 #include "material_graph_runtime.h"
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace me
@@ -53,6 +56,35 @@ std::filesystem::path BuildMaterialDefinitionPath(
 {
     return modelPath.parent_path() /
            (modelPath.stem().string() + "_" + std::to_string(materialIndex) + ".material.yaml");
+}
+
+std::vector<std::filesystem::path> FindMaterialDefinitionFiles(const std::filesystem::path& modelPath)
+{
+    const std::string prefix = modelPath.stem().string() + "_";
+    constexpr std::string_view kSuffix = ".material.yaml";
+
+    std::vector<std::filesystem::path> files;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(modelPath.parent_path(), ec), end; !ec && it != end; it.increment(ec))
+    {
+        const std::string name = it->path().filename().string();
+        if (!name.starts_with(prefix) || !name.ends_with(kSuffix))
+        {
+            continue;
+        }
+        // Only a numeric index: "tree_1.glb" is another model whose own
+        // definitions ("tree_1_0.material.yaml") must not be claimed by "tree".
+        const std::string index = name.substr(prefix.size(), name.size() - prefix.size() - kSuffix.size());
+        const bool numeric = !index.empty() && std::all_of(index.begin(), index.end(), [](unsigned char c)
+                                                           {
+                                                               return std::isdigit(c) != 0;
+                                                           });
+        if (numeric)
+        {
+            files.push_back(it->path());
+        }
+    }
+    return files;
 }
 
 ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material)

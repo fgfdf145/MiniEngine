@@ -23,6 +23,13 @@ struct AssetManagerResult
     std::vector<std::string> deleteRequests; // one or more paths to delete
     std::optional<std::string> draggedModelPath;
     std::optional<PasteRequest> pasteRequest;
+
+    struct RenamedAsset
+    {
+        std::string oldPath;
+        std::string newPath;
+    };
+    std::vector<RenamedAsset> renamedAssets; // renames completed on disk this frame
 };
 
 class AssetManager
@@ -126,6 +133,7 @@ class AssetManager
     bool m_openDeleteModal = false;
 
     std::optional<PendingRename> m_pendingRename;
+    std::vector<AssetManagerResult::RenamedAsset> m_completedRenames; // drained into Draw()'s result
     std::vector<std::string> m_pendingRenameWarnings;
     bool m_openRenameModal = false;
 };

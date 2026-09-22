@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -15,6 +16,8 @@ namespace me
 std::filesystem::path BuildMaterialDefinitionPath(
     const std::filesystem::path& modelPath,
     uint32_t materialIndex);
+// Every "<stem>_<index>.material.yaml" next to the model, whatever the index.
+std::vector<std::filesystem::path> FindMaterialDefinitionFiles(const std::filesystem::path& modelPath);
 ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& material);
 void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMaterialData& destination);
 YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material);

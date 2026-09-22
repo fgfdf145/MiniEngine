@@ -1,5 +1,6 @@
 ﻿#include <engine/editor/editor_ui.h>
 
+#include <engine/asset/asset_paths.h>
 #include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/model_loader.h>
 #include <engine/asset/texture_loader.h>
@@ -100,6 +101,18 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
                 assetResult.pasteRequest->sourcePath,
                 assetResult.pasteRequest->destinationDirectory};
             m_assetManager->Refresh();
+        }
+        for (const AssetManagerResult::RenamedAsset& renamed : assetResult.renamedAssets)
+        {
+            // The model processor saves material edits next to the model it
+            // opened; follow the rename so they land beside the renamed file.
+            if (const std::optional<std::filesystem::path> rebased =
+                    AssetPaths::Rebase(m_modelProcessorModelPath, renamed.oldPath, renamed.newPath))
+            {
+                m_modelProcessorModelPath = rebased->string();
+                m_modelProcessorDisplayName = rebased->filename().string();
+            }
+            result.actions.renamedAssets.push_back(renamed);
         }
         DrawImportConflictModal(result);
     }
