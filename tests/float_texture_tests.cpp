@@ -165,18 +165,33 @@ void RejectsWhatIsNotAFloatImage()
     const std::filesystem::path png = directory.Path() / "plain.png";
     const std::uint8_t pixel[4] = {10, 20, 30, 255};
     Require(stbi_write_png(png.string().c_str(), 1, 1, 4, pixel, 4) != 0, "could not write the .png fixture");
-    Require(Throws([&]() { TextureLoader::LoadRGBA32F(png.string()); }), "a .png is not a float image");
+    Require(Throws([&]()
+                   {
+                       TextureLoader::LoadRGBA32F(png.string());
+                   }),
+            "a .png is not a float image");
 
     // A PNG under an .hdr name: stbi_loadf would convert it from LDR, which is not what .hdr means.
     const std::filesystem::path disguised = directory.Path() / "disguised.hdr";
     std::filesystem::copy_file(png, disguised);
-    Require(Throws([&]() { TextureLoader::LoadRGBA32F(disguised.string()); }), "a PNG named .hdr is refused");
+    Require(Throws([&]()
+                   {
+                       TextureLoader::LoadRGBA32F(disguised.string());
+                   }),
+            "a PNG named .hdr is refused");
 
     const std::filesystem::path exr = WriteExr(directory.Path());
     std::filesystem::resize_file(exr, 20);
-    Require(Throws([&]() { TextureLoader::LoadRGBA32F(exr.string()); }), "a truncated .exr throws");
+    Require(Throws([&]()
+                   {
+                       TextureLoader::LoadRGBA32F(exr.string());
+                   }),
+            "a truncated .exr throws");
 
-    Require(Throws([&]() { TextureLoader::LoadRGBA32F((directory.Path() / "missing.exr").string()); }),
+    Require(Throws([&]()
+                   {
+                       TextureLoader::LoadRGBA32F((directory.Path() / "missing.exr").string());
+                   }),
             "a missing file throws");
 }
 
