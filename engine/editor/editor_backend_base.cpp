@@ -400,7 +400,13 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         viewportExtent,
         m_backendType);
 
-    if (result.engineSettingsChanged || State().engineSettingsNeedsBootstrapSave)
+    // A slider or color drag changes the settings every frame; write the file once the drag ends
+    // rather than on each of those frames.
+    if (result.engineSettingsChanged)
+    {
+        State().engineSettingsDirty = true;
+    }
+    if ((State().engineSettingsDirty || State().engineSettingsNeedsBootstrapSave) && !ImGui::IsAnyItemActive())
     {
         State().editorUi.WriteEngineSettings(State().engineSettings);
         SaveEngineSettings();
@@ -655,6 +661,7 @@ void EditorRenderBackendBase::SaveEngineSettings()
     }
 
     State().engineSettingsNeedsBootstrapSave = false;
+    State().engineSettingsDirty = false;
     State().lastEngineSettingsError.clear();
 }
 }

@@ -12,6 +12,7 @@
 #include <engine/platform/ui/ui_scale.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <imgui_stdlib.h>
 #include <ImGuizmo.h>
 #include <yaml-cpp/yaml.h>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -456,12 +457,13 @@ void EditorUiController::DrawScenePanel(
             const TagComponent& tag = scene.GetTag(entity);
             const LightComponent& light = scene.GetLightComponent(entity);
             const ImVec4 typeColor = ImGui::ColorConvertU32ToFloat4(GetLightTypeColor(light.type));
-            ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
             const std::string label = std::string("[") + GetLightTypeLabel(light.type)[0] + "] " +
                                       tag.name + "##light_" +
                                       std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
+            ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
+            const bool clicked = ImGui::Selectable(label.c_str(), scene.IsSelected(entity));
             ImGui::PopStyleColor();
-            if (ImGui::Selectable(label.c_str(), scene.IsSelected(entity)))
+            if (clicked)
             {
                 scene.SetSelectedEntity(entity);
             }
@@ -478,12 +480,7 @@ void EditorUiController::DrawScenePanel(
 
             ImGui::Separator();
 
-            char tagBuffer[128]{};
-            std::snprintf(tagBuffer, sizeof(tagBuffer), "%s", tag.name.c_str());
-            if (ImGui::InputText("Name", tagBuffer, sizeof(tagBuffer)))
-            {
-                tag.name = tagBuffer;
-            }
+            ImGui::InputText("Name", &tag.name);
             ImGui::TextDisabled("Entity UUID: %s", scene.GetEntityUuid(selectedEntity).c_str());
 
             if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))

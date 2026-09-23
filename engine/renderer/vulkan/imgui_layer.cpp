@@ -8,6 +8,7 @@
 #include <imgui.h>
 #include <array>
 #include <filesystem>
+#include <span>
 
 namespace me
 {
@@ -22,23 +23,9 @@ std::string BuildImGuiIniPath()
     return (EnginePaths::ProjectRoot() / "imgui.ini").string();
 }
 
-std::filesystem::path FindPreferredUiFontPath()
+std::filesystem::path FindFirstExistingFont(std::span<const char* const> candidates)
 {
-#if defined(_WIN32)
-    constexpr std::array<const char*, 4> kCandidates = {
-        "C:/Windows/Fonts/segoeuivariable.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/tahoma.ttf"};
-#else
-    constexpr std::array<const char*, 4> kCandidates = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"};
-#endif
-
-    for (const char* candidate : kCandidates)
+    for (const char* candidate : candidates)
     {
         std::error_code errorCode;
         if (std::filesystem::exists(candidate, errorCode) && !errorCode)
@@ -48,6 +35,56 @@ std::filesystem::path FindPreferredUiFontPath()
     }
 
     return {};
+}
+
+std::filesystem::path FindPreferredUiFontPath()
+{
+#if defined(_WIN32)
+    static constexpr std::array<const char*, 4> kCandidates = {
+        "C:/Windows/Fonts/segoeuivariable.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/tahoma.ttf"};
+#elif defined(__APPLE__)
+    static constexpr std::array<const char*, 3> kCandidates = {
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf"};
+#else
+    static constexpr std::array<const char*, 4> kCandidates = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"};
+#endif
+
+    return FindFirstExistingFont(kCandidates);
+}
+
+// Merged behind the UI font so Chinese, Japanese and Korean file, model and material names render
+// instead of '?'. ImGui 1.92 rasterizes glyphs on first use, so the atlas only grows by the
+// characters actually shown.
+std::filesystem::path FindCjkFallbackFontPath()
+{
+#if defined(_WIN32)
+    static constexpr std::array<const char*, 3> kCandidates = {
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyh.ttf",
+        "C:/Windows/Fonts/simhei.ttf"};
+#elif defined(__APPLE__)
+    static constexpr std::array<const char*, 3> kCandidates = {
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"};
+#else
+    static constexpr std::array<const char*, 4> kCandidates = {
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"};
+#endif
+
+    return FindFirstExistingFont(kCandidates);
 }
 
 void ConfigureImGuiStyle()
@@ -198,6 +235,19 @@ void ConfigureImGuiFonts(ImGuiIO& io)
     if (defaultFont == nullptr)
     {
         defaultFont = fonts->AddFontDefaultVector(&fontConfig);
+    }
+
+    if (const std::filesystem::path cjkFontPath = FindCjkFallbackFontPath(); !cjkFontPath.empty())
+    {
+        ImFontConfig cjkConfig{};
+        cjkConfig.MergeMode = true;
+        cjkConfig.SizePixels = fontConfig.SizePixels;
+        cjkConfig.OversampleH = fontConfig.OversampleH;
+        cjkConfig.OversampleV = fontConfig.OversampleV;
+        cjkConfig.PixelSnapH = fontConfig.PixelSnapH;
+        cjkConfig.RasterizerMultiply = fontConfig.RasterizerMultiply;
+        const std::string cjkFontPathString = cjkFontPath.string();
+        fonts->AddFontFromFileTTF(cjkFontPathString.c_str(), cjkConfig.SizePixels, &cjkConfig);
     }
 
     io.FontDefault = defaultFont;

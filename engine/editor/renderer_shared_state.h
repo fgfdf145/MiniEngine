@@ -170,6 +170,8 @@ struct RendererSharedState
     std::filesystem::path engineSettingsPath;
     EngineSettings engineSettings;
     bool engineSettingsNeedsBootstrapSave = false;
+    // Set when the editor UI changed a persisted setting that has not been written yet.
+    bool engineSettingsDirty = false;
     RenderExtent requestedViewportExtent{};
     // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
     // the frame. Not persisted: a debug view left on should not survive a restart.
