@@ -37,6 +37,10 @@ This is phase 1 of four toward image-based lighting; each later phase gets its o
 
 1. **Formats:** `.hdr` (Radiance RGBE) through stb's `stbi_loadf`; `.exr` through **tinyexr 3.1.0**
    (vcpkg port, BSD-3-Clause, pulls in miniz), linked privately into `engine_asset`.
+
+   > **Amended during implementation.** The manifest's `builtin-baseline` resolves tinyexr to
+   > 1.0.12, not the 3.1.0 of the local port tree. Its `LoadEXR`, `SaveEXR` and
+   > `FreeEXRErrorMessage` match, and so does the `unofficial::tinyexr::tinyexr` target.
 2. **Detection by extension**, case-insensitive: `.hdr` and `.exr` are float images, everything
    else is not. The asset lists already classify files by extension, so the two stay in step.
 3. **Lossless on the CPU, half on the GPU.** The loader returns linear RGBA32F
@@ -127,6 +131,15 @@ fresh compressions and uncompressed textures.
 
 `.exr` joins `.hdr` in `IsTextureExt` (`asset_manager.cpp`), `HasRegistrableExtension`
 (`asset_registry.cpp`) and the texture filter of `file_dialog_backend.cpp`.
+
+### Model import
+
+> **Added during implementation.** Acceptance found that a glTF referencing an `.exr` companion
+> failed to import: `GltfModelLoader::UnpackEmbeddedTextures` parsed the model with tinygltf's
+> default image loader, which decodes every image with stb, companion files included. It now
+> installs the same image hook as a load (`LoadGltfImageData`), which leaves companion files
+> undecoded; only embedded images are unpacked. Regression test:
+> `UnpackSkipsCompanionImages` in `miniengine.model_import_texture`.
 
 ### Build
 
