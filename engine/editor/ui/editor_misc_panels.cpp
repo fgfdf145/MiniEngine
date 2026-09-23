@@ -153,14 +153,15 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 7> kGBufferViewNames = {
+        static constexpr std::array<const char*, 8> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
             "G-buffer: geometric normal",
             "G-buffer: metallic / roughness / occlusion",
             "G-buffer: emissive",
-            "G-buffer: motion vectors"};
+            "G-buffer: motion vectors",
+            "Ambient occlusion"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
@@ -169,6 +170,23 @@ void EditorUiController::DrawGraphicsDebugPanel()
                 static_cast<int>(kGBufferViewNames.size())))
         {
             m_renderDebug.gbufferView = static_cast<GBufferDebugView>(gbufferView);
+        }
+
+        // The forward-only order runs no AO pass, so these are disabled with the views above.
+        ImGui::SeparatorText("Ambient occlusion");
+        AoSettings& ao = m_renderDebug.ao;
+        ImGui::Checkbox("Enabled##ao", &ao.enabled);
+        ImGui::BeginDisabled(!ao.enabled);
+        ImGui::SliderFloat("Radius (m)", &ao.radius, 0.1f, 5.0f, "%.2f");
+        ImGui::SliderFloat("Thickness (m)", &ao.thickness, 0.01f, 2.0f, "%.2f");
+        ImGui::SliderInt("Slices", &ao.sliceCount, 1, 4);
+        ImGui::SliderInt("Steps", &ao.stepCount, 2, 16);
+        ImGui::Checkbox("Spatial filter", &ao.spatialFilter);
+        ImGui::Checkbox("Temporal filter", &ao.temporalFilter);
+        ImGui::EndDisabled();
+        if (ImGui::SmallButton("Reset##ao"))
+        {
+            ao = AoSettings{};
         }
         ImGui::EndDisabled();
     }
