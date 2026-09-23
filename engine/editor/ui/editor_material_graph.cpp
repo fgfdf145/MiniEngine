@@ -832,15 +832,15 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     }
     if (pbr.alphaMode == MaterialAlphaMode::Mask)
     {
-        changed |= ImGui::SliderFloat("Alpha Cutoff", &pbr.alphaCutoff, 0.0f, 1.0f, "%.2f");
+        changed |= DragFloatInRange("Alpha Cutoff", &pbr.alphaCutoff, 0.0f, 1.0f, "%.2f");
     }
-    changed |= ImGui::SliderFloat("Metallic", &pbr.metallicFactor, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::SliderFloat("Roughness", &pbr.roughnessFactor, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::SliderFloat("Normal Scale", &pbr.normalScale, 0.0f, 4.0f, "%.2f");
-    changed |= ImGui::SliderFloat("AO Strength", &pbr.occlusionStrength, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Metallic", &pbr.metallicFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Roughness", &pbr.roughnessFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Normal Scale", &pbr.normalScale, 0.0f, 4.0f, "%.2f");
+    changed |= DragFloatInRange("AO Strength", &pbr.occlusionStrength, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::ColorEdit3("Emissive", pbr.emissiveColor);
-    changed |= ImGui::SliderFloat("Emissive Intensity", &pbr.emissiveIntensity, 0.0f, 8.0f, "%.2f");
-    changed |= ImGui::SliderFloat("Opacity", &pbr.opacity, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Emissive Intensity", &pbr.emissiveIntensity, 0.0f, 8.0f, "%.2f");
+    changed |= DragFloatInRange("Opacity", &pbr.opacity, 0.0f, 1.0f, "%.2f");
     return changed;
 }
 
@@ -1101,7 +1101,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     case MaterialShaderNodeType::Scalar:
         ImGui::SeparatorText("Value");
         ImGui::TextWrapped("Use this node to drive blend factor or output scalar overrides.");
-        result.changed |= ImGui::SliderFloat("Scalar", &node.scalarValue, 0.0f, 8.0f, "%.2f");
+        result.changed |= DragFloatInRange("Scalar", &node.scalarValue, 0.0f, 8.0f, "%.2f");
         break;
     case MaterialShaderNodeType::Color:
         ImGui::SeparatorText("Color");
@@ -1115,7 +1115,7 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
     case MaterialShaderNodeType::Blend:
         ImGui::SeparatorText("Blend");
         ImGui::TextWrapped("This node mixes Surface A and Surface B. A connected scalar input overrides the default factor.");
-        result.changed |= ImGui::SliderFloat("Default Factor", &node.scalarValue, 0.0f, 1.0f, "%.2f");
+        result.changed |= DragFloatInRange("Default Factor", &node.scalarValue, 0.0f, 1.0f, "%.2f");
         break;
     case MaterialShaderNodeType::Output:
         ImGui::SeparatorText("PBR Defaults");

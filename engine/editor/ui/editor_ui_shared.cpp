@@ -152,4 +152,46 @@ ImU32 GetLightTypeColor(LightType type)
         return IM_COL32(220, 220, 220, 255);
     }
 }
+
+namespace
+{
+// Pixels of mouse travel that cross a field's whole range, about the width of a slider.
+constexpr float kDragPixelsForFullRange = 300.0f;
+
+float ResolveDragSpeed(float speed, float min, float max)
+{
+    return speed > 0.0f ? speed : (max - min) / kDragPixelsForFullRange;
+}
+}
+
+bool DragFloatInRange(const char* label, float* value, float min, float max, const char* format, float speed)
+{
+    return ImGui::DragFloat(
+        label,
+        value,
+        ResolveDragSpeed(speed, min, max),
+        min,
+        max,
+        format,
+        ImGuiSliderFlags_AlwaysClamp);
+}
+
+bool DragFloat3InRange(const char* label, float* values, float min, float max, const char* format, float speed)
+{
+    return ImGui::DragFloat3(
+        label,
+        values,
+        ResolveDragSpeed(speed, min, max),
+        min,
+        max,
+        format,
+        ImGuiSliderFlags_AlwaysClamp);
+}
+
+bool DragIntInRange(const char* label, int* value, int min, int max)
+{
+    // Integer fields have few steps, so they get more travel per step than float fields.
+    const float speed = std::max(static_cast<float>(max - min) / 150.0f, 0.02f);
+    return ImGui::DragInt(label, value, speed, min, max, "%d", ImGuiSliderFlags_AlwaysClamp);
+}
 }

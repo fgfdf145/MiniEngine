@@ -25,6 +25,25 @@ void DrawSecondaryMaterialTextureRows(const MaterialTextureBlendGraph& blendGrap
 const char* GetLightTypeLabel(LightType type);
 ImU32 GetLightTypeColor(LightType type);
 
+// Every numeric field in the editor is a drag field, so they all work the same way: drag to change,
+// double-click or Ctrl+click to type. These stand in for ImGui sliders: a speed of 0 crosses the
+// range in about a slider's width, and typed values are clamped to the range as a slider's were.
+bool DragFloatInRange(
+    const char* label,
+    float* value,
+    float min,
+    float max,
+    const char* format = "%.3f",
+    float speed = 0.0f);
+bool DragFloat3InRange(
+    const char* label,
+    float* values,
+    float min,
+    float max,
+    const char* format = "%.3f",
+    float speed = 0.0f);
+bool DragIntInRange(const char* label, int* value, int min, int max);
+
 // --- editor_dock_toolbar.cpp ----------------------------------------------
 void DrawTopToolbar(
     bool& showCameraWindow,

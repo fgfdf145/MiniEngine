@@ -148,7 +148,8 @@ bool DrawTransformComponent(TransformComponent& transform)
         0.05f,
         -WorldUnits::kUiTransformTranslationRangeMeters,
         WorldUnits::kUiTransformTranslationRangeMeters,
-        "%.3f");
+        "%.3f",
+        ImGuiSliderFlags_AlwaysClamp);
     changed |= ImGui::DragFloat3("Rotation", glm::value_ptr(transform.rotationDegrees), 0.5f);
     changed |= ImGui::DragFloat3(
         "Scale (1 = source meters)",
@@ -156,7 +157,8 @@ bool DrawTransformComponent(TransformComponent& transform)
         0.02f,
         WorldUnits::kMinimumScale,
         WorldUnits::kUiTransformScaleMax,
-        "%.3f");
+        "%.3f",
+        ImGuiSliderFlags_AlwaysClamp);
     const glm::vec3 clampedScale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
     changed |= glm::any(glm::notEqual(clampedScale, transform.scale));
     transform.scale = clampedScale;
@@ -194,10 +196,10 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             ImGui::TextDisabled("Add a Directional light: it is the sun.");
         }
         ImGui::ColorEdit3("Ground albedo", &atmosphere.groundAlbedo.x);
-        ImGui::DragFloat("Rayleigh density", &atmosphere.rayleighDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
-        ImGui::DragFloat("Mie density", &atmosphere.mieDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
-        ImGui::SliderFloat("Mie anisotropy", &atmosphere.mieAnisotropy, 0.0f, 0.99f, "%.2f");
-        ImGui::DragFloat("Ozone density", &atmosphere.ozoneDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
+        ImGui::DragFloat("Rayleigh density", &atmosphere.rayleighDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::DragFloat("Mie density", &atmosphere.mieDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        DragFloatInRange("Mie anisotropy", &atmosphere.mieAnisotropy, 0.0f, 0.99f, "%.2f");
+        ImGui::DragFloat("Ozone density", &atmosphere.ozoneDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::DragFloat(
             "Aerial perspective scale",
             &atmosphere.aerialPerspectiveDistanceScale,
@@ -205,8 +207,8 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             0.0f,
             10000.0f,
             "%.1f",
-            ImGuiSliderFlags_Logarithmic);
-        ImGui::SliderFloat("Sun disk (deg)", &atmosphere.sunAngularDiameterDegrees, 0.1f, 5.0f, "%.3f");
+            ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+        DragFloatInRange("Sun disk (deg)", &atmosphere.sunAngularDiameterDegrees, 0.1f, 5.0f, "%.3f");
     }
     else if (environment.mode == EnvironmentMode::Hdri)
     {
@@ -220,8 +222,8 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
                 hdri.uuid = AssetRegistry::GetOrCreateUuid(*path);
             }
         }
-        ImGui::DragFloat("Intensity (cd/m2)", &hdri.intensity, 10.0f, 0.0f, 1000000.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
-        ImGui::SliderFloat("Rotation (deg)", &hdri.rotationDegrees, -180.0f, 180.0f, "%.1f");
+        ImGui::DragFloat("Intensity (cd/m2)", &hdri.intensity, 10.0f, 0.0f, 1000000.0f, "%.0f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+        DragFloatInRange("Rotation (deg)", &hdri.rotationDegrees, -180.0f, 180.0f, "%.1f", 0.5f);
     }
 
     if (!(environment == scene.GetEnvironment()))
@@ -254,9 +256,10 @@ void DrawGizmoControls(GizmoSettings& gizmo)
         0.05f,
         WorldUnits::kUiCameraNearMinMeters,
         WorldUnits::kUiTranslationSnapMaxMeters,
-        "%.2f");
-    ImGui::DragFloat("Rotate Snap", &gizmo.rotationSnap, 0.5f, 1.0f, 90.0f, "%.1f deg");
-    ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, WorldUnits::kUiScaleSnapMax, "%.2f");
+        "%.2f",
+        ImGuiSliderFlags_AlwaysClamp);
+    ImGui::DragFloat("Rotate Snap", &gizmo.rotationSnap, 0.5f, 1.0f, 90.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, WorldUnits::kUiScaleSnapMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 }
 
 void DrawLightComponentEditor(LightComponent& light, float uiScale)
@@ -292,21 +295,21 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
         intensityUnit = "cd/m^2";
 
     const std::string intensityLabel = std::string("Intensity (") + intensityUnit + ")";
-    ImGui::DragFloat(intensityLabel.c_str(), &light.intensity, 10.0f, 0.0f, 1000000.0f, "%.1f");
+    ImGui::DragFloat(intensityLabel.c_str(), &light.intensity, 10.0f, 0.0f, 1000000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
     light.intensity = std::max(light.intensity, 0.0f);
 
     // Range
     if (light.type != LightType::Directional && light.type != LightType::Ambient)
     {
-        ImGui::DragFloat("Range (m)", &light.range, 0.1f, 0.1f, 1000.0f, "%.2f");
+        ImGui::DragFloat("Range (m)", &light.range, 0.1f, 0.1f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         light.range = std::max(light.range, 0.01f);
     }
 
     // Spot angles
     if (light.type == LightType::Spot)
     {
-        ImGui::SliderFloat("Inner Angle", &light.spotInnerAngleDegrees, 1.0f, 89.0f, "%.1f deg");
-        ImGui::SliderFloat("Outer Angle", &light.spotOuterAngleDegrees, 1.0f, 89.0f, "%.1f deg");
+        DragFloatInRange("Inner Angle", &light.spotInnerAngleDegrees, 1.0f, 89.0f, "%.1f deg", 0.25f);
+        DragFloatInRange("Outer Angle", &light.spotOuterAngleDegrees, 1.0f, 89.0f, "%.1f deg", 0.25f);
         light.spotInnerAngleDegrees = std::clamp(light.spotInnerAngleDegrees, 1.0f, 89.0f);
         light.spotOuterAngleDegrees = std::clamp(light.spotOuterAngleDegrees,
                                                  light.spotInnerAngleDegrees, 89.0f);
@@ -315,7 +318,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     // Area size
     if (light.type == LightType::Area)
     {
-        ImGui::DragFloat2("Area Size (m)", &light.areaSize.x, 0.05f, 0.01f, 100.0f, "%.2f");
+        ImGui::DragFloat2("Area Size (m)", &light.areaSize.x, 0.05f, 0.01f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         light.areaSize = glm::max(light.areaSize, glm::vec2(0.01f));
         ImGui::TextDisabled("One-sided: emits along the gizmo's arrow (local -Z); W along local X, H along local Y.");
     }

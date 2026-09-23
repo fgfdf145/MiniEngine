@@ -1,4 +1,5 @@
 ﻿#include <engine/editor/editor_ui.h>
+#include "editor_ui_internal.h"
 
 #include <engine/core/log/log.h>
 #include <engine/platform/ui/ui_scale.h>
@@ -15,7 +16,7 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
 {
     if (ImGui::Begin("Camera", &m_showCameraWindow))
     {
-        if (ImGui::SliderFloat("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
+        if (DragFloatInRange("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
         {
             ApplyUiScale();
         }
@@ -29,33 +30,36 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         ImGui::Text("Look: Hold Right Mouse");
         ImGui::Text("Pan: Hold Middle Mouse");
         ImGui::Text("Wheel: Fov (Speed while Right Mouse held)");
-        ImGui::SliderFloat3(
+        DragFloat3InRange(
             "Position (m)",
             &camera.position.x,
             -WorldUnits::kUiCameraPositionRangeMeters,
             WorldUnits::kUiCameraPositionRangeMeters,
-            "%.2f");
-        ImGui::SliderFloat("Yaw", &camera.yawDegrees, -180.0f, 180.0f);
-        ImGui::SliderFloat("Pitch", &camera.pitchDegrees, -89.0f, 89.0f);
-        ImGui::SliderFloat(
+            "%.2f",
+            0.05f);
+        DragFloatInRange("Yaw", &camera.yawDegrees, -180.0f, 180.0f, "%.1f", 0.5f);
+        DragFloatInRange("Pitch", &camera.pitchDegrees, -89.0f, 89.0f, "%.1f", 0.5f);
+        DragFloatInRange(
             "Speed (m/s)",
             &camera.moveSpeed,
             WorldUnits::kUiCameraMoveSpeedMinMetersPerSecond,
             WorldUnits::kUiCameraMoveSpeedMaxMetersPerSecond,
             "%.2f");
-        ImGui::SliderFloat("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
-        ImGui::SliderFloat(
+        DragFloatInRange("Sensitivity", &camera.mouseSensitivity, 0.01f, 1.0f);
+        DragFloatInRange(
             "Fov",
             &camera.fovDegrees,
             WorldUnits::kUiCameraFovMinDegrees,
-            WorldUnits::kUiCameraFovMaxDegrees);
-        ImGui::SliderFloat(
+            WorldUnits::kUiCameraFovMaxDegrees,
+            "%.1f");
+        DragFloatInRange(
             "Near (m)",
             &camera.nearPlane,
             WorldUnits::kUiCameraNearMinMeters,
             WorldUnits::kUiCameraNearMaxMeters,
-            "%.3f");
-        ImGui::SliderFloat(
+            "%.3f",
+            0.005f);
+        DragFloatInRange(
             "Far (m)",
             &camera.farPlane,
             WorldUnits::kUiCameraFarMinMeters,
@@ -65,9 +69,9 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         AutoExposureSettings& autoExposure = camera.autoExposure;
         ImGui::Checkbox("Auto Exposure", &autoExposure.enabled);
 
-        // In auto mode the renderer writes exposureEv100 every frame, so the slider only shows it.
+        // In auto mode the renderer writes exposureEv100 every frame, so the field only shows it.
         ImGui::BeginDisabled(autoExposure.enabled);
-        ImGui::SliderFloat(
+        DragFloatInRange(
             "Exposure (EV100)",
             &camera.exposureEv100,
             kMinExposureEv100,
@@ -83,7 +87,7 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
 
         if (autoExposure.enabled)
         {
-            ImGui::SliderFloat("Compensation (EV)", &autoExposure.compensationEv, -5.0f, 5.0f, "%+.1f");
+            DragFloatInRange("Compensation (EV)", &autoExposure.compensationEv, -5.0f, 5.0f, "%+.1f");
             ImGui::DragFloatRange2(
                 "EV100 Range",
                 &autoExposure.minEv100,
@@ -94,13 +98,13 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
                 "Min %.1f",
                 "Max %.1f",
                 ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat(
+            DragFloatInRange(
                 "Adapt to Brighter (1/s)",
                 &autoExposure.adaptToBrighterPerSecond,
                 0.1f,
                 10.0f,
                 "%.1f");
-            ImGui::SliderFloat(
+            DragFloatInRange(
                 "Adapt to Darker (1/s)",
                 &autoExposure.adaptToDarkerPerSecond,
                 0.1f,
@@ -149,10 +153,10 @@ void EditorUiController::DrawGraphicsDebugPanel()
         AoSettings& ao = m_renderDebug.ao;
         ImGui::Checkbox("Enabled##ao", &ao.enabled);
         ImGui::BeginDisabled(!ao.enabled);
-        ImGui::SliderFloat("Radius (m)", &ao.radius, 0.1f, 5.0f, "%.2f");
-        ImGui::SliderFloat("Thickness (m)", &ao.thickness, 0.01f, 2.0f, "%.2f");
-        ImGui::SliderInt("Slices", &ao.sliceCount, 1, 4);
-        ImGui::SliderInt("Steps", &ao.stepCount, 2, 16);
+        DragFloatInRange("Radius (m)", &ao.radius, 0.1f, 5.0f, "%.2f");
+        DragFloatInRange("Thickness (m)", &ao.thickness, 0.01f, 2.0f, "%.2f");
+        DragIntInRange("Slices", &ao.sliceCount, 1, 4);
+        DragIntInRange("Steps", &ao.stepCount, 2, 16);
         ImGui::Checkbox("Spatial filter", &ao.spatialFilter);
         ImGui::Checkbox("Temporal filter", &ao.temporalFilter);
         ImGui::EndDisabled();
