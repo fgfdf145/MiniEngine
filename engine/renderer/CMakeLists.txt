@@ -10,6 +10,8 @@ add_library(engine_render_core
     atmosphere.h
     camera.cpp
     camera.h
+    environment_brdf.cpp
+    environment_brdf.h
     exposure.cpp
     exposure.h
     material.h

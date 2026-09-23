@@ -339,6 +339,32 @@ endif()
 
 set_target_properties(miniengine_spherical_harmonics_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_environment_brdf_tests
+    environment_brdf_tests.cpp
+)
+miniengine_group_target_sources(miniengine_environment_brdf_tests)
+
+target_link_libraries(miniengine_environment_brdf_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.environment_brdf
+    COMMAND miniengine_environment_brdf_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_environment_brdf_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_environment_brdf_tests>
+            $<TARGET_FILE_DIR:miniengine_environment_brdf_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_environment_brdf_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_texture_compression_tests
     texture_compression_tests.cpp
 )
