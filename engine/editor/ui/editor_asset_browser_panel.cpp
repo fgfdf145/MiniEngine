@@ -167,7 +167,7 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
-            const bool overwrite = ImGui::Button("Overwrite", ImVec2(120.0f, 0.0f));
+            const bool overwrite = ImGui::Button("Overwrite", ImVec2(120.0f * m_effectiveUiScale, 0.0f));
             ImGui::PopStyleColor(3);
             if (overwrite)
             {
@@ -177,7 +177,7 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
             }
 
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+            if (ImGui::Button("Cancel", ImVec2(120.0f * m_effectiveUiScale, 0.0f)))
             {
                 m_pendingImportConflict.reset();
                 ImGui::CloseCurrentPopup();

@@ -88,10 +88,28 @@ void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, cons
     }
 }
 
-// Square tile layout (Unreal-style content browser)
-constexpr float kTileWidth = 96.0f;
-constexpr float kTileIconHeight = 64.0f;
-constexpr float kTileHeight = 100.0f; // icon area + ~2 lines of label
+// The editor keeps FontScaleMain at its effective UI scale (window DPI times the user's
+// multiplier), so pixel sizes here are multiplied by it to stay in proportion with the text.
+float UiScale()
+{
+    return ImGui::GetStyle().FontScaleMain;
+}
+
+// Square tile layout (Unreal-style content browser), sized at UI scale 1.
+float TileWidth()
+{
+    return 96.0f * UiScale();
+}
+
+float TileIconHeight()
+{
+    return 64.0f * UiScale();
+}
+
+float TileHeight()
+{
+    return 100.0f * UiScale(); // icon area + ~2 lines of label
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -416,16 +434,16 @@ void AssetManager::DrawBreadcrumb()
 
 void AssetManager::DrawEntryList(AssetManagerResult& result)
 {
-    constexpr float kPreviewPanelHeight = 100.0f;
+    const float previewPanelHeight = 100.0f * UiScale();
     const float listHeight = std::max(
-        ImGui::GetContentRegionAvail().y - kPreviewPanelHeight - ImGui::GetStyle().ItemSpacing.y,
-        60.0f);
+        ImGui::GetContentRegionAvail().y - previewPanelHeight - ImGui::GetStyle().ItemSpacing.y,
+        60.0f * UiScale());
     if (ImGui::BeginChild("##asset_list", ImVec2(0.0f, listHeight), false))
     {
         const ImGuiStyle& style = ImGui::GetStyle();
         const int columns = std::max(
             1,
-            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (kTileWidth + style.ItemSpacing.x)));
+            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (TileWidth() + style.ItemSpacing.x)));
 
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
         {
@@ -477,7 +495,7 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     if (!isRenaming)
     {
         if (ImGui::Selectable("##tile", isSelected, ImGuiSelectableFlags_AllowDoubleClick,
-                              ImVec2(kTileWidth, kTileHeight)))
+                              ImVec2(TileWidth(), TileHeight())))
         {
             // ".." always navigates, never participates in multi-select
             if (entry.name == "..")
@@ -575,13 +593,13 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     else
     {
         // Icon area stays; the label line becomes an inline rename field.
-        ImGui::Dummy(ImVec2(kTileWidth, kTileIconHeight));
+        ImGui::Dummy(ImVec2(TileWidth(), TileIconHeight()));
         if (m_renameFocusPending)
         {
             ImGui::SetKeyboardFocusHere();
             m_renameFocusPending = false;
         }
-        ImGui::SetNextItemWidth(kTileWidth);
+        ImGui::SetNextItemWidth(TileWidth());
         const bool committed = ImGui::InputText("##rename", m_renameBuffer, sizeof(m_renameBuffer),
                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
         if (committed)
@@ -605,22 +623,23 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImU32 typeCol = TypeColorU32(entry.type);
 
-    const ImVec2 iconMin(tileMin.x + 16.0f, tileMin.y + 8.0f);
-    const ImVec2 iconMax(tileMin.x + kTileWidth - 16.0f, tileMin.y + kTileIconHeight - 6.0f);
+    const float s = UiScale();
+    const ImVec2 iconMin(tileMin.x + 16.0f * s, tileMin.y + 8.0f * s);
+    const ImVec2 iconMax(tileMin.x + TileWidth() - 16.0f * s, tileMin.y + TileIconHeight() - 6.0f * s);
 
     if (entry.isDir)
     {
         // Folder glyph: tab + body
         const float tabWidth = (iconMax.x - iconMin.x) * 0.45f;
-        drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + tabWidth, iconMin.y + 10.0f), typeCol, 3.0f);
-        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f), iconMax, typeCol, 4.0f);
-        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f), ImVec2(iconMax.x, iconMin.y + 14.0f),
-                                IM_COL32(255, 255, 255, 40), 4.0f);
+        drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + tabWidth, iconMin.y + 10.0f * s), typeCol, 3.0f * s);
+        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f * s), iconMax, typeCol, 4.0f * s);
+        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f * s), ImVec2(iconMax.x, iconMin.y + 14.0f * s),
+                                IM_COL32(255, 255, 255, 40), 4.0f * s);
     }
     else
     {
-        drawList->AddRectFilled(iconMin, iconMax, IM_COL32(52, 54, 60, 255), 4.0f);
-        drawList->AddRect(iconMin, iconMax, typeCol, 4.0f, 0, 2.0f);
+        drawList->AddRectFilled(iconMin, iconMax, IM_COL32(52, 54, 60, 255), 4.0f * s);
+        drawList->AddRect(iconMin, iconMax, typeCol, 4.0f * s, 0, 2.0f * s);
         const char* tag = ShortTag(entry.type);
         const ImVec2 tagSize = ImGui::CalcTextSize(tag);
         drawList->AddText(ImVec2((iconMin.x + iconMax.x - tagSize.x) * 0.5f,
@@ -632,13 +651,13 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     {
         // Name label: wrapped to the tile width, clipped to two lines,
         // centered when it fits on one line
-        const float labelTop = tileMin.y + kTileIconHeight;
-        const float wrapWidth = kTileWidth - 6.0f;
+        const float labelTop = tileMin.y + TileIconHeight();
+        const float wrapWidth = TileWidth() - 6.0f * s;
         const ImVec2 textSize = ImGui::CalcTextSize(entry.name.c_str(), nullptr, false, wrapWidth);
         const float textX = (textSize.x < wrapWidth)
-                                ? tileMin.x + (kTileWidth - textSize.x) * 0.5f
-                                : tileMin.x + 3.0f;
-        const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + kTileWidth, tileMin.y + kTileHeight);
+                                ? tileMin.x + (TileWidth() - textSize.x) * 0.5f
+                                : tileMin.x + 3.0f * s;
+        const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + TileWidth(), tileMin.y + TileHeight());
         drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(textX, labelTop),
                           ImGui::GetColorU32(ImGuiCol_Text), entry.name.c_str(), nullptr,
                           wrapWidth, &clipRect);
@@ -1121,7 +1140,7 @@ void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
-        if (ImGui::Button("Delete", ImVec2(120.0f, 0.0f)))
+        if (ImGui::Button("Delete", ImVec2(120.0f * UiScale(), 0.0f)))
         {
             for (std::string& path : m_pendingDeletePaths)
             {
@@ -1133,7 +1152,7 @@ void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
         ImGui::PopStyleColor(3);
 
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+        if (ImGui::Button("Cancel", ImVec2(120.0f * UiScale(), 0.0f)))
         {
             m_pendingDeletePaths.clear();
             ImGui::CloseCurrentPopup();
@@ -1178,7 +1197,7 @@ void AssetManager::DrawRenameConfirmModal()
         ImGui::TextDisabled("Those files reference it by path: renaming breaks them. Scenes are not affected.");
         ImGui::Separator();
 
-        if (ImGui::Button("Rename Anyway", ImVec2(140.0f, 0.0f)))
+        if (ImGui::Button("Rename Anyway", ImVec2(140.0f * UiScale(), 0.0f)))
         {
             if (m_pendingRename.has_value())
             {
@@ -1189,7 +1208,7 @@ void AssetManager::DrawRenameConfirmModal()
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+        if (ImGui::Button("Cancel", ImVec2(120.0f * UiScale(), 0.0f)))
         {
             m_pendingRename.reset();
             m_needsScan = true; // refresh the list; the inline edit already closed

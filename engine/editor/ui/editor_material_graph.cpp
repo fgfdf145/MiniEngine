@@ -83,7 +83,8 @@ bool DrawGraphTextureSlotEditor(
     ImGui::PushID(idSuffix);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(0.0f, 10.0f);
+    const float uiScale = ImGui::GetStyle().FontScaleMain;
+    ImGui::SameLine(0.0f, 10.0f * uiScale);
     if (path.empty())
     {
         ImGui::TextDisabled("Default");
@@ -97,7 +98,7 @@ bool DrawGraphTextureSlotEditor(
         }
     }
 
-    if (ImGui::GetContentRegionAvail().x > 120.0f)
+    if (ImGui::GetContentRegionAvail().x > 120.0f * uiScale)
     {
         ImGui::SameLine();
     }

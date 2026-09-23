@@ -92,6 +92,11 @@ class EditorUiController
   public:
     void BeginFrame(SDL_Window* window, const EngineSettings& settings);
     void WriteEngineSettings(EngineSettings& settings) const;
+    // Window DPI scale times the user's UI scale multiplier; the ImGui style is scaled by it.
+    float GetEffectiveUiScale() const
+    {
+        return m_effectiveUiScale;
+    }
     EditorUiFrameResult Draw(
         Camera& camera,
         ViewportMatrices& matrices,

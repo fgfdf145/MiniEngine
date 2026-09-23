@@ -422,7 +422,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowBgAlpha(0.88f);
-        ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(360.0f * State().editorUi.GetEffectiveUiScale(), 0.0f));
         if (ImGui::Begin("##async_load_overlay", nullptr,
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
