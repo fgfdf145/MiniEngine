@@ -118,6 +118,29 @@ its source and captures nothing.
     decision 4, and for `Hdri` an asset picker (`.hdr`/`.exr`), intensity and rotation. Edits
     mark the scene dirty like any scene edit.
 
+## Amendments During Implementation
+
+- **Startup scene:** it gains a directional light "Sun" (120000 lux, 35 degrees up behind the default
+  camera) along with `Atmosphere`, since the atmosphere has no light without one.
+- **Aerial perspective slices** are spread quadratically over 32 km (Hillaire's reference
+  implementation), not 1 km apart; the first half slice fades in linearly from the camera.
+- **HDRI changes** rewrite set 0 binding 6 after `WaitForAllFrames` instead of rebuilding
+  `VulkanUniformBuffer`. Until the map is loaded, or after it fails, the frame renders as `None`
+  rather than keeping the previous sky.
+- **Scene dirty tracking** does not exist in the editor, so decision 13's "mark the scene dirty"
+  does not apply; the environment is saved with the scene like everything else.
+- **Exposure metering:** the histogram used to skip every pixel at depth 1, because the flat
+  background is divided by the exposure. A physical sky is radiance, so it is now metered whenever
+  the mode is `Atmosphere` or `Hdri`; without this, a frame of sky metered nothing and kept its
+  previous EV. Measured noon sky: EV100 15.5.
+- **Verification tooling:** `--capture <png>` writes the viewport after `--frames`, logging the
+  EV100; `VulkanUploadBatch::Flush` now submits command-only batches, which the readback needs.
+- **Measured cost** (RTX 4070 Laptop, Release): sky-view plus aerial perspective 0.035 ms per
+  frame; 0.10 ms on a frame that also rebuilds the transmittance and multiple-scattering LUTs.
+- **Known limits:** below the horizon the sky is nearly black, since the camera sits 0.5 m above an
+  undrawn ground; interiors lit only by the fallback ambient look dark next to the physical sky
+  and haze until diffuse IBL (phase 3) lights them from the sky.
+
 ## Components
 
 ### `engine/scene` and `engine/logic`
