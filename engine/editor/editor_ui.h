@@ -187,6 +187,7 @@ class EditorUiController
     bool m_openMaterialGraphAddNodePopup = false;
     bool m_showModelProcessorWindow = false;
     bool m_modelProcessorDirty = false;
+    double m_modelProcessorLastExistsCheckTime = -1.0e9;
     uint32_t m_materialGraphLinkDragFromNodeId = 0;
     uint8_t m_materialGraphResizeEdges = 0;
     std::optional<AssetManager> m_assetManager;
@@ -210,5 +211,7 @@ class EditorUiController
     bool m_showViewportWindow = true;
     bool m_showGraphicsDebugWindow = false;
     bool m_inputMonitorAutoScroll = true;
+    std::vector<std::string> m_inputMonitorMessages;
+    uint64_t m_inputMonitorMessagesRevision = 0;
 };
 }

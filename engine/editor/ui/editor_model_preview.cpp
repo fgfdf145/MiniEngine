@@ -1,39 +1,22 @@
 ﻿#include "editor_model_preview.h"
 #include "editor_ui_internal.h"
 
-#include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/model_loader.h>
 #include <engine/asset/texture_loader.h>
 
-#include <engine/logic/editor_world.h>
-#include <engine/platform/file_dialog/file_dialog.h>
-#include <engine/core/log/log.h>
-#include <engine/platform/ui/ui_scale.h>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <ImGuizmo.h>
-#include <yaml-cpp/yaml.h>
-#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/common.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
-#include <glm/gtc/matrix_inverse.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/euler_angles.hpp>
 
 #include <algorithm>
-#include <array>
-#include <cctype>
 #include <cmath>
 #include <cfloat>
+#include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
 #include <functional>
-#include <limits>
-#include <numeric>
-#include <sstream>
-#include <stdexcept>
-#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <utility>
@@ -234,6 +217,7 @@ struct CachedPreviewTexture
 {
     TextureData texture;
     std::filesystem::file_time_type lastWriteTime{};
+    std::chrono::steady_clock::time_point lastFileCheck{};
     bool resolved = false;
     bool available = false;
     uint64_t lastAccess = 0;
@@ -463,6 +447,11 @@ void StoreMaterialShadedPreviewCacheKey(
     cache.valid = true;
 }
 
+// The preview samples its textures for every vertex it shades, and it reshades every frame while
+// the user orbits it: hundreds of thousands of lookups. A file is checked on disk at most this
+// often, so an edited texture still shows up without a filesystem call per sample.
+constexpr std::chrono::milliseconds kPreviewTextureRecheckInterval{1000};
+
 const TextureData* ResolvePreviewTexture(const std::string& path)
 {
     if (path.empty())
@@ -470,20 +459,31 @@ const TextureData* ResolvePreviewTexture(const std::string& path)
         return nullptr;
     }
 
+    // Keyed by the path as given: normalizing it costs a filesystem call too.
+    auto& cache = GetPreviewTextureCache();
+    CachedPreviewTexture& cached = cache[path];
+    cached.lastAccess = ++PreviewTextureAccessCounter();
+
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    if (cached.resolved && now - cached.lastFileCheck < kPreviewTextureRecheckInterval)
+    {
+        return cached.available ? &cached.texture : nullptr;
+    }
+
     std::error_code errorCode;
     const std::filesystem::path normalizedPath = NormalizeFilesystemPath(path);
     const bool exists = std::filesystem::exists(normalizedPath, errorCode) && !errorCode;
-    auto& cache = GetPreviewTextureCache();
-    CachedPreviewTexture& cached = cache[normalizedPath.string()];
-    cached.lastAccess = ++PreviewTextureAccessCounter();
-
     if (!exists)
     {
+        const uint64_t lastAccess = cached.lastAccess;
         cached = CachedPreviewTexture{};
         cached.resolved = true;
         cached.available = false;
+        cached.lastFileCheck = now;
+        cached.lastAccess = lastAccess;
         return nullptr;
     }
+    cached.lastFileCheck = now;
 
     const std::filesystem::file_time_type lastWriteTime = std::filesystem::last_write_time(normalizedPath, errorCode);
     const bool reloadRequired =
@@ -501,15 +501,18 @@ const TextureData* ResolvePreviewTexture(const std::string& path)
         }
         catch (...)
         {
+            const uint64_t lastAccess = cached.lastAccess;
             cached = CachedPreviewTexture{};
             cached.resolved = true;
             cached.available = false;
+            cached.lastFileCheck = now;
+            cached.lastAccess = lastAccess;
         }
 
         // Trim can erase map entries, so re-look-up afterwards rather than
         // holding `cached` across it.
         TrimPreviewTextureCache();
-        const auto it = cache.find(normalizedPath.string());
+        const auto it = cache.find(path);
         return (it != cache.end() && it->second.available) ? &it->second.texture : nullptr;
     }
 

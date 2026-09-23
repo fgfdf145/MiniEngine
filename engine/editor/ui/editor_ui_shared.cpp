@@ -1,40 +1,13 @@
 ﻿#include "editor_ui_internal.h"
 
-#include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/model_loader.h>
-#include <engine/asset/texture_loader.h>
 
-#include <engine/logic/editor_world.h>
-#include <engine/platform/file_dialog/file_dialog.h>
-#include <engine/core/log/log.h>
-#include <engine/platform/ui/ui_scale.h>
 #include <imgui.h>
-#include <imgui_internal.h>
-#include <ImGuizmo.h>
-#include <yaml-cpp/yaml.h>
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/common.hpp>
-#include <glm/ext/matrix_transform.hpp>
-#include <glm/gtc/matrix_inverse.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/euler_angles.hpp>
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <cmath>
-#include <cfloat>
-#include <cstdio>
 #include <filesystem>
-#include <functional>
-#include <limits>
-#include <numeric>
-#include <sstream>
-#include <stdexcept>
-#include <string_view>
 #include <system_error>
-#include <unordered_map>
-#include <vector>
 
 namespace me
 {

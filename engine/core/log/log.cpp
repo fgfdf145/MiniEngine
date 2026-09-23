@@ -22,6 +22,8 @@ constexpr size_t kMaxInputMessages = 256;
 
 std::mutex g_inputMessagesMutex;
 std::deque<std::string> g_inputMessages;
+// Bumped on every change; starts at 1 so a caller's initial revision 0 always copies.
+uint64_t g_inputMessagesRevision = 1;
 }
 
 void Log::Init()
@@ -37,16 +39,24 @@ void Log::Init()
     spdlog::set_level(spdlog::level::trace);
 }
 
-std::vector<std::string> Log::GetInputMessagesSnapshot()
+bool Log::RefreshInputMessagesSnapshot(std::vector<std::string>& messages, uint64_t& revision)
 {
     std::lock_guard<std::mutex> lock(g_inputMessagesMutex);
-    return std::vector<std::string>(g_inputMessages.begin(), g_inputMessages.end());
+    if (revision == g_inputMessagesRevision)
+    {
+        return false;
+    }
+
+    messages.assign(g_inputMessages.begin(), g_inputMessages.end());
+    revision = g_inputMessagesRevision;
+    return true;
 }
 
 void Log::ClearInputMessages()
 {
     std::lock_guard<std::mutex> lock(g_inputMessagesMutex);
     g_inputMessages.clear();
+    ++g_inputMessagesRevision;
 }
 
 void Log::WriteInputLine(const std::string& message)
@@ -57,5 +67,6 @@ void Log::WriteInputLine(const std::string& message)
     {
         g_inputMessages.pop_front();
     }
+    ++g_inputMessagesRevision;
 }
 }
