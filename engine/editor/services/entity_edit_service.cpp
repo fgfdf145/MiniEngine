@@ -3,6 +3,7 @@
 #include "scene_renderables.h"
 
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/logic/world_bounds.h>
 
 #include <engine/asset/asset_registry.h>
 #include <engine/core/log/log.h>
@@ -26,6 +27,18 @@ std::filesystem::path NormalizePath(const std::filesystem::path& path)
     std::error_code errorCode;
     const std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
     return errorCode ? path.lexically_normal() : absolutePath.lexically_normal();
+}
+
+// Frames the camera on where the entity's model is in the world. The bounds component is local to
+// the model, so framing it directly would aim at the origin wherever the model was placed.
+void FrameEntityModel(RendererSharedState& state, entt::entity entity)
+{
+    glm::vec3 minBounds{};
+    glm::vec3 maxBounds{};
+    if (ComputeWorldModelBounds(state.GetEditorWorld(), entity, minBounds, maxBounds))
+    {
+        state.camera.FrameBounds(minBounds, maxBounds);
+    }
 }
 }
 
@@ -57,11 +70,6 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
         {
             state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
             RefreshDirtySceneRenderables(state);
-            const ModelBoundsComponent& bounds = state.GetEditorWorld().GetModelBounds(selectedEntity);
-            if (bounds.hasBounds)
-            {
-                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
-            }
         }
         catch (...)
         {
@@ -74,6 +82,7 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
         {
             state.GetEditorWorld().ResetSelectedTransform();
         }
+        FrameEntityModel(state, selectedEntity);
         LOG_INFO("Loaded model (cached) into '{}': {}", state.GetEditorWorld().GetTag(selectedEntity).name, path);
         return;
     }
@@ -139,11 +148,7 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
         try
         {
             RefreshDirtySceneRenderables(state);
-            const ModelBoundsComponent& bounds = state.GetEditorWorld().GetModelBounds(placedEntity);
-            if (bounds.hasBounds)
-            {
-                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
-            }
+            FrameEntityModel(state, placedEntity);
         }
         catch (...)
         {
@@ -474,16 +479,12 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
 
         if (IsValidModelEntity(load.trackedEntity))
         {
-            const ModelBoundsComponent& bounds = world.GetModelBounds(load.trackedEntity);
-            if (bounds.hasBounds)
-            {
-                state.camera.FrameBounds(bounds.minBounds, bounds.maxBounds);
-            }
             if (load.resetTransformOnComplete)
             {
                 world.SetSelectedEntity(load.trackedEntity);
                 world.ResetSelectedTransform();
             }
+            FrameEntityModel(state, load.trackedEntity);
         }
 
         state.lastModelLoadError.clear();

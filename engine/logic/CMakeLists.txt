@@ -5,6 +5,8 @@ add_library(engine_logic
     gizmo_settings.cpp
     gizmo_settings.h
     logic_layer.h
+    world_bounds.cpp
+    world_bounds.h
 )
 miniengine_group_target_sources(engine_logic)
 

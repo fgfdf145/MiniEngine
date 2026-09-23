@@ -6,6 +6,7 @@
 #include <engine/asset/texture_loader.h>
 
 #include <engine/logic/editor_world.h>
+#include <engine/logic/world_bounds.h>
 #include <engine/platform/file_dialog/file_dialog.h>
 #include <engine/core/log/log.h>
 #include <engine/platform/ui/ui_scale.h>
@@ -115,19 +116,6 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
     rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
 }
 
-std::array<glm::vec3, 8> BuildBoundsCorners(const glm::vec3& minBounds, const glm::vec3& maxBounds)
-{
-    return {
-        glm::vec3(minBounds.x, minBounds.y, minBounds.z),
-        glm::vec3(maxBounds.x, minBounds.y, minBounds.z),
-        glm::vec3(minBounds.x, maxBounds.y, minBounds.z),
-        glm::vec3(maxBounds.x, maxBounds.y, minBounds.z),
-        glm::vec3(minBounds.x, minBounds.y, maxBounds.z),
-        glm::vec3(maxBounds.x, minBounds.y, maxBounds.z),
-        glm::vec3(minBounds.x, maxBounds.y, maxBounds.z),
-        glm::vec3(maxBounds.x, maxBounds.y, maxBounds.z)};
-}
-
 constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = {{{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7}, {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
 
 std::string ReadDragDropPayloadString(const ImGuiPayload& payload)
@@ -191,31 +179,6 @@ bool BuildProjectedSelectionBox(
         {
             return false;
         }
-    }
-
-    return true;
-}
-
-bool ComputeWorldBounds(
-    const IEditorWorld& scene,
-    entt::entity entity,
-    glm::vec3& minBounds,
-    glm::vec3& maxBounds)
-{
-    const ModelBoundsComponent& bounds = scene.GetModelBounds(entity);
-    if (!bounds.hasBounds)
-    {
-        return false;
-    }
-
-    minBounds = glm::vec3(std::numeric_limits<float>::max());
-    maxBounds = glm::vec3(std::numeric_limits<float>::lowest());
-    const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
-    for (const glm::vec3& corner : BuildBoundsCorners(bounds.minBounds, bounds.maxBounds))
-    {
-        const glm::vec3 worldPoint = glm::vec3(modelMatrix * glm::vec4(corner, 1.0f));
-        minBounds = glm::min(minBounds, worldPoint);
-        maxBounds = glm::max(maxBounds, worldPoint);
     }
 
     return true;
@@ -448,7 +411,7 @@ void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const Viewport
     {
         glm::vec3 minBounds{};
         glm::vec3 maxBounds{};
-        if (ComputeWorldBounds(scene, scene.GetSelectedEntity(), minBounds, maxBounds))
+        if (ComputeWorldModelBounds(scene, scene.GetSelectedEntity(), minBounds, maxBounds))
         {
             camera.FrameBounds(minBounds, maxBounds);
         }
