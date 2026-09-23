@@ -36,6 +36,21 @@ struct FloatTextureData
     }
 };
 
+// Linear RGBA16F, four IEEE 754 half floats per texel, rows top-down: the texels a float material
+// texture uploads.
+struct HalfFloatTextureData
+{
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint16_t> texels;
+
+    bool IsValid() const
+    {
+        return width > 0 && height > 0 &&
+               texels.size() == static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    }
+};
+
 class TextureLoader
 {
   public:
@@ -51,4 +66,9 @@ class TextureLoader
     // its colour sRGB-encoded, for previews.
     static TextureData LoadRGBA8(const std::string& path, bool flipVertically = false);
 };
+
+// Float to IEEE half. NaN becomes 0; everything else, infinities included, clamps to
+// [-65504, 65504], half's largest finite value, keeping its sign.
+std::uint16_t PackHalfFloat(float value);
+HalfFloatTextureData PackRgba16Float(const FloatTextureData& image);
 }

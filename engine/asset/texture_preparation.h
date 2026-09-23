@@ -18,11 +18,12 @@
 namespace me
 {
 
-// A material texture file ready to upload: block-compressed when the device samples BC formats,
-// RGBA8 otherwise.
+// A material texture file ready to upload. Exactly one form is filled: block-compressed when the
+// device samples BC formats, half floats for .hdr/.exr files, RGBA8 otherwise.
 struct PreparedTexture
 {
     std::optional<CompressedTexture> compressed;
+    std::optional<HalfFloatTextureData> halfFloat;
     TextureData rgba;
     bool fromCache = false;
     double compressSeconds = 0.0;
@@ -30,8 +31,8 @@ struct PreparedTexture
 
 // The CPU half of loading one texture file; safe to run on any thread. When `compress` is set the
 // compressed form comes from `cacheDirectory` or is built and cached there; a texture that cannot be
-// compressed or cached is decoded to RGBA8 instead, on its own. A texture that cannot be decoded at
-// all throws.
+// compressed or cached is decoded to RGBA8 instead, on its own. A float image (.hdr, .exr) is packed
+// to RGBA16F and never compressed or cached. A texture that cannot be decoded at all throws.
 PreparedTexture PrepareTexture(
     const std::string& path,
     TextureUsage usage,

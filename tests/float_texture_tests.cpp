@@ -1,4 +1,5 @@
 #include <engine/asset/texture_loader.h>
+#include <engine/asset/texture_preparation.h>
 
 #include <stb_image_write.h>
 #include <tinyexr.h>
@@ -6,8 +7,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -176,6 +179,55 @@ void RejectsWhatIsNotAFloatImage()
     Require(Throws([&]() { TextureLoader::LoadRGBA32F((directory.Path() / "missing.exr").string()); }),
             "a missing file throws");
 }
+
+void PacksHalfFloats()
+{
+    const auto hex = [](std::uint16_t value)
+    {
+        char text[8] = {};
+        std::snprintf(text, sizeof(text), "0x%04X", value);
+        return std::string(text);
+    };
+    const auto expect = [&](float input, std::uint16_t expected, const std::string& label)
+    {
+        const std::uint16_t actual = PackHalfFloat(input);
+        Require(actual == expected, label + " packs to " + hex(actual) + ", expected " + hex(expected));
+    };
+    expect(0.0f, 0x0000, "0");
+    expect(1.0f, 0x3C00, "1");
+    expect(-2.0f, 0xC000, "-2");
+    expect(65504.0f, 0x7BFF, "65504");
+    expect(1.0e6f, 0x7BFF, "1e6");
+    expect(std::numeric_limits<float>::infinity(), 0x7BFF, "+inf");
+    expect(-std::numeric_limits<float>::infinity(), 0xFBFF, "-inf");
+    expect(std::numeric_limits<float>::quiet_NaN(), 0x0000, "NaN");
+    expect(std::ldexp(1.0f, -15), 0x0200, "the subnormal 2^-15");
+}
+
+void PacksWholeImages()
+{
+    FloatTextureData image{};
+    image.width = 2;
+    image.height = 1;
+    image.pixels = {1.0f, -2.0f, 1.0e6f, 1.0f, 0.0f, 0.5f, 0.25f, 0.0f};
+    const HalfFloatTextureData packed = PackRgba16Float(image);
+    Require(packed.IsValid() && packed.width == 2 && packed.height == 1, "packing keeps the size");
+    const std::vector<std::uint16_t> expected = {0x3C00, 0xC000, 0x7BFF, 0x3C00, 0x0000, 0x3800, 0x3400, 0x0000};
+    Require(packed.texels == expected, "packing converts every channel in order");
+}
+
+void PreparesFloatFilesUncompressed()
+{
+    ScratchDirectory images;
+    ScratchDirectory cache;
+    const std::filesystem::path hdr = WriteHdr(images.Path());
+    const PreparedTexture prepared = PrepareTexture(hdr.string(), TextureUsage::Color, true, cache.Path());
+    Require(prepared.halfFloat.has_value() && prepared.halfFloat->IsValid(), "a float file prepares as half floats");
+    Require(!prepared.compressed.has_value(), "a float file is never block-compressed");
+    Require(prepared.rgba.pixels.empty(), "a float file has no RGBA8 form");
+    Require(prepared.halfFloat->texels[3 * 4] == 0x63D0, "1000 survives as half 1000 (0x63D0)");
+    Require(std::filesystem::is_empty(cache.Path()), "a float file writes nothing to the texture cache");
+}
 }
 
 int main()
@@ -187,6 +239,9 @@ int main()
         LoadsOpenExr();
         LoadRgba8ShowsFloatFilesClampedAndEncoded();
         RejectsWhatIsNotAFloatImage();
+        PacksHalfFloats();
+        PacksWholeImages();
+        PreparesFloatFilesUncompressed();
     }
     catch (const std::exception& error)
     {

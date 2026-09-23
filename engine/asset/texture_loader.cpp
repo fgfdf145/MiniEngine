@@ -4,6 +4,8 @@
 #include <stb_image.h>
 #include <tinyexr.h>
 
+#include <glm/gtc/packing.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -201,6 +203,26 @@ FloatTextureData TextureLoader::LoadRGBA32F(const std::string& path)
         throw std::runtime_error("'" + path + "' is not a floating-point image (.hdr or .exr)");
     }
     return LowerExtension(path) == ".exr" ? LoadOpenExr(path) : LoadRadianceHdr(path);
+}
+
+std::uint16_t PackHalfFloat(float value)
+{
+    if (std::isnan(value))
+    {
+        return 0;
+    }
+    constexpr float kHalfMax = 65504.0f;
+    return glm::packHalf1x16(std::clamp(value, -kHalfMax, kHalfMax));
+}
+
+HalfFloatTextureData PackRgba16Float(const FloatTextureData& image)
+{
+    HalfFloatTextureData packed{};
+    packed.width = image.width;
+    packed.height = image.height;
+    packed.texels.resize(image.pixels.size());
+    std::transform(image.pixels.begin(), image.pixels.end(), packed.texels.begin(), PackHalfFloat);
+    return packed;
 }
 
 TextureData TextureLoader::LoadRGBA8(const std::string& path, bool flipVertically)

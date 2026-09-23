@@ -18,6 +18,13 @@ PreparedTexture PrepareTexture(
     const std::filesystem::path& cacheDirectory)
 {
     PreparedTexture prepared{};
+    // No BC6H encoder exists here, and decoding a float file is cheap next to encoding, so float
+    // files skip both the compressor and the disk cache whatever the device supports.
+    if (TextureLoader::IsFloatImageFile(path))
+    {
+        prepared.halfFloat = PackRgba16Float(TextureLoader::LoadRGBA32F(path));
+        return prepared;
+    }
     if (compress)
     {
         try
