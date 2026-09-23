@@ -24,6 +24,8 @@ add_library(engine_render_core
     scene_lighting.h
     shadow_cascades.cpp
     shadow_cascades.h
+    spherical_harmonics.cpp
+    spherical_harmonics.h
 )
 miniengine_group_target_sources(engine_render_core)
 
