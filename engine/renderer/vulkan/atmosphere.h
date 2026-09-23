@@ -40,6 +40,7 @@ class VulkanAtmosphere
     TextureDescriptorBinding GetTransmittanceBinding() const;
     TextureDescriptorBinding GetSkyViewBinding() const;
     TextureDescriptorBinding GetAerialPerspectiveBinding() const;
+    VkBuffer GetIrradianceBuffer() const;
 
   private:
     enum Lut : size_t
@@ -50,6 +51,9 @@ class VulkanAtmosphere
         kAerialPerspective,
         kLutCount
     };
+    // The pipelines are the four LUTs' plus the sky's SH projection.
+    static constexpr size_t kIrradiancePipeline = kLutCount;
+    static constexpr size_t kPipelineCount = kLutCount + 1;
 
     struct LutImage
     {
@@ -61,7 +65,7 @@ class VulkanAtmosphere
     void CreateImages();
     void CreateDescriptors();
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
-    void Dispatch(VkCommandBuffer commandBuffer, Lut lut, uint32_t x, uint32_t y, uint32_t z) const;
+    void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void DestroyHandles();
 
@@ -73,7 +77,11 @@ class VulkanAtmosphere
     VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     std::array<LutImage, kLutCount> m_images{};
-    std::array<VkPipeline, kLutCount> m_pipelines{};
+    std::array<VkPipeline, kPipelineCount> m_pipelines{};
+    // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0
+    // binding 7. Shared by the frames in flight like the LUTs.
+    VkBuffer m_irradianceBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_irradianceMemory = VK_NULL_HANDLE;
     bool m_imagesInitialized = false;
     // The parameters the static LUTs were last built from; empty until the first build.
     std::optional<AtmosphereParameters> m_staticLutParameters;

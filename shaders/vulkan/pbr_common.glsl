@@ -3,6 +3,9 @@
 
 // SceneLightData, the LIGHT_* and SHADOW_CASCADE_COUNT constants and the ubo block.
 #include "scene_common.glsl"
+// The sky's SH irradiance for the ambient term under a physical sky.
+#include "atmosphere_sampling.glsl"
+#include "spherical_harmonics.glsl"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -370,6 +373,39 @@ vec3 EvaluateSceneLight(
     return EvaluateBRDF(N, V, L, albedo, metallic, roughness, radiance);
 }
 
+// Sky irradiance for a direction from the active sky's SH: the atmosphere's (computed on the GPU)
+// or the HDRI's (projected on the CPU, in the camera block).
+vec3 EvaluateSkyIrradiance(vec3 direction)
+{
+    float basis[9];
+    EvaluateShBasis(direction, basis);
+    bool hdri = EnvironmentMode() == ENVIRONMENT_HDRI;
+    vec3 irradiance = vec3(0.0);
+    for (int i = 0; i < 9; ++i)
+    {
+        vec3 coefficient = hdri ? ubo.hdriIrradianceSh[i].rgb : skyIrradiance.coefficients[i].rgb;
+        irradiance += coefficient * (SH_COSINE_LOBE[i] * basis[i]);
+    }
+    return max(irradiance, vec3(0.0));
+}
+
+// The ambient term under a physical sky: the diffuse lobe sees the irradiance for N, the specular
+// lobe the cosine-blurred radiance along R (phase 4 prefilters it properly), each divided by pi to
+// turn irradiance into the radiance of a Lambertian reflector. The scene's Ambient lights, but not
+// the fallback, add their uniform luminance.
+vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float roughness)
+{
+    float NdV = max(dot(N, V), 0.0);
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec2 environmentBrdf = EnvironmentBrdfApprox(roughness, NdV);
+    vec3 specularAlbedo = F0 * environmentBrdf.x + environmentBrdf.y;
+    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+    vec3 R = reflect(-V, N);
+    vec3 sky = (diffuseAlbedo * EvaluateSkyIrradiance(N) + specularAlbedo * EvaluateSkyIrradiance(R)) / ATMOSPHERE_PI;
+    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
+    return sky + (diffuseAlbedo + specularAlbedo) * sceneAmbient;
+}
+
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
 // (ambient + direct) with emissive added afterwards, so the forward image is unchanged by the move
@@ -381,8 +417,12 @@ vec3 EvaluateSceneLight(
 vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, float ao)
 {
     // The CPU has already summed the scene's Ambient lights into ambientLuminance, or put the
-    // fallback there when there are none; see SelectSceneLights.
-    vec3 ambient = EvaluateUniformAmbient(N, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb) * ao;
+    // fallback there when there are none; see SelectSceneLights. Under a physical sky the sky's
+    // irradiance takes the fallback's place.
+    vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
+                       ? EvaluateUniformAmbient(N, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb)
+                       : EvaluateSkyAmbient(N, V, albedo, metallic, roughness);
+    ambient *= ao;
 
     uint lightCount = ubo.sceneLightCount.x;
     int shadowLightIndex = int(ubo.shadowParams.x);

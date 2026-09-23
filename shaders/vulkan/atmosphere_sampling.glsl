@@ -10,6 +10,12 @@ layout(set = 0, binding = 3) uniform sampler2D atmosphereTransmittanceLut;
 layout(set = 0, binding = 4) uniform sampler2D atmosphereSkyViewLut;
 layout(set = 0, binding = 5) uniform sampler3D atmosphereAerialPerspective;
 layout(set = 0, binding = 6) uniform sampler2D environmentMap;
+// Set 0 binding 7: the atmosphere's radiance SH, written by atmosphere_irradiance.comp.
+layout(set = 0, binding = 7, std430) readonly buffer SkyIrradiance
+{
+    vec4 coefficients[9];
+}
+skyIrradiance;
 
 // The world direction through a full-screen texture coordinate (origin top left, as
 // fullscreen.vert emits it), from the camera toward the far plane.
@@ -104,6 +110,37 @@ vec3 ApplyAerialPerspective(vec3 color, vec3 worldPosition)
     vec4 aerialPerspective = textureLod(atmosphereAerialPerspective, vec3(uv, w), 0.0);
     float transmittance = 1.0 - weight * (1.0 - aerialPerspective.a);
     return color * transmittance + aerialPerspective.rgb * weight;
+}
+
+// Radiance that lights surfaces: the sky without the sun's disk (the sun is a light of its own),
+// and below the horizon the ground lit by the transmitted sun, which the sky-view LUT leaves out.
+vec3 SampleSkyForLighting(vec3 direction)
+{
+    vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
+    float viewHeight = length(camera);
+    vec3 up = camera / viewHeight;
+    vec3 sunDirection = ubo.sunDirectionAndMode.xyz;
+
+    float lightViewCos = 1.0;
+    vec3 side = cross(up, direction);
+    if (dot(side, side) > 1e-10)
+    {
+        side = normalize(side);
+        vec3 forward = normalize(cross(side, up));
+        vec2 sunOnPlane = vec2(dot(sunDirection, forward), dot(sunDirection, side));
+        float length2 = dot(sunOnPlane, sunOnPlane);
+        lightViewCos = length2 > 1e-12 ? sunOnPlane.x * inversesqrt(length2) : 1.0;
+    }
+    bool intersectGround = RaySphereIntersectNearest(camera, direction, vec3(0.0), BottomRadius()) >= 0.0;
+    vec2 uv = SkyViewLutParamsToUv(intersectGround, dot(direction, up), lightViewCos, viewHeight);
+    vec3 luminance = textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
+    if (intersectGround)
+    {
+        float cosSunZenith = dot(up, sunDirection);
+        vec3 transmittance = SampleTransmittance(atmosphereTransmittanceLut, BottomRadius() + PLANET_RADIUS_OFFSET_KM, cosSunZenith);
+        luminance += ubo.groundAlbedo.rgb / ATMOSPHERE_PI * ubo.sunIlluminance.rgb * transmittance * max(cosSunZenith, 0.0);
+    }
+    return luminance;
 }
 
 #endif

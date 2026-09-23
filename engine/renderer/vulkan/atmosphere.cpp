@@ -18,11 +18,13 @@ constexpr std::array<VkExtent3D, 4> kLutExtents = {
     VkExtent3D{32, 32, 1},
     VkExtent3D{192, 108, 1},
     VkExtent3D{32, 32, 32}};
-constexpr std::array<const char*, 4> kShaderNames = {
+constexpr std::array<const char*, 5> kShaderNames = {
     "atmosphere_transmittance.comp.spv",
     "atmosphere_multiscattering.comp.spv",
     "atmosphere_skyview.comp.spv",
-    "atmosphere_aerial_perspective.comp.spv"};
+    "atmosphere_aerial_perspective.comp.spv",
+    "atmosphere_irradiance.comp.spv"};
+constexpr VkDeviceSize kIrradianceBytes = 9 * 4 * sizeof(float);
 
 uint32_t GroupCount(uint32_t size, uint32_t groupSize)
 {
@@ -85,6 +87,11 @@ TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding() const
     return TextureDescriptorBinding{m_images[kAerialPerspective].view, m_sampler};
 }
 
+VkBuffer VulkanAtmosphere::GetIrradianceBuffer() const
+{
+    return m_irradianceBuffer;
+}
+
 void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, const AtmosphereParameters* parameters)
 {
     if (!m_imagesInitialized)
@@ -120,6 +127,7 @@ void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet fra
         {
             vkCmdClearColorImage(commandBuffer, image.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
         }
+        vkCmdFillBuffer(commandBuffer, m_irradianceBuffer, 0, VK_WHOLE_SIZE, 0);
         m_imagesInitialized = true;
     }
 
@@ -154,6 +162,9 @@ void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet fra
         }
         Dispatch(commandBuffer, kSkyView, GroupCount(192, 8), GroupCount(108, 8), 1);
         Dispatch(commandBuffer, kAerialPerspective, GroupCount(32, 8), GroupCount(32, 8), 32);
+        // The SH projection samples the sky-view LUT written above.
+        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        Dispatch(commandBuffer, kIrradiancePipeline, 1, 1, 1);
     }
 
     // This frame's writes before its fragment shaders sample them.
@@ -165,9 +176,9 @@ void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet fra
         VK_ACCESS_SHADER_READ_BIT);
 }
 
-void VulkanAtmosphere::Dispatch(VkCommandBuffer commandBuffer, Lut lut, uint32_t x, uint32_t y, uint32_t z) const
+void VulkanAtmosphere::Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const
 {
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelines[lut]);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelines[pipeline]);
     vkCmdDispatch(commandBuffer, x, y, z);
 }
 
@@ -223,15 +234,34 @@ void VulkanAtmosphere::CreateImages()
     samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
     samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create the atmosphere sampler");
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = kIrradianceBytes;
+    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_irradianceBuffer), "Failed to create the sky irradiance buffer");
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(m_device, m_irradianceBuffer, &requirements);
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = requirements.size;
+    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_irradianceMemory), "Failed to allocate the sky irradiance buffer");
+    CheckVulkan(vkBindBufferMemory(m_device, m_irradianceBuffer, m_irradianceMemory, 0), "Failed to bind the sky irradiance buffer");
 }
 
 void VulkanAtmosphere::CreateDescriptors()
 {
-    std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
+    // 0-3 the LUTs as storage images, 4-5 the transmittance and multiple-scattering LUTs sampled,
+    // 6 the SH buffer.
+    std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
     for (uint32_t binding = 0; binding < bindings.size(); ++binding)
     {
         bindings[binding].binding = binding;
-        bindings[binding].descriptorType = binding < 4 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorType = binding < 4   ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                           : binding < 6 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                         : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
@@ -241,9 +271,10 @@ void VulkanAtmosphere::CreateDescriptors()
     layoutInfo.pBindings = bindings.data();
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create the atmosphere set layout");
 
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {
+    const std::array<VkDescriptorPoolSize, 3> poolSizes = {
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2}};
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 1;
@@ -265,7 +296,8 @@ void VulkanAtmosphere::CreateDescriptors()
     }
     infos[4] = VkDescriptorImageInfo{m_sampler, m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[5] = VkDescriptorImageInfo{m_sampler, m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
-    std::array<VkWriteDescriptorSet, 6> writes{};
+    const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
+    std::array<VkWriteDescriptorSet, 7> writes{};
     for (uint32_t binding = 0; binding < writes.size(); ++binding)
     {
         writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -273,7 +305,14 @@ void VulkanAtmosphere::CreateDescriptors()
         writes[binding].dstBinding = binding;
         writes[binding].descriptorCount = 1;
         writes[binding].descriptorType = bindings[binding].descriptorType;
-        writes[binding].pImageInfo = &infos[binding];
+        if (binding < 6)
+        {
+            writes[binding].pImageInfo = &infos[binding];
+        }
+        else
+        {
+            writes[binding].pBufferInfo = &irradianceInfo;
+        }
     }
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
@@ -287,9 +326,9 @@ void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     pipelineLayoutInfo.pSetLayouts = setLayouts.data();
     CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create the atmosphere pipeline layout");
 
-    for (size_t lut = 0; lut < kLutCount; ++lut)
+    for (size_t pipeline = 0; pipeline < kPipelineCount; ++pipeline)
     {
-        const VulkanShaderModule shader(m_device, EnginePaths::ShaderRoot() / kShaderNames[lut]);
+        const VulkanShaderModule shader(m_device, EnginePaths::ShaderRoot() / kShaderNames[pipeline]);
         VkComputePipelineCreateInfo pipelineInfo{};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
         pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -298,7 +337,7 @@ void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
         pipelineInfo.stage.pName = "main";
         pipelineInfo.layout = m_pipelineLayout;
         CheckVulkan(
-            vkCreateComputePipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_pipelines[lut]),
+            vkCreateComputePipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_pipelines[pipeline]),
             "Failed to create an atmosphere pipeline");
     }
 }
@@ -347,6 +386,16 @@ void VulkanAtmosphere::DestroyHandles()
     {
         vkDestroySampler(m_device, m_sampler, nullptr);
         m_sampler = VK_NULL_HANDLE;
+    }
+    if (m_irradianceBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_irradianceBuffer, nullptr);
+        m_irradianceBuffer = VK_NULL_HANDLE;
+    }
+    if (m_irradianceMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_irradianceMemory, nullptr);
+        m_irradianceMemory = VK_NULL_HANDLE;
     }
     for (LutImage& image : m_images)
     {

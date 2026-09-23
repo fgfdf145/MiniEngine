@@ -1,0 +1,64 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "scene_common.glsl"
+#include "atmosphere_sampling.glsl"
+#include "spherical_harmonics.glsl"
+
+// One workgroup: 64 invocations, 128 directions each, of a 128 x 64 grid uniform in azimuth and
+// cos zenith, so every direction stands for the same solid angle, 4 pi / 8192.
+layout(local_size_x = 64) in;
+
+layout(set = 1, binding = 6, std430) writeonly buffer SkyIrradianceOut
+{
+    vec4 coefficients[9];
+}
+irradianceOut;
+
+shared vec3 sharedSums[64][9];
+
+void main()
+{
+    uint index = gl_LocalInvocationIndex;
+    vec3 sums[9];
+    for (int i = 0; i < 9; ++i)
+    {
+        sums[i] = vec3(0.0);
+    }
+    for (uint sampleIndex = index; sampleIndex < 8192u; sampleIndex += 64u)
+    {
+        float u = (float(sampleIndex % 128u) + 0.5) / 128.0;
+        float v = (float(sampleIndex / 128u) + 0.5) / 64.0;
+        float phi = 2.0 * ATMOSPHERE_PI * u;
+        float cosTheta = 1.0 - 2.0 * v;
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        vec3 direction = vec3(sinTheta * cos(phi), cosTheta, sinTheta * sin(phi));
+        vec3 radiance = SampleSkyForLighting(direction);
+        float basis[9];
+        EvaluateShBasis(direction, basis);
+        for (int i = 0; i < 9; ++i)
+        {
+            sums[i] += radiance * basis[i];
+        }
+    }
+    for (int i = 0; i < 9; ++i)
+    {
+        sharedSums[index][i] = sums[i];
+    }
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u)
+    {
+        if (index < stride)
+        {
+            for (int i = 0; i < 9; ++i)
+            {
+                sharedSums[index][i] += sharedSums[index + stride][i];
+            }
+        }
+        barrier();
+    }
+    if (index < 9u)
+    {
+        irradianceOut.coefficients[index] = vec4(sharedSums[0][index] * (4.0 * ATMOSPHERE_PI / 8192.0), 0.0);
+    }
+}

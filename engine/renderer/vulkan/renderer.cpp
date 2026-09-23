@@ -818,6 +818,7 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.transmittance = m_atmosphere->GetTransmittanceBinding();
     bindings.skyView = m_atmosphere->GetSkyViewBinding();
     bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
+    bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;

@@ -29,6 +29,8 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding skyView;
     TextureDescriptorBinding aerialPerspective;
     TextureDescriptorBinding environmentMap;
+    // Binding 7: the atmosphere's radiance SH (VulkanAtmosphere::GetIrradianceBuffer).
+    VkBuffer irradiance = VK_NULL_HANDLE;
 };
 
 struct MaterialTextureBinding

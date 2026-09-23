@@ -137,6 +137,7 @@ set(MINIENGINE_SHADER_SOURCES
     atmosphere_multiscattering.comp
     atmosphere_skyview.comp
     atmosphere_aerial_perspective.comp
+    atmosphere_irradiance.comp
     sky.vert
     sky.frag
     shadow.vert
@@ -157,6 +158,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_common.glsl
     atmosphere_integrate.glsl
     atmosphere_sampling.glsl
+    spherical_harmonics.glsl
 )
 
 function(miniengine_add_shaders shader_target)
