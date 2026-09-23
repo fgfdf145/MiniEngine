@@ -209,6 +209,32 @@ endif()
 
 set_target_properties(miniengine_motion_history_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_ao_history_tests
+    ao_history_tests.cpp
+)
+miniengine_group_target_sources(miniengine_ao_history_tests)
+
+target_link_libraries(miniengine_ao_history_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.ao_history
+    COMMAND miniengine_ao_history_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_ao_history_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_ao_history_tests>
+            $<TARGET_FILE_DIR:miniengine_ao_history_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_ao_history_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_texture_compression_tests
     texture_compression_tests.cpp
 )

@@ -4,6 +4,8 @@
 # Keep this target free of ImGui editor code and Vulkan.
 # ----------------------------------------------------------------------------
 add_library(engine_render_core
+    ao_history.cpp
+    ao_history.h
     camera.cpp
     camera.h
     exposure.cpp
