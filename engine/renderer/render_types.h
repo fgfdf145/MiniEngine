@@ -27,7 +27,10 @@ enum class GBufferDebugView : uint32_t
     Surface = 4,
     Emissive = 5,
     MotionVectors = 6,
-    AmbientOcclusion = 7
+    AmbientOcclusion = 7,
+    // How many local lights each pixel's cluster lists, as a heat map. Drawn by the lighting pass,
+    // so Blend surfaces still show shaded on top of it.
+    LightClusters = 8
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the

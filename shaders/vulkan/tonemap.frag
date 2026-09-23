@@ -16,6 +16,7 @@ const uint GBUFFER_VIEW_SURFACE = 4u;
 const uint GBUFFER_VIEW_EMISSIVE = 5u;
 const uint GBUFFER_VIEW_MOTION_VECTORS = 6u;
 const uint GBUFFER_VIEW_AMBIENT_OCCLUSION = 7u;
+const uint GBUFFER_VIEW_LIGHT_CLUSTERS = 8u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -75,6 +76,13 @@ void main()
     {
         // The resolved screen-space AO alone, white where nothing occludes.
         color = vec3(texture(sceneAo, fragTexCoord).r);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
+    {
+        // The lighting pass wrote heat colours divided by the exposure; multiplying back shows them
+        // as they were meant, without the operator bending their hues. Blend surfaces, shaded on
+        // top by the forward pass, are exposed but not tone mapped here.
+        color = min(texture(hdrTexture, fragTexCoord).rgb * constants.exposure, vec3(1.0));
     }
     else
     {

@@ -13,8 +13,22 @@ layout(push_constant) uniform LightingConstants
     // xyz = GetBackgroundRadiance(exposure), exactly what the forward pass clears the HDR target
     // to, computed by the same C++ helper; w unused. A pixel no geometry covered resolves to it.
     vec4 backgroundRadiance;
+    // x = 1 for the light cluster heat map instead of shading; y = 1 / exposure, so the tone mapping
+    // pass, which multiplies by the exposure, shows the heat colours as written.
+    vec4 debug;
 }
 lightingData;
+
+// Blue through cyan, green and yellow to red as the count rises to 32, black for no light at all.
+vec3 LightCountHeat(uint count)
+{
+    if (count == 0u)
+    {
+        return vec3(0.0);
+    }
+    float t = clamp(float(count) / 32.0, 0.0, 1.0);
+    return clamp(vec3(1.5) - abs(vec3(4.0 * t) - vec3(3.0, 2.0, 1.0)), 0.0, 1.0);
+}
 
 layout(location = 0) in vec2 fragTexCoord;
 
@@ -49,6 +63,15 @@ void main()
     // Depth is 0..1 because the projection is perspectiveRH_ZO.
     vec4 world = ubo.invViewProj * vec4(fragTexCoord * 2.0 - 1.0, depth, 1.0);
     vec3 worldPosition = world.xyz / world.w;
+
+    if (lightingData.debug.x > 0.5)
+    {
+        uint localLights = ubo.lightCounts.z != 0u
+                               ? lightClusters.ranges[FindLightCluster(worldPosition)].y
+                               : ubo.lightCounts.y - ubo.lightCounts.x;
+        outColor = vec4(LightCountHeat(localLights) * lightingData.debug.y, 1.0);
+        return;
+    }
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao) + emissive;

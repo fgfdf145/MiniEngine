@@ -8,6 +8,20 @@
 namespace me
 {
 
+namespace
+{
+// Must match LightingConstants in shaders/vulkan/deferred_lighting.frag.
+struct LightingPushConstants
+{
+    // xyz = the background radiance, w unused.
+    glm::vec4 backgroundRadiance{0.0f};
+    // x = 1 to draw the light cluster heat map instead of shading, y = 1 / exposure; zw unused.
+    glm::vec4 debug{0.0f};
+};
+
+static_assert(sizeof(LightingPushConstants) == 32, "LightingPushConstants must match the shader's block");
+}
+
 VulkanLightingPass::VulkanLightingPass(
     VkDevice device,
     VkPipelineCache pipelineCache,
@@ -91,15 +105,23 @@ void VulkanLightingPass::Record(
         0,
         nullptr);
 
+    LightingPushConstants constants{};
     // The same helper the forward pass clears with, so the two orders' backgrounds cannot differ.
-    const glm::vec4 backgroundRadiance(GetBackgroundRadiance(frame.exposure), 1.0f);
+    constants.backgroundRadiance = glm::vec4(GetBackgroundRadiance(frame.exposure), 1.0f);
+    // The heat map is written divided by the exposure so that the tone mapping pass, which
+    // multiplies by it, shows the colours as written.
+    constants.debug = glm::vec4(
+        frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f,
+        1.0f / frame.exposure,
+        0.0f,
+        0.0f);
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,
         VK_SHADER_STAGE_FRAGMENT_BIT,
         0,
-        sizeof(backgroundRadiance),
-        &backgroundRadiance);
+        sizeof(constants),
+        &constants);
 
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     vkCmdEndRenderPass(commandBuffer);
@@ -124,7 +146,7 @@ void VulkanLightingPass::CreatePipeline(
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(glm::vec4);
+    pushConstantRange.size = sizeof(LightingPushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

@@ -126,10 +126,12 @@ void EditorUiController::DrawGraphicsDebugPanel()
     if (ImGui::Begin("Graphics Debug", &m_showGraphicsDebugWindow))
     {
         ImGui::Checkbox("Forward only (comparison)", &m_renderDebug.forwardOnly);
+        // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
+        ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 8> kGBufferViewNames = {
+        static constexpr std::array<const char*, 9> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -137,7 +139,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: metallic / roughness / occlusion",
             "G-buffer: emissive",
             "G-buffer: motion vectors",
-            "Ambient occlusion"};
+            "Ambient occlusion",
+            "Light clusters"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
