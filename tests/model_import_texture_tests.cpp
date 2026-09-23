@@ -360,6 +360,31 @@ void ImportFromNonAsciiPath()
     const LoadedModelData data = ModelLoader::LoadModel(imported.string());
     Require(!data.submeshes.empty(), "model imported from a non-ASCII path did not load");
 }
+
+// A companion image is copied, never decoded, during import: an .exr that stb cannot read must not
+// fail the unpack step, which only cares about embedded images.
+void UnpackSkipsCompanionImages()
+{
+    ScopedDir scope("companion_exr");
+    const std::filesystem::path model = scope.Path() / "fixture.gltf";
+    std::string gltf = BuildFixtureGltf();
+    const size_t start = gltf.find(R"("images": [ )");
+    const std::string arrayEnd = " } ],";
+    const size_t end = gltf.find(arrayEnd, start);
+    Require(start != std::string::npos && end != std::string::npos, "fixture has no image array");
+    gltf.replace(start, end + arrayEnd.size() - start, R"("images": [ { "uri": "radiance.exr" } ],)");
+    {
+        std::ofstream out(model, std::ios::binary | std::ios::trunc);
+        out << gltf;
+    }
+    {
+        std::ofstream out(scope.Path() / "radiance.exr", std::ios::binary | std::ios::trunc);
+        out << "v/1 not something stb can decode";
+    }
+
+    GltfModelLoader::UnpackEmbeddedTextures(model);
+    Require(CountFilesIn(scope.Path() / "textures") == 0, "a companion image must not be unpacked");
+}
 }
 
 int main()
@@ -375,6 +400,7 @@ int main()
         MaterialDefinitionsFollowTheirMaterialByName();
         MaterialDefinitionForAnotherMaterialIsSkipped();
         ImportFromNonAsciiPath();
+        UnpackSkipsCompanionImages();
 
         std::cout << "model import texture tests passed\n";
         return 0;

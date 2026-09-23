@@ -1270,8 +1270,11 @@ void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelP
 {
     const std::string extension = ToLowerCopy(modelPath.extension().string());
 
+    // The same image hook as a load, without progress: companion files are left undecoded. Only
+    // embedded images are unpacked, and a companion stb cannot read (an .exr) must not fail the
+    // import. The hook forwards the preserve-channels option itself.
     tinygltf::TinyGLTF loader;
-    loader.SetPreserveImageChannels(true);
+    loader.SetImageLoader(&LoadGltfImageData, nullptr);
 
     tinygltf::Model model;
     std::string warnings;
