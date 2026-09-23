@@ -1,5 +1,7 @@
 #pragma once
 
+#include "spherical_harmonics.h"
+
 #include <engine/scene/scene_environment.h>
 
 #include <glm/glm.hpp>
@@ -72,15 +74,18 @@ struct EnvironmentUniformData
     glm::vec4 radii{0.0f};                                 // x bottom km, y top km, z aerial perspective distance scale
     glm::vec4 cameraPositionKm{0.0f};                      // xyz, see ToAtmosphereCameraPositionKm
     glm::vec4 hdriParameters{0.0f};                        // x intensity, y rotation in turns
+    // The HDRI's radiance SH, rotated and scaled by its intensity; xyz used.
+    glm::vec4 hdriIrradianceSh[9]{};
 };
-static_assert(sizeof(EnvironmentUniformData) == 9 * 16, "EnvironmentUniformData must stay nine vec4s");
+static_assert(sizeof(EnvironmentUniformData) == 18 * 16, "EnvironmentUniformData must stay eighteen vec4s");
 
 // mode is the mode the frame renders with, which differs from environment.mode while an HDRI is
-// still loading. With no sun the illuminance is zero and the sky is black.
+// still loading. hdriSh is the loaded HDRI's unrotated radiance SH, or null. With no sun the illuminance is zero and the sky is black.
 EnvironmentUniformData BuildEnvironmentUniformData(
     EnvironmentMode mode,
     const SceneEnvironment& environment,
     const AtmosphereParameters& p,
     const std::optional<AtmosphereSun>& sun,
-    const glm::vec3& cameraPositionMeters);
+    const glm::vec3& cameraPositionMeters,
+    const ShCoefficients* hdriSh);
 }

@@ -76,7 +76,8 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     const SceneEnvironment& environment,
     const AtmosphereParameters& p,
     const std::optional<AtmosphereSun>& sun,
-    const glm::vec3& cameraPositionMeters)
+    const glm::vec3& cameraPositionMeters,
+    const ShCoefficients* hdriSh)
 {
     EnvironmentUniformData data{};
     const glm::vec3 directionToSun = sun.has_value() ? glm::normalize(sun->directionToSun) : glm::vec3(0.0f, 1.0f, 0.0f);
@@ -95,6 +96,15 @@ EnvironmentUniformData BuildEnvironmentUniformData(
         environment.hdri.rotationDegrees / 360.0f,
         0.0f,
         0.0f);
+    if (hdriSh != nullptr)
+    {
+        const ShCoefficients rotated = ShForHdriRotation(*hdriSh, environment.hdri.rotationDegrees);
+        const float intensity = std::max(environment.hdri.intensity, 0.0f);
+        for (size_t index = 0; index < rotated.size(); ++index)
+        {
+            data.hdriIrradianceSh[index] = glm::vec4(rotated[index] * intensity, 0.0f);
+        }
+    }
     return data;
 }
 }

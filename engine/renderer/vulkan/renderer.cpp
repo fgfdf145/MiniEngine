@@ -504,7 +504,8 @@ void VulkanRenderer::DrawFrame()
         environment,
         atmosphereParameters,
         sun,
-        State().camera.position);
+        State().camera.position,
+        environmentMode == EnvironmentMode::Hdri ? &m_environmentMapSh : nullptr);
 
     std::vector<glm::mat4> models;
     std::vector<MotionKey> motionKeys;
@@ -523,6 +524,7 @@ void VulkanRenderer::DrawFrame()
         State().viewportMatrices,
         State().camera.position,
         lightSelection.ambientLuminance,
+        lightSelection.usesFallbackAmbient,
         selectedLights,
         shadowData,
         motion.previousViewProjection,
@@ -849,7 +851,8 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
         const std::string path = m_pendingEnvironmentMapPath;
         try
         {
-            const FloatTextureData image = m_pendingEnvironmentMap.get();
+            PreparedEnvironmentMap prepared = m_pendingEnvironmentMap.get();
+            const FloatTextureData& image = prepared.image;
             if (path == wanted)
             {
                 VulkanUploadBatch uploadBatch(
@@ -867,6 +870,7 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                 }
                 m_environmentMap = std::move(texture);
                 m_environmentMapPath = path;
+                m_environmentMapSh = prepared.sh;
                 LOG_INFO("Loaded HDRI '{}' ({}x{})", path, image.width, image.height);
             }
         }
@@ -887,7 +891,10 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
         std::launch::async,
         [path = wanted]()
         {
-            return TextureLoader::LoadRGBA32F(path);
+            PreparedEnvironmentMap prepared{};
+            prepared.image = TextureLoader::LoadRGBA32F(path);
+            prepared.sh = ProjectEquirectangular(prepared.image);
+            return prepared;
         });
 }
 

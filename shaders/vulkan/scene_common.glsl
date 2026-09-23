@@ -30,7 +30,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 proj;
     vec4 cameraWorldPosition;
     // xyz = ambient luminance in cd/m^2: the sum of the scene's Ambient lights, or the fallback when
-    // it has none. Ambient lights are folded in here on the CPU and never appear in lights[].
+    // it has none; w = 1 when it is the fallback. Ambient lights are folded in here on the CPU and never appear in lights[].
     vec4 ambientLuminance;
     SceneLightData lights[MAX_SCENE_LIGHTS];
     uvec4 sceneLightCount; // x = active light count
@@ -53,6 +53,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 atmosphereRadii;            // x bottom km, y top km, z aerial perspective distance scale
     vec4 atmosphereCameraPositionKm; // xyz camera relative to the planet centre
     vec4 hdriParameters;             // x intensity, y rotation in turns
+    vec4 hdriIrradianceSh[9];        // the HDRI's radiance SH, rotated and scaled; xyz used
 }
 ubo;
 

@@ -209,7 +209,15 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanTexture> m_environmentMap;
     std::string m_environmentMapPath;
     // A decode running on a worker thread, and the path it decodes.
-    std::future<FloatTextureData> m_pendingEnvironmentMap;
+    // A decoded HDRI and its SH, prepared together on the worker thread.
+    struct PreparedEnvironmentMap
+    {
+        FloatTextureData image;
+        ShCoefficients sh{};
+    };
+    std::future<PreparedEnvironmentMap> m_pendingEnvironmentMap;
+    // The loaded HDRI's unrotated radiance SH, at intensity 1.
+    ShCoefficients m_environmentMapSh{};
     std::string m_pendingEnvironmentMapPath;
     // The last path that failed, so a bad file is reported once rather than every frame.
     std::string m_failedEnvironmentMapPath;

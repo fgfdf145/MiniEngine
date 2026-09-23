@@ -1,4 +1,5 @@
 #include <engine/renderer/atmosphere.h>
+#include <engine/renderer/spherical_harmonics.h>
 
 #include <glm/glm.hpp>
 
@@ -89,7 +90,7 @@ void BuildsUniformData()
     sun.illuminance = glm::vec3(100000.0f);
 
     const EnvironmentUniformData data =
-        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f, -10.0f, 0.0f));
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f, -10.0f, 0.0f), nullptr);
     Require(data.sunDirectionAndMode.w == 1.0f, "the mode is carried in w");
     Require(glm::length(glm::vec3(data.sunDirectionAndMode) - sun.directionToSun) < 1e-6f, "the sun direction is carried");
     Require(glm::vec3(data.sunIlluminance) == sun.illuminance, "the sun illuminance is carried");
@@ -99,13 +100,29 @@ void BuildsUniformData()
     Require(data.hdriParameters.x == 2000.0f && data.hdriParameters.y == 0.25f, "HDRI intensity and rotation in turns");
 
     const EnvironmentUniformData high =
-        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f, 200000.0f, 0.0f));
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f, 200000.0f, 0.0f), nullptr);
     const float highAltitude = glm::length(glm::vec3(high.cameraPositionKm)) - p.bottomRadiusKm;
     Require(std::fabs(highAltitude - 99.0f) < 0.01f, "a camera above the atmosphere is held 1 km below its top");
 
     const EnvironmentUniformData dark =
-        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f));
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f), nullptr);
     Require(glm::vec3(dark.sunIlluminance) == glm::vec3(0.0f), "no sun, no illuminance");
+
+    ShCoefficients sh{};
+    sh[0] = glm::vec3(1.0f, 2.0f, 3.0f);
+    sh[3] = glm::vec3(0.5f);
+    SceneEnvironment hdri = environment;
+    hdri.mode = EnvironmentMode::Hdri;
+    hdri.hdri.intensity = 10.0f;
+    hdri.hdri.rotationDegrees = 90.0f;
+    const EnvironmentUniformData withSh =
+        BuildEnvironmentUniformData(EnvironmentMode::Hdri, hdri, p, std::nullopt, glm::vec3(0.0f), &sh);
+    const ShCoefficients expected = ShForHdriRotation(sh, 90.0f);
+    for (int index = 0; index < 9; ++index)
+    {
+        Require(glm::length(glm::vec3(withSh.hdriIrradianceSh[index]) - expected[index] * 10.0f) < 1e-5f,
+                "the HDRI SH is rotated and scaled by the intensity");
+    }
 }
 }
 

@@ -109,7 +109,7 @@ struct alignas(16) CameraUniformData
 static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
     sizeof(CameraUniformData) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 9 * 16,
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
     offsetof(CameraUniformData, invViewProj) ==
@@ -194,6 +194,7 @@ class VulkanUniformBuffer
         const ViewportMatrices& matrices,
         const glm::vec3& cameraPosition,
         const glm::vec3& ambientLuminance,
+        bool usesFallbackAmbient,
         std::span<const GpuLightData> lights,
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,

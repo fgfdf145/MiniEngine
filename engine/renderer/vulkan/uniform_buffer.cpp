@@ -149,6 +149,7 @@ void VulkanUniformBuffer::Update(
     const ViewportMatrices& matrices,
     const glm::vec3& cameraPosition,
     const glm::vec3& ambientLuminance,
+    bool usesFallbackAmbient,
     std::span<const GpuLightData> lights,
     const ShadowUniformData& shadow,
     const glm::mat4& prevViewProj,
@@ -169,7 +170,7 @@ void VulkanUniformBuffer::Update(
     // inverting the other one would reconstruct every position mirrored.
     data.invViewProj = glm::inverse(matrices.renderProjection * matrices.view);
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
-    data.ambientLuminance = glm::vec4(ambientLuminance, 0.0f);
+    data.ambientLuminance = glm::vec4(ambientLuminance, usesFallbackAmbient ? 1.0f : 0.0f);
 
     const uint32_t lightCount = std::min(static_cast<uint32_t>(lights.size()), kMaxSceneLights);
     data.sceneLightCount = glm::uvec4(lightCount, 0u, 0u, 0u);
