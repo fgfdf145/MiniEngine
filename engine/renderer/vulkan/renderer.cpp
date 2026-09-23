@@ -265,6 +265,9 @@ VkAccessFlags AccessMaskForLayout(VkImageLayout layout)
         return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
         return VK_ACCESS_SHADER_READ_BIT;
+    case VK_IMAGE_LAYOUT_GENERAL:
+        // Only the AO storage targets use it, written and read by compute.
+        return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     case VK_IMAGE_LAYOUT_UNDEFINED:
         return 0;
     default:
@@ -290,6 +293,8 @@ VkPipelineStageFlags StageMaskForLayout(VkImageLayout layout)
         // Sampled by fragment shaders (tone mapping, ImGui) and by the exposure histogram's
         // compute shader, so a transition into or out of this layout has to cover both.
         return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    case VK_IMAGE_LAYOUT_GENERAL:
+        return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     case VK_IMAGE_LAYOUT_UNDEFINED:
         return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     default:

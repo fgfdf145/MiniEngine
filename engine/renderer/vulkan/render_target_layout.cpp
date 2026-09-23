@@ -21,14 +21,29 @@ VkImageLayout ResolveWriteLayout(RenderTargetId target)
 
 RenderTargetKind GetRenderTargetKind(RenderTargetId target)
 {
-    return target == RenderTargetId::SceneDepth ? RenderTargetKind::Depth : RenderTargetKind::Color;
+    switch (target)
+    {
+    case RenderTargetId::SceneDepth:
+        return RenderTargetKind::Depth;
+    case RenderTargetId::AoRaw:
+    case RenderTargetId::SceneAo:
+        return RenderTargetKind::Storage;
+    default:
+        return RenderTargetKind::Color;
+    }
 }
 
 VkImageLayout GetWriteLayout(RenderTargetId target)
 {
-    return GetRenderTargetKind(target) == RenderTargetKind::Depth
-               ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-               : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    switch (GetRenderTargetKind(target))
+    {
+    case RenderTargetKind::Depth:
+        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case RenderTargetKind::Storage:
+        return VK_IMAGE_LAYOUT_GENERAL;
+    default:
+        return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 }
 
 RenderTargetLayoutTracker::RenderTargetLayoutTracker()

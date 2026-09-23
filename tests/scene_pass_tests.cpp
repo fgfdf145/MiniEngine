@@ -289,6 +289,28 @@ void GBufferTargetsAreColorTargets()
     }
 }
 
+void AoTargetsAreStorageTargets()
+{
+    for (const RenderTargetId target : {RenderTargetId::AoRaw, RenderTargetId::SceneAo})
+    {
+        Require(GetRenderTargetKind(target) == RenderTargetKind::Storage, "AO targets are written by compute");
+        Require(GetWriteLayout(target) == VK_IMAGE_LAYOUT_GENERAL, "a storage write needs the general layout");
+    }
+}
+
+void StorageWriteThenReadBecomesShaderRead()
+{
+    RenderTargetLayoutTracker tracker;
+    const std::array<RenderTargetId, 1> ao = {RenderTargetId::SceneAo};
+    const std::vector<TargetTransition> write = tracker.Transition(MakeIo({}, ao));
+    Require(write.size() == 1 && write[0].newLayout == VK_IMAGE_LAYOUT_GENERAL, "a storage write targets general");
+
+    const std::vector<TargetTransition> read = tracker.Transition(MakeIo(ao, {}));
+    Require(read.size() == 1, "a read after a storage write needs one barrier");
+    Require(read[0].oldLayout == VK_IMAGE_LAYOUT_GENERAL, "the read starts from what the write left");
+    Require(read[0].newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, "a read targets shader read only");
+}
+
 void DepthFollowsTheDeferredWriteReadWriteSequence()
 {
     // The geometry pass writes depth, the lighting pass samples it, then the forward blend pass
@@ -332,6 +354,8 @@ int main()
         DeferredOrderRunsGeometryLightingForwardExposureThenTonemap();
         ForwardOnlyOrderSkipsTheDeferredPasses();
         GBufferTargetsAreColorTargets();
+        AoTargetsAreStorageTargets();
+        StorageWriteThenReadBecomesShaderRead();
         DepthFollowsTheDeferredWriteReadWriteSequence();
 
         std::cout << "scene pass tests passed\n";

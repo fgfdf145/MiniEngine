@@ -269,6 +269,24 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     static constexpr std::array<VkFormat, 1> kVelocityCandidates = {VK_FORMAT_R16G16_SFLOAT};
     describeGBufferTarget(RenderTargetId::GBufferVelocity, "G-buffer velocity", kVelocityCandidates);
 
+    // Visibility bitmask AO, written by compute through image stores. R32F is in the core list of
+    // storage formats, so no shaderStorageImageExtendedFormats is needed, and it has no fallback.
+    static constexpr std::array<VkFormat, 1> kAoCandidates = {VK_FORMAT_R32_SFLOAT};
+    const auto describeAoTarget = [&](RenderTargetId target, std::string_view label)
+    {
+        TargetDescription& description = Describe(target);
+        description.format = ChooseFormat(
+            label,
+            kAoCandidates,
+            VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+            query);
+        description.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        description.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        description.bindToImGui = false;
+    };
+    describeAoTarget(RenderTargetId::AoRaw, "AO trace");
+    describeAoTarget(RenderTargetId::SceneAo, "AO");
+
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
     // cause; phase three appends GB4, so name the omission at the point it happens.

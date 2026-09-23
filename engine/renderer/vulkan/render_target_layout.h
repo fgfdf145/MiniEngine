@@ -14,8 +14,8 @@ namespace me
 {
 
 // Every offscreen target the scene passes read or write. The first three arrived in phase one,
-// the four G-buffer targets in phase two, then GBufferVelocity (motion vectors); GB4 (entity id)
-// is appended in phase three, which is why Count stays last. Only SceneLdr is indexed by swapchain
+// the four G-buffer targets in phase two, then GBufferVelocity (motion vectors) and the two AO
+// targets; GB4 (entity id) is appended in phase three, which is why Count stays last. Only SceneLdr is indexed by swapchain
 // image; every other target is transient and indexed by frame slot (see
 // SceneRenderTargets::ResolveIndex).
 enum class RenderTargetId : uint32_t
@@ -28,6 +28,10 @@ enum class RenderTargetId : uint32_t
     GBufferSurface,
     GBufferEmissive,
     GBufferVelocity,
+    // Visibility bitmask AO: the noisy trace, then the filtered result the lighting pass reads.
+    // Both are storage images written by compute.
+    AoRaw,
+    SceneAo,
     Count
 };
 
@@ -38,7 +42,9 @@ inline constexpr size_t kRenderTargetCount = static_cast<size_t>(RenderTargetId:
 enum class RenderTargetKind
 {
     Color,
-    Depth
+    Depth,
+    // Written by a compute shader through image stores, in VK_IMAGE_LAYOUT_GENERAL.
+    Storage
 };
 
 RenderTargetKind GetRenderTargetKind(RenderTargetId target);
