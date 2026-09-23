@@ -56,6 +56,18 @@ interim specular term.
 7. **Synchronisation:** the SH buffer is written by `VulkanAtmosphere::Record` (its fifth dispatch)
    and follows the LUTs' barriers; zero-filled on first use.
 
+## Amendments During Implementation
+
+- **Rotation sense:** the first implementation turned HDRI SH the wrong way; the test that
+  projects a column-shifted map caught it, and `ShForHdriRotation` passes `+rotation` to
+  `RotateShAboutY`. That test, not a comment, is the definition.
+- **None mode comparison:** captures are not byte-identical between runs, because auto exposure
+  converges with the frame timing (EV differs by a few hundredths). "Unchanged" means within the
+  run-to-run noise: EV within 0.05, pixels within 2 levels. Measured: max difference 1.
+- **Measured cost** (RTX 4070 Laptop, Release): about 0.05 ms per frame for the projection
+  (atmosphere total 0.081 ms, from 0.035 ms in phase 2).
+- **Known limit:** no sky occlusion beyond VBAO, so interiors receive the whole sky's irradiance.
+
 ## Components
 
 - `engine/renderer/spherical_harmonics.{h,cpp}` (engine_render_core, pure): `ShCoefficients`
