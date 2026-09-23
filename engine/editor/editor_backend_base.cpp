@@ -44,6 +44,11 @@ void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
     State().input.HandleEvent(event);
     HandleBackendEvent(event);
 
+    if (event.type == SDL_EVENT_DROP_FILE && event.drop.data != nullptr)
+    {
+        State().editorUi.QueueDroppedFile(event.drop.data);
+    }
+
     if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
         (event.button.button == SDL_BUTTON_RIGHT || event.button.button == SDL_BUTTON_MIDDLE))
     {

@@ -3,9 +3,11 @@
 #include <engine/asset/model_loader.h>
 
 #include <imgui.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <system_error>
 
@@ -101,6 +103,132 @@ size_t CountMaterialGraphSecondaryTextures(const MaterialTextureBlendGraph& blen
                                                  return value != nullptr && !value->empty();
                                              }));
 }
+
+// A typed or pasted path: surrounding blanks and quotes dropped, and "~" expanded where there is a
+// home directory, since a shell would have done that.
+std::string CleanTypedPath(std::string path)
+{
+    const size_t first = path.find_first_not_of(" \t\r\n\"'");
+    const size_t last = path.find_last_not_of(" \t\r\n\"'");
+    path = first == std::string::npos ? std::string{} : path.substr(first, last - first + 1);
+#ifndef _WIN32
+    if (path == "~" || path.starts_with("~/"))
+    {
+        if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
+        {
+            path = std::string(home) + path.substr(1);
+        }
+    }
+#endif
+    return path;
+}
+
+// Why the typed path cannot be used, or "" when it can.
+std::string CheckTypedPath(FileDialogType type, const std::string& path)
+{
+    if (path.empty())
+    {
+        return "Enter a path.";
+    }
+    std::error_code ec;
+    if (type == FileDialogType::SaveScene)
+    {
+        const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+        if (!parent.empty() && !std::filesystem::is_directory(parent, ec))
+        {
+            return "The folder does not exist: " + parent.string();
+        }
+        return {};
+    }
+    if (!std::filesystem::is_regular_file(path, ec))
+    {
+        return "No file at that path.";
+    }
+    return {};
+}
+
+const char* FilePathPromptHint(FileDialogType type)
+{
+    switch (type)
+    {
+    case FileDialogType::OpenModel:
+        return "Model file to import (.gltf or .glb):";
+    case FileDialogType::OpenTexture:
+        return "Texture file (.png, .jpg, .hdr, .exr, ...):";
+    case FileDialogType::OpenScene:
+        return "Scene file to load (.yaml):";
+    case FileDialogType::SaveScene:
+        return "Save the scene to (.yaml):";
+    }
+    return "File path:";
+}
+}
+
+std::optional<std::string> PickFilePath(FileDialogType type, bool requested)
+{
+    constexpr const char* kTitle = "Enter File Path";
+    // Only one modal is open at a time, so the prompts share one buffer.
+    static std::string s_typedPath;
+    static std::string s_typedPathError;
+
+    if (requested)
+    {
+        if (SupportsNativeFileDialogs())
+        {
+            std::optional<std::string> chosen = ShowFileDialog(type);
+            // Still supported afterwards: the user chose a file or cancelled.
+            if (chosen.has_value() || SupportsNativeFileDialogs())
+            {
+                return chosen;
+            }
+        }
+        s_typedPath.clear();
+        s_typedPathError.clear();
+        ImGui::OpenPopup(kTitle);
+    }
+
+    std::optional<std::string> chosen;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const float uiScale = ImGui::GetStyle().FontScaleMain;
+        ImGui::TextUnformatted(FilePathPromptHint(type));
+        ImGui::TextDisabled("No file dialog is available here; type or paste the full path.");
+        if (ImGui::IsWindowAppearing())
+        {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::SetNextItemWidth(520.0f * uiScale);
+        const bool entered = ImGui::InputText("##typed_path", &s_typedPath, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (!s_typedPathError.empty())
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_typedPathError.c_str());
+        }
+        ImGui::Separator();
+
+        if (ImGui::Button("OK", ImVec2(120.0f * uiScale, 0.0f)) || entered)
+        {
+            std::string path = CleanTypedPath(s_typedPath);
+            if (type == FileDialogType::SaveScene && !path.empty() &&
+                std::filesystem::path(path).extension().empty())
+            {
+                path += ".yaml"; // the native dialogs add it too
+            }
+            s_typedPathError = CheckTypedPath(type, path);
+            if (s_typedPathError.empty())
+            {
+                chosen = std::move(path);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f * uiScale, 0.0f)))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    return chosen;
 }
 
 bool IsSupportedModelAssetPath(const std::filesystem::path& path)

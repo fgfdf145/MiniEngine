@@ -12,10 +12,12 @@
 #include <yaml-cpp/yaml.h>
 
 #include <charconv>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace me
@@ -163,6 +165,18 @@ int EditorApplication::Run()
         EnginePaths::AssetsRoot().string(),
         EnginePaths::CacheRoot().string(),
         EnginePaths::ShaderRoot().string());
+
+    // The assets folder is not version controlled, so a fresh checkout has none. Every asset browser
+    // action works inside it; create it up front instead of leaving the browser empty and inert.
+    std::error_code assetsRootError;
+    std::filesystem::create_directories(EnginePaths::AssetsRoot(), assetsRootError);
+    if (assetsRootError)
+    {
+        LOG_ERROR(
+            "Could not create the assets folder '{}': {}",
+            EnginePaths::AssetsRoot().string(),
+            assetsRootError.message());
+    }
 
     auto sharedState = std::make_shared<RendererSharedState>();
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));

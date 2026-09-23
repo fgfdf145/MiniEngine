@@ -3,11 +3,13 @@
 // Internal declarations shared between the editor UI panel translation units.
 // Not part of the public engine_editor interface.
 
+#include <engine/platform/file_dialog/file_dialog.h>
 #include <engine/scene/scene_components.h>
 
 #include <imgui.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace me
@@ -43,6 +45,12 @@ bool DragFloat3InRange(
     const char* format = "%.3f",
     float speed = 0.0f);
 bool DragIntInRange(const char* label, int* value, int min, int max);
+
+// Asks for a file when `requested` is true (pass the button that asks for one) and returns the
+// chosen path in the frame it is chosen. Uses the native dialog; where there is none, or it failed,
+// a modal asks for the path to be typed instead. The modal lives in the current ID stack, so call
+// this every frame from the same place, not only when the button was pressed.
+std::optional<std::string> PickFilePath(FileDialogType type, bool requested);
 
 // --- editor_dock_toolbar.cpp ----------------------------------------------
 void DrawTopToolbar(

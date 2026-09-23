@@ -79,28 +79,27 @@ bool DrawGraphTextureSlotEditor(
     {
         ImGui::SameLine();
     }
-    if (ImGui::SmallButton(path.empty() ? "Pick" : "Swap"))
+    if (const std::optional<std::string> selectedPath =
+            PickFilePath(FileDialogType::OpenTexture, ImGui::SmallButton(path.empty() ? "Pick" : "Swap"));
+        selectedPath.has_value())
     {
-        if (const std::optional<std::string> selectedPath = OpenTextureFileDialog(); selectedPath.has_value())
+        try
         {
-            try
+            path =
+                !modelPath.empty() && slotName != nullptr
+                    ? ImportTextureIntoModelMaterialDirectory(modelPath, materialIndex, slotName, *selectedPath)
+                    : *selectedPath;
+            if (statusMessage != nullptr)
             {
-                path =
-                    !modelPath.empty() && slotName != nullptr
-                        ? ImportTextureIntoModelMaterialDirectory(modelPath, materialIndex, slotName, *selectedPath)
-                        : *selectedPath;
-                if (statusMessage != nullptr)
-                {
-                    *statusMessage = "Imported texture for " + std::string(label) + ": " + path;
-                }
-                changed = true;
+                *statusMessage = "Imported texture for " + std::string(label) + ": " + path;
             }
-            catch (const std::exception& error)
+            changed = true;
+        }
+        catch (const std::exception& error)
+        {
+            if (statusMessage != nullptr)
             {
-                if (statusMessage != nullptr)
-                {
-                    *statusMessage = error.what();
-                }
+                *statusMessage = error.what();
             }
         }
     }

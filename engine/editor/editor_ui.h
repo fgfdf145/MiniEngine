@@ -17,6 +17,7 @@
 #include <imgui.h>
 
 #include <array>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -119,6 +120,10 @@ class EditorUiController
         }
     }
 
+    // A file or folder dropped onto the editor window from the OS. It is imported (models) or copied
+    // into the folder the asset browser shows, and the browser is opened to show it.
+    void QueueDroppedFile(std::string path);
+
   private:
     void ApplyEngineSettings(const EngineSettings& settings);
     void ApplyUiScale();
@@ -149,6 +154,8 @@ class EditorUiController
         EditorUiFrameResult& result);
     void DrawAssetBrowserPanel(EditorUiFrameResult& result);
     void DrawImportConflictModal(EditorUiFrameResult& result);
+    // Imports a model into the folder being browsed, asking first when its target folder is taken.
+    void RequestModelImport(const std::string& sourcePath, EditorUiFrameResult& result);
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;
@@ -202,6 +209,7 @@ class EditorUiController
     };
     std::optional<PendingImportConflict> m_pendingImportConflict;
     bool m_openImportConflictModal = false;
+    std::deque<std::string> m_droppedFiles; // queued by QueueDroppedFile, drained by the asset browser
     bool m_showCameraWindow = true;
     RenderDebugSettings m_renderDebug;
     bool m_showAssetManagerWindow = false;

@@ -117,6 +117,8 @@ class AssetManager
     std::string m_previewUuid;
     std::string m_clipboard;
     bool m_needsScan = true;
+    // Shown in red under the toolbar: a browser action that failed, or a missing assets folder.
+    std::string m_statusError;
 
     // Inline rename (context menu "Rename" or F2). A newly created folder is
     // renamed immediately: its name is parked here until the next scan.

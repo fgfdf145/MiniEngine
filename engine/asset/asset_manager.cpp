@@ -161,6 +161,12 @@ AssetManagerResult AssetManager::Draw()
     }
 
     DrawToolbar(result);
+    if (!m_statusError.empty())
+    {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", m_statusError.c_str());
+        ImGui::PopTextWrapPos();
+    }
     ImGui::Separator();
     DrawBreadcrumb();
     ImGui::Separator();
@@ -189,8 +195,21 @@ void AssetManager::ScanCurrentDir()
     std::error_code ec;
     if (!std::filesystem::exists(m_currentDir, ec) || !std::filesystem::is_directory(m_currentDir, ec))
     {
-        m_currentDir = m_root;
+        if (m_currentDir != m_root)
+        {
+            // The folder went away (deleted or renamed outside the editor): show the root instead.
+            m_currentDir = m_root;
+            ScanCurrentDir();
+        }
+        else
+        {
+            m_statusError = "The assets folder does not exist: " + m_root.string();
+        }
         return;
+    }
+    if (m_currentDir == m_root && m_statusError.starts_with("The assets folder does not exist"))
+    {
+        m_statusError.clear();
     }
 
     // ".." entry when not at root
@@ -444,6 +463,11 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
         const int columns = std::max(
             1,
             static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (TileWidth() + style.ItemSpacing.x)));
+
+        if (m_entries.empty())
+        {
+            ImGui::TextDisabled("This folder is empty. Use Import Model, or drop files onto the window.");
+        }
 
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
         {
@@ -1032,12 +1056,16 @@ void AssetManager::CreateNewFolder()
         target = m_currentDir / ("NewFolder" + std::to_string(suffix++));
     }
 
-    std::filesystem::create_directory(target, ec);
-    if (!ec)
+    // create_directories also recreates the current folder (or the assets root) if it went missing.
+    std::filesystem::create_directories(target, ec);
+    if (ec)
     {
-        m_pendingRenameName = target.filename().string();
-        m_needsScan = true;
+        m_statusError = "Could not create folder '" + target.string() + "': " + ec.message();
+        return;
     }
+    m_statusError.clear();
+    m_pendingRenameName = target.filename().string();
+    m_needsScan = true;
 }
 
 void AssetManager::BuildPendingDeleteWarnings()

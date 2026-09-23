@@ -1,8 +1,9 @@
 ﻿#include <engine/editor/editor_ui.h>
+#include "editor_ui_internal.h"
 
 #include <engine/asset/asset_paths.h>
 
-#include <engine/platform/file_dialog/file_dialog.h>
+#include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <imgui.h>
 
@@ -21,32 +22,35 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
     {
         const AssetManagerResult assetResult = m_assetManager->Draw();
 
-        if (assetResult.wantsImportModel)
+        if (const std::optional<std::string> sourcePath =
+                PickFilePath(FileDialogType::OpenModel, assetResult.wantsImportModel);
+            sourcePath.has_value())
         {
-            if (const std::optional<std::string> sourcePath = OpenModelFileDialog(); sourcePath.has_value())
+            RequestModelImport(*sourcePath, result);
+        }
+
+        // Files dropped onto the window go into the folder being browsed, one per frame: a frame
+        // carries one import or copy request, and a model whose folder is taken waits for the
+        // conflict modal to be answered.
+        if (!m_droppedFiles.empty() && !m_pendingImportConflict.has_value() &&
+            !result.actions.importedModelRequest.has_value() && !assetResult.pasteRequest.has_value())
+        {
+            const std::string dropped = std::move(m_droppedFiles.front());
+            m_droppedFiles.pop_front();
+            if (IsSupportedModelAssetPath(dropped))
             {
-                const std::string destination = m_assetManager->GetCurrentDirectory().string();
-                const std::filesystem::path modelFolder =
-                    ModelImportTarget::DefaultFolder(std::filesystem::path(*sourcePath), destination);
-                if (ModelImportTarget::IsOccupied(modelFolder))
-                {
-                    // Same-named models are common (every Sketchfab download is
-                    // "scene.gltf"): ask rather than silently reuse the old one.
-                    m_pendingImportConflict = PendingImportConflict{
-                        *sourcePath,
-                        destination,
-                        modelFolder.filename().string(),
-                        ModelImportTarget::NextFreeFolder(modelFolder).filename().string()};
-                    m_openImportConflictModal = true;
-                }
-                else
-                {
-                    // The import runs on a background thread; the backend calls
-                    // RequestAssetBrowserRefresh() once the files are on disk.
-                    result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
-                        *sourcePath,
-                        destination};
-                }
+                RequestModelImport(dropped, result);
+            }
+            else if (!AssetPaths::IsSameOrInside(dropped, m_assetManager->GetAssetsRoot()))
+            {
+                result.actions.pastedAsset = EditorUiActions::AssetPasteRequest{
+                    dropped,
+                    m_assetManager->GetCurrentDirectory().string()};
+                m_assetManager->Refresh();
+            }
+            else
+            {
+                LOG_INFO("Ignored dropped file '{}': it is already in the assets folder", dropped);
             }
         }
         if (assetResult.selectedModelPath.has_value())
@@ -87,6 +91,39 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         DrawImportConflictModal(result);
     }
     ImGui::End();
+}
+
+void EditorUiController::QueueDroppedFile(std::string path)
+{
+    m_droppedFiles.push_back(std::move(path));
+    // Show where the file lands.
+    m_showAssetManagerWindow = true;
+}
+
+void EditorUiController::RequestModelImport(const std::string& sourcePath, EditorUiFrameResult& result)
+{
+    const std::string destination = m_assetManager->GetCurrentDirectory().string();
+    const std::filesystem::path modelFolder =
+        ModelImportTarget::DefaultFolder(std::filesystem::path(sourcePath), destination);
+    if (ModelImportTarget::IsOccupied(modelFolder))
+    {
+        // Same-named models are common (every Sketchfab download is
+        // "scene.gltf"): ask rather than silently reuse the old one.
+        m_pendingImportConflict = PendingImportConflict{
+            sourcePath,
+            destination,
+            modelFolder.filename().string(),
+            ModelImportTarget::NextFreeFolder(modelFolder).filename().string()};
+        m_openImportConflictModal = true;
+    }
+    else
+    {
+        // The import runs on a background thread; the backend calls
+        // RequestAssetBrowserRefresh() once the files are on disk.
+        result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
+            sourcePath,
+            destination};
+    }
 }
 
 void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)

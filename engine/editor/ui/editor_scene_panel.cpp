@@ -214,13 +214,12 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
     {
         HdriSettings& hdri = environment.hdri;
         ImGui::TextWrapped("%s", hdri.path.empty() ? "<no HDRI>" : hdri.path.c_str());
-        if (ImGui::Button("Choose HDRI..."))
+        if (const std::optional<std::string> path =
+                PickFilePath(FileDialogType::OpenTexture, ImGui::Button("Choose HDRI..."));
+            path.has_value())
         {
-            if (const std::optional<std::string> path = OpenTextureFileDialog(); path.has_value())
-            {
-                hdri.path = *path;
-                hdri.uuid = AssetRegistry::GetOrCreateUuid(*path);
-            }
+            hdri.path = *path;
+            hdri.uuid = AssetRegistry::GetOrCreateUuid(*path);
         }
         ImGui::DragFloat("Intensity (cd/m2)", &hdri.intensity, 10.0f, 0.0f, 1000000.0f, "%.0f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
         DragFloatInRange("Rotation (deg)", &hdri.rotationDegrees, -180.0f, 180.0f, "%.1f", 0.5f);
@@ -548,33 +547,27 @@ void EditorUiController::DrawScenePanel(
         {
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", lastSceneIoError.c_str());
         }
-        if (ImGui::Button("Save Scene"))
+        // Save goes to the current path if already set; otherwise it asks, like Save As.
+        const bool savePressed = ImGui::Button("Save Scene");
+        const bool saveToCurrentPath = savePressed && !scene.GetSceneFilePath().empty();
+        if (saveToCurrentPath)
         {
-            // Save to current path if already set, otherwise open dialog
-            if (!scene.GetSceneFilePath().empty())
-            {
-                result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
-            }
-            else if (const std::optional<std::string> savePath = SaveSceneFileDialog(); savePath.has_value())
-            {
-                result.actions.selectedSceneSavePath = *savePath;
-            }
+            result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Save As..."))
+        const bool saveAsPressed = ImGui::Button("Save As...");
+        if (const std::optional<std::string> savePath =
+                PickFilePath(FileDialogType::SaveScene, (savePressed && !saveToCurrentPath) || saveAsPressed);
+            savePath.has_value())
         {
-            if (const std::optional<std::string> savePath = SaveSceneFileDialog(); savePath.has_value())
-            {
-                result.actions.selectedSceneSavePath = *savePath;
-            }
+            result.actions.selectedSceneSavePath = *savePath;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Load Scene"))
+        if (const std::optional<std::string> loadPath =
+                PickFilePath(FileDialogType::OpenScene, ImGui::Button("Load Scene"));
+            loadPath.has_value())
         {
-            if (const std::optional<std::string> loadPath = OpenSceneFileDialog(); loadPath.has_value())
-            {
-                result.actions.selectedSceneLoadPath = *loadPath;
-            }
+            result.actions.selectedSceneLoadPath = *loadPath;
         }
     }
     ImGui::End();

@@ -11,6 +11,13 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#else
+#include <engine/core/log/log.h>
+#include <SDL3/SDL.h>
+
+#include <atomic>
+#include <filesystem>
+#include <mutex>
 #endif
 
 namespace me
@@ -58,6 +65,94 @@ std::optional<std::string> ShowWindowsFileDialog(OPENFILENAMEW& dialog, bool sav
 
     return WideToUtf8(dialog.lpstrFile);
 }
+#else
+// Cleared the first time SDL reports that it cannot show a dialog (e.g. no portal or zenity on
+// Linux), so the editor falls back to typing the path instead of offering a button that never works.
+std::atomic<bool> g_sdlDialogsAvailable{true};
+
+// SDL's dialogs report through a callback. On macOS it runs before SDL_Show*FileDialog returns; on
+// Linux it can come later and from another thread, so the result is handed over under a mutex.
+struct SdlDialogResult
+{
+    std::mutex mutex;
+    bool done = false;
+    std::optional<std::string> path;
+};
+
+void SDLCALL OnSdlDialogFinished(void* userdata, const char* const* filelist, int filter)
+{
+    static_cast<void>(filter);
+    auto* result = static_cast<SdlDialogResult*>(userdata);
+    std::lock_guard lock(result->mutex);
+    if (filelist == nullptr)
+    {
+        LOG_WARN("Native file dialog unavailable: {}", SDL_GetError());
+        g_sdlDialogsAvailable = false;
+    }
+    else if (filelist[0] != nullptr)
+    {
+        result->path = std::string(filelist[0]);
+    }
+    result->done = true;
+}
+
+std::optional<std::string> ShowSdlFileDialog(FileDialogType type)
+{
+    static constexpr SDL_DialogFileFilter kModelFilters[] = {
+        {"glTF Files", "gltf;glb"},
+        {"All Files", "*"},
+    };
+    static constexpr SDL_DialogFileFilter kTextureFilters[] = {
+        {"Texture Files", "png;jpg;jpeg;tga;bmp;gif;hdr;exr;dds"},
+        {"All Files", "*"},
+    };
+    static constexpr SDL_DialogFileFilter kSceneFilters[] = {
+        {"Scene Files", "yaml;yml"},
+        {"All Files", "*"},
+    };
+
+    SdlDialogResult result;
+    // No parent window: on macOS SDL then runs the panel modally and returns with the answer, which
+    // keeps this call synchronous like the Windows dialog.
+    switch (type)
+    {
+    case FileDialogType::OpenModel:
+        SDL_ShowOpenFileDialog(OnSdlDialogFinished, &result, nullptr, kModelFilters, 2, nullptr, false);
+        break;
+    case FileDialogType::OpenTexture:
+        SDL_ShowOpenFileDialog(OnSdlDialogFinished, &result, nullptr, kTextureFilters, 2, nullptr, false);
+        break;
+    case FileDialogType::OpenScene:
+        SDL_ShowOpenFileDialog(OnSdlDialogFinished, &result, nullptr, kSceneFilters, 2, nullptr, false);
+        break;
+    case FileDialogType::SaveScene:
+        SDL_ShowSaveFileDialog(OnSdlDialogFinished, &result, nullptr, kSceneFilters, 2, nullptr);
+        break;
+    }
+
+    // Backends that answer asynchronously need the event loop pumped to make progress.
+    for (;;)
+    {
+        {
+            std::lock_guard lock(result.mutex);
+            if (result.done)
+            {
+                break;
+            }
+        }
+        SDL_PumpEvents();
+        SDL_Delay(10);
+    }
+
+    std::lock_guard lock(result.mutex);
+    // Match the Windows dialog's default extension.
+    if (type == FileDialogType::SaveScene && result.path.has_value() &&
+        std::filesystem::path(*result.path).extension().empty())
+    {
+        *result.path += ".yaml";
+    }
+    return result.path;
+}
 #endif
 }
 
@@ -68,7 +163,7 @@ bool SupportsNativeFileDialogs()
 #if defined(_WIN32)
     return true;
 #else
-    return false;
+    return g_sdlDialogsAvailable;
 #endif
 }
 
@@ -116,8 +211,11 @@ std::optional<std::string> ShowFileDialog(FileDialogType type)
 
     return std::nullopt;
 #else
-    static_cast<void>(type);
-    return std::nullopt;
+    if (!g_sdlDialogsAvailable)
+    {
+        return std::nullopt;
+    }
+    return ShowSdlFileDialog(type);
 #endif
 }
 }
