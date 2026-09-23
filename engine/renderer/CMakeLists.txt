@@ -57,6 +57,8 @@ add_library(engine_renderer
     rhi/factory.h
     vulkan/ao_pass.cpp
     vulkan/ao_pass.h
+    vulkan/atmosphere.cpp
+    vulkan/atmosphere.h
     vulkan/buffer.cpp
     vulkan/buffer.h
     vulkan/command.cpp
@@ -129,6 +131,10 @@ set(MINIENGINE_SHADER_SOURCES
     exposure_histogram.comp
     vbao_trace.comp
     vbao_resolve.comp
+    atmosphere_transmittance.comp
+    atmosphere_multiscattering.comp
+    atmosphere_skyview.comp
+    atmosphere_aerial_perspective.comp
     shadow.vert
     shadow.frag
 )
@@ -144,6 +150,8 @@ set(MINIENGINE_SHADER_INCLUDES
     gbuffer_inputs.glsl
     normal_map.glsl
     vbao_common.glsl
+    atmosphere_common.glsl
+    atmosphere_integrate.glsl
 )
 
 function(miniengine_add_shaders shader_target)

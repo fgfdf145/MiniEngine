@@ -42,6 +42,17 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 shadowParams;                                      // x = index into lights[] of the caster, -1 for none; y = 1 / resolution
     mat4 invViewProj;                                       // inverse(proj * view), for reconstructing world position from depth
     mat4 prevViewProj;                                      // last frame's proj * view, for motion vectors
+
+    // Environment: EnvironmentUniformData in engine/renderer/atmosphere.h, member for member.
+    vec4 sunDirectionAndMode;        // xyz toward the sun, w EnvironmentMode
+    vec4 sunIlluminance;             // rgb lux at the top of the atmosphere, w cos(sun angular radius)
+    vec4 rayleighScattering;         // rgb per km, w scale height km
+    vec4 mieParameters;              // x scattering per km, y extinction per km, z scale height km, w g
+    vec4 ozoneAbsorption;            // rgb per km
+    vec4 groundAlbedo;               // rgb
+    vec4 atmosphereRadii;            // x bottom km, y top km, z aerial perspective distance scale
+    vec4 atmosphereCameraPositionKm; // xyz camera relative to the planet centre
+    vec4 hdriParameters;             // x intensity, y rotation in turns
 }
 ubo;
 

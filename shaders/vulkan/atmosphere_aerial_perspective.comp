@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "scene_common.glsl"
+#include "atmosphere_common.glsl"
+#include "atmosphere_integrate.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 1, binding = 3, rgba16f) uniform writeonly image3D aerialPerspectiveOut;
+layout(set = 1, binding = 4) uniform sampler2D transmittanceLut;
+layout(set = 1, binding = 5) uniform sampler2D multiScatteringLut;
+
+void main()
+{
+    ivec3 texel = ivec3(gl_GlobalInvocationID.xyz);
+    // The volume covers the view frustum: xy the screen, z the distance (see
+    // AERIAL_PERSPECTIVE_KM_PER_SLICE for the quadratic spread).
+    vec2 uv = (vec2(texel.xy) + 0.5) / AERIAL_PERSPECTIVE_SLICE_COUNT;
+    vec4 farPoint = ubo.invViewProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec3 direction = normalize(farPoint.xyz / farPoint.w - ubo.cameraWorldPosition.xyz);
+    vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
+
+    float slice = (float(texel.z) + 0.5) / AERIAL_PERSPECTIVE_SLICE_COUNT;
+    slice = slice * slice * AERIAL_PERSPECTIVE_SLICE_COUNT;
+    float tMax = slice * AERIAL_PERSPECTIVE_KM_PER_SLICE;
+    vec3 end = camera + tMax * direction;
+    if (length(end) <= BottomRadius() + PLANET_RADIUS_OFFSET_KM)
+    {
+        // Below the ground: aim at the point on the ground instead, so the slice still holds
+        // plausible haze for geometry drawn there.
+        end = normalize(end) * (BottomRadius() + PLANET_RADIUS_OFFSET_KM);
+        direction = normalize(end - camera);
+        tMax = length(end - camera);
+    }
+
+    ScatteringResult result = IntegrateScatteredLuminance(
+        camera, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb,
+        transmittanceLut, multiScatteringLut, false, max(1.0, float(texel.z + 1) * 2.0), tMax, true, true);
+    float meanTransmittance = dot(result.transmittance, vec3(1.0 / 3.0));
+    imageStore(aerialPerspectiveOut, texel, vec4(result.luminance, meanTransmittance));
+}

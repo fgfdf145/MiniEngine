@@ -475,6 +475,36 @@ void VulkanRenderer::DrawFrame()
             0.0f);
     }
 
+    const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
+    const EnvironmentMode environmentMode = EffectiveEnvironmentMode(environment);
+    const AtmosphereParameters atmosphereParameters = BuildAtmosphereParameters(environment.atmosphere);
+    std::optional<AtmosphereSun> sun;
+    if (shadowLightIndex >= 0)
+    {
+        GpuLightData& sunLight = selectedLights[static_cast<size_t>(shadowLightIndex)];
+        sun = AtmosphereSun{
+            -glm::normalize(glm::vec3(sunLight.directionAndType)),
+            glm::vec3(sunLight.colorAndIntensity) * sunLight.colorAndIntensity.w};
+        if (environmentMode == EnvironmentMode::Atmosphere)
+        {
+            // The light's intensity is the illuminance above the atmosphere; the scene receives
+            // what gets through to the camera's altitude.
+            const glm::vec3 camera = ToAtmosphereCameraPositionKm(atmosphereParameters, State().camera.position);
+            const float cosZenith = glm::dot(sun->directionToSun, glm::normalize(camera));
+            const glm::vec3 transmittance = ComputeTransmittanceToSpace(
+                atmosphereParameters,
+                glm::length(camera) - atmosphereParameters.bottomRadiusKm,
+                cosZenith);
+            sunLight.colorAndIntensity = glm::vec4(glm::vec3(sunLight.colorAndIntensity) * transmittance, sunLight.colorAndIntensity.w);
+        }
+    }
+    const EnvironmentUniformData environmentData = BuildEnvironmentUniformData(
+        environmentMode,
+        environment,
+        atmosphereParameters,
+        sun,
+        State().camera.position);
+
     std::vector<glm::mat4> models;
     std::vector<MotionKey> motionKeys;
     models.reserve(m_renderSubmeshes.size());
@@ -495,7 +525,8 @@ void VulkanRenderer::DrawFrame()
         selectedLights,
         shadowData,
         motion.previousViewProjection,
-        motion.previousModels);
+        motion.previousModels,
+        environmentData);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
@@ -557,6 +588,14 @@ void VulkanRenderer::DrawFrame()
                                                   commandBuffer,
                                                   shadowDrawItems,
                                                   shadowCascades.has_value() ? &*shadowCascades : nullptr);
+
+                                              // Ahead of the scene passes, whose fragment shaders sample the
+                                              // LUTs; it orders itself with its own barriers (see
+                                              // VulkanAtmosphere).
+                                              m_atmosphere->Record(
+                                                  commandBuffer,
+                                                  frame.frameDescriptorSet,
+                                                  environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr);
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -704,6 +743,28 @@ void VulkanRenderer::CreateDeviceResources()
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
+
+    m_atmosphere = std::make_unique<VulkanAtmosphere>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_frameSetLayout->GetHandle());
+
+    // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
+    VulkanUploadBatch uploadBatch(
+        m_device->GetHandle(),
+        m_device->GetQueueFamilies().graphicsFamily.value(),
+        m_device->GetGraphicsQueue());
+    FloatTextureData black{};
+    black.width = 1;
+    black.height = 1;
+    black.pixels = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_defaultEnvironmentMap = std::make_unique<VulkanTexture>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        black,
+        uploadBatch);
+    uploadBatch.Flush();
 }
 
 void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
@@ -732,6 +793,8 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
 
 void VulkanRenderer::DestroyDeviceResources()
 {
+    m_defaultEnvironmentMap.reset();
+    m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
     if (m_pipelineCache != VK_NULL_HANDLE)
@@ -741,6 +804,22 @@ void VulkanRenderer::DestroyDeviceResources()
     }
     m_materialSetLayout.reset();
     m_frameSetLayout.reset();
+}
+
+EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
+{
+    EnvironmentDescriptorBindings bindings{};
+    bindings.transmittance = m_atmosphere->GetTransmittanceBinding();
+    bindings.skyView = m_atmosphere->GetSkyViewBinding();
+    bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
+    bindings.environmentMap = TextureDescriptorBinding{m_defaultEnvironmentMap->GetImageView(), m_defaultEnvironmentMap->GetSampler()};
+    return bindings;
+}
+
+// The mode the frame renders with. An HDRI that is not loaded renders as None (Task 7 loads it).
+EnvironmentMode VulkanRenderer::EffectiveEnvironmentMode(const SceneEnvironment& environment) const
+{
+    return environment.mode == EnvironmentMode::Hdri ? EnvironmentMode::None : environment.mode;
 }
 
 void VulkanRenderer::CreateScenePasses()
@@ -862,6 +941,7 @@ void VulkanRenderer::CreateDescriptorResources()
         m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots),
         m_shadowPass->GetSampledBinding(),
+        BuildEnvironmentBindings(),
         static_cast<uint32_t>(m_renderSubmeshes.size()));
 }
 
@@ -1369,6 +1449,7 @@ void VulkanRenderer::ApplyRenderContent(
             m_materialSetLayout->GetHandle(),
             BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots),
             m_shadowPass->GetSampledBinding(),
+            BuildEnvironmentBindings(),
             static_cast<uint32_t>(newRenderSubmeshes.size()));
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the

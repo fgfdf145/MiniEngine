@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ao_pass.h"
+#include "atmosphere.h"
 #include "buffer.h"
 #include "command.h"
 #include "device.h"
@@ -104,6 +105,8 @@ class VulkanRenderer : public EditorRenderBackendBase
   private:
     void CreateDeviceResources();
     void DestroyDeviceResources();
+    EnvironmentDescriptorBindings BuildEnvironmentBindings() const;
+    EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     void CreateSwapchainResources();
     void CreateScenePasses();
     IScenePass* FindScenePass(ScenePassId id) const;
@@ -194,6 +197,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Device lifetime too: its image has a fixed size and is shared by every frame in flight, and
     // every VulkanUniformBuffer binds it into set 0.
     std::unique_ptr<VulkanShadowPass> m_shadowPass;
+    // Device lifetime as well, for the same reasons: fixed-size images shared by every frame in
+    // flight and bound into set 0 by every VulkanUniformBuffer.
+    std::unique_ptr<VulkanAtmosphere> m_atmosphere;
+    // Set 0 binding 6 when no HDRI is loaded.
+    std::unique_ptr<VulkanTexture> m_defaultEnvironmentMap;
     // The swapchain image the last submitted frame drew into, for CaptureViewport.
     std::optional<uint32_t> m_lastRecordedImageIndex;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;

@@ -84,6 +84,58 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    const FloatTextureData& equirectangular,
+    VulkanUploadBatch& uploadBatch)
+    : m_physicalDevice(physicalDevice),
+      m_device(device),
+      m_textureFormat(VulkanTextureFormat::LinearData)
+{
+    try
+    {
+        if (!equirectangular.IsValid())
+        {
+            throw std::runtime_error("Cannot create an environment map from invalid float data");
+        }
+        const uint32_t width = static_cast<uint32_t>(equirectangular.width);
+        const uint32_t height = static_cast<uint32_t>(equirectangular.height);
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_R32G32B32A32_SFLOAT, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0)
+        {
+            UploadTexels(
+                equirectangular.pixels.data(),
+                static_cast<VkDeviceSize>(equirectangular.pixels.size() * sizeof(float)),
+                width,
+                height,
+                VK_FORMAT_R32G32B32A32_SFLOAT,
+                uploadBatch,
+                false,
+                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+        }
+        else
+        {
+            const HalfFloatTextureData packed = PackRgba16Float(equirectangular);
+            UploadTexels(
+                packed.texels.data(),
+                static_cast<VkDeviceSize>(packed.texels.size() * sizeof(std::uint16_t)),
+                width,
+                height,
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                uploadBatch,
+                false,
+                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+        }
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
+}
+
+VulkanTexture::VulkanTexture(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
     const CompressedTexture& texture,
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
@@ -122,7 +174,9 @@ void VulkanTexture::UploadTexels(
     uint32_t width,
     uint32_t height,
     VkFormat vkFormat,
-    VulkanUploadBatch& uploadBatch)
+    VulkanUploadBatch& uploadBatch,
+    bool generateMips,
+    VkSamplerAddressMode addressModeV)
 {
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -140,7 +194,7 @@ void VulkanTexture::UploadTexels(
     vkUnmapMemory(m_device, stagingMemory);
 
     const bool canGenerateMips = FormatSupportsLinearBlit(vkFormat);
-    m_mipLevels = canGenerateMips
+    m_mipLevels = canGenerateMips && generateMips
                       ? static_cast<uint32_t>(std::floor(std::log2(
                             static_cast<double>(std::max(width, height))))) +
                             1
@@ -175,7 +229,7 @@ void VulkanTexture::UploadTexels(
         TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     }
 
-    CreateViewAndSampler(vkFormat);
+    CreateViewAndSampler(vkFormat, addressModeV);
 }
 
 void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch)
@@ -264,7 +318,7 @@ VkFormat VulkanTexture::ToVkFormat(CompressedTextureFormat format)
     throw std::runtime_error("Unknown compressed texture format");
 }
 
-void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat)
+void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat, VkSamplerAddressMode addressModeV)
 {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -288,7 +342,7 @@ void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat)
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = addressModeV;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.anisotropyEnable = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
     samplerInfo.maxAnisotropy = supportedFeatures.samplerAnisotropy

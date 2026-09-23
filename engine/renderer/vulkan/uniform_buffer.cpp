@@ -17,11 +17,13 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkDescriptorSetLayout materialSetLayout,
     const std::vector<MaterialTextureBinding>& materialBindings,
     TextureDescriptorBinding shadowMap,
+    EnvironmentDescriptorBindings environment,
     uint32_t motionSlotCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
       m_shadowMap(shadowMap),
+      m_environment(environment),
       m_frameSetLayout(frameSetLayout),
       m_materialSetLayout(materialSetLayout),
       // A zero-sized storage buffer is invalid, and a scene with no submeshes still binds set 0.
@@ -133,7 +135,8 @@ void VulkanUniformBuffer::Update(
     std::span<const GpuLightData> lights,
     const ShadowUniformData& shadow,
     const glm::mat4& prevViewProj,
-    std::span<const glm::mat4> prevModels)
+    std::span<const glm::mat4> prevModels,
+    const EnvironmentUniformData& environment)
 {
     // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
     // robustness feature is enabled to catch it, so a mismatch is refused here instead.
@@ -159,6 +162,7 @@ void VulkanUniformBuffer::Update(
     }
     data.shadow = shadow;
     data.prevViewProj = prevViewProj;
+    data.environment = environment;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
     std::memcpy(m_mappedMotionBuffers[imageIndex], prevModels.data(), prevModels.size_bytes());
@@ -167,7 +171,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -183,6 +187,15 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // The atmosphere LUTs (3 transmittance, 4 sky-view, 5 aerial perspective) and the HDRI (6),
+    // sampled by the sky, lighting and forward fragment shaders.
+    for (uint32_t binding = 3; binding <= 6; ++binding)
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -311,7 +324,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 5},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -371,7 +384,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 3> frameWrites{};
+        std::array<VkWriteDescriptorSet, 7> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -390,6 +403,21 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         frameWrites[2].descriptorCount = 1;
         frameWrites[2].pBufferInfo = &motionInfo;
+        const std::array<VkDescriptorImageInfo, 4> environmentInfos = {
+            VkDescriptorImageInfo{m_environment.transmittance.sampler, m_environment.transmittance.imageView, VK_IMAGE_LAYOUT_GENERAL},
+            VkDescriptorImageInfo{m_environment.skyView.sampler, m_environment.skyView.imageView, VK_IMAGE_LAYOUT_GENERAL},
+            VkDescriptorImageInfo{m_environment.aerialPerspective.sampler, m_environment.aerialPerspective.imageView, VK_IMAGE_LAYOUT_GENERAL},
+            VkDescriptorImageInfo{m_environment.environmentMap.sampler, m_environment.environmentMap.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            VkWriteDescriptorSet& write = frameWrites[3 + index];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = m_frameDescriptorSets[i];
+            write.dstBinding = 3 + index;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &environmentInfos[index];
+        }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

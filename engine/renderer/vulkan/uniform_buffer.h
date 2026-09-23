@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../atmosphere.h"
 #include "../camera.h"
 #include "../shadow_cascades.h"
 #include "common.h"
@@ -17,6 +18,17 @@ struct TextureDescriptorBinding
 {
     VkImageView imageView = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
+};
+
+// The environment images set 0 binds for the fragment shaders: the atmosphere LUTs, kept in
+// VK_IMAGE_LAYOUT_GENERAL by VulkanAtmosphere, and the equirectangular HDRI (a 1x1 black map when
+// none is loaded), in SHADER_READ_ONLY_OPTIMAL.
+struct EnvironmentDescriptorBindings
+{
+    TextureDescriptorBinding transmittance;
+    TextureDescriptorBinding skyView;
+    TextureDescriptorBinding aerialPerspective;
+    TextureDescriptorBinding environmentMap;
 };
 
 struct MaterialTextureBinding
@@ -86,6 +98,8 @@ struct alignas(16) CameraUniformData
     // Last frame's proj * view, for motion vectors. Equal to this frame's when there is no history
     // (the first frame, or the first after the scene targets were rebuilt).
     glm::mat4 prevViewProj{1.0f};
+    // Appended last so no earlier member's offset moves.
+    EnvironmentUniformData environment;
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -95,7 +109,7 @@ struct alignas(16) CameraUniformData
 static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
 static_assert(
     sizeof(CameraUniformData) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64,
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 9 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
     offsetof(CameraUniformData, invViewProj) ==
@@ -105,6 +119,10 @@ static_assert(
     offsetof(CameraUniformData, prevViewProj) ==
         2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
     "prevViewProj must follow invViewProj with no padding");
+static_assert(
+    offsetof(CameraUniformData, environment) ==
+        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64,
+    "environment must follow prevViewProj with no padding");
 
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
 // 1 and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
@@ -159,6 +177,7 @@ class VulkanUniformBuffer
         VkDescriptorSetLayout materialSetLayout,
         const std::vector<MaterialTextureBinding>& materialBindings,
         TextureDescriptorBinding shadowMap,
+        EnvironmentDescriptorBindings environment,
         uint32_t motionSlotCount);
     ~VulkanUniformBuffer();
 
@@ -175,7 +194,8 @@ class VulkanUniformBuffer
         std::span<const GpuLightData> lights,
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,
-        std::span<const glm::mat4> prevModels);
+        std::span<const glm::mat4> prevModels,
+        const EnvironmentUniformData& environment);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.
@@ -189,6 +209,7 @@ class VulkanUniformBuffer
     VkDevice m_device = VK_NULL_HANDLE;
     std::vector<MaterialTextureBinding> m_materialBindings;
     TextureDescriptorBinding m_shadowMap;
+    EnvironmentDescriptorBindings m_environment;
     VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;

@@ -42,6 +42,15 @@ class VulkanTexture
         VkDevice device,
         const HalfFloatTextureData& textureData,
         VulkanUploadBatch& uploadBatch);
+    // An equirectangular environment map: R32G32B32A32_SFLOAT when the device filters that format
+    // linearly, else packed to R16G16B16A16_SFLOAT (values clamp at 65504). One mip level: the map
+    // is magnified, never minified, and a mip chain would seam where the longitude wraps. Repeats
+    // in u, clamps in v.
+    VulkanTexture(
+        VkPhysicalDevice physicalDevice,
+        VkDevice device,
+        const FloatTextureData& equirectangular,
+        VulkanUploadBatch& uploadBatch);
     // Uploads a block-compressed texture with its whole mip chain, as prepared by
     // CompressTexture. The device must support block compression (see
     // VulkanDevice::SupportsBlockCompression).
@@ -65,10 +74,10 @@ class VulkanTexture
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
     // Uploads level 0 from tightly packed texels and builds the mip chain with linear blits when the
     // format supports them, else keeps a single level. Shared by the RGBA8 and half-float paths.
-    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch);
+    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch, bool generateMips = true, VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT);
     void UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch);
     // Shared by both upload paths once the image holds every level in shader read layout.
-    void CreateViewAndSampler(VkFormat vkFormat);
+    void CreateViewAndSampler(VkFormat vkFormat, VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT);
     static VkFormat ToVkFormat(CompressedTextureFormat format);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;

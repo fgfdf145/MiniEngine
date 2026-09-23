@@ -1,0 +1,40 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "scene_common.glsl"
+#include "atmosphere_common.glsl"
+#include "atmosphere_integrate.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D skyViewOut;
+layout(set = 1, binding = 4) uniform sampler2D transmittanceLut;
+layout(set = 1, binding = 5) uniform sampler2D multiScatteringLut;
+
+void main()
+{
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, ivec2(SKY_VIEW_LUT_SIZE))))
+    {
+        return;
+    }
+    vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
+    float viewHeight = length(camera);
+    float viewZenithCos;
+    float lightViewCos;
+    UvToSkyViewLutParams((vec2(texel) + 0.5) / SKY_VIEW_LUT_SIZE, viewHeight, viewZenithCos, lightViewCos);
+
+    // A local frame with +Y up and the sun's azimuth along +X; only the angles matter.
+    float cosSunZenith = dot(camera / viewHeight, ubo.sunDirectionAndMode.xyz);
+    vec3 sunDirection = normalize(vec3(sqrt(max(0.0, 1.0 - cosSunZenith * cosSunZenith)), cosSunZenith, 0.0));
+    float viewZenithSin = sqrt(max(0.0, 1.0 - viewZenithCos * viewZenithCos));
+    vec3 direction = vec3(
+        viewZenithSin * lightViewCos,
+        viewZenithCos,
+        viewZenithSin * sqrt(max(0.0, 1.0 - lightViewCos * lightViewCos)));
+
+    ScatteringResult result = IntegrateScatteredLuminance(
+        vec3(0.0, viewHeight, 0.0), direction, sunDirection, ubo.sunIlluminance.rgb,
+        transmittanceLut, multiScatteringLut, false, 30.0, 9.0e9, true, true);
+    imageStore(skyViewOut, texel, vec4(result.luminance, 1.0));
+}
