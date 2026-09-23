@@ -2,6 +2,7 @@
 
 #include "../atmosphere.h"
 #include "../camera.h"
+#include "../light_clusters.h"
 #include "../shadow_cascades.h"
 #include "common.h"
 
@@ -70,7 +71,20 @@ struct GpuLightData
     glm::vec4 areaRightAxis{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
-static constexpr uint32_t kMaxSceneLights = 8;
+// The storage buffer at set 0 binding 10 holds this many; SelectSceneLights drops the rest.
+static constexpr uint32_t kMaxSceneLights = 1024;
+
+// What Update uploads for the lights. The lights are ordered as SelectSceneLights orders them:
+// every directional light first, so the shader can loop over those without the cluster grid, then
+// the local lights the grid indexes. clusters is read only when clustered is set.
+struct LightUpload
+{
+    std::span<const GpuLightData> lights;
+    uint32_t directionalCount = 0;
+    const LightClusterGrid* clusters = nullptr;
+    // Off: the shader loops over every local light, the brute-force comparison path.
+    bool clustered = true;
+};
 
 // The directional shadow map as the shader reads it. Mirrors the shadow members at the end of
 // CameraBuffer in shaders/vulkan/scene_common.glsl.
@@ -95,8 +109,12 @@ struct alignas(16) CameraUniformData
     glm::vec4 cameraWorldPosition{0.0f, 0.0f, 0.0f, 1.0f};
     // xyz = ambient luminance in cd/m^2 (see SceneLightSelection::ambientLuminance), w unused.
     glm::vec4 ambientLuminance{0.0f};
-    GpuLightData lights[kMaxSceneLights];
-    glm::uvec4 sceneLightCount{0u, 0u, 0u, 0u};
+    // x = directional light count, y = total light count, z = 1 when the shader looks lights up
+    // through the cluster grid, 0 when it loops over all of them; w unused. The lights themselves
+    // are in the storage buffer at binding 10.
+    glm::uvec4 lightCounts{0u, 0u, 0u, 0u};
+    // x = sliceScale, y = sliceBias of the cluster grid (see LightClusterGrid); zw unused.
+    glm::vec4 lightClusterSlices{0.0f};
     ShadowUniformData shadow;
     // Inverse of proj * view, for reconstructing world position from depth in the lighting pass.
     // Appended last so no earlier member's offset moves.
@@ -112,26 +130,32 @@ struct alignas(16) CameraUniformData
 // the shader's std140 CameraBuffer block exactly. Every member is a 16-byte multiple (mat4/vec4
 // only — never add vec3/scalars without manual padding), which keeps the C++ layout identical
 // to std140 without relying on GLM alignment macros.
-static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140");
+static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to match std140 and std430");
+// view, proj, cameraWorldPosition, ambientLuminance, lightCounts, lightClusterSlices.
+inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
+    offsetof(CameraUniformData, shadow) == kCameraBlockHeaderBytes,
+    "the shadow block must follow lightClusterSlices with no padding");
+static_assert(
     offsetof(CameraUniformData, invViewProj) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16,
     "invViewProj must follow the shadow block with no padding, where std140 places it");
 static_assert(
     offsetof(CameraUniformData, prevViewProj) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64,
     "prevViewProj must follow invViewProj with no padding");
 static_assert(
     offsetof(CameraUniformData, environment) ==
-        2 * 64 + 2 * 16 + kMaxSceneLights * 80 + 16 + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64,
     "environment must follow prevViewProj with no padding");
 
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
-// 1 and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// 1, the scene lights at binding 10, the light cluster grid at binding 11, and each draw's previous
+// model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
@@ -201,7 +225,7 @@ class VulkanUniformBuffer
         const glm::vec3& cameraPosition,
         const glm::vec3& ambientLuminance,
         bool usesFallbackAmbient,
-        std::span<const GpuLightData> lights,
+        const LightUpload& lights,
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,
         std::span<const glm::mat4> prevModels,
@@ -211,6 +235,14 @@ class VulkanUniformBuffer
     // Shared by the destructor and the constructor's unwind path. Skips null handles.
     void DestroyHandles();
     void CreateBuffers(uint32_t imageCount);
+    // A host-visible, host-coherent buffer, mapped for its lifetime. The handles are written as
+    // they are created, so DestroyHandles releases whatever a throw part way through left behind.
+    void CreateMappedBuffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory,
+        void*& mapped);
     void CreateDescriptorPool(uint32_t imageCount);
     void CreateDescriptorSets(uint32_t imageCount);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
@@ -232,6 +264,14 @@ class VulkanUniformBuffer
     std::vector<VkDeviceMemory> m_motionMemories;
     std::vector<void*> m_mappedMotionBuffers;
     uint32_t m_motionSlotCount = 0;
+    // Set 0 binding 10: every light the shader evaluates, kMaxSceneLights slots per image.
+    std::vector<VkBuffer> m_lightBuffers;
+    std::vector<VkDeviceMemory> m_lightMemories;
+    std::vector<void*> m_mappedLightBuffers;
+    // Set 0 binding 11: the cluster ranges, then the index list, one per image.
+    std::vector<VkBuffer> m_clusterBuffers;
+    std::vector<VkDeviceMemory> m_clusterMemories;
+    std::vector<void*> m_mappedClusterBuffers;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;

@@ -12,8 +12,14 @@
 #define LIGHT_AREA 3
 #define LIGHT_AMBIENT 4
 
-#define MAX_SCENE_LIGHTS 8
 #define SHADOW_CASCADE_COUNT 4
+
+// The light cluster grid: must match kLightClusterTiles* and kLightClusterSlices in
+// engine/renderer/light_clusters.h.
+#define LIGHT_CLUSTER_TILES_X 16
+#define LIGHT_CLUSTER_TILES_Y 9
+#define LIGHT_CLUSTER_SLICES 24
+#define LIGHT_CLUSTER_COUNT (LIGHT_CLUSTER_TILES_X * LIGHT_CLUSTER_TILES_Y * LIGHT_CLUSTER_SLICES)
 
 struct SceneLightData
 {
@@ -30,16 +36,17 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 proj;
     vec4 cameraWorldPosition;
     // xyz = ambient luminance in cd/m^2: the sum of the scene's Ambient lights, or the fallback when
-    // it has none; w = 1 when it is the fallback. Ambient lights are folded in here on the CPU and never appear in lights[].
+    // it has none; w = 1 when it is the fallback. Ambient lights are folded in here on the CPU and never appear among the lights.
     vec4 ambientLuminance;
-    SceneLightData lights[MAX_SCENE_LIGHTS];
-    uvec4 sceneLightCount; // x = active light count
+    // The lights are in the storage buffer at binding 10 (see pbr_common.glsl), directional ones first.
+    uvec4 lightCounts;       // x = directional count, y = total count, z = 1 to look up through the cluster grid, 0 to loop over all
+    vec4 lightClusterSlices; // x = slice scale, y = slice bias: slice = floor(log(view depth) * x + y)
 
     // Cascaded shadow map of the one directional light that casts shadows (see ShadowUniformData).
     mat4 shadowCascadeViewProjection[SHADOW_CASCADE_COUNT]; // world to light clip space
     vec4 shadowCascadeSplits;                               // view distance where each cascade ends
     vec4 shadowCascadeTexelSizes;                           // world size of one texel per cascade
-    vec4 shadowParams;                                      // x = index into lights[] of the caster, -1 for none; y = 1 / resolution
+    vec4 shadowParams;                                      // x = index of the caster among the lights, -1 for none; y = 1 / resolution
     mat4 invViewProj;                                       // inverse(proj * view), for reconstructing world position from depth
     mat4 prevViewProj;                                      // last frame's proj * view, for motion vectors
 

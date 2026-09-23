@@ -164,6 +164,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void UpdateAutoExposure(uint32_t frameSlot);
     // Logs when the number of lights left out by the light limit changes.
     void ReportDroppedLights(uint32_t droppedCount);
+    void ReportDroppedClusterLights(uint32_t droppedCount);
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
@@ -235,6 +236,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // fading in from the default EV.
     bool m_hasMeteredExposure = false;
     uint32_t m_droppedLightCount = 0;
+    uint32_t m_droppedClusterLightCount = 0;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
     // at the image lifetime boundaries keep it from describing a destroyed image even when no

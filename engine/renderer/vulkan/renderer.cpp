@@ -440,9 +440,14 @@ void VulkanRenderer::DrawFrame()
     ReportDroppedLights(lightSelection.droppedCount);
     std::vector<GpuLightData> selectedLights;
     selectedLights.reserve(lightSelection.selected.size());
+    uint32_t directionalLightCount = 0;
     for (uint32_t index : lightSelection.selected)
     {
         selectedLights.push_back(sceneLights.gpuLights[index]);
+        if (sceneLights.candidates[index].type == LightType::Directional)
+        {
+            ++directionalLightCount;
+        }
     }
 
     ShadowUniformData shadowData{};
@@ -521,13 +526,40 @@ void VulkanRenderer::DrawFrame()
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
     const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
 
+    // The selection puts every directional light first, so the local lights the grid bins are the
+    // tail of selectedLights, and the grid's indices point into the same array the shader reads.
+    const bool clusteredLighting = State().renderDebug.clusteredLighting;
+    LightClusterGrid lightClusters;
+    if (clusteredLighting)
+    {
+        std::vector<LightClusterSphere> lightSpheres;
+        lightSpheres.reserve(selectedLights.size() - directionalLightCount);
+        for (uint32_t index = directionalLightCount; index < static_cast<uint32_t>(selectedLights.size()); ++index)
+        {
+            const glm::vec4& positionAndRange = selectedLights[index].positionAndRange;
+            lightSpheres.push_back(LightClusterSphere{glm::vec3(positionAndRange), positionAndRange.w, index});
+        }
+        LightClusterCamera clusterCamera{};
+        clusterCamera.view = State().viewportMatrices.view;
+        clusterCamera.projection = State().viewportMatrices.renderProjection;
+        clusterCamera.nearPlane = State().camera.nearPlane;
+        clusterCamera.farPlane = State().camera.farPlane;
+        lightClusters = BuildLightClusters(clusterCamera, lightSpheres, kLightClusterIndexCapacity);
+    }
+    ReportDroppedClusterLights(lightClusters.droppedCount);
+    LightUpload lightUpload{};
+    lightUpload.lights = selectedLights;
+    lightUpload.directionalCount = directionalLightCount;
+    lightUpload.clusters = clusteredLighting ? &lightClusters : nullptr;
+    lightUpload.clustered = clusteredLighting;
+
     m_uniformBuffer->Update(
         imageIndex,
         State().viewportMatrices,
         State().camera.position,
         lightSelection.ambientLuminance,
         lightSelection.usesFallbackAmbient,
-        selectedLights,
+        lightUpload,
         shadowData,
         motion.previousViewProjection,
         motion.previousModels,
@@ -1737,6 +1769,26 @@ void VulkanRenderer::ReportDroppedLights(uint32_t droppedCount)
     else
     {
         LOG_INFO("Every scene light fits in the renderer's light limit again");
+    }
+}
+
+void VulkanRenderer::ReportDroppedClusterLights(uint32_t droppedCount)
+{
+    // Logged when the count changes, like ReportDroppedLights.
+    if (droppedCount == m_droppedClusterLightCount)
+    {
+        return;
+    }
+    m_droppedClusterLightCount = droppedCount;
+    if (droppedCount > 0)
+    {
+        LOG_WARN(
+            "The light cluster index list is full: {} light-cluster pairs are left out, so some lights stop short of their range",
+            droppedCount);
+    }
+    else
+    {
+        LOG_INFO("Every light fits in the light cluster index list again");
     }
 }
 

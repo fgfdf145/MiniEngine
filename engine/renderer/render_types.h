@@ -55,6 +55,9 @@ struct RenderDebugSettings
     // Records the forward-only order instead of the deferred one: the comparison switch that makes
     // pixel equivalence something a reviewer flips rather than judges.
     bool forwardOnly = false;
+    // Looks local lights up through the light cluster grid. Off, every pixel loops over all of them:
+    // the comparison path, which must render the same image.
+    bool clusteredLighting = true;
     AoSettings ao;
 };
 }

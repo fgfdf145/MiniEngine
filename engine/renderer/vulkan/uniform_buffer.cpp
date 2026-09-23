@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <glm/geometric.hpp>
 #include <glm/matrix.hpp>
@@ -85,6 +86,27 @@ void VulkanUniformBuffer::DestroyHandles()
         }
     }
 
+    const auto destroyMapped = [this](std::vector<VkBuffer>& buffers, std::vector<VkDeviceMemory>& memories, std::vector<void*>& mapped)
+    {
+        for (size_t i = 0; i < buffers.size(); ++i)
+        {
+            if (buffers[i] != VK_NULL_HANDLE)
+            {
+                vkDestroyBuffer(m_device, buffers[i], nullptr);
+            }
+            // Freeing mapped memory unmaps it implicitly.
+            if (memories[i] != VK_NULL_HANDLE)
+            {
+                vkFreeMemory(m_device, memories[i], nullptr);
+            }
+        }
+        buffers.clear();
+        memories.clear();
+        mapped.clear();
+    };
+    destroyMapped(m_lightBuffers, m_lightMemories, m_mappedLightBuffers);
+    destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
+
     m_buffers.clear();
     m_memories.clear();
     m_mappedBuffers.clear();
@@ -150,7 +172,7 @@ void VulkanUniformBuffer::Update(
     const glm::vec3& cameraPosition,
     const glm::vec3& ambientLuminance,
     bool usesFallbackAmbient,
-    std::span<const GpuLightData> lights,
+    const LightUpload& lights,
     const ShadowUniformData& shadow,
     const glm::mat4& prevViewProj,
     std::span<const glm::mat4> prevModels,
@@ -172,11 +194,30 @@ void VulkanUniformBuffer::Update(
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
     data.ambientLuminance = glm::vec4(ambientLuminance, usesFallbackAmbient ? 1.0f : 0.0f);
 
-    const uint32_t lightCount = std::min(static_cast<uint32_t>(lights.size()), kMaxSceneLights);
-    data.sceneLightCount = glm::uvec4(lightCount, 0u, 0u, 0u);
-    for (uint32_t i = 0; i < lightCount; ++i)
+    // The shader indexes the light buffer with these counts and with the grid's indices, so all of
+    // them are checked against what the buffers hold rather than trusted.
+    const uint32_t lightCount = std::min(static_cast<uint32_t>(lights.lights.size()), kMaxSceneLights);
+    const bool clustered = lights.clustered && lights.clusters != nullptr;
+    data.lightCounts = glm::uvec4(std::min(lights.directionalCount, lightCount), lightCount, clustered ? 1u : 0u, 0u);
+    std::memcpy(m_mappedLightBuffers[imageIndex], lights.lights.data(), sizeof(GpuLightData) * lightCount);
+    if (clustered)
     {
-        data.lights[i] = lights[i];
+        const LightClusterGrid& grid = *lights.clusters;
+        if (grid.ranges.size() != kLightClusterCount || grid.indices.size() > kLightClusterIndexCapacity)
+        {
+            throw std::runtime_error("Light cluster grid does not fit the cluster buffer");
+        }
+        for (uint32_t index : grid.indices)
+        {
+            if (index >= lightCount)
+            {
+                throw std::runtime_error("Light cluster grid indexes past the uploaded lights");
+            }
+        }
+        data.lightClusterSlices = glm::vec4(grid.sliceScale, grid.sliceBias, 0.0f, 0.0f);
+        auto* clusterBytes = static_cast<std::byte*>(m_mappedClusterBuffers[imageIndex]);
+        std::memcpy(clusterBytes, grid.ranges.data(), sizeof(glm::uvec2) * kLightClusterCount);
+        std::memcpy(clusterBytes + sizeof(glm::uvec2) * kLightClusterCount, grid.indices.data(), sizeof(uint32_t) * grid.indices.size());
     }
     data.shadow = shadow;
     data.prevViewProj = prevViewProj;
@@ -189,7 +230,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 10> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -225,6 +266,14 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    // The scene lights (10) and the cluster grid that indexes them (11), read by ShadeSurface.
+    for (uint32_t binding = 10; binding <= 11; ++binding)
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
@@ -347,17 +396,63 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         const std::vector<glm::mat4> identities(m_motionSlotCount, glm::mat4(1.0f));
         std::memcpy(m_mappedMotionBuffers[i], identities.data(), static_cast<size_t>(motionBytes));
     }
+
+    constexpr VkDeviceSize kLightBytes = sizeof(GpuLightData) * kMaxSceneLights;
+    constexpr VkDeviceSize kClusterBytes =
+        sizeof(glm::uvec2) * kLightClusterCount + sizeof(uint32_t) * kLightClusterIndexCapacity;
+    m_lightBuffers.assign(imageCount, VK_NULL_HANDLE);
+    m_lightMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_mappedLightBuffers.assign(imageCount, nullptr);
+    m_clusterBuffers.assign(imageCount, VK_NULL_HANDLE);
+    m_clusterMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_mappedClusterBuffers.assign(imageCount, nullptr);
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightMemories[i], m_mappedLightBuffers[i]);
+        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterMemories[i], m_mappedClusterBuffers[i]);
+        // Empty until the first Update: no light, no cluster lists anything.
+        std::memset(m_mappedLightBuffers[i], 0, static_cast<size_t>(kLightBytes));
+        std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
+    }
+}
+
+void VulkanUniformBuffer::CreateMappedBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory,
+    void*& mapped)
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create light buffer");
+
+    VkMemoryRequirements memoryRequirements{};
+    vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = memoryRequirements.size;
+    allocateInfo.memoryTypeIndex = FindMemoryType(
+        memoryRequirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate light buffer memory");
+    CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind light buffer memory");
+    CheckVulkan(vkMapMemory(m_device, memory, 0, size, 0, &mapped), "Failed to map light buffer memory");
 }
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
     // One pool serves both sets the split produced: imageCount uniform buffers, shadow map
-    // samplers and previous model buffers for set 0 and thirteen samplers per material set for
+    // samplers and four storage buffers (previous models, sky SH, lights, clusters) for set 0 and thirteen samplers per material set for
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
                                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 7},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 2}}};
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 4}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -416,7 +511,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 10> frameWrites{};
+        std::array<VkWriteDescriptorSet, 12> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -469,6 +564,20 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             write.descriptorCount = 1;
             write.pImageInfo = &specularInfos[index];
+        }
+
+        const std::array<VkDescriptorBufferInfo, 2> lightInfos = {
+            VkDescriptorBufferInfo{m_lightBuffers[i], 0, VK_WHOLE_SIZE},
+            VkDescriptorBufferInfo{m_clusterBuffers[i], 0, VK_WHOLE_SIZE}};
+        for (uint32_t index = 0; index < 2; ++index)
+        {
+            VkWriteDescriptorSet& write = frameWrites[10 + index];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = m_frameDescriptorSets[i];
+            write.dstBinding = 10 + index;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.descriptorCount = 1;
+            write.pBufferInfo = &lightInfos[index];
         }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);

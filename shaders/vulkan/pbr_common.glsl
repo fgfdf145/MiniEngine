@@ -11,6 +11,23 @@
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
+// Every light the shader evaluates: ubo.lightCounts.x directional lights, then the local ones. The
+// C++ side is GpuLightData, written by VulkanUniformBuffer::Update.
+layout(set = 0, binding = 10, std430) readonly buffer SceneLightBuffer
+{
+    SceneLightData lights[];
+}
+sceneLights;
+
+// The local lights each cluster may be lit by (LightClusterGrid in engine/renderer/light_clusters.h):
+// ranges[cluster] = (offset, count) into indices, whose entries index sceneLights.lights.
+layout(set = 0, binding = 11, std430) readonly buffer LightClusterBuffer
+{
+    uvec2 ranges[LIGHT_CLUSTER_COUNT];
+    uint indices[];
+}
+lightClusters;
+
 const float PI = 3.14159265359;
 
 // ---------------------------------------------------------------------------
@@ -432,6 +449,26 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float rough
     return sky + (diffuseAlbedo + specularAlbedo) * sceneAmbient;
 }
 
+// ---------------------------------------------------------------------------
+// Light clusters
+// ---------------------------------------------------------------------------
+
+// The cluster a world position falls in: its tile from the NDC the camera projects it to, its slice
+// from its view depth. FindLightCluster in engine/renderer/light_clusters.cpp is the same arithmetic,
+// and the CPU binned the lights through the same projection, Y flip included, so the two agree on
+// which tile a pixel is in.
+uint FindLightCluster(vec3 worldPosition)
+{
+    vec4 viewPosition = ubo.view * vec4(worldPosition, 1.0);
+    vec4 clip = ubo.proj * viewPosition;
+    vec2 ndc = clip.xy / clip.w;
+    vec2 tileCount = vec2(LIGHT_CLUSTER_TILES_X, LIGHT_CLUSTER_TILES_Y);
+    uvec2 tile = uvec2(clamp(floor((ndc * 0.5 + 0.5) * tileCount), vec2(0.0), tileCount - 1.0));
+    float slice = floor(log(max(-viewPosition.z, 1e-4)) * ubo.lightClusterSlices.x + ubo.lightClusterSlices.y);
+    uint sliceIndex = uint(clamp(slice, 0.0, float(LIGHT_CLUSTER_SLICES - 1)));
+    return (sliceIndex * LIGHT_CLUSTER_TILES_Y + tile.y) * LIGHT_CLUSTER_TILES_X + tile.x;
+}
+
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
 // (ambient + direct) with emissive added afterwards, so the forward image is unchanged by the move
@@ -457,13 +494,15 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 energyCompensation = SpecularEnergyCompensation(F0, SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0)));
 
-    uint lightCount = ubo.sceneLightCount.x;
+    // Directional lights reach everywhere, so they are never binned: every pixel loops over them.
+    // The shadow caster is always one of them.
+    uint directionalCount = ubo.lightCounts.x;
     int shadowLightIndex = int(ubo.shadowParams.x);
     vec3 directAccum = vec3(0.0);
-    for (uint i = 0u; i < lightCount; ++i)
+    for (uint i = 0u; i < directionalCount; ++i)
     {
         vec3 contribution = EvaluateSceneLight(
-            ubo.lights[i],
+            sceneLights.lights[i],
             worldPosition,
             N, V,
             albedo, metallic, roughness,
@@ -475,6 +514,35 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
             contribution *= EvaluateDirectionalShadow(worldPosition, geoNormal);
         }
         directAccum += contribution;
+    }
+
+    // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
+    // and a light left out contributes exactly zero, so this sums the same values in the same order
+    // as the brute-force loop below. That loop stays as the comparison path.
+    if (ubo.lightCounts.z != 0u)
+    {
+        uvec2 range = lightClusters.ranges[FindLightCluster(worldPosition)];
+        for (uint k = 0u; k < range.y; ++k)
+        {
+            directAccum += EvaluateSceneLight(
+                sceneLights.lights[lightClusters.indices[range.x + k]],
+                worldPosition,
+                N, V,
+                albedo, metallic, roughness,
+                energyCompensation);
+        }
+    }
+    else
+    {
+        for (uint i = directionalCount; i < ubo.lightCounts.y; ++i)
+        {
+            directAccum += EvaluateSceneLight(
+                sceneLights.lights[i],
+                worldPosition,
+                N, V,
+                albedo, metallic, roughness,
+                energyCompensation);
+        }
     }
 
     return ambient + directAccum;
