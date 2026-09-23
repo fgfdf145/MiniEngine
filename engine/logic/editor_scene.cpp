@@ -176,10 +176,99 @@ TransformComponent DecomposeTransformMatrix(const glm::mat4& matrix, const Trans
     return transform;
 }
 
+const char* EnvironmentModeToString(EnvironmentMode mode)
+{
+    switch (mode)
+    {
+    case EnvironmentMode::Atmosphere:
+        return "atmosphere";
+    case EnvironmentMode::Hdri:
+        return "hdri";
+    case EnvironmentMode::None:
+        break;
+    }
+    return "none";
+}
+
+EnvironmentMode EnvironmentModeFromString(const std::string& text)
+{
+    if (text == "atmosphere")
+    {
+        return EnvironmentMode::Atmosphere;
+    }
+    if (text == "hdri")
+    {
+        return EnvironmentMode::Hdri;
+    }
+    return EnvironmentMode::None;
+}
+
+// A missing node, from a scene saved before environments existed, reads as the default: None.
+SceneEnvironment ReadEnvironment(const YAML::Node& node)
+{
+    SceneEnvironment environment{};
+    if (!node || !node.IsMap())
+    {
+        return environment;
+    }
+    environment.mode = EnvironmentModeFromString(node["mode"].as<std::string>("none"));
+
+    // A missing sub-node keeps its defaults; subscripting one would throw.
+    const YAML::Node atmosphereNode = node["atmosphere"];
+    if (atmosphereNode && atmosphereNode.IsMap())
+    {
+        AtmosphereSettings& atmosphere = environment.atmosphere;
+        atmosphere.groundAlbedo = ReadVec3(atmosphereNode["ground_albedo"], atmosphere.groundAlbedo);
+        atmosphere.rayleighDensityScale = atmosphereNode["rayleigh_density_scale"].as<float>(atmosphere.rayleighDensityScale);
+        atmosphere.mieDensityScale = atmosphereNode["mie_density_scale"].as<float>(atmosphere.mieDensityScale);
+        atmosphere.mieAnisotropy = atmosphereNode["mie_anisotropy"].as<float>(atmosphere.mieAnisotropy);
+        atmosphere.ozoneDensityScale = atmosphereNode["ozone_density_scale"].as<float>(atmosphere.ozoneDensityScale);
+        atmosphere.aerialPerspectiveDistanceScale =
+            atmosphereNode["aerial_perspective_distance_scale"].as<float>(atmosphere.aerialPerspectiveDistanceScale);
+        atmosphere.sunAngularDiameterDegrees =
+            atmosphereNode["sun_angular_diameter_degrees"].as<float>(atmosphere.sunAngularDiameterDegrees);
+    }
+
+    const YAML::Node hdriNode = node["hdri"];
+    if (hdriNode && hdriNode.IsMap())
+    {
+        HdriSettings& hdri = environment.hdri;
+        hdri.path = hdriNode["path"].as<std::string>(hdri.path);
+        hdri.uuid = hdriNode["uuid"].as<std::string>(hdri.uuid);
+        hdri.intensity = hdriNode["intensity"].as<float>(hdri.intensity);
+        hdri.rotationDegrees = hdriNode["rotation_degrees"].as<float>(hdri.rotationDegrees);
+    }
+    return environment;
+}
+
+void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment)
+{
+    emitter << YAML::Key << "environment" << YAML::Value << YAML::BeginMap;
+    emitter << YAML::Key << "mode" << YAML::Value << EnvironmentModeToString(environment.mode);
+    emitter << YAML::Key << "atmosphere" << YAML::Value << YAML::BeginMap;
+    const AtmosphereSettings& atmosphere = environment.atmosphere;
+    EmitVec3(emitter, "ground_albedo", atmosphere.groundAlbedo);
+    emitter << YAML::Key << "rayleigh_density_scale" << YAML::Value << atmosphere.rayleighDensityScale;
+    emitter << YAML::Key << "mie_density_scale" << YAML::Value << atmosphere.mieDensityScale;
+    emitter << YAML::Key << "mie_anisotropy" << YAML::Value << atmosphere.mieAnisotropy;
+    emitter << YAML::Key << "ozone_density_scale" << YAML::Value << atmosphere.ozoneDensityScale;
+    emitter << YAML::Key << "aerial_perspective_distance_scale" << YAML::Value << atmosphere.aerialPerspectiveDistanceScale;
+    emitter << YAML::Key << "sun_angular_diameter_degrees" << YAML::Value << atmosphere.sunAngularDiameterDegrees;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "hdri" << YAML::Value << YAML::BeginMap;
+    emitter << YAML::Key << "path" << YAML::Value << environment.hdri.path;
+    emitter << YAML::Key << "uuid" << YAML::Value << environment.hdri.uuid;
+    emitter << YAML::Key << "intensity" << YAML::Value << environment.hdri.intensity;
+    emitter << YAML::Key << "rotation_degrees" << YAML::Value << environment.hdri.rotationDegrees;
+    emitter << YAML::EndMap;
+    emitter << YAML::EndMap;
+}
+
 SerializedSceneData ReadSceneData(const YAML::Node& root)
 {
     SerializedSceneData sceneData{};
     sceneData.gizmo = ReadGizmoSettings(root["editor"]["gizmo"], sceneData.gizmo);
+    sceneData.environment = ReadEnvironment(root["environment"]);
 
     const YAML::Node entitiesNode = root["entities"];
     if (entitiesNode && entitiesNode.IsSequence())
@@ -287,6 +376,8 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
     }
     emitter << YAML::EndSeq;
 
+    EmitEnvironment(emitter, sceneData.environment);
+
     emitter << YAML::Key << "editor" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "gizmo" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "operation" << YAML::Value << ToString(sceneData.gizmo.operation);
@@ -351,6 +442,16 @@ void EditorScene::SetSceneFilePath(const std::string& path)
     m_sceneFilePath = path;
 }
 
+const SceneEnvironment& EditorScene::GetEnvironment() const
+{
+    return m_environment;
+}
+
+void EditorScene::SetEnvironment(const SceneEnvironment& environment)
+{
+    m_environment = environment;
+}
+
 void EditorScene::CreateTwoCubeTestScene()
 {
     Clear();
@@ -367,6 +468,21 @@ void EditorScene::CreateTwoCubeTestScene()
 
     CreateEntity(leftCube);
     CreateEntity(rightCube);
+
+    // The atmosphere needs a sun to light it: 35 degrees up, behind the default camera, which looks
+    // down -Z. A directional light shines along its local -Y; 55 degrees about X tips that toward -Z.
+    // (Y is applied before X in BuildLightRotation, so it cannot turn a -Y light; azimuth would need
+    // Z.)
+    SerializedLightData sun{};
+    sun.tagName = "Sun";
+    sun.lightType = LightType::Directional;
+    sun.intensity = kDefaultSunIlluminanceLux;
+    sun.transform.translation = glm::vec3(0.0f, 4.0f, 0.0f);
+    sun.transform.rotationDegrees = glm::vec3(55.0f, 0.0f, 0.0f);
+    CreateLightEntity(sun);
+
+    m_environment = SceneEnvironment{};
+    m_environment.mode = EnvironmentMode::Atmosphere;
     EnsureSelection();
 }
 
@@ -641,6 +757,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
 {
     Clear();
     m_gizmoSettings = sceneData.gizmo;
+    m_environment = sceneData.environment;
 
     for (const SerializedEntityData& entityData : sceneData.entities)
     {
@@ -773,6 +890,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
 {
     SerializedSceneData sceneData{};
     sceneData.gizmo = m_gizmoSettings;
+    sceneData.environment = m_environment;
 
     // The on_destroy listener keeps scene order free of stale handles,
     // so entries can be read without per-entity validity checks.

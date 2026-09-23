@@ -50,6 +50,32 @@ endif()
 
 set_target_properties(miniengine_world_bounds_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_scene_environment_tests
+    scene_environment_tests.cpp
+)
+miniengine_group_target_sources(miniengine_scene_environment_tests)
+
+target_link_libraries(miniengine_scene_environment_tests
+    PRIVATE
+        engine_logic
+)
+
+add_test(
+    NAME miniengine.scene_environment
+    COMMAND miniengine_scene_environment_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_scene_environment_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_scene_environment_tests>
+            $<TARGET_FILE_DIR:miniengine_scene_environment_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_scene_environment_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gizmo_settings_tests
     gizmo_settings_tests.cpp
 )

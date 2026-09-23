@@ -3,6 +3,7 @@
 #include <engine/logic/logic_layer.h>
 #include <engine/logic/gizmo_settings.h>
 #include <engine/scene/scene_components.h>
+#include <engine/scene/scene_environment.h>
 #include <engine/scene/scene_world.h>
 
 #include <imgui.h>
@@ -49,6 +50,7 @@ struct SerializedSceneData
     std::vector<SerializedEntityData> entities;
     std::vector<SerializedLightData> lights;
     GizmoSettings gizmo;
+    SceneEnvironment environment;
     std::string selectedEntityUuid;
     // Legacy v1/v2 model-list index, retained for backward-compatible loads.
     int selectedEntityIndex = 0;
@@ -97,6 +99,9 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
     virtual std::string BuildSceneYamlPreview() const = 0;
     virtual const std::string& GetConfigPath() const = 0;
     virtual const std::string& GetSceneFilePath() const = 0;
+    // The scene's sky. Saved with the scene; a scene file without it loads as EnvironmentMode::None.
+    virtual const SceneEnvironment& GetEnvironment() const = 0;
+    virtual void SetEnvironment(const SceneEnvironment& environment) = 0;
 
     // Convenience accessors; callers must hold a valid selection (HasSelection()).
     TagComponent& EditSelectedTag()

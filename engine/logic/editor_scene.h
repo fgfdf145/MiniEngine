@@ -69,6 +69,8 @@ class EditorScene final : public IEditorWorld
     std::string BuildSceneYamlPreview() const override;
     const std::string& GetConfigPath() const override;
     const std::string& GetSceneFilePath() const override;
+    const SceneEnvironment& GetEnvironment() const override;
+    void SetEnvironment(const SceneEnvironment& environment) override;
 
   private:
     void EnsureSelection();
@@ -81,6 +83,7 @@ class EditorScene final : public IEditorWorld
     entt::entity m_selectedEntity = entt::null;
     TransformComponent m_defaultTransform;
     GizmoSettings m_gizmoSettings;
+    SceneEnvironment m_environment;
     std::string m_configPath;
     std::string m_sceneFilePath;
     std::unordered_map<std::string, entt::entity> m_entityByUuid;

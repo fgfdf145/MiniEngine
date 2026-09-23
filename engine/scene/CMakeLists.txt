@@ -2,6 +2,7 @@ add_library(engine_scene
     material_alpha.cpp
     material_graph.h
     scene_components.h
+    scene_environment.h
     scene_module.cpp
     scene_world.h
     world_units.h
