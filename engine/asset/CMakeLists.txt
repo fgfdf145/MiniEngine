@@ -51,4 +51,5 @@ target_link_libraries(engine_asset
         yaml-cpp::yaml-cpp
     PRIVATE
         unofficial::bc7enc-rdo::bc7enc-rdo
+        unofficial::tinyexr::tinyexr
 )

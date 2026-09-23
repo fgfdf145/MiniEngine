@@ -25,6 +25,7 @@
     },
     "spdlog",
     "stb",
+    "tinyexr",
     "tinygltf",
     "vulkan",
     "yaml-cpp"

@@ -132,6 +132,7 @@ find_package(yaml-cpp CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(unofficial-bc7enc-rdo CONFIG REQUIRED)
+find_package(tinyexr CONFIG REQUIRED)
 find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
 
 if(NOT Vulkan_GLSLC_EXECUTABLE)

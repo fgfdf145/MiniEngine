@@ -290,6 +290,35 @@ endif()
 
 set_target_properties(miniengine_texture_preparation_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_float_texture_tests
+    float_texture_tests.cpp
+)
+miniengine_group_target_sources(miniengine_float_texture_tests)
+
+# tinyexr is linked directly as well: the tests write the EXR fixtures engine_asset reads.
+target_link_libraries(miniengine_float_texture_tests
+    PRIVATE
+        engine_asset
+        unofficial::tinyexr::tinyexr
+)
+target_include_directories(miniengine_float_texture_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+add_test(
+    NAME miniengine.float_textures
+    COMMAND miniengine_float_texture_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_float_texture_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_float_texture_tests>
+            $<TARGET_FILE_DIR:miniengine_float_texture_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_float_texture_tests PROPERTIES FOLDER "Tests")
+
 add_test(
     NAME miniengine.vcpkg_layout_contract
     COMMAND ${CMAKE_COMMAND}
