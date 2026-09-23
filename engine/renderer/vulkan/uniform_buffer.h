@@ -31,6 +31,10 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding environmentMap;
     // Binding 7: the atmosphere's radiance SH (VulkanAtmosphere::GetIrradianceBuffer).
     VkBuffer irradiance = VK_NULL_HANDLE;
+    // Binding 8: the GGX-prefiltered sky cube (VulkanEnvironmentProbe), in GENERAL.
+    TextureDescriptorBinding prefiltered;
+    // Binding 9: the DFG table, in SHADER_READ_ONLY_OPTIMAL.
+    TextureDescriptorBinding brdfLut;
 };
 
 struct MaterialTextureBinding

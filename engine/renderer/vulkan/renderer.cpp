@@ -2,6 +2,8 @@
 
 #include "../imgui/imgui_impl_vulkan.h"
 #include "viewport_capture.h"
+
+#include <engine/renderer/environment_brdf.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/renderer/scene_lighting.h>
 
@@ -600,6 +602,11 @@ void VulkanRenderer::DrawFrame()
                                                   commandBuffer,
                                                   frame.frameDescriptorSet,
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr);
+                                              // After the atmosphere, whose sky-view LUT the capture samples.
+                                              m_environmentProbe->Record(
+                                                  commandBuffer,
+                                                  frame.frameDescriptorSet,
+                                                  environmentMode != EnvironmentMode::None);
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -753,6 +760,11 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle());
+    m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_frameSetLayout->GetHandle());
 
     // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
     VulkanUploadBatch uploadBatch(
@@ -767,6 +779,13 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         black,
+        uploadBatch);
+    // The DFG table, one mip, RGBA32F; the shader clamps its lookups to texel centres, so the
+    // equirectangular sampler's u repeat never shows.
+    m_environmentBrdfLut = std::make_unique<VulkanTexture>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, kEnvironmentBrdfSampleCount),
         uploadBatch);
     uploadBatch.Flush();
 }
@@ -800,6 +819,8 @@ void VulkanRenderer::DestroyDeviceResources()
     m_environmentMap.reset();
     m_environmentMapPath.clear();
     m_defaultEnvironmentMap.reset();
+    m_environmentBrdfLut.reset();
+    m_environmentProbe.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
@@ -819,6 +840,8 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.skyView = m_atmosphere->GetSkyViewBinding();
     bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
+    bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
+    bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;

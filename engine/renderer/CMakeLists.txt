@@ -70,6 +70,8 @@ add_library(engine_renderer
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
+    vulkan/environment_probe.cpp
+    vulkan/environment_probe.h
     vulkan/exposure_histogram_pass.cpp
     vulkan/exposure_histogram_pass.h
     vulkan/format_support.cpp
@@ -140,6 +142,8 @@ set(MINIENGINE_SHADER_SOURCES
     atmosphere_skyview.comp
     atmosphere_aerial_perspective.comp
     atmosphere_irradiance.comp
+    environment_capture.comp
+    environment_prefilter.comp
     sky.vert
     sky.frag
     shadow.vert
@@ -161,6 +165,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_integrate.glsl
     atmosphere_sampling.glsl
     spherical_harmonics.glsl
+    cubemap_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)

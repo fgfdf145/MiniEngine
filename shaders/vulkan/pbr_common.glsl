@@ -6,6 +6,7 @@
 // The sky's SH irradiance for the ambient term under a physical sky.
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
+#include "cubemap_common.glsl"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -389,19 +390,28 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
     return max(irradiance, vec3(0.0));
 }
 
-// The ambient term under a physical sky: the diffuse lobe sees the irradiance for N, the specular
-// lobe the cosine-blurred radiance along R (phase 4 prefilters it properly), each divided by pi to
-// turn irradiance into the radiance of a Lambertian reflector. The scene's Ambient lights, but not
-// the fallback, add their uniform luminance.
+// The DFG table at (roughness, N.V), clamped to texel centres so the lookup never wraps.
+vec2 SampleEnvironmentBrdf(float roughness, float NdV)
+{
+    const float size = 64.0;
+    vec2 uv = clamp(vec2(NdV, roughness), vec2(0.5 / size), vec2(1.0 - 0.5 / size));
+    return textureLod(environmentBrdfLut, uv, 0.0).rg;
+}
+
+// The ambient term under a physical sky, split-sum (Karis 2013): the diffuse lobe sees the SH
+// irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
+// weighted by the DFG table's F0 A + B. The scene's Ambient lights, but not the fallback, add their
+// uniform luminance.
 vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float roughness)
 {
     float NdV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    vec2 environmentBrdf = EnvironmentBrdfApprox(roughness, NdV);
+    vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
     vec3 specularAlbedo = F0 * environmentBrdf.x + environmentBrdf.y;
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     vec3 R = reflect(-V, N);
-    vec3 sky = (diffuseAlbedo * EvaluateSkyIrradiance(N) + specularAlbedo * EvaluateSkyIrradiance(R)) / ATMOSPHERE_PI;
+    vec3 specular = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+    vec3 sky = diffuseAlbedo * EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + specularAlbedo * specular;
     vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
     return sky + (diffuseAlbedo + specularAlbedo) * sceneAmbient;
 }

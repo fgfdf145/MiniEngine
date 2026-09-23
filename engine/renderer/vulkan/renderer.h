@@ -2,6 +2,7 @@
 
 #include "ao_pass.h"
 #include "atmosphere.h"
+#include "environment_probe.h"
 #include "buffer.h"
 #include "command.h"
 #include "device.h"
@@ -203,6 +204,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Device lifetime as well, for the same reasons: fixed-size images shared by every frame in
     // flight and bound into set 0 by every VulkanUniformBuffer.
     std::unique_ptr<VulkanAtmosphere> m_atmosphere;
+    // The sky prefiltered for the specular lobe, and the DFG table it is weighted by.
+    std::unique_ptr<VulkanEnvironmentProbe> m_environmentProbe;
+    std::unique_ptr<VulkanTexture> m_environmentBrdfLut;
     // Set 0 binding 6 when no HDRI is loaded.
     std::unique_ptr<VulkanTexture> m_defaultEnvironmentMap;
     // The loaded HDRI and the scene path it came from; empty until one loads.

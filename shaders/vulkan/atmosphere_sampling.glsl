@@ -16,6 +16,10 @@ layout(set = 0, binding = 7, std430) readonly buffer SkyIrradiance
     vec4 coefficients[9];
 }
 skyIrradiance;
+// Set 0 bindings 8 and 9: the GGX-prefiltered sky (mip m for roughness m / 5) and the DFG table
+// (x = N.V, y = roughness).
+layout(set = 0, binding = 8) uniform samplerCube prefilteredEnvironment;
+layout(set = 0, binding = 9) uniform sampler2D environmentBrdfLut;
 
 // The world direction through a full-screen texture coordinate (origin top left, as
 // fullscreen.vert emits it), from the camera toward the far plane.
