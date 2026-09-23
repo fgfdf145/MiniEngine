@@ -101,6 +101,23 @@ void VulkanUniformBuffer::DestroyHandles()
     // VulkanMaterialDescriptorSetLayout respectively, not by this buffer.
 }
 
+void VulkanUniformBuffer::SetEnvironmentMap(TextureDescriptorBinding environmentMap)
+{
+    m_environment.environmentMap = environmentMap;
+    const VkDescriptorImageInfo info{environmentMap.sampler, environmentMap.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    for (VkDescriptorSet set : m_frameDescriptorSets)
+    {
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set;
+        write.dstBinding = 6;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+}
+
 VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) const
 {
     if (imageIndex >= m_imageCount)

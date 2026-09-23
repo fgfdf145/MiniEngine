@@ -476,6 +476,7 @@ void VulkanRenderer::DrawFrame()
     }
 
     const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
+    UpdateEnvironmentMap(environment);
     const EnvironmentMode environmentMode = EffectiveEnvironmentMode(environment);
     const AtmosphereParameters atmosphereParameters = BuildAtmosphereParameters(environment.atmosphere);
     std::optional<AtmosphereSun> sun;
@@ -563,6 +564,7 @@ void VulkanRenderer::DrawFrame()
     frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly;
     frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
+    frame.physicalSky = environmentMode != EnvironmentMode::None;
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
@@ -788,11 +790,13 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
     // The ImGui pass sampled it last, so the tracker left it shader-read.
     request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     CaptureImageToPng(request, path);
-    LOG_INFO("Captured the viewport to '{}'", path.string());
+    LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), State().camera.exposureEv100);
 }
 
 void VulkanRenderer::DestroyDeviceResources()
 {
+    m_environmentMap.reset();
+    m_environmentMapPath.clear();
     m_defaultEnvironmentMap.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
@@ -812,14 +816,79 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.transmittance = m_atmosphere->GetTransmittanceBinding();
     bindings.skyView = m_atmosphere->GetSkyViewBinding();
     bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
-    bindings.environmentMap = TextureDescriptorBinding{m_defaultEnvironmentMap->GetImageView(), m_defaultEnvironmentMap->GetSampler()};
+    const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
+    bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;
 }
 
-// The mode the frame renders with. An HDRI that is not loaded renders as None (Task 7 loads it).
+// The mode the frame renders with: an HDRI that is still loading, or failed to, renders as None.
 EnvironmentMode VulkanRenderer::EffectiveEnvironmentMode(const SceneEnvironment& environment) const
 {
-    return environment.mode == EnvironmentMode::Hdri ? EnvironmentMode::None : environment.mode;
+    if (environment.mode != EnvironmentMode::Hdri)
+    {
+        return environment.mode;
+    }
+    const bool loaded = m_environmentMap && !environment.hdri.path.empty() && environment.hdri.path == m_environmentMapPath;
+    return loaded ? EnvironmentMode::Hdri : EnvironmentMode::None;
+}
+
+void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
+{
+    if (environment.mode != EnvironmentMode::Hdri || environment.hdri.path.empty())
+    {
+        return;
+    }
+    const std::string& wanted = environment.hdri.path;
+
+    if (m_pendingEnvironmentMap.valid())
+    {
+        if (m_pendingEnvironmentMap.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            return;
+        }
+        const std::string path = m_pendingEnvironmentMapPath;
+        try
+        {
+            const FloatTextureData image = m_pendingEnvironmentMap.get();
+            if (path == wanted)
+            {
+                VulkanUploadBatch uploadBatch(
+                    m_device->GetHandle(),
+                    m_device->GetQueueFamilies().graphicsFamily.value(),
+                    m_device->GetGraphicsQueue());
+                auto texture = std::make_unique<VulkanTexture>(
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(), image, uploadBatch);
+                uploadBatch.Flush();
+                // The frame sets name the old map until rewritten, and may be in use.
+                m_commandContext->WaitForAllFrames();
+                if (m_uniformBuffer)
+                {
+                    m_uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), texture->GetSampler()});
+                }
+                m_environmentMap = std::move(texture);
+                m_environmentMapPath = path;
+                LOG_INFO("Loaded HDRI '{}' ({}x{})", path, image.width, image.height);
+            }
+        }
+        catch (const std::exception& error)
+        {
+            LOG_ERROR("Failed to load HDRI '{}': {}", path, error.what());
+            m_failedEnvironmentMapPath = path;
+        }
+        m_pendingEnvironmentMapPath.clear();
+    }
+
+    if (wanted == m_environmentMapPath || wanted == m_failedEnvironmentMapPath)
+    {
+        return;
+    }
+    m_pendingEnvironmentMapPath = wanted;
+    m_pendingEnvironmentMap = std::async(
+        std::launch::async,
+        [path = wanted]()
+        {
+            return TextureLoader::LoadRGBA32F(path);
+        });
 }
 
 void VulkanRenderer::CreateScenePasses()

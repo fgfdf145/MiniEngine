@@ -23,10 +23,14 @@ static_assert(
 
 constexpr VkDeviceSize kHistogramBytes = sizeof(uint32_t) * kExposureHistogramBinCount;
 
+// Must match HistogramConstants in shaders/vulkan/exposure_histogram.comp.
 struct HistogramPushConstants
 {
     uint32_t width = 0;
     uint32_t height = 0;
+    // 1 when the pixels no geometry covered hold a physical sky and are metered like the rest.
+    uint32_t meterBackground = 0;
+    uint32_t unused = 0;
 };
 }
 
@@ -123,7 +127,7 @@ void VulkanExposureHistogramPass::Record(
         0,
         nullptr);
 
-    const HistogramPushConstants constants{frame.extent.width, frame.extent.height};
+    const HistogramPushConstants constants{frame.extent.width, frame.extent.height, frame.physicalSky ? 1u : 0u, 0u};
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,

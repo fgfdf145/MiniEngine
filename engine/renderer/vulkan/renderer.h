@@ -27,6 +27,7 @@
 #include <engine/renderer/motion_history.h>
 
 #include <memory>
+#include <future>
 #include <optional>
 #include <span>
 #include <string>
@@ -107,6 +108,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     void DestroyDeviceResources();
     EnvironmentDescriptorBindings BuildEnvironmentBindings() const;
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
+    // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
+    void UpdateEnvironmentMap(const SceneEnvironment& environment);
     void CreateSwapchainResources();
     void CreateScenePasses();
     IScenePass* FindScenePass(ScenePassId id) const;
@@ -202,6 +205,14 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanAtmosphere> m_atmosphere;
     // Set 0 binding 6 when no HDRI is loaded.
     std::unique_ptr<VulkanTexture> m_defaultEnvironmentMap;
+    // The loaded HDRI and the scene path it came from; empty until one loads.
+    std::unique_ptr<VulkanTexture> m_environmentMap;
+    std::string m_environmentMapPath;
+    // A decode running on a worker thread, and the path it decodes.
+    std::future<FloatTextureData> m_pendingEnvironmentMap;
+    std::string m_pendingEnvironmentMapPath;
+    // The last path that failed, so a bad file is reported once rather than every frame.
+    std::string m_failedEnvironmentMapPath;
     // The swapchain image the last submitted frame drew into, for CaptureViewport.
     std::optional<uint32_t> m_lastRecordedImageIndex;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;

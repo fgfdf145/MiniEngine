@@ -21,6 +21,9 @@ histogram;
 layout(push_constant) uniform HistogramConstants
 {
     uvec2 extent;
+    // 1 when the background is a physical sky (the atmosphere or an HDRI), metered like geometry.
+    uint meterBackground;
+    uint unused;
 }
 constants;
 
@@ -34,10 +37,11 @@ void main()
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     if (all(lessThan(gl_GlobalInvocationID.xy, constants.extent)))
     {
-        // Background pixels are skipped: the forward pass clears them to a value divided by the
-        // current exposure, so metering them would feed the exposure back into itself.
+        // The flat background of EnvironmentMode::None is skipped: it is a value divided by the
+        // current exposure, so metering it would feed the exposure back into itself. A physical
+        // sky is radiance like any surface and is metered.
         float depth = texelFetch(depthTexture, pixel, 0).r;
-        if (depth < 1.0)
+        if (depth < 1.0 || constants.meterBackground != 0u)
         {
             vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0));
             float luminance = ExposureLuminance(radiance);

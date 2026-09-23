@@ -185,6 +185,9 @@ class VulkanUniformBuffer
     VulkanUniformBuffer& operator=(const VulkanUniformBuffer&) = delete;
 
     VkDescriptorSet GetFrameDescriptorSet(uint32_t imageIndex) const;
+    // Points set 0 binding 6 of every frame set at another environment map. The caller has waited
+    // for every frame in flight: the sets must not be in use while they are written.
+    void SetEnvironmentMap(TextureDescriptorBinding environmentMap);
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
     void Update(
         uint32_t imageIndex,
