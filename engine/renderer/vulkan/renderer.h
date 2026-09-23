@@ -95,6 +95,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
 
     void DrawFrame() override;
+    void CaptureViewport(const std::filesystem::path& path) override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -193,6 +194,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Device lifetime too: its image has a fixed size and is shared by every frame in flight, and
     // every VulkanUniformBuffer binds it into set 0.
     std::unique_ptr<VulkanShadowPass> m_shadowPass;
+    // The swapchain image the last submitted frame drew into, for CaptureViewport.
+    std::optional<uint32_t> m_lastRecordedImageIndex;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;

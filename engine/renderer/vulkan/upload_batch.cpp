@@ -38,8 +38,9 @@ VulkanUploadBatch::~VulkanUploadBatch()
     }
 }
 
-VkCommandBuffer VulkanUploadBatch::GetCommandBuffer() const
+VkCommandBuffer VulkanUploadBatch::GetCommandBuffer()
 {
+    m_hasCommands = true;
     return m_commandBuffer;
 }
 
@@ -58,7 +59,7 @@ void VulkanUploadBatch::BeginRecording()
 
 void VulkanUploadBatch::Flush()
 {
-    if (m_stagingResources.empty())
+    if (!m_hasCommands && m_stagingResources.empty())
     {
         return;
     }
@@ -82,6 +83,7 @@ void VulkanUploadBatch::Flush()
         vkFreeMemory(m_device, stagingMemory, nullptr);
     }
     m_stagingResources.clear();
+    m_hasCommands = false;
 
     CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset upload batch command pool");
     BeginRecording();

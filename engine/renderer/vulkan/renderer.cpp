@@ -1,6 +1,7 @@
 ﻿#include "renderer.h"
 
 #include "../imgui/imgui_impl_vulkan.h"
+#include "viewport_capture.h"
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/renderer/scene_lighting.h>
 
@@ -570,6 +571,7 @@ void VulkanRenderer::DrawFrame()
                                               RecordEditorLayer(commandBuffer, imageIndex);
                                           });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
+    m_lastRecordedImageIndex = imageIndex;
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
@@ -702,6 +704,30 @@ void VulkanRenderer::CreateDeviceResources()
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
+}
+
+void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
+{
+    if (!m_lastRecordedImageIndex.has_value() || !m_sceneTargets)
+    {
+        throw std::runtime_error("No frame has been drawn to capture");
+    }
+    vkDeviceWaitIdle(m_device->GetHandle());
+
+    ImageCaptureRequest request{};
+    request.physicalDevice = m_device->GetPhysicalDevice();
+    request.device = m_device->GetHandle();
+    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
+    request.queue = m_device->GetGraphicsQueue();
+    // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
+    const uint32_t index = m_sceneTargets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
+    request.image = m_sceneTargets->GetImage(RenderTargetId::SceneLdr, index);
+    request.format = m_sceneTargets->GetFormat(RenderTargetId::SceneLdr);
+    request.extent = m_sceneTargets->GetExtent();
+    // The ImGui pass sampled it last, so the tracker left it shader-read.
+    request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    CaptureImageToPng(request, path);
+    LOG_INFO("Captured the viewport to '{}'", path.string());
 }
 
 void VulkanRenderer::DestroyDeviceResources()

@@ -19,6 +19,8 @@ struct EditorApplicationOptions
     // A scene file loaded in place of the two-cube test scene, the way File > Open would load it.
     std::optional<std::string> startupScenePath;
     uint32_t maxFrames = 0;
+    // With --frames: the viewport of the last frame is written here as a PNG.
+    std::optional<std::string> capturePath;
     EnginePaths::Overrides paths;
 };
 

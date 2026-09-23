@@ -93,6 +93,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--capture")
+        {
+            options.capturePath = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
         if (argument == "--backend")
         {
             options.renderBackend = ParseRenderBackend(ReadRequiredArgument(i, argc, argv, argument));
@@ -191,6 +197,11 @@ int EditorApplication::Run()
                 break;
             }
         }
+    }
+
+    if (m_options.capturePath.has_value())
+    {
+        renderer->CaptureViewport(*m_options.capturePath);
     }
 
     return 0;

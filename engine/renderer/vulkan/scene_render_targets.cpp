@@ -226,7 +226,8 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
 
     TargetDescription& ldr = Describe(RenderTargetId::SceneLdr);
     ldr.format = ldrFormat;
-    ldr.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // Transfer source for --capture, which copies the viewport to a PNG.
+    ldr.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     ldr.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     ldr.bindToImGui = true;
 

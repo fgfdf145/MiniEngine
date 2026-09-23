@@ -27,14 +27,16 @@ class VulkanUploadBatch
     VulkanUploadBatch(const VulkanUploadBatch&) = delete;
     VulkanUploadBatch& operator=(const VulkanUploadBatch&) = delete;
 
-    VkCommandBuffer GetCommandBuffer() const;
+    // Anything recorded into it is submitted by the next Flush(), whether or not it tracked a
+    // staging buffer: a readback records commands with nothing to stage.
+    VkCommandBuffer GetCommandBuffer();
     // Takes ownership. Track a staging buffer as soon as it exists, before anything else that can
     // throw, so a later failure in the same upload cannot leak it. Either handle may be null.
     void TrackStagingResource(VkBuffer buffer, VkDeviceMemory memory);
 
     // Submits everything recorded so far, waits for the GPU to finish, frees the staging
     // buffers tracked since the last Flush(), and re-arms the batch for more recording.
-    // No-op if nothing has been recorded.
+    // No-op if nobody asked for the command buffer since the last Flush().
     void Flush();
 
   private:
@@ -45,5 +47,6 @@ class VulkanUploadBatch
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_stagingResources;
+    bool m_hasCommands = false;
 };
 }

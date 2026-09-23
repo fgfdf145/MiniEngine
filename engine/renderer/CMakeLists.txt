@@ -107,6 +107,8 @@ add_library(engine_renderer
     vulkan/uniform_buffer.h
     vulkan/upload_batch.cpp
     vulkan/upload_batch.h
+    vulkan/viewport_capture.cpp
+    vulkan/viewport_capture.h
 )
 miniengine_group_target_sources(engine_renderer)
 
@@ -179,5 +181,6 @@ target_link_libraries(engine_renderer
     PRIVATE
         engine_logic
 )
+target_include_directories(engine_renderer PRIVATE "${Stb_INCLUDE_DIR}")
 
 add_dependencies(engine_renderer engine_renderer_shaders)
