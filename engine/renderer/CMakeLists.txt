@@ -14,6 +14,8 @@ add_library(engine_render_core
     environment_brdf.h
     exposure.cpp
     exposure.h
+    light_clusters.cpp
+    light_clusters.h
     material.h
     material_pipeline.cpp
     material_pipeline.h
