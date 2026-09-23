@@ -4,6 +4,7 @@
 layout(constant_id = 0) const bool kAlphaMask = false;
 
 #include "scene_common.glsl"
+#include "atmosphere_sampling.glsl"
 #include "pbr_common.glsl"
 #include "normal_map.glsl"
 
@@ -109,6 +110,10 @@ void main()
     // drift.
     vec3 emissive = emissiveSample * drawData.emissiveFactor;
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao) + emissive;
+
+    // The atmosphere between the surface and the camera, before blending: an approximation for
+    // Blend items, exact for the forward-only order's opaque ones.
+    color = ApplyAerialPerspective(color, fragWorldPosition);
 
     // Tone mapping happens in the tonemap pass, which is the only consumer of this target. This
     // shader writes linear radiance.

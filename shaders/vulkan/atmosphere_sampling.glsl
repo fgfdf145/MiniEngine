@@ -80,4 +80,30 @@ vec3 SampleEnvironmentMap(vec3 direction)
     return textureLod(environmentMap, vec2(u, v), 0.0).rgb * ubo.hdriParameters.x;
 }
 
+// Hazes a surface's radiance by the atmosphere between it and the camera: color * T + L, from the
+// aerial perspective volume at the surface's screen position and view distance (times the
+// scene's distance scale). The first half slice fades in from nothing, so surfaces right at the
+// camera are untouched. Off unless the environment is the atmosphere.
+vec3 ApplyAerialPerspective(vec3 color, vec3 worldPosition)
+{
+    if (EnvironmentMode() != ENVIRONMENT_ATMOSPHERE)
+    {
+        return color;
+    }
+    vec4 clip = ubo.proj * ubo.view * vec4(worldPosition, 1.0);
+    vec2 uv = clamp(clip.xy / clip.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    float distanceKm = length(worldPosition - ubo.cameraWorldPosition.xyz) * 0.001 * ubo.atmosphereRadii.z;
+    float slice = distanceKm / AERIAL_PERSPECTIVE_KM_PER_SLICE;
+    float weight = 1.0;
+    if (slice < 0.5)
+    {
+        weight = clamp(slice * 2.0, 0.0, 1.0);
+        slice = 0.5;
+    }
+    float w = sqrt(slice / AERIAL_PERSPECTIVE_SLICE_COUNT);
+    vec4 aerialPerspective = textureLod(atmosphereAerialPerspective, vec3(uv, w), 0.0);
+    float transmittance = 1.0 - weight * (1.0 - aerialPerspective.a);
+    return color * transmittance + aerialPerspective.rgb * weight;
+}
+
 #endif

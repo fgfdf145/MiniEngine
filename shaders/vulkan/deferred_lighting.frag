@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "scene_common.glsl"
+#include "atmosphere_sampling.glsl"
 #include "pbr_common.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
@@ -54,5 +55,5 @@ void main()
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
     // composites over this with an RGB-only write mask.
-    outColor = vec4(color, 1.0);
+    outColor = vec4(ApplyAerialPerspective(color, worldPosition), 1.0);
 }
