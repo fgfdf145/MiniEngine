@@ -53,6 +53,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
 vec3 EvaluateBRDF(
     vec3 N, vec3 V, vec3 L,
     vec3 albedo, float metallic, float roughness,
+    vec3 energyCompensation,
     vec3 radiance)
 {
     float NdL = max(dot(N, L), 0.0);
@@ -68,7 +69,7 @@ vec3 EvaluateBRDF(
     float D = DistributionGGX(N, H, roughness);
     float G = GeometrySmith(N, V, L, roughness);
 
-    vec3 specular = (D * G * F) / max(4.0 * NdV * NdL, 0.0001);
+    vec3 specular = (D * G * F) / max(4.0 * NdV * NdL, 0.0001) * energyCompensation;
 
     vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
@@ -135,7 +136,8 @@ vec3 EvaluateAreaLight(
     SceneLightData light,
     vec3 worldPos,
     vec3 N, vec3 V,
-    vec3 albedo, float metallic, float roughness)
+    vec3 albedo, float metallic, float roughness,
+    vec3 energyCompensation)
 {
     vec3 center = light.positionAndRange.xyz;
     vec3 lightNormal = normalize(light.directionAndType.xyz);
@@ -196,7 +198,7 @@ vec3 EvaluateAreaLight(
 
     float D = DistributionGGX(N, H, roughness) * energyNormalization;
     float G = GeometrySmith(N, V, L, roughness);
-    vec3 specular = NdL > 0.0 ? (D * G * F) / max(4.0 * NdV * NdL, 0.0001) : vec3(0.0);
+    vec3 specular = NdL > 0.0 ? (D * G * F) / max(4.0 * NdV * NdL, 0.0001) * energyCompensation : vec3(0.0);
 
     vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
@@ -290,6 +292,18 @@ vec2 EnvironmentBrdfApprox(float roughness, float NdV)
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// Scales a single-scattering GGX specular term up by the energy the lobe loses to light bouncing
+// between microfacets more than once (Fdez-Aguera 2019, in Filament's form). environmentBrdf is
+// the (A, B) pair the specular term was computed with: A + B is the lobe's directional albedo for
+// F0 = 1, so a perfect conductor then reflects exactly all it receives. Rough metals gain the most;
+// dielectrics, with their small F0, barely change. SpecularEnergyCompensation in
+// engine/renderer/environment_brdf.cpp is the same formula and carries the tests.
+vec3 SpecularEnergyCompensation(vec3 F0, vec2 environmentBrdf)
+{
+    float singleScatterAlbedo = max(environmentBrdf.x + environmentBrdf.y, 1e-4);
+    return vec3(1.0) + F0 * (1.0 / singleScatterAlbedo - 1.0);
+}
+
 // Outgoing radiance from an environment of the same luminance in every direction. For that
 // environment the split sum is exact apart from the BRDF fit: the prefiltered radiance is the
 // luminance itself whatever the roughness. Metals get only the specular lobe, tinted by their F0,
@@ -302,7 +316,8 @@ vec3 EvaluateUniformAmbient(
     float NdV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec2 environmentBrdf = EnvironmentBrdfApprox(roughness, NdV);
-    vec3 specularAlbedo = F0 * environmentBrdf.x + environmentBrdf.y;
+    // Compensated with the same fit it was computed from, so the white furnace holds within it.
+    vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     return (diffuseAlbedo + specularAlbedo) * luminance;
 }
@@ -314,7 +329,8 @@ vec3 EvaluateSceneLight(
     SceneLightData light,
     vec3 worldPos,
     vec3 N, vec3 V,
-    vec3 albedo, float metallic, float roughness)
+    vec3 albedo, float metallic, float roughness,
+    vec3 energyCompensation)
 {
     int lightType = int(light.directionAndType.w);
 
@@ -364,14 +380,14 @@ vec3 EvaluateSceneLight(
     else if (lightType == LIGHT_AREA)
     {
         // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
-        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness);
+        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness, energyCompensation);
     }
     else
     {
         return vec3(0.0);
     }
 
-    return EvaluateBRDF(N, V, L, albedo, metallic, roughness, radiance);
+    return EvaluateBRDF(N, V, L, albedo, metallic, roughness, energyCompensation, radiance);
 }
 
 // Sky irradiance for a direction from the active sky's SH: the atmosphere's (computed on the GPU)
@@ -407,7 +423,7 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float rough
     float NdV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
-    vec3 specularAlbedo = F0 * environmentBrdf.x + environmentBrdf.y;
+    vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     vec3 R = reflect(-V, N);
     vec3 specular = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
@@ -434,6 +450,13 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
                        : EvaluateSkyAmbient(N, V, albedo, metallic, roughness);
     ambient *= ao;
 
+    // One factor for every direct light: it depends only on the surface and the view. It comes
+    // from the DFG table, whose visibility term remaps k = alpha / 2 where the direct lights'
+    // GeometrySchlickGGX uses (roughness + 1)^2 / 8, so it is the table lobe's loss standing in
+    // for theirs; the two differ little and the table is what the specular IBL uses.
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 energyCompensation = SpecularEnergyCompensation(F0, SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0)));
+
     uint lightCount = ubo.sceneLightCount.x;
     int shadowLightIndex = int(ubo.shadowParams.x);
     vec3 directAccum = vec3(0.0);
@@ -443,7 +466,8 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
             ubo.lights[i],
             worldPosition,
             N, V,
-            albedo, metallic, roughness);
+            albedo, metallic, roughness,
+            energyCompensation);
         // Skipped where the light contributes nothing, which includes every surface facing away
         // from it: those are dark already, and the lookup is the most expensive part of the loop.
         if (int(i) == shadowLightIndex && any(greaterThan(contribution, vec3(0.0))))

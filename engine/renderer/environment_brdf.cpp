@@ -63,6 +63,12 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
     return glm::vec2(a, b) / static_cast<float>(sampleCount);
 }
 
+glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& environmentBrdf)
+{
+    const float singleScatterAlbedo = std::max(environmentBrdf.x + environmentBrdf.y, 1e-4f);
+    return glm::vec3(1.0f) + f0 * (1.0f / singleScatterAlbedo - 1.0f);
+}
+
 FloatTextureData BuildEnvironmentBrdfLut(uint32_t size, uint32_t sampleCount)
 {
     FloatTextureData table{};
