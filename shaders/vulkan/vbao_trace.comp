@@ -1,0 +1,145 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Screen Space Indirect Lighting with Visibility Bitmask (Therrien, Levesque, Gilet
+// 2023), ambient occlusion half only. Per pixel: a few slices through the view vector, each a
+// 32-sector bitmask over the hemisphere around the normal. Every depth sample is treated as a slab
+// of constant thickness, so it occludes only the sectors between its front and back, and thin
+// geometry no longer shadows everything behind it the way a GTAO horizon does.
+
+#include "scene_common.glsl"
+#include "gbuffer_common.glsl"
+#include "vbao_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D depthTexture;
+layout(set = 1, binding = 1) uniform sampler2D normalTexture;
+layout(set = 1, binding = 2, r32f) uniform writeonly image2D aoRawImage;
+
+const float PI = 3.14159265359;
+const float HALF_PI = 1.57079632679;
+const uint SECTOR_COUNT = 32u;
+
+// Jimenez 2014. Offsetting the pixel by a per-frame amount decorrelates frames for the temporal
+// filter while keeping the spatial pattern low-discrepancy for the spatial one.
+float InterleavedGradientNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+// Bits [floor(minT * 32), floor(minT * 32) + ceil((maxT - minT) * 32)), the sectors a slab spanning
+// minT..maxT covers. The paper's formulation, including the conservative ceil.
+uint OccludedSectors(float minT, float maxT)
+{
+    uint startBit = min(uint(minT * float(SECTOR_COUNT)), SECTOR_COUNT - 1u);
+    uint count = uint(ceil((maxT - minT) * float(SECTOR_COUNT)));
+    uint mask = count == 0u ? 0u : (0xFFFFFFFFu >> (SECTOR_COUNT - min(count, SECTOR_COUNT)));
+    return mask << startBit;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(vec2(pixel), aoConstants.extent)))
+    {
+        return;
+    }
+
+    float depth = texelFetch(depthTexture, pixel, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(aoRawImage, pixel, vec4(1.0));
+        return;
+    }
+
+    vec2 uv = (vec2(pixel) + 0.5) * aoConstants.invExtent;
+    vec3 position = ViewPositionFromDepth(uv, depth);
+    // The geometric normal: the depth buffer does not follow the normal map, so the shading normal
+    // would self-occlude.
+    vec3 worldNormal = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).ba);
+    vec3 normal = normalize(mat3(ubo.view) * worldNormal);
+    vec3 V = normalize(-position);
+
+    // The world radius projected at this depth, in pixels. |proj[1][1]| is 1 / tan(fovY / 2).
+    float pixelRadius = aoConstants.radius * abs(ubo.proj[1][1]) * 0.5 * aoConstants.extent.y / -position.z;
+    pixelRadius = min(pixelRadius, aoConstants.maxPixelRadius);
+    if (pixelRadius < 1.0)
+    {
+        imageStore(aoRawImage, pixel, vec4(1.0));
+        return;
+    }
+
+    vec2 noisePixel = vec2(pixel) + 5.588238 * float(aoConstants.frameIndex % 64u);
+    float sliceNoise = InterleavedGradientNoise(noisePixel);
+    float stepNoise = InterleavedGradientNoise(noisePixel + vec2(37.0, 17.0));
+
+    float visibility = 0.0;
+    float weightSum = 0.0;
+    for (uint slice = 0u; slice < aoConstants.sliceCount; ++slice)
+    {
+        float phi = (PI / float(aoConstants.sliceCount)) * (float(slice) + sliceNoise);
+        // Screen direction in pixels, +y down. For square pixels the view-space direction it
+        // traces is (x, -y, 0).
+        vec2 omega = vec2(cos(phi), sin(phi));
+        vec3 direction = vec3(omega.x, -omega.y, 0.0);
+        vec3 orthoDirection = direction - dot(direction, V) * V;
+        vec3 axis = normalize(cross(direction, V));
+        vec3 projectedNormal = normal - axis * dot(normal, axis);
+        float projectedLength = length(projectedNormal);
+        // The normal's angle from V within the slice, positive toward +direction.
+        float signN = dot(orthoDirection, projectedNormal) >= 0.0 ? 1.0 : -1.0;
+        float cosN = clamp(dot(projectedNormal, V) / max(projectedLength, 1e-4), 0.0, 1.0);
+        float n = signN * acos(cosN);
+
+        uint occlusion = 0u;
+        for (int side = 0; side < 2; ++side)
+        {
+            float sideSign = side == 0 ? 1.0 : -1.0;
+            for (uint stepIndex = 0u; stepIndex < aoConstants.stepCount; ++stepIndex)
+            {
+                // Quadratic spacing puts more samples near the pixel, where occluders subtend
+                // the most angle.
+                float t = (float(stepIndex) + stepNoise) / float(aoConstants.stepCount);
+                float distancePixels = 1.0 + t * t * (pixelRadius - 1.0);
+                vec2 samplePixel = floor(vec2(pixel) + 0.5 + omega * sideSign * distancePixels);
+                if (any(lessThan(samplePixel, vec2(0.0))) || any(greaterThanEqual(samplePixel, aoConstants.extent)))
+                {
+                    break;
+                }
+
+                float sampleDepth = texelFetch(depthTexture, ivec2(samplePixel), 0).r;
+                if (sampleDepth >= 1.0)
+                {
+                    continue;
+                }
+
+                vec3 samplePosition = ViewPositionFromDepth((samplePixel + 0.5) * aoConstants.invExtent, sampleDepth);
+                vec3 deltaFront = samplePosition - position;
+                float frontLength = length(deltaFront);
+                if (frontLength > aoConstants.radius || frontLength < 1e-4)
+                {
+                    continue;
+                }
+                // The slab's back face: pushed away from the camera along the view ray.
+                vec3 deltaBack = deltaFront - V * aoConstants.thickness;
+
+                vec2 horizonCos = vec2(dot(deltaFront / frontLength, V), dot(normalize(deltaBack), V));
+                // Angles from V, signed toward the side being marched.
+                vec2 theta = sideSign * acos(clamp(horizonCos, -1.0, 1.0));
+                // Position within the hemisphere [n - pi/2, n + pi/2] as 0..1, cosine weighted:
+                // equal sector widths carry equal shares of the ambient integral.
+                vec2 sectorT = 0.5 + 0.5 * sin(clamp(theta - n, -HALF_PI, HALF_PI));
+                occlusion |= OccludedSectors(min(sectorT.x, sectorT.y), max(sectorT.x, sectorT.y));
+            }
+        }
+
+        float sliceVisibility = 1.0 - float(bitCount(occlusion)) / float(SECTOR_COUNT);
+        // Cosine weighting across slices too: a slice the normal lies far out of contributes less.
+        float weight = projectedLength;
+        visibility += sliceVisibility * weight;
+        weightSum += weight;
+    }
+
+    imageStore(aoRawImage, pixel, vec4(weightSum > 0.0 ? visibility / weightSum : 1.0));
+}

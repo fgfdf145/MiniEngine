@@ -15,6 +15,7 @@ const uint GBUFFER_VIEW_GEOMETRIC_NORMAL = 3u;
 const uint GBUFFER_VIEW_SURFACE = 4u;
 const uint GBUFFER_VIEW_EMISSIVE = 5u;
 const uint GBUFFER_VIEW_MOTION_VECTORS = 6u;
+const uint GBUFFER_VIEW_AMBIENT_OCCLUSION = 7u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -69,6 +70,11 @@ void main()
         // no vector and read grey.
         vec2 pixels = texture(gbufferVelocity, fragTexCoord).rg * vec2(textureSize(gbufferVelocity, 0));
         color = vec3(clamp(0.5 + pixels / 8.0, 0.0, 1.0), 0.5);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_AMBIENT_OCCLUSION)
+    {
+        // The resolved screen-space AO alone, white where nothing occludes.
+        color = vec3(texture(sceneAo, fragTexCoord).r);
     }
     else
     {

@@ -1,0 +1,100 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Depth-aware 5x5 spatial filter of the raw trace, then exponential temporal
+// accumulation reprojected through the motion vectors. History holds (ao, view distance, sample
+// count); a history sample whose distance disagrees with where this surface was last frame is a
+// disocclusion and is dropped.
+
+#include "scene_common.glsl"
+#include "vbao_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D aoRawTexture;
+layout(set = 1, binding = 1) uniform sampler2D depthTexture;
+layout(set = 1, binding = 2) uniform sampler2D velocityTexture;
+layout(set = 1, binding = 3) uniform sampler2D historyTexture;
+layout(set = 1, binding = 4, rgba16f) uniform writeonly image2D historyImage;
+layout(set = 1, binding = 5, r32f) uniform writeonly image2D aoImage;
+
+const float MAX_HISTORY = 16.0;
+const float SPATIAL_DEPTH_TOLERANCE = 0.05;
+const float TEMPORAL_DEPTH_TOLERANCE = 0.05;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = ivec2(aoConstants.extent);
+    if (any(greaterThanEqual(pixel, extent)))
+    {
+        return;
+    }
+
+    // AO off: the lighting pass and the debug view read a neutral 1.0, and history is left alone
+    // (the renderer reports it invalid for the next frame).
+    if ((aoConstants.flags & AO_FLAG_ENABLED) == 0u)
+    {
+        imageStore(aoImage, pixel, vec4(1.0));
+        return;
+    }
+
+    float depth = texelFetch(depthTexture, pixel, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(historyImage, pixel, vec4(1.0, 0.0, 0.0, 0.0));
+        imageStore(aoImage, pixel, vec4(1.0));
+        return;
+    }
+    float distanceToCamera = -ViewZFromDepth(depth);
+
+    float current = texelFetch(aoRawTexture, pixel, 0).r;
+    if ((aoConstants.flags & AO_FLAG_SPATIAL) != 0u)
+    {
+        float sum = 0.0;
+        float weightSum = 0.0;
+        for (int y = -2; y <= 2; ++y)
+        {
+            for (int x = -2; x <= 2; ++x)
+            {
+                ivec2 neighbor = clamp(pixel + ivec2(x, y), ivec2(0), extent - 1);
+                float neighborDepth = texelFetch(depthTexture, neighbor, 0).r;
+                if (neighborDepth >= 1.0)
+                {
+                    continue;
+                }
+                float neighborDistance = -ViewZFromDepth(neighborDepth);
+                float weight = max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (SPATIAL_DEPTH_TOLERANCE * distanceToCamera));
+                sum += weight * texelFetch(aoRawTexture, neighbor, 0).r;
+                weightSum += weight;
+            }
+        }
+        current = weightSum > 0.0 ? sum / weightSum : current;
+    }
+
+    float result = current;
+    float sampleCount = 1.0;
+    bool temporal = (aoConstants.flags & AO_FLAG_TEMPORAL) != 0u;
+    bool historyValid = (aoConstants.flags & AO_FLAG_HISTORY_VALID) != 0u;
+    if (temporal && historyValid)
+    {
+        vec2 uv = (vec2(pixel) + 0.5) * aoConstants.invExtent;
+        vec2 previousUv = uv - texelFetch(velocityTexture, pixel, 0).rg;
+        if (all(greaterThanEqual(previousUv, vec2(0.0))) && all(lessThanEqual(previousUv, vec2(1.0))))
+        {
+            vec4 history = textureLod(historyTexture, previousUv, 0.0);
+            // Where this surface point sat last frame, assuming it did not move: exact for static
+            // geometry, and close for slow movers.
+            vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, depth, 1.0);
+            float expectedDistance = (ubo.prevViewProj * vec4(world.xyz / world.w, 1.0)).w;
+            if (abs(history.g - expectedDistance) < TEMPORAL_DEPTH_TOLERANCE * expectedDistance)
+            {
+                sampleCount = min(history.b + 1.0, MAX_HISTORY);
+                result = mix(history.r, current, 1.0 / sampleCount);
+            }
+        }
+    }
+
+    imageStore(historyImage, pixel, vec4(result, distanceToCamera, sampleCount, 0.0));
+    imageStore(aoImage, pixel, vec4(result));
+}

@@ -13,6 +13,8 @@ namespace me
 enum class ScenePassId
 {
     Geometry,
+    AoTrace,
+    AoResolve,
     Lighting,
     Forward,
     ExposureHistogram,

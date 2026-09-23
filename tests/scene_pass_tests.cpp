@@ -249,16 +249,18 @@ void ChooseFormatThrowsWhenNothingQualifies()
     Require(threw, "no qualifying candidate must throw rather than return an undefined format");
 }
 
-void DeferredOrderRunsGeometryLightingForwardExposureThenTonemap()
+void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 5, "the deferred order must contain five passes");
+    Require(order.size() == 7, "the deferred order must contain seven passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
-    Require(order[1] == ScenePassId::Lighting, "lighting must follow the geometry pass");
-    Require(order[2] == ScenePassId::Forward, "the forward blend pass must follow lighting");
-    Require(order[3] == ScenePassId::ExposureHistogram, "the histogram must meter the finished HDR image");
-    Require(order[4] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+    Require(order[1] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
+    Require(order[2] == ScenePassId::AoResolve, "the AO resolve filters the trace");
+    Require(order[3] == ScenePassId::Lighting, "lighting reads the resolved AO");
+    Require(order[4] == ScenePassId::Forward, "the forward blend pass must follow lighting");
+    Require(order[5] == ScenePassId::ExposureHistogram, "the histogram must meter the finished HDR image");
+    Require(order[6] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
@@ -351,7 +353,7 @@ int main()
         ChooseFormatFallsThroughToALaterCandidate();
         ChooseFormatRequiresEveryRequestedFeature();
         ChooseFormatThrowsWhenNothingQualifies();
-        DeferredOrderRunsGeometryLightingForwardExposureThenTonemap();
+        DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap();
         ForwardOnlyOrderSkipsTheDeferredPasses();
         GBufferTargetsAreColorTargets();
         AoTargetsAreStorageTargets();

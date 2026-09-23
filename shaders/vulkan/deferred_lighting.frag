@@ -38,7 +38,9 @@ void main()
     // Re-clamped: 8-bit storage can round the geometry pass's 0.04 floor down to 10/255, and the
     // GGX terms assume the floor holds.
     float roughness = clamp(surface.g, 0.04, 1.0);
-    float ao = surface.b;
+    // Material occlusion times the screen-space result. Only the ambient term uses it; the resolve
+    // writes 1.0 when AO is off.
+    float ao = surface.b * texture(sceneAo, fragTexCoord).r;
     vec3 emissive = texture(gbufferEmissive, fragTexCoord).rgb;
 
     // fragTexCoord has its origin at the top left, and the image's top row is ndc.y == -1 (see

@@ -525,6 +525,12 @@ void VulkanRenderer::DrawFrame()
     frame.forwardFilter = renderDebug.forwardOnly ? ForwardDrawFilter::All : ForwardDrawFilter::BlendOnly;
     frame.gbufferView = renderDebug.forwardOnly ? GBufferDebugView::Off : renderDebug.gbufferView;
     frame.exposure = State().camera.GetExposure();
+    // The forward-only order runs neither AO pass, so AO is off there by construction. History
+    // advances once per recorded frame; a frame that does not accumulate invalidates the next.
+    frame.ao = renderDebug.ao;
+    frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly;
+    frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
+    frame.frameIndex = m_aoFrameIndex++;
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
@@ -643,6 +649,7 @@ void VulkanRenderer::CreateSwapchainResources()
 
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
+    m_aoHistory.Reset();
     CreateScenePasses();
 }
 
@@ -765,6 +772,17 @@ void VulkanRenderer::CreateScenePasses()
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
     m_scenePasses.push_back(std::move(geometryPass));
+    m_scenePasses.push_back(std::make_unique<VulkanAoTracePass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
+    m_scenePasses.push_back(std::make_unique<VulkanAoResolvePass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
     m_scenePasses.push_back(std::make_unique<VulkanLightingPass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -875,6 +893,7 @@ void VulkanRenderer::SyncSceneTargets()
     }
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
+    m_aoHistory.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",
         m_sceneTargets->GetExtent().width,

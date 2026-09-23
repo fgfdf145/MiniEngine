@@ -53,6 +53,8 @@ add_library(engine_renderer
     rhi/backend.h
     rhi/factory.cpp
     rhi/factory.h
+    vulkan/ao_pass.cpp
+    vulkan/ao_pass.h
     vulkan/buffer.cpp
     vulkan/buffer.h
     vulkan/command.cpp
@@ -121,6 +123,8 @@ set(MINIENGINE_SHADER_SOURCES
     fullscreen.vert
     tonemap.frag
     exposure_histogram.comp
+    vbao_trace.comp
+    vbao_resolve.comp
     shadow.vert
     shadow.frag
 )
@@ -135,6 +139,7 @@ set(MINIENGINE_SHADER_INCLUDES
     gbuffer_common.glsl
     gbuffer_inputs.glsl
     normal_map.glsl
+    vbao_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)
