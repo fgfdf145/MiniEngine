@@ -1,6 +1,7 @@
 ﻿#include <engine/editor/editor_ui.h>
 #include "editor_ui_internal.h"
 
+#include <engine/asset/asset_registry.h>
 #include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/model_loader.h>
 #include <engine/asset/texture_loader.h>
@@ -183,6 +184,73 @@ bool DrawTransformComponent(TransformComponent& transform)
     changed |= glm::any(glm::notEqual(clampedScale, transform.scale));
     transform.scale = clampedScale;
     return changed;
+}
+
+bool SceneHasDirectionalLight(const IEditorWorld& scene)
+{
+    bool found = false;
+    scene.ForEachLight(
+        [&](entt::entity, const TagComponent&, const TransformComponent&, const LightComponent& light)
+        {
+            found = found || light.type == LightType::Directional;
+        });
+    return found;
+}
+
+// The scene's sky. Edits a copy and writes it back only when something changed.
+void DrawEnvironmentEditor(IEditorWorld& scene)
+{
+    SceneEnvironment environment = scene.GetEnvironment();
+
+    static constexpr std::array<const char*, 3> kModes = {"None", "Atmosphere", "HDRI"};
+    int mode = static_cast<int>(environment.mode);
+    if (ImGui::Combo("Sky", &mode, kModes.data(), static_cast<int>(kModes.size())))
+    {
+        environment.mode = static_cast<EnvironmentMode>(mode);
+    }
+
+    if (environment.mode == EnvironmentMode::Atmosphere)
+    {
+        AtmosphereSettings& atmosphere = environment.atmosphere;
+        if (!SceneHasDirectionalLight(scene))
+        {
+            ImGui::TextDisabled("Add a Directional light: it is the sun.");
+        }
+        ImGui::ColorEdit3("Ground albedo", &atmosphere.groundAlbedo.x);
+        ImGui::DragFloat("Rayleigh density", &atmosphere.rayleighDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
+        ImGui::DragFloat("Mie density", &atmosphere.mieDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
+        ImGui::SliderFloat("Mie anisotropy", &atmosphere.mieAnisotropy, 0.0f, 0.99f, "%.2f");
+        ImGui::DragFloat("Ozone density", &atmosphere.ozoneDensityScale, 0.01f, 0.0f, 10.0f, "%.2f");
+        ImGui::DragFloat(
+            "Aerial perspective scale",
+            &atmosphere.aerialPerspectiveDistanceScale,
+            1.0f,
+            0.0f,
+            10000.0f,
+            "%.1f",
+            ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Sun disk (deg)", &atmosphere.sunAngularDiameterDegrees, 0.1f, 5.0f, "%.3f");
+    }
+    else if (environment.mode == EnvironmentMode::Hdri)
+    {
+        HdriSettings& hdri = environment.hdri;
+        ImGui::TextWrapped("%s", hdri.path.empty() ? "<no HDRI>" : hdri.path.c_str());
+        if (ImGui::Button("Choose HDRI..."))
+        {
+            if (const std::optional<std::string> path = OpenTextureFileDialog(); path.has_value())
+            {
+                hdri.path = *path;
+                hdri.uuid = AssetRegistry::GetOrCreateUuid(*path);
+            }
+        }
+        ImGui::DragFloat("Intensity (cd/m2)", &hdri.intensity, 10.0f, 0.0f, 1000000.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Rotation (deg)", &hdri.rotationDegrees, -180.0f, 180.0f, "%.1f");
+    }
+
+    if (!(environment == scene.GetEnvironment()))
+    {
+        scene.SetEnvironment(environment);
+    }
 }
 
 void DrawGizmoControls(GizmoSettings& gizmo)
@@ -489,6 +557,12 @@ void EditorUiController::DrawScenePanel(
         else
         {
             ImGui::TextUnformatted("No entity selected.");
+        }
+
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawEnvironmentEditor(scene);
         }
 
         // Scene I/O — always visible
