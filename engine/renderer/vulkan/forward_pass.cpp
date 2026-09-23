@@ -2,6 +2,7 @@
 
 #include "command.h"
 #include "material_draw.h"
+#include "pipeline.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/material.h>
@@ -11,7 +12,11 @@
 namespace me
 {
 
-VulkanForwardPass::VulkanForwardPass(VkDevice device, const SceneRenderTargets& targets)
+VulkanForwardPass::VulkanForwardPass(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    const SceneRenderTargets& targets,
+    VkDescriptorSetLayout frameSetLayout)
     : m_device(device)
 {
     // A throw out of a constructor skips the destructor, so everything created before the failure
@@ -22,6 +27,22 @@ VulkanForwardPass::VulkanForwardPass(VkDevice device, const SceneRenderTargets& 
         m_clearRenderPass = CreateRenderPass(targets, VK_ATTACHMENT_LOAD_OP_CLEAR);
         m_loadRenderPass = CreateRenderPass(targets, VK_ATTACHMENT_LOAD_OP_LOAD);
         CreateFramebuffers(targets);
+
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushConstantRange.size = sizeof(glm::vec4);
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &frameSetLayout;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushConstantRange;
+        CheckVulkan(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_skyPipelineLayout), "Failed to create sky pipeline layout");
+        FullscreenPipelineOptions skyOptions{};
+        skyOptions.vertexShaderName = "sky.vert.spv";
+        skyOptions.depthTestAtFarPlane = true;
+        m_skyPipeline = CreateFullscreenPipeline(
+            m_device, pipelineCache, m_clearRenderPass, m_skyPipelineLayout, "sky.frag.spv", "sky", skyOptions);
     }
     catch (...)
     {
@@ -80,12 +101,25 @@ void VulkanForwardPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
-    RecordMaterialDrawItems(
-        commandBuffer,
-        *frame.forwardPipelines,
-        frame.frameDescriptorSet,
-        ownsFrame ? frame.drawItems : frame.BlendDrawItems());
+    // Opaque and Mask first (only when this pass owns the frame; otherwise the lighting pass drew
+    // them), then the sky into whatever no geometry covered, then Blend items over both.
+    if (ownsFrame)
+    {
+        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
+    }
+    RecordSky(commandBuffer, frame);
+    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());
     vkCmdEndRenderPass(commandBuffer);
+}
+
+void VulkanForwardPass::RecordSky(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame) const
+{
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
+    vkCmdBindDescriptorSets(
+        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
+    const glm::vec4 background(GetBackgroundRadiance(frame.exposure), 1.0f);
+    vkCmdPushConstants(commandBuffer, m_skyPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(background), &background);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 }
 
 void VulkanForwardPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
@@ -205,6 +239,16 @@ void VulkanForwardPass::DestroyFramebuffers()
 
 void VulkanForwardPass::DestroyHandles()
 {
+    if (m_skyPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
+        m_skyPipeline = VK_NULL_HANDLE;
+    }
+    if (m_skyPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_skyPipelineLayout, nullptr);
+        m_skyPipelineLayout = VK_NULL_HANDLE;
+    }
     DestroyFramebuffers();
     // Nulled after destruction so the handle is never left dangling: the constructor's unwind path
     // runs this and then throws, and GetRenderPass must not hand out a destroyed render pass.

@@ -840,7 +840,11 @@ void VulkanRenderer::CreateScenePasses()
     m_gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *m_sceneTargets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(m_device->GetHandle(), *m_sceneTargets);
-    auto forwardPass = std::make_unique<VulkanForwardPass>(m_device->GetHandle(), *m_sceneTargets);
+    auto forwardPass = std::make_unique<VulkanForwardPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle());
 
     MaterialPipelineSetConfig geometryConfig{};
     geometryConfig.fragmentShader = "gbuffer.frag.spv";

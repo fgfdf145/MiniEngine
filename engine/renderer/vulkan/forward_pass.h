@@ -9,14 +9,19 @@ namespace me
 
 // The material pass into the HDR target with depth. In the forward-only comparison order it owns
 // the frame and draws every item; in the deferred order it draws only Blend items over the lighting
-// pass's result. Both attachments declare initialLayout == finalLayout so the pass performs no
+// pass's result. Either way it draws the sky between its opaque and blend items, into the pixels
+// no geometry covered. Both attachments declare initialLayout == finalLayout so the pass performs no
 // implicit transition.
 //
 // Framebuffers are indexed by frame slot because both attachments are transient targets.
 class VulkanForwardPass : public IScenePass
 {
   public:
-    VulkanForwardPass(VkDevice device, const SceneRenderTargets& targets);
+    VulkanForwardPass(
+        VkDevice device,
+        VkPipelineCache pipelineCache,
+        const SceneRenderTargets& targets,
+        VkDescriptorSetLayout frameSetLayout);
     ~VulkanForwardPass() override;
 
     VulkanForwardPass(const VulkanForwardPass&) = delete;
@@ -38,6 +43,7 @@ class VulkanForwardPass : public IScenePass
   private:
     VkRenderPass CreateRenderPass(const SceneRenderTargets& targets, VkAttachmentLoadOp loadOp) const;
     void CreateFramebuffers(const SceneRenderTargets& targets);
+    void RecordSky(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame) const;
     void DestroyFramebuffers();
     // Shared by the destructor and the constructor's unwind path, the way VulkanTonemapPass does
     // it: a throw part way through construction skips the destructor, so both need the same
@@ -51,5 +57,8 @@ class VulkanForwardPass : public IScenePass
     VkRenderPass m_clearRenderPass = VK_NULL_HANDLE;
     VkRenderPass m_loadRenderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> m_framebuffers;
+    // sky.vert and sky.frag: set 0 plus a 16-byte push constant, the background radiance.
+    VkPipelineLayout m_skyPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_skyPipeline = VK_NULL_HANDLE;
 };
 }

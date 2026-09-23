@@ -32,8 +32,17 @@ class VulkanShaderModule
 // label names the pass in the failure message.
 VkRenderPass CreateFullscreenRenderPass(VkDevice device, VkFormat colorFormat, const char* label);
 
+// What varies between full-screen pipelines beyond the fragment stage.
+struct FullscreenPipelineOptions
+{
+    const char* vertexShaderName = "fullscreen.vert.spv";
+    // Test against the pass's depth attachment with LESS_OR_EQUAL, writing nothing: with sky.vert,
+    // which places the triangle at depth 1, that draws only where no geometry did.
+    bool depthTestAtFarPlane = false;
+};
+
 // The pipeline every full-screen pass uses: fullscreen.vert with no vertex input, no culling, no
-// depth test, dynamic viewport and scissor, and all four channels written without blending. Only
+// depth test unless options ask for it, dynamic viewport and scissor, and all four channels written without blending. Only
 // the fragment stage, the layout and the render pass vary.
 VkPipeline CreateFullscreenPipeline(
     VkDevice device,
@@ -41,5 +50,6 @@ VkPipeline CreateFullscreenPipeline(
     VkRenderPass renderPass,
     VkPipelineLayout layout,
     const char* fragmentShaderName,
-    const char* label);
+    const char* label,
+    const FullscreenPipelineOptions& options = {});
 }
