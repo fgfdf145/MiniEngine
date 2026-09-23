@@ -147,8 +147,9 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     {
         try
         {
+            // A model dropped into the viewport lands where the user is already looking, so the
+            // camera stays put.
             RefreshDirtySceneRenderables(state);
-            FrameEntityModel(state, placedEntity);
         }
         catch (...)
         {
@@ -484,7 +485,11 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
                 world.SetSelectedEntity(load.trackedEntity);
                 world.ResetSelectedTransform();
             }
-            FrameEntityModel(state, load.trackedEntity);
+            // Only a replaced model is framed; a dropped one keeps the camera where it is.
+            if (load.isReplacement)
+            {
+                FrameEntityModel(state, load.trackedEntity);
+            }
         }
 
         state.lastModelLoadError.clear();
