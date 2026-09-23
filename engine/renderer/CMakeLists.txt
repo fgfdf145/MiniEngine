@@ -6,6 +6,8 @@
 add_library(engine_render_core
     ao_history.cpp
     ao_history.h
+    atmosphere.cpp
+    atmosphere.h
     camera.cpp
     camera.h
     exposure.cpp

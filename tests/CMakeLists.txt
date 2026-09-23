@@ -287,6 +287,32 @@ endif()
 
 set_target_properties(miniengine_ao_history_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_atmosphere_tests
+    atmosphere_tests.cpp
+)
+miniengine_group_target_sources(miniengine_atmosphere_tests)
+
+target_link_libraries(miniengine_atmosphere_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.atmosphere
+    COMMAND miniengine_atmosphere_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_atmosphere_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_atmosphere_tests>
+            $<TARGET_FILE_DIR:miniengine_atmosphere_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_atmosphere_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_texture_compression_tests
     texture_compression_tests.cpp
 )
