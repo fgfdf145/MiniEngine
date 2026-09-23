@@ -204,6 +204,27 @@ The `CameraUniformData` `static_assert`s pin the new block layout.
    brute-force one. Reported with numbers, not asserted.
 4. **The heat map is plausible.** Clusters around lights read hot, empty space cold.
 
+## Amendments During Implementation
+
+- **Bit-identical became within run-to-run noise.** Two captures from the same build already differ:
+  VBAO's temporal accumulation and auto exposure follow wall-clock frame timing, so after the same
+  frame count 0.5-0.7% of pixels differ by one 8-bit step. The acceptance checks were therefore made
+  against that floor, at equal frame counts: Sponza with five lights of every type differs from the
+  previous build in 7 pixels by one step; Sponza with 256 point lights differs between clustered and
+  brute force by one step in 0.52% of pixels, the same as two clustered runs against each other.
+- **The heat map saturates in the stress scene.** 256 lights of 2-5 m range in the Sponza nave put
+  32 or more lights in most clusters (the box of touched columns, rows and slices is looser than the
+  sphere, and far slices are deep), so the view reads mostly red there; in scenes of a few dozen
+  lights it spreads across the ramp. Auto exposure meters the heat colours while the view is on, so
+  it drifts (to EV 16.75 in that scene) and readapts when the view is turned off; what the view
+  shows is unaffected.
+- **Measured cost** (Apple M3, Debug build, 667 x 541 viewport, Sponza with 256 point lights): whole
+  frame 45.0 ms clustered, 49.6 ms brute force, 43.7 ms with the heat map (no shading at all), so
+  the local-light shading is roughly 1.3 ms against 5.9 ms. The frame is dominated by other work in
+  the Debug build; no Release measurement was made.
+- **Test scene camera.** The editor has no command-line camera, so the acceptance scenes moved and
+  rotated Sponza (and the lights with it) in front of the default camera instead.
+
 ## Out of Scope
 
 - Shadows for local lights (the next step; the light buffer is where their map index will go).
