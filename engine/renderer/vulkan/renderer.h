@@ -179,6 +179,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         size_t fromCache = 0;
         size_t compressedNow = 0;
         size_t uncompressed = 0;
+        size_t floatTextures = 0;
         double compressSeconds = 0.0;
     };
     // Counted as textures upload, logged and reset when a change commits.

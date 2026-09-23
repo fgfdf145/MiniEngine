@@ -1096,14 +1096,15 @@ void VulkanRenderer::UploadSceneResources()
     uploadBatch.Flush();
     LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
     const TextureUploadStats& stats = m_textureUploadStats;
-    if (stats.fromCache + stats.compressedNow + stats.uncompressed > 0)
+    if (stats.fromCache + stats.compressedNow + stats.uncompressed + stats.floatTextures > 0)
     {
         LOG_INFO(
-            "Texture files: {} block-compressed from the cache, {} compressed now ({:.1f} s of encoding across threads), {} uncompressed",
+            "Texture files: {} block-compressed from the cache, {} compressed now ({:.1f} s of encoding across threads), {} uncompressed, {} float",
             stats.fromCache,
             stats.compressedNow,
             stats.compressSeconds,
-            stats.uncompressed);
+            stats.uncompressed,
+            stats.floatTextures);
     }
 
     ApplyRenderContent(
@@ -1256,6 +1257,13 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
     VulkanUploadBatch& uploadBatch)
 {
     TextureUploadStats& stats = m_textureUploadStats;
+    if (prepared.halfFloat)
+    {
+        ++stats.floatTextures;
+        return std::make_unique<VulkanTexture>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            *prepared.halfFloat, uploadBatch);
+    }
     if (!prepared.compressed)
     {
         ++stats.uncompressed;

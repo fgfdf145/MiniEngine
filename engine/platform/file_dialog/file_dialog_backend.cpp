@@ -93,7 +93,7 @@ std::optional<std::string> ShowFileDialog(FileDialogType type)
         return ShowWindowsFileDialog(dialog, false);
     case FileDialogType::OpenTexture:
         dialog.lpstrFilter =
-            L"Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.gif;*.hdr;*.dds\0"
+            L"Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.gif;*.hdr;*.exr;*.dds\0"
             L"All Files\0*.*\0";
         dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         dialog.lpstrDefExt = L"png";

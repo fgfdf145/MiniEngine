@@ -54,6 +54,36 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    const HalfFloatTextureData& textureData,
+    VulkanUploadBatch& uploadBatch)
+    : m_physicalDevice(physicalDevice),
+      m_device(device),
+      m_textureFormat(VulkanTextureFormat::LinearData)
+{
+    try
+    {
+        if (!textureData.IsValid())
+        {
+            throw std::runtime_error("Cannot create Vulkan texture from invalid half-float data");
+        }
+        UploadTexels(
+            textureData.texels.data(),
+            static_cast<VkDeviceSize>(textureData.texels.size() * sizeof(std::uint16_t)),
+            static_cast<uint32_t>(textureData.width),
+            static_cast<uint32_t>(textureData.height),
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            uploadBatch);
+    }
+    catch (...)
+    {
+        DestroyHandles();
+        throw;
+    }
+}
+
+VulkanTexture::VulkanTexture(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
     const CompressedTexture& texture,
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
@@ -77,16 +107,27 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
         throw std::runtime_error("Cannot create Vulkan texture from invalid pixel data");
     }
 
-    const VkDeviceSize imageSize =
-        static_cast<VkDeviceSize>(textureData.width) *
-        static_cast<VkDeviceSize>(textureData.height) *
-        4;
+    UploadTexels(
+        textureData.pixels.data(),
+        static_cast<VkDeviceSize>(textureData.width) * static_cast<VkDeviceSize>(textureData.height) * 4,
+        static_cast<uint32_t>(textureData.width),
+        static_cast<uint32_t>(textureData.height),
+        GetVkFormat(),
+        uploadBatch);
+}
 
+void VulkanTexture::UploadTexels(
+    const void* texels,
+    VkDeviceSize byteCount,
+    uint32_t width,
+    uint32_t height,
+    VkFormat vkFormat,
+    VulkanUploadBatch& uploadBatch)
+{
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    const VkFormat vkFormat = GetVkFormat();
     CreateBuffer(
-        imageSize,
+        byteCount,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
@@ -94,20 +135,20 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
     uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     void* mappedData = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, imageSize, 0, &mappedData), "Failed to map texture staging buffer");
-    std::memcpy(mappedData, textureData.pixels.data(), static_cast<size_t>(imageSize));
+    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, byteCount, 0, &mappedData), "Failed to map texture staging buffer");
+    std::memcpy(mappedData, texels, static_cast<size_t>(byteCount));
     vkUnmapMemory(m_device, stagingMemory);
 
     const bool canGenerateMips = FormatSupportsLinearBlit(vkFormat);
     m_mipLevels = canGenerateMips
                       ? static_cast<uint32_t>(std::floor(std::log2(
-                            static_cast<double>(std::max(textureData.width, textureData.height))))) +
+                            static_cast<double>(std::max(width, height))))) +
                             1
                       : 1;
 
     CreateImage(
-        static_cast<uint32_t>(textureData.width),
-        static_cast<uint32_t>(textureData.height),
+        width,
+        height,
         m_mipLevels,
         vkFormat,
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -123,11 +164,11 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
     // level 0, but GenerateMipmaps()'s blit chain expects every level to already be in that
     // layout (it reads each source level back out of TRANSFER_DST_OPTIMAL).
     TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, m_mipLevels);
-    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, static_cast<uint32_t>(textureData.width), static_cast<uint32_t>(textureData.height));
+    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, width, height);
 
     if (m_mipLevels > 1)
     {
-        GenerateMipmaps(commandBuffer, m_image, textureData.width, textureData.height, m_mipLevels);
+        GenerateMipmaps(commandBuffer, m_image, static_cast<int32_t>(width), static_cast<int32_t>(height), m_mipLevels);
     }
     else
     {

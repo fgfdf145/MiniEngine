@@ -35,6 +35,13 @@ class VulkanTexture
         const TextureData& textureData,
         VulkanUploadBatch& uploadBatch,
         VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
+    // Uploads a linear RGBA16F image as R16G16B16A16_SFLOAT with GPU-built mips. The format has no
+    // sRGB variant and needs none: float images are scene-linear whatever slot samples them.
+    VulkanTexture(
+        VkPhysicalDevice physicalDevice,
+        VkDevice device,
+        const HalfFloatTextureData& textureData,
+        VulkanUploadBatch& uploadBatch);
     // Uploads a block-compressed texture with its whole mip chain, as prepared by
     // CompressTexture. The device must support block compression (see
     // VulkanDevice::SupportsBlockCompression).
@@ -54,7 +61,11 @@ class VulkanTexture
   private:
     // Shared by the destructor and the constructors' unwind path. Skips null handles.
     void DestroyHandles();
+    // Uploads an RGBA8 image in this texture's sRGB or linear format.
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
+    // Uploads level 0 from tightly packed texels and builds the mip chain with linear blits when the
+    // format supports them, else keeps a single level. Shared by the RGBA8 and half-float paths.
+    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch);
     void UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch);
     // Shared by both upload paths once the image holds every level in shader read layout.
     void CreateViewAndSampler(VkFormat vkFormat);
