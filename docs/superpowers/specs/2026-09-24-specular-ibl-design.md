@@ -45,6 +45,20 @@ analytic environment BRDF fit in sky modes.
    the blits. Set 0 gains binding 8 (the prefiltered cube) and binding 9 (the BRDF table), fragment
    stage. In None mode nothing is recorded after the first frame's clears.
 
+## Amendments During Implementation
+
+- **DFG table oracle:** the planned comparison with Karis' analytic fit (within 0.05) failed across
+  the whole grid, not only at grazing angles: the fit under-reflects near-mirrors seen head on by
+  about 0.14 (0.86 against 0.99 at roughness 0.25). The integral matches exact values instead (a
+  mirror is Schlick's Fresnel, `B = (1 - N.V)^5`), so the test rests on those, energy conservation,
+  monotonic head-on albedo and 512-sample convergence; the fit is only a loose (0.2) same-family
+  bound. The None path keeps the fit, unchanged.
+- **Face orientation** was verified by drawing the HDRI sky from the prefiltered cube's mip 0:
+  the four test rotations show the same colours as the direct lookup; mip 5 blends neighbouring
+  directions smoothly.
+- **Measured cost** (RTX 4070 Laptop, Release): capture plus prefilter about 0.07 ms per frame;
+  the whole environment compute is 0.15 ms per frame under the atmosphere, 0.07 ms under an HDRI.
+
 ## Verification
 
 - `miniengine.environment_brdf`: A + B = 1 and B = 0 for a mirror seen head on; A and B within
