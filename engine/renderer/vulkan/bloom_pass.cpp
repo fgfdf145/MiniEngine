@@ -19,7 +19,7 @@ struct BloomPushConstants
     glm::vec2 sourceTexelSize{0.0f};
     uint32_t mode = 0;
     float intensity = 0.0f;
-    float exposure = 1.0f;
+    float unused = 0.0f;
     float levelCount = 1.0f;
 };
 static_assert(sizeof(BloomPushConstants) == 32, "BloomPushConstants must match bloom.comp");
@@ -153,7 +153,6 @@ void VulkanBloomPass::Record(
     const glm::uvec2 sceneExtent(frame.extent.width, frame.extent.height);
     BloomPushConstants constants{};
     constants.intensity = std::clamp(frame.bloom.intensity, 0.0f, 1.0f);
-    constants.exposure = frame.exposure;
     constants.levelCount = static_cast<float>(m_levelExtents.size());
     const auto dispatch = [&](VkDescriptorSet set, uint32_t mode, glm::uvec2 source, glm::uvec2 destination)
     {

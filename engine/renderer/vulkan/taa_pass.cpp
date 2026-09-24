@@ -14,7 +14,8 @@ struct TaaPushConstants
 {
     glm::vec2 extent{0.0f};
     glm::vec2 invExtent{0.0f};
-    float exposure = 1.0f;
+    // Current over previous pre-exposure (see TaaHistoryScale).
+    float historyScale = 1.0f;
     uint32_t flags = 0;
     glm::vec2 unused{0.0f};
 };
@@ -101,7 +102,7 @@ void VulkanTaaPass::Record(
     TaaPushConstants constants{};
     constants.extent = glm::vec2(static_cast<float>(frame.extent.width), static_cast<float>(frame.extent.height));
     constants.invExtent = 1.0f / constants.extent;
-    constants.exposure = frame.exposure;
+    constants.historyScale = frame.taaHistoryScale;
     constants.flags = (frame.taaEnabled ? kFlagEnabled : 0u) | (frame.taaHistory.valid ? kFlagHistoryValid : 0u);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);

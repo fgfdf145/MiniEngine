@@ -125,7 +125,9 @@ void main()
     outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT ? vec4(material.clearcoatFactors.x, coatRoughness, 0.0, 0.0)
                 : material.shadingModel.x == SHADING_MODEL_SHEEN   ? material.sheenFactors
                                                                    : vec4(0.0);
-    outEmissive = vec4(emissiveSample * material.emissiveFactor, 0.0);
+    // Pre-exposed like the HDR target (see pre_exposure.glsl), so an emissive far brighter than
+    // B10G11R11's 65000 still fits; the lighting pass divides it back into physical units.
+    outEmissive = vec4(emissiveSample * material.emissiveFactor * ubo.exposure.x, 0.0);
 
     // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is
     // the motion in UV units. A consumer finds the previous position at uv - velocity.

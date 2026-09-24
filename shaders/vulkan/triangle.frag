@@ -126,9 +126,9 @@ void main()
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.
-    color = ApplyAerialPerspective(color, fragWorldPosition);
+    color = ApplyAerialPerspective(color, fragWorldPosition) * ubo.exposure.x;
 
     // Tone mapping happens in the tonemap pass, which is the only consumer of this target. This
-    // shader writes linear radiance.
+    // shader writes linear radiance, pre-exposed (see pre_exposure.glsl).
     outColor = vec4(color, albedo.a);
 }

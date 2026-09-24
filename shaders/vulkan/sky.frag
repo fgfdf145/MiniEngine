@@ -7,7 +7,8 @@
 // Must match the push constant VulkanForwardPass::RecordSky pushes.
 layout(push_constant) uniform SkyConstants
 {
-    // xyz = GetBackgroundRadiance(exposure), the flat background of EnvironmentMode::None.
+    // xyz = kViewportBackgroundFrameBuffer, the flat background of EnvironmentMode::None, already
+    // in HDR target units: it stands for no physical light and is not pre-exposed.
     vec4 backgroundRadiance;
 }
 skyData;
@@ -26,6 +27,8 @@ void main()
     }
     vec3 direction = ViewDirectionFromTexCoord(fragTexCoord);
     vec3 luminance = mode == ENVIRONMENT_HDRI ? SampleEnvironmentMap(direction) : SampleSky(direction);
-    // The sun disk alone is ~1e9 cd/m^2, past half float; the target must never hold infinity.
-    outColor = vec4(min(luminance, vec3(65504.0)), 1.0);
+    // Pre-exposed (see pre_exposure.glsl). The sun disk alone is ~1e9 cd/m^2, which now fits in half
+    // float at daylight exposure; the clamp stays for HDRI texels and low EVs, since the target must
+    // never hold infinity.
+    outColor = vec4(min(luminance * ubo.exposure.x, vec3(65504.0)), 1.0);
 }

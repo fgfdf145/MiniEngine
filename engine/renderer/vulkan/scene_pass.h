@@ -45,9 +45,9 @@ struct ScenePassFrameContext
     // gbuffer.frag against GB0-GB3.
     const VulkanPipelineSet* geometryPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
-    // Scale from physical scene radiance to the pre-exposed values the tone mapping operator takes
-    // (see ExposureFromEv100). Always positive.
-    float exposure = 1.0f;
+    // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see
+    // PreExposureFromEv100). Always positive.
+    float preExposure = 1.0f;
     // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors.
     VkDescriptorSet gbufferDescriptorSet = VK_NULL_HANDLE;
     // What the tone mapping pass writes to the viewport.
@@ -60,6 +60,8 @@ struct ScenePassFrameContext
     // its history, as aoHistory is the AO resolve's.
     bool taaEnabled = false;
     TemporalHistoryFrame taaHistory;
+    // What TAA multiplies its history by (see TaaHistoryScale): 1 without valid history.
+    float taaHistoryScale = 1.0f;
     BloomSettings bloom;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
@@ -92,15 +94,6 @@ inline void SetViewportAndScissor(VkCommandBuffer commandBuffer, VkExtent2D exte
     VkRect2D scissor{};
     scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-}
-
-// What a pixel no geometry covered holds in the HDR target: the viewport background, divided by
-// the exposure so it stays fixed on screen while the exposure moves, since it stands for no
-// physical light. The forward pass clears to it and the lighting pass writes it, from this one
-// function, so the forward-only and deferred orders cannot disagree about the background.
-inline glm::vec3 GetBackgroundRadiance(float exposure)
-{
-    return kViewportBackgroundFrameBuffer / kFrameBufferUnitsPerExposed / exposure;
 }
 
 // One pass in the scene frame. Io() is the declaration the layout tracker turns into barriers;

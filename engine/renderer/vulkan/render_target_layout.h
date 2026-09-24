@@ -21,6 +21,7 @@ namespace me
 enum class RenderTargetId : uint32_t
 {
     SceneDepth,
+    // Pre-exposed HDR color: 1.0 is 100 cd/m^2 as displayed (see shaders/vulkan/pre_exposure.glsl).
     SceneHdr,
     SceneLdr,
     GBufferAlbedo,

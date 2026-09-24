@@ -15,7 +15,7 @@ struct LightingPushConstants
 {
     // xyz = the background radiance, w unused.
     glm::vec4 backgroundRadiance{0.0f};
-    // x = 1 to draw the light cluster heat map instead of shading, y = 1 / exposure; zw unused.
+    // x = 1 to draw the light cluster heat map instead of shading; yzw unused.
     glm::vec4 debug{0.0f};
 };
 
@@ -106,15 +106,9 @@ void VulkanLightingPass::Record(
         nullptr);
 
     LightingPushConstants constants{};
-    // The same helper the forward pass clears with, so the two orders' backgrounds cannot differ.
-    constants.backgroundRadiance = glm::vec4(GetBackgroundRadiance(frame.exposure), 1.0f);
-    // The heat map is written divided by the exposure so that the tone mapping pass, which
-    // multiplies by it, shows the colours as written.
-    constants.debug = glm::vec4(
-        frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f,
-        1.0f / frame.exposure,
-        0.0f,
-        0.0f);
+    // The same constant the forward pass clears with, so the two orders' backgrounds cannot differ.
+    constants.backgroundRadiance = glm::vec4(kViewportBackgroundFrameBuffer, 1.0f);
+    constants.debug = glm::vec4(frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,
@@ -142,7 +136,7 @@ void VulkanLightingPass::CreatePipeline(
 {
     const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, emptySetLayout, gbufferSetLayout};
 
-    // The background radiance follows the exposure every frame, so it is a push constant.
+    // The background and the debug switch are push constants, set per frame.
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;

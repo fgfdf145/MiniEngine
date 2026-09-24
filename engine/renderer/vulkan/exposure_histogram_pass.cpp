@@ -30,7 +30,8 @@ struct HistogramPushConstants
     uint32_t height = 0;
     // 1 when the pixels no geometry covered hold a physical sky and are metered like the rest.
     uint32_t meterBackground = 0;
-    uint32_t unused = 0;
+    // The HDR target is pre-exposed; the shader multiplies by this to meter physical luminance.
+    float invPreExposure = 1.0f;
 };
 }
 
@@ -127,7 +128,8 @@ void VulkanExposureHistogramPass::Record(
         0,
         nullptr);
 
-    const HistogramPushConstants constants{frame.extent.width, frame.extent.height, frame.physicalSky ? 1u : 0u, 0u};
+    const HistogramPushConstants constants{
+        frame.extent.width, frame.extent.height, frame.physicalSky ? 1u : 0u, 1.0f / frame.preExposure};
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,

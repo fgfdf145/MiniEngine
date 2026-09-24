@@ -628,7 +628,7 @@ void VulkanRenderer::DrawFrame()
     const std::span<const ScenePassId> passOrder = BuildScenePassOrder(renderDebug.forwardOnly);
     frame.forwardFilter = renderDebug.forwardOnly ? ForwardDrawFilter::All : ForwardDrawFilter::BlendOnly;
     frame.gbufferView = renderDebug.forwardOnly ? GBufferDebugView::Off : renderDebug.gbufferView;
-    frame.exposure = State().camera.GetExposure();
+    frame.preExposure = preExposure;
     // The forward-only order runs neither AO pass, so AO is off there by construction. History
     // advances once per recorded frame; a frame that does not accumulate invalidates the next.
     frame.ao = renderDebug.ao;
@@ -638,6 +638,9 @@ void VulkanRenderer::DrawFrame()
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
+    frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
+    // The history this frame writes carries this frame's pre-exposure.
+    m_taaHistoryPreExposure = preExposure;
     frame.physicalSky = environmentMode != EnvironmentMode::None;
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)

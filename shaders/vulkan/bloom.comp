@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Bloom (Jimenez 2014, "Next Generation Post Processing in Call of Duty: Advanced Warfare"). One
 // shader, four modes, dispatched by VulkanBloomPass in this order:
@@ -8,6 +9,8 @@
 //   composite         SceneTaa = mix(SceneTaa, level 0 / levelCount, intensity).
 // Level 0 ends up holding every level's blur added together, so dividing by the level count
 // averages them, and the mix hands `intensity` of each pixel's energy to its surroundings.
+
+#include "pre_exposure.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -21,8 +24,7 @@ layout(push_constant) uniform BloomConstants
     vec2 sourceTexelSize;
     uint mode;
     float intensity;
-    // Radiance to pre-exposed values: Karis' weights must see what the viewer sees.
-    float exposure;
+    float unused;
     float levelCount;
 }
 bloom;
@@ -46,7 +48,8 @@ vec3 Tap(vec2 uv, vec2 offset)
 
 float KarisWeight(vec3 color)
 {
-    return 1.0 / (1.0 + dot(color, vec3(0.2126, 0.7152, 0.0722)) * bloom.exposure);
+    // Exposed luma (1.0 = sensor saturation): Karis' weights must see what the viewer sees.
+    return 1.0 / (1.0 + dot(color, vec3(0.2126, 0.7152, 0.0722)) * kExposedPerFrameBufferUnit);
 }
 
 // The 13 bilinear taps of Jimenez's downsample, grouped into five overlapping 2x2 boxes: the centre

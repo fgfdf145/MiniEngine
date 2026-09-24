@@ -6,15 +6,15 @@
 #include "pbr_common.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
+#include "pre_exposure.glsl"
 
 // Must match the push constant VulkanLightingPass::Record pushes.
 layout(push_constant) uniform LightingConstants
 {
-    // xyz = GetBackgroundRadiance(exposure), exactly what the forward pass clears the HDR target
-    // to, computed by the same C++ helper; w unused. A pixel no geometry covered resolves to it.
+    // xyz = kViewportBackgroundFrameBuffer, exactly what the forward pass clears the HDR target to;
+    // w unused. A pixel no geometry covered resolves to it.
     vec4 backgroundRadiance;
-    // x = 1 for the light cluster heat map instead of shading; y = 1 / exposure, so the tone mapping
-    // pass, which multiplies by the exposure, shows the heat colours as written.
+    // x = 1 for the light cluster heat map instead of shading; yzw unused.
     vec4 debug;
 }
 lightingData;
@@ -56,7 +56,8 @@ void main()
     // Material occlusion times the screen-space result. Only the ambient term uses it; the resolve
     // writes 1.0 when AO is off.
     float ao = surface.b * texture(sceneAo, fragTexCoord).r;
-    vec3 emissive = texture(gbufferEmissive, fragTexCoord).rgb;
+    // GB3 is pre-exposed; shading runs in physical units, so it is divided back here.
+    vec3 emissive = texture(gbufferEmissive, fragTexCoord).rgb * ubo.exposure.y;
 
     // fragTexCoord has its origin at the top left, and the image's top row is ndc.y == -1 (see
     // fullscreen.vert). The projection's Y flip is inside invViewProj, so no flip belongs here.
@@ -69,7 +70,9 @@ void main()
         uint localLights = ubo.lightCounts.z != 0u
                                ? lightClusters.ranges[FindLightCluster(worldPosition)].y
                                : ubo.lightCounts.y - ubo.lightCounts.x;
-        outColor = vec4(LightCountHeat(localLights) * lightingData.debug.y, 1.0);
+        // Scaled so the tone mapping pass, which shows this view at kExposedPerFrameBufferUnit,
+        // displays the heat colours as written.
+        outColor = vec4(LightCountHeat(localLights) * kFrameBufferUnitsPerExposed, 1.0);
         return;
     }
 
@@ -94,6 +97,7 @@ void main()
     vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
-    // composites over this with an RGB-only write mask.
-    outColor = vec4(ApplyAerialPerspective(color, worldPosition), 1.0);
+    // composites over this with an RGB-only write mask. Pre-exposed on the way out (see
+    // pre_exposure.glsl), after the aerial perspective, which is physical radiance too.
+    outColor = vec4(ApplyAerialPerspective(color, worldPosition) * ubo.exposure.x, 1.0);
 }

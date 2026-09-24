@@ -252,6 +252,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the resolve pass recreates its history images at the same points.
     TemporalHistory m_aoHistory;
     TemporalHistory m_taaHistory;
+    // The pre-exposure the TAA history was written with; 0 before any frame wrote it.
+    float m_taaHistoryPreExposure = 0.0f;
     // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
     uint32_t m_taaFrameIndex = 0;
     // Seeds the AO trace's noise; advances once per recorded frame.

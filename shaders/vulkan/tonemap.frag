@@ -23,8 +23,6 @@ const uint GBUFFER_VIEW_CUSTOM = 9u;
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
 {
-    // Physical radiance to pre-exposed value, from the camera's EV100 (see ExposureFromEv100).
-    float exposure;
     uint gbufferView;
 }
 constants;
@@ -61,9 +59,9 @@ void main()
     }
     else if (constants.gbufferView == GBUFFER_VIEW_EMISSIVE)
     {
-        // Emissive is radiance, so it is exposed and tone mapped exactly as the shaded image is.
+        // Emissive is pre-exposed radiance, so it is tone mapped exactly as the shaded image is.
         vec3 emissive = min(texture(gbufferEmissive, fragTexCoord).rgb, vec3(65504.0));
-        color = TonemapFrameBufferRec709(emissive * constants.exposure * kFrameBufferUnitsPerExposed);
+        color = TonemapFrameBufferRec709(emissive);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_MOTION_VECTORS)
     {
@@ -87,25 +85,21 @@ void main()
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
     {
-        // The lighting pass wrote heat colours divided by the exposure; multiplying back shows them
-        // as they were meant, without the operator bending their hues. Blend surfaces, shaded on
-        // top by the forward pass, are exposed but not tone mapped here.
-        color = min(texture(hdrTexture, fragTexCoord).rgb * constants.exposure, vec3(1.0));
+        // The lighting pass wrote heat colours times kFrameBufferUnitsPerExposed; scaling back shows
+        // them as they were meant, without the operator bending their hues. Blend surfaces, shaded
+        // on top by the forward pass, are exposed but not tone mapped here.
+        color = min(texture(hdrTexture, fragTexCoord).rgb * kExposedPerFrameBufferUnit, vec3(1.0));
     }
     else
     {
-        // Radiance is stored raw, so clamp below fp16's maximum before the operator: an infinite
-        // input would turn into NaN inside it and show a very bright pixel as black.
+        // The HDR target already holds pre-exposed values in the operator's unit (see
+        // pre_exposure.glsl). Clamp below fp16's maximum before the operator: an infinite input
+        // would turn into NaN inside it and show a very bright pixel as black.
         color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
-
-        // The HDR target holds radiance in physical units, where a sunlit surface is in the
-        // hundreds or thousands, so the operator below only sees a usable range once the exposure
-        // is applied.
-        color *= constants.exposure;
 
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.
-        color = TonemapFrameBufferRec709(color * kFrameBufferUnitsPerExposed);
+        color = TonemapFrameBufferRec709(color);
     }
 
     // This pass is the sole writer of the LDR target and knows coverage is total, so it writes

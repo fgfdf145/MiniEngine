@@ -17,11 +17,10 @@ namespace
 // The tone mapping push constant block. Must match TonemapConstants in shaders/vulkan/tonemap.frag.
 struct TonemapPushConstants
 {
-    float exposure = 1.0f;
     uint32_t gbufferView = 0;
 };
 
-static_assert(sizeof(TonemapPushConstants) == 8, "TonemapPushConstants must match the shader's block");
+static_assert(sizeof(TonemapPushConstants) == 4, "TonemapPushConstants must match the shader's block");
 }
 
 VulkanTonemapPass::VulkanTonemapPass(
@@ -134,7 +133,6 @@ void VulkanTonemapPass::Record(
         nullptr);
 
     TonemapPushConstants constants{};
-    constants.exposure = frame.exposure;
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     vkCmdPushConstants(
         commandBuffer,
@@ -212,9 +210,8 @@ void VulkanTonemapPass::CreatePipeline(
 {
     const std::array<VkDescriptorSetLayout, 3> setLayouts = {m_setLayout, emptySetLayout, gbufferSetLayout};
 
-    // The exposure changes every frame the user drags the slider, and the view whenever they pick
-    // one, so both are push constants rather than something that would force the descriptor sets
-    // to be rewritten.
+    // The view changes whenever the user picks one, so it is a push constant rather than something
+    // that would force the descriptor sets to be rewritten.
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;

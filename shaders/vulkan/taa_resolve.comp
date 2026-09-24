@@ -13,6 +13,7 @@
 // - a 10% / 90% blend weighted by 1 / (1 + exposed luma), so one bright sample cannot dominate.
 
 #include "scene_common.glsl"
+#include "pre_exposure.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -28,8 +29,10 @@ layout(push_constant) uniform TaaConstants
 {
     vec2 extent;
     vec2 invExtent;
-    // Radiance to the pre-exposed values the tone mapper takes; the blend weights use exposed luma.
-    float exposure;
+    // Current over previous pre-exposure: the history holds last frame's pre-exposed values and is
+    // multiplied by this before it is used, so a changing exposure does not flash or trail. 1 when
+    // the history is not valid.
+    float historyScale;
     uint flags;
     vec2 unused;
 }
@@ -172,10 +175,11 @@ void main()
     bool onScreen = all(greaterThanEqual(previousUv, vec2(0.0))) && all(lessThanEqual(previousUv, vec2(1.0)));
     if ((taa.flags & TAA_FLAG_HISTORY_VALID) != 0u && onScreen)
     {
-        vec3 history = SampleHistoryCatmullRom(previousUv);
+        vec3 history = SampleHistoryCatmullRom(previousUv) * taa.historyScale;
         history = YCoCgToRgb(ClipToBox(RgbToYCoCg(history), boxMin, boxMax));
-        float currentWeight = CURRENT_WEIGHT / (1.0 + Luma(current) * taa.exposure);
-        float historyWeight = (1.0 - CURRENT_WEIGHT) / (1.0 + Luma(history) * taa.exposure);
+        // Exposed luma (1.0 = sensor saturation), as the weights were tuned.
+        float currentWeight = CURRENT_WEIGHT / (1.0 + Luma(current) * kExposedPerFrameBufferUnit);
+        float historyWeight = (1.0 - CURRENT_WEIGHT) / (1.0 + Luma(history) * kExposedPerFrameBufferUnit);
         result = (current * currentWeight + history * historyWeight) / (currentWeight + historyWeight);
     }
     result = Sanitize(result);

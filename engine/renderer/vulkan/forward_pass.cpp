@@ -80,9 +80,10 @@ void VulkanForwardPass::Record(
     const bool ownsFrame = frame.forwardFilter == ForwardDrawFilter::All;
 
     std::array<VkClearValue, 2> clearValues{};
-    // The clear lands in the HDR target and is exposed and tone mapped with everything else. The
-    // lighting pass writes the same value for background pixels in the deferred order.
-    const glm::vec3 background = GetBackgroundRadiance(frame.exposure);
+    // The clear lands in the HDR target and is tone mapped with everything else. It stands for no
+    // physical light, so it is written as is at every exposure; the lighting pass writes the same
+    // value for background pixels in the deferred order.
+    const glm::vec3 background = kViewportBackgroundFrameBuffer;
     clearValues[0].color.float32[0] = background.r;
     clearValues[0].color.float32[1] = background.g;
     clearValues[0].color.float32[2] = background.b;
@@ -117,7 +118,7 @@ void VulkanForwardPass::RecordSky(VkCommandBuffer commandBuffer, const ScenePass
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
-    const glm::vec4 background(GetBackgroundRadiance(frame.exposure), 1.0f);
+    const glm::vec4 background(kViewportBackgroundFrameBuffer, 1.0f);
     vkCmdPushConstants(commandBuffer, m_skyPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(background), &background);
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 }

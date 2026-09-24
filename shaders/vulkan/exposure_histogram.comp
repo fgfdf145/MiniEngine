@@ -23,7 +23,8 @@ layout(push_constant) uniform HistogramConstants
     uvec2 extent;
     // 1 when the background is a physical sky (the atmosphere or an HDRI), metered like geometry.
     uint meterBackground;
-    uint unused;
+    // The HDR target is pre-exposed; this turns it back into physical luminance for the bins.
+    float invPreExposure;
 }
 constants;
 
@@ -37,13 +38,13 @@ void main()
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     if (all(lessThan(gl_GlobalInvocationID.xy, constants.extent)))
     {
-        // The flat background of EnvironmentMode::None is skipped: it is a value divided by the
-        // current exposure, so metering it would feed the exposure back into itself. A physical
-        // sky is radiance like any surface and is metered.
+        // The flat background of EnvironmentMode::None is skipped: it is a fixed display value, not
+        // radiance, so metering it would feed the exposure back into itself. A physical sky is
+        // radiance like any surface and is metered.
         float depth = texelFetch(depthTexture, pixel, 0).r;
         if (depth < 1.0 || constants.meterBackground != 0u)
         {
-            vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0));
+            vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0)) * constants.invPreExposure;
             float luminance = ExposureLuminance(radiance);
             // NaN fails every comparison; such a pixel is left out rather than binned arbitrarily.
             if (luminance >= 0.0)
