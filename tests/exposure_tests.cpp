@@ -9,6 +9,13 @@
 #include <optional>
 #include <stdexcept>
 
+// The HDR target's unit as the shaders see it, compiled from the same source they include.
+namespace pre_exposure_shader
+{
+using namespace glm;
+#include <shaders/vulkan/pre_exposure.glsl>
+}
+
 // main() stays in the global namespace; everything it drives lives in me::.
 using namespace me;
 
@@ -63,15 +70,38 @@ void DefaultEvExposesTheDefaultSunMidRange()
     Require(preExposed > 0.25f && preExposed < 2.0f, "the default EV must expose a 1000 lx white surface below white");
 }
 
-void BackgroundClearStaysInsideFp16()
+void PreExposureIsExposureInFrameBufferUnits()
 {
-    // The forward pass clears the HDR target to background / exposure so the editor background
-    // does not move with the slider. The brightest channel must stay representable at the top EV.
-    const float brightestBackgroundChannel =
-        std::max({kViewportBackgroundExposed.x, kViewportBackgroundExposed.y, kViewportBackgroundExposed.z});
+    for (float ev = kMinExposureEv100; ev <= kMaxExposureEv100; ev += 0.5f)
+    {
+        Require(
+            NearlyEqual(PreExposureFromEv100(ev), ExposureFromEv100(ev) * kFrameBufferUnitsPerExposed),
+            "the pre-exposure must be the exposure times the frame-buffer scale");
+    }
     Require(
-        brightestBackgroundChannel / ExposureFromEv100(kMaxExposureEv100) < 65504.0f,
-        "the background clear must stay below fp16's maximum at the highest EV");
+        pre_exposure_shader::kFrameBufferUnitsPerExposed == kFrameBufferUnitsPerExposed,
+        "pre_exposure.glsl and exposure.h must agree on the frame-buffer scale");
+    Require(
+        NearlyEqual(pre_exposure_shader::kExposedPerFrameBufferUnit * kFrameBufferUnitsPerExposed, 1.0f),
+        "the two GLSL constants must be reciprocals");
+}
+
+void SunFitsInFp16InDaylight()
+{
+    // The sun disk is about 1e9 cd/m^2. Pre-exposed at a sunlit EV it must be representable, which
+    // it never was as raw radiance.
+    for (const float ev : {15.0f, 15.6f, 18.0f})
+    {
+        Require(1e9f * PreExposureFromEv100(ev) < 65504.0f, "a pre-exposed sun must fit in fp16 at daylight EV");
+    }
+}
+
+void TaaHistoryScaleFollowsThePreExposure()
+{
+    Require(NearlyEqual(TaaHistoryScale(true, 2.0f, 1.0f), 2.0f), "history is scaled by current / previous");
+    Require(NearlyEqual(TaaHistoryScale(true, 1.0f, 4.0f), 0.25f), "history is scaled down when the exposure falls");
+    Require(TaaHistoryScale(false, 2.0f, 1.0f) == 1.0f, "invalid history is not scaled");
+    Require(TaaHistoryScale(true, 2.0f, 0.0f) == 1.0f, "a history written without a pre-exposure is not scaled");
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +237,9 @@ int main()
         EachStopHalvesTheExposure();
         CameraUsesItsOwnEv();
         DefaultEvExposesTheDefaultSunMidRange();
-        BackgroundClearStaysInsideFp16();
+        PreExposureIsExposureInFrameBufferUnits();
+        SunFitsInFp16InDaylight();
+        TaaHistoryScaleFollowsThePreExposure();
         BinsCoverTheirLuminance();
         EmptyHistogramMetersNothing();
         UniformSceneIsExposedToMidGray();

@@ -100,7 +100,7 @@ inline void SetViewportAndScissor(VkCommandBuffer commandBuffer, VkExtent2D exte
 // function, so the forward-only and deferred orders cannot disagree about the background.
 inline glm::vec3 GetBackgroundRadiance(float exposure)
 {
-    return kViewportBackgroundExposed / exposure;
+    return kViewportBackgroundFrameBuffer / kFrameBufferUnitsPerExposed / exposure;
 }
 
 // One pass in the scene frame. Io() is the declaration the layout tracker turns into barriers;

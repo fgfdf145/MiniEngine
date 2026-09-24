@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "gt7_tonemap.glsl"
+#include "pre_exposure.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
 
@@ -62,7 +63,7 @@ void main()
     {
         // Emissive is radiance, so it is exposed and tone mapped exactly as the shaded image is.
         vec3 emissive = min(texture(gbufferEmissive, fragTexCoord).rgb, vec3(65504.0));
-        color = TonemapExposedRec709(emissive * constants.exposure);
+        color = TonemapFrameBufferRec709(emissive * constants.exposure * kFrameBufferUnitsPerExposed);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_MOTION_VECTORS)
     {
@@ -104,7 +105,7 @@ void main()
 
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.
-        color = TonemapExposedRec709(color);
+        color = TonemapFrameBufferRec709(color * kFrameBufferUnitsPerExposed);
     }
 
     // This pass is the sole writer of the LDR target and knows coverage is total, so it writes

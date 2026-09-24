@@ -23,6 +23,20 @@ float ExposureFromEv100(float ev100)
     return 1.0f / (1.2f * std::exp2(ev100));
 }
 
+float PreExposureFromEv100(float ev100)
+{
+    return ExposureFromEv100(ev100) * kFrameBufferUnitsPerExposed;
+}
+
+float TaaHistoryScale(bool historyValid, float currentPreExposure, float historyPreExposure)
+{
+    if (!historyValid || !(historyPreExposure > 0.0f))
+    {
+        return 1.0f;
+    }
+    return currentPreExposure / historyPreExposure;
+}
+
 uint32_t ExposureHistogramBinForLuminance(float luminance)
 {
     return exposure_shader::ExposureHistogramBin(luminance);

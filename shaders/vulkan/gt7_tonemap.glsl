@@ -263,15 +263,11 @@ const mat3 kRec2020ToRec709 = mat3(
     -0.1245505f, 1.1328999f, -0.0083494f,
     -0.0181508f, -0.1005789f, 1.1187297f);
 
-// Exposed values put sensor saturation at 1.0 (see ExposureFromEv100). This places that point at
-// the SDR paper white, 250 cd/m^2 or 2.5 GT frame-buffer units, so an exposed mid gray lands where
-// the previous Reinhard operator put it while highlights now roll off into a real white.
-const float kExposedToGt7FrameBuffer = 2.5f;
-
-// Exposed linear Rec.709 in, display-referred linear Rec.709 in [0, 1] out.
-vec3 TonemapExposedRec709(vec3 exposedRec709)
+// HDR target values (GT7 frame-buffer units, linear Rec.709; see pre_exposure.glsl) in,
+// display-referred linear Rec.709 in [0, 1] out.
+vec3 TonemapFrameBufferRec709(vec3 frameBufferRec709)
 {
-    vec3 rec2020 = max(exposedRec709, vec3(0.0f)) * kExposedToGt7FrameBuffer * kRec709ToRec2020;
+    vec3 rec2020 = max(frameBufferRec709, vec3(0.0f)) * kRec709ToRec2020;
     vec3 mapped = Gt7ApplyToneMapping(Gt7InitializeAsSdr(), rec2020);
     return clamp(mapped * kRec2020ToRec709, vec3(0.0f), vec3(1.0f));
 }

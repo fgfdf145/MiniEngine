@@ -110,16 +110,16 @@ void PrimariesConversionsAreInverse()
 void BlackStaysBlackAndHighlightsReachWhite()
 {
     Require(
-        MaxAbsDifference(shader::TonemapExposedRec709(glm::vec3(0.0f)), glm::vec3(0.0f)) <= 1e-6f,
+        MaxAbsDifference(shader::TonemapFrameBufferRec709(glm::vec3(0.0f)), glm::vec3(0.0f)) <= 1e-6f,
         "black must stay black");
     Require(
-        MaxAbsDifference(shader::TonemapExposedRec709(glm::vec3(4.0f)), glm::vec3(1.0f)) <= 1e-4f,
+        MaxAbsDifference(shader::TonemapFrameBufferRec709(glm::vec3(4.0f) * kFrameBufferUnitsPerExposed), glm::vec3(1.0f)) <= 1e-4f,
         "a gray well past sensor saturation must reach display white");
 
     float previous = -1.0f;
     for (float exposed = 0.0f; exposed <= 8.0f; exposed += 0.01f)
     {
-        const glm::vec3 mapped = shader::TonemapExposedRec709(glm::vec3(exposed));
+        const glm::vec3 mapped = shader::TonemapFrameBufferRec709(glm::vec3(exposed) * kFrameBufferUnitsPerExposed);
         Require(mapped.x >= 0.0f && mapped.x <= 1.0f, "output must stay inside [0, 1]");
         Require(mapped.x >= previous - 1e-6f, "a brighter gray must never map darker");
         previous = mapped.x;
@@ -129,20 +129,20 @@ void BlackStaysBlackAndHighlightsReachWhite()
 void MidGrayStaysWhereReinhardPutIt()
 {
     // An averaged scene exposed to EV100 sits at 1 / 9.6 of sensor saturation (reflected-light
-    // meter constant 12.5 against the 1.2 * 2^EV saturation point). kExposedToGt7FrameBuffer was
+    // meter constant 12.5 against the 1.2 * 2^EV saturation point). kFrameBufferUnitsPerExposed was
     // chosen so that point displays as it did under the previous Reinhard operator.
     const float midGray = 1.0f / 9.6f;
-    const float gt7 = shader::TonemapExposedRec709(glm::vec3(midGray)).x;
+    const float gt7 = shader::TonemapFrameBufferRec709(glm::vec3(midGray) * kFrameBufferUnitsPerExposed).x;
     const float reinhard = midGray / (1.0f + midGray);
     Require(std::abs(gt7 - reinhard) <= 0.005f, "mid gray must display within 0.005 of Reinhard");
 }
 
 void BackgroundConstantMatchesTheOperator()
 {
-    const glm::vec3 displayed = shader::TonemapExposedRec709(kViewportBackgroundExposed);
+    const glm::vec3 displayed = shader::TonemapFrameBufferRec709(kViewportBackgroundFrameBuffer);
     Require(
         MaxAbsDifference(displayed, kViewportBackgroundDisplayLinear) <= 1e-4f,
-        "kViewportBackgroundExposed must tone map to the viewport background");
+        "kViewportBackgroundFrameBuffer must tone map to the viewport background");
 }
 }
 

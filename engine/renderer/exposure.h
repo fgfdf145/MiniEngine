@@ -15,9 +15,16 @@ namespace me
 // multiplied by this before the tone mapping operator sees it.
 float ExposureFromEv100(float ev100);
 
+// Physical radiance (cd/m^2) to the HDR target's unit: the scale every writer of the HDR target
+// and GB3 applies. ExposureFromEv100(ev100) * kFrameBufferUnitsPerExposed.
+float PreExposureFromEv100(float ev100);
+
+// What TAA multiplies its history by: the history was written at historyPreExposure and this frame
+// writes at currentPreExposure. 1 when there is no valid history or it carries no pre-exposure.
+float TaaHistoryScale(bool historyValid, float currentPreExposure, float historyPreExposure);
+
 // EV100 range the editor exposes. 16 is a sunlit exterior, 8 an overcast one or a bright interior,
-// and 2 a dim interior lit by a few bulbs. The top end is also bounded by the HDR target: the
-// forward pass clears to background / exposure, which has to stay below fp16's 65504.
+// and 2 a dim interior lit by a few bulbs.
 inline constexpr float kMinExposureEv100 = -2.0f;
 inline constexpr float kMaxExposureEv100 = 18.0f;
 
@@ -25,11 +32,16 @@ inline constexpr float kMaxExposureEv100 = 18.0f;
 // 1000 lx directional light on a white diffuse surface lands mid range after tone mapping.
 inline constexpr float kDefaultExposureEv100 = 8.0f;
 
-// The editor viewport's background as an exposed value: what the tone mapping pass
-// (TonemapExposedRec709 in shaders/vulkan/gt7_tonemap.glsl) turns into the display-linear
-// {0.08, 0.1, 0.16}. Solved numerically against that operator; tests/tonemap_tests.cpp checks it
-// still round-trips, so a change to the operator that moves the background fails there.
-inline constexpr glm::vec3 kViewportBackgroundExposed{0.089420f, 0.109121f, 0.168410f};
+// The HDR target's unit (shaders/vulkan/pre_exposure.glsl): pre-exposed values, where 1.0 is
+// 100 cd/m^2 as displayed, GT7's frame-buffer unit. An exposed value (1.0 = sensor saturation, see
+// ExposureFromEv100) times this lands saturation on GT7's 250 cd/m^2 SDR paper white.
+inline constexpr float kFrameBufferUnitsPerExposed = 2.5f;
+
+// The editor viewport's background in HDR target units: what the tone mapping pass
+// (TonemapFrameBufferRec709 in shaders/vulkan/gt7_tonemap.glsl) turns into the display-linear
+// {0.08, 0.1, 0.16}. It stands for no physical light, so it is written as is at every exposure.
+// Solved numerically against that operator; tests/tonemap_tests.cpp checks it still round-trips.
+inline constexpr glm::vec3 kViewportBackgroundFrameBuffer{0.223550f, 0.272803f, 0.421025f};
 inline constexpr glm::vec3 kViewportBackgroundDisplayLinear{0.08f, 0.1f, 0.16f};
 
 // Number of bins exposure_histogram.comp writes; the binning itself is in
