@@ -132,6 +132,9 @@ struct alignas(16) CameraUniformData
     // Geometric specular anti-aliasing: x = 1 when on, y = variance, z = threshold (see
     // specular_aa.h); w unused. Appended last.
     glm::vec4 specularAntiAliasing{0.0f};
+    // x = pre-exposure, physical radiance to HDR target units (see PreExposureFromEv100);
+    // y = 1 / pre-exposure; zw unused. Appended last.
+    glm::vec4 exposure{1.0f, 1.0f, 0.0f, 0.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -143,8 +146,12 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, exposure) ==
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16,
+    "exposure must follow specularAntiAliasing with no padding");
 static_assert(
     offsetof(CameraUniformData, specularAntiAliasing) ==
         kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64,
@@ -249,7 +256,8 @@ class VulkanUniformBuffer
         std::span<const glm::mat4> prevModels,
         const EnvironmentUniformData& environment,
         const glm::mat4& viewProjNoJitter,
-        bool specularAntiAliasing);
+        bool specularAntiAliasing,
+        float preExposure);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

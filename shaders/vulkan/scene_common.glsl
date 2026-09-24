@@ -66,6 +66,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 viewProjNoJitter;
     // Geometric specular anti-aliasing: x = 1 when on, y = variance, z = threshold (specular_aa.glsl).
     vec4 specularAntiAliasing;
+    // x = pre-exposure (physical radiance to HDR target units, see pre_exposure.glsl), y = its
+    // inverse. Every writer of the HDR target and GB3 multiplies its final value by x.
+    vec4 exposure;
 }
 ubo;
 

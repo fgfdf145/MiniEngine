@@ -582,6 +582,9 @@ void VulkanRenderer::DrawFrame()
     lightUpload.clusters = clusteredLighting ? &lightClusters : nullptr;
     lightUpload.clustered = clusteredLighting;
 
+    // This frame's EV, already adapted by UpdateAutoExposure, so every writer and reader of the
+    // HDR target agrees on one pre-exposure.
+    const float preExposure = PreExposureFromEv100(State().camera.exposureEv100);
     m_uniformBuffer->Update(
         imageIndex,
         renderMatrices,
@@ -594,7 +597,8 @@ void VulkanRenderer::DrawFrame()
         motion.previousModels,
         environmentData,
         viewProjection,
-        State().renderDebug.specularAntiAliasing);
+        State().renderDebug.specularAntiAliasing,
+        preExposure);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
