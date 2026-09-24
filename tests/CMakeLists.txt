@@ -443,6 +443,32 @@ endif()
 
 set_target_properties(miniengine_specular_aa_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_bloom_chain_tests
+    bloom_chain_tests.cpp
+)
+miniengine_group_target_sources(miniengine_bloom_chain_tests)
+
+target_link_libraries(miniengine_bloom_chain_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.bloom_chain
+    COMMAND miniengine_bloom_chain_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_bloom_chain_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_bloom_chain_tests>
+            $<TARGET_FILE_DIR:miniengine_bloom_chain_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_bloom_chain_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gltf_material_extensions_tests
     gltf_material_extensions_tests.cpp
 )
