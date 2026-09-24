@@ -32,7 +32,7 @@ enum class GBufferDebugView : uint32_t
     // so Blend surfaces still show shaded on top of it.
     LightClusters = 8,
     // GB5 as stored: its channels mean what the pixel's shading model says (clearcoat: r factor,
-    // g roughness).
+    // g roughness; sheen: rgb colour, a roughness).
     Custom = 9
 };
 

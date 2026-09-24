@@ -72,6 +72,21 @@ Surfaces without sheen must render as before.
    roughness; the no-sheen row does not.
 3. With VBAO off, deferred and forward-only agree on sheen spheres as on plain ones.
 
+## Amendments During Implementation
+
+- **The sheen albedo exceeds 1 and is clamped in the table.** Charlie with Neubelt's visibility is
+  not energy conserving: smooth sheen at grazing angles integrates to 1.74 (roughness 0.1, N.V 0.05),
+  which a brute-force quadrature over outgoing directions and a separate Python integration both
+  confirm. `IntegrateSheenAlbedo` returns the true integral (its test allows up to 2);
+  `BuildEnvironmentBrdfLut` stores it clamped to 1, so the base scaling never goes negative and the
+  sheen ambient never reflects more than arrives.
+- **Acceptance** (Sponza with five lights, 3500 frames): deferred differs from the previous build in
+  0.59% of pixels by one 8-bit step, forward-only in 0.85%; two runs of one build differ in 0.59%.
+  On the sphere grid, with VBAO off in both orders, deferred and forward-only agree within two 8-bit
+  steps on every row (mean 0.14-0.51); with it on, the sheen rows differ about as much as the plain
+  row (mean 1.1-1.2).
+- **The GB5 debug view** is renamed "custom data (clearcoat / sheen)"; for sheen it shows the colour.
+
 ## Out of Scope
 
 - Sheen textures; sheen and clearcoat on one pixel; a Charlie-prefiltered environment.

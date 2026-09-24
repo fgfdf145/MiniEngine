@@ -80,8 +80,8 @@ void main()
     }
     else if (constants.gbufferView == GBUFFER_VIEW_CUSTOM)
     {
-        // GB5 as stored. For clearcoat, red is the coat's factor and green its roughness; pixels of
-        // other shading models are black.
+        // GB5 as stored. For clearcoat, red is the coat's factor and green its roughness; for sheen,
+        // rgb is its colour (its roughness, in alpha, does not show). Default Lit pixels are black.
         color = texture(gbufferCustom, fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)

@@ -141,7 +141,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: motion vectors",
             "Ambient occlusion",
             "Light clusters",
-            "G-buffer: custom data (clearcoat)"};
+            "G-buffer: custom data (clearcoat / sheen)"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
