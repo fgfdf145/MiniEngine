@@ -71,6 +71,8 @@ add_library(engine_renderer
     vulkan/buffer.h
     vulkan/command.cpp
     vulkan/command.h
+    vulkan/compute_pass_util.cpp
+    vulkan/compute_pass_util.h
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h

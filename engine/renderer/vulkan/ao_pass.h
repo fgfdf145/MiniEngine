@@ -1,5 +1,6 @@
 #pragma once
 
+#include "compute_pass_util.h"
 #include "scene_pass.h"
 
 #include <array>
@@ -76,17 +77,7 @@ class VulkanAoResolvePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    struct HistoryImage
-    {
-        VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkImageView view = VK_NULL_HANDLE;
-    };
-
-    void CreateHistoryImages(VkExtent2D extent);
-    void DestroyHistoryImages();
     void CreateDescriptorSets(const SceneRenderTargets& targets);
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
@@ -97,7 +88,7 @@ class VulkanAoResolvePass : public IScenePass
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::array<HistoryImage, 2> m_history{};
+    HistoryImagePair m_history;
     // Indexed by frameSlot * 2 + readIndex: set r samples m_history[r] and stores to
     // m_history[1 - r].
     std::vector<VkDescriptorSet> m_descriptorSets;
