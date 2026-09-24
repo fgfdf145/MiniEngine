@@ -7,12 +7,13 @@
       "macos": 0.750
     },
     "windows": {
-      "camera": false,
+      "camera": true,
       "asset_manager": true,
       "input_monitor": false,
       "scene": true,
       "theme": false,
-      "viewport": true
+      "viewport": true,
+      "graphics_debug": true
     },
     "theme": {
       "colors": {
