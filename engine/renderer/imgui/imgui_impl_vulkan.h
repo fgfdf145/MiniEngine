@@ -101,6 +101,11 @@ struct ImGui_ImplVulkan_InitInfo
     VkPipelineRenderingCreateInfoKHR PipelineRenderingCreateInfo;
 #endif
 
+    // (Optional, MiniEngine) A fragment shader to use instead of the built-in one, as SPIR-V words
+    // that must stay valid while the backend is initialized. The HDR output encodes every pixel with it.
+    const uint32_t* FragmentShaderCode;
+    size_t FragmentShaderCodeSize; // in bytes
+
     // (Optional) Allocation, Debugging
     const VkAllocationCallbacks* Allocator;
     void (*CheckVkResultFn)(VkResult err);

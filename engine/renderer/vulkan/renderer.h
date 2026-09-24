@@ -250,6 +250,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the adapted white point; empty until the first balanced frame.
     WhiteBalanceReferences m_whiteBalanceReferences;
     std::optional<glm::vec2> m_adaptedWhiteXy;
+    // The HDR output setting the current swapchain was created for; a different one recreates it.
+    bool m_swapchainHdrRequested = false;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's

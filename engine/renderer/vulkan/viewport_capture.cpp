@@ -4,6 +4,10 @@
 
 #include <stb_image_write.h>
 
+#include <glm/gtc/packing.hpp>
+
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -31,6 +35,19 @@ uint32_t FindHostVisibleMemoryType(VkPhysicalDevice physicalDevice, uint32_t typ
 bool IsBgra(VkFormat format)
 {
     return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_B8G8R8A8_UNORM;
+}
+
+// The HDR output's LDR target: display-linear, 1.0 being UI white (see hdr_output.glsl).
+bool IsHalfFloat(VkFormat format)
+{
+    return format == VK_FORMAT_R16G16B16A16_SFLOAT;
+}
+
+uint8_t EncodeSrgb(float linear)
+{
+    const float clamped = std::clamp(linear, 0.0f, 1.0f);
+    const float encoded = clamped <= 0.0031308f ? clamped * 12.92f : 1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f;
+    return static_cast<uint8_t>(std::lround(encoded * 255.0f));
 }
 
 bool IsRgba(VkFormat format)
@@ -66,12 +83,13 @@ void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, VkImageLayo
 
 void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path)
 {
-    if (!IsBgra(request.format) && !IsRgba(request.format))
+    if (!IsBgra(request.format) && !IsRgba(request.format) && !IsHalfFloat(request.format))
     {
-        throw std::runtime_error("Viewport capture supports only 8-bit RGBA and BGRA images");
+        throw std::runtime_error("Viewport capture supports only 8-bit RGBA and BGRA and half-float RGBA images");
     }
 
-    const VkDeviceSize byteCount = static_cast<VkDeviceSize>(request.extent.width) * request.extent.height * 4;
+    const VkDeviceSize texelBytes = IsHalfFloat(request.format) ? 8 : 4;
+    const VkDeviceSize byteCount = static_cast<VkDeviceSize>(request.extent.width) * request.extent.height * texelBytes;
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = byteCount;
@@ -102,10 +120,22 @@ void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem
         TransitionForCopy(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.layout);
         batch.Flush();
 
-        std::vector<uint8_t> pixels(static_cast<size_t>(byteCount));
+        std::vector<uint8_t> pixels(static_cast<size_t>(request.extent.width) * request.extent.height * 4);
         void* mapped = nullptr;
         CheckVulkan(vkMapMemory(request.device, memory, 0, byteCount, 0, &mapped), "Failed to map the capture buffer");
-        std::memcpy(pixels.data(), mapped, pixels.size());
+        if (IsHalfFloat(request.format))
+        {
+            // An SDR PNG of an HDR frame: clipped at UI white, sRGB-encoded.
+            const auto* halves = static_cast<const uint16_t*>(mapped);
+            for (size_t texel = 0; texel < pixels.size(); ++texel)
+            {
+                pixels[texel] = EncodeSrgb(glm::unpackHalf1x16(halves[texel]));
+            }
+        }
+        else
+        {
+            std::memcpy(pixels.data(), mapped, pixels.size());
+        }
         vkUnmapMemory(request.device, memory);
         if (IsBgra(request.format))
         {

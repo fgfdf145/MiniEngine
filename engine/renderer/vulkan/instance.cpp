@@ -186,6 +186,21 @@ std::vector<const char*> VulkanInstance::GetRequiredExtensions(bool enableValida
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
+    // HDR output: the swapchain colour spaces beyond sRGB (HDR10 PQ, extended linear sRGB) are only
+    // reported when this is enabled. Optional; without it the swapchain stays SDR.
+    uint32_t availableCount = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
+    std::vector<VkExtensionProperties> available(availableCount);
+    vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
+    for (const VkExtensionProperties& extension : available)
+    {
+        if (std::strcmp(extension.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0)
+        {
+            extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            break;
+        }
+    }
+
     return extensions;
 }
 

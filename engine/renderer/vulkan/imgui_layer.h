@@ -33,10 +33,14 @@ class VulkanImGuiLayer
     bool WantsKeyboardCapture() const;
     bool WantsMouseCapture() const;
 
-    void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount);
+    // hdrOutput selects imgui_hdr10.frag, which PQ-encodes everything ImGui draws for an HDR10
+    // swapchain; otherwise the backend's own shader writes display-linear values as before.
+    void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput);
     void DestroyVulkanResources();
 
   private:
+    // The HDR fragment shader's SPIR-V, kept alive while the backend uses it.
+    std::vector<uint32_t> m_hdrFragmentShader;
     void CreateDescriptorPool();
     void UploadFonts() const;
     static void CheckVkResult(VkResult result);

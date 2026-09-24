@@ -3,6 +3,7 @@
 
 #include "gt7_tonemap.glsl"
 #include "pre_exposure.glsl"
+#include "hdr_output.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
 
@@ -24,9 +25,10 @@ const uint GBUFFER_VIEW_CUSTOM = 9u;
 layout(push_constant) uniform TonemapConstants
 {
     uint gbufferView;
-    uint unused0;
-    uint unused1;
-    uint unused2;
+    // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
+    uint hdrOutput;
+    float peakNits;
+    uint unused;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     vec4 whiteBalance[3];
 }
@@ -109,7 +111,16 @@ void main()
 
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.
-        color = TonemapFrameBufferRec709(color);
+        if (constants.hdrOutput != 0u)
+        {
+            // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, then relative to the UI
+            // white that imgui_hdr10.frag maps to kUiWhiteNits.
+            color = TonemapFrameBufferRec709Hdr(color, constants.peakNits) * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits);
+        }
+        else
+        {
+            color = TonemapFrameBufferRec709(color);
+        }
     }
 
     // This pass is the sole writer of the LDR target and knows coverage is total, so it writes

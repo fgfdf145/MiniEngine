@@ -248,6 +248,21 @@ vec3 Gt7ApplyToneMapping(Gt7ToneMapping toneMapping, vec3 rgb)
     return toneMapping.sdrCorrectionFactor * min(blended, vec3(toneMapping.frameBufferLuminanceTarget));
 }
 
+// The reference's initializeAsHDR: the same curve built for a display peak in cd/m^2 (250 to
+// 10 000). The output is in frame-buffer units up to that peak (1.0 = 100 cd/m^2), ready for PQ.
+Gt7ToneMapping Gt7InitializeAsHdr(float physicalTargetLuminance)
+{
+    Gt7ToneMapping toneMapping;
+    toneMapping.sdrCorrectionFactor = 1.0f;
+    toneMapping.frameBufferLuminanceTarget = Gt7PhysicalToFrameBuffer(physicalTargetLuminance);
+    toneMapping.curve = Gt7InitializeCurve(toneMapping.frameBufferLuminanceTarget, 0.25f, 0.538f, 0.444f, 1.280f);
+    toneMapping.blendRatio = 0.6f;
+    toneMapping.fadeStart = 0.98f;
+    toneMapping.fadeEnd = 1.16f;
+    toneMapping.frameBufferLuminanceTargetUcs = Gt7RgbToICtCp(vec3(toneMapping.frameBufferLuminanceTarget)).x;
+    return toneMapping;
+}
+
 // ---------------------------------------------------------------------------
 // Engine glue: the engine renders linear Rec.709, while the reference's ICtCp coefficients take
 // linear Rec.2020, so the scene is converted into Rec.2020 for the operator and back afterwards.
@@ -262,6 +277,15 @@ const mat3 kRec2020ToRec709 = mat3(
     1.6604910f, -0.5876411f, -0.0728499f,
     -0.1245505f, 1.1328999f, -0.0083494f,
     -0.0181508f, -0.1005789f, 1.1187297f);
+
+// HDR target values in, GT7's HDR curve for a display peak in cd/m^2: linear Rec.709 in
+// frame-buffer units up to that peak (out-of-gamut channels clamped at 0).
+vec3 TonemapFrameBufferRec709Hdr(vec3 frameBufferRec709, float peakNits)
+{
+    vec3 rec2020 = max(frameBufferRec709, vec3(0.0f)) * kRec709ToRec2020;
+    vec3 mapped = Gt7ApplyToneMapping(Gt7InitializeAsHdr(peakNits), rec2020);
+    return max(mapped * kRec2020ToRec709, vec3(0.0f));
+}
 
 // HDR target values (GT7 frame-buffer units, linear Rec.709; see pre_exposure.glsl) in,
 // display-referred linear Rec.709 in [0, 1] out.

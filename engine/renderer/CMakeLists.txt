@@ -168,6 +168,7 @@ set(MINIENGINE_SHADER_SOURCES
     sky.frag
     shadow.vert
     shadow.frag
+    imgui_hdr10.frag
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
@@ -175,6 +176,8 @@ set(MINIENGINE_SHADER_SOURCES
 set(MINIENGINE_SHADER_INCLUDES
     exposure_histogram.glsl
     gt7_tonemap.glsl
+    hdr_output.glsl
+    pre_exposure.glsl
     scene_common.glsl
     pbr_common.glsl
     material_common.glsl

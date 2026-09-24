@@ -8,6 +8,8 @@
 #include <imgui.h>
 #include <array>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <span>
 
 namespace me
@@ -343,9 +345,24 @@ bool VulkanImGuiLayer::WantsMouseCapture() const
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount)
+void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput)
 {
     DestroyVulkanResources();
+
+    m_hdrFragmentShader.clear();
+    if (hdrOutput)
+    {
+        const std::filesystem::path path = EnginePaths::ShaderRoot() / "imgui_hdr10.frag.spv";
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file)
+        {
+            throw std::runtime_error("Failed to open " + path.string());
+        }
+        const std::streamsize size = file.tellg();
+        m_hdrFragmentShader.resize(static_cast<size_t>(size) / sizeof(uint32_t));
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(m_hdrFragmentShader.data()), size);
+    }
 
     ImGui_ImplVulkan_InitInfo initInfo{};
     initInfo.ApiVersion = VK_API_VERSION_1_3;
@@ -360,6 +377,11 @@ void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, ui
     initInfo.ImageCount = imageCount;
     initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     initInfo.CheckVkResultFn = &VulkanImGuiLayer::CheckVkResult;
+    if (!m_hdrFragmentShader.empty())
+    {
+        initInfo.FragmentShaderCode = m_hdrFragmentShader.data();
+        initInfo.FragmentShaderCodeSize = m_hdrFragmentShader.size() * sizeof(uint32_t);
+    }
 
     if (!ImGui_ImplVulkan_Init(&initInfo))
     {

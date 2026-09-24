@@ -68,6 +68,10 @@ struct ScenePassFrameContext
     float glareFNumber = kGlareMinFNumber;
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
     glm::mat3 whiteBalance{1.0f};
+    // The swapchain is HDR10: the tone mapping pass uses GT7's HDR curve for hdrPeakNits and writes
+    // display-linear values relative to kUiWhiteNits.
+    bool hdrOutput = false;
+    float hdrPeakNits = 1000.0f;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the

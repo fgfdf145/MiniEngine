@@ -154,6 +154,11 @@ void EditorUiController::DrawGraphicsDebugPanel()
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Output");
+        // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
+        ImGui::Checkbox("HDR output", &m_renderDebug.hdrOutput);
+        ImGui::BeginDisabled(!m_renderDebug.hdrOutput);
+        DragFloatInRange("Display peak (nits)", &m_renderDebug.hdrPeakNits, 250.0f, 10000.0f, "%.0f");
+        ImGui::EndDisabled();
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.

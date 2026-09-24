@@ -892,6 +892,11 @@ static void ImGui_ImplVulkan_CreateShaderModules(VkDevice device, const VkAlloca
         frag_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         frag_info.codeSize = sizeof(__glsl_shader_frag_spv);
         frag_info.pCode = (uint32_t*)__glsl_shader_frag_spv;
+        if (bd->VulkanInitInfo.FragmentShaderCode != nullptr)
+        {
+            frag_info.codeSize = bd->VulkanInitInfo.FragmentShaderCodeSize;
+            frag_info.pCode = bd->VulkanInitInfo.FragmentShaderCode;
+        }
         VkResult err = vkCreateShaderModule(device, &frag_info, allocator, &bd->ShaderModuleFrag);
         check_vk_result(err);
     }

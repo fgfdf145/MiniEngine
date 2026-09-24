@@ -412,7 +412,8 @@ void VulkanRenderer::DrawFrame()
     // A swapchain that no longer matches the window is rebuilt before drawing rather than after a
     // present reports it: drawing into the old size first leaves the newly exposed area unpainted
     // for a frame, which shows on every step of a live resize.
-    if (SwapchainNeedsResize())
+    // Switching HDR output changes the swapchain's format, and with it everything built on it.
+    if (SwapchainNeedsResize() || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
     {
         RecreateSwapchain();
     }
@@ -687,6 +688,8 @@ void VulkanRenderer::DrawFrame()
     frame.bloom = renderDebug.bloom;
     frame.glareFNumber = GlareFNumberFromEv100(State().camera.exposureEv100);
     frame.whiteBalance = UpdateWhiteBalance();
+    frame.hdrOutput = m_swapchain->IsHdr();
+    frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
     // The history this frame writes carries this frame's pre-exposure.
@@ -778,7 +781,9 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetHandle(),
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
-        supportDetails);
+        supportDetails,
+        State().renderDebug.hdrOutput);
+    m_swapchainHdrRequested = State().renderDebug.hdrOutput;
     m_renderPass = std::make_unique<VulkanRenderPass>(
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
@@ -788,7 +793,10 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetHandle(),
         m_device->GetQueueFamilies(),
         m_renderPass->GetFramebuffers().size());
-    m_imguiLayer->CreateOrUpdateVulkanResources(m_renderPass->GetHandle(), static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    m_imguiLayer->CreateOrUpdateVulkanResources(
+        m_renderPass->GetHandle(),
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+        m_swapchain->IsHdr());
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
@@ -806,9 +814,11 @@ void VulkanRenderer::CreateSwapchainResources()
     // and it has to reach the LDR target: the tone mapping pass builds its render pass on that
     // format and ImGui samples the image, so a stale one would be a wrong-format viewport. Only
     // a fresh SceneRenderTargets re-runs the selection, so that case is reconstructed outright.
+    // With HDR output the LDR target holds display-linear values above UI white, which only a float
+    // format keeps; ImGui's HDR shader encodes them for the swapchain.
+    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : m_swapchain->GetImageFormat();
     const bool ldrFormatMatchesSwapchain =
-        m_sceneTargets != nullptr &&
-        m_sceneTargets->GetFormat(RenderTargetId::SceneLdr) == m_swapchain->GetImageFormat();
+        m_sceneTargets != nullptr && m_sceneTargets->GetFormat(RenderTargetId::SceneLdr) == ldrFormat;
     if (ldrFormatMatchesSwapchain)
     {
         m_sceneTargets->Rebuild(viewportExtent, swapchainImageCount);
@@ -818,7 +828,7 @@ void VulkanRenderer::CreateSwapchainResources()
         m_sceneTargets = std::make_unique<SceneRenderTargets>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
-            m_swapchain->GetImageFormat(),
+            ldrFormat,
             viewportExtent,
             swapchainImageCount);
     }

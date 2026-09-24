@@ -17,6 +17,7 @@ namespace shader
 {
 using namespace glm;
 #include <shaders/vulkan/gt7_tonemap.glsl>
+#include <shaders/vulkan/hdr_output.glsl>
 }
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -137,6 +138,50 @@ void MidGrayStaysWhereReinhardPutIt()
     Require(std::abs(gt7 - reinhard) <= 0.005f, "mid gray must display within 0.005 of Reinhard");
 }
 
+void HdrPortMatchesReferenceAcrossPeaks()
+{
+    std::mt19937 generator(13u);
+    std::uniform_real_distribution<float> exponent(-14.0f, 10.0f);
+    for (const float peakNits : {250.0f, 600.0f, 1000.0f, 4000.0f, 10000.0f})
+    {
+        gt7_reference::GT7ToneMapping reference;
+        reference.initializeAsHDR(peakNits);
+        const shader::Gt7ToneMapping port = shader::Gt7InitializeAsHdr(peakNits);
+        for (int sample = 0; sample < 20000; ++sample)
+        {
+            const glm::vec3 input(
+                std::exp2(exponent(generator)),
+                std::exp2(exponent(generator)),
+                std::exp2(exponent(generator)));
+            const glm::vec3 expected = ReferenceSdr(reference, input);
+            Require(
+                MaxAbsDifference(shader::Gt7ApplyToneMapping(port, input), expected) <= 1e-6f * std::max(1.0f, peakNits / 100.0f),
+                "the HDR port must match the reference's initializeAsHDR");
+        }
+    }
+}
+
+void HdrAtSdrPaperWhiteIsTheSdrCurveUnscaled()
+{
+    // GT7 builds SDR as a 250-nit output scaled into [0, 1] by 1 / 2.5.
+    const shader::Gt7ToneMapping hdr = shader::Gt7InitializeAsHdr(250.0f);
+    const shader::Gt7ToneMapping sdr = shader::Gt7InitializeAsSdr();
+    for (float value = 0.01f; value < 40.0f; value *= 1.7f)
+    {
+        const glm::vec3 input(value, value * 0.6f, value * 0.3f);
+        Require(
+            MaxAbsDifference(shader::Gt7ApplyToneMapping(hdr, input), shader::Gt7ApplyToneMapping(sdr, input) * 2.5f) <= 1e-5f,
+            "a 250-nit HDR output is the SDR output times 2.5");
+    }
+}
+
+void PqEncodesAbsoluteLuminance()
+{
+    Require(shader::PqEncodeNits(0.0f) < 1e-6f, "0 nits is the bottom of the PQ range");
+    Require(std::abs(shader::PqEncodeNits(100.0f) - 0.5081f) < 1e-3f, "100 nits encodes to about 0.508");
+    Require(std::abs(shader::PqEncodeNits(10000.0f) - 1.0f) < 1e-5f, "10 000 nits is the top of the PQ range");
+}
+
 void BackgroundConstantMatchesTheOperator()
 {
     const glm::vec3 displayed = shader::TonemapFrameBufferRec709(kViewportBackgroundFrameBuffer);
@@ -156,6 +201,9 @@ int main()
         BlackStaysBlackAndHighlightsReachWhite();
         MidGrayStaysWhereReinhardPutIt();
         BackgroundConstantMatchesTheOperator();
+        HdrPortMatchesReferenceAcrossPeaks();
+        HdrAtSdrPaperWhiteIsTheSdrCurveUnscaled();
+        PqEncodesAbsoluteLuminance();
     }
     catch (const std::exception& error)
     {

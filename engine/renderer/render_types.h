@@ -81,6 +81,10 @@ struct RenderDebugSettings
     // each pixel. Off, roughness reaches the lighting exactly as the material gives it.
     bool specularAntiAliasing = true;
     BloomSettings bloom;
+    // Presents to an HDR10 swapchain when the display offers one (see hdr_output.glsl), tone mapped
+    // with GT7's HDR curve for this peak luminance in cd/m^2, which Vulkan cannot query.
+    bool hdrOutput = false;
+    float hdrPeakNits = 1000.0f;
     AoSettings ao;
 };
 }

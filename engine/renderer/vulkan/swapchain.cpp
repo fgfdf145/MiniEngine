@@ -12,10 +12,16 @@ VulkanSwapchain::VulkanSwapchain(
     VkDevice device,
     VkSurfaceKHR surface,
     const QueueFamilyIndices& queueFamilies,
-    const SwapchainSupportDetails& supportDetails)
+    const SwapchainSupportDetails& supportDetails,
+    bool preferHdr)
     : m_device(device)
 {
-    const VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(supportDetails.formats);
+    const VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(supportDetails.formats, preferHdr);
+    m_colorSpace = surfaceFormat.colorSpace;
+    if (preferHdr && !IsHdr())
+    {
+        LOG_WARN("HDR output was requested, but the surface offers no HDR10 format; presenting SDR");
+    }
     const VkPresentModeKHR presentMode = ChoosePresentMode(supportDetails.presentModes);
     const VkExtent2D extent = ChooseExtent(window, supportDetails.capabilities);
 
@@ -102,8 +108,27 @@ const std::vector<VkImageView>& VulkanSwapchain::GetImageViews() const
     return m_imageViews;
 }
 
-VkSurfaceFormatKHR VulkanSwapchain::ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const
+bool VulkanSwapchain::IsHdr() const
 {
+    return m_colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
+}
+
+VkSurfaceFormatKHR VulkanSwapchain::ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats, bool preferHdr) const
+{
+    if (preferHdr)
+    {
+        for (const VkFormat hdrFormat : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32})
+        {
+            for (const auto& availableFormat : formats)
+            {
+                if (availableFormat.format == hdrFormat && availableFormat.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT)
+                {
+                    return availableFormat;
+                }
+            }
+        }
+    }
+
     for (const auto& availableFormat : formats)
     {
         if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
