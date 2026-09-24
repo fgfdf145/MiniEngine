@@ -95,6 +95,49 @@ vec3 EvaluateBRDF(
 }
 
 // ---------------------------------------------------------------------------
+// Clearcoat (KHR_materials_clearcoat)
+// ---------------------------------------------------------------------------
+
+// The clear dielectric layer over the base, as the Khronos glTF sample viewer shades it: a second
+// GGX lobe with F0 = 0.04 (IOR 1.5), its own roughness and normal, weighted by factor. A factor of
+// 0 is no coat, and every coat term below is skipped for it.
+struct CoatParams
+{
+    float factor;
+    // Perceptual roughness, already floored at 0.04 like the base's.
+    float roughness;
+    // The geometric normal: the coat is not normal mapped (no clearcoatNormalTexture support).
+    vec3 normal;
+};
+
+CoatParams NoCoat()
+{
+    CoatParams coat;
+    coat.factor = 0.0;
+    coat.roughness = 1.0;
+    coat.normal = vec3(0.0, 0.0, 1.0);
+    return coat;
+}
+
+const vec3 COAT_F0 = vec3(0.04);
+
+// The coat lobe's outgoing radiance for light arriving along L. Radiance is the light's
+// illuminance at normal incidence, as EvaluateBRDF takes it.
+vec3 EvaluateCoatSpecular(CoatParams coat, vec3 V, vec3 L, vec3 radiance)
+{
+    float NdL = max(dot(coat.normal, L), 0.0);
+    if (NdL <= 0.0)
+        return vec3(0.0);
+
+    vec3 H = normalize(V + L);
+    float NdV = max(dot(coat.normal, V), 0.0);
+    vec3 F = FresnelSchlick(max(dot(H, V), 0.0), COAT_F0);
+    float D = DistributionGGX(coat.normal, H, coat.roughness);
+    float G = GeometrySmith(coat.normal, V, L, coat.roughness);
+    return (D * G * F) / max(4.0 * NdV * NdL, 0.0001) * radiance * NdL;
+}
+
+// ---------------------------------------------------------------------------
 // Distance attenuation: inverse square, windowed to zero at the light's range
 // ---------------------------------------------------------------------------
 // The windowing half on its own: 1 near the light, falling smoothly to 0 at the range.
@@ -144,44 +187,14 @@ float RectangleFormFactor(vec3 worldPos, vec3 N, vec3 corners[4])
     return max(0.5 * sum, 0.0);
 }
 
-// A one-sided Lambertian rectangle. Diffuse uses the exact irradiance from RectangleFormFactor.
-// Specular uses a representative point, the point on the rectangle closest to the reflection
-// ray, renormalized for the angle the light subtends so the enlarged highlight does not add
-// energy. As the rectangle shrinks this converges to a point light emitting
-// flux / pi along its normal with a cosine falloff.
-vec3 EvaluateAreaLight(
-    SceneLightData light,
-    vec3 worldPos,
-    vec3 N, vec3 V,
-    vec3 albedo, float metallic, float roughness,
-    vec3 energyCompensation)
+// The specular BRDF value of a rectangular light for a surface with normal N and this roughness,
+// at the light's representative point, and the Fresnel term it used (the base's diffuse weight
+// needs it). The caller multiplies by the irradiance.
+vec3 AreaLightSpecular(
+    vec3 worldPos, vec3 N, vec3 V, float roughness, vec3 F0,
+    vec3 center, vec3 lightNormal, vec3 rightAxis, vec3 upAxis, vec2 halfSize, float area,
+    out vec3 F)
 {
-    vec3 center = light.positionAndRange.xyz;
-    vec3 lightNormal = normalize(light.directionAndType.xyz);
-    vec3 rightAxis = normalize(light.areaRightAxis.xyz);
-    vec3 upAxis = cross(lightNormal, rightAxis);
-    vec2 halfSize = 0.5 * max(light.spotAndArea.zw, vec2(0.001));
-
-    // One sided: the back of the rectangle emits nothing.
-    if (dot(worldPos - center, lightNormal) <= 0.0)
-        return vec3(0.0);
-
-    vec3 corners[4];
-    corners[0] = center - rightAxis * halfSize.x - upAxis * halfSize.y;
-    corners[1] = center + rightAxis * halfSize.x - upAxis * halfSize.y;
-    corners[2] = center + rightAxis * halfSize.x + upAxis * halfSize.y;
-    corners[3] = center - rightAxis * halfSize.x + upAxis * halfSize.y;
-
-    float formFactor = RectangleFormFactor(worldPos, N, corners);
-    if (formFactor <= 0.0)
-        return vec3(0.0);
-
-    // Lumens to luminance for a Lambertian emitter: flux / (pi * area).
-    float area = 4.0 * halfSize.x * halfSize.y;
-    vec3 luminance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area));
-    float window = RangeWindow(distance(worldPos, center), light.positionAndRange.w);
-    vec3 irradiance = luminance * formFactor * window;
-
     // Representative point: where the reflection ray meets the light's plane, clamped into the
     // rectangle. A ray that never reaches the plane falls back to the receiver's projection onto it.
     vec3 R = reflect(-V, N);
@@ -201,8 +214,7 @@ vec3 EvaluateAreaLight(
     vec3 H = normalize(V + L);
     float NdV = max(dot(N, V), 0.0);
     float NdL = max(dot(N, L), 0.0);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+    F = FresnelSchlick(max(dot(H, V), 0.0), F0);
 
     // Moving L to the representative point already spreads the highlight over the light's shape,
     // so the lobe itself is left alone and only renormalized: (alpha / widened)^2, with alpha
@@ -215,7 +227,73 @@ vec3 EvaluateAreaLight(
 
     float D = DistributionGGX(N, H, roughness) * energyNormalization;
     float G = GeometrySmith(N, V, L, roughness);
-    vec3 specular = NdL > 0.0 ? (D * G * F) / max(4.0 * NdV * NdL, 0.0001) * energyCompensation : vec3(0.0);
+    return NdL > 0.0 ? (D * G * F) / max(4.0 * NdV * NdL, 0.0001) : vec3(0.0);
+}
+
+// A one-sided Lambertian rectangle. Diffuse uses the exact irradiance from RectangleFormFactor.
+// Specular uses a representative point, the point on the rectangle closest to the reflection
+// ray, renormalized for the angle the light subtends so the enlarged highlight does not add
+// energy. As the rectangle shrinks this converges to a point light emitting
+// flux / pi along its normal with a cosine falloff. The coat, when there is one, gets the same
+// treatment with its own normal and roughness, written to coatContribution.
+vec3 EvaluateAreaLight(
+    SceneLightData light,
+    vec3 worldPos,
+    vec3 N, vec3 V,
+    vec3 albedo, float metallic, float roughness,
+    vec3 energyCompensation,
+    CoatParams coat,
+    out vec3 coatContribution)
+{
+    coatContribution = vec3(0.0);
+    vec3 center = light.positionAndRange.xyz;
+    vec3 lightNormal = normalize(light.directionAndType.xyz);
+    vec3 rightAxis = normalize(light.areaRightAxis.xyz);
+    vec3 upAxis = cross(lightNormal, rightAxis);
+    vec2 halfSize = 0.5 * max(light.spotAndArea.zw, vec2(0.001));
+
+    // One sided: the back of the rectangle emits nothing.
+    if (dot(worldPos - center, lightNormal) <= 0.0)
+        return vec3(0.0);
+
+    vec3 corners[4];
+    corners[0] = center - rightAxis * halfSize.x - upAxis * halfSize.y;
+    corners[1] = center + rightAxis * halfSize.x - upAxis * halfSize.y;
+    corners[2] = center + rightAxis * halfSize.x + upAxis * halfSize.y;
+    corners[3] = center - rightAxis * halfSize.x + upAxis * halfSize.y;
+
+    // Lumens to luminance for a Lambertian emitter: flux / (pi * area).
+    float area = 4.0 * halfSize.x * halfSize.y;
+    vec3 luminance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area));
+    float window = RangeWindow(distance(worldPos, center), light.positionAndRange.w);
+
+    if (coat.factor > 0.0)
+    {
+        float coatFormFactor = RectangleFormFactor(worldPos, coat.normal, corners);
+        if (coatFormFactor > 0.0)
+        {
+            vec3 coatFresnel;
+            coatContribution = AreaLightSpecular(
+                                   worldPos, coat.normal, V, coat.roughness, COAT_F0,
+                                   center, lightNormal, rightAxis, upAxis, halfSize, area,
+                                   coatFresnel) *
+                               (luminance * coatFormFactor * window);
+        }
+    }
+
+    float formFactor = RectangleFormFactor(worldPos, N, corners);
+    if (formFactor <= 0.0)
+        return vec3(0.0);
+
+    vec3 irradiance = luminance * formFactor * window;
+
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F;
+    vec3 specular = AreaLightSpecular(
+                        worldPos, N, V, roughness, F0,
+                        center, lightNormal, rightAxis, upAxis, halfSize, area,
+                        F) *
+                    energyCompensation;
 
     vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
@@ -347,8 +425,11 @@ vec3 EvaluateSceneLight(
     vec3 worldPos,
     vec3 N, vec3 V,
     vec3 albedo, float metallic, float roughness,
-    vec3 energyCompensation)
+    vec3 energyCompensation,
+    CoatParams coat,
+    out vec3 coatContribution)
 {
+    coatContribution = vec3(0.0);
     int lightType = int(light.directionAndType.w);
 
     if (lightType == LIGHT_AMBIENT)
@@ -397,13 +478,17 @@ vec3 EvaluateSceneLight(
     else if (lightType == LIGHT_AREA)
     {
         // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
-        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness, energyCompensation);
+        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness, energyCompensation, coat, coatContribution);
     }
     else
     {
         return vec3(0.0);
     }
 
+    if (coat.factor > 0.0)
+    {
+        coatContribution = EvaluateCoatSpecular(coat, V, L, radiance);
+    }
     return EvaluateBRDF(N, V, L, albedo, metallic, roughness, energyCompensation, radiance);
 }
 
@@ -469,6 +554,25 @@ uint FindLightCluster(vec3 worldPosition)
     return (sliceIndex * LIGHT_CLUSTER_TILES_Y + tile.y) * LIGHT_CLUSTER_TILES_X + tile.x;
 }
 
+// The coat's share of the ambient term: its lobe's directional albedo (0.04 A + B) times what the
+// environment sends along the coat's reflection, the same split sum the base's specular uses. Under
+// the uniform ambient that is the ambient luminance itself, weighted by Karis' fit as the base is.
+vec3 EvaluateCoatAmbient(CoatParams coat, vec3 V)
+{
+    float NdV = max(dot(coat.normal, V), 0.0);
+    if (EnvironmentMode() == ENVIRONMENT_NONE)
+    {
+        vec2 environmentBrdf = EnvironmentBrdfApprox(coat.roughness, NdV);
+        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * ubo.ambientLuminance.rgb;
+    }
+    vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
+    vec3 coatAlbedo = COAT_F0 * environmentBrdf.x + environmentBrdf.y;
+    vec3 R = reflect(-V, coat.normal);
+    vec3 sky = textureLod(prefilteredEnvironment, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
+    return coatAlbedo * (sky + sceneAmbient);
+}
+
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
 // (ambient + direct) with emissive added afterwards, so the forward image is unchanged by the move
@@ -477,7 +581,11 @@ uint FindLightCluster(vec3 worldPosition)
 // N is the shading normal, normal map applied. geoNormal is the interpolated vertex normal,
 // flipped for back faces the way triangle.frag flips it: the shadow lookup offsets along it, not
 // along N, so the shadow boundary does not follow the normal map.
-vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, float ao)
+vec3 ShadeSurface(
+    vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V,
+    vec3 albedo, float metallic, float roughness, float ao,
+    vec3 emissive,
+    CoatParams coat)
 {
     // The CPU has already summed the scene's Ambient lights into ambientLuminance, or put the
     // fallback there when there are none; see SelectSceneLights. Under a physical sky the sky's
@@ -499,6 +607,8 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
     uint directionalCount = ubo.lightCounts.x;
     int shadowLightIndex = int(ubo.shadowParams.x);
     vec3 directAccum = vec3(0.0);
+    vec3 coatAccum = vec3(0.0);
+    vec3 coatContribution;
     for (uint i = 0u; i < directionalCount; ++i)
     {
         vec3 contribution = EvaluateSceneLight(
@@ -506,14 +616,21 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
             worldPosition,
             N, V,
             albedo, metallic, roughness,
-            energyCompensation);
+            energyCompensation,
+            coat,
+            coatContribution);
         // Skipped where the light contributes nothing, which includes every surface facing away
         // from it: those are dark already, and the lookup is the most expensive part of the loop.
-        if (int(i) == shadowLightIndex && any(greaterThan(contribution, vec3(0.0))))
+        // The coat's normal can face the light where the base's does not, so it counts too.
+        if (int(i) == shadowLightIndex &&
+            (any(greaterThan(contribution, vec3(0.0))) || any(greaterThan(coatContribution, vec3(0.0)))))
         {
-            contribution *= EvaluateDirectionalShadow(worldPosition, geoNormal);
+            float shadow = EvaluateDirectionalShadow(worldPosition, geoNormal);
+            contribution *= shadow;
+            coatContribution *= shadow;
         }
         directAccum += contribution;
+        coatAccum += coatContribution;
     }
 
     // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
@@ -529,7 +646,10 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
                 worldPosition,
                 N, V,
                 albedo, metallic, roughness,
-                energyCompensation);
+                energyCompensation,
+                coat,
+                coatContribution);
+            coatAccum += coatContribution;
         }
     }
     else
@@ -541,11 +661,24 @@ vec3 ShadeSurface(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albed
                 worldPosition,
                 N, V,
                 albedo, metallic, roughness,
-                energyCompensation);
+                energyCompensation,
+                coat,
+                coatContribution);
+            coatAccum += coatContribution;
         }
     }
 
-    return ambient + directAccum;
+    // The base, emissive included, loses what the coat's Fresnel reflects toward the viewer; the
+    // coat adds its own lobe. Uncoated surfaces sum exactly what they did before emissive moved in
+    // here: (ambient + direct) + emissive.
+    vec3 color = ambient + directAccum + emissive;
+    if (coat.factor > 0.0)
+    {
+        float coatFresnel = FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
+        vec3 coatAmbient = EvaluateCoatAmbient(coat, V) * ao;
+        color = color * (1.0 - coat.factor * coatFresnel) + coat.factor * (coatAmbient + coatAccum);
+    }
+    return color;
 }
 
 #endif

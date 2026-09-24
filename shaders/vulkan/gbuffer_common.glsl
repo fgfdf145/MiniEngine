@@ -29,6 +29,8 @@ vec3 DecodeNormalOctahedral(vec2 encoded)
 // The shading model id in GB2.a: ShadingModel in engine/renderer/material.h. Stored as id / 255 in
 // the UNORM channel, so it round-trips exactly for every id below 256.
 const uint SHADING_MODEL_DEFAULT_LIT = 0u;
+// GB5.r = clearcoat factor, GB5.g = clearcoat roughness.
+const uint SHADING_MODEL_CLEARCOAT = 1u;
 
 float EncodeShadingModel(uint shadingModel)
 {

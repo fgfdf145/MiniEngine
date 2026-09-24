@@ -28,6 +28,9 @@ enum class RenderTargetId : uint32_t
     GBufferSurface,
     GBufferEmissive,
     GBufferVelocity,
+    // GB5: data whose meaning depends on the pixel's shading model (GB2.a). Clearcoat keeps its
+    // factor and roughness in .rg.
+    GBufferCustom,
     // Visibility bitmask AO: the noisy trace, then the filtered result the lighting pass reads.
     // Both are storage images written by compute.
     AoRaw,

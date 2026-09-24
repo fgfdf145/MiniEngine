@@ -178,6 +178,12 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material.nodeGraphFactors[1] = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
         renderSubmesh.material.nodeGraphFactors[2] = 1.0f;
         renderSubmesh.material.nodeGraphFactors[3] = 0.0f;
+        // A coat of zero is no coat: those draws keep the default model and its exact shading.
+        const float clearcoat = std::clamp(material.clearcoatFactor, 0.0f, 1.0f);
+        renderSubmesh.material.shadingModel[0] = static_cast<uint32_t>(
+            clearcoat > 0.0f ? ShadingModel::Clearcoat : ShadingModel::DefaultLit);
+        renderSubmesh.material.clearcoatFactors[0] = clearcoat;
+        renderSubmesh.material.clearcoatFactors[1] = std::clamp(material.clearcoatRoughnessFactor, 0.0f, 1.0f);
         renderSubmesh.name = submesh.name;
         if (submesh.hasTexCoords)
         {

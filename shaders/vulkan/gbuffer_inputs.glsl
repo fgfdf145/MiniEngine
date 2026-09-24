@@ -13,5 +13,7 @@ layout(set = 2, binding = 3) uniform sampler2D gbufferEmissive;
 layout(set = 2, binding = 4) uniform sampler2D gbufferDepth;
 layout(set = 2, binding = 5) uniform sampler2D gbufferVelocity;
 layout(set = 2, binding = 6) uniform sampler2D sceneAo;
+// GB5: per-shading-model data; see SHADING_MODEL_* in gbuffer_common.glsl.
+layout(set = 2, binding = 7) uniform sampler2D gbufferCustom;
 
 #endif

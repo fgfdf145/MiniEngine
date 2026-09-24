@@ -270,6 +270,10 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     static constexpr std::array<VkFormat, 1> kVelocityCandidates = {VK_FORMAT_R16G16_SFLOAT};
     describeGBufferTarget(RenderTargetId::GBufferVelocity, "G-buffer velocity", kVelocityCandidates);
 
+    // Per-shading-model data (GB5). RGBA8 is a mandatory color attachment and sampled format.
+    static constexpr std::array<VkFormat, 1> kCustomCandidates = {VK_FORMAT_R8G8B8A8_UNORM};
+    describeGBufferTarget(RenderTargetId::GBufferCustom, "G-buffer custom data", kCustomCandidates);
+
     // Visibility bitmask AO, written by compute through image stores. R32F is in the core list of
     // storage formats, so no shaderStorageImageExtendedFormats is needed, and it has no fallback.
     static constexpr std::array<VkFormat, 1> kAoCandidates = {VK_FORMAT_R32_SFLOAT};

@@ -18,16 +18,17 @@ namespace me
 class VulkanGeometryPass : public IScenePass
 {
   public:
-    // Framebuffer attachment order: the five colors, then depth. gbuffer.frag's output locations
-    // 0-4 are the first five entries.
-    static constexpr std::array<RenderTargetId, 6> kAttachments = {
+    // Framebuffer attachment order: the six colors, then depth. gbuffer.frag's output locations
+    // 0-5 are the first six entries.
+    static constexpr std::array<RenderTargetId, 7> kAttachments = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
         RenderTargetId::GBufferEmissive,
         RenderTargetId::GBufferVelocity,
+        RenderTargetId::GBufferCustom,
         RenderTargetId::SceneDepth};
-    static constexpr uint32_t kColorAttachmentCount = 5;
+    static constexpr uint32_t kColorAttachmentCount = 6;
 
     VulkanGeometryPass(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGeometryPass() override;

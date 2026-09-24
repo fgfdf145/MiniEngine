@@ -8,6 +8,8 @@ layout(constant_id = 0) const bool kAlphaMask = false;
 #include "pbr_common.glsl"
 #include "normal_map.glsl"
 #include "material_common.glsl"
+// SHADING_MODEL_* for the material's shading model id.
+#include "gbuffer_common.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -102,7 +104,15 @@ void main()
     // it lives in pbr_common.glsl so the forward comparison path and the deferred path cannot
     // drift.
     vec3 emissive = emissiveSample * material.emissiveFactor;
-    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao) + emissive;
+    // The forward path reads the coat from the material, where the deferred path reads it from GB5.
+    CoatParams coat = NoCoat();
+    if (material.shadingModel.x == SHADING_MODEL_CLEARCOAT)
+    {
+        coat.factor = clamp(material.clearcoatFactors.x, 0.0, 1.0);
+        coat.roughness = clamp(material.clearcoatFactors.y, 0.04, 1.0);
+        coat.normal = geoNormal;
+    }
+    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat);
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.
