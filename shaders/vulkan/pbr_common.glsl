@@ -138,6 +138,57 @@ vec3 EvaluateCoatSpecular(CoatParams coat, vec3 V, vec3 L, vec3 radiance)
 }
 
 // ---------------------------------------------------------------------------
+// Sheen (KHR_materials_sheen), Filament's model
+// ---------------------------------------------------------------------------
+
+// Fibres standing off a cloth surface: the Charlie distribution (Estevez & Kulla 2017) with
+// Neubelt's visibility, tinted by the sheen colour, on the shading normal. A black colour is no
+// sheen, and every sheen term below is skipped for it.
+struct SheenParams
+{
+    vec3 color;
+    // Perceptual roughness, already floored at 0.04.
+    float roughness;
+};
+
+SheenParams NoSheen()
+{
+    SheenParams sheen;
+    sheen.color = vec3(0.0);
+    sheen.roughness = 1.0;
+    return sheen;
+}
+
+bool HasSheen(SheenParams sheen)
+{
+    return max(sheen.color.r, max(sheen.color.g, sheen.color.b)) > 0.0;
+}
+
+// sin^2 is floored as Filament floors it, so the 1 / alpha power stays finite at grazing half
+// vectors. IntegrateSheenAlbedo in engine/renderer/environment_brdf.cpp integrates the same terms.
+float DistributionCharlie(float roughness, float NdH)
+{
+    float alpha = roughness * roughness;
+    float sin2h = max(1.0 - NdH * NdH, 0.0078125);
+    return (2.0 + 1.0 / alpha) * pow(sin2h, 0.5 / alpha) / (2.0 * PI);
+}
+
+float VisibilityNeubelt(float NdV, float NdL)
+{
+    return 1.0 / (4.0 * max(NdL + NdV - NdL * NdV, 1e-4));
+}
+
+vec3 EvaluateSheen(vec3 N, vec3 V, vec3 L, SheenParams sheen, vec3 radiance)
+{
+    float NdL = max(dot(N, L), 0.0);
+    if (NdL <= 0.0)
+        return vec3(0.0);
+    vec3 H = normalize(V + L);
+    float NdV = max(dot(N, V), 0.0);
+    return sheen.color * (DistributionCharlie(sheen.roughness, max(dot(N, H), 0.0)) * VisibilityNeubelt(NdV, NdL)) * radiance * NdL;
+}
+
+// ---------------------------------------------------------------------------
 // Distance attenuation: inverse square, windowed to zero at the light's range
 // ---------------------------------------------------------------------------
 // The windowing half on its own: 1 near the light, falling smoothly to 0 at the range.
@@ -243,9 +294,12 @@ vec3 EvaluateAreaLight(
     vec3 albedo, float metallic, float roughness,
     vec3 energyCompensation,
     CoatParams coat,
-    out vec3 coatContribution)
+    out vec3 coatContribution,
+    SheenParams sheen,
+    out vec3 sheenContribution)
 {
     coatContribution = vec3(0.0);
+    sheenContribution = vec3(0.0);
     vec3 center = light.positionAndRange.xyz;
     vec3 lightNormal = normalize(light.directionAndType.xyz);
     vec3 rightAxis = normalize(light.areaRightAxis.xyz);
@@ -286,6 +340,19 @@ vec3 EvaluateAreaLight(
         return vec3(0.0);
 
     vec3 irradiance = luminance * formFactor * window;
+
+    // The sheen lobe is broad, so it is evaluated toward the rectangle's centre and weighted by the
+    // form factor's irradiance, which already carries the cosine.
+    if (HasSheen(sheen))
+    {
+        vec3 L = normalize(center - worldPos);
+        vec3 H = normalize(V + L);
+        float NdL = max(dot(N, L), 1e-4);
+        sheenContribution = sheen.color *
+                            (DistributionCharlie(sheen.roughness, max(dot(N, H), 0.0)) *
+                             VisibilityNeubelt(max(dot(N, V), 0.0), NdL)) *
+                            irradiance;
+    }
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 F;
@@ -427,9 +494,12 @@ vec3 EvaluateSceneLight(
     vec3 albedo, float metallic, float roughness,
     vec3 energyCompensation,
     CoatParams coat,
-    out vec3 coatContribution)
+    out vec3 coatContribution,
+    SheenParams sheen,
+    out vec3 sheenContribution)
 {
     coatContribution = vec3(0.0);
+    sheenContribution = vec3(0.0);
     int lightType = int(light.directionAndType.w);
 
     if (lightType == LIGHT_AMBIENT)
@@ -478,7 +548,9 @@ vec3 EvaluateSceneLight(
     else if (lightType == LIGHT_AREA)
     {
         // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
-        return EvaluateAreaLight(light, worldPos, N, V, albedo, metallic, roughness, energyCompensation, coat, coatContribution);
+        return EvaluateAreaLight(
+            light, worldPos, N, V, albedo, metallic, roughness, energyCompensation,
+            coat, coatContribution, sheen, sheenContribution);
     }
     else
     {
@@ -488,6 +560,10 @@ vec3 EvaluateSceneLight(
     if (coat.factor > 0.0)
     {
         coatContribution = EvaluateCoatSpecular(coat, V, L, radiance);
+    }
+    if (HasSheen(sheen))
+    {
+        sheenContribution = EvaluateSheen(N, V, L, sheen, radiance);
     }
     return EvaluateBRDF(N, V, L, albedo, metallic, roughness, energyCompensation, radiance);
 }
@@ -554,6 +630,31 @@ uint FindLightCluster(vec3 worldPosition)
     return (sliceIndex * LIGHT_CLUSTER_TILES_Y + tile.y) * LIGHT_CLUSTER_TILES_X + tile.x;
 }
 
+// The sheen lobe's directional albedo, IntegrateSheenAlbedo clamped to 1, from the DFG table's
+// blue channel.
+float SampleSheenAlbedo(float roughness, float NdV)
+{
+    const float size = 64.0;
+    vec2 uv = clamp(vec2(NdV, roughness), vec2(0.5 / size), vec2(1.0 - 0.5 / size));
+    return textureLod(environmentBrdfLut, uv, 0.0).b;
+}
+
+// The sheen's share of the ambient term, as Filament shades it: the GGX-prefiltered sky along the
+// reflection at the sheen's roughness (the uniform ambient under None), times the sheen colour and
+// its albedo. The caller applies the occlusion.
+vec3 EvaluateSheenAmbient(vec3 N, vec3 V, SheenParams sheen)
+{
+    float albedo = SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
+    if (EnvironmentMode() == ENVIRONMENT_NONE)
+    {
+        return sheen.color * albedo * ubo.ambientLuminance.rgb;
+    }
+    vec3 R = reflect(-V, N);
+    vec3 sky = textureLod(prefilteredEnvironment, R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
+    return sheen.color * albedo * (sky + sceneAmbient);
+}
+
 // The coat's share of the ambient term: its lobe's directional albedo (0.04 A + B) times what the
 // environment sends along the coat's reflection, the same split sum the base's specular uses. Under
 // the uniform ambient that is the ambient luminance itself, weighted by Karis' fit as the base is.
@@ -585,7 +686,8 @@ vec3 ShadeSurface(
     vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V,
     vec3 albedo, float metallic, float roughness, float ao,
     vec3 emissive,
-    CoatParams coat)
+    CoatParams coat,
+    SheenParams sheen)
 {
     // The CPU has already summed the scene's Ambient lights into ambientLuminance, or put the
     // fallback there when there are none; see SelectSceneLights. Under a physical sky the sky's
@@ -609,6 +711,8 @@ vec3 ShadeSurface(
     vec3 directAccum = vec3(0.0);
     vec3 coatAccum = vec3(0.0);
     vec3 coatContribution;
+    vec3 sheenAccum = vec3(0.0);
+    vec3 sheenContribution;
     for (uint i = 0u; i < directionalCount; ++i)
     {
         vec3 contribution = EvaluateSceneLight(
@@ -618,7 +722,9 @@ vec3 ShadeSurface(
             albedo, metallic, roughness,
             energyCompensation,
             coat,
-            coatContribution);
+            coatContribution,
+            sheen,
+            sheenContribution);
         // Skipped where the light contributes nothing, which includes every surface facing away
         // from it: those are dark already, and the lookup is the most expensive part of the loop.
         // The coat's normal can face the light where the base's does not, so it counts too.
@@ -628,9 +734,11 @@ vec3 ShadeSurface(
             float shadow = EvaluateDirectionalShadow(worldPosition, geoNormal);
             contribution *= shadow;
             coatContribution *= shadow;
+            sheenContribution *= shadow;
         }
         directAccum += contribution;
         coatAccum += coatContribution;
+        sheenAccum += sheenContribution;
     }
 
     // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
@@ -648,8 +756,11 @@ vec3 ShadeSurface(
                 albedo, metallic, roughness,
                 energyCompensation,
                 coat,
-                coatContribution);
+                coatContribution,
+                sheen,
+                sheenContribution);
             coatAccum += coatContribution;
+            sheenAccum += sheenContribution;
         }
     }
     else
@@ -663,15 +774,30 @@ vec3 ShadeSurface(
                 albedo, metallic, roughness,
                 energyCompensation,
                 coat,
-                coatContribution);
+                coatContribution,
+                sheen,
+                sheenContribution);
             coatAccum += coatContribution;
+            sheenAccum += sheenContribution;
         }
     }
 
     // The base, emissive included, loses what the coat's Fresnel reflects toward the viewer; the
     // coat adds its own lobe. Uncoated surfaces sum exactly what they did before emissive moved in
     // here: (ambient + direct) + emissive.
-    vec3 color = ambient + directAccum + emissive;
+    vec3 color;
+    if (HasSheen(sheen))
+    {
+        // The base loses what the sheen lobe reflects, per its albedo at this view; emissive does
+        // not pass under the fibres' reflection, as in Filament.
+        float sheenScaling = 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) *
+                                       SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
+        color = (ambient + directAccum) * sheenScaling + sheenAccum + EvaluateSheenAmbient(N, V, sheen) * ao + emissive;
+    }
+    else
+    {
+        color = ambient + directAccum + emissive;
+    }
     if (coat.factor > 0.0)
     {
         float coatFresnel = FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;

@@ -15,7 +15,10 @@ enum class ShadingModel : uint32_t
     DefaultLit = 0,
     // A clear dielectric coat over the base (KHR_materials_clearcoat). GB5.rg holds its factor and
     // roughness.
-    Clearcoat = 1
+    Clearcoat = 1,
+    // Cloth-like sheen over the base (KHR_materials_sheen). GB5.rgb holds its colour, GB5.a its
+    // roughness. A material with both a coat and a sheen gets Clearcoat: GB5 holds one layer.
+    Sheen = 2
 };
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
@@ -36,6 +39,9 @@ struct alignas(16) GpuMaterialData
     // x = clearcoat factor, y = clearcoat perceptual roughness, both [0, 1]; zw unused. Read only
     // when shadingModel is Clearcoat.
     float clearcoatFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // rgb = sheen colour (linear), a = sheen perceptual roughness. Read only when shadingModel is
+    // Sheen.
+    float sheenFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
@@ -45,12 +51,13 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 96, "GpuMaterialData must stay 6 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 112, "GpuMaterialData must stay 7 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");
 static_assert(offsetof(GpuMaterialData, nodeGraphFactors) == 48, "nodeGraphFactors must be the fourth vec4");
 static_assert(offsetof(GpuMaterialData, shadingModel) == 64, "shadingModel must be the fifth vec4");
 static_assert(offsetof(GpuMaterialData, clearcoatFactors) == 80, "clearcoatFactors must be the sixth vec4");
+static_assert(offsetof(GpuMaterialData, sheenFactors) == 96, "sheenFactors must be the seventh vec4");
 static_assert(sizeof(ObjectPushConstants) == 64, "ObjectPushConstants must match triangle.vert's push constant block");
 }

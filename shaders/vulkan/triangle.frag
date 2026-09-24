@@ -106,13 +106,19 @@ void main()
     vec3 emissive = emissiveSample * material.emissiveFactor;
     // The forward path reads the coat from the material, where the deferred path reads it from GB5.
     CoatParams coat = NoCoat();
+    SheenParams sheen = NoSheen();
     if (material.shadingModel.x == SHADING_MODEL_CLEARCOAT)
     {
         coat.factor = clamp(material.clearcoatFactors.x, 0.0, 1.0);
         coat.roughness = clamp(material.clearcoatFactors.y, 0.04, 1.0);
         coat.normal = geoNormal;
     }
-    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat);
+    else if (material.shadingModel.x == SHADING_MODEL_SHEEN)
+    {
+        sheen.color = clamp(material.sheenFactors.rgb, 0.0, 1.0);
+        sheen.roughness = clamp(material.sheenFactors.a, 0.04, 1.0);
+    }
+    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen);
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.

@@ -2,7 +2,7 @@
 #define MATERIAL_COMMON_GLSL
 
 // One draw's material: GpuMaterialData in engine/renderer/material.h, member for member (std430,
-// 6 x vec4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
+// 7 x vec4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
 struct MaterialData
 {
     vec4 baseColorFactor;
@@ -12,6 +12,7 @@ struct MaterialData
     vec4 nodeGraphFactors; // x blend graph enabled, y blend factor
     uvec4 shadingModel;    // x = SHADING_MODEL_* (gbuffer_common.glsl); yzw reserved
     vec4 clearcoatFactors; // x clearcoat factor, y clearcoat roughness; read for SHADING_MODEL_CLEARCOAT
+    vec4 sheenFactors;     // rgb sheen colour, a sheen roughness; read for SHADING_MODEL_SHEEN
 };
 
 layout(set = 0, binding = 12, std430) readonly buffer MaterialBuffer

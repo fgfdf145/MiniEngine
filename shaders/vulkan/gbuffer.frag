@@ -109,10 +109,11 @@ void main()
     // It is already face-flipped, so the lighting pass uses it as decoded.
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
     outSurface = vec4(metallic, roughness, ao, EncodeShadingModel(material.shadingModel.x));
-    // Clearcoat keeps its factor and roughness here; every other model writes zeros.
-    outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT
-                    ? vec4(material.clearcoatFactors.xy, 0.0, 0.0)
-                    : vec4(0.0);
+    // Clearcoat keeps its factor and roughness here, sheen its colour and roughness; every other
+    // model writes zeros.
+    outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT ? vec4(material.clearcoatFactors.xy, 0.0, 0.0)
+                : material.shadingModel.x == SHADING_MODEL_SHEEN   ? material.sheenFactors
+                                                                   : vec4(0.0);
     outEmissive = vec4(emissiveSample * material.emissiveFactor, 0.0);
 
     // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is

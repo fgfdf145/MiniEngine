@@ -179,9 +179,19 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material.nodeGraphFactors[2] = 1.0f;
         renderSubmesh.material.nodeGraphFactors[3] = 0.0f;
         // A coat of zero is no coat: those draws keep the default model and its exact shading.
+        // A black sheen is no sheen. GB5 holds one layer per pixel, so a coat takes precedence.
         const float clearcoat = std::clamp(material.clearcoatFactor, 0.0f, 1.0f);
-        renderSubmesh.material.shadingModel[0] = static_cast<uint32_t>(
-            clearcoat > 0.0f ? ShadingModel::Clearcoat : ShadingModel::DefaultLit);
+        float sheenStrength = 0.0f;
+        for (size_t index = 0; index < 3; ++index)
+        {
+            renderSubmesh.material.sheenFactors[index] = std::clamp(material.sheenColorFactor[index], 0.0f, 1.0f);
+            sheenStrength = std::max(sheenStrength, renderSubmesh.material.sheenFactors[index]);
+        }
+        renderSubmesh.material.sheenFactors[3] = std::clamp(material.sheenRoughnessFactor, 0.0f, 1.0f);
+        const ShadingModel shadingModel = clearcoat > 0.0f       ? ShadingModel::Clearcoat
+                                          : sheenStrength > 0.0f ? ShadingModel::Sheen
+                                                                 : ShadingModel::DefaultLit;
+        renderSubmesh.material.shadingModel[0] = static_cast<uint32_t>(shadingModel);
         renderSubmesh.material.clearcoatFactors[0] = clearcoat;
         renderSubmesh.material.clearcoatFactors[1] = std::clamp(material.clearcoatRoughnessFactor, 0.0f, 1.0f);
         renderSubmesh.name = submesh.name;

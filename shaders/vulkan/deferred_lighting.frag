@@ -75,15 +75,23 @@ void main()
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     // GB5 means something only for the models that write it, so it is read only for them.
+    uint shadingModel = DecodeShadingModel(surface.a);
     CoatParams coat = NoCoat();
-    if (DecodeShadingModel(surface.a) == SHADING_MODEL_CLEARCOAT)
+    SheenParams sheen = NoSheen();
+    if (shadingModel == SHADING_MODEL_CLEARCOAT)
     {
         vec2 coatFactors = texture(gbufferCustom, fragTexCoord).rg;
         coat.factor = coatFactors.x;
         coat.roughness = clamp(coatFactors.y, 0.04, 1.0);
         coat.normal = geoNormal;
     }
-    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat);
+    else if (shadingModel == SHADING_MODEL_SHEEN)
+    {
+        vec4 sheenFactors = texture(gbufferCustom, fragTexCoord);
+        sheen.color = sheenFactors.rgb;
+        sheen.roughness = clamp(sheenFactors.a, 0.04, 1.0);
+    }
+    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
     // composites over this with an RGB-only write mask.

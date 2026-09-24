@@ -31,6 +31,8 @@ vec3 DecodeNormalOctahedral(vec2 encoded)
 const uint SHADING_MODEL_DEFAULT_LIT = 0u;
 // GB5.r = clearcoat factor, GB5.g = clearcoat roughness.
 const uint SHADING_MODEL_CLEARCOAT = 1u;
+// GB5.rgb = sheen colour, GB5.a = sheen roughness.
+const uint SHADING_MODEL_SHEEN = 2u;
 
 float EncodeShadingModel(uint shadingModel)
 {
