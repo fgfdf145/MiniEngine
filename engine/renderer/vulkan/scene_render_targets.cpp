@@ -292,6 +292,18 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeAoTarget(RenderTargetId::AoRaw, "AO trace");
     describeAoTarget(RenderTargetId::SceneAo, "AO");
 
+    // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
+    static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
+    TargetDescription& taa = Describe(RenderTargetId::SceneTaa);
+    taa.format = ChooseFormat(
+        "TAA",
+        kTaaCandidates,
+        VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+        query);
+    taa.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    taa.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    taa.bindToImGui = false;
+
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
     // cause; phase three appends GB4, so name the omission at the point it happens.

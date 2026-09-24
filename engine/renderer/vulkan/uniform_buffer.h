@@ -125,6 +125,9 @@ struct alignas(16) CameraUniformData
     glm::mat4 prevViewProj{1.0f};
     // Appended last so no earlier member's offset moves.
     EnvironmentUniformData environment;
+    // This frame's proj * view without the TAA jitter, which proj and invViewProj carry. Motion
+    // vectors are measured with it, so a still camera has none whatever the jitter. Appended last.
+    glm::mat4 viewProjNoJitter{1.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -136,8 +139,12 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, viewProjNoJitter) ==
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
+    "viewProjNoJitter must follow the environment block with no padding");
 static_assert(
     offsetof(CameraUniformData, shadow) == kCameraBlockHeaderBytes,
     "the shadow block must follow lightClusterSlices with no padding");
@@ -232,7 +239,8 @@ class VulkanUniformBuffer
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,
         std::span<const glm::mat4> prevModels,
-        const EnvironmentUniformData& environment);
+        const EnvironmentUniformData& environment,
+        const glm::mat4& viewProjNoJitter);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

@@ -1,0 +1,185 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Temporal anti-aliasing resolve (Karis 2014, with the refinements that became standard). Each frame
+// is rendered with a sub-pixel jitter; this pass blends it into last frame's result, reprojected
+// through the motion vectors, so a still image converges to many samples per pixel.
+//
+// - velocity from the nearest-depth pixel of the 3x3 neighbourhood, so an edge moves with the
+//   surface in front of it; background pixels, which have no velocity, reproject by camera motion;
+// - history sampled with a 5-tap Catmull-Rom filter, which keeps it from blurring frame over frame;
+// - history clipped toward the neighbourhood mean in YCoCg, to mean +- CLIP_GAMMA * sigma of the
+//   current 3x3 (variance clipping), which removes ghosts left by disocclusion and changing light;
+// - a 10% / 90% blend weighted by 1 / (1 + exposed luma), so one bright sample cannot dominate.
+
+#include "scene_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D currentTexture;  // SceneHdr, nearest
+layout(set = 1, binding = 1) uniform sampler2D depthTexture;    // nearest
+layout(set = 1, binding = 2) uniform sampler2D velocityTexture; // nearest
+layout(set = 1, binding = 3) uniform sampler2D historyTexture;  // last frame's result, linear
+layout(set = 1, binding = 4, rgba16f) uniform writeonly image2D historyImage;
+layout(set = 1, binding = 5, rgba16f) uniform writeonly image2D outputImage; // SceneTaa
+
+// Must match TaaPushConstants in engine/renderer/vulkan/taa_pass.cpp.
+layout(push_constant) uniform TaaConstants
+{
+    vec2 extent;
+    vec2 invExtent;
+    // Radiance to the pre-exposed values the tone mapper takes; the blend weights use exposed luma.
+    float exposure;
+    uint flags;
+    vec2 unused;
+}
+taa;
+
+const uint TAA_FLAG_ENABLED = 1u;
+const uint TAA_FLAG_HISTORY_VALID = 2u;
+
+const float CURRENT_WEIGHT = 0.1;
+const float CLIP_GAMMA = 1.0;
+
+// NaN, infinities and negatives would never leave the history once they entered it.
+vec3 Sanitize(vec3 color)
+{
+    if (any(isnan(color)) || any(isinf(color)))
+        return vec3(0.0);
+    return clamp(color, vec3(0.0), vec3(65504.0));
+}
+
+vec3 LoadCurrent(ivec2 pixel)
+{
+    return Sanitize(texelFetch(currentTexture, clamp(pixel, ivec2(0), ivec2(taa.extent) - 1), 0).rgb);
+}
+
+vec3 RgbToYCoCg(vec3 c)
+{
+    return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b);
+}
+
+vec3 YCoCgToRgb(vec3 c)
+{
+    float t = c.x - c.z;
+    return vec3(t + c.y, c.x + c.z, t - c.y);
+}
+
+float Luma(vec3 c)
+{
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// Catmull-Rom through nine texels using five bilinear taps (the corner taps' weights are small
+// enough to drop).
+vec3 SampleHistoryCatmullRom(vec2 uv)
+{
+    vec2 samplePosition = uv * taa.extent;
+    vec2 center = floor(samplePosition - 0.5) + 0.5;
+    vec2 f = samplePosition - center;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2;
+    vec2 position0 = (center - 1.0) * taa.invExtent;
+    vec2 position3 = (center + 2.0) * taa.invExtent;
+    vec2 position12 = (center + w2 / w12) * taa.invExtent;
+
+    vec3 result = textureLod(historyTexture, vec2(position12.x, position0.y), 0.0).rgb * (w12.x * w0.y);
+    result += textureLod(historyTexture, vec2(position0.x, position12.y), 0.0).rgb * (w0.x * w12.y);
+    result += textureLod(historyTexture, position12, 0.0).rgb * (w12.x * w12.y);
+    result += textureLod(historyTexture, vec2(position3.x, position12.y), 0.0).rgb * (w3.x * w12.y);
+    result += textureLod(historyTexture, vec2(position12.x, position3.y), 0.0).rgb * (w12.x * w3.y);
+    float weight = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    // The negative lobes can ring below zero at hard edges; the clip below bounds the rest.
+    return max(result / weight, vec3(0.0));
+}
+
+// Moves the history along the line to the box centre until it is inside the box (Playdead's
+// AABB clip), rather than clamping each axis, which would shift its hue.
+vec3 ClipToBox(vec3 history, vec3 boxMin, vec3 boxMax)
+{
+    vec3 center = 0.5 * (boxMin + boxMax);
+    vec3 halfSize = 0.5 * (boxMax - boxMin) + 1e-5;
+    vec3 offset = history - center;
+    vec3 scale = halfSize / max(abs(offset), vec3(1e-5));
+    float t = clamp(min(scale.x, min(scale.y, scale.z)), 0.0, 1.0);
+    return center + offset * t;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, ivec2(taa.extent))))
+    {
+        return;
+    }
+
+    vec3 current = LoadCurrent(pixel);
+
+    // TAA off, or the forward-only order: pass the image through untouched. History is left alone;
+    // the renderer reports it invalid for the next frame that resolves.
+    if ((taa.flags & TAA_FLAG_ENABLED) == 0u)
+    {
+        imageStore(outputImage, pixel, vec4(current, 1.0));
+        return;
+    }
+
+    vec3 moment1 = vec3(0.0);
+    vec3 moment2 = vec3(0.0);
+    float closestDepth = 1.0;
+    ivec2 closestPixel = pixel;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 neighbor = clamp(pixel + ivec2(x, y), ivec2(0), ivec2(taa.extent) - 1);
+            vec3 color = RgbToYCoCg(LoadCurrent(neighbor));
+            moment1 += color;
+            moment2 += color * color;
+            // Zero-to-one depth with the near plane at 0: the smallest depth is the nearest surface.
+            float depth = texelFetch(depthTexture, neighbor, 0).r;
+            if (depth < closestDepth)
+            {
+                closestDepth = depth;
+                closestPixel = neighbor;
+            }
+        }
+    }
+    vec3 mean = moment1 / 9.0;
+    vec3 sigma = sqrt(max(moment2 / 9.0 - mean * mean, vec3(0.0)));
+    vec3 boxMin = mean - CLIP_GAMMA * sigma;
+    vec3 boxMax = mean + CLIP_GAMMA * sigma;
+
+    vec2 uv = (vec2(pixel) + 0.5) * taa.invExtent;
+    vec2 velocity;
+    if (closestDepth >= 1.0)
+    {
+        // Nothing but background around this pixel, and background writes no motion vector: it
+        // moves with the camera alone, so reproject its far-plane point.
+        vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+        vec4 previousClip = ubo.prevViewProj * vec4(world.xyz / world.w, 1.0);
+        velocity = uv - (previousClip.xy / previousClip.w * 0.5 + 0.5);
+    }
+    else
+    {
+        velocity = texelFetch(velocityTexture, closestPixel, 0).rg;
+    }
+    vec2 previousUv = uv - velocity;
+
+    vec3 result = current;
+    bool onScreen = all(greaterThanEqual(previousUv, vec2(0.0))) && all(lessThanEqual(previousUv, vec2(1.0)));
+    if ((taa.flags & TAA_FLAG_HISTORY_VALID) != 0u && onScreen)
+    {
+        vec3 history = SampleHistoryCatmullRom(previousUv);
+        history = YCoCgToRgb(ClipToBox(RgbToYCoCg(history), boxMin, boxMax));
+        float currentWeight = CURRENT_WEIGHT / (1.0 + Luma(current) * taa.exposure);
+        float historyWeight = (1.0 - CURRENT_WEIGHT) / (1.0 + Luma(history) * taa.exposure);
+        result = (current * currentWeight + history * historyWeight) / (currentWeight + historyWeight);
+    }
+    result = Sanitize(result);
+
+    imageStore(historyImage, pixel, vec4(result, 1.0));
+    imageStore(outputImage, pixel, vec4(result, 1.0));
+}

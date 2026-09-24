@@ -253,24 +253,26 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 7, "the deferred order must contain seven passes");
+    Require(order.size() == 8, "the deferred order must contain eight passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
     Require(order[1] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
     Require(order[2] == ScenePassId::AoResolve, "the AO resolve filters the trace");
     Require(order[3] == ScenePassId::Lighting, "lighting reads the resolved AO");
     Require(order[4] == ScenePassId::Forward, "the forward blend pass must follow lighting");
-    Require(order[5] == ScenePassId::ExposureHistogram, "the histogram must meter the finished HDR image");
-    Require(order[6] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+    Require(order[5] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
+    Require(order[6] == ScenePassId::ExposureHistogram, "the histogram must meter the resolved image");
+    Require(order[7] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(true);
 
-    Require(order.size() == 3, "the forward-only order must contain three passes");
+    Require(order.size() == 4, "the forward-only order must contain four passes");
     Require(order[0] == ScenePassId::Forward, "the forward-only order must start with the forward pass");
-    Require(order[1] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
-    Require(order[2] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
+    Require(order[1] == ScenePassId::Taa, "both orders hand the image to TAA, which passes it through here");
+    Require(order[2] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
+    Require(order[3] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
 }
 
 void GBufferTargetsAreColorTargets()
@@ -294,7 +296,7 @@ void GBufferTargetsAreColorTargets()
 
 void AoTargetsAreStorageTargets()
 {
-    for (const RenderTargetId target : {RenderTargetId::AoRaw, RenderTargetId::SceneAo})
+    for (const RenderTargetId target : {RenderTargetId::AoRaw, RenderTargetId::SceneAo, RenderTargetId::SceneTaa})
     {
         Require(GetRenderTargetKind(target) == RenderTargetKind::Storage, "AO targets are written by compute");
         Require(GetWriteLayout(target) == VK_IMAGE_LAYOUT_GENERAL, "a storage write needs the general layout");

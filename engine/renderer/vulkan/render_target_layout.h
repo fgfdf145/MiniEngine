@@ -35,6 +35,9 @@ enum class RenderTargetId : uint32_t
     // Both are storage images written by compute.
     AoRaw,
     SceneAo,
+    // The TAA resolve's output, written by compute: the anti-aliased HDR image the exposure
+    // histogram and tone mapping read.
+    SceneTaa,
     Count
 };
 

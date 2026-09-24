@@ -27,6 +27,7 @@ RenderTargetKind GetRenderTargetKind(RenderTargetId target)
         return RenderTargetKind::Depth;
     case RenderTargetId::AoRaw:
     case RenderTargetId::SceneAo:
+    case RenderTargetId::SceneTaa:
         return RenderTargetKind::Storage;
     default:
         return RenderTargetKind::Color;

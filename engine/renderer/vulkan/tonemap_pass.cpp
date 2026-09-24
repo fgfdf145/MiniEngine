@@ -68,7 +68,7 @@ RenderPassIo VulkanTonemapPass::Io() const
     // declared reads alongside the HDR target. In an order that never wrote them their contents
     // are undefined, and the renderer forces the view off.
     static constexpr std::array<RenderTargetId, 9> kReads = {
-        RenderTargetId::SceneHdr,
+        RenderTargetId::SceneTaa,
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
@@ -111,7 +111,7 @@ void VulkanTonemapPass::Record(
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
     const VkDescriptorSet descriptorSet = m_descriptorSets.at(
-        targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot));
+        targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot));
     vkCmdBindDescriptorSets(
         commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -281,7 +281,7 @@ void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)
     {
         VkDescriptorImageInfo imageInfo{};
         imageInfo.sampler = m_sampler;
-        imageInfo.imageView = targets.GetSampledView(RenderTargetId::SceneHdr, slot);
+        imageInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkWriteDescriptorSet write{};

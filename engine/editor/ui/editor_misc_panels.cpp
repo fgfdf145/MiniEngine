@@ -128,6 +128,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
         ImGui::Checkbox("Forward only (comparison)", &m_renderDebug.forwardOnly);
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
+        // The forward-only order has no motion vectors, so TAA is off there whatever this says.
+        ImGui::Checkbox("Temporal anti-aliasing", &m_renderDebug.taa);
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.

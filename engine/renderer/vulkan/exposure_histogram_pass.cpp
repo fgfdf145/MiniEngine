@@ -73,7 +73,7 @@ ScenePassId VulkanExposureHistogramPass::Id() const
 RenderPassIo VulkanExposureHistogramPass::Io() const
 {
     static constexpr std::array<RenderTargetId, 2> kReads = {
-        RenderTargetId::SceneHdr,
+        RenderTargetId::SceneTaa,
         RenderTargetId::SceneDepth};
 
     RenderPassIo io{};
@@ -86,9 +86,9 @@ void VulkanExposureHistogramPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // The HDR and depth copies and the histogram buffer are all per frame slot, so one index
+    // The resolved HDR and depth copies and the histogram buffer are all per frame slot, so one index
     // picks all three.
-    const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot);
+    const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
     const VkBuffer histogram = m_histograms.at(slot).buffer;
 
     // The CPU read this buffer before the frame was submitted, which vkQueueSubmit orders ahead of
@@ -327,7 +327,7 @@ void VulkanExposureHistogramPass::CreateDescriptorSets(const SceneRenderTargets&
     {
         VkDescriptorImageInfo hdrInfo{};
         hdrInfo.sampler = m_sampler;
-        hdrInfo.imageView = targets.GetSampledView(RenderTargetId::SceneHdr, slot);
+        hdrInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
         hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorImageInfo depthInfo{};

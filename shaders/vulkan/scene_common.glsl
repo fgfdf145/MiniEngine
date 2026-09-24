@@ -61,6 +61,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 atmosphereCameraPositionKm; // xyz camera relative to the planet centre
     vec4 hdriParameters;             // x intensity, y rotation in turns
     vec4 hdriIrradianceSh[9];        // the HDRI's radiance SH, rotated and scaled; xyz used
+
+    // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
+    mat4 viewProjNoJitter;
 }
 ubo;
 

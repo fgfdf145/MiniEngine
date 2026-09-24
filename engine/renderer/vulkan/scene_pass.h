@@ -56,6 +56,10 @@ struct ScenePassFrameContext
     AoSettings ao;
     // Which AO history image the resolve reads and writes, and whether the read one is valid.
     TemporalHistoryFrame aoHistory;
+    // Whether the TAA pass resolves (on, and the deferred order) or copies the image through, and
+    // its history, as aoHistory is the AO resolve's.
+    bool taaEnabled = false;
+    TemporalHistoryFrame taaHistory;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the

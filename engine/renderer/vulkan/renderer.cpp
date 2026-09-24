@@ -539,6 +539,20 @@ void VulkanRenderer::DrawFrame()
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
     const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
 
+    // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
+    // history keep the plain projection, and the camera block carries the plain view-projection for
+    // the motion vectors. The forward-only order has no motion vectors, so it never jitters.
+    const bool taaEnabled = State().renderDebug.taa && !State().renderDebug.forwardOnly;
+    ViewportMatrices renderMatrices = State().viewportMatrices;
+    if (taaEnabled)
+    {
+        const VkExtent2D extent = m_sceneTargets->GetExtent();
+        renderMatrices.renderProjection = JitterProjection(
+            renderMatrices.renderProjection,
+            TaaJitterPixels(m_taaFrameIndex++),
+            glm::uvec2(extent.width, extent.height));
+    }
+
     // The selection puts every directional light first, so the local lights the grid bins are the
     // tail of selectedLights, and the grid's indices point into the same array the shader reads.
     const bool clusteredLighting = State().renderDebug.clusteredLighting;
@@ -554,7 +568,9 @@ void VulkanRenderer::DrawFrame()
         }
         LightClusterCamera clusterCamera{};
         clusterCamera.view = State().viewportMatrices.view;
-        clusterCamera.projection = State().viewportMatrices.renderProjection;
+        // The jittered projection: the shader finds a pixel's cluster through the one it rasterised
+        // with, and the binning must agree with it.
+        clusterCamera.projection = renderMatrices.renderProjection;
         clusterCamera.nearPlane = State().camera.nearPlane;
         clusterCamera.farPlane = State().camera.farPlane;
         lightClusters = BuildLightClusters(clusterCamera, lightSpheres, kLightClusterIndexCapacity);
@@ -568,7 +584,7 @@ void VulkanRenderer::DrawFrame()
 
     m_uniformBuffer->Update(
         imageIndex,
-        State().viewportMatrices,
+        renderMatrices,
         State().camera.position,
         lightSelection.ambientLuminance,
         lightSelection.usesFallbackAmbient,
@@ -576,7 +592,8 @@ void VulkanRenderer::DrawFrame()
         shadowData,
         motion.previousViewProjection,
         motion.previousModels,
-        environmentData);
+        environmentData,
+        viewProjection);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
@@ -613,6 +630,8 @@ void VulkanRenderer::DrawFrame()
     frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly;
     frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
+    frame.taaEnabled = taaEnabled;
+    frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.physicalSky = environmentMode != EnvironmentMode::None;
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -747,6 +766,7 @@ void VulkanRenderer::CreateSwapchainResources()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_taaHistory.Reset();
     CreateScenePasses();
 }
 
@@ -1045,6 +1065,12 @@ void VulkanRenderer::CreateScenePasses()
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(forwardPass));
+    m_scenePasses.push_back(std::make_unique<VulkanTaaPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
     m_scenePasses.push_back(std::move(exposurePass));
     m_scenePasses.push_back(std::make_unique<VulkanTonemapPass>(
         m_device->GetHandle(),
@@ -1149,6 +1175,7 @@ void VulkanRenderer::SyncSceneTargets()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_taaHistory.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",
         m_sceneTargets->GetExtent().width,

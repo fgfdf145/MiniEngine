@@ -54,7 +54,8 @@ void main()
     vec3 worldTangent = normalize(mat3(drawData.model) * inTangent.xyz);
 
     gl_Position = ubo.proj * ubo.view * worldPosition;
-    fragCurrClip = gl_Position;
+    // Unjittered, like prevViewProj, so motion vectors measure motion and not the TAA jitter.
+    fragCurrClip = ubo.viewProjNoJitter * worldPosition;
     fragPrevClip = ubo.prevViewProj * (previousModelData.previousModels[gl_InstanceIndex] * vec4(inPosition, 1.0));
     fragColor = inColor;
     fragTexCoord = inTexCoord;

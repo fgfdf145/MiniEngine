@@ -18,12 +18,14 @@
 #include "scene_render_targets.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
+#include "taa_pass.h"
 #include "texture.h"
 #include "tonemap_pass.h"
 #include "uniform_buffer.h"
 
 #include <engine/editor/editor_backend_base.h>
 #include <engine/asset/texture_preparation.h>
+#include <engine/renderer/taa_jitter.h>
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 
@@ -248,6 +250,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Which AO history image each frame reads and writes. Reset with the motion history, because
     // the resolve pass recreates its history images at the same points.
     TemporalHistory m_aoHistory;
+    TemporalHistory m_taaHistory;
+    // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
+    uint32_t m_taaFrameIndex = 0;
     // Seeds the AO trace's noise; advances once per recorded frame.
     uint32_t m_aoFrameIndex = 0;
     // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes

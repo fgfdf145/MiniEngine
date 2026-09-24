@@ -115,6 +115,8 @@ add_library(engine_renderer
     vulkan/shadow_pass.h
     vulkan/swapchain.cpp
     vulkan/swapchain.h
+    vulkan/taa_pass.cpp
+    vulkan/taa_pass.h
     vulkan/texture.cpp
     vulkan/texture.h
     vulkan/tonemap_pass.cpp
@@ -143,6 +145,7 @@ set(MINIENGINE_SHADER_SOURCES
     exposure_histogram.comp
     vbao_trace.comp
     vbao_resolve.comp
+    taa_resolve.comp
     atmosphere_transmittance.comp
     atmosphere_multiscattering.comp
     atmosphere_skyview.comp

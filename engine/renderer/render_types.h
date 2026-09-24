@@ -64,6 +64,9 @@ struct RenderDebugSettings
     // Looks local lights up through the light cluster grid. Off, every pixel loops over all of them:
     // the comparison path, which must render the same image.
     bool clusteredLighting = true;
+    // Temporal anti-aliasing: jittered projection plus the TAA resolve. Off, the frame is neither
+    // jittered nor resolved, and renders exactly as it did before TAA existed.
+    bool taa = true;
     AoSettings ao;
 };
 }
