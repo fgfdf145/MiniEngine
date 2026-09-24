@@ -391,6 +391,32 @@ endif()
 
 set_target_properties(miniengine_light_clusters_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_gltf_material_extensions_tests
+    gltf_material_extensions_tests.cpp
+)
+miniengine_group_target_sources(miniengine_gltf_material_extensions_tests)
+
+target_link_libraries(miniengine_gltf_material_extensions_tests
+    PRIVATE
+        engine_asset
+)
+
+add_test(
+    NAME miniengine.gltf_material_extensions
+    COMMAND miniengine_gltf_material_extensions_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_gltf_material_extensions_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_gltf_material_extensions_tests>
+            $<TARGET_FILE_DIR:miniengine_gltf_material_extensions_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_gltf_material_extensions_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_texture_compression_tests
     texture_compression_tests.cpp
 )

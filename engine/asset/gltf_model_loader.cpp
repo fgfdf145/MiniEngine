@@ -706,6 +706,26 @@ ModelMaterialData BuildMaterialData(
         materialData.emissiveIntensity = 1.0f;
     }
 
+    // KHR_materials_emissive_strength scales the emissive factor past glTF's [0, 1], which is
+    // what emissiveIntensity already does. Only a non-negative number is a strength; anything else
+    // keeps the default rather than darkening or inverting the emission.
+    const auto emissiveStrength = material.extensions.find("KHR_materials_emissive_strength");
+    if (emissiveStrength != material.extensions.end() && emissiveStrength->second.Has("emissiveStrength"))
+    {
+        const tinygltf::Value& strength = emissiveStrength->second.Get("emissiveStrength");
+        if (strength.IsNumber() && strength.GetNumberAsDouble() >= 0.0)
+        {
+            materialData.emissiveIntensity = static_cast<float>(strength.GetNumberAsDouble());
+        }
+        else
+        {
+            LOG_WARN(
+                "Ignoring an invalid KHR_materials_emissive_strength on material '{}' in '{}'",
+                material.name,
+                modelPath.string());
+        }
+    }
+
     const std::optional<MaterialAlphaMode> parsedAlphaMode =
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
