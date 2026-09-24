@@ -417,6 +417,32 @@ endif()
 
 set_target_properties(miniengine_taa_jitter_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_specular_aa_tests
+    specular_aa_tests.cpp
+)
+miniengine_group_target_sources(miniengine_specular_aa_tests)
+
+target_link_libraries(miniengine_specular_aa_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.specular_aa
+    COMMAND miniengine_specular_aa_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_specular_aa_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_specular_aa_tests>
+            $<TARGET_FILE_DIR:miniengine_specular_aa_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_specular_aa_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gltf_material_extensions_tests
     gltf_material_extensions_tests.cpp
 )

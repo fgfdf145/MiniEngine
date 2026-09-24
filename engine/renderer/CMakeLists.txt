@@ -26,6 +26,8 @@ add_library(engine_render_core
     scene_lighting.h
     shadow_cascades.cpp
     shadow_cascades.h
+    specular_aa.cpp
+    specular_aa.h
     spherical_harmonics.cpp
     spherical_harmonics.h
     taa_jitter.cpp
