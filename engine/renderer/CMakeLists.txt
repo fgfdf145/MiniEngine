@@ -28,6 +28,8 @@ add_library(engine_render_core
     shadow_cascades.h
     spherical_harmonics.cpp
     spherical_harmonics.h
+    taa_jitter.cpp
+    taa_jitter.h
     temporal_history.cpp
     temporal_history.h
 )
