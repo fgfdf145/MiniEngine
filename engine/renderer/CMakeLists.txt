@@ -8,6 +8,8 @@ add_library(engine_render_core
     atmosphere.h
     bloom_chain.cpp
     bloom_chain.h
+    glare.cpp
+    glare.h
     camera.cpp
     camera.h
     environment_brdf.cpp
