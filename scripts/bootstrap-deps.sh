@@ -164,8 +164,13 @@ log "vcpkg root: $vcpkg_root"
 log "Selected triplet: $triplet"
 log "vcpkg installed root: $installed_root"
 
-if [[ -d "$vcpkg_root/.git" ]]; then
+# An initialized submodule has a .git file, not a directory.
+if [[ -e "$vcpkg_root/.git" ]]; then
     log "Using existing vcpkg checkout at '$vcpkg_root'."
+elif [[ "$vcpkg_root" == "$repo_root/.deps/vcpkg" ]]; then
+    # The default root is a submodule; pin to its recorded commit, not upstream master.
+    step "Initializing the vcpkg submodule"
+    git -C "$repo_root" submodule update --init --depth 1 -- .deps/vcpkg
 else
     if [[ -e "$vcpkg_root" ]] && [[ -n "$(ls -A "$vcpkg_root" 2>/dev/null || true)" ]]; then
         die "Target vcpkg directory exists but is not a git checkout: '$vcpkg_root'."
@@ -174,6 +179,14 @@ else
     mkdir -p -- "$(dirname -- "$vcpkg_root")"
     step "Cloning vcpkg into '$vcpkg_root'"
     git clone --depth 1 https://github.com/microsoft/vcpkg.git "$vcpkg_root"
+fi
+
+# A shallow checkout lacks the manifest's builtin-baseline commit, and vcpkg
+# cannot resolve port versions without it. Fetch just that commit.
+baseline="$(sed -n 's/.*"builtin-baseline"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' "$repo_root/vcpkg.json")"
+if [[ -n "$baseline" ]] && ! git -C "$vcpkg_root" cat-file -e "$baseline^{commit}" 2>/dev/null; then
+    step "Fetching vcpkg baseline $baseline"
+    git -C "$vcpkg_root" fetch --depth 1 origin "$baseline"
 fi
 
 if [[ ! -x "$vcpkg_root/bootstrap-vcpkg.sh" ]]; then
@@ -192,6 +205,7 @@ if [[ "$skip_install" -eq 0 ]]; then
     "$vcpkg_root/vcpkg" install \
         "--x-manifest-root=$repo_root" \
         "--x-install-root=$installed_root" \
+        "--overlay-ports=$repo_root/cmake/vcpkg-overlay-ports" \
         "--triplet=$triplet"
 else
     log "Skipping 'vcpkg install' because --skip-install was provided."

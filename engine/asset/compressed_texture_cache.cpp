@@ -71,7 +71,9 @@ std::string BuildCompressedTextureKey(const std::filesystem::path& imagePath, Te
 {
     const std::filesystem::path canonical = std::filesystem::weakly_canonical(imagePath);
     const uintmax_t size = std::filesystem::file_size(canonical);
-    const auto writeTime = std::filesystem::last_write_time(canonical).time_since_epoch().count();
+    // libc++ stores file_time_type ticks as __int128, which std::to_string has no overload for.
+    const auto writeTime =
+        static_cast<long long>(std::filesystem::last_write_time(canonical).time_since_epoch().count());
     return canonical.generic_string() + "|" + std::to_string(size) + "|" + std::to_string(writeTime) + "|" +
            std::to_string(static_cast<uint32_t>(usage)) + "|v" + std::to_string(kTextureCacheVersion);
 }

@@ -150,6 +150,42 @@ else()
 endif()
 
 if(miniengine_vcpkg_active)
+    # IDEs such as CLion configure without the presets. On macOS and Linux the
+    # host decides the triplet; Windows keeps it explicit because Ninja with cl
+    # cannot tell x86 from x64 before project().
+    if((NOT DEFINED VCPKG_TARGET_TRIPLET OR "${VCPKG_TARGET_TRIPLET}" STREQUAL "") AND
+       NOT CMAKE_HOST_WIN32)
+        cmake_host_system_information(RESULT host_processor QUERY OS_PLATFORM)
+        if(CMAKE_HOST_APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$")
+            set(host_processor "${CMAKE_OSX_ARCHITECTURES}")
+        endif()
+        if(host_processor MATCHES "^(arm64|aarch64)$")
+            set(host_triplet_arch "arm64")
+        elseif(host_processor MATCHES "^(x86_64|amd64|AMD64)$")
+            set(host_triplet_arch "x64")
+        endif()
+        if(DEFINED host_triplet_arch)
+            if(CMAKE_HOST_APPLE)
+                set(host_triplet_os "osx")
+            else()
+                set(host_triplet_os "linux")
+            endif()
+            set(VCPKG_TARGET_TRIPLET
+                "${host_triplet_arch}-${host_triplet_os}"
+                CACHE STRING
+                "vcpkg target triplet"
+            )
+            message(STATUS "MiniEngine: defaulting VCPKG_TARGET_TRIPLET to '${VCPKG_TARGET_TRIPLET}'")
+        endif()
+    endif()
+    if(NOT DEFINED VCPKG_OVERLAY_PORTS)
+        set(VCPKG_OVERLAY_PORTS
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vcpkg-overlay-ports"
+            CACHE STRING
+            "vcpkg overlay ports"
+        )
+    endif()
+
     if(NOT DEFINED VCPKG_TARGET_TRIPLET OR "${VCPKG_TARGET_TRIPLET}" STREQUAL "")
         message(FATAL_ERROR
             "MiniEngine requires VCPKG_TARGET_TRIPLET when the vcpkg toolchain is enabled."

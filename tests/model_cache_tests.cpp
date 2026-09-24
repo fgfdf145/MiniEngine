@@ -133,15 +133,19 @@ void LruOrder()
     ModelCache::Invalidate(c);
 }
 
-// Trim normalizes what it is given, so a live key spelled with different
-// separators than the stored key still pins its entry.
+// Trim normalizes what it is given, so a live key spelled differently from
+// the stored key still pins its entry. Backslashes only separate on Windows.
 void LiveKeyNormalization()
 {
     const std::string stored = "C:/fake/norm/model.glb";
     ModelCache::Invalidate(stored);
     ModelCache::Store(stored, MakeModel(10, 10, "m"));
 
+#ifdef _WIN32
     ModelCache::Trim({"C:\\fake\\norm\\model.glb"}, 0);
+#else
+    ModelCache::Trim({"C:/fake/./norm//model.glb"}, 0);
+#endif
     Require(ModelCache::Get(stored) != nullptr, "a differently-spelled live key failed to pin its entry");
 
     ModelCache::Invalidate(stored);

@@ -41,8 +41,13 @@ void RebaseRenamedFile()
 
 void RebaseFileInsideRenamedFolder()
 {
-    const std::optional<std::filesystem::path> rebased =
-        AssetPaths::Rebase("C:\\assets\\Tree\\textures\\bark.png", "C:/assets/Tree", "C:/assets/Oak");
+    // Spelled differently from the folder; backslashes only separate on Windows.
+#ifdef _WIN32
+    const char* file = "C:\\assets\\Tree\\textures\\bark.png";
+#else
+    const char* file = "C:/assets/Tree/./textures//bark.png";
+#endif
+    const std::optional<std::filesystem::path> rebased = AssetPaths::Rebase(file, "C:/assets/Tree", "C:/assets/Oak");
     Require(rebased.has_value(), "a file inside the renamed folder was not rebased");
     Require(
         *rebased == std::filesystem::path("C:/assets/Oak/textures/bark.png").lexically_normal(),

@@ -163,11 +163,20 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments)
     }
 }
 
-function Ensure-VcpkgRepository([string]$ResolvedVcpkgRoot)
+function Ensure-VcpkgRepository([string]$ResolvedVcpkgRoot, [string]$RepoRoot)
 {
     if (Test-Path (Join-Path $ResolvedVcpkgRoot ".git"))
     {
         Write-Info("Using existing vcpkg checkout at '$ResolvedVcpkgRoot'.")
+        return
+    }
+
+    # The default root is a submodule; pin to its recorded commit, not upstream master.
+    $submoduleRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot ".deps\vcpkg"))
+    if ([System.IO.Path]::GetFullPath($ResolvedVcpkgRoot) -eq $submoduleRoot)
+    {
+        Write-Step("Initializing the vcpkg submodule")
+        Invoke-NativeCommand "git" @("-C", $RepoRoot, "submodule", "update", "--init", "--depth", "1", "--", ".deps/vcpkg")
         return
     }
 
@@ -191,6 +200,27 @@ function Ensure-VcpkgRepository([string]$ResolvedVcpkgRoot)
         "https://github.com/microsoft/vcpkg.git",
         $ResolvedVcpkgRoot
     )
+}
+
+# A shallow checkout lacks the manifest's builtin-baseline commit, and vcpkg
+# cannot resolve port versions without it. Fetch just that commit.
+function Ensure-VcpkgBaseline([string]$ResolvedVcpkgRoot, [string]$RepoRoot)
+{
+    $manifest = Get-Content -Raw -Path (Join-Path $RepoRoot "vcpkg.json") | ConvertFrom-Json
+    $baseline = $manifest."builtin-baseline"
+    if ([string]::IsNullOrWhiteSpace($baseline))
+    {
+        return
+    }
+
+    & git -C $ResolvedVcpkgRoot cat-file -e "$baseline^{commit}" 2>$null
+    if ($LASTEXITCODE -eq 0)
+    {
+        return
+    }
+
+    Write-Step("Fetching vcpkg baseline $baseline")
+    Invoke-NativeCommand "git" @("-C", $ResolvedVcpkgRoot, "fetch", "--depth", "1", "origin", $baseline)
 }
 
 function Bootstrap-Vcpkg([string]$ResolvedVcpkgRoot, [string]$PlatformName)
@@ -316,7 +346,8 @@ Write-Info("vcpkg root: $resolvedVcpkgRoot")
 Write-Info("Selected triplet: $selectedTriplet")
 Write-Info("vcpkg installed root: $installedRoot")
 
-Ensure-VcpkgRepository $resolvedVcpkgRoot
+Ensure-VcpkgRepository $resolvedVcpkgRoot $repoRoot
+Ensure-VcpkgBaseline $resolvedVcpkgRoot $repoRoot
 Bootstrap-Vcpkg $resolvedVcpkgRoot $platformName
 
 $vcpkgExecutable = Get-VcpkgExecutable $resolvedVcpkgRoot $platformName
@@ -332,6 +363,7 @@ if (-not $SkipInstall)
         "install",
         "--x-manifest-root=$repoRoot",
         "--x-install-root=$installedRoot",
+        "--overlay-ports=$(Join-Path $repoRoot "cmake\vcpkg-overlay-ports")",
         "--triplet=$selectedTriplet"
     )
 }

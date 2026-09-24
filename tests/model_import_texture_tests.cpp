@@ -347,10 +347,14 @@ void ImportFromNonAsciiPath()
     const std::filesystem::path sourceDir = scope.Path() / L"\u6a21\u578b";
     WriteFixtureTo(sourceDir / "fixture.gltf");
 
-    // What the dialog returns: the same path as UTF-8 bytes.
+    // What the dialog returns: the same path as UTF-8 bytes, with native separators.
+#ifdef _WIN32
+    const std::string separator = "\\";
+#else
+    const std::string separator = "/";
+#endif
     const std::string utf8SourcePath =
-        scope.Path().string() + "\\\xE6\xA8\xA1\xE5\x9E\x8B"
-                                "\\fixture.gltf";
+        scope.Path().string() + separator + "\xE6\xA8\xA1\xE5\x9E\x8B" + separator + "fixture.gltf";
     const std::filesystem::path bundle = scope.Path() / "bundle";
     std::error_code ec;
     std::filesystem::create_directories(bundle, ec);
