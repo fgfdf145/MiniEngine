@@ -56,3 +56,18 @@ The user accepts this by the rendered image.
 1. Sponza (sun colour 1, 0.95, 0.9): a little less warm than before.
 2. Daylight atmosphere scene: essentially unchanged (sun plus sky is near D65).
 3. A warm light scene (sun colour set to 3000 K): warm, but visibly less orange than with AWB off.
+
+## Amendments During Implementation
+
+- **Lights alone mislead.** With only the sun and sky references, the daylight atmosphere scene went
+  blue (mean R -2.8, B +4.5 levels): Atmosphere mode had no CPU-side sky, so the warm transmitted
+  sun stood for all the light. Sponza with its sun set to 3000 K went strongly blue-teal, although
+  without AWB it looked nearly neutral: the sun lights little of what that view shows.
+- **Fixes.** (1) The sky SH the atmosphere computes on the GPU is copied into one host-visible
+  buffer per frame in flight and read after the slot's fence (`GetSkyAverageRadiance`); auto
+  exposure uses it too. (2) The histogram pass sums each metered pixel's rgb over its luminance, and
+  the view's average colour is blended with the lights' estimate at equal luminance, 0.75 view to
+  0.25 lights (`kWhiteBalanceFrameWeight`). (3) The default degree of adaptation is 0.6, not 0.8.
+- **Results.** Daylight: within 1.8 levels of AWB off on average. Sponza: its bluish fallback
+  ambient is neutralized a little (B -5.9 levels). Sponza with a 3000 K sun: slightly more neutral
+  than AWB off (R -4.9, B -2.6), no cast.
