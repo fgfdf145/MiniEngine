@@ -64,6 +64,17 @@ a lamp is visible, which is the night-scene glare GT7 describes.
    otherwise as before.
 3. Bloom off is unchanged from the previous build.
 
+## Amendments During Implementation
+
+- **Results** (667 x 541 captures). Bloom off: 1.23% of pixels differ from the previous build (max 12),
+  within the TAA noise. Daylight sphere (2e7 cd/m^2, auto EV 15.68, f/20.4): above the no-glare image
+  the halo is +106 luma in the first 10 px from the sphere's edge, +43 at 10-20, +19 at 20-30, +9 at
+  30-40, ~0 past 90 px, with a warm outer fringe; the old fixed 4% mix gave +166 at the edge and still
+  +10 at 90-100 px. Sponza (EV 5.14, f/1.4): 0.18% moved instead of 4%; mean 0.2 levels darker in the
+  vault, visually the same image, slightly crisper around the sunlit arches.
+- **The moved energy is capped at 95%** (`kGlareMaxMovedEnergy`): at f/22 on a 4320-pixel-tall
+  viewport with strength 4 the diffraction formula would otherwise take nearly all of a pixel.
+
 ## Out of Scope
 
 - HDR-output narrowing of the glare (no HDR output yet), star-shaped aperture blades, lens dirt.
