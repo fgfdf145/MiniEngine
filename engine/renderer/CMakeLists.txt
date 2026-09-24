@@ -4,8 +4,6 @@
 # Keep this target free of ImGui editor code and Vulkan.
 # ----------------------------------------------------------------------------
 add_library(engine_render_core
-    ao_history.cpp
-    ao_history.h
     atmosphere.cpp
     atmosphere.h
     camera.cpp
@@ -30,6 +28,8 @@ add_library(engine_render_core
     shadow_cascades.h
     spherical_harmonics.cpp
     spherical_harmonics.h
+    temporal_history.cpp
+    temporal_history.h
 )
 miniengine_group_target_sources(engine_render_core)
 

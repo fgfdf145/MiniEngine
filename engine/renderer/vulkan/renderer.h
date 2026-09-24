@@ -24,7 +24,7 @@
 
 #include <engine/editor/editor_backend_base.h>
 #include <engine/asset/texture_preparation.h>
-#include <engine/renderer/ao_history.h>
+#include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 
 #include <memory>
@@ -247,7 +247,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     MotionHistory m_motionHistory;
     // Which AO history image each frame reads and writes. Reset with the motion history, because
     // the resolve pass recreates its history images at the same points.
-    AoHistory m_aoHistory;
+    TemporalHistory m_aoHistory;
     // Seeds the AO trace's noise; advances once per recorded frame.
     uint32_t m_aoFrameIndex = 0;
     // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes

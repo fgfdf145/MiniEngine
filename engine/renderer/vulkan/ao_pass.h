@@ -50,7 +50,7 @@ class VulkanAoTracePass : public IScenePass
 // than in SceneRenderTargets because they must survive across frames, which the frame-scoped layout
 // tracker cannot describe. They stay in VK_IMAGE_LAYOUT_GENERAL, and a barrier at the head of
 // Record orders last frame's accesses against this frame's. Which image is read, which is written
-// and whether the read one is valid arrive in the frame context (see AoHistory), so the pass keeps
+// and whether the read one is valid arrive in the frame context (see TemporalHistory), so the pass keeps
 // no per-frame state. With AO disabled it still records, writing 1.0 to SceneAo, so the lighting
 // pass and the debug view never read undefined contents.
 class VulkanAoResolvePass : public IScenePass

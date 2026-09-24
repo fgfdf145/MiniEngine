@@ -445,7 +445,7 @@ void VulkanAoResolvePass::Record(
 
 void VulkanAoResolvePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    // The renderer resets AoHistory at the same call sites, so the next frame discards the new
+    // The renderer resets TemporalHistory at the same call sites, so the next frame discards the new
     // images' undefined contents.
     DestroyHistoryImages();
     CreateHistoryImages(targets.GetExtent());

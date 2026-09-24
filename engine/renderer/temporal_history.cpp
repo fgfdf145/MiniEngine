@@ -1,11 +1,11 @@
-#include "ao_history.h"
+#include "temporal_history.h"
 
 namespace me
 {
 
-AoHistoryFrame AoHistory::Advance(bool accumulating)
+TemporalHistoryFrame TemporalHistory::Advance(bool accumulating)
 {
-    AoHistoryFrame frame{};
+    TemporalHistoryFrame frame{};
     frame.readIndex = m_lastWriteIndex;
     frame.writeIndex = 1u - m_lastWriteIndex;
     frame.valid = accumulating && m_hasHistory;
@@ -18,7 +18,7 @@ AoHistoryFrame AoHistory::Advance(bool accumulating)
     return frame;
 }
 
-void AoHistory::Reset()
+void TemporalHistory::Reset()
 {
     m_hasHistory = false;
 }

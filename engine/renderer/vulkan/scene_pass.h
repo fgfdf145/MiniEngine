@@ -7,7 +7,7 @@
 #include "scene_pass_order.h"
 #include "scene_render_targets.h"
 
-#include <engine/renderer/ao_history.h>
+#include <engine/renderer/temporal_history.h>
 #include <engine/renderer/exposure.h>
 #include <engine/renderer/render_types.h>
 
@@ -55,7 +55,7 @@ struct ScenePassFrameContext
     // AO parameters for this frame. enabled is already false in the forward-only order.
     AoSettings ao;
     // Which AO history image the resolve reads and writes, and whether the read one is valid.
-    AoHistoryFrame aoHistory;
+    TemporalHistoryFrame aoHistory;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
