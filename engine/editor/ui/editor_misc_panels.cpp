@@ -153,6 +153,15 @@ void EditorUiController::DrawGraphicsDebugPanel()
         DragFloatInRange("Strength##bloom", &m_renderDebug.bloom.strength, 0.0f, 4.0f, "%.2f");
         ImGui::EndDisabled();
 
+        // The trace needs TAA's history for its colour and the G-buffer, so it is off without TAA
+        // and in the forward-only order.
+        ImGui::SeparatorText("Screen-space reflections");
+        ImGui::Checkbox("Enabled##ssr", &m_renderDebug.ssr.enabled);
+        ImGui::BeginDisabled(!m_renderDebug.ssr.enabled);
+        DragFloatInRange("Max roughness##ssr", &m_renderDebug.ssr.maxRoughness, 0.05f, 1.0f, "%.2f");
+        DragFloatInRange("Max distance (m)##ssr", &m_renderDebug.ssr.maxDistance, 1.0f, 200.0f, "%.0f");
+        ImGui::EndDisabled();
+
         ImGui::SeparatorText("Output");
         // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
         ImGui::Checkbox("HDR output", &m_renderDebug.hdrOutput);
@@ -162,7 +171,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 10> kGBufferViewNames = {
+        static constexpr std::array<const char*, 11> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -172,7 +181,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: motion vectors",
             "Ambient occlusion",
             "Light clusters",
-            "G-buffer: custom data (clearcoat / sheen)"};
+            "G-buffer: custom data (clearcoat / sheen)",
+            "Screen-space reflections"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",

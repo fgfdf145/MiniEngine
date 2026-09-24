@@ -36,6 +36,10 @@ enum class RenderTargetId : uint32_t
     // Both are storage images written by compute.
     AoRaw,
     SceneAo,
+    // Screen-space reflections, written by compute: the raw one-ray trace, then the filtered result
+    // the lighting pass reads. rgb pre-exposed radiance, a confidence.
+    SsrRaw,
+    SceneReflections,
     // The TAA resolve's output, written by compute: the anti-aliased HDR image the exposure
     // histogram and tone mapping read.
     SceneTaa,

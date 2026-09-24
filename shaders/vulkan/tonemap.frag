@@ -20,6 +20,7 @@ const uint GBUFFER_VIEW_MOTION_VECTORS = 6u;
 const uint GBUFFER_VIEW_AMBIENT_OCCLUSION = 7u;
 const uint GBUFFER_VIEW_LIGHT_CLUSTERS = 8u;
 const uint GBUFFER_VIEW_CUSTOM = 9u;
+const uint GBUFFER_VIEW_REFLECTIONS = 10u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -89,6 +90,13 @@ void main()
         // GB5 as stored. For clearcoat, red is the coat's factor and green its roughness; for sheen,
         // rgb is its colour (its roughness, in alpha, does not show). Default Lit pixels are black.
         color = texture(gbufferCustom, fragTexCoord).rgb;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_REFLECTIONS)
+    {
+        // What the screen-space trace found, in HDR target units, tone mapped like the image and
+        // scaled by its confidence: black where the environment is used instead.
+        vec4 reflection = texture(sceneReflections, fragTexCoord);
+        color = TonemapFrameBufferRec709(min(reflection.rgb, vec3(65504.0))) * reflection.a;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
     {

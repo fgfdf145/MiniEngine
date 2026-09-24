@@ -3,6 +3,7 @@
 
 // SceneLightData, the LIGHT_* and SHADOW_CASCADE_COUNT constants and the ubo block.
 #include "scene_common.glsl"
+#include "ssr_common.glsl"
 // The sky's SH irradiance for the ambient term under a physical sky.
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
@@ -470,10 +471,20 @@ vec3 SpecularEnergyCompensation(vec3 F0, vec2 environmentBrdf)
 // environment the split sum is exact apart from the BRDF fit: the prefiltered radiance is the
 // luminance itself whatever the roughness. Metals get only the specular lobe, tinted by their F0,
 // and the diffuse lobe keeps whatever energy the specular one did not reflect.
+// The specular lobe's incoming radiance: the environment's, occluded by the AO as a lobe of this
+// roughness is (Lagarde 2014), replaced by the screen-space reflection as far as it is trusted.
+// reflection.rgb is physical radiance, reflection.a its confidence.
+vec3 SpecularAmbientRadiance(vec3 environment, vec4 reflection, float NdV, float ao, float roughness)
+{
+    return mix(environment * SpecularOcclusion(NdV, ao, roughness), reflection.rgb, reflection.a);
+}
+
 vec3 EvaluateUniformAmbient(
     vec3 N, vec3 V,
     vec3 albedo, float metallic, float roughness,
-    vec3 luminance)
+    vec3 luminance,
+    float ao,
+    vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
@@ -481,7 +492,7 @@ vec3 EvaluateUniformAmbient(
     // Compensated with the same fit it was computed from, so the white furnace holds within it.
     vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
-    return (diffuseAlbedo + specularAlbedo) * luminance;
+    return diffuseAlbedo * luminance * ao + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness);
 }
 
 // ---------------------------------------------------------------------------
@@ -596,7 +607,7 @@ vec2 SampleEnvironmentBrdf(float roughness, float NdV)
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
 // weighted by the DFG table's F0 A + B. The scene's Ambient lights, but not the fallback, add their
 // uniform luminance.
-vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float roughness)
+vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float ao, vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
@@ -604,10 +615,10 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 V, vec3 albedo, float metallic, float rough
     vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     vec3 R = reflect(-V, N);
-    vec3 specular = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    vec3 sky = diffuseAlbedo * EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + specularAlbedo * specular;
     vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
-    return sky + (diffuseAlbedo + specularAlbedo) * sceneAmbient;
+    vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + sceneAmbient;
+    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao;
+    return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness);
 }
 
 // ---------------------------------------------------------------------------
@@ -687,15 +698,17 @@ vec3 ShadeSurface(
     vec3 albedo, float metallic, float roughness, float ao,
     vec3 emissive,
     CoatParams coat,
-    SheenParams sheen)
+    SheenParams sheen,
+    vec4 reflection)
 {
     // The CPU has already summed the scene's Ambient lights into ambientLuminance, or put the
     // fallback there when there are none; see SelectSceneLights. Under a physical sky the sky's
     // irradiance takes the fallback's place.
+    // The AO darkens the diffuse lobe directly and the specular one through SpecularOcclusion; a
+    // screen-space reflection (reflection.a > 0) replaces the occluded environment where it is trusted.
     vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
-                       ? EvaluateUniformAmbient(N, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb)
-                       : EvaluateSkyAmbient(N, V, albedo, metallic, roughness);
-    ambient *= ao;
+                       ? EvaluateUniformAmbient(N, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb, ao, reflection)
+                       : EvaluateSkyAmbient(N, V, albedo, metallic, roughness, ao, reflection);
 
     // One factor for every direct light: it depends only on the surface and the view. It comes
     // from the DFG table, whose visibility term remaps k = alpha / 2 where the direct lights'

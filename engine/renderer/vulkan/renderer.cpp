@@ -696,6 +696,11 @@ void VulkanRenderer::DrawFrame()
         frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
+    // Reflections take their colour from TAA's history, so they trace only where it is valid; the
+    // forward-only order has no G-buffer to trace from.
+    frame.ssr = renderDebug.ssr;
+    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly;
+    frame.ssrHistory = m_ssrHistory.Advance(SsrTraces(frame));
     // The history this frame writes carries this frame's pre-exposure.
     m_taaHistoryPreExposure = preExposure;
     frame.physicalSky = environmentMode != EnvironmentMode::None;
@@ -840,6 +845,7 @@ void VulkanRenderer::CreateSwapchainResources()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_ssrHistory.Reset();
     m_taaHistory.Reset();
     CreateScenePasses();
 }
@@ -1139,7 +1145,23 @@ void VulkanRenderer::CreateScenePasses()
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(forwardPass));
-    m_scenePasses.push_back(std::make_unique<VulkanTaaPass>(
+    auto taaPass = std::make_unique<VulkanTaaPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle());
+    const VulkanTaaPass& taa = *taaPass;
+    m_scenePasses.push_back(std::move(taaPass));
+    // After TAA in this list, whose order OnTargetsRebuilt follows: the trace names TAA's history
+    // images, which TAA recreates first.
+    m_scenePasses.push_back(std::make_unique<VulkanSsrTracePass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        taa));
+    m_scenePasses.push_back(std::make_unique<VulkanSsrResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_pipelineCache,
@@ -1264,6 +1286,7 @@ void VulkanRenderer::SyncSceneTargets()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_ssrHistory.Reset();
     m_taaHistory.Reset();
     LOG_INFO(
         "Scene render targets resized to {}x{}",

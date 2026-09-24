@@ -125,6 +125,8 @@ add_library(engine_renderer
     vulkan/shadow_pass.h
     vulkan/swapchain.cpp
     vulkan/swapchain.h
+    vulkan/ssr_pass.cpp
+    vulkan/ssr_pass.h
     vulkan/taa_pass.cpp
     vulkan/taa_pass.h
     vulkan/texture.cpp
@@ -169,6 +171,8 @@ set(MINIENGINE_SHADER_SOURCES
     shadow.vert
     shadow.frag
     imgui_hdr10.frag
+    ssr_trace.comp
+    ssr_resolve.comp
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
@@ -177,6 +181,7 @@ set(MINIENGINE_SHADER_INCLUDES
     exposure_histogram.glsl
     gt7_tonemap.glsl
     hdr_output.glsl
+    ssr_common.glsl
     pre_exposure.glsl
     scene_common.glsl
     pbr_common.glsl

@@ -35,6 +35,12 @@ class VulkanTaaPass : public IScenePass
         const ScenePassFrameContext& frame) const override;
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
+    // One of the two history images (last frame's anti-aliased result is at the frame's
+    // taaHistory.readIndex), for the SSR trace, which takes its reflected colour from it. The
+    // images are recreated in OnTargetsRebuilt, so a reader must rebuild its descriptors after
+    // this pass has.
+    VkImageView GetHistoryView(uint32_t index) const;
+
   private:
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     void DestroyHandles();

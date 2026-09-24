@@ -94,7 +94,10 @@ void main()
         sheen.color = sheenFactors.rgb;
         sheen.roughness = clamp(sheenFactors.a, 0.04, 1.0);
     }
-    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen);
+    // Screen-space reflection in HDR target units; ShadeSurface wants physical radiance.
+    vec4 reflection = texture(sceneReflections, fragTexCoord);
+    reflection.rgb *= ubo.exposure.y;
+    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, reflection);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
     // composites over this with an RGB-only write mask. Pre-exposed on the way out (see

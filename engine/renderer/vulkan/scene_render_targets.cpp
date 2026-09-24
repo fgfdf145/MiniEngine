@@ -292,6 +292,24 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeAoTarget(RenderTargetId::AoRaw, "AO trace");
     describeAoTarget(RenderTargetId::SceneAo, "AO");
 
+    // Screen-space reflections, written by compute: rgb radiance, a confidence. RGBA16F is in the
+    // core list of storage formats.
+    static constexpr std::array<VkFormat, 1> kSsrCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
+    const auto describeSsrTarget = [&](RenderTargetId target, std::string_view label)
+    {
+        TargetDescription& description = Describe(target);
+        description.format = ChooseFormat(
+            label,
+            kSsrCandidates,
+            VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
+            query);
+        description.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        description.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        description.bindToImGui = false;
+    };
+    describeSsrTarget(RenderTargetId::SsrRaw, "SSR trace");
+    describeSsrTarget(RenderTargetId::SceneReflections, "Reflections");
+
     // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
     static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
     TargetDescription& taa = Describe(RenderTargetId::SceneTaa);

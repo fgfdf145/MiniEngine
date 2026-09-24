@@ -1,0 +1,136 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Screen-space reflections, the resolve: GT7 reconstructs its one-ray-a-pixel trace with sample
+// reuse, a temporal filter and a joint bilateral filter; this does the last two. A spatial pass
+// over the raw trace, depth- and normal-aware, whose footprint grows with roughness (a mirror keeps
+// its own sample), then exponential accumulation of history reprojected through the surface's
+// motion vector and clipped to the current neighbourhood, so a reflection that moved or appeared
+// does not trail. Values are premultiplied by confidence while they are averaged.
+
+#include "scene_common.glsl"
+#include "gbuffer_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D ssrRawTexture;  // nearest
+layout(set = 1, binding = 1) uniform sampler2D depthTexture;   // nearest
+layout(set = 1, binding = 2) uniform sampler2D normalTexture;  // GB1, nearest
+layout(set = 1, binding = 3) uniform sampler2D surfaceTexture; // GB2, nearest
+layout(set = 1, binding = 4) uniform sampler2D velocityTexture;
+layout(set = 1, binding = 5) uniform sampler2D historyTexture; // linear
+layout(set = 1, binding = 6, rgba16f) uniform writeonly image2D historyImage;
+layout(set = 1, binding = 7, rgba16f) uniform writeonly image2D reflectionsImage;
+
+// Must match SsrResolvePushConstants in engine/renderer/vulkan/ssr_pass.cpp.
+layout(push_constant) uniform SsrResolveConstants
+{
+    vec2 extent;
+    vec2 invExtent;
+    // The history holds last frame's pre-exposed values; this brings them to this frame's.
+    float historyScale;
+    uint flags;
+    vec2 unused;
+}
+resolve;
+
+const uint SSR_FLAG_TRACED = 1u;
+const uint SSR_FLAG_HISTORY_VALID = 2u;
+
+const float CURRENT_WEIGHT = 0.125;
+const float DEPTH_TOLERANCE = 0.05;
+const float NORMAL_POWER = 16.0;
+// Roughness at which the spatial footprint reaches its full 5x5.
+const float FULL_FOOTPRINT_ROUGHNESS = 0.3;
+
+float ViewZFromDepth(float depth)
+{
+    return -ubo.proj[3][2] / (depth + ubo.proj[2][2]);
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = ivec2(resolve.extent);
+    if (any(greaterThanEqual(pixel, extent)))
+    {
+        return;
+    }
+
+    // Nothing traced (SSR off, or no history to take colour from): the lighting pass sees zero
+    // confidence and uses the environment. History is left alone; the renderer invalidates it.
+    float depth = texelFetch(depthTexture, pixel, 0).r;
+    if ((resolve.flags & SSR_FLAG_TRACED) == 0u || depth >= 1.0)
+    {
+        imageStore(reflectionsImage, pixel, vec4(0.0));
+        if ((resolve.flags & SSR_FLAG_TRACED) != 0u)
+        {
+            imageStore(historyImage, pixel, vec4(0.0));
+        }
+        return;
+    }
+
+    float distanceToCamera = -ViewZFromDepth(depth);
+    vec3 N = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).rg);
+    float roughness = clamp(texelFetch(surfaceTexture, pixel, 0).g, 0.04, 1.0);
+    int radius = int(round(2.0 * clamp(roughness / FULL_FOOTPRINT_ROUGHNESS, 0.0, 1.0)));
+
+    // Spatial, premultiplied by confidence; the 3x3 bounds for clipping the history come along.
+    vec4 sum = vec4(0.0);
+    float weightSum = 0.0;
+    vec4 neighbourhoodMin = vec4(65504.0);
+    vec4 neighbourhoodMax = vec4(0.0);
+    for (int y = -2; y <= 2; ++y)
+    {
+        for (int x = -2; x <= 2; ++x)
+        {
+            ivec2 neighbor = clamp(pixel + ivec2(x, y), ivec2(0), extent - 1);
+            vec4 raw = texelFetch(ssrRawTexture, neighbor, 0);
+            vec4 premultiplied = vec4(raw.rgb * raw.a, raw.a);
+            if (abs(x) <= 1 && abs(y) <= 1)
+            {
+                neighbourhoodMin = min(neighbourhoodMin, premultiplied);
+                neighbourhoodMax = max(neighbourhoodMax, premultiplied);
+            }
+            if (abs(x) > radius || abs(y) > radius)
+            {
+                continue;
+            }
+            float neighborDepth = texelFetch(depthTexture, neighbor, 0).r;
+            if (neighborDepth >= 1.0)
+            {
+                continue;
+            }
+            float neighborDistance = -ViewZFromDepth(neighborDepth);
+            vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, neighbor, 0).rg);
+            float weight = max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (DEPTH_TOLERANCE * distanceToCamera)) *
+                           pow(max(dot(N, neighborNormal), 0.0), NORMAL_POWER);
+            sum += weight * premultiplied;
+            weightSum += weight;
+        }
+    }
+    vec4 current = weightSum > 0.0 ? sum / weightSum : vec4(0.0);
+
+    vec4 result = current;
+    if ((resolve.flags & SSR_FLAG_HISTORY_VALID) != 0u)
+    {
+        vec2 uv = (vec2(pixel) + 0.5) * resolve.invExtent;
+        vec2 previousUv = uv - texelFetch(velocityTexture, pixel, 0).rg;
+        if (all(greaterThanEqual(previousUv, vec2(0.0))) && all(lessThanEqual(previousUv, vec2(1.0))))
+        {
+            vec4 history = textureLod(historyTexture, previousUv, 0.0);
+            history.rgb *= resolve.historyScale;
+            history = clamp(history, neighbourhoodMin, neighbourhoodMax);
+            result = mix(history, current, CURRENT_WEIGHT);
+        }
+    }
+    if (any(isnan(result)) || any(isinf(result)))
+    {
+        result = vec4(0.0);
+    }
+
+    imageStore(historyImage, pixel, result);
+    // Un-premultiplied for the lighting pass: radiance, and how far to trust it.
+    vec3 radiance = result.a > 1e-4 ? result.rgb / result.a : vec3(0.0);
+    imageStore(reflectionsImage, pixel, vec4(min(radiance, vec3(65504.0)), clamp(result.a, 0.0, 1.0)));
+}

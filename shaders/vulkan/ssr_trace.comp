@@ -1,0 +1,192 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Screen-space reflections, the trace. One ray a pixel: the reflection of the view about a GGX half
+// vector drawn from the visible normals at the pixel's roughness, marched in screen space between
+// its projected ends with view depth interpolated as 1/z, then refined by bisection. A hit takes its
+// colour from last frame's anti-aliased image (TAA's history, before bloom) at the hit point
+// reprojected into last frame, scaled into this frame's pre-exposure. Output: rgb radiance in HDR
+// target units, a confidence (see ssr_common.glsl for the fades). GT7 traces the same lobe with
+// hardware rays; this is the screen-space version of that one term.
+
+#include "scene_common.glsl"
+#include "gbuffer_common.glsl"
+#include "ssr_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D depthTexture;   // nearest
+layout(set = 1, binding = 1) uniform sampler2D normalTexture;  // GB1, nearest
+layout(set = 1, binding = 2) uniform sampler2D surfaceTexture; // GB2, nearest
+layout(set = 1, binding = 3) uniform sampler2D historyTexture; // TAA history, last frame, linear
+layout(set = 1, binding = 4, rgba16f) uniform writeonly image2D ssrRawImage;
+
+// Must match SsrPushConstants in engine/renderer/vulkan/ssr_pass.cpp.
+layout(push_constant) uniform SsrConstants
+{
+    vec2 extent;
+    vec2 invExtent;
+    float maxDistance;
+    float maxRoughness;
+    // Current over previous pre-exposure: the history holds last frame's values.
+    float historyScale;
+    uint frameIndex;
+}
+ssr;
+
+const int STEP_COUNT = 48;
+const int REFINE_COUNT = 6;
+const float THICKNESS_BASE = 0.1;
+const float THICKNESS_PER_METRE = 0.03;
+// The last share of the ray over which a hit fades: it is about to run out of length.
+const float LENGTH_FADE_START = 0.8;
+
+float ViewZFromDepth(float depth)
+{
+    return -ubo.proj[3][2] / (depth + ubo.proj[2][2]);
+}
+
+// Jimenez 2014, offset per frame so TAA and the resolve see a new sample every frame.
+float InterleavedGradientNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(vec2(pixel), ssr.extent)))
+    {
+        return;
+    }
+
+    float depth = texelFetch(depthTexture, pixel, 0).r;
+    vec4 surface = texelFetch(surfaceTexture, pixel, 0);
+    float roughness = clamp(surface.g, 0.04, 1.0);
+    float roughnessFade = SsrRoughnessFade(roughness, ssr.maxRoughness);
+    if (depth >= 1.0 || roughnessFade <= 0.0)
+    {
+        imageStore(ssrRawImage, pixel, vec4(0.0));
+        return;
+    }
+
+    vec2 uv = (vec2(pixel) + 0.5) * ssr.invExtent;
+    vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec3 worldPosition = world.xyz / world.w;
+    vec3 N = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).rg);
+    vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
+
+    // A fresh sample every frame: the pixel's noise shifted by a per-frame offset.
+    vec2 frameOffset = vec2(float(ssr.frameIndex % 64u) * 5.588238, float(ssr.frameIndex % 64u) * 7.123);
+    vec2 u = vec2(InterleavedGradientNoise(vec2(pixel) + frameOffset), InterleavedGradientNoise(vec2(pixel.yx) + frameOffset * 1.37));
+    vec3 H = SampleGgxVisibleNormal(N, V, roughness, u);
+    vec3 R = reflect(-V, H);
+    if (dot(R, N) <= 0.0)
+    {
+        imageStore(ssrRawImage, pixel, vec4(0.0));
+        return;
+    }
+
+    // The ray in view space, from just above the surface, clipped in front of the near plane.
+    vec3 viewStart = (ubo.view * vec4(worldPosition + N * 0.01, 1.0)).xyz;
+    vec3 viewDirection = normalize(mat3(ubo.view) * R);
+    float rayLength = ssr.maxDistance;
+    // The near plane sits where depth is 0: view z = -proj[3][2] / proj[2][2] (negative).
+    float nearZ = ViewZFromDepth(0.0);
+    if (viewStart.z + viewDirection.z * rayLength > nearZ)
+    {
+        rayLength = (nearZ * 1.01 - viewStart.z) / viewDirection.z;
+    }
+    vec3 viewEnd = viewStart + viewDirection * rayLength;
+
+    vec4 clipStart = ubo.proj * vec4(viewStart, 1.0);
+    vec4 clipEnd = ubo.proj * vec4(viewEnd, 1.0);
+    float kStart = 1.0 / clipStart.w;
+    float kEnd = 1.0 / clipEnd.w;
+    vec2 uvStart = clipStart.xy * kStart * 0.5 + 0.5;
+    vec2 uvEnd = clipEnd.xy * kEnd * 0.5 + 0.5;
+    // Interpolating z / w and 1 / w linearly in screen space gives the perspective-correct depth.
+    float qStart = viewStart.z * kStart;
+    float qEnd = viewEnd.z * kEnd;
+
+    float jitter = InterleavedGradientNoise(vec2(pixel) + frameOffset * 0.71);
+    float previousT = 0.0;
+    float hitT = -1.0;
+    for (int step = 1; step <= STEP_COUNT; ++step)
+    {
+        float t = (float(step) - 1.0 + jitter) / float(STEP_COUNT);
+        vec2 sampleUv = mix(uvStart, uvEnd, t);
+        if (any(lessThan(sampleUv, vec2(0.0))) || any(greaterThan(sampleUv, vec2(1.0))))
+        {
+            break;
+        }
+        float rayZ = mix(qStart, qEnd, t) / mix(kStart, kEnd, t);
+        float sceneDepth = textureLod(depthTexture, sampleUv, 0.0).r;
+        if (sceneDepth < 1.0)
+        {
+            float sceneZ = ViewZFromDepth(sceneDepth);
+            float behind = sceneZ - rayZ;
+            if (behind > 0.0 && behind < THICKNESS_BASE + THICKNESS_PER_METRE * -sceneZ)
+            {
+                hitT = t;
+                break;
+            }
+        }
+        previousT = t;
+    }
+
+    if (hitT < 0.0)
+    {
+        imageStore(ssrRawImage, pixel, vec4(0.0));
+        return;
+    }
+
+    // Bisection between the last step in front and the first behind.
+    float low = previousT;
+    float high = hitT;
+    for (int i = 0; i < REFINE_COUNT; ++i)
+    {
+        float middle = 0.5 * (low + high);
+        vec2 sampleUv = mix(uvStart, uvEnd, middle);
+        float rayZ = mix(qStart, qEnd, middle) / mix(kStart, kEnd, middle);
+        float sceneZ = ViewZFromDepth(textureLod(depthTexture, sampleUv, 0.0).r);
+        if (sceneZ - rayZ > 0.0)
+        {
+            high = middle;
+        }
+        else
+        {
+            low = middle;
+        }
+    }
+    vec2 hitUv = mix(uvStart, uvEnd, high);
+    ivec2 hitPixel = clamp(ivec2(hitUv * ssr.extent), ivec2(0), ivec2(ssr.extent) - 1);
+    float hitDepth = texelFetch(depthTexture, hitPixel, 0).r;
+
+    // A surface facing away from the ray shows its back, which the screen never rendered.
+    vec3 hitNormal = DecodeNormalOctahedral(texelFetch(normalTexture, hitPixel, 0).rg);
+    if (hitDepth >= 1.0 || dot(hitNormal, R) > 0.0)
+    {
+        imageStore(ssrRawImage, pixel, vec4(0.0));
+        return;
+    }
+
+    // Where the hit point was on last frame's screen.
+    vec4 hitWorld = ubo.invViewProj * vec4(hitUv * 2.0 - 1.0, hitDepth, 1.0);
+    vec4 previousClip = ubo.prevViewProj * vec4(hitWorld.xyz / hitWorld.w, 1.0);
+    vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+    if (previousClip.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) || any(greaterThan(previousUv, vec2(1.0))))
+    {
+        imageStore(ssrRawImage, pixel, vec4(0.0));
+        return;
+    }
+
+    vec3 radiance = textureLod(historyTexture, previousUv, 0.0).rgb * ssr.historyScale;
+    if (any(isnan(radiance)) || any(isinf(radiance)))
+    {
+        radiance = vec3(0.0);
+    }
+    float confidence = roughnessFade * SsrEdgeFade(hitUv) * SsrEdgeFade(previousUv) *
+                       (1.0 - smoothstep(LENGTH_FADE_START, 1.0, high));
+    imageStore(ssrRawImage, pixel, vec4(min(radiance, vec3(65504.0)), confidence));
+}

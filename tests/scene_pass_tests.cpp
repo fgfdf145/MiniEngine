@@ -253,16 +253,18 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 9, "the deferred order must contain nine passes");
+    Require(order.size() == 11, "the deferred order must contain eleven passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
     Require(order[1] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
     Require(order[2] == ScenePassId::AoResolve, "the AO resolve filters the trace");
-    Require(order[3] == ScenePassId::Lighting, "lighting reads the resolved AO");
-    Require(order[4] == ScenePassId::Forward, "the forward blend pass must follow lighting");
-    Require(order[5] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
-    Require(order[6] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
-    Require(order[7] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
-    Require(order[8] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+    Require(order[3] == ScenePassId::SsrTrace, "the reflection trace reads the finished G-buffer");
+    Require(order[4] == ScenePassId::SsrResolve, "the reflection resolve filters the trace");
+    Require(order[5] == ScenePassId::Lighting, "lighting reads the resolved AO and reflections");
+    Require(order[6] == ScenePassId::Forward, "the forward blend pass must follow lighting");
+    Require(order[7] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
+    Require(order[8] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
+    Require(order[9] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
+    Require(order[10] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
@@ -298,7 +300,8 @@ void GBufferTargetsAreColorTargets()
 
 void AoTargetsAreStorageTargets()
 {
-    for (const RenderTargetId target : {RenderTargetId::AoRaw, RenderTargetId::SceneAo, RenderTargetId::SceneTaa})
+    for (const RenderTargetId target :
+         {RenderTargetId::AoRaw, RenderTargetId::SceneAo, RenderTargetId::SceneTaa, RenderTargetId::SsrRaw, RenderTargetId::SceneReflections})
     {
         Require(GetRenderTargetKind(target) == RenderTargetKind::Storage, "AO targets are written by compute");
         Require(GetWriteLayout(target) == VK_IMAGE_LAYOUT_GENERAL, "a storage write needs the general layout");

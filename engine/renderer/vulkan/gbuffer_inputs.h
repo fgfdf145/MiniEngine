@@ -23,7 +23,7 @@ class VulkanGBufferDescriptors
 {
   public:
     // Binding order: binding N samples kInputs[N]. gbuffer_inputs.glsl declares the same order.
-    static constexpr std::array<RenderTargetId, 8> kInputs = {
+    static constexpr std::array<RenderTargetId, 9> kInputs = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
@@ -31,7 +31,8 @@ class VulkanGBufferDescriptors
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferVelocity,
         RenderTargetId::SceneAo,
-        RenderTargetId::GBufferCustom};
+        RenderTargetId::GBufferCustom,
+        RenderTargetId::SceneReflections};
 
     VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();

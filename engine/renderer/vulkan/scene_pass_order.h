@@ -15,6 +15,8 @@ enum class ScenePassId
     Geometry,
     AoTrace,
     AoResolve,
+    SsrTrace,
+    SsrResolve,
     Lighting,
     Forward,
     Taa,

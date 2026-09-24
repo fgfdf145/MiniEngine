@@ -64,6 +64,10 @@ struct ScenePassFrameContext
     // What TAA multiplies its history by (see TaaHistoryScale): 1 without valid history.
     float taaHistoryScale = 1.0f;
     BloomSettings bloom;
+    // SSR settings; enabled is already false in the forward-only order.
+    SsrSettings ssr;
+    // Which SSR resolve history image is read and written, and whether the read one is valid.
+    TemporalHistoryFrame ssrHistory;
     // The aperture the glare is diffracted through, from this frame's EV (see GlareFNumberFromEv100).
     float glareFNumber = kGlareMinFNumber;
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).

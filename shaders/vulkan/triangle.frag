@@ -122,7 +122,8 @@ void main()
         sheen.color = clamp(material.sheenFactors.rgb, 0.0, 1.0);
         sheen.roughness = clamp(material.sheenFactors.a, 0.04, 1.0);
     }
-    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen);
+    // The forward path has no screen-space reflection: the environment alone, specularly occluded.
+    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, vec4(0.0));
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.

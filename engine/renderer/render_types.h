@@ -33,7 +33,9 @@ enum class GBufferDebugView : uint32_t
     LightClusters = 8,
     // GB5 as stored: its channels mean what the pixel's shading model says (clearcoat: r factor,
     // g roughness; sheen: rgb colour, a roughness).
-    Custom = 9
+    Custom = 9,
+    // The resolved screen-space reflections, tone mapped, dimmed where their confidence is low.
+    Reflections = 10
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the
@@ -65,6 +67,19 @@ struct BloomSettings
     float strength = 1.0f;
 };
 
+// Screen-space reflections (see ssr_common.glsl): replace the environment's specular radiance where
+// the screen shows what a glossy surface reflects. Not persisted, like the rest of RenderDebugSettings.
+struct SsrSettings
+{
+    bool enabled = true;
+    // Rougher lobes are left to the prefiltered environment; the trace fades out from 0.4 to this.
+    // 0.8 keeps rough stone (Sponza's floor is 0.6-0.8) in the trace: a blurry, dim reflection that
+    // mostly shows as local occlusion of the environment, which the filters and TAA keep quiet.
+    float maxRoughness = 0.8f;
+    // How far a ray is marched, in metres.
+    float maxDistance = 30.0f;
+};
+
 struct RenderDebugSettings
 {
     GBufferDebugView gbufferView = GBufferDebugView::Off;
@@ -81,6 +96,7 @@ struct RenderDebugSettings
     // each pixel. Off, roughness reaches the lighting exactly as the material gives it.
     bool specularAntiAliasing = true;
     BloomSettings bloom;
+    SsrSettings ssr;
     // Presents to an HDR10 swapchain when the display offers one (see hdr_output.glsl), tone mapped
     // with GT7's HDR curve for this peak luminance in cd/m^2, which Vulkan cannot query.
     bool hdrOutput = false;

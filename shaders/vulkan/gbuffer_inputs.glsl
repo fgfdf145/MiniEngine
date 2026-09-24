@@ -15,5 +15,7 @@ layout(set = 2, binding = 5) uniform sampler2D gbufferVelocity;
 layout(set = 2, binding = 6) uniform sampler2D sceneAo;
 // GB5: per-shading-model data; see SHADING_MODEL_* in gbuffer_common.glsl.
 layout(set = 2, binding = 7) uniform sampler2D gbufferCustom;
+// Screen-space reflections: rgb radiance in HDR target units, a confidence (see ssr_resolve.comp).
+layout(set = 2, binding = 8) uniform sampler2D sceneReflections;
 
 #endif
