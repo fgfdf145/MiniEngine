@@ -122,6 +122,16 @@ imported before keep their `.material.yaml`, so their look does not change until
 2. **Forward-only too.** The same with the forward-only order, which reads the material in
    `triangle.frag`.
 
+## Amendments During Implementation
+
+- **One parameter instead of a count check.** Rather than refusing materials and motion slots of
+  different counts, `VulkanUniformBuffer` takes the per-draw materials in place of its motion slot
+  count and sizes both buffers from them, so they cannot disagree.
+- **The push constant range is vertex-only.** Only `triangle.vert` still reads it.
+- **No pixel change, within noise** (Sponza with five lights, 3500 frames): deferred differs from the
+  previous build in 0.76% of pixels by one 8-bit step, forward-only in 0.45%; two runs of one build
+  differ in 0.70%.
+
 ## Out of Scope
 
 - Clearcoat, sheen and every other `KHR_materials_*` extension beyond emissive strength.
