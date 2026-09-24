@@ -118,6 +118,20 @@ GpuMaterialData.clearcoatFactors, shadingModel = Clearcoat when factor > 0
 3. **Both orders agree.** The coated spheres differ between deferred and forward-only by no more
    than the uncoated ones do (VBAO, which only the deferred order has, is the known difference).
 
+## Amendments During Implementation
+
+- **The acceptance spheres use coat roughness 0.2, not 0.05.** At 0.05 the sun's coat highlight is
+  narrower than a pixel on 45-pixel spheres, so it is missed by sampling; the coat still shows as a
+  faint sky reflection (green and blue +3 on the sphere average). At 0.2 every coated sphere keeps a
+  sharp highlight whatever its base roughness, while the uncoated row's highlight spreads and fades.
+- **Both orders agree once VBAO is off.** With VBAO on, deferred and forward-only differ a little
+  more on coated spheres (mean 2.1 against 1.6 on uncoated ones, max 17 against 12), because VBAO,
+  which only the deferred order runs, also darkens the coat's ambient. With it off in both, every row
+  agrees within two 8-bit steps (mean 0.3-0.5).
+- **`triangle.frag` includes `gbuffer_common.glsl`** for the `SHADING_MODEL_*` constants.
+- **Coatless scenes:** Sponza with five lights differs from the previous build in 8 pixels deferred
+  and 0.85% forward-only, by one 8-bit step, within two runs of one build.
+
 ## Out of Scope
 
 - Clearcoat textures, including the coat's own normal map.
