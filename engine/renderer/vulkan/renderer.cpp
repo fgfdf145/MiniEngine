@@ -1692,6 +1692,11 @@ void VulkanRenderer::ApplyRenderContent(
     m_textureCacheKeys = std::move(newTextureCacheKeys);
     m_materialTextureSlots = std::move(newMaterialTextureSlots);
     m_renderSubmeshes = std::move(newRenderSubmeshes);
+    // New content may be a different world (a scene that finished loading in the background while
+    // the startup scene was on screen). The long-term exposure restarts its warm-up, so it catches
+    // up at the short-term rates instead of keeping the old world's light for minutes; the view
+    // itself does not snap.
+    m_autoExposureState.meteredSeconds = 0.0f;
 }
 
 std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const

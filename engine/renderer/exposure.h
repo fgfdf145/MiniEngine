@@ -98,7 +98,13 @@ struct AutoExposureState
 {
     float longTermEv100 = kDefaultExposureEv100;
     bool initialized = false;
+    // Seconds of metering so far. For the first kLongTermWarmupSeconds the long-term stage adapts
+    // at the short-term rates: the first frames can be transients (textures still streaming in),
+    // which it would otherwise keep for minutes.
+    float meteredSeconds = 0.0f;
 };
+
+inline constexpr float kLongTermWarmupSeconds = 3.0f;
 
 // Where a luminance lands in the histogram and where a bin sits, from the shared binning rule.
 uint32_t ExposureHistogramBinForLuminance(float luminance);

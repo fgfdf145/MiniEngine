@@ -199,14 +199,16 @@ float StepAutoExposure(
         return std::clamp(frameTargetEv100, state.longTermEv100 - range, state.longTermEv100 + range);
     }
 
+    const bool warmingUp = state.meteredSeconds < kLongTermWarmupSeconds;
+    state.meteredSeconds += std::max(deltaSeconds, 0.0f);
     if (longTermTargetEv100.has_value())
     {
         state.longTermEv100 = AdaptAtRates(
             state.longTermEv100,
             *longTermTargetEv100,
             deltaSeconds,
-            settings.longTermToBrighterPerSecond,
-            settings.longTermToDarkerPerSecond);
+            warmingUp ? settings.adaptToBrighterPerSecond : settings.longTermToBrighterPerSecond,
+            warmingUp ? settings.adaptToDarkerPerSecond : settings.longTermToDarkerPerSecond);
     }
     const float shortTermTarget =
         std::clamp(frameTargetEv100, state.longTermEv100 - range, state.longTermEv100 + range);

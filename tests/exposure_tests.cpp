@@ -279,7 +279,7 @@ void FirstStepSnapsBothStages()
 void ShortTermStaysWithinItsRangeOfTheLongTerm()
 {
     AutoExposureSettings settings;
-    AutoExposureState state{12.0f, true};
+    AutoExposureState state{12.0f, true, kLongTermWarmupSeconds};
     // A dark view (frame target 5 stops under) converges only 2.5 stops under the long-term state.
     float ev = 12.0f;
     for (int frame = 0; frame < 2000; ++frame)
@@ -293,11 +293,27 @@ void ShortTermStaysWithinItsRangeOfTheLongTerm()
     Require(state.longTermEv100 == held, "no long-term target holds the long-term state");
 }
 
+void LongTermRecoversFromAMisleadingFirstFrame()
+{
+    // The first metered frame can be a transient (textures still streaming in). During the warm-up
+    // the long-term stage adapts at the short-term rates, so it does not keep that reading for
+    // minutes.
+    AutoExposureSettings settings;
+    AutoExposureState state;
+    float ev = StepAutoExposure(state, 8.0f, 15.0f, 15.0f, 0.016f, settings);
+    for (int frame = 0; frame < 300; ++frame)
+    {
+        ev = StepAutoExposure(state, ev, 5.0f, 7.0f, 0.016f, settings);
+    }
+    Require(std::abs(state.longTermEv100 - 7.0f) < 0.1f, "the long-term stage must settle during the warm-up");
+    Require(std::abs(ev - 5.0f) < 0.1f, "the view then exposes as the frame asks, inside the range");
+}
+
 void LongTermAdaptsSlowlyAndFrameRateIndependently()
 {
     AutoExposureSettings settings;
-    AutoExposureState one{10.0f, true};
-    AutoExposureState two{10.0f, true};
+    AutoExposureState one{10.0f, true, kLongTermWarmupSeconds};
+    AutoExposureState two{10.0f, true, kLongTermWarmupSeconds};
     StepAutoExposure(one, 10.0f, 10.0f, 14.0f, 1.0f, settings);
     StepAutoExposure(two, 10.0f, 10.0f, 14.0f, 0.5f, settings);
     StepAutoExposure(two, 10.0f, 10.0f, 14.0f, 0.5f, settings);
@@ -331,6 +347,7 @@ int main()
         FirstStepSnapsBothStages();
         ShortTermStaysWithinItsRangeOfTheLongTerm();
         LongTermAdaptsSlowlyAndFrameRateIndependently();
+        LongTermRecoversFromAMisleadingFirstFrame();
     }
     catch (const std::exception& error)
     {
