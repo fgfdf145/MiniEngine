@@ -371,6 +371,11 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
     HashQuantizedFloat(seed, pbr.alphaCutoff);
     HashQuantizedFloat(seed, pbr.clearcoatFactor);
     HashQuantizedFloat(seed, pbr.clearcoatRoughnessFactor);
+    for (float component : pbr.sheenColorFactor)
+    {
+        HashQuantizedFloat(seed, component);
+    }
+    HashQuantizedFloat(seed, pbr.sheenRoughnessFactor);
 }
 
 void HashPreviewBlendGraph(size_t& seed, const MaterialTextureBlendGraph& blendGraph)

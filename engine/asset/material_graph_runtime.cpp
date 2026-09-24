@@ -501,6 +501,13 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["opacity"] = ClampMaterialAlphaValue(node.pbr.opacity, 1.0f);
         pbr["clearcoat_factor"] = node.pbr.clearcoatFactor;
         pbr["clearcoat_roughness_factor"] = node.pbr.clearcoatRoughnessFactor;
+        YAML::Node sheenColor(YAML::NodeType::Sequence);
+        for (float value : node.pbr.sheenColorFactor)
+        {
+            sheenColor.push_back(value);
+        }
+        pbr["sheen_color_factor"] = sheenColor;
+        pbr["sheen_roughness_factor"] = node.pbr.sheenRoughnessFactor;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -600,6 +607,15 @@ bool DeserializeMaterialShaderGraph(
             node.pbr.clearcoatFactor = std::clamp(ReadFloatOrFallback(pbrNode["clearcoat_factor"], node.pbr.clearcoatFactor), 0.0f, 1.0f);
             node.pbr.clearcoatRoughnessFactor = std::clamp(
                 ReadFloatOrFallback(pbrNode["clearcoat_roughness_factor"], node.pbr.clearcoatRoughnessFactor),
+                0.0f,
+                1.0f);
+            ReadFloatSequence(pbrNode["sheen_color_factor"], node.pbr.sheenColorFactor, 3);
+            for (float& component : node.pbr.sheenColorFactor)
+            {
+                component = std::clamp(component, 0.0f, 1.0f);
+            }
+            node.pbr.sheenRoughnessFactor = std::clamp(
+                ReadFloatOrFallback(pbrNode["sheen_roughness_factor"], node.pbr.sheenRoughnessFactor),
                 0.0f,
                 1.0f);
             node.pbr.alphaMode = ParseMaterialAlphaMode(

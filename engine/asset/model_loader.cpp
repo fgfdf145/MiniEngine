@@ -48,6 +48,11 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.opacity = ClampMaterialAlphaValue(material.opacity, 1.0f);
     pbr.clearcoatFactor = material.clearcoatFactor;
     pbr.clearcoatRoughnessFactor = material.clearcoatRoughnessFactor;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        pbr.sheenColorFactor[index] = material.sheenColorFactor[index];
+    }
+    pbr.sheenRoughnessFactor = material.sheenRoughnessFactor;
     return pbr;
 }
 
@@ -72,6 +77,11 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.opacity = ClampMaterialAlphaValue(pbr.opacity, 1.0f);
     material.clearcoatFactor = pbr.clearcoatFactor;
     material.clearcoatRoughnessFactor = pbr.clearcoatRoughnessFactor;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        material.sheenColorFactor[index] = pbr.sheenColorFactor[index];
+    }
+    material.sheenRoughnessFactor = pbr.sheenRoughnessFactor;
 }
 
 struct MaterialDefinitionFile

@@ -848,6 +848,12 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 "Clearcoat %.2f  Clearcoat Roughness %.2f",
                 selectedMaterial.pbr.clearcoatFactor,
                 selectedMaterial.pbr.clearcoatRoughnessFactor);
+            ImGui::Text(
+                "Sheen Color %.2f %.2f %.2f  Sheen Roughness %.2f",
+                selectedMaterial.pbr.sheenColorFactor[0],
+                selectedMaterial.pbr.sheenColorFactor[1],
+                selectedMaterial.pbr.sheenColorFactor[2],
+                selectedMaterial.pbr.sheenRoughnessFactor);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

@@ -38,6 +38,10 @@ struct MaterialPbrSurfaceSettings
     // factor of 0 means no coat.
     float clearcoatFactor = 0.0f;
     float clearcoatRoughnessFactor = 0.0f;
+    // KHR_materials_sheen: the sheen's linear colour and perceptual roughness, all [0, 1]. A black
+    // colour means no sheen.
+    float sheenColorFactor[3] = {0.0f, 0.0f, 0.0f};
+    float sheenRoughnessFactor = 0.0f;
 };
 
 struct MaterialGraphNodePosition

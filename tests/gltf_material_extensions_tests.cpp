@@ -215,6 +215,75 @@ void ReadsClearcoat()
     Near(MaterialNamed(model, "textured").clearcoatFactor, 0.5f, "textured coat keeps its factor");
 }
 
+void ReadsSheen()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "sheen",
+            {R"({ "name": "velvet", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [0.9, 0.5, 0.25], "sheenRoughnessFactor": 0.6 } } })",
+             R"({ "name": "clamped", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [2, -1, 0.5], "sheenRoughnessFactor": 3 } } })",
+             R"({ "name": "defaults", "extensions": { "KHR_materials_sheen": {} } })",
+             R"({ "name": "plain" })",
+             R"({ "name": "textured", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1], "sheenColorTexture": { "index": 0 } } } })",
+             R"({ "name": "both", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1] }, "KHR_materials_clearcoat": { "clearcoatFactor": 1 } } })"})
+            .string());
+    Require(model.IsValid(), "the sheen fixture loads");
+
+    const ModelMaterialData& velvet = MaterialNamed(model, "velvet");
+    Near(velvet.sheenColorFactor[0], 0.9f, "sheen red");
+    Near(velvet.sheenColorFactor[1], 0.5f, "sheen green");
+    Near(velvet.sheenColorFactor[2], 0.25f, "sheen blue");
+    Near(velvet.sheenRoughnessFactor, 0.6f, "sheen roughness");
+    Near(velvet.pbr.sheenColorFactor[0], 0.9f, "sheen red in the PBR settings");
+    Near(velvet.pbr.sheenRoughnessFactor, 0.6f, "sheen roughness in the PBR settings");
+
+    const ModelMaterialData& clamped = MaterialNamed(model, "clamped");
+    Near(clamped.sheenColorFactor[0], 1.0f, "sheen colour clamps to 1");
+    Near(clamped.sheenColorFactor[1], 0.0f, "sheen colour clamps to 0");
+    Near(clamped.sheenRoughnessFactor, 1.0f, "sheen roughness clamps to 1");
+
+    Near(MaterialNamed(model, "defaults").sheenColorFactor[0], 0.0f, "the extension's default colour is black");
+    Near(MaterialNamed(model, "plain").sheenColorFactor[0], 0.0f, "no extension, no sheen");
+    Near(MaterialNamed(model, "textured").sheenColorFactor[0], 1.0f, "textured sheen keeps its factors");
+    // Both are kept; the renderer decides which layer the pixel gets.
+    Near(MaterialNamed(model, "both").sheenColorFactor[0], 1.0f, "sheen kept beside a coat");
+    Near(MaterialNamed(model, "both").clearcoatFactor, 1.0f, "coat kept beside a sheen");
+}
+
+void SidecarKeepsSheen()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "velvet";
+    written.pbr.sheenColorFactor[0] = 0.5f;
+    written.pbr.sheenColorFactor[1] = 0.25f;
+    written.pbr.sheenColorFactor[2] = 0.125f;
+    written.pbr.sheenRoughnessFactor = 0.75f;
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "velvet.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.sheenColorFactor[1], 0.25f, "sidecar sheen green");
+    Near(read.pbr.sheenRoughnessFactor, 0.75f, "sidecar sheen roughness");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Near(legacy.pbr.sheenColorFactor[0], 0.0f, "a legacy sidecar has no sheen");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Near(applied.sheenColorFactor[2], 0.125f, "applied sheen blue");
+    Near(applied.sheenRoughnessFactor, 0.75f, "applied sheen roughness");
+}
+
 void SidecarKeepsClearcoat()
 {
     const ScopedFixtureDirectory directory;
@@ -263,6 +332,8 @@ int main()
         ReadsEmissiveStrength();
         ReadsClearcoat();
         SidecarKeepsClearcoat();
+        ReadsSheen();
+        SidecarKeepsSheen();
     }
     catch (const std::exception& error)
     {

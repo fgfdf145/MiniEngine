@@ -842,6 +842,14 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= DragFloatInRange("Opacity", &pbr.opacity, 0.0f, 1.0f, "%.2f");
     changed |= DragFloatInRange("Clearcoat", &pbr.clearcoatFactor, 0.0f, 1.0f, "%.2f");
     changed |= DragFloatInRange("Clearcoat Roughness", &pbr.clearcoatRoughnessFactor, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::ColorEdit3("Sheen Color", pbr.sheenColorFactor);
+    changed |= DragFloatInRange("Sheen Roughness", &pbr.sheenRoughnessFactor, 0.0f, 1.0f, "%.2f");
+    // The G-buffer holds one of the two layers per pixel, and the coat is the one kept.
+    const float sheenStrength = std::max({pbr.sheenColorFactor[0], pbr.sheenColorFactor[1], pbr.sheenColorFactor[2]});
+    if (pbr.clearcoatFactor > 0.0f && sheenStrength > 0.0f)
+    {
+        ImGui::TextDisabled("Clearcoat and sheen together: only the clearcoat is rendered.");
+    }
     return changed;
 }
 

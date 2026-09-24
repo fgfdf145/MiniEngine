@@ -168,6 +168,11 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.emissiveIntensity = source.pbr.emissiveIntensity;
     destination.clearcoatFactor = source.pbr.clearcoatFactor;
     destination.clearcoatRoughnessFactor = source.pbr.clearcoatRoughnessFactor;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        destination.sheenColorFactor[index] = source.pbr.sheenColorFactor[index];
+    }
+    destination.sheenRoughnessFactor = source.pbr.sheenRoughnessFactor;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -203,6 +208,10 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     pbr["opacity"] = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
     pbr["clearcoat_factor"] = material.pbr.clearcoatFactor;
     pbr["clearcoat_roughness_factor"] = material.pbr.clearcoatRoughnessFactor;
+    YAML::Node sheenColor(YAML::NodeType::Sequence);
+    SerializeFloatSequence(sheenColor, material.pbr.sheenColorFactor, 3);
+    pbr["sheen_color_factor"] = sheenColor;
+    pbr["sheen_roughness_factor"] = material.pbr.sheenRoughnessFactor;
     node["pbr"] = pbr;
 
     if (HasBlendData(material.blendGraph))
@@ -268,6 +277,15 @@ bool LoadMaterialDefinition(
                 1.0f);
             material.pbr.clearcoatRoughnessFactor = std::clamp(
                 pbrNode["clearcoat_roughness_factor"].as<float>(material.pbr.clearcoatRoughnessFactor),
+                0.0f,
+                1.0f);
+            ReadFloatSequence(pbrNode["sheen_color_factor"], material.pbr.sheenColorFactor);
+            for (float& component : material.pbr.sheenColorFactor)
+            {
+                component = std::clamp(component, 0.0f, 1.0f);
+            }
+            material.pbr.sheenRoughnessFactor = std::clamp(
+                pbrNode["sheen_roughness_factor"].as<float>(material.pbr.sheenRoughnessFactor),
                 0.0f,
                 1.0f);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));

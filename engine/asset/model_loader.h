@@ -35,6 +35,8 @@ struct ModelMaterialData
     bool doubleSided = false;
     float clearcoatFactor = 0.0f;
     float clearcoatRoughnessFactor = 0.0f;
+    float sheenColorFactor[3] = {0.0f, 0.0f, 0.0f};
+    float sheenRoughnessFactor = 0.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

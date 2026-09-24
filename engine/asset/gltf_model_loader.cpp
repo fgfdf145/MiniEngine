@@ -753,6 +753,47 @@ ModelMaterialData BuildMaterialData(
         }
     }
 
+    // KHR_materials_sheen, factors only. Absent members take the extension's defaults: black, 0.
+    const auto sheen = material.extensions.find("KHR_materials_sheen");
+    if (sheen != material.extensions.end())
+    {
+        if (sheen->second.Has("sheenColorFactor") && sheen->second.Get("sheenColorFactor").IsArray())
+        {
+            const tinygltf::Value& color = sheen->second.Get("sheenColorFactor");
+            for (int index = 0; index < 3 && index < static_cast<int>(color.ArrayLen()); ++index)
+            {
+                if (color.Get(index).IsNumber())
+                {
+                    materialData.sheenColorFactor[index] =
+                        std::clamp(static_cast<float>(color.Get(index).GetNumberAsDouble()), 0.0f, 1.0f);
+                }
+            }
+        }
+        if (sheen->second.Has("sheenRoughnessFactor") && sheen->second.Get("sheenRoughnessFactor").IsNumber())
+        {
+            materialData.sheenRoughnessFactor =
+                std::clamp(static_cast<float>(sheen->second.Get("sheenRoughnessFactor").GetNumberAsDouble()), 0.0f, 1.0f);
+        }
+        for (const char* texture : {"sheenColorTexture", "sheenRoughnessTexture"})
+        {
+            if (sheen->second.Has(texture))
+            {
+                LOG_WARN(
+                    "Material '{}' in '{}' has a {}, which is not supported; its sheen uses the factors alone",
+                    material.name,
+                    modelPath.string(),
+                    texture);
+            }
+        }
+        if (clearcoat != material.extensions.end() && materialData.clearcoatFactor > 0.0f)
+        {
+            LOG_WARN(
+                "Material '{}' in '{}' has both clearcoat and sheen; only the clearcoat is rendered",
+                material.name,
+                modelPath.string());
+        }
+    }
+
     const std::optional<MaterialAlphaMode> parsedAlphaMode =
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
