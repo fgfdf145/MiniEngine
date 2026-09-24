@@ -524,15 +524,20 @@ void VulkanRenderer::DrawFrame()
     {
         constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
         m_exposureReferences.sunIlluminanceLux.reset();
+        m_whiteBalanceReferences.sunIlluminanceRgb.reset();
         if (shadowLightIndex >= 0)
         {
             const glm::vec4& sunColor = selectedLights[static_cast<size_t>(shadowLightIndex)].colorAndIntensity;
             m_exposureReferences.sunIlluminanceLux = glm::dot(glm::vec3(sunColor) * sunColor.w, kLuma);
+            m_whiteBalanceReferences.sunIlluminanceRgb = glm::vec3(sunColor) * sunColor.w;
         }
         m_exposureReferences.skyLuminance.reset();
+        m_whiteBalanceReferences.skyIlluminanceRgb.reset();
         if (environmentMode == EnvironmentMode::None)
         {
             m_exposureReferences.skyLuminance = glm::dot(lightSelection.ambientLuminance, kLuma);
+            // A uniform sky of luminance L puts pi L on a horizontal surface.
+            m_whiteBalanceReferences.skyIlluminanceRgb = lightSelection.ambientLuminance * glm::pi<float>();
         }
     }
     const EnvironmentUniformData environmentData = BuildEnvironmentUniformData(
@@ -547,8 +552,9 @@ void VulkanRenderer::DrawFrame()
     {
         // The L0 band of the radiance SH is its average over the sphere times Y00 = 0.282095.
         constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
-        m_exposureReferences.skyLuminance =
-            glm::dot(glm::vec3(environmentData.hdriIrradianceSh[0]), kLuma) * 0.282095f;
+        const glm::vec3 averageRadiance = glm::vec3(environmentData.hdriIrradianceSh[0]) * 0.282095f;
+        m_exposureReferences.skyLuminance = glm::dot(averageRadiance, kLuma);
+        m_whiteBalanceReferences.skyIlluminanceRgb = averageRadiance * glm::pi<float>();
     }
 
     std::vector<glm::mat4> models;
@@ -662,6 +668,7 @@ void VulkanRenderer::DrawFrame()
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
     frame.glareFNumber = GlareFNumberFromEv100(State().camera.exposureEv100);
+    frame.whiteBalance = UpdateWhiteBalance();
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
     // The history this frame writes carries this frame's pre-exposure.
@@ -1874,6 +1881,27 @@ void VulkanRenderer::ReportDroppedClusterLights(uint32_t droppedCount)
     {
         LOG_INFO("Every light fits in the light cluster index list again");
     }
+}
+
+glm::mat3 VulkanRenderer::UpdateWhiteBalance()
+{
+    Camera& camera = State().camera;
+    const AutoWhiteBalanceSettings& settings = camera.autoWhiteBalance;
+    if (!settings.enabled)
+    {
+        // Off shows the illuminant as it is; turned back on, the white point adapts from where it
+        // was rather than from D65.
+        camera.adaptedWhiteKelvin = CorrelatedColorTemperature(kD65WhiteXy);
+        return glm::mat3(1.0f);
+    }
+
+    // The references are the previous frame's, like the exposure's; at these rates that is moot.
+    const glm::vec2 target = EstimateIlluminantXy(m_whiteBalanceReferences);
+    m_adaptedWhiteXy = m_adaptedWhiteXy.has_value()
+                           ? AdaptWhitePointXy(*m_adaptedWhiteXy, target, State().frameDeltaSeconds, settings.adaptPerSecond)
+                           : target;
+    camera.adaptedWhiteKelvin = CorrelatedColorTemperature(*m_adaptedWhiteXy);
+    return WhiteBalanceMatrix(*m_adaptedWhiteXy, settings.degree);
 }
 
 void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)

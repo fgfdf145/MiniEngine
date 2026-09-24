@@ -66,6 +66,8 @@ struct ScenePassFrameContext
     BloomSettings bloom;
     // The aperture the glare is diffracted through, from this frame's EV (see GlareFNumberFromEv100).
     float glareFNumber = kGlareMinFNumber;
+    // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
+    glm::mat3 whiteBalance{1.0f};
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the

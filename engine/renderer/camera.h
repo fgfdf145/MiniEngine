@@ -2,6 +2,7 @@
 
 #include "exposure.h"
 #include "render_types.h"
+#include "white_balance.h"
 
 #include <engine/scene/world_units.h>
 
@@ -48,6 +49,10 @@ class Camera
     // The long-term stage of auto exposure (see StepAutoExposure), written by the renderer for the
     // Camera panel to show.
     float adaptedLongTermEv100 = kDefaultExposureEv100;
+    AutoWhiteBalanceSettings autoWhiteBalance;
+    // The white point auto white balance has adapted to, as a colour temperature, written by the
+    // renderer for the Camera panel to show.
+    float adaptedWhiteKelvin = 6504.0f;
 
     float GetExposure() const;
 };

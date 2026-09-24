@@ -24,6 +24,11 @@ const uint GBUFFER_VIEW_CUSTOM = 9u;
 layout(push_constant) uniform TonemapConstants
 {
     uint gbufferView;
+    uint unused0;
+    uint unused1;
+    uint unused2;
+    // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
+    vec4 whiteBalance[3];
 }
 constants;
 
@@ -96,6 +101,11 @@ void main()
         // pre_exposure.glsl). Clamp below fp16's maximum before the operator: an infinite input
         // would turn into NaN inside it and show a very bright pixel as black.
         color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
+
+        // Auto white balance, before the operator: a partial chromatic adaptation toward D65 (see
+        // engine/renderer/white_balance.h). It can push a saturated colour slightly negative; the
+        // operator clamps at zero.
+        color = mat3(constants.whiteBalance[0].xyz, constants.whiteBalance[1].xyz, constants.whiteBalance[2].xyz) * color;
 
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.

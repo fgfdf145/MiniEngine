@@ -165,6 +165,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Meters the histogram the given frame slot last wrote and moves the camera's EV100 toward
     // it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(uint32_t frameSlot);
+    // Adapts the white point toward this frame's illuminant estimate and returns the balance the
+    // tone mapping pass applies (identity when auto white balance is off).
+    glm::mat3 UpdateWhiteBalance();
     // Logs when the number of lights left out by the light limit changes.
     void ReportDroppedLights(uint32_t droppedCount);
     void ReportDroppedClusterLights(uint32_t droppedCount);
@@ -242,6 +245,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     // references gathered while recording the previous frame.
     AutoExposureState m_autoExposureState;
     ExposureReferences m_exposureReferences;
+    // Auto white balance (see white_balance.h): the references gathered with the exposure ones, and
+    // the adapted white point; empty until the first balanced frame.
+    WhiteBalanceReferences m_whiteBalanceReferences;
+    std::optional<glm::vec2> m_adaptedWhiteXy;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's

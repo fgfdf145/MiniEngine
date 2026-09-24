@@ -18,9 +18,12 @@ namespace
 struct TonemapPushConstants
 {
     uint32_t gbufferView = 0;
+    uint32_t unused[3] = {0u, 0u, 0u};
+    // The white balance matrix's columns, xyz used (see WhiteBalanceMatrix).
+    glm::vec4 whiteBalance[3] = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
 };
 
-static_assert(sizeof(TonemapPushConstants) == 4, "TonemapPushConstants must match the shader's block");
+static_assert(sizeof(TonemapPushConstants) == 64, "TonemapPushConstants must match the shader's block");
 }
 
 VulkanTonemapPass::VulkanTonemapPass(
@@ -134,6 +137,10 @@ void VulkanTonemapPass::Record(
 
     TonemapPushConstants constants{};
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
+    for (int column = 0; column < 3; ++column)
+    {
+        constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);
+    }
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,
@@ -210,8 +217,8 @@ void VulkanTonemapPass::CreatePipeline(
 {
     const std::array<VkDescriptorSetLayout, 3> setLayouts = {m_setLayout, emptySetLayout, gbufferSetLayout};
 
-    // The view changes whenever the user picks one, so it is a push constant rather than something
-    // that would force the descriptor sets to be rewritten.
+    // The view changes whenever the user picks one and the white balance every frame, so both are
+    // push constants rather than something that would force the descriptor sets to be rewritten.
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;

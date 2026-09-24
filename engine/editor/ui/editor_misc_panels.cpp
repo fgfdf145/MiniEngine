@@ -88,6 +88,13 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         // The aperture the glare is diffracted through, chosen by the exposure (see glare.h).
         ImGui::Text("Glare aperture f/%.1f", GlareFNumberFromEv100(camera.exposureEv100));
 
+        // GT7's auto white balance (see white_balance.h): partial adaptation to the scene's light.
+        ImGui::Checkbox("Auto White Balance", &camera.autoWhiteBalance.enabled);
+        ImGui::BeginDisabled(!camera.autoWhiteBalance.enabled);
+        DragFloatInRange("Adaptation Degree", &camera.autoWhiteBalance.degree, 0.0f, 1.0f, "%.2f");
+        ImGui::Text("Adapted white %.0f K", camera.adaptedWhiteKelvin);
+        ImGui::EndDisabled();
+
         if (autoExposure.enabled)
         {
             DragFloatInRange("Compensation (EV)", &autoExposure.compensationEv, -5.0f, 5.0f, "%+.1f");
