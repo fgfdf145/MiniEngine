@@ -1,5 +1,7 @@
 #include "atmosphere.h"
 
+#include "command.h"
+
 #include "pipeline.h"
 
 #include <engine/core/paths/engine_paths.h>
@@ -87,12 +89,28 @@ TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding() const
     return TextureDescriptorBinding{m_images[kAerialPerspective].view, m_sampler};
 }
 
+std::optional<glm::vec3> VulkanAtmosphere::GetSkyAverageRadiance(uint32_t frameSlot) const
+{
+    const Readback& readback = m_readbacks.at(frameSlot);
+    if (!readback.written || readback.mapped == nullptr)
+    {
+        return std::nullopt;
+    }
+    // The L0 coefficient is the radiance's average over the sphere times Y00 = 0.282095, and
+    // 1 / (4 pi Y00) = Y00.
+    return glm::vec3(readback.mapped[0], readback.mapped[1], readback.mapped[2]) * 0.282095f;
+}
+
 VkBuffer VulkanAtmosphere::GetIrradianceBuffer() const
 {
     return m_irradianceBuffer;
 }
 
-void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, const AtmosphereParameters* parameters)
+void VulkanAtmosphere::Record(
+    VkCommandBuffer commandBuffer,
+    VkDescriptorSet frameDescriptorSet,
+    const AtmosphereParameters* parameters,
+    uint32_t frameSlot)
 {
     if (!m_imagesInitialized)
     {
@@ -165,7 +183,15 @@ void VulkanAtmosphere::Record(VkCommandBuffer commandBuffer, VkDescriptorSet fra
         // The SH projection samples the sky-view LUT written above.
         GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         Dispatch(commandBuffer, kIrradiancePipeline, 1, 1, 1);
+
+        // A copy for the CPU, read once this slot's fence has signaled.
+        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        Readback& readback = m_readbacks.at(frameSlot);
+        const VkBufferCopy copy{0, 0, kIrradianceBytes};
+        vkCmdCopyBuffer(commandBuffer, m_irradianceBuffer, readback.buffer, 1, &copy);
+        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
     }
+    m_readbacks.at(frameSlot).written = parameters != nullptr;
 
     // This frame's writes before its fragment shaders sample them.
     GlobalBarrier(
@@ -238,7 +264,7 @@ void VulkanAtmosphere::CreateImages()
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = kIrradianceBytes;
-    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_irradianceBuffer), "Failed to create the sky irradiance buffer");
     VkMemoryRequirements requirements{};
@@ -249,6 +275,30 @@ void VulkanAtmosphere::CreateImages()
     allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_irradianceMemory), "Failed to allocate the sky irradiance buffer");
     CheckVulkan(vkBindBufferMemory(m_device, m_irradianceBuffer, m_irradianceMemory, 0), "Failed to bind the sky irradiance buffer");
+
+    m_readbacks.resize(VulkanCommandContext::kMaxFramesInFlight);
+    for (Readback& readback : m_readbacks)
+    {
+        VkBufferCreateInfo readbackInfo{};
+        readbackInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        readbackInfo.size = kIrradianceBytes;
+        readbackInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        readbackInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        CheckVulkan(vkCreateBuffer(m_device, &readbackInfo, nullptr, &readback.buffer), "Failed to create a sky readback buffer");
+        VkMemoryRequirements readbackRequirements{};
+        vkGetBufferMemoryRequirements(m_device, readback.buffer, &readbackRequirements);
+        VkMemoryAllocateInfo readbackAllocate{};
+        readbackAllocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        readbackAllocate.allocationSize = readbackRequirements.size;
+        readbackAllocate.memoryTypeIndex = FindMemoryType(
+            readbackRequirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        CheckVulkan(vkAllocateMemory(m_device, &readbackAllocate, nullptr, &readback.memory), "Failed to allocate a sky readback buffer");
+        CheckVulkan(vkBindBufferMemory(m_device, readback.buffer, readback.memory, 0), "Failed to bind a sky readback buffer");
+        void* mapped = nullptr;
+        CheckVulkan(vkMapMemory(m_device, readback.memory, 0, kIrradianceBytes, 0, &mapped), "Failed to map a sky readback buffer");
+        readback.mapped = static_cast<const float*>(mapped);
+    }
 }
 
 void VulkanAtmosphere::CreateDescriptors()
@@ -387,6 +437,18 @@ void VulkanAtmosphere::DestroyHandles()
         vkDestroySampler(m_device, m_sampler, nullptr);
         m_sampler = VK_NULL_HANDLE;
     }
+    for (Readback& readback : m_readbacks)
+    {
+        if (readback.buffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(m_device, readback.buffer, nullptr);
+        }
+        if (readback.memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(m_device, readback.memory, nullptr);
+        }
+    }
+    m_readbacks.clear();
     if (m_irradianceBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_irradianceBuffer, nullptr);

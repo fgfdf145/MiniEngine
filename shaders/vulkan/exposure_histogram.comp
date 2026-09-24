@@ -15,8 +15,15 @@ layout(set = 0, binding = 1) uniform sampler2D depthTexture;
 layout(set = 0, binding = 2, std430) buffer HistogramBuffer
 {
     uint bins[kExposureHistogramBinCount];
+    // The view's average colour for auto white balance: each metered pixel adds its rgb divided by
+    // its luminance, in 1/kColorScale units, then the pixel count. Must match
+    // VulkanExposureHistogramPass::GetFrameColor.
+    uint colorSums[3];
+    uint colorCount;
 }
 histogram;
+
+const float kColorScale = 1024.0;
 
 layout(push_constant) uniform HistogramConstants
 {
@@ -29,10 +36,15 @@ layout(push_constant) uniform HistogramConstants
 constants;
 
 shared uint localBins[kExposureHistogramBinCount];
+shared uint localColor[4];
 
 void main()
 {
     localBins[gl_LocalInvocationIndex] = 0u;
+    if (gl_LocalInvocationIndex < 4u)
+    {
+        localColor[gl_LocalInvocationIndex] = 0u;
+    }
     barrier();
 
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -51,6 +63,16 @@ void main()
             {
                 atomicAdd(localBins[ExposureHistogramBin(luminance)], 1u);
             }
+            // Chromaticity only, so a bright highlight weighs as much as a dim wall; capped so a
+            // saturated pixel cannot overflow the sums.
+            if (luminance > 1e-4)
+            {
+                uvec3 color = uvec3(min(radiance / luminance, vec3(4.0)) * kColorScale);
+                atomicAdd(localColor[0], color.r);
+                atomicAdd(localColor[1], color.g);
+                atomicAdd(localColor[2], color.b);
+                atomicAdd(localColor[3], 1u);
+            }
         }
     }
 
@@ -60,5 +82,13 @@ void main()
     if (count != 0u)
     {
         atomicAdd(histogram.bins[gl_LocalInvocationIndex], count);
+    }
+    if (gl_LocalInvocationIndex < 3u)
+    {
+        atomicAdd(histogram.colorSums[gl_LocalInvocationIndex], localColor[gl_LocalInvocationIndex]);
+    }
+    else if (gl_LocalInvocationIndex == 3u)
+    {
+        atomicAdd(histogram.colorCount, localColor[3]);
     }
 }

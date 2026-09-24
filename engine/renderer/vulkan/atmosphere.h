@@ -7,6 +7,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 namespace me
 {
@@ -35,7 +36,18 @@ class VulkanAtmosphere
 
     // parameters is null when the frame does not render the atmosphere; the frame descriptor set
     // carries the same parameters in its camera block.
-    void Record(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, const AtmosphereParameters* parameters);
+    // frameSlot picks the host-visible copy of the sky's SH this frame leaves for the CPU (see
+    // GetSkyAverageRadiance).
+    void Record(
+        VkCommandBuffer commandBuffer,
+        VkDescriptorSet frameDescriptorSet,
+        const AtmosphereParameters* parameters,
+        uint32_t frameSlot);
+
+    // The sky's average radiance (its SH's L0 band), as the frame last recorded in this slot left
+    // it, for auto exposure and white balance. Call after the slot's fence has signaled; empty when
+    // that frame did not render the atmosphere.
+    std::optional<glm::vec3> GetSkyAverageRadiance(uint32_t frameSlot) const;
 
     TextureDescriptorBinding GetTransmittanceBinding() const;
     TextureDescriptorBinding GetSkyViewBinding() const;
@@ -82,6 +94,16 @@ class VulkanAtmosphere
     // binding 7. Shared by the frames in flight like the LUTs.
     VkBuffer m_irradianceBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_irradianceMemory = VK_NULL_HANDLE;
+    // One host-visible copy of the SH per frame in flight, copied after the projection so the CPU
+    // reads a finished frame's sky instead of racing the shared buffer.
+    struct Readback
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        const float* mapped = nullptr;
+        bool written = false;
+    };
+    std::vector<Readback> m_readbacks;
     bool m_imagesInitialized = false;
     // The parameters the static LUTs were last built from; empty until the first build.
     std::optional<AtmosphereParameters> m_staticLutParameters;

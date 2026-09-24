@@ -88,6 +88,24 @@ void AWarmSunPullsTheEstimate()
     Require(kelvin > 3000.0f && kelvin < 3300.0f, "the sun dominates, the 5% virtual D65 pulls slightly: " + std::to_string(kelvin));
 }
 
+void TheViewTempersTheLights()
+{
+    // A 3000 K sun the camera barely sees: the view reads neutral, so the estimate lands mostly on
+    // the view (kWhiteBalanceFrameWeight, in XYZ at equal luminance), far from 3000 K.
+    const glm::vec2 sunXy = PlanckianXy(3000.0f);
+    const glm::vec3 sunXyz(sunXy.x / sunXy.y, 1.0f, (1.0f - sunXy.x - sunXy.y) / sunXy.y);
+    WhiteBalanceReferences references;
+    references.sunIlluminanceRgb = XyzToRec709(sunXyz) * 50000.0f;
+    const float lightsOnly = CorrelatedColorTemperature(EstimateIlluminantXy(references));
+    references.frameColorRgb = glm::vec3(1.0f);
+    const float withView = CorrelatedColorTemperature(EstimateIlluminantXy(references));
+    Require(withView > lightsOnly + 1000.0f && withView < 6000.0f, "a neutral view pulls the estimate toward D65: " + std::to_string(withView));
+    // The view alone, with no light references, meets the virtual D65 light halfway.
+    WhiteBalanceReferences viewOnly;
+    viewOnly.frameColorRgb = glm::vec3(1.0f);
+    Require(glm::length(EstimateIlluminantXy(viewOnly) - kD65WhiteXy) < 0.002f, "a gray view under no light reads about D65");
+}
+
 void AdaptationIsFrameRateIndependent()
 {
     const glm::vec2 one = AdaptWhitePointXy(kD65WhiteXy, kIlluminantA, 1.0f, 0.5f);
@@ -109,6 +127,7 @@ int main()
         EstimateFallsBackToTheVirtualLight();
         AWarmSunPullsTheEstimate();
         AdaptationIsFrameRateIndependent();
+        TheViewTempersTheLights();
     }
     catch (const std::exception& error)
     {

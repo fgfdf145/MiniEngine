@@ -41,6 +41,9 @@ class VulkanExposureHistogramPass : public IScenePass
     // The histogram the given slot last wrote. Only valid to read once that slot's fence has
     // signaled, and until the slot is recorded again.
     std::span<const uint32_t> GetHistogram(uint32_t frameSlot) const;
+    // The same frame's average colour (rgb over luminance, so about 1 for a gray view), for auto
+    // white balance; empty when no pixel was metered. Same validity as GetHistogram.
+    std::optional<glm::vec3> GetFrameColor(uint32_t frameSlot) const;
 
   private:
     struct HistogramBuffer

@@ -533,7 +533,17 @@ void VulkanRenderer::DrawFrame()
         }
         m_exposureReferences.skyLuminance.reset();
         m_whiteBalanceReferences.skyIlluminanceRgb.reset();
-        if (environmentMode == EnvironmentMode::None)
+        if (environmentMode == EnvironmentMode::Atmosphere)
+        {
+            // The sky SH the atmosphere left in this slot kMaxFramesInFlight frames ago; its fence
+            // has signaled.
+            if (const std::optional<glm::vec3> sky = m_atmosphere->GetSkyAverageRadiance(m_commandContext->GetCurrentFrame()))
+            {
+                m_exposureReferences.skyLuminance = glm::dot(*sky, kLuma);
+                m_whiteBalanceReferences.skyIlluminanceRgb = *sky * glm::pi<float>();
+            }
+        }
+        else if (environmentMode == EnvironmentMode::None)
         {
             m_exposureReferences.skyLuminance = glm::dot(lightSelection.ambientLuminance, kLuma);
             // A uniform sky of luminance L puts pi L on a horizontal surface.
@@ -706,7 +716,8 @@ void VulkanRenderer::DrawFrame()
                                               m_atmosphere->Record(
                                                   commandBuffer,
                                                   frame.frameDescriptorSet,
-                                                  environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr);
+                                                  environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
+                                                  frame.frameSlot);
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
@@ -1895,7 +1906,14 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance()
         return glm::mat3(1.0f);
     }
 
-    // The references are the previous frame's, like the exposure's; at these rates that is moot.
+    // The view's colour from the histogram this slot recorded kMaxFramesInFlight frames ago (its
+    // fence has signaled); the light references are the previous frame's. At these rates that is
+    // moot.
+    m_whiteBalanceReferences.frameColorRgb.reset();
+    if (m_exposurePass != nullptr)
+    {
+        m_whiteBalanceReferences.frameColorRgb = m_exposurePass->GetFrameColor(m_commandContext->GetCurrentFrame());
+    }
     const glm::vec2 target = EstimateIlluminantXy(m_whiteBalanceReferences);
     m_adaptedWhiteXy = m_adaptedWhiteXy.has_value()
                            ? AdaptWhitePointXy(*m_adaptedWhiteXy, target, State().frameDeltaSeconds, settings.adaptPerSecond)

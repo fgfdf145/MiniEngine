@@ -24,7 +24,8 @@ struct AutoWhiteBalanceSettings
 {
     bool enabled = true;
     // Degree of chromatic adaptation: 1 balances fully to D65, 0 not at all.
-    float degree = 0.8f;
+    // Partial: the estimate is uncertain and the eye never fully discounts the light either.
+    float degree = 0.6f;
     // Exponential adaptation rate of the white point, per second.
     float adaptPerSecond = 0.5f;
 };
@@ -35,7 +36,15 @@ struct WhiteBalanceReferences
 {
     std::optional<glm::vec3> sunIlluminanceRgb;
     std::optional<glm::vec3> skyIlluminanceRgb;
+    // The view's average colour (any scale): what the camera actually sees lit. Lights the view
+    // barely shows must not decide the balance alone.
+    std::optional<glm::vec3> frameColorRgb;
 };
+
+// How much the view counts against the light references in the estimate, at equal luminance.
+// The view dominates: a light the camera barely sees (the sun on a far wall of an interior) must not
+// tint everything else.
+inline constexpr float kWhiteBalanceFrameWeight = 0.75f;
 
 glm::vec3 Rec709ToXyz(const glm::vec3& rgb);
 glm::vec3 XyzToRec709(const glm::vec3& xyz);
@@ -49,7 +58,8 @@ glm::vec2 PlanckianXy(float kelvin);
 // to the Planckian locus at the nearer limit.
 glm::vec2 LimitWhitePoint(const glm::vec2& xy);
 
-// The luminance-weighted chromaticity of the references and the virtual D65 light, limited.
+// The luminance-weighted chromaticity of the light references and the virtual D65 light, blended
+// at equal luminance with the view's colour (kWhiteBalanceFrameWeight), limited.
 glm::vec2 EstimateIlluminantXy(const WhiteBalanceReferences& references);
 
 // One step of exponential adaptation of the white point; frame-rate independent.

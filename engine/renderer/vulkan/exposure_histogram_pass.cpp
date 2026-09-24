@@ -21,7 +21,10 @@ static_assert(
     kWorkgroupSize * kWorkgroupSize == kExposureHistogramBinCount,
     "the shader clears and flushes one bin per invocation");
 
-constexpr VkDeviceSize kHistogramBytes = sizeof(uint32_t) * kExposureHistogramBinCount;
+// The bins, then three colour sums and the pixel count they cover (see exposure_histogram.comp).
+constexpr uint32_t kColorWords = 4;
+constexpr float kColorScale = 1024.0f;
+constexpr VkDeviceSize kHistogramBytes = sizeof(uint32_t) * (kExposureHistogramBinCount + kColorWords);
 
 // Must match HistogramConstants in shaders/vulkan/exposure_histogram.comp.
 struct HistogramPushConstants
@@ -170,6 +173,17 @@ void VulkanExposureHistogramPass::OnTargetsRebuilt(const SceneRenderTargets& tar
     // The sets point at the old HDR and depth views. The histogram buffers do not depend on the
     // targets and keep their last results.
     CreateDescriptorSets(targets);
+}
+
+std::optional<glm::vec3> VulkanExposureHistogramPass::GetFrameColor(uint32_t frameSlot) const
+{
+    const uint32_t* color = m_histograms.at(frameSlot).mapped + kExposureHistogramBinCount;
+    if (color[3] == 0u)
+    {
+        return std::nullopt;
+    }
+    return glm::vec3(static_cast<float>(color[0]), static_cast<float>(color[1]), static_cast<float>(color[2])) /
+           (static_cast<float>(color[3]) * kColorScale);
 }
 
 std::span<const uint32_t> VulkanExposureHistogramPass::GetHistogram(uint32_t frameSlot) const

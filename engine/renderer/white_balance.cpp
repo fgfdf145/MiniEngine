@@ -114,7 +114,20 @@ glm::vec2 EstimateIlluminantXy(const WhiteBalanceReferences& references)
     }
     const float virtualLux = kWhiteBalanceVirtualLightShare * sum.y + kWhiteBalanceVirtualLightLux;
     sum += XyToXyz(kD65WhiteXy) * virtualLux;
-    return LimitWhitePoint(XyzToXy(sum));
+    glm::vec2 xy = XyzToXy(sum);
+
+    if (references.frameColorRgb.has_value())
+    {
+        const glm::vec3 frameXyz = Rec709ToXyz(glm::max(*references.frameColorRgb, glm::vec3(0.0f)));
+        if (frameXyz.y > 0.0f && std::isfinite(frameXyz.x + frameXyz.y + frameXyz.z))
+        {
+            // Both at unit luminance, so the weight is the view's share of the chromaticity.
+            const glm::vec3 blended =
+                XyToXyz(xy) * (1.0f - kWhiteBalanceFrameWeight) + frameXyz / frameXyz.y * kWhiteBalanceFrameWeight;
+            xy = XyzToXy(blended);
+        }
+    }
+    return LimitWhitePoint(xy);
 }
 
 glm::vec2 AdaptWhitePointXy(const glm::vec2& current, const glm::vec2& target, float deltaSeconds, float ratePerSecond)
