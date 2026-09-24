@@ -499,6 +499,8 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["alpha_mode"] = ToString(node.pbr.alphaMode);
         pbr["alpha_cutoff"] = ClampMaterialAlphaValue(node.pbr.alphaCutoff, 0.5f);
         pbr["opacity"] = ClampMaterialAlphaValue(node.pbr.opacity, 1.0f);
+        pbr["clearcoat_factor"] = node.pbr.clearcoatFactor;
+        pbr["clearcoat_roughness_factor"] = node.pbr.clearcoatRoughnessFactor;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -595,6 +597,11 @@ bool DeserializeMaterialShaderGraph(
             node.pbr.normalScale = ReadFloatOrFallback(pbrNode["normal_scale"], node.pbr.normalScale);
             node.pbr.occlusionStrength = ReadFloatOrFallback(pbrNode["occlusion_strength"], node.pbr.occlusionStrength);
             node.pbr.emissiveIntensity = ReadFloatOrFallback(pbrNode["emissive_intensity"], node.pbr.emissiveIntensity);
+            node.pbr.clearcoatFactor = std::clamp(ReadFloatOrFallback(pbrNode["clearcoat_factor"], node.pbr.clearcoatFactor), 0.0f, 1.0f);
+            node.pbr.clearcoatRoughnessFactor = std::clamp(
+                ReadFloatOrFallback(pbrNode["clearcoat_roughness_factor"], node.pbr.clearcoatRoughnessFactor),
+                0.0f,
+                1.0f);
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

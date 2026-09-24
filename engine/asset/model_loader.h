@@ -33,6 +33,8 @@ struct ModelMaterialData
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
     bool doubleSided = false;
+    float clearcoatFactor = 0.0f;
+    float clearcoatRoughnessFactor = 0.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

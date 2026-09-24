@@ -34,6 +34,10 @@ struct MaterialPbrSurfaceSettings
     float opacity = 1.0f;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     float alphaCutoff = 0.5f;
+    // KHR_materials_clearcoat: the coat's weight and its perceptual roughness, both [0, 1]. A
+    // factor of 0 means no coat.
+    float clearcoatFactor = 0.0f;
+    float clearcoatRoughnessFactor = 0.0f;
 };
 
 struct MaterialGraphNodePosition

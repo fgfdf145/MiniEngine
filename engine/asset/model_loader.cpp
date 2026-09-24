@@ -46,6 +46,8 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.alphaMode = material.alphaMode;
     pbr.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
     pbr.opacity = ClampMaterialAlphaValue(material.opacity, 1.0f);
+    pbr.clearcoatFactor = material.clearcoatFactor;
+    pbr.clearcoatRoughnessFactor = material.clearcoatRoughnessFactor;
     return pbr;
 }
 
@@ -68,6 +70,8 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.alphaMode = pbr.alphaMode;
     material.alphaCutoff = ClampMaterialAlphaValue(pbr.alphaCutoff, 0.5f);
     material.opacity = ClampMaterialAlphaValue(pbr.opacity, 1.0f);
+    material.clearcoatFactor = pbr.clearcoatFactor;
+    material.clearcoatRoughnessFactor = pbr.clearcoatRoughnessFactor;
 }
 
 struct MaterialDefinitionFile

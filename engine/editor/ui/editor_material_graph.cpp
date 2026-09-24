@@ -840,6 +840,8 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= ImGui::ColorEdit3("Emissive", pbr.emissiveColor);
     changed |= DragFloatInRange("Emissive Intensity", &pbr.emissiveIntensity, 0.0f, 8.0f, "%.2f");
     changed |= DragFloatInRange("Opacity", &pbr.opacity, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Clearcoat", &pbr.clearcoatFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Clearcoat Roughness", &pbr.clearcoatRoughnessFactor, 0.0f, 1.0f, "%.2f");
     return changed;
 }
 

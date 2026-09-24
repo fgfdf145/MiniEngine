@@ -844,6 +844,10 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.occlusionStrength,
                 selectedMaterial.pbr.emissiveIntensity,
                 selectedMaterial.pbr.opacity);
+            ImGui::Text(
+                "Clearcoat %.2f  Clearcoat Roughness %.2f",
+                selectedMaterial.pbr.clearcoatFactor,
+                selectedMaterial.pbr.clearcoatRoughnessFactor);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

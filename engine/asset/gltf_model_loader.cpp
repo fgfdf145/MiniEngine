@@ -726,6 +726,33 @@ ModelMaterialData BuildMaterialData(
         }
     }
 
+    // KHR_materials_clearcoat, factors only. Absent members take the extension's defaults, 0.
+    const auto clearcoat = material.extensions.find("KHR_materials_clearcoat");
+    if (clearcoat != material.extensions.end())
+    {
+        const auto readUnitFactor = [&](const char* name)
+        {
+            if (!clearcoat->second.Has(name) || !clearcoat->second.Get(name).IsNumber())
+            {
+                return 0.0f;
+            }
+            return std::clamp(static_cast<float>(clearcoat->second.Get(name).GetNumberAsDouble()), 0.0f, 1.0f);
+        };
+        materialData.clearcoatFactor = readUnitFactor("clearcoatFactor");
+        materialData.clearcoatRoughnessFactor = readUnitFactor("clearcoatRoughnessFactor");
+        for (const char* texture : {"clearcoatTexture", "clearcoatRoughnessTexture", "clearcoatNormalTexture"})
+        {
+            if (clearcoat->second.Has(texture))
+            {
+                LOG_WARN(
+                    "Material '{}' in '{}' has a {}, which is not supported; its clearcoat uses the factors alone",
+                    material.name,
+                    modelPath.string(),
+                    texture);
+            }
+        }
+    }
+
     const std::optional<MaterialAlphaMode> parsedAlphaMode =
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);

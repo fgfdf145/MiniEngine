@@ -166,6 +166,8 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.normalScale = source.pbr.normalScale;
     destination.occlusionStrength = source.pbr.occlusionStrength;
     destination.emissiveIntensity = source.pbr.emissiveIntensity;
+    destination.clearcoatFactor = source.pbr.clearcoatFactor;
+    destination.clearcoatRoughnessFactor = source.pbr.clearcoatRoughnessFactor;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -199,6 +201,8 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     pbr["alpha_mode"] = ToString(material.pbr.alphaMode);
     pbr["alpha_cutoff"] = ClampMaterialAlphaValue(material.pbr.alphaCutoff, 0.5f);
     pbr["opacity"] = ClampMaterialAlphaValue(material.pbr.opacity, 1.0f);
+    pbr["clearcoat_factor"] = material.pbr.clearcoatFactor;
+    pbr["clearcoat_roughness_factor"] = material.pbr.clearcoatRoughnessFactor;
     node["pbr"] = pbr;
 
     if (HasBlendData(material.blendGraph))
@@ -257,6 +261,15 @@ bool LoadMaterialDefinition(
             material.pbr.normalScale = pbrNode["normal_scale"].as<float>(material.pbr.normalScale);
             material.pbr.occlusionStrength = pbrNode["occlusion_strength"].as<float>(material.pbr.occlusionStrength);
             material.pbr.emissiveIntensity = pbrNode["emissive_intensity"].as<float>(material.pbr.emissiveIntensity);
+            // Absent in sidecars written before clearcoat existed, which then keep what they had.
+            material.pbr.clearcoatFactor = std::clamp(
+                pbrNode["clearcoat_factor"].as<float>(material.pbr.clearcoatFactor),
+                0.0f,
+                1.0f);
+            material.pbr.clearcoatRoughnessFactor = std::clamp(
+                pbrNode["clearcoat_roughness_factor"].as<float>(material.pbr.clearcoatRoughnessFactor),
+                0.0f,
+                1.0f);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {
