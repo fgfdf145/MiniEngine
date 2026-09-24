@@ -686,10 +686,14 @@ void VulkanRenderer::DrawFrame()
     frame.frameIndex = m_aoFrameIndex++;
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
-    frame.glareFNumber = GlareFNumberFromEv100(State().camera.exposureEv100);
+
     frame.whiteBalance = UpdateWhiteBalance();
     frame.hdrOutput = m_swapchain->IsHdr();
     frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
+    // HDR output shows more of the highlight's brightness directly, so it needs less glare.
+    frame.glareFNumber = GlareFNumberFromEv100(
+        State().camera.exposureEv100,
+        frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
     // The history this frame writes carries this frame's pre-exposure.

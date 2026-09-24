@@ -25,8 +25,13 @@ inline constexpr glm::vec3 kGlareWavelengthsMicrons{0.612f, 0.549f, 0.465f};
 // The composite keeps at least this share of every pixel where it is, whatever the strength.
 inline constexpr float kGlareMaxMovedEnergy = 0.95f;
 
+// The display peak GT7's SDR output stands for (its paper white).
+inline constexpr float kGlareSdrPeakNits = 250.0f;
+
 // The f-number a camera at kGlareShutterSeconds uses for this exposure, clamped to the lens range.
-float GlareFNumberFromEv100(float ev100);
+// On an HDR display GT7 treats the peak above SDR's as extra exposure latitude: the aperture opens
+// by log2(peak / kGlareSdrPeakNits) stops, so a brighter display needs less glare to read as bright.
+float GlareFNumberFromEv100(float ev100, float displayPeakNits = kGlareSdrPeakNits);
 
 // The share of each pixel's energy that bloom level k spreads, per channel. Past its first rings the
 // Airy pattern leaves 2 lambda N / (pi^2 rho) of its energy beyond focal-plane radius rho, so with

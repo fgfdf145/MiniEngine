@@ -122,6 +122,18 @@ void EnergyBeyondAnAngleIsResolutionIndependent()
     Require(NearlyEqual(lowSum, highSum), "the glare must not depend on the render resolution");
 }
 
+void HdrDisplaysNeedLessGlare()
+{
+    // GT7 treats the display's peak above SDR's 250 nits as extra exposure latitude: a 1000-nit
+    // display is two stops, so the aperture opens by two stops and the f-number halves.
+    const float ev = 14.0f; // f/11.4 in SDR, clear of the f/22 clamp
+    Require(GlareFNumberFromEv100(ev, kGlareSdrPeakNits) == GlareFNumberFromEv100(ev), "SDR is the default");
+    const float sdr = GlareFNumberFromEv100(ev);
+    const float hdr = GlareFNumberFromEv100(ev, 1000.0f);
+    Require(std::abs(hdr - sdr / 2.0f) < 1e-3f, "a 1000-nit display halves the f-number: " + std::to_string(hdr));
+    Require(GlareFNumberFromEv100(ev, 100.0f) == sdr, "a peak under SDR white never widens the glare");
+}
+
 void StaysEnergyConserving()
 {
     // Even at the smallest aperture on a tall viewport, the moved energy must stay below 1.
@@ -148,6 +160,7 @@ int main()
         OneLevelTakesEverything();
         EnergyBeyondAnAngleIsResolutionIndependent();
         StaysEnergyConserving();
+        HdrDisplaysNeedLessGlare();
     }
     catch (const std::exception& error)
     {

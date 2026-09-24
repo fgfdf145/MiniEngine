@@ -75,6 +75,11 @@ a lamp is visible, which is the night-scene glare GT7 describes.
 - **The moved energy is capped at 95%** (`kGlareMaxMovedEnergy`): at f/22 on a 4320-pixel-tall
   viewport with strength 4 the diffraction formula would otherwise take nearly all of a pixel.
 
+- **HDR narrowing (added with HDR output).** GT7 narrows the glare on HDR displays by treating the
+  peak luminance above SDR's 250 nits as an exposure difference in f-number. With HDR output on, the
+  aperture is computed from `EV - log2(peak / 250)`: at a 1000-nit peak two stops wider, half the
+  f-number and half the moved energy. The Camera panel's aperture readout stays the SDR one.
+
 ## Out of Scope
 
-- HDR-output narrowing of the glare (no HDR output yet), star-shaped aperture blades, lens dirt.
+- Star-shaped aperture blades, lens dirt.

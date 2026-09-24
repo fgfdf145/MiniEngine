@@ -7,9 +7,10 @@
 namespace me
 {
 
-float GlareFNumberFromEv100(float ev100)
+float GlareFNumberFromEv100(float ev100, float displayPeakNits)
 {
-    const float fNumber = std::sqrt(std::exp2(ev100) * kGlareShutterSeconds);
+    const float latitudeStops = std::log2(std::max(displayPeakNits, kGlareSdrPeakNits) / kGlareSdrPeakNits);
+    const float fNumber = std::sqrt(std::exp2(ev100 - latitudeStops) * kGlareShutterSeconds);
     return std::clamp(fNumber, kGlareMinFNumber, kGlareMaxFNumber);
 }
 
