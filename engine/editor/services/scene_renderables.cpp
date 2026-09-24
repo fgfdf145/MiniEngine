@@ -19,9 +19,9 @@ namespace me
 
 namespace
 {
-MaterialPushConstants BuildDefaultMaterialForTag(const std::string& tagName)
+GpuMaterialData BuildDefaultMaterialForTag(const std::string& tagName)
 {
-    MaterialPushConstants material{};
+    GpuMaterialData material{};
     if (tagName == "Cube A")
     {
         material.baseColorFactor[0] = 1.0f;

@@ -25,7 +25,7 @@ struct ShadowDrawItem
     // Mask materials run the alpha test and need their material set; opaque ones need neither.
     bool alphaMask = false;
     VkDescriptorSet materialDescriptorSet = VK_NULL_HANDLE;
-    MaterialPushConstants material;
+    GpuMaterialData material;
 };
 
 // Push constants for shaders/vulkan/shadow.vert and shadow.frag.

@@ -17,8 +17,9 @@ void RecordMaterialDrawItems(
     const VkPipelineLayout pipelineLayout = pipelines.GetLayout();
     VkPipeline boundPipeline = VK_NULL_HANDLE;
 
-    // Set 0 (the camera uniform buffer) is the same for every item, so it is bound once rather
-    // than per item. Set 1 (the material samplers) varies per item and is bound in the loop.
+    // Set 0 (the camera uniform buffer and the material buffer) is the same for every item, so it
+    // is bound once rather than per item. Set 1 (the material samplers) varies per item and is
+    // bound in the loop.
     vkCmdBindDescriptorSets(
         commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -54,7 +55,7 @@ void RecordMaterialDrawItems(
         vkCmdPushConstants(
             commandBuffer,
             pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            VK_SHADER_STAGE_VERTEX_BIT,
             0,
             sizeof(ObjectPushConstants),
             &drawItem.drawConstants);

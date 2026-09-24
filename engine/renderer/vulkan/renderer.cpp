@@ -107,6 +107,19 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
     return collected;
 }
 
+// Every submesh's material in submesh order, which is the draw slot order: BuildDrawItems passes the
+// submesh index as each draw's firstInstance.
+std::vector<GpuMaterialData> CollectDrawMaterials(const std::vector<RenderSubmesh>& renderSubmeshes)
+{
+    std::vector<GpuMaterialData> materials;
+    materials.reserve(renderSubmeshes.size());
+    for (const RenderSubmesh& renderSubmesh : renderSubmeshes)
+    {
+        materials.push_back(renderSubmesh.material);
+    }
+    return materials;
+}
+
 TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha)
 {
     TextureData texture{};
@@ -1078,7 +1091,7 @@ void VulkanRenderer::CreateDescriptorResources()
         BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots),
         m_shadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(),
-        static_cast<uint32_t>(m_renderSubmeshes.size()));
+        CollectDrawMaterials(m_renderSubmeshes));
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
@@ -1586,7 +1599,7 @@ void VulkanRenderer::ApplyRenderContent(
             BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots),
             m_shadowPass->GetSampledBinding(),
             BuildEnvironmentBindings(),
-            static_cast<uint32_t>(newRenderSubmeshes.size()));
+            CollectDrawMaterials(newRenderSubmeshes));
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and the new UBO above is built while the GPU may still
@@ -1626,7 +1639,6 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
         const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
         ObjectPushConstants drawConstants{};
         drawConstants.model = models[submeshIndex];
-        drawConstants.material = renderSubmesh.material;
         const MaterialPipelineKey pipelineKey{
             renderSubmesh.alphaMode,
             renderSubmesh.doubleSided};

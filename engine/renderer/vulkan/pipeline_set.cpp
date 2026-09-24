@@ -88,7 +88,8 @@ VulkanPipelineSet::VulkanPipelineSet(
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
         VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        // Only triangle.vert reads it: the fragment shaders take their material from set 0.
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(ObjectPushConstants);
 

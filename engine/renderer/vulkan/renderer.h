@@ -46,7 +46,7 @@ struct RenderSubmesh
     entt::entity entity = entt::null;
     std::unique_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
-    MaterialPushConstants material;
+    GpuMaterialData material;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     glm::vec3 localBoundsCenter{0.0f};

@@ -7,17 +7,7 @@ layout(constant_id = 0) const bool kAlphaMask = false;
 #include "atmosphere_sampling.glsl"
 #include "pbr_common.glsl"
 #include "normal_map.glsl"
-
-layout(push_constant) uniform DrawConstants
-{
-    mat4 model;
-    vec4 baseColorFactor;
-    vec3 emissiveFactor;
-    float alphaCutoff;
-    vec4 surfaceFactors;
-    vec4 nodeGraphFactors;
-}
-drawData;
+#include "material_common.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -38,6 +28,7 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 fragWorldNormal;
 layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 4) in vec3 fragWorldPosition;
+layout(location = 7) flat in uint fragDrawSlot;
 
 layout(location = 0) out vec4 outColor;
 
@@ -46,19 +37,21 @@ layout(location = 0) out vec4 outColor;
 // ---------------------------------------------------------------------------
 void main()
 {
+    MaterialData material = materialData.materials[fragDrawSlot];
+
     // ---- Blend mask & blend weight ----------------------------------------
     float blendMask = texture(blendMaskTexture, fragTexCoord).r;
     float blendWeight = clamp(
-        mix(0.0, drawData.nodeGraphFactors.y, clamp(drawData.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
+        mix(0.0, material.nodeGraphFactors.y, clamp(material.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
         0.0, 1.0);
 
     // ---- Albedo -----------------------------------------------------------
     vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
-    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
+    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
 
-    if (kAlphaMask && albedo.a < drawData.alphaCutoff)
+    if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;
 
     // ---- Normal -----------------------------------------------------------
@@ -77,7 +70,7 @@ void main()
     vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, fragTexCoord));
     vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
-    nrmSample.xy *= drawData.surfaceFactors.z; // normal scale
+    nrmSample.xy *= material.surfaceFactors.z; // normal scale
     vec3 N = normalize(TBN * nrmSample);
 
     // ---- PBR factors ------------------------------------------------------
@@ -98,9 +91,9 @@ void main()
         texture(secondaryEmissiveTexture, fragTexCoord).rgb,
         blendWeight);
 
-    float metallic = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
-    float roughness = clamp(drawData.surfaceFactors.y * roughnessSample, 0.04, 1.0);
-    float ao = mix(1.0, aoSample, clamp(drawData.surfaceFactors.w, 0.0, 1.0));
+    float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
+    float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
 
@@ -108,7 +101,7 @@ void main()
     // ShadeSurface is the ambient, direct and shadow arithmetic deferred_lighting.frag also runs;
     // it lives in pbr_common.glsl so the forward comparison path and the deferred path cannot
     // drift.
-    vec3 emissive = emissiveSample * drawData.emissiveFactor;
+    vec3 emissive = emissiveSample * material.emissiveFactor;
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao) + emissive;
 
     // The atmosphere between the surface and the camera, before blending: an approximation for

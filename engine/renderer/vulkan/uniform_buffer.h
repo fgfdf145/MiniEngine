@@ -3,6 +3,7 @@
 #include "../atmosphere.h"
 #include "../camera.h"
 #include "../light_clusters.h"
+#include "../material.h"
 #include "../shadow_cascades.h"
 #include "common.h"
 
@@ -154,8 +155,8 @@ static_assert(
     "environment must follow prevViewProj with no padding");
 
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
-// 1, the scene lights at binding 10, the light cluster grid at binding 11, and each draw's previous
-// model matrix at binding 2 (a storage buffer read by triangle.vert for
+// 1, the scene lights at binding 10, the light cluster grid at binding 11, each draw's material at
+// binding 12, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
@@ -208,7 +209,9 @@ class VulkanUniformBuffer
         const std::vector<MaterialTextureBinding>& materialBindings,
         TextureDescriptorBinding shadowMap,
         EnvironmentDescriptorBindings environment,
-        uint32_t motionSlotCount);
+        // One per draw slot, in slot order: binding 12 holds them and binding 2 gets as many
+        // previous-model slots, so the two can never disagree about how many draws there are.
+        std::span<const GpuMaterialData> drawMaterials);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -264,6 +267,12 @@ class VulkanUniformBuffer
     std::vector<VkDeviceMemory> m_motionMemories;
     std::vector<void*> m_mappedMotionBuffers;
     uint32_t m_motionSlotCount = 0;
+    // Set 0 binding 12: every draw's material, written once here and never again. Content changes
+    // build a new VulkanUniformBuffer, so one buffer serves every frame in flight.
+    VkBuffer m_materialBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_materialMemory = VK_NULL_HANDLE;
+    void* m_mappedMaterialBuffer = nullptr;
+    std::vector<GpuMaterialData> m_drawMaterials;
     // Set 0 binding 10: every light the shader evaluates, kMaxSceneLights slots per image.
     std::vector<VkBuffer> m_lightBuffers;
     std::vector<VkDeviceMemory> m_lightMemories;

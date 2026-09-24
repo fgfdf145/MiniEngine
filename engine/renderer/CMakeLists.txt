@@ -159,6 +159,7 @@ set(MINIENGINE_SHADER_INCLUDES
     gt7_tonemap.glsl
     scene_common.glsl
     pbr_common.glsl
+    material_common.glsl
     gbuffer_common.glsl
     gbuffer_inputs.glsl
     normal_map.glsl

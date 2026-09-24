@@ -3,21 +3,9 @@
 
 #include "gbuffer_common.glsl"
 #include "normal_map.glsl"
+#include "material_common.glsl"
 
 layout(constant_id = 0) const bool kAlphaMask = false;
-
-// Identical to the block in triangle.vert and triangle.frag; ObjectPushConstants' static
-// assertions pin the layout on the C++ side.
-layout(push_constant) uniform DrawConstants
-{
-    mat4 model;
-    vec4 baseColorFactor;
-    vec3 emissiveFactor;
-    float alphaCutoff;
-    vec4 surfaceFactors;
-    vec4 nodeGraphFactors;
-}
-drawData;
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -41,30 +29,33 @@ layout(location = 2) in vec3 fragWorldNormal;
 layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 5) in vec4 fragCurrClip;
 layout(location = 6) in vec4 fragPrevClip;
+layout(location = 7) flat in uint fragDrawSlot;
 
 // Locations match VulkanGeometryPass::kAttachments. All five are vec4 so no attachment receives
 // fewer components than it has; channels the encoding table marks unused are written as stated.
 layout(location = 0) out vec4 outAlbedo;   // GB0 R8G8B8A8_SRGB: rgb albedo, a = 1
 layout(location = 1) out vec4 outNormal;   // GB1 R16G16B16A16_SFLOAT: rg shading normal, ba geometric normal, both octahedral
-layout(location = 2) out vec4 outSurface;  // GB2 R8G8B8A8_UNORM: metallic, roughness, occlusion, a = 0
+layout(location = 2) out vec4 outSurface;  // GB2 R8G8B8A8_UNORM: metallic, roughness, occlusion, a = shading model
 layout(location = 3) out vec4 outEmissive; // GB3 B10G11R11_UFLOAT: rgb emissive
 layout(location = 4) out vec4 outVelocity; // R16G16_SFLOAT: current uv - previous uv
 
 void main()
 {
+    MaterialData material = materialData.materials[fragDrawSlot];
+
     // ---- Blend mask & blend weight ----------------------------------------
     float blendMask = texture(blendMaskTexture, fragTexCoord).r;
     float blendWeight = clamp(
-        mix(0.0, drawData.nodeGraphFactors.y, clamp(drawData.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
+        mix(0.0, material.nodeGraphFactors.y, clamp(material.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
         0.0, 1.0);
 
     // ---- Albedo -----------------------------------------------------------
     vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
-    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * drawData.baseColorFactor;
+    vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
 
-    if (kAlphaMask && albedo.a < drawData.alphaCutoff)
+    if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;
 
     // ---- Normal -----------------------------------------------------------
@@ -83,7 +74,7 @@ void main()
     vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, fragTexCoord));
     vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
-    nrmSample.xy *= drawData.surfaceFactors.z; // normal scale
+    nrmSample.xy *= material.surfaceFactors.z; // normal scale
     vec3 N = normalize(TBN * nrmSample);
 
     // ---- PBR factors ------------------------------------------------------
@@ -104,9 +95,9 @@ void main()
         texture(secondaryEmissiveTexture, fragTexCoord).rgb,
         blendWeight);
 
-    float metallic = clamp(drawData.surfaceFactors.x * metallicSample, 0.0, 1.0);
-    float roughness = clamp(drawData.surfaceFactors.y * roughnessSample, 0.04, 1.0);
-    float ao = mix(1.0, aoSample, clamp(drawData.surfaceFactors.w, 0.0, 1.0));
+    float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
+    float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     // ---- Encode -----------------------------------------------------------
     // Albedo is written linear; the _SRGB format encodes it in hardware and the lighting pass's
@@ -116,8 +107,8 @@ void main()
     // The geometric normal rides along for the shadow lookup's normal offset (see ShadeSurface).
     // It is already face-flipped, so the lighting pass uses it as decoded.
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
-    outSurface = vec4(metallic, roughness, ao, 0.0);
-    outEmissive = vec4(emissiveSample * drawData.emissiveFactor, 0.0);
+    outSurface = vec4(metallic, roughness, ao, EncodeShadingModel(material.shadingModel.x));
+    outEmissive = vec4(emissiveSample * material.emissiveFactor, 0.0);
 
     // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is
     // the motion in UV units. A consumer finds the previous position at uv - velocity.

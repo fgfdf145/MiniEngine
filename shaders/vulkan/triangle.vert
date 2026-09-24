@@ -3,14 +3,10 @@
 
 #include "scene_common.glsl"
 
+// ObjectPushConstants in engine/renderer/material.h. The material is in set 0 binding 12.
 layout(push_constant) uniform DrawConstants
 {
     mat4 model;
-    vec4 baseColorFactor;
-    vec3 emissiveFactor;
-    float alphaCutoff;
-    vec4 surfaceFactors;
-    vec4 nodeGraphFactors;
 }
 drawData;
 
@@ -37,6 +33,8 @@ layout(location = 4) out vec3 fragWorldPosition;
 // for motion vectors. triangle.frag does not declare them.
 layout(location = 5) out vec4 fragCurrClip;
 layout(location = 6) out vec4 fragPrevClip;
+// The draw's slot (its firstInstance), which the fragment shaders index the material buffer with.
+layout(location = 7) flat out uint fragDrawSlot;
 
 void main()
 {
@@ -63,4 +61,5 @@ void main()
     fragWorldNormal = normalize(normalMatrix * inNormal);
     fragWorldTangent = vec4(worldTangent, inTangent.w);
     fragWorldPosition = worldPosition.xyz;
+    fragDrawSlot = uint(gl_InstanceIndex);
 }

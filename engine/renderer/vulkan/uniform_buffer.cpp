@@ -19,7 +19,7 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     const std::vector<MaterialTextureBinding>& materialBindings,
     TextureDescriptorBinding shadowMap,
     EnvironmentDescriptorBindings environment,
-    uint32_t motionSlotCount)
+    std::span<const GpuMaterialData> drawMaterials)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
@@ -28,7 +28,9 @@ VulkanUniformBuffer::VulkanUniformBuffer(
       m_frameSetLayout(frameSetLayout),
       m_materialSetLayout(materialSetLayout),
       // A zero-sized storage buffer is invalid, and a scene with no submeshes still binds set 0.
-      m_motionSlotCount(std::max(motionSlotCount, 1u)),
+      m_motionSlotCount(std::max(static_cast<uint32_t>(drawMaterials.size()), 1u)),
+      // A zero-sized storage buffer is invalid, so a scene with no draws still gets one record.
+      m_drawMaterials(drawMaterials.empty() ? std::vector<GpuMaterialData>(1) : std::vector<GpuMaterialData>(drawMaterials.begin(), drawMaterials.end())),
       m_imageCount(imageCount)
 {
     if (m_materialBindings.empty())
@@ -105,6 +107,17 @@ void VulkanUniformBuffer::DestroyHandles()
         mapped.clear();
     };
     destroyMapped(m_lightBuffers, m_lightMemories, m_mappedLightBuffers);
+    if (m_materialBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_materialBuffer, nullptr);
+        m_materialBuffer = VK_NULL_HANDLE;
+    }
+    if (m_materialMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_materialMemory, nullptr);
+        m_materialMemory = VK_NULL_HANDLE;
+    }
+    m_mappedMaterialBuffer = nullptr;
     destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
 
     m_buffers.clear();
@@ -230,7 +243,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -277,6 +290,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
+    // Every draw's material, read by the material fragment shaders at their draw slot.
+    bindings[12].binding = 12;
+    bindings[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[12].descriptorCount = 1;
+    bindings[12].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -414,6 +432,10 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         std::memset(m_mappedLightBuffers[i], 0, static_cast<size_t>(kLightBytes));
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
     }
+
+    const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_drawMaterials.size();
+    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
+    std::memcpy(m_mappedMaterialBuffer, m_drawMaterials.data(), static_cast<size_t>(materialBytes));
 }
 
 void VulkanUniformBuffer::CreateMappedBuffer(
@@ -447,12 +469,12 @@ void VulkanUniformBuffer::CreateMappedBuffer(
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
     // One pool serves both sets the split produced: imageCount uniform buffers, shadow map
-    // samplers and four storage buffers (previous models, sky SH, lights, clusters) for set 0 and thirteen samplers per material set for
+    // samplers and five storage buffers (previous models, sky SH, lights, clusters, materials) for set 0 and thirteen samplers per material set for
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
                                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 7},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 4}}};
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 5}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -511,7 +533,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 12> frameWrites{};
+        std::array<VkWriteDescriptorSet, 13> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -579,6 +601,13 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             write.descriptorCount = 1;
             write.pBufferInfo = &lightInfos[index];
         }
+        const VkDescriptorBufferInfo materialInfo{m_materialBuffer, 0, VK_WHOLE_SIZE};
+        frameWrites[12].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[12].dstSet = m_frameDescriptorSets[i];
+        frameWrites[12].dstBinding = 12;
+        frameWrites[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        frameWrites[12].descriptorCount = 1;
+        frameWrites[12].pBufferInfo = &materialInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

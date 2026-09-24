@@ -37,7 +37,7 @@ struct CpuRenderSubmesh
     // hundreds of submeshes, nothing here mutates the geometry, and the entry this aliases
     // keeps the whole cached model alive for as long as any submesh references it.
     std::shared_ptr<const MeshData> mesh;
-    MaterialPushConstants material;
+    GpuMaterialData material;
     MaterialTexturePaths textures;
     bool hasTexCoords = false;
     bool doubleSided = false;
