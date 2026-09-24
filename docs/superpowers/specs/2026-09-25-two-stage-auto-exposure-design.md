@@ -57,3 +57,16 @@ The user accepts this by the rendered image.
 2. Sponza (interior, directional light, flat ambient): the exposure the log shows moves only as the
    long-term clamp requires; the image is as before or slightly darker, never brighter.
 3. A dark view under a daylight sun (camera pointed down into shadow): darker than a mid-gray exposure.
+
+## Amendments During Implementation
+
+- **Warm-up.** The first captures of Sponza came out at EV 8.30 instead of 5.14. The editor shows its
+  outdoor startup scene (sun 95 000 lx, EV 16) for the ~17 s Sponza takes to load in the background,
+  so the long-term stage had adapted to daylight and then decayed at 0.02/s. Two changes: for the
+  first `kLongTermWarmupSeconds` (3 s) of metering the long-term stage adapts at the short-term
+  rates, and new scene content (`ApplyRenderContent`) restarts that warm-up; the view never snaps.
+- **Results.** Sponza EV 5.14 and the daylight spheres EV 15.68, both as before. The view pitched
+  down at the unlit ground below the horizon under the daylight sun: EV 3.86 with the stages, EV 1.69
+  with the short-term range opened to 100 (the old single-stage behavior), 2.2 stops darker.
+- **Not done:** resetting the stages on an explicit scene switch beyond the warm-up restart; a sky
+  reference in Atmosphere mode (its SH is computed on the GPU only).
