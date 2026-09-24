@@ -38,6 +38,8 @@ add_library(engine_render_core
     taa_jitter.h
     temporal_history.cpp
     temporal_history.h
+    white_balance.cpp
+    white_balance.h
 )
 miniengine_group_target_sources(engine_render_core)
 
