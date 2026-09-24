@@ -121,6 +121,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CreateDescriptorResources();
     void DestroyDescriptorResources();
     void RecreateSwapchain();
+    bool SwapchainNeedsResize() const;
     void SyncSceneTargets();
     // Builds the GPU content for the scene as it now is and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.

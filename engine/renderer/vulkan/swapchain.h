@@ -24,10 +24,13 @@ class VulkanSwapchain
     VkExtent2D GetExtent() const;
     const std::vector<VkImageView>& GetImageViews() const;
 
+    // The extent a swapchain created now would get: the surface's current extent, or the window's
+    // pixel size clamped to the surface limits when the surface leaves it to the swapchain.
+    static VkExtent2D ChooseExtent(SDL_Window* window, const VkSurfaceCapabilitiesKHR& capabilities);
+
   private:
     VkSurfaceFormatKHR ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const;
     VkPresentModeKHR ChoosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) const;
-    VkExtent2D ChooseExtent(SDL_Window* window, const VkSurfaceCapabilitiesKHR& capabilities) const;
     void CreateImageViews();
 
     VkDevice m_device = VK_NULL_HANDLE;

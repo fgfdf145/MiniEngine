@@ -409,6 +409,14 @@ void VulkanRenderer::DrawFrame()
 
     EditorWorld().FlushDirtyTransforms();
 
+    // A swapchain that no longer matches the window is rebuilt before drawing rather than after a
+    // present reports it: drawing into the old size first leaves the newly exposed area unpainted
+    // for a frame, which shows on every step of a live resize.
+    if (SwapchainNeedsResize())
+    {
+        RecreateSwapchain();
+    }
+
     SyncSceneTargets();
 
     uint32_t imageIndex = 0;
@@ -1198,6 +1206,15 @@ void VulkanRenderer::RecreateSwapchain()
     DestroySwapchainResources();
     CreateSwapchainResources();
     CreateDescriptorResources();
+}
+
+bool VulkanRenderer::SwapchainNeedsResize() const
+{
+    const VkExtent2D wanted = VulkanSwapchain::ChooseExtent(
+        GetWindow().GetSDLWindow(),
+        m_device->QuerySurfaceCapabilities());
+    const VkExtent2D current = m_swapchain->GetExtent();
+    return wanted.width != current.width || wanted.height != current.height;
 }
 
 void VulkanRenderer::SyncSceneTargets()

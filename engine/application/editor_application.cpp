@@ -195,6 +195,19 @@ int EditorApplication::Run()
     }
     uint32_t renderedFrameCount = 0;
 
+    // Keeps the frame coming while a window edge is dragged, so the area the drag exposes is drawn
+    // instead of left unpainted until the mouse is released. The handler is removed before the
+    // renderer it calls is destroyed.
+    window.SetLiveResizeHandler([&renderer]()
+                                {
+                                    renderer->DrawFrame();
+                                });
+    struct LiveResizeHandlerReset
+    {
+        Window& window;
+        ~LiveResizeHandlerReset() { window.SetLiveResizeHandler({}); }
+    } liveResizeHandlerReset{window};
+
     while (!window.ShouldClose())
     {
         window.PollEvents([&renderer](const SDL_Event& event)

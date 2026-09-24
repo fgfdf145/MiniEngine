@@ -138,7 +138,7 @@ VkPresentModeKHR VulkanSwapchain::ChoosePresentMode(const std::vector<VkPresentM
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D VulkanSwapchain::ChooseExtent(SDL_Window* window, const VkSurfaceCapabilitiesKHR& capabilities) const
+VkExtent2D VulkanSwapchain::ChooseExtent(SDL_Window* window, const VkSurfaceCapabilitiesKHR& capabilities)
 {
     if (capabilities.currentExtent.width != UINT32_MAX)
     {

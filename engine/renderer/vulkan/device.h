@@ -20,6 +20,7 @@ class VulkanDevice
     VkQueue GetGraphicsQueue() const;
     VkQueue GetPresentQueue() const;
     SwapchainSupportDetails QuerySwapchainSupport() const;
+    VkSurfaceCapabilitiesKHR QuerySurfaceCapabilities() const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     // Whether material textures can be uploaded as BC7 and BC5: the textureCompressionBC feature
     // is enabled and all three formats sample with linear filtering. Decided once, at creation.

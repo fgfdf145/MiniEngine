@@ -168,6 +168,15 @@ SwapchainSupportDetails VulkanDevice::QuerySwapchainSupport() const
     return QuerySwapchainSupport(m_physicalDevice);
 }
 
+VkSurfaceCapabilitiesKHR VulkanDevice::QuerySurfaceCapabilities() const
+{
+    VkSurfaceCapabilitiesKHR capabilities{};
+    CheckVulkan(
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &capabilities),
+        "Failed to get surface capabilities");
+    return capabilities;
+}
+
 uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
 {
     VkPhysicalDeviceMemoryProperties memoryProperties{};

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace me
 {
@@ -61,6 +62,7 @@ Window::Window(int width, int height, const char* title, RenderBackendType backe
 
 Window::~Window()
 {
+    SetLiveResizeHandler({});
     if (m_window)
     {
         SDL_DestroyWindow(m_window);
@@ -90,6 +92,56 @@ void Window::PollEvents(const std::function<void(const SDL_Event&)>& eventHandle
             m_running = false;
         }
     }
+
+    if (m_liveResizeError)
+    {
+        std::rethrow_exception(std::exchange(m_liveResizeError, nullptr));
+    }
+}
+
+void Window::SetLiveResizeHandler(std::function<void()> handler)
+{
+    const bool wasInstalled = static_cast<bool>(m_liveResizeHandler);
+    m_liveResizeHandler = std::move(handler);
+    if (wasInstalled && !m_liveResizeHandler)
+    {
+        SDL_RemoveEventWatch(&Window::LiveResizeEventWatch, this);
+    }
+    else if (!wasInstalled && m_liveResizeHandler)
+    {
+        if (!SDL_AddEventWatch(&Window::LiveResizeEventWatch, this))
+        {
+            LOG_WARN("SDL_AddEventWatch failed: {}", SDL_GetError());
+        }
+    }
+}
+
+bool SDLCALL Window::LiveResizeEventWatch(void* userdata, SDL_Event* event)
+{
+    auto* window = static_cast<Window*>(userdata);
+    // data1 is 1 only for the exposes SDL sends from inside the OS live-resize loop; ordinary
+    // exposes are drawn by the regular frame loop. The guard stops a handler that pumps events
+    // from re-entering itself.
+    if (event->type == SDL_EVENT_WINDOW_EXPOSED &&
+        event->window.data1 == 1 &&
+        event->window.windowID == SDL_GetWindowID(window->m_window) &&
+        window->m_liveResizeHandler &&
+        !window->m_inLiveResizeHandler &&
+        !window->m_liveResizeError)
+    {
+        window->m_inLiveResizeHandler = true;
+        try
+        {
+            window->m_liveResizeHandler();
+        }
+        catch (...)
+        {
+            // Keep the first failure; no more frames are drawn until PollEvents rethrows it.
+            window->m_liveResizeError = std::current_exception();
+        }
+        window->m_inLiveResizeHandler = false;
+    }
+    return true;
 }
 
 SDL_Window* Window::GetSDLWindow() const
