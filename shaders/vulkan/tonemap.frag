@@ -17,6 +17,7 @@ const uint GBUFFER_VIEW_EMISSIVE = 5u;
 const uint GBUFFER_VIEW_MOTION_VECTORS = 6u;
 const uint GBUFFER_VIEW_AMBIENT_OCCLUSION = 7u;
 const uint GBUFFER_VIEW_LIGHT_CLUSTERS = 8u;
+const uint GBUFFER_VIEW_CUSTOM = 9u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -76,6 +77,12 @@ void main()
     {
         // The resolved screen-space AO alone, white where nothing occludes.
         color = vec3(texture(sceneAo, fragTexCoord).r);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_CUSTOM)
+    {
+        // GB5 as stored. For clearcoat, red is the coat's factor and green its roughness; pixels of
+        // other shading models are black.
+        color = texture(gbufferCustom, fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
     {
