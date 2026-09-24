@@ -55,6 +55,14 @@ struct AoSettings
 
 // Renderer switches the editor owns and the backend reads when it builds each frame. Plain data,
 // handed over by copy in EditorUiFrameResult.
+// Energy-conserving bloom: each pixel gives intensity of its energy to a blur of its
+// surroundings. Not persisted, like the rest of RenderDebugSettings.
+struct BloomSettings
+{
+    bool enabled = true;
+    float intensity = 0.04f;
+};
+
 struct RenderDebugSettings
 {
     GBufferDebugView gbufferView = GBufferDebugView::Off;
@@ -70,6 +78,7 @@ struct RenderDebugSettings
     // Geometric specular anti-aliasing: widens specular lobes by how much the normal varies across
     // each pixel. Off, roughness reaches the lighting exactly as the material gives it.
     bool specularAntiAliasing = true;
+    BloomSettings bloom;
     AoSettings ao;
 };
 }

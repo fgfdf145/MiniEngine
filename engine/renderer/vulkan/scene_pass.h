@@ -60,6 +60,7 @@ struct ScenePassFrameContext
     // its history, as aoHistory is the AO resolve's.
     bool taaEnabled = false;
     TemporalHistoryFrame taaHistory;
+    BloomSettings bloom;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the

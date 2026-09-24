@@ -131,6 +131,14 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order has no motion vectors, so TAA is off there whatever this says.
         ImGui::Checkbox("Temporal anti-aliasing", &m_renderDebug.taa);
         ImGui::Checkbox("Specular anti-aliasing", &m_renderDebug.specularAntiAliasing);
+        // Bloom needs no motion vectors, so unlike what follows it works in the forward-only order.
+        ImGui::SeparatorText("Bloom");
+        ImGui::Checkbox("Enabled##bloom", &m_renderDebug.bloom.enabled);
+        ImGui::BeginDisabled(!m_renderDebug.bloom.enabled);
+        DragFloatInRange("Intensity##bloom", &m_renderDebug.bloom.intensity, 0.0f, 0.2f, "%.3f");
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Output");
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.

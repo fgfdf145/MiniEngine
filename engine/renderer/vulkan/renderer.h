@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ao_pass.h"
+#include "bloom_pass.h"
 #include "atmosphere.h"
 #include "environment_probe.h"
 #include "buffer.h"

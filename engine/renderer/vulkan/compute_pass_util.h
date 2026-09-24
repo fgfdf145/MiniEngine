@@ -18,6 +18,9 @@ inline constexpr uint32_t kComputeWorkgroupSize = 8;
 
 VkSampler CreateClampSampler(VkDevice device, VkFilter filter);
 
+// A memory type in typeFilter with every one of properties; throws when there is none.
+uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
 // One binding per type, all compute stage, binding N of type types[N].
 VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types);
 

@@ -632,6 +632,7 @@ void VulkanRenderer::DrawFrame()
     frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
     frame.taaEnabled = taaEnabled;
+    frame.bloom = renderDebug.bloom;
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.physicalSky = environmentMode != EnvironmentMode::None;
 
@@ -1067,6 +1068,12 @@ void VulkanRenderer::CreateScenePasses()
         m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::make_unique<VulkanTaaPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
+    m_scenePasses.push_back(std::make_unique<VulkanBloomPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_pipelineCache,

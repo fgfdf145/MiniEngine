@@ -1,0 +1,120 @@
+#version 450
+
+// Bloom (Jimenez 2014, "Next Generation Post Processing in Call of Duty: Advanced Warfare"). One
+// shader, four modes, dispatched by VulkanBloomPass in this order:
+//   first downsample  SceneTaa -> level 0, 13 taps, Karis average against fireflies;
+//   downsample        level i-1 -> level i, 13 taps;
+//   upsample          level i += 3x3 tent of level i+1, from the bottom of the chain up;
+//   composite         SceneTaa = mix(SceneTaa, level 0 / levelCount, intensity).
+// Level 0 ends up holding every level's blur added together, so dividing by the level count
+// averages them, and the mix hands `intensity` of each pixel's energy to its surroundings.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D sourceTexture;
+layout(set = 1, binding = 1, rgba16f) uniform image2D destinationImage;
+
+// Must match BloomPushConstants in engine/renderer/vulkan/bloom_pass.cpp.
+layout(push_constant) uniform BloomConstants
+{
+    uvec2 destinationExtent;
+    vec2 sourceTexelSize;
+    uint mode;
+    float intensity;
+    // Radiance to pre-exposed values: Karis' weights must see what the viewer sees.
+    float exposure;
+    float levelCount;
+}
+bloom;
+
+const uint MODE_FIRST_DOWNSAMPLE = 0u;
+const uint MODE_DOWNSAMPLE = 1u;
+const uint MODE_UPSAMPLE = 2u;
+const uint MODE_COMPOSITE = 3u;
+
+vec3 Sanitize(vec3 color)
+{
+    if (any(isnan(color)) || any(isinf(color)))
+        return vec3(0.0);
+    return clamp(color, vec3(0.0), vec3(65504.0));
+}
+
+vec3 Tap(vec2 uv, vec2 offset)
+{
+    return Sanitize(textureLod(sourceTexture, uv + offset * bloom.sourceTexelSize, 0.0).rgb);
+}
+
+float KarisWeight(vec3 color)
+{
+    return 1.0 / (1.0 + dot(color, vec3(0.2126, 0.7152, 0.0722)) * bloom.exposure);
+}
+
+// The 13 bilinear taps of Jimenez's downsample, grouped into five overlapping 2x2 boxes: the centre
+// box weighs 0.5, the four corner boxes 0.125 each. With karis, each box is also weighted by
+// 1 / (1 + its exposed luma), and the weights renormalised.
+vec3 Downsample(vec2 uv, bool karis)
+{
+    vec3 a = Tap(uv, vec2(-2.0, -2.0));
+    vec3 b = Tap(uv, vec2(0.0, -2.0));
+    vec3 c = Tap(uv, vec2(2.0, -2.0));
+    vec3 d = Tap(uv, vec2(-1.0, -1.0));
+    vec3 e = Tap(uv, vec2(1.0, -1.0));
+    vec3 f = Tap(uv, vec2(-2.0, 0.0));
+    vec3 g = Tap(uv, vec2(0.0, 0.0));
+    vec3 h = Tap(uv, vec2(2.0, 0.0));
+    vec3 i = Tap(uv, vec2(-1.0, 1.0));
+    vec3 j = Tap(uv, vec2(1.0, 1.0));
+    vec3 k = Tap(uv, vec2(-2.0, 2.0));
+    vec3 l = Tap(uv, vec2(0.0, 2.0));
+    vec3 m = Tap(uv, vec2(2.0, 2.0));
+
+    vec3 boxes[5] = vec3[5]((d + e + i + j) * 0.25, (a + b + f + g) * 0.25, (b + c + g + h) * 0.25, (f + g + k + l) * 0.25, (g + h + l + m) * 0.25);
+    float weights[5] = float[5](0.5, 0.125, 0.125, 0.125, 0.125);
+    vec3 sum = vec3(0.0);
+    float weightSum = 0.0;
+    for (int box = 0; box < 5; ++box)
+    {
+        float weight = weights[box] * (karis ? KarisWeight(boxes[box]) : 1.0);
+        sum += boxes[box] * weight;
+        weightSum += weight;
+    }
+    return sum / weightSum;
+}
+
+// 3x3 tent over the coarser level's texels: weights 1 2 1 / 2 4 2 / 1 2 1, sixteenths.
+vec3 UpsampleTent(vec2 uv)
+{
+    vec3 sum = Tap(uv, vec2(-1.0, -1.0)) + Tap(uv, vec2(1.0, -1.0)) + Tap(uv, vec2(-1.0, 1.0)) + Tap(uv, vec2(1.0, 1.0));
+    sum += 2.0 * (Tap(uv, vec2(0.0, -1.0)) + Tap(uv, vec2(-1.0, 0.0)) + Tap(uv, vec2(1.0, 0.0)) + Tap(uv, vec2(0.0, 1.0)));
+    sum += 4.0 * Tap(uv, vec2(0.0));
+    return sum / 16.0;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(uvec2(pixel), bloom.destinationExtent)))
+    {
+        return;
+    }
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(bloom.destinationExtent);
+
+    vec3 result;
+    if (bloom.mode == MODE_FIRST_DOWNSAMPLE || bloom.mode == MODE_DOWNSAMPLE)
+    {
+        result = Downsample(uv, bloom.mode == MODE_FIRST_DOWNSAMPLE);
+    }
+    else if (bloom.mode == MODE_UPSAMPLE)
+    {
+        // Each pixel reads and writes only its own texel of this level, so the read-modify-write
+        // needs no ordering between invocations.
+        result = Sanitize(imageLoad(destinationImage, pixel).rgb) + UpsampleTent(uv);
+    }
+    else
+    {
+        vec3 scene = Sanitize(imageLoad(destinationImage, pixel).rgb);
+        vec3 glow = Sanitize(textureLod(sourceTexture, uv, 0.0).rgb) / bloom.levelCount;
+        result = mix(scene, glow, bloom.intensity);
+    }
+    imageStore(destinationImage, pixel, vec4(Sanitize(result), 1.0));
+}

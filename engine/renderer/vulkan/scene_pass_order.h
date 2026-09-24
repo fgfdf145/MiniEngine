@@ -18,6 +18,7 @@ enum class ScenePassId
     Lighting,
     Forward,
     Taa,
+    Bloom,
     ExposureHistogram,
     Tonemap
 };

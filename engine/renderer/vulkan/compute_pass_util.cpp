@@ -9,8 +9,6 @@
 namespace me
 {
 
-namespace
-{
 uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
 {
     VkPhysicalDeviceMemoryProperties memoryProperties{};
@@ -22,8 +20,7 @@ uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
             return i;
         }
     }
-    throw std::runtime_error("Failed to find a memory type for a history image");
-}
+    throw std::runtime_error("Failed to find a memory type for a compute pass image");
 }
 
 VkSampler CreateClampSampler(VkDevice device, VkFilter filter)

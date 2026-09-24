@@ -69,6 +69,8 @@ add_library(engine_renderer
     rhi/factory.h
     vulkan/ao_pass.cpp
     vulkan/ao_pass.h
+    vulkan/bloom_pass.cpp
+    vulkan/bloom_pass.h
     vulkan/atmosphere.cpp
     vulkan/atmosphere.h
     vulkan/buffer.cpp
@@ -150,6 +152,7 @@ set(MINIENGINE_SHADER_SOURCES
     vbao_trace.comp
     vbao_resolve.comp
     taa_resolve.comp
+    bloom.comp
     atmosphere_transmittance.comp
     atmosphere_multiscattering.comp
     atmosphere_skyview.comp

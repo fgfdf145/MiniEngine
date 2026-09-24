@@ -253,26 +253,28 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 8, "the deferred order must contain eight passes");
+    Require(order.size() == 9, "the deferred order must contain nine passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
     Require(order[1] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
     Require(order[2] == ScenePassId::AoResolve, "the AO resolve filters the trace");
     Require(order[3] == ScenePassId::Lighting, "lighting reads the resolved AO");
     Require(order[4] == ScenePassId::Forward, "the forward blend pass must follow lighting");
     Require(order[5] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
-    Require(order[6] == ScenePassId::ExposureHistogram, "the histogram must meter the resolved image");
-    Require(order[7] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+    Require(order[6] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
+    Require(order[7] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
+    Require(order[8] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(true);
 
-    Require(order.size() == 4, "the forward-only order must contain four passes");
+    Require(order.size() == 5, "the forward-only order must contain five passes");
     Require(order[0] == ScenePassId::Forward, "the forward-only order must start with the forward pass");
     Require(order[1] == ScenePassId::Taa, "both orders hand the image to TAA, which passes it through here");
-    Require(order[2] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
-    Require(order[3] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
+    Require(order[2] == ScenePassId::Bloom, "bloom needs no motion vectors, so both orders have it");
+    Require(order[3] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
+    Require(order[4] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
 }
 
 void GBufferTargetsAreColorTargets()
