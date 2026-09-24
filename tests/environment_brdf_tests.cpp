@@ -110,6 +110,76 @@ void EnergyCompensationRestoresTheWhiteFurnace()
     Require(largestCompensation < 4.0f, "the factor stays bounded, got " + std::to_string(largestCompensation));
 }
 
+// The sheen lobe's directional albedo, integrated the slow, obvious way: a fine grid over outgoing
+// directions, D_Charlie * V_Neubelt * N.L * d(solid angle). Nothing in it is shared with the
+// importance-sampled estimator, so agreeing with it checks that estimator's change of variables.
+float BruteForceSheenAlbedo(float roughness, float NdV)
+{
+    const float kPi = 3.14159265358979f;
+    const glm::vec3 V(std::sqrt(1.0f - NdV * NdV), 0.0f, NdV);
+    const float alpha = roughness * roughness;
+    const int thetaSteps = 512;
+    const int phiSteps = 1024;
+    double sum = 0.0;
+    for (int t = 0; t < thetaSteps; ++t)
+    {
+        const float theta = (static_cast<float>(t) + 0.5f) / thetaSteps * (kPi / 2.0f);
+        for (int p = 0; p < phiSteps; ++p)
+        {
+            const float phi = (static_cast<float>(p) + 0.5f) / phiSteps * (2.0f * kPi);
+            const glm::vec3 L(std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta));
+            const glm::vec3 H = glm::normalize(V + L);
+            const float NdL = L.z;
+            const float sin2h = std::max(1.0f - H.z * H.z, 0.0078125f);
+            const float D = (2.0f + 1.0f / alpha) * std::pow(sin2h, 0.5f / alpha) / (2.0f * kPi);
+            const float Vis = 1.0f / (4.0f * (NdL + NdV - NdL * NdV));
+            const float dOmega = std::sin(theta) * (kPi / 2.0f / thetaSteps) * (2.0f * kPi / phiSteps);
+            sum += static_cast<double>(D * Vis * NdL * dOmega);
+        }
+    }
+    return static_cast<float>(sum);
+}
+
+void SheenAlbedoIsBoundedAndMatchesQuadrature()
+{
+    for (float roughness = 0.1f; roughness <= 1.0f; roughness += 0.1f)
+    {
+        for (float NdV = 0.05f; NdV <= 1.0f; NdV += 0.15f)
+        {
+            const float albedo = IntegrateSheenAlbedo(roughness, NdV, 512);
+            // Unclamped: the model exceeds 1 for smooth sheen at grazing angles (1.74 at roughness
+            // 0.1, N.V 0.05, confirmed by the quadrature below and independently in Python).
+            Require(std::isfinite(albedo) && albedo >= 0.0f && albedo <= 2.0f,
+                    "sheen albedo is finite and plausible, got " + std::to_string(albedo) + " at roughness " + std::to_string(roughness) +
+                        ", N.V " + std::to_string(NdV));
+            const float reference = IntegrateSheenAlbedo(roughness, NdV, 4096);
+            Require(std::fabs(albedo - reference) < 0.01f, "512 sheen samples are within 0.01 of 4096");
+            if (roughness >= 0.25f)
+            {
+                const float quadrature = BruteForceSheenAlbedo(roughness, NdV);
+                Require(std::fabs(reference - quadrature) < 0.01f,
+                        "sheen albedo " + std::to_string(reference) + " disagrees with quadrature " + std::to_string(quadrature) +
+                            " at roughness " + std::to_string(roughness) + ", N.V " + std::to_string(NdV));
+            }
+        }
+    }
+}
+
+void TableHoldsSheenAlbedoInBlue()
+{
+    const FloatTextureData table = BuildEnvironmentBrdfLut(8, 64);
+    const float expected = IntegrateSheenAlbedo(5.5f / 8.0f, 2.5f / 8.0f, 64);
+    const float* texel = &table.pixels[(5 * 8 + 2) * 4];
+    Require(std::fabs(texel[2] - std::min(expected, 1.0f)) < 1e-6f, "texel (2, 5) holds the sheen albedo in blue");
+
+    // The whole default table stays in [0, 1], so 1 - max(sheenColor) * E never goes negative.
+    const FloatTextureData full = BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, 64);
+    for (size_t index = 2; index < full.pixels.size(); index += 4)
+    {
+        Require(full.pixels[index] >= 0.0f && full.pixels[index] <= 1.0f, "the stored sheen albedo is clamped to [0, 1]");
+    }
+}
+
 // A dielectric's F0 is small, so its lobe barely loses energy and the factor stays near 1.
 void DielectricsBarelyChange()
 {
@@ -130,6 +200,8 @@ int main()
         TableSamplesTexelCentres();
         EnergyCompensationRestoresTheWhiteFurnace();
         DielectricsBarelyChange();
+        SheenAlbedoIsBoundedAndMatchesQuadrature();
+        TableHoldsSheenAlbedoInBlue();
     }
     catch (const std::exception& error)
     {

@@ -69,6 +69,41 @@ glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& envir
     return glm::vec3(1.0f) + f0 * (1.0f / singleScatterAlbedo - 1.0f);
 }
 
+float IntegrateSheenAlbedo(float roughness, float NdV, uint32_t sampleCount)
+{
+    NdV = std::clamp(NdV, 1e-4f, 1.0f);
+    const glm::vec3 V(std::sqrt(1.0f - NdV * NdV), 0.0f, NdV);
+    // The same floor the shader puts on the sheen roughness, and the same guard Filament keeps
+    // on sin^2 so the Charlie term stays finite at grazing half vectors.
+    const float alpha = std::max(roughness, 0.04f) * std::max(roughness, 0.04f);
+    double sum = 0.0;
+    for (uint32_t i = 0; i < sampleCount; ++i)
+    {
+        // Uniform over the hemisphere: cos(theta) uniform in [0, 1], pdf = 1 / (2 pi) per steradian.
+        const float cosTheta = (static_cast<float>(i) + 0.5f) / static_cast<float>(sampleCount);
+        const float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
+        const float phi = 2.0f * kPi * RadicalInverse(i);
+        const glm::vec3 H(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+        const float VdH = glm::dot(V, H);
+        if (VdH <= 0.0f)
+        {
+            continue;
+        }
+        const glm::vec3 L = 2.0f * VdH * H - V;
+        const float NdL = L.z;
+        if (NdL <= 0.0f)
+        {
+            continue;
+        }
+        const float sin2h = std::max(1.0f - cosTheta * cosTheta, 0.0078125f);
+        const float D = (2.0f + 1.0f / alpha) * std::pow(sin2h, 0.5f / alpha) / (2.0f * kPi);
+        const float visibility = 1.0f / (4.0f * (NdL + NdV - NdL * NdV));
+        // pdf over L is pdf over H / (4 V.H), so each sample weighs D V N.L * 4 V.H * 2 pi.
+        sum += static_cast<double>(D * visibility * NdL * VdH);
+    }
+    return static_cast<float>(sum * 8.0 * static_cast<double>(kPi) / static_cast<double>(sampleCount));
+}
+
 FloatTextureData BuildEnvironmentBrdfLut(uint32_t size, uint32_t sampleCount)
 {
     FloatTextureData table{};
@@ -85,7 +120,11 @@ FloatTextureData BuildEnvironmentBrdfLut(uint32_t size, uint32_t sampleCount)
             float* texel = &table.pixels[(static_cast<size_t>(y) * size + x) * 4];
             texel[0] = ab.x;
             texel[1] = ab.y;
-            texel[2] = 0.0f;
+            // Charlie with Neubelt's visibility is not energy conserving: smooth sheen seen at
+            // grazing angles integrates past 1 (1.74 at roughness 0.1, N.V 0.05). The shader
+            // scales the base by 1 - max(sheenColor) * this, which must not go negative, and a
+            // lobe cannot reflect more than arrives, so the table stores it clamped.
+            texel[2] = std::min(IntegrateSheenAlbedo(roughness, NdV, sampleCount), 1.0f);
             texel[3] = 1.0f;
         }
     }

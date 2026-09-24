@@ -27,7 +27,15 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
 // SpecularEnergyCompensation is the same formula.
 glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& environmentBrdf);
 
-// The table: texel (x, y) holds (A, B, 0, 1) for N.V = (x + 0.5) / size and roughness =
+// The directional albedo of the sheen lobe (KHR_materials_sheen, Filament's model): the integral of
+// D_Charlie * V_Neubelt * N.L over the hemisphere for a white sheen at this perceptual roughness,
+// seen at this N.V. pbr_common.glsl scales the base by 1 - max(sheenColor) * this and weights the
+// sheen's ambient by it. Estimated with sampleCount half vectors spread uniformly over the
+// hemisphere (Charlie's lobe is too broad for importance sampling to pay off). Not clamped: the
+// model exceeds 1 for smooth sheen at grazing angles; BuildEnvironmentBrdfLut clamps what it stores.
+float IntegrateSheenAlbedo(float roughness, float NdV, uint32_t sampleCount);
+
+// The table: texel (x, y) holds (A, B, sheen albedo, 1) for N.V = (x + 0.5) / size and roughness =
 // (y + 0.5) / size, rows top-down like every texture.
 FloatTextureData BuildEnvironmentBrdfLut(uint32_t size, uint32_t sampleCount);
 }
