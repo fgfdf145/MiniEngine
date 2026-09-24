@@ -64,3 +64,18 @@ The user accepts this by the rendered image.
 
 - Hi-Z tracing, half-resolution tracing, ray-traced reflections, reflections on Blend surfaces,
   coat and sheen reflections.
+
+## Amendments During Implementation
+
+- **Maximum roughness 0.8, not 0.6.** Sponza's stone is 0.6-0.8 (its floor about 0.65), so at 0.6
+  the trace did nothing there. At 0.85 the floor gets a dim, blurry reflection, mostly visible as
+  local occlusion of the uniform ambient (mean -0.03 to -0.07 levels), and the shaded image shows no
+  noise after the resolve and TAA; the default is 0.8.
+- **Test scene.** Sponza cannot show a sharp reflection, so a generated glTF (a 10 m floor at
+  roughness 0.1, four spheres at 0.2-0.5, a box and a small lamp, in the default daylight scene)
+  was used: each sphere reflects clearly in the floor, fading with distance; the reflections view
+  shows some noise on the sphere tops where rays find nothing, which the shaded image does not show.
+- **Specular occlusion alone** (SSR off) moves Sponza by -0.007 levels on average from the previous
+  build.
+- **The SSR passes need TAA:** without valid TAA history nothing is traced and the environment is
+  used.
