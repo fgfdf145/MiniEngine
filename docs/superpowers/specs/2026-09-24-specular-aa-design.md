@@ -43,6 +43,20 @@ With the switch off the renderer must produce the image it produces today.
    uncoated row changes little.
 3. On: Sponza still (TAA on) shows no visible loss of highlight sharpness on flat surfaces.
 
+## Amendments During Implementation
+
+- **The coat's filter starts from its floor.** The coat roughness is filtered from
+  `clamp(roughness, 0.04, 1)`, the value the lighting would give it, and stored filtered in GB5;
+  with the switch off GB5 holds the material's value as before.
+- **Results.** With TAA on, two runs of one build already differ in 1.6% of pixels (max 11, the
+  jitter meeting wall-clock exposure adaptation). Filter off stays within that: 1.43% deferred
+  (max 13) and 0.43% forward-only (max 1). Filter on: 30% of Sponza's pixels change, slightly (mean
+  0.14, max 23), on its normal-mapped stone. On the coat-roughness-0.05 spheres the coat's sun
+  highlight appears on every sphere, with TAA on and off: the coated row's peaks go from 248-576 to
+  454-627 while the uncoated row stays within a few steps.
+- **Stage Manager.** Every capture was checked for its size (667 x 541) and for resizes after
+  start-up; none happened, so the window's stage did not reach the images.
+
 ## Out of Scope
 
 - Filtering normal maps into roughness at mip generation (Toksvig or LEAN maps).
