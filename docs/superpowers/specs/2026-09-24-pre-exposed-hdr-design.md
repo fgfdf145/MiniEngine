@@ -79,6 +79,26 @@ the one the renderer produces today: this is a change of units, not of look.
    trail.
 4. **Debug views:** emissive, light cluster and the other G-buffer views look as they do today.
 
+## Amendments During Implementation
+
+- **"No change" means at most one level, not run-to-run noise.** Storing pre-exposed instead of
+  physical values moves every pixel to a different fp16 rounding (the scale depends on EV and is not
+  a power of two), so some pixels land on the other side of an 8-bit boundary. Sponza (five lights,
+  3500 frames) against the previous build: without TAA 4.80% of pixels differ, all by exactly 1;
+  forward-only 5.02%, all by 1; with TAA 12.88%, 99.5% of them by 1 and the rest within TAA noise
+  (max 19; two baseline runs differ in 1.48%, max 14), because the RGBA16F history re-rounds every
+  frame. Mean signed shift -0.005 levels.
+- **Daylight headroom, measured.** The two emissive spheres (2e5 and 2e7 cd/m^2) at EV 15.6: before,
+  their halos differed by at most 0.4 luma in any 10-pixel ring; now the 2e7 halo is +166 at the
+  sphere's edge, +46 at 30-40 px, +10 at 90-100 px and +3 at 120-130 px. Auto exposure also meters
+  the 2e7 scene at EV 15.79 instead of 15.63, since the histogram now sees its real luminance.
+- **The history rescale, measured.** Manual EV jumping from 5 to 7 at frame 3490, captured at 3500,
+  against a steady EV 7 run: 2.61% of pixels differ (9053 of 9418 by 1, max 18; two steady runs
+  differ in 0.48%, max 6). With the rescale forced off: 67.2%, max 61, 0.58 levels brighter on
+  average.
+- **The debug views were not captured**: the emissive and light cluster views change by exact
+  reciprocal constants only.
+
 ## Out of Scope
 
 - Bloom or glare strength driven by exposure (notes, section 3), HDR display output, a baked tone
