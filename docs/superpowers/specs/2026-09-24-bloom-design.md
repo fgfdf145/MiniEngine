@@ -47,6 +47,24 @@ With bloom off the renderer must produce the image it produces today.
    away from it does not change.
 3. On: the mean brightness of Sponza changes little (the mix keeps energy).
 
+## Amendments During Implementation
+
+- **The HDR target's range caps bloom in daylight.** The scene is rendered into fp16 in physical
+  units, before exposure, so every radiance above 65504 cd/m^2 is clipped there. Two emissive
+  spheres of 2e5 and 2e7 cd/m^2 gave the same halo, because both were already 65504 when bloom read
+  them. At the daylight exposure of that test (EV 15.6), 65504 is only about 1.1 times the tone
+  mapper's white, which leaves little energy to spread; at Sponza's EV 5 it is about 1700 times, and
+  bloom shows as expected. This predates bloom (the sun disk has always been clamped at 65504) and is
+  left as a follow-up: a pre-exposed HDR buffer, which Frostbite and Filament use, would lift it.
+- **Results** (Sponza with five lights, 3500 frames, TAA and specular AA on). Bloom off: three
+  pairwise comparisons of two baseline runs and one bloom-off run all differ in about 1.5% of pixels
+  (max 11-19), the TAA run-to-run noise; forward-only differs in 1 pixel. Bloom on: the sunlit arch
+  glows into the dark vault around it; mean brightness 77.59 against 77.80 (0.3%). On the emissive
+  sphere the halo falls off smoothly: +11 at its edge, +3 at 60 pixels, +0.5 at 140.
+- **Stage Manager resized the window once during a capture** (to 886 x 573). The capture scripts now
+  check that each run has exactly its two start-up resizes and ends at 667 x 541, and retry up to
+  twice when it does not.
+
 ## Out of Scope
 
 - Lens dirt, anamorphic streaks, a brightness threshold.
