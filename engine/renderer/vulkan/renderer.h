@@ -238,6 +238,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     // False until auto exposure has metered its first frame, which it then snaps to instead of
     // fading in from the default EV.
     bool m_hasMeteredExposure = false;
+    // Two-stage auto exposure (see StepAutoExposure): the long-term stage, and the sun and sky
+    // references gathered while recording the previous frame.
+    AutoExposureState m_autoExposureState;
+    ExposureReferences m_exposureReferences;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's

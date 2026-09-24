@@ -113,6 +113,10 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
                 0.1f,
                 10.0f,
                 "%.1f");
+            // The long-term stage follows the frame, the sun and the sky; the view stays within the
+            // short-term range of it (see StepAutoExposure).
+            ImGui::Text("Long-term adaptation EV100 %.2f", camera.adaptedLongTermEv100);
+            DragFloatInRange("Short-term Range (EV)", &autoExposure.shortTermRangeEv, 0.0f, 10.0f, "%.1f");
             if (ImGui::SmallButton("Reset##autoexposure"))
             {
                 autoExposure = AutoExposureSettings{};

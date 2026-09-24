@@ -519,6 +519,22 @@ void VulkanRenderer::DrawFrame()
             sunLight.colorAndIntensity = glm::vec4(glm::vec3(sunLight.colorAndIntensity) * transmittance, sunLight.colorAndIntensity.w);
         }
     }
+    // The long-term auto exposure references for the next frame: the sun as it reaches the ground,
+    // and the sky's average luminance where the CPU knows it.
+    {
+        constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
+        m_exposureReferences.sunIlluminanceLux.reset();
+        if (shadowLightIndex >= 0)
+        {
+            const glm::vec4& sunColor = selectedLights[static_cast<size_t>(shadowLightIndex)].colorAndIntensity;
+            m_exposureReferences.sunIlluminanceLux = glm::dot(glm::vec3(sunColor) * sunColor.w, kLuma);
+        }
+        m_exposureReferences.skyLuminance.reset();
+        if (environmentMode == EnvironmentMode::None)
+        {
+            m_exposureReferences.skyLuminance = glm::dot(lightSelection.ambientLuminance, kLuma);
+        }
+    }
     const EnvironmentUniformData environmentData = BuildEnvironmentUniformData(
         environmentMode,
         environment,
@@ -526,6 +542,14 @@ void VulkanRenderer::DrawFrame()
         sun,
         State().camera.position,
         environmentMode == EnvironmentMode::Hdri ? &m_environmentMapSh : nullptr);
+
+    if (environmentMode == EnvironmentMode::Hdri)
+    {
+        // The L0 band of the radiance SH is its average over the sphere times Y00 = 0.282095.
+        constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
+        m_exposureReferences.skyLuminance =
+            glm::dot(glm::vec3(environmentData.hdriIrradianceSh[0]), kLuma) * 0.282095f;
+    }
 
     std::vector<glm::mat4> models;
     std::vector<MotionKey> motionKeys;
@@ -1860,15 +1884,26 @@ void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)
 
     // The slot's fence has signaled, so its histogram is the one it recorded kMaxFramesInFlight
     // frames ago. Empty means nothing but background was visible; the exposure then holds.
-    const std::optional<float> target = MeterTargetEv100(m_exposurePass->GetHistogram(frameSlot), settings);
+    const std::span<const uint32_t> histogram = m_exposurePass->GetHistogram(frameSlot);
+    const std::optional<float> target = MeterTargetEv100(histogram, settings);
     if (!target.has_value())
     {
         return;
     }
 
-    camera.exposureEv100 = m_hasMeteredExposure
-                               ? AdaptEv100(camera.exposureEv100, *target, State().frameDeltaSeconds, settings)
-                               : *target;
+    // The long-term stage meters the frame together with the sun and the sky; the view then moves
+    // at most shortTermRangeEv away from it (see StepAutoExposure).
+    ExposureReferences references = m_exposureReferences;
+    references.frameLog2Luminance =
+        MeterAverageLog2Luminance(histogram, settings.lowPercentile, settings.highPercentile);
+    camera.exposureEv100 = StepAutoExposure(
+        m_autoExposureState,
+        camera.exposureEv100,
+        *target,
+        MeterLongTermTargetEv100(references, settings),
+        State().frameDeltaSeconds,
+        settings);
+    camera.adaptedLongTermEv100 = m_autoExposureState.longTermEv100;
     m_hasMeteredExposure = true;
 }
 

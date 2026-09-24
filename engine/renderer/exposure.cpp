@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 // The binning rule, compiled from the same source the compute shader includes.
 namespace me::exposure_shader
@@ -122,7 +123,9 @@ std::optional<float> MeterTargetEv100(std::span<const uint32_t> histogram, const
     return std::clamp(ev100, lower, upper);
 }
 
-float AdaptEv100(float currentEv100, float targetEv100, float deltaSeconds, const AutoExposureSettings& settings)
+namespace
+{
+float AdaptAtRates(float currentEv100, float targetEv100, float deltaSeconds, float toBrighter, float toDarker)
 {
     if (!(deltaSeconds > 0.0f))
     {
@@ -130,8 +133,83 @@ float AdaptEv100(float currentEv100, float targetEv100, float deltaSeconds, cons
     }
 
     // A rising EV100 means the scene got brighter.
-    const float rate = targetEv100 > currentEv100 ? settings.adaptToBrighterPerSecond : settings.adaptToDarkerPerSecond;
+    const float rate = targetEv100 > currentEv100 ? toBrighter : toDarker;
     const float blend = 1.0f - std::exp(-std::max(rate, 0.0f) * deltaSeconds);
     return currentEv100 + (targetEv100 - currentEv100) * blend;
+}
+}
+
+float AdaptEv100(float currentEv100, float targetEv100, float deltaSeconds, const AutoExposureSettings& settings)
+{
+    return AdaptAtRates(
+        currentEv100, targetEv100, deltaSeconds, settings.adaptToBrighterPerSecond, settings.adaptToDarkerPerSecond);
+}
+
+std::optional<float> MeterLongTermTargetEv100(const ExposureReferences& references, const AutoExposureSettings& settings)
+{
+    double weightedSum = 0.0;
+    double weight = 0.0;
+    const auto add = [&](float log2Luminance, float referenceWeight)
+    {
+        if (referenceWeight > 0.0f && std::isfinite(log2Luminance))
+        {
+            weightedSum += static_cast<double>(referenceWeight) * Ev100FromAverageLog2Luminance(log2Luminance);
+            weight += referenceWeight;
+        }
+    };
+
+    if (references.frameLog2Luminance.has_value())
+    {
+        add(*references.frameLog2Luminance, settings.frameReferenceWeight);
+    }
+    // A reflected-light meter aimed at an 18% gray card under the sun.
+    constexpr float kMinSunLux = 0.001f;
+    if (references.sunIlluminanceLux.has_value() && *references.sunIlluminanceLux >= kMinSunLux)
+    {
+        add(std::log2(*references.sunIlluminanceLux * 0.18f / std::numbers::pi_v<float>), settings.sunReferenceWeight);
+    }
+    if (references.skyLuminance.has_value() && *references.skyLuminance > 0.0f)
+    {
+        add(std::log2(*references.skyLuminance), settings.skyReferenceWeight);
+    }
+    if (weight <= 0.0)
+    {
+        return std::nullopt;
+    }
+
+    const float ev100 = static_cast<float>(weightedSum / weight) - settings.compensationEv;
+    const float lower = std::min(settings.minEv100, settings.maxEv100);
+    const float upper = std::max(settings.minEv100, settings.maxEv100);
+    return std::clamp(ev100, lower, upper);
+}
+
+float StepAutoExposure(
+    AutoExposureState& state,
+    float currentEv100,
+    float frameTargetEv100,
+    std::optional<float> longTermTargetEv100,
+    float deltaSeconds,
+    const AutoExposureSettings& settings)
+{
+    const float range = std::max(settings.shortTermRangeEv, 0.0f);
+    if (!state.initialized)
+    {
+        state.longTermEv100 = longTermTargetEv100.value_or(frameTargetEv100);
+        state.initialized = true;
+        return std::clamp(frameTargetEv100, state.longTermEv100 - range, state.longTermEv100 + range);
+    }
+
+    if (longTermTargetEv100.has_value())
+    {
+        state.longTermEv100 = AdaptAtRates(
+            state.longTermEv100,
+            *longTermTargetEv100,
+            deltaSeconds,
+            settings.longTermToBrighterPerSecond,
+            settings.longTermToDarkerPerSecond);
+    }
+    const float shortTermTarget =
+        std::clamp(frameTargetEv100, state.longTermEv100 - range, state.longTermEv100 + range);
+    return AdaptEv100(currentEv100, shortTermTarget, deltaSeconds, settings);
 }
 }

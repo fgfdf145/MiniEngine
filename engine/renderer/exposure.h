@@ -68,6 +68,36 @@ struct AutoExposureSettings
     // a darker one, hence the two.
     float adaptToBrighterPerSecond = 3.0f;
     float adaptToDarkerPerSecond = 1.5f;
+
+    // Two-stage adaptation (GT7, docs/references/gt7-rendering-notes.md section 4). The rates above
+    // drive the short-term stage (pupil and neural gain), which follows the view but stays within
+    // this many stops of the long-term stage (receptor sensitivity).
+    float shortTermRangeEv = 2.5f;
+    // The long-term stage follows the world's light, far more slowly than the view.
+    float longTermToBrighterPerSecond = 0.05f;
+    float longTermToDarkerPerSecond = 0.02f;
+    // How much each reference counts in the long-term target; renormalized over those present.
+    float frameReferenceWeight = 0.5f;
+    float sunReferenceWeight = 0.25f;
+    float skyReferenceWeight = 0.25f;
+};
+
+// What the long-term stage meters, beyond the view. Each is left empty when the scene has none.
+struct ExposureReferences
+{
+    // The frame's percentile-window average (see MeterAverageLog2Luminance).
+    std::optional<float> frameLog2Luminance;
+    // Illuminance from the brightest directional light that reaches the ground, in lux.
+    std::optional<float> sunIlluminanceLux;
+    // The sky's average luminance in cd/m^2.
+    std::optional<float> skyLuminance;
+};
+
+// The two stages' state. The short-term stage's state is the camera's exposureEv100 itself.
+struct AutoExposureState
+{
+    float longTermEv100 = kDefaultExposureEv100;
+    bool initialized = false;
 };
 
 // Where a luminance lands in the histogram and where a bin sits, from the shared binning rule.
@@ -87,6 +117,23 @@ float Ev100FromAverageLog2Luminance(float averageLog2Luminance);
 
 // Meter, apply compensation and clamp: the EV100 auto exposure moves toward.
 std::optional<float> MeterTargetEv100(std::span<const uint32_t> histogram, const AutoExposureSettings& settings);
+
+// The EV100 the long-term stage moves toward: the weighted mean of the references' meter readings
+// (a gray card of 18% under the sun), then compensation and the range, as MeterTargetEv100. Empty
+// with no reference, or a sun under 0.001 lx and nothing else.
+std::optional<float> MeterLongTermTargetEv100(const ExposureReferences& references, const AutoExposureSettings& settings);
+
+// One frame of two-stage adaptation. frameTargetEv100 is MeterTargetEv100's; longTermTargetEv100
+// MeterLongTermTargetEv100's (empty holds the long-term state). The first step snaps both stages.
+// Returns the exposure to render with: the short-term stage, adapted toward the frame target
+// clamped to the long-term state plus or minus shortTermRangeEv.
+float StepAutoExposure(
+    AutoExposureState& state,
+    float currentEv100,
+    float frameTargetEv100,
+    std::optional<float> longTermTargetEv100,
+    float deltaSeconds,
+    const AutoExposureSettings& settings);
 
 // One step of exponential adaptation from current toward target. Frame-rate independent: two
 // steps of dt / 2 land where one step of dt does.

@@ -45,6 +45,9 @@ class Camera
     // every frame while auto exposure is enabled.
     float exposureEv100 = kDefaultExposureEv100;
     AutoExposureSettings autoExposure;
+    // The long-term stage of auto exposure (see StepAutoExposure), written by the renderer for the
+    // Camera panel to show.
+    float adaptedLongTermEv100 = kDefaultExposureEv100;
 
     float GetExposure() const;
 };

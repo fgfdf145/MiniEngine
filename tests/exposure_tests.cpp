@@ -227,6 +227,83 @@ void AdaptationMovesTowardTargetAtItsRate()
     }
     Require(std::abs(ev100 - 12.0f) <= 1e-3f, "ten seconds must be enough to converge");
 }
+
+// ---------------------------------------------------------------------------
+// Two-stage auto exposure
+// ---------------------------------------------------------------------------
+
+void LongTermTargetWithOnlyTheFrameIsTheFrameTarget()
+{
+    AutoExposureSettings settings;
+    ExposureReferences references;
+    references.frameLog2Luminance = 4.0f;
+    const std::optional<float> target = MeterLongTermTargetEv100(references, settings);
+    Require(target.has_value() && NearlyEqual(*target, 7.0f), "the frame alone meters as today: log2 L + 3");
+    Require(!MeterLongTermTargetEv100(ExposureReferences{}, settings).has_value(), "no reference, no target");
+}
+
+void SunReferenceMetersAGrayCard()
+{
+    AutoExposureSettings settings;
+    ExposureReferences references;
+    references.sunIlluminanceLux = 100000.0f;
+    const float ev = *MeterLongTermTargetEv100(references, settings);
+    // 18% gray under 100 000 lx: L = 5730 cd/m^2, EV = log2(L) + 3.
+    Require(std::abs(ev - 15.48f) < 0.05f, "a gray card in full sun meters about EV 15.5");
+    references.sunIlluminanceLux = 0.0001f;
+    Require(!MeterLongTermTargetEv100(references, settings).has_value(), "a sun below the horizon is no reference");
+}
+
+void LongTermTargetIsTheWeightedMean()
+{
+    AutoExposureSettings settings;
+    settings.maxEv100 = 30.0f;
+    ExposureReferences references;
+    references.frameLog2Luminance = 2.0f;       // EV 5
+    references.skyLuminance = std::exp2(10.0f); // EV 13
+    const float frameAndSky = *MeterLongTermTargetEv100(references, settings);
+    Require(NearlyEqual(frameAndSky, (0.5f * 5.0f + 0.25f * 13.0f) / 0.75f), "weights renormalize over present references");
+    settings.compensationEv = 1.0f;
+    Require(NearlyEqual(*MeterLongTermTargetEv100(references, settings), frameAndSky - 1.0f), "compensation applies");
+}
+
+void FirstStepSnapsBothStages()
+{
+    AutoExposureSettings settings;
+    AutoExposureState state;
+    const float ev = StepAutoExposure(state, 8.0f, 5.0f, 12.0f, 0.016f, settings);
+    Require(state.initialized && NearlyEqual(state.longTermEv100, 12.0f), "the long-term stage snaps to its target");
+    Require(NearlyEqual(ev, 12.0f - settings.shortTermRangeEv), "the view is held within the short-term range");
+}
+
+void ShortTermStaysWithinItsRangeOfTheLongTerm()
+{
+    AutoExposureSettings settings;
+    AutoExposureState state{12.0f, true};
+    // A dark view (frame target 5 stops under) converges only 2.5 stops under the long-term state.
+    float ev = 12.0f;
+    for (int frame = 0; frame < 2000; ++frame)
+    {
+        ev = StepAutoExposure(state, ev, 7.0f, 12.0f, 0.016f, settings);
+    }
+    Require(std::abs(ev - (12.0f - settings.shortTermRangeEv)) < 0.01f, "the short-term stage stops at its range");
+    // Without a long-term target the stage holds and the view is still limited by it.
+    const float held = state.longTermEv100;
+    StepAutoExposure(state, ev, 7.0f, std::nullopt, 0.016f, settings);
+    Require(state.longTermEv100 == held, "no long-term target holds the long-term state");
+}
+
+void LongTermAdaptsSlowlyAndFrameRateIndependently()
+{
+    AutoExposureSettings settings;
+    AutoExposureState one{10.0f, true};
+    AutoExposureState two{10.0f, true};
+    StepAutoExposure(one, 10.0f, 10.0f, 14.0f, 1.0f, settings);
+    StepAutoExposure(two, 10.0f, 10.0f, 14.0f, 0.5f, settings);
+    StepAutoExposure(two, 10.0f, 10.0f, 14.0f, 0.5f, settings);
+    Require(NearlyEqual(one.longTermEv100, two.longTermEv100), "two half steps land where one full step does");
+    Require(one.longTermEv100 > 10.0f && one.longTermEv100 < 10.3f, "one second moves the long-term state only a little");
+}
 }
 
 int main()
@@ -248,6 +325,12 @@ int main()
         CompensationAndRangeApply();
         AdaptationIsFrameRateIndependent();
         AdaptationMovesTowardTargetAtItsRate();
+        LongTermTargetWithOnlyTheFrameIsTheFrameTarget();
+        SunReferenceMetersAGrayCard();
+        LongTermTargetIsTheWeightedMean();
+        FirstStepSnapsBothStages();
+        ShortTermStaysWithinItsRangeOfTheLongTerm();
+        LongTermAdaptsSlowlyAndFrameRateIndependently();
     }
     catch (const std::exception& error)
     {
