@@ -10,6 +10,7 @@ layout(constant_id = 0) const bool kAlphaMask = false;
 #include "material_common.glsl"
 // SHADING_MODEL_* for the material's shading model id.
 #include "gbuffer_common.glsl"
+#include "specular_aa.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -95,6 +96,9 @@ void main()
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    // As gbuffer.frag: both variations here, in uniform control flow.
+    roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
+    float coatNormalVariation = NormalVariation(geoNormal);
     float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
@@ -110,7 +114,7 @@ void main()
     if (material.shadingModel.x == SHADING_MODEL_CLEARCOAT)
     {
         coat.factor = clamp(material.clearcoatFactors.x, 0.0, 1.0);
-        coat.roughness = clamp(material.clearcoatFactors.y, 0.04, 1.0);
+        coat.roughness = FilterRoughnessForSpecularAA(clamp(material.clearcoatFactors.y, 0.04, 1.0), coatNormalVariation);
         coat.normal = geoNormal;
     }
     else if (material.shadingModel.x == SHADING_MODEL_SHEEN)

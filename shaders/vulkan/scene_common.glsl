@@ -64,6 +64,8 @@ layout(set = 0, binding = 0) uniform CameraBuffer
 
     // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
     mat4 viewProjNoJitter;
+    // Geometric specular anti-aliasing: x = 1 when on, y = variance, z = threshold (specular_aa.glsl).
+    vec4 specularAntiAliasing;
 }
 ubo;
 

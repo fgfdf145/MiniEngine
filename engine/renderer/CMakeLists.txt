@@ -169,6 +169,7 @@ set(MINIENGINE_SHADER_INCLUDES
     scene_common.glsl
     pbr_common.glsl
     material_common.glsl
+    specular_aa.glsl
     gbuffer_common.glsl
     gbuffer_inputs.glsl
     normal_map.glsl

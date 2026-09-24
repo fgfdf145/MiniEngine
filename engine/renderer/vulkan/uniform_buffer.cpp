@@ -190,7 +190,8 @@ void VulkanUniformBuffer::Update(
     const glm::mat4& prevViewProj,
     std::span<const glm::mat4> prevModels,
     const EnvironmentUniformData& environment,
-    const glm::mat4& viewProjNoJitter)
+    const glm::mat4& viewProjNoJitter,
+    bool specularAntiAliasing)
 {
     // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
     // robustness feature is enabled to catch it, so a mismatch is refused here instead.
@@ -237,6 +238,7 @@ void VulkanUniformBuffer::Update(
     data.prevViewProj = prevViewProj;
     data.environment = environment;
     data.viewProjNoJitter = viewProjNoJitter;
+    data.specularAntiAliasing = glm::vec4(specularAntiAliasing ? 1.0f : 0.0f, kSpecularAAVariance, kSpecularAAThreshold, 0.0f);
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
     std::memcpy(m_mappedMotionBuffers[imageIndex], prevModels.data(), prevModels.size_bytes());

@@ -67,6 +67,9 @@ struct RenderDebugSettings
     // Temporal anti-aliasing: jittered projection plus the TAA resolve. Off, the frame is neither
     // jittered nor resolved, and renders exactly as it did before TAA existed.
     bool taa = true;
+    // Geometric specular anti-aliasing: widens specular lobes by how much the normal varies across
+    // each pixel. Off, roughness reaches the lighting exactly as the material gives it.
+    bool specularAntiAliasing = true;
     AoSettings ao;
 };
 }

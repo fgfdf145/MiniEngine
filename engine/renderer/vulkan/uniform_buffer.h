@@ -4,6 +4,7 @@
 #include "../camera.h"
 #include "../light_clusters.h"
 #include "../material.h"
+#include "../specular_aa.h"
 #include "../shadow_cascades.h"
 #include "common.h"
 
@@ -128,6 +129,9 @@ struct alignas(16) CameraUniformData
     // This frame's proj * view without the TAA jitter, which proj and invViewProj carry. Motion
     // vectors are measured with it, so a still camera has none whatever the jitter. Appended last.
     glm::mat4 viewProjNoJitter{1.0f};
+    // Geometric specular anti-aliasing: x = 1 when on, y = variance, z = threshold (see
+    // specular_aa.h); w unused. Appended last.
+    glm::vec4 specularAntiAliasing{0.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -139,8 +143,12 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, specularAntiAliasing) ==
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64,
+    "specularAntiAliasing must follow viewProjNoJitter with no padding");
 static_assert(
     offsetof(CameraUniformData, viewProjNoJitter) ==
         kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
@@ -240,7 +248,8 @@ class VulkanUniformBuffer
         const glm::mat4& prevViewProj,
         std::span<const glm::mat4> prevModels,
         const EnvironmentUniformData& environment,
-        const glm::mat4& viewProjNoJitter);
+        const glm::mat4& viewProjNoJitter,
+        bool specularAntiAliasing);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

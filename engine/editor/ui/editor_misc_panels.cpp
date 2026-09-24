@@ -130,6 +130,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         // The forward-only order has no motion vectors, so TAA is off there whatever this says.
         ImGui::Checkbox("Temporal anti-aliasing", &m_renderDebug.taa);
+        ImGui::Checkbox("Specular anti-aliasing", &m_renderDebug.specularAntiAliasing);
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.

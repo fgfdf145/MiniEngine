@@ -593,7 +593,8 @@ void VulkanRenderer::DrawFrame()
         motion.previousViewProjection,
         motion.previousModels,
         environmentData,
-        viewProjection);
+        viewProjection,
+        State().renderDebug.specularAntiAliasing);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};

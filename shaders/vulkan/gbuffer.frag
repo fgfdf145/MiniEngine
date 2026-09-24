@@ -1,9 +1,11 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
+#include "scene_common.glsl"
 #include "gbuffer_common.glsl"
 #include "normal_map.glsl"
 #include "material_common.glsl"
+#include "specular_aa.glsl"
 
 layout(constant_id = 0) const bool kAlphaMask = false;
 
@@ -98,6 +100,10 @@ void main()
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    // Both variations are taken here, in uniform control flow. The base's lobe varies with the
+    // normal-mapped normal; the coat's with the geometric normal it uses.
+    roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
+    float coatNormalVariation = NormalVariation(geoNormal);
     float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     // ---- Encode -----------------------------------------------------------
@@ -111,7 +117,12 @@ void main()
     outSurface = vec4(metallic, roughness, ao, EncodeShadingModel(material.shadingModel.x));
     // Clearcoat keeps its factor and roughness here, sheen its colour and roughness; every other
     // model writes zeros.
-    outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT ? vec4(material.clearcoatFactors.xy, 0.0, 0.0)
+    // The coat's roughness is filtered from the floor the lighting pass would give it; with the
+    // filter off it is stored as the material has it, as before.
+    float coatRoughness = ubo.specularAntiAliasing.x > 0.5
+                              ? FilterRoughnessForSpecularAA(clamp(material.clearcoatFactors.y, 0.04, 1.0), coatNormalVariation)
+                              : material.clearcoatFactors.y;
+    outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT ? vec4(material.clearcoatFactors.x, coatRoughness, 0.0, 0.0)
                 : material.shadingModel.x == SHADING_MODEL_SHEEN   ? material.sheenFactors
                                                                    : vec4(0.0);
     outEmissive = vec4(emissiveSample * material.emissiveFactor, 0.0);
