@@ -1,14 +1,15 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-// Bloom (Jimenez 2014, "Next Generation Post Processing in Call of Duty: Advanced Warfare"). One
+// Glare on the bloom mip chain of Jimenez 2014 ("Next Generation Post Processing in Call of Duty:
+// Advanced Warfare"), weighted as diffraction spreads energy (see engine/renderer/glare.h). One
 // shader, four modes, dispatched by VulkanBloomPass in this order:
 //   first downsample  SceneTaa -> level 0, 13 taps, Karis average against fireflies;
 //   downsample        level i-1 -> level i, 13 taps;
-//   upsample          level i += 3x3 tent of level i+1, from the bottom of the chain up;
-//   composite         SceneTaa = mix(SceneTaa, level 0 / levelCount, intensity).
-// Level 0 ends up holding every level's blur added together, so dividing by the level count
-// averages them, and the mix hands `intensity` of each pixel's energy to its surroundings.
+//   upsample          level i = band_i * level i + 3x3 tent of level i+1, from the bottom up;
+//   composite         SceneTaa = SceneTaa * (1 - total) + level 0.
+// Level 0 ends up holding sum_k band_k * blur_k, the energy diffraction carries past 2 pixels, and
+// the composite takes exactly that much from each pixel where it was.
 
 #include "pre_exposure.glsl"
 
@@ -23,9 +24,13 @@ layout(push_constant) uniform BloomConstants
     uvec2 destinationExtent;
     vec2 sourceTexelSize;
     uint mode;
-    float intensity;
-    float unused;
-    float levelCount;
+    float unused0;
+    float unused1;
+    float unused2;
+    // Upsample: level = destination * destinationWeight + tent(source) * sourceWeight. Composite:
+    // scene = scene * destinationWeight + level 0 * sourceWeight. rgb used.
+    vec4 destinationWeight;
+    vec4 sourceWeight;
 }
 bloom;
 
@@ -111,13 +116,14 @@ void main()
     {
         // Each pixel reads and writes only its own texel of this level, so the read-modify-write
         // needs no ordering between invocations.
-        result = Sanitize(imageLoad(destinationImage, pixel).rgb) + UpsampleTent(uv);
+        result = Sanitize(imageLoad(destinationImage, pixel).rgb) * bloom.destinationWeight.rgb +
+                 UpsampleTent(uv) * bloom.sourceWeight.rgb;
     }
     else
     {
         vec3 scene = Sanitize(imageLoad(destinationImage, pixel).rgb);
-        vec3 glow = Sanitize(textureLod(sourceTexture, uv, 0.0).rgb) / bloom.levelCount;
-        result = mix(scene, glow, bloom.intensity);
+        vec3 glow = Sanitize(textureLod(sourceTexture, uv, 0.0).rgb);
+        result = scene * bloom.destinationWeight.rgb + glow * bloom.sourceWeight.rgb;
     }
     imageStore(destinationImage, pixel, vec4(Sanitize(result), 1.0));
 }

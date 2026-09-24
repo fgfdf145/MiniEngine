@@ -55,12 +55,14 @@ struct AoSettings
 
 // Renderer switches the editor owns and the backend reads when it builds each frame. Plain data,
 // handed over by copy in EditorUiFrameResult.
-// Energy-conserving bloom: each pixel gives intensity of its energy to a blur of its
-// surroundings. Not persisted, like the rest of RenderDebugSettings.
+// Glare (bloom): each pixel gives the share of its energy that diffraction through the exposure's
+// aperture carries past 2 pixels to a blur of its surroundings (see glare.h). Not persisted, like the
+// rest of RenderDebugSettings.
 struct BloomSettings
 {
     bool enabled = true;
-    float intensity = 0.04f;
+    // Multiplies the diffraction energy; 1 is the physical value.
+    float strength = 1.0f;
 };
 
 struct RenderDebugSettings

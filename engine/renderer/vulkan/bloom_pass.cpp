@@ -18,11 +18,13 @@ struct BloomPushConstants
     glm::uvec2 destinationExtent{0u};
     glm::vec2 sourceTexelSize{0.0f};
     uint32_t mode = 0;
-    float intensity = 0.0f;
-    float unused = 0.0f;
-    float levelCount = 1.0f;
+    float unused[3] = {0.0f, 0.0f, 0.0f};
+    // Upsample: level = destination * destinationWeight + tent(source) * sourceWeight. Composite:
+    // scene = scene * destinationWeight + level 0 * sourceWeight. rgb used.
+    glm::vec4 destinationWeight{1.0f};
+    glm::vec4 sourceWeight{1.0f};
 };
-static_assert(sizeof(BloomPushConstants) == 32, "BloomPushConstants must match bloom.comp");
+static_assert(sizeof(BloomPushConstants) == 64, "BloomPushConstants must match bloom.comp");
 
 // Must match the MODE_* constants in bloom.comp.
 constexpr uint32_t kModeFirstDownsample = 0u;
@@ -151,12 +153,28 @@ void VulkanBloomPass::Record(
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
     const glm::uvec2 sceneExtent(frame.extent.width, frame.extent.height);
+    // Each level's share of every pixel's energy (see ComputeGlareBands). The upsample chain sums
+    // band_k * blur_k into level 0, and the composite keeps 1 - total where it was.
+    const size_t levelCount = m_levelExtents.size();
+    const std::vector<glm::vec3> bands =
+        ComputeGlareBands(frame.glareFNumber, frame.extent.height, levelCount, std::max(frame.bloom.strength, 0.0f));
+    glm::vec3 total(0.0f);
+    for (const glm::vec3& band : bands)
+    {
+        total += band;
+    }
+
     BloomPushConstants constants{};
-    constants.intensity = std::clamp(frame.bloom.intensity, 0.0f, 1.0f);
-    constants.levelCount = static_cast<float>(m_levelExtents.size());
-    const auto dispatch = [&](VkDescriptorSet set, uint32_t mode, glm::uvec2 source, glm::uvec2 destination)
+    const auto dispatch = [&](VkDescriptorSet set,
+                              uint32_t mode,
+                              glm::uvec2 source,
+                              glm::uvec2 destination,
+                              glm::vec3 destinationWeight,
+                              glm::vec3 sourceWeight)
     {
         constants.mode = mode;
+        constants.destinationWeight = glm::vec4(destinationWeight, 0.0f);
+        constants.sourceWeight = glm::vec4(sourceWeight, 0.0f);
         constants.sourceTexelSize = 1.0f / glm::vec2(source);
         constants.destinationExtent = destination;
         DispatchCompute(
@@ -171,16 +189,22 @@ void VulkanBloomPass::Record(
         ComputeToComputeBarrier(commandBuffer);
     };
 
-    dispatch(m_firstDownsampleSets.at(slot), kModeFirstDownsample, sceneExtent, m_levelExtents[0]);
-    for (size_t level = 1; level < m_levelExtents.size(); ++level)
+    const glm::vec3 one(1.0f);
+    dispatch(m_firstDownsampleSets.at(slot), kModeFirstDownsample, sceneExtent, m_levelExtents[0], one, one);
+    for (size_t level = 1; level < levelCount; ++level)
     {
-        dispatch(m_downsampleSets[level - 1], kModeDownsample, m_levelExtents[level - 1], m_levelExtents[level]);
+        dispatch(m_downsampleSets[level - 1], kModeDownsample, m_levelExtents[level - 1], m_levelExtents[level], one, one);
     }
-    for (size_t level = m_levelExtents.size() - 1; level-- > 0;)
+    // The bottom level is weighted as the first upsample reads it; every level above it is already
+    // a weighted sum when the next one up reads it.
+    for (size_t level = levelCount - 1; level-- > 0;)
     {
-        dispatch(m_upsampleSets[level], kModeUpsample, m_levelExtents[level + 1], m_levelExtents[level]);
+        const glm::vec3 sourceWeight = level + 2 == levelCount ? bands[level + 1] : one;
+        dispatch(m_upsampleSets[level], kModeUpsample, m_levelExtents[level + 1], m_levelExtents[level], bands[level], sourceWeight);
     }
-    dispatch(m_compositeSets.at(slot), kModeComposite, m_levelExtents[0], sceneExtent);
+    // With a single level no upsample ran, so level 0 is still unweighted.
+    const glm::vec3 levelZeroWeight = levelCount == 1 ? bands[0] : one;
+    dispatch(m_compositeSets.at(slot), kModeComposite, m_levelExtents[0], sceneExtent, one - total, levelZeroWeight);
 }
 
 void VulkanBloomPass::OnTargetsRebuilt(const SceneRenderTargets& targets)

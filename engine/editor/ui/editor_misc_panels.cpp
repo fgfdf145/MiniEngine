@@ -3,6 +3,7 @@
 
 #include <engine/core/log/log.h>
 #include <engine/platform/ui/ui_scale.h>
+#include <engine/renderer/glare.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -84,6 +85,8 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
             camera.exposureEv100 = kDefaultExposureEv100;
         }
         ImGui::EndDisabled();
+        // The aperture the glare is diffracted through, chosen by the exposure (see glare.h).
+        ImGui::Text("Glare aperture f/%.1f", GlareFNumberFromEv100(camera.exposureEv100));
 
         if (autoExposure.enabled)
         {
@@ -132,10 +135,11 @@ void EditorUiController::DrawGraphicsDebugPanel()
         ImGui::Checkbox("Temporal anti-aliasing", &m_renderDebug.taa);
         ImGui::Checkbox("Specular anti-aliasing", &m_renderDebug.specularAntiAliasing);
         // Bloom needs no motion vectors, so unlike what follows it works in the forward-only order.
-        ImGui::SeparatorText("Bloom");
+        ImGui::SeparatorText("Glare (bloom)");
         ImGui::Checkbox("Enabled##bloom", &m_renderDebug.bloom.enabled);
         ImGui::BeginDisabled(!m_renderDebug.bloom.enabled);
-        DragFloatInRange("Intensity##bloom", &m_renderDebug.bloom.intensity, 0.0f, 0.2f, "%.3f");
+        // 1 is the diffraction the exposure's aperture produces; the Camera panel shows that aperture.
+        DragFloatInRange("Strength##bloom", &m_renderDebug.bloom.strength, 0.0f, 4.0f, "%.2f");
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Output");

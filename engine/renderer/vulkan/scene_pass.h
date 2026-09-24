@@ -9,6 +9,7 @@
 
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/exposure.h>
+#include <engine/renderer/glare.h>
 #include <engine/renderer/render_types.h>
 
 #include <span>
@@ -63,6 +64,8 @@ struct ScenePassFrameContext
     // What TAA multiplies its history by (see TaaHistoryScale): 1 without valid history.
     float taaHistoryScale = 1.0f;
     BloomSettings bloom;
+    // The aperture the glare is diffracted through, from this frame's EV (see GlareFNumberFromEv100).
+    float glareFNumber = kGlareMinFNumber;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
