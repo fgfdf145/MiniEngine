@@ -97,6 +97,24 @@ Geometry … Lighting ─► Forward ─► SceneHdr ─► Taa (+ depth, veloci
 4. **Motion.** With the camera orbiting (temporary instrumentation), TAA on shows no ghost trails
    behind columns and no smeared sky compared with TAA off.
 
+## Amendments During Implementation
+
+- **The compute plumbing is shared.** The AO passes' samplers, set layouts, pipeline and dispatch
+  helpers, descriptor pool and ping-ponged history images moved to `compute_pass_util`
+  (`HistoryImagePair`) in a separate refactor, and both AO passes and TAA use them.
+- **Acceptance 3 failed: TAA does not recover sub-pixel highlights.** On the clearcoat spheres at coat
+  roughness 0.05, the sun's reflection is about 0.1 pixel in radius, some 3% of a pixel; eight fixed
+  jitter positions usually all miss it, and the measured peaks are the same with TAA off and on. This
+  needs specular anti-aliasing (widening roughness by the pixel's normal variation), not more
+  temporal samples. It is left as a follow-up.
+- **Results** (Sponza with five lights, 3500 frames): TAA off differs from the previous build in
+  0.74% of pixels deferred and 0.83% forward-only, by one 8-bit step (two runs of one build: 0.72%);
+  with TAA requested, forward-only passes through (0.86%). TAA on, still camera: 172 pixels change by
+  more than 60, all on arch and column edges, which lose their stair steps. With the camera turning
+  0.3 degrees per frame: no ghost trails behind the columns, but texture detail softens in motion.
+- **The acceptance scripts must pass environment through `env`.** Under `/bin/sh` in POSIX mode,
+  `VAR=1 function` assignments persist after the call, which invalidated one batch of captures.
+
 ## Out of Scope
 
 - Sharpening, TAA upscaling, per-object velocity for Blend surfaces.
