@@ -4,6 +4,7 @@
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/render_backend_type.h>
+#include <engine/renderer/render_types.h>
 
 #include <cstdint>
 #include <optional>
@@ -24,6 +25,8 @@ struct EditorApplicationOptions
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;
+    // --viewport-size WxH: renders the scene at a fixed size, independent of the editor's layout.
+    std::optional<RenderExtent> viewportSize;
     EnginePaths::Overrides paths;
 };
 

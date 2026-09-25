@@ -157,7 +157,12 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 
 void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
-    State().requestedViewportExtent = uiFrame.viewportExtent;
+    State().requestedViewportExtent = State().fixedViewportExtent.value_or(uiFrame.viewportExtent);
+    if (State().fixedViewportExtent.has_value())
+    {
+        // The viewport panel built its matrices for its own size; the scene renders at the fixed one.
+        UpdateViewportMatrices(*State().fixedViewportExtent);
+    }
     State().renderDebug = uiFrame.renderDebug;
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,

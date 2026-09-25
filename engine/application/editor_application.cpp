@@ -49,6 +49,22 @@ uint32_t ParsePositiveFrameCount(std::string_view value)
     return frameCount;
 }
 
+RenderExtent ParseViewportSize(std::string_view value)
+{
+    const size_t separator = value.find('x');
+    uint32_t width = 0;
+    uint32_t height = 0;
+    const bool parsed =
+        separator != std::string_view::npos &&
+        std::from_chars(value.data(), value.data() + separator, width).ec == std::errc{} &&
+        std::from_chars(value.data() + separator + 1, value.data() + value.size(), height).ec == std::errc{};
+    if (!parsed || width == 0 || height == 0 || width > 16384 || height > 16384)
+    {
+        throw std::runtime_error("--viewport-size requires WIDTHxHEIGHT, for example 667x541");
+    }
+    return RenderExtent{width, height};
+}
+
 RenderBackendType ParseRenderBackend(std::string_view value)
 {
     RenderBackendType backendType = GetPreferredRenderBackendType();
@@ -98,6 +114,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--capture")
         {
             options.capturePath = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--viewport-size")
+        {
+            options.viewportSize = ParseViewportSize(ReadRequiredArgument(i, argc, argv, argument));
             continue;
         }
 
@@ -186,6 +208,7 @@ int EditorApplication::Run()
 
     auto sharedState = std::make_shared<RendererSharedState>();
     sharedState->editorUi.EditRenderDebug().khronosReference = m_options.khronosReference;
+    sharedState->fixedViewportExtent = m_options.viewportSize;
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
     Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);

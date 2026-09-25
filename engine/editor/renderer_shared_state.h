@@ -173,6 +173,9 @@ struct RendererSharedState
     // Set when the editor UI changed a persisted setting that has not been written yet.
     bool engineSettingsDirty = false;
     RenderExtent requestedViewportExtent{};
+    // --viewport-size: the scene renders at this size whatever the viewport panel's size, so captures
+    // do not depend on the editor's layout or the window manager. Unset, the panel decides.
+    std::optional<RenderExtent> fixedViewportExtent;
     // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
     // the frame. Not persisted: a debug view left on should not survive a restart.
     RenderDebugSettings renderDebug;
