@@ -25,6 +25,9 @@ void CreateSceneLightEntity(RendererSharedState& state, const std::string& name,
 void DeleteSelectedLightEntity(RendererSharedState& state);
 void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::string& path);
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state);
+// KHR_materials_variants: dresses the selected model in the named variant, the empty name its
+// default materials.
+void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::string& variant);
 
 // Applies a finished async model load, if any. Returns true when renderables changed.
 bool PumpAsyncModelLoad(RendererSharedState& state);

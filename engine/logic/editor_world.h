@@ -28,6 +28,8 @@ struct SerializedEntityData
     std::string modelSourceUuid; // stable asset id; survives renames/moves of the path
     std::string modelBaseColorTextureOverridePath;
     std::string modelBaseColorTextureOverrideUuid;
+    // KHR_materials_variants: the variant's name, empty for the glTF's default bindings.
+    std::string modelMaterialVariant;
     TransformComponent transform;
 };
 
@@ -93,7 +95,8 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
         const glm::vec3& maxBounds,
         bool hasBounds,
         const std::vector<ModelImportedMaterialInfo>& importedMaterials,
-        const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes) = 0;
+        const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes,
+        const std::vector<std::string>& materialVariants) = 0;
 
     virtual void ApplySceneData(const SerializedSceneData& sceneData) = 0;
     virtual SerializedSceneData CaptureSceneData() const = 0;

@@ -29,6 +29,7 @@ int main()
         SerializedEntityData first{};
         first.entityUuid = "11111111-1111-4111-8111-111111111111";
         first.tagName = "First";
+        first.modelMaterialVariant = "beach";
         const entt::entity firstEntity = world->CreateEntity(first);
 
         SerializedEntityData duplicate{};
@@ -68,6 +69,8 @@ int main()
         Require(restored.selectedEntityUuid == light.entityUuid, "light selection did not survive yaml round-trip");
         Require(restored.entities.size() == 2u && restored.lights.size() == 1u, "scene entity counts changed on round-trip");
         Require(restored.entities[0].entityUuid == first.entityUuid, "model uuid changed on round-trip");
+        Require(restored.entities[0].modelMaterialVariant == "beach", "material variant changed on round-trip");
+        Require(restored.entities[1].modelMaterialVariant.empty(), "an entity without a variant gained one");
         Require(restored.lights[0].entityUuid == light.entityUuid, "light uuid changed on round-trip");
 
         std::error_code removeError;

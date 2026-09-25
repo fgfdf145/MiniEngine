@@ -412,6 +412,43 @@ void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::s
         path);
 }
 
+void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::string& variant)
+{
+    if (!state.GetEditorWorld().HasSelection() ||
+        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
+    {
+        throw std::runtime_error("No selected model entity available to change its material variant");
+    }
+
+    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
+    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
+    const ModelComponent previousModel = model;
+    if (model.sourcePath.empty())
+    {
+        throw std::runtime_error("The selected entity does not reference an imported model");
+    }
+
+    model.materialVariant = variant;
+
+    try
+    {
+        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
+        RefreshDirtySceneRenderables(state);
+    }
+    catch (...)
+    {
+        model = previousModel;
+        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
+        throw;
+    }
+
+    state.lastModelLoadError.clear();
+    LOG_INFO(
+        "Material variant of '{}': {}",
+        state.GetEditorWorld().GetTag(selectedEntity).name,
+        variant.empty() ? std::string("default") : variant);
+}
+
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 {
     if (!state.GetEditorWorld().HasSelection() ||

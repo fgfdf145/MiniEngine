@@ -287,6 +287,8 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
                 modelNode["base_color_texture_override"].as<std::string>(entityData.modelBaseColorTextureOverridePath);
             entityData.modelBaseColorTextureOverrideUuid =
                 modelNode["base_color_texture_override_uuid"].as<std::string>(entityData.modelBaseColorTextureOverrideUuid);
+            entityData.modelMaterialVariant =
+                modelNode["material_variant"].as<std::string>(entityData.modelMaterialVariant);
             entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
         }
@@ -347,6 +349,10 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::Key << "source_uuid" << YAML::Value << entity.modelSourceUuid;
         emitter << YAML::Key << "base_color_texture_override" << YAML::Value << entity.modelBaseColorTextureOverridePath;
         emitter << YAML::Key << "base_color_texture_override_uuid" << YAML::Value << entity.modelBaseColorTextureOverrideUuid;
+        if (!entity.modelMaterialVariant.empty())
+        {
+            emitter << YAML::Key << "material_variant" << YAML::Value << entity.modelMaterialVariant;
+        }
         emitter << YAML::EndMap;
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
         EmitVec3(emitter, "translation", entity.transform.translation);
@@ -517,6 +523,7 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     model.baseColorTextureOverridePath = entityData.modelBaseColorTextureOverridePath;
     model.sourceUuid = entityData.modelSourceUuid;
     model.baseColorTextureOverrideUuid = entityData.modelBaseColorTextureOverrideUuid;
+    model.materialVariant = entityData.modelMaterialVariant;
     m_registry.emplace<ModelBoundsComponent>(entity);
     m_registry.emplace<EditorModelMetadataComponent>(entity);
     m_registry.emplace<ModelRenderableDirty>(entity);
@@ -706,7 +713,8 @@ void EditorScene::UpdateModelInfo(
     const glm::vec3& maxBounds,
     bool hasBounds,
     const std::vector<ModelImportedMaterialInfo>& importedMaterials,
-    const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes)
+    const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes,
+    const std::vector<std::string>& materialVariants)
 {
     auto [model, bounds, metadata, tag] = m_registry.get<
         ModelComponent,
@@ -721,6 +729,7 @@ void EditorScene::UpdateModelInfo(
     metadata.submeshCount = std::max(submeshCount, 1u);
     metadata.importedMaterials = importedMaterials;
     metadata.importedSubmeshes = importedSubmeshes;
+    metadata.materialVariants = materialVariants;
 
     if (sourcePath.empty())
     {
@@ -919,6 +928,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelSourceUuid = model.sourceUuid;
         entityData.modelBaseColorTextureOverridePath = model.baseColorTextureOverridePath;
         entityData.modelBaseColorTextureOverrideUuid = model.baseColorTextureOverrideUuid;
+        entityData.modelMaterialVariant = model.materialVariant;
         entityData.transform = transform;
         sceneData.entities.push_back(entityData);
     }

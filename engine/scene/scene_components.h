@@ -109,6 +109,9 @@ struct ModelComponent
     // they let serialized references survive asset renames and moves.
     std::string sourceUuid;
     std::string baseColorTextureOverrideUuid;
+    // KHR_materials_variants: the name of the variant this entity wears, empty for the glTF's
+    // default bindings. By name so a re-exported glTF that reorders its variants keeps the choice.
+    std::string materialVariant;
 };
 
 struct ModelBoundsComponent
@@ -125,5 +128,7 @@ struct EditorModelMetadataComponent
     uint32_t submeshCount = 1;
     std::vector<ModelImportedMaterialInfo> importedMaterials;
     std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
+    // KHR_materials_variants' names, for the variant picker.
+    std::vector<std::string> materialVariants;
 };
 }

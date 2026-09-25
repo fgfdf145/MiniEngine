@@ -64,6 +64,8 @@ struct EditorUiActions
     std::optional<std::string> selectedModelPath;
     std::vector<std::string> batchLoadModelPaths; // each placed as a new scene entity
     std::optional<std::string> selectedBaseColorTexturePath;
+    // KHR_materials_variants: the variant picked for the selected model, empty for its default.
+    std::optional<std::string> selectedMaterialVariant;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
     std::vector<std::string> deleteAssetPaths;

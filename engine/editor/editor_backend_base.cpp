@@ -309,6 +309,21 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 error.what());
         }
     }
+    if (uiFrame.actions.selectedMaterialVariant.has_value())
+    {
+        try
+        {
+            EntityEditService::ApplySelectedModelMaterialVariant(State(), *uiFrame.actions.selectedMaterialVariant);
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR(
+                "Failed to apply material variant '{}' to selected model: {}",
+                *uiFrame.actions.selectedMaterialVariant,
+                error.what());
+        }
+    }
     if (uiFrame.actions.clearSelectedBaseColorTexture)
     {
         try

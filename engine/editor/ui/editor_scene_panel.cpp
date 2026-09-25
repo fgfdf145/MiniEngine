@@ -529,6 +529,28 @@ void EditorUiController::DrawScenePanel(
                         ImGui::TextWrapped("Asset management is disabled while it is being rebuilt.");
                     }
 
+                    if (!metadata.materialVariants.empty())
+                    {
+                        const char* preview = model.materialVariant.empty() ? "Default" : model.materialVariant.c_str();
+                        if (ImGui::BeginCombo("Material Variant", preview))
+                        {
+                            if (ImGui::Selectable("Default", model.materialVariant.empty()) && !model.materialVariant.empty())
+                            {
+                                result.actions.selectedMaterialVariant = std::string{};
+                            }
+                            for (size_t index = 0; index < metadata.materialVariants.size(); ++index)
+                            {
+                                const std::string& name = metadata.materialVariants[index];
+                                const std::string label = name + "##variant_" + std::to_string(index);
+                                if (ImGui::Selectable(label.c_str(), name == model.materialVariant) && name != model.materialVariant)
+                                {
+                                    result.actions.selectedMaterialVariant = name;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
+
                     DrawImportedModelInspector(metadata);
                 }
 

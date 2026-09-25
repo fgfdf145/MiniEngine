@@ -6,11 +6,13 @@
 #include <engine/asset/material_definition.h>
 #include <engine/asset/model_cache.h>
 #include <engine/asset/model_loader.h>
+#include <engine/core/log/log.h>
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -67,6 +69,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             WorldUnits::kDefaultCubeMinBoundsMeters,
             WorldUnits::kDefaultCubeMaxBoundsMeters,
             true,
+            {},
             {},
             {});
 
@@ -136,15 +139,26 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
+    // The entity's material variant; a name the model does not have falls back to the default.
+    const std::optional<uint32_t> variantIndex = FindMaterialVariant(modelData, model.materialVariant);
+    if (!model.materialVariant.empty() && !variantIndex.has_value())
+    {
+        LOG_WARN(
+            "'{}' has no material variant '{}'; using its default materials",
+            model.sourcePath,
+            model.materialVariant);
+    }
+
     std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
     importedSubmeshes.reserve(modelData.submeshes.size());
     std::vector<bool> materialUsesUv(importedMaterials.size(), false);
     for (const ModelSubmeshData& submesh : modelData.submeshes)
     {
         importedSubmeshes.push_back(BuildImportedSubmeshInfo(submesh));
-        if (submesh.hasTexCoords && submesh.materialIndex < materialUsesUv.size())
+        const uint32_t materialIndex = ResolveSubmeshMaterialIndex(submesh, variantIndex);
+        if (submesh.hasTexCoords && materialIndex < materialUsesUv.size())
         {
-            materialUsesUv[submesh.materialIndex] = true;
+            materialUsesUv[materialIndex] = true;
         }
     }
     if (!model.baseColorTextureOverridePath.empty())
@@ -168,7 +182,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.mesh = std::shared_ptr<const MeshData>(modelDataPtr, &submesh.mesh);
         renderSubmesh.hasTexCoords = submesh.hasTexCoords;
 
-        const ModelMaterialData& material = modelData.materials[submesh.materialIndex];
+        const ModelMaterialData& material = modelData.materials[ResolveSubmeshMaterialIndex(submesh, variantIndex)];
         renderSubmesh.doubleSided = material.doubleSided;
         renderSubmesh.alphaMode = material.alphaMode;
         renderSubmesh.localBoundsCenter = submesh.boundsCenter;
@@ -295,7 +309,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         modelData.maxBounds,
         modelData.hasBounds,
         importedMaterials,
-        importedSubmeshes);
+        importedSubmeshes,
+        modelData.materialVariants);
     return renderSubmeshes;
 }
 
