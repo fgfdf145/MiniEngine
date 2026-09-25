@@ -27,6 +27,8 @@ inline constexpr uint32_t kShadingFlagCoatNormal = 16u;
 // geometry pass still writes the surface, so depth, motion, normals and AO stay; the lighting pass
 // skips its pixels and the forward pass draws over them.
 inline constexpr uint32_t kShadingFlagForward = 32u;
+// KHR_materials_unlit: the base colour, shown at the display's paper white, no lighting.
+inline constexpr uint32_t kShadingFlagUnlit = 64u;
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
 // binding 12, MaterialData in shaders/vulkan/material_common.glsl), indexed by the draw's slot.
@@ -41,7 +43,8 @@ struct alignas(16) GpuMaterialData
     float alphaCutoff = 0.5f;
     float surfaceFactors[4] = {0.0f, 1.0f, 1.0f, 1.0f};
     float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
-    // x = kShadingFlag* bits; yzw reserved.
+    // x = kShadingFlag* bits, y = 1 when any texture is transformed or reads the second UV set
+    // (the shaders then read GpuTextureTransforms); zw reserved.
     uint32_t shadingModel[4] = {0u, 0u, 0u, 0u};
     // x = clearcoat factor, y = clearcoat perceptual roughness, both [0, 1], z = the coat normal
     // map's scale; w unused. Read only with kShadingFlagClearcoat.
@@ -58,6 +61,17 @@ struct alignas(16) GpuMaterialData
     // by the forward pass, which is where a film sends a material (kShadingFlagForward).
     float iridescenceFactors[4] = {0.0f, 1.3f, 100.0f, 400.0f};
 };
+
+// Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.glsl): per
+// slot, in the material set's binding order, two rows, (a, b, tx, UV set) and (c, d, ty, 0), as
+// ComputeTextureTransformRows writes them.
+inline constexpr uint32_t kGpuTextureTransformSlots = 23;
+struct GpuTextureTransforms
+{
+    float rows[kGpuTextureTransformSlots * 8] = {};
+};
+
+static_assert(sizeof(GpuTextureTransforms) == 23 * 32, "GpuTextureTransforms must stay two vec4 per slot");
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
 // once it outgrew the 128 bytes Vulkan guarantees for push constants.

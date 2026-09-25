@@ -52,6 +52,7 @@ struct RenderSubmesh
     std::unique_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
     GpuMaterialData material;
+    GpuTextureTransforms textureTransforms;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     glm::vec3 localBoundsCenter{0.0f};

@@ -26,6 +26,8 @@ struct ShadowDrawItem
     bool alphaMask = false;
     VkDescriptorSet materialDescriptorSet = VK_NULL_HANDLE;
     GpuMaterialData material;
+    // The base colour's texture transform rows (GpuTextureTransforms slot 0), for the alpha test.
+    float baseColorTransform[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
 };
 
 // Push constants for shaders/vulkan/shadow.vert and shadow.frag.
@@ -35,9 +37,11 @@ struct ShadowPushConstants
     float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
     float alphaCutoffAndPadding[4] = {0.5f, 0.0f, 0.0f, 0.0f};
+    float baseColorTransform[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
 };
 
-static_assert(sizeof(ShadowPushConstants) == 112, "ShadowPushConstants must match the shadow shaders' block");
+// Past the 128 bytes Vulkan guarantees; VulkanDevice requires 144.
+static_assert(sizeof(ShadowPushConstants) == 144, "ShadowPushConstants must match the shadow shaders' block");
 
 // Renders the cascaded shadow map of the directional light that casts shadows: a 2D array depth
 // image with one layer per cascade, which the material pass samples through set 0, binding 1.

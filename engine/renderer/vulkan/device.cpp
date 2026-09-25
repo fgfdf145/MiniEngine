@@ -47,7 +47,16 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
         {
             VkPhysicalDeviceProperties properties{};
             vkGetPhysicalDeviceProperties(device, &properties);
-            // The geometry pass writes eight G-buffer targets at once.
+            // The geometry pass writes eight G-buffer targets at once, and the shadow passes push 144
+            // bytes of constants (Vulkan guarantees 128).
+            if (properties.limits.maxPushConstantsSize < 144)
+            {
+                LOG_WARN(
+                    "Skipping {}: it offers {} bytes of push constants and the shadow passes need 144",
+                    properties.deviceName,
+                    properties.limits.maxPushConstantsSize);
+                continue;
+            }
             if (properties.limits.maxColorAttachments < 8)
             {
                 LOG_WARN(

@@ -5,7 +5,7 @@
 // textures) and what gbuffer.frag and triangle.frag both make of them. Each map multiplies its
 // factor; an absent one is bound as white, the anisotropy map as (1, 0.5, 1) and the coat normal
 // as the flat normal, so the factors alone apply. Needs material_common.glsl, gbuffer_common.glsl,
-// normal_map.glsl and anisotropy_common.glsl.
+// normal_map.glsl, material_uv.glsl and anisotropy_common.glsl.
 
 layout(set = 1, binding = 13) uniform sampler2D clearcoatTexture;          // R
 layout(set = 1, binding = 14) uniform sampler2D clearcoatRoughnessTexture; // G
@@ -46,7 +46,7 @@ bool HasShadingFlag(uint flags, uint flag)
 }
 
 // TBN is the geometric tangent frame (tangent, bitangent, geometric normal), N the shading normal.
-MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, vec3 N)
+MaterialLayers EvaluateMaterialLayers(MaterialData material, uint drawSlot, vec2 uv0, vec2 uv1, mat3 TBN, vec3 N)
 {
     MaterialLayers layers;
     layers.flags = material.shadingModel.x;
@@ -56,11 +56,12 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
     layers.coatNormal = TBN[2];
     if (HasShadingFlag(layers.flags, SHADING_FLAG_CLEARCOAT))
     {
-        layers.coatFactor = clamp(material.clearcoatFactors.x * texture(clearcoatTexture, uv).r, 0.0, 1.0);
-        layers.coatRoughness = clamp(material.clearcoatFactors.y * texture(clearcoatRoughnessTexture, uv).g, 0.0, 1.0);
+        layers.coatFactor = clamp(material.clearcoatFactors.x * texture(clearcoatTexture, MaterialSlotUv(material, drawSlot, 13u, uv0, uv1)).r, 0.0, 1.0);
+        layers.coatRoughness = clamp(material.clearcoatFactors.y * texture(clearcoatRoughnessTexture, MaterialSlotUv(material, drawSlot, 14u, uv0, uv1)).g, 0.0, 1.0);
         if (HasShadingFlag(layers.flags, SHADING_FLAG_COAT_NORMAL))
         {
-            vec3 coatSample = DecodeNormalMap(texture(clearcoatNormalTexture, uv));
+            vec3 coatSample = DecodeNormalMap(texture(clearcoatNormalTexture, MaterialSlotUv(material, drawSlot, 20u, uv0, uv1)));
+            coatSample.xy = RotateMaterialTangentXy(material, drawSlot, 20u, coatSample.xy);
             coatSample.xy *= material.clearcoatFactors.z;
             layers.coatNormal = normalize(TBN * coatSample);
         }
@@ -70,16 +71,17 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
     layers.sheenRoughness = 0.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_SHEEN))
     {
-        layers.sheenColor = clamp(material.sheenFactors.rgb * texture(sheenColorTexture, uv).rgb, 0.0, 1.0);
-        layers.sheenRoughness = clamp(material.sheenFactors.a * texture(sheenRoughnessTexture, uv).a, 0.0, 1.0);
+        layers.sheenColor = clamp(material.sheenFactors.rgb * texture(sheenColorTexture, MaterialSlotUv(material, drawSlot, 15u, uv0, uv1)).rgb, 0.0, 1.0);
+        layers.sheenRoughness = clamp(material.sheenFactors.a * texture(sheenRoughnessTexture, MaterialSlotUv(material, drawSlot, 16u, uv0, uv1)).a, 0.0, 1.0);
     }
 
     layers.anisotropyTangent = TBN[0];
     layers.anisotropyStrength = 0.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_ANISOTROPY))
     {
-        vec3 sampled = texture(anisotropyTexture, uv).rgb;
-        vec2 direction = AnisotropyDirection(sampled.rg, material.anisotropyFactors.y, material.anisotropyFactors.z);
+        vec3 sampled = texture(anisotropyTexture, MaterialSlotUv(material, drawSlot, 17u, uv0, uv1)).rgb;
+        vec2 direction = RotateMaterialTangentXy(
+            material, drawSlot, 17u, AnisotropyDirection(sampled.rg, material.anisotropyFactors.y, material.anisotropyFactors.z));
         vec3 tangent = TBN * vec3(direction, 0.0);
         // Into the surface of the shading normal, which the normal map may have tilted.
         tangent -= N * dot(N, tangent);
@@ -97,8 +99,8 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
     layers.dielectricF90 = 1.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_SPECULAR))
     {
-        float specular = clamp(material.specularFactors.a * texture(specularTexture, uv).a, 0.0, 1.0);
-        layers.dielectricF0 = min(material.specularFactors.rgb * texture(specularColorTexture, uv).rgb, vec3(1.0)) * specular;
+        float specular = clamp(material.specularFactors.a * texture(specularTexture, MaterialSlotUv(material, drawSlot, 18u, uv0, uv1)).a, 0.0, 1.0);
+        layers.dielectricF0 = min(material.specularFactors.rgb * texture(specularColorTexture, MaterialSlotUv(material, drawSlot, 19u, uv0, uv1)).rgb, vec3(1.0)) * specular;
         layers.dielectricF90 = specular;
     }
 
@@ -106,9 +108,9 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
     layers.iridescenceThickness = 0.0;
     if (material.iridescenceFactors.x > 0.0)
     {
-        layers.iridescenceFactor = clamp(material.iridescenceFactors.x * texture(iridescenceTexture, uv).r, 0.0, 1.0);
+        layers.iridescenceFactor = clamp(material.iridescenceFactors.x * texture(iridescenceTexture, MaterialSlotUv(material, drawSlot, 21u, uv0, uv1)).r, 0.0, 1.0);
         layers.iridescenceThickness =
-            mix(material.iridescenceFactors.z, material.iridescenceFactors.w, texture(iridescenceThicknessTexture, uv).g);
+            mix(material.iridescenceFactors.z, material.iridescenceFactors.w, texture(iridescenceThicknessTexture, MaterialSlotUv(material, drawSlot, 22u, uv0, uv1)).g);
     }
     return layers;
 }

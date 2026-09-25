@@ -227,6 +227,16 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
             (coatNormal ? kShadingFlagCoatNormal : 0u) | (iridescence > 0.0f ? kShadingFlagForward : 0u);
         renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
+        // Unlit shows the base colour alone; transforms only matter where there are textures.
+        if (material.unlit)
+        {
+            renderSubmesh.material.shadingModel[0] |= kShadingFlagUnlit;
+        }
+        if (submesh.hasTexCoords && !AreIdentity(material.textureTransforms))
+        {
+            renderSubmesh.textureTransforms = material.textureTransforms;
+            renderSubmesh.material.shadingModel[1] = 1u;
+        }
         renderSubmesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
         renderSubmesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
         renderSubmesh.material.anisotropyFactors[2] = std::sin(material.anisotropyRotation);

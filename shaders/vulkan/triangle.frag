@@ -8,9 +8,11 @@ layout(constant_id = 0) const bool kAlphaMask = false;
 #include "pbr_common.glsl"
 #include "normal_map.glsl"
 #include "material_common.glsl"
+#include "material_uv.glsl"
 // SHADING_MODEL_* for the material's shading model id.
 #include "gbuffer_common.glsl"
 #include "specular_aa.glsl"
+#include "pre_exposure.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -33,6 +35,7 @@ layout(location = 2) in vec3 fragWorldNormal;
 layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 4) in vec3 fragWorldPosition;
 layout(location = 7) flat in uint fragDrawSlot;
+layout(location = 8) in vec2 fragTexCoord1;
 
 layout(location = 0) out vec4 outColor;
 
@@ -50,13 +53,20 @@ void main()
         0.0, 1.0);
 
     // ---- Albedo -----------------------------------------------------------
-    vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
+    vec4 primaryBaseColor = texture(baseColorTexture, MaterialSlotUv(material, fragDrawSlot, 0u, fragTexCoord, fragTexCoord1));
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
 
     if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;
+
+    // Unlit: the base colour as if lit to the display's paper white, at every exposure.
+    if ((material.shadingModel.x & SHADING_FLAG_UNLIT) != 0u)
+    {
+        outColor = vec4(albedo.rgb * kFrameBufferUnitsPerExposed, albedo.a);
+        return;
+    }
 
     // ---- Normal -----------------------------------------------------------
     // A back face is only rasterized by a double-sided pipeline, and it is seen from the side the
@@ -71,7 +81,8 @@ void main()
     vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w) * faceSign;
     mat3 TBN = mat3(tangent, bitangent, geoNormal);
 
-    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, fragTexCoord));
+    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, MaterialSlotUv(material, fragDrawSlot, 1u, fragTexCoord, fragTexCoord1)));
+    nrmPrimary.xy = RotateMaterialTangentXy(material, fragDrawSlot, 1u, nrmPrimary.xy);
     vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
     nrmSample.xy *= material.surfaceFactors.z; // normal scale
@@ -79,19 +90,19 @@ void main()
 
     // ---- PBR factors ------------------------------------------------------
     float metallicSample = mix(
-        texture(metallicTexture, fragTexCoord).b,
+        texture(metallicTexture, MaterialSlotUv(material, fragDrawSlot, 2u, fragTexCoord, fragTexCoord1)).b,
         texture(secondaryMetallicTexture, fragTexCoord).b,
         blendWeight);
     float roughnessSample = mix(
-        texture(roughnessTexture, fragTexCoord).g,
+        texture(roughnessTexture, MaterialSlotUv(material, fragDrawSlot, 3u, fragTexCoord, fragTexCoord1)).g,
         texture(secondaryRoughnessTexture, fragTexCoord).g,
         blendWeight);
     float aoSample = mix(
-        texture(occlusionTexture, fragTexCoord).r,
+        texture(occlusionTexture, MaterialSlotUv(material, fragDrawSlot, 4u, fragTexCoord, fragTexCoord1)).r,
         texture(secondaryOcclusionTexture, fragTexCoord).r,
         blendWeight);
     vec3 emissiveSample = mix(
-        texture(emissiveTexture, fragTexCoord).rgb,
+        texture(emissiveTexture, MaterialSlotUv(material, fragDrawSlot, 5u, fragTexCoord, fragTexCoord1)).rgb,
         texture(secondaryEmissiveTexture, fragTexCoord).rgb,
         blendWeight);
 
@@ -99,7 +110,7 @@ void main()
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
     // As gbuffer.frag: both variations here, in uniform control flow.
     roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
-    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragDrawSlot, fragTexCoord, fragTexCoord1, TBN, N);
     float coatNormalVariation = NormalVariation(layers.coatNormal);
     float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 

@@ -79,6 +79,13 @@ void main()
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     // GB5 means something only for the models that write it, so it is read only for them.
     uint flags = DecodeShadingFlags(surface.a);
+    // Unlit: the base colour as if lit to the display's paper white, at every exposure, like the
+    // viewport background.
+    if ((flags & SHADING_FLAG_UNLIT) != 0u)
+    {
+        outColor = vec4(albedo * kFrameBufferUnitsPerExposed, 1.0);
+        return;
+    }
     // The forward pass shades this pixel over whatever is written here.
     if ((flags & SHADING_FLAG_FORWARD) != 0u)
     {

@@ -5,6 +5,7 @@
 #include "gbuffer_common.glsl"
 #include "normal_map.glsl"
 #include "material_common.glsl"
+#include "material_uv.glsl"
 #include "specular_aa.glsl"
 #include "anisotropy_common.glsl"
 
@@ -34,6 +35,7 @@ layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 5) in vec4 fragCurrClip;
 layout(location = 6) in vec4 fragPrevClip;
 layout(location = 7) flat in uint fragDrawSlot;
+layout(location = 8) in vec2 fragTexCoord1;
 
 // Locations match VulkanGeometryPass::kAttachments. All five are vec4 so no attachment receives
 // fewer components than it has; channels the encoding table marks unused are written as stated.
@@ -57,7 +59,7 @@ void main()
         0.0, 1.0);
 
     // ---- Albedo -----------------------------------------------------------
-    vec4 primaryBaseColor = texture(baseColorTexture, fragTexCoord);
+    vec4 primaryBaseColor = texture(baseColorTexture, MaterialSlotUv(material, fragDrawSlot, 0u, fragTexCoord, fragTexCoord1));
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
@@ -78,7 +80,8 @@ void main()
     vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w) * faceSign;
     mat3 TBN = mat3(tangent, bitangent, geoNormal);
 
-    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, fragTexCoord));
+    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, MaterialSlotUv(material, fragDrawSlot, 1u, fragTexCoord, fragTexCoord1)));
+    nrmPrimary.xy = RotateMaterialTangentXy(material, fragDrawSlot, 1u, nrmPrimary.xy);
     vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
     nrmSample.xy *= material.surfaceFactors.z; // normal scale
@@ -86,25 +89,25 @@ void main()
 
     // ---- PBR factors ------------------------------------------------------
     float metallicSample = mix(
-        texture(metallicTexture, fragTexCoord).b,
+        texture(metallicTexture, MaterialSlotUv(material, fragDrawSlot, 2u, fragTexCoord, fragTexCoord1)).b,
         texture(secondaryMetallicTexture, fragTexCoord).b,
         blendWeight);
     float roughnessSample = mix(
-        texture(roughnessTexture, fragTexCoord).g,
+        texture(roughnessTexture, MaterialSlotUv(material, fragDrawSlot, 3u, fragTexCoord, fragTexCoord1)).g,
         texture(secondaryRoughnessTexture, fragTexCoord).g,
         blendWeight);
     float aoSample = mix(
-        texture(occlusionTexture, fragTexCoord).r,
+        texture(occlusionTexture, MaterialSlotUv(material, fragDrawSlot, 4u, fragTexCoord, fragTexCoord1)).r,
         texture(secondaryOcclusionTexture, fragTexCoord).r,
         blendWeight);
     vec3 emissiveSample = mix(
-        texture(emissiveTexture, fragTexCoord).rgb,
+        texture(emissiveTexture, MaterialSlotUv(material, fragDrawSlot, 5u, fragTexCoord, fragTexCoord1)).rgb,
         texture(secondaryEmissiveTexture, fragTexCoord).rgb,
         blendWeight);
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
-    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragDrawSlot, fragTexCoord, fragTexCoord1, TBN, N);
     // Both variations are taken here, in uniform control flow. The base's lobe varies with the
     // normal-mapped normal; the coat's with its own (the geometric normal unless it has a map).
     roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));

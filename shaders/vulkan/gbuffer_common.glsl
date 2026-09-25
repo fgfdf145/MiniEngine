@@ -42,6 +42,8 @@ const uint SHADING_FLAG_SPECULAR = 8u;
 const uint SHADING_FLAG_COAT_NORMAL = 16u;
 // Shaded by the forward pass; the lighting pass skips the pixel.
 const uint SHADING_FLAG_FORWARD = 32u;
+// KHR_materials_unlit: GB0's colour at paper white, no lighting.
+const uint SHADING_FLAG_UNLIT = 64u;
 
 float EncodeShadingFlags(uint flags)
 {

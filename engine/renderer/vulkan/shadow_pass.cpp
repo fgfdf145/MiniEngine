@@ -142,6 +142,7 @@ void VulkanShadowPass::Record(
                 std::memcpy(constants.baseColorFactor, item.material.baseColorFactor, sizeof(constants.baseColorFactor));
                 std::memcpy(constants.nodeGraphFactors, item.material.nodeGraphFactors, sizeof(constants.nodeGraphFactors));
                 constants.alphaCutoffAndPadding[0] = item.material.alphaCutoff;
+                std::memcpy(constants.baseColorTransform, item.baseColorTransform, sizeof(constants.baseColorTransform));
                 vkCmdPushConstants(
                     commandBuffer,
                     m_pipelineLayout,
@@ -330,7 +331,8 @@ void VulkanShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     // Only position and texture coordinate are read, so only those two attributes are declared.
     const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
     const auto allAttributes = GetVertexAttributeDescriptions();
-    const std::array<VkVertexInputAttributeDescription, 2> attributes = {allAttributes[0], allAttributes[2]};
+    // Position and both UV sets: the alpha test may sample the base colour through either.
+    const std::array<VkVertexInputAttributeDescription, 3> attributes = {allAttributes[0], allAttributes[2], allAttributes[5]};
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

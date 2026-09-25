@@ -20,7 +20,8 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     TextureDescriptorBinding shadowMap,
     TextureDescriptorBinding localShadowAtlas,
     EnvironmentDescriptorBindings environment,
-    std::span<const GpuMaterialData> drawMaterials)
+    std::span<const GpuMaterialData> drawMaterials,
+    std::span<const GpuTextureTransforms> drawTextureTransforms)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
@@ -33,6 +34,9 @@ VulkanUniformBuffer::VulkanUniformBuffer(
       m_motionSlotCount(std::max(static_cast<uint32_t>(drawMaterials.size()), 1u)),
       // A zero-sized storage buffer is invalid, so a scene with no draws still gets one record.
       m_drawMaterials(drawMaterials.empty() ? std::vector<GpuMaterialData>(1) : std::vector<GpuMaterialData>(drawMaterials.begin(), drawMaterials.end())),
+      m_drawTextureTransforms(
+          drawTextureTransforms.empty() ? std::vector<GpuTextureTransforms>(1)
+                                        : std::vector<GpuTextureTransforms>(drawTextureTransforms.begin(), drawTextureTransforms.end())),
       m_imageCount(imageCount)
 {
     if (m_materialBindings.empty())
@@ -120,6 +124,17 @@ void VulkanUniformBuffer::DestroyHandles()
         m_materialMemory = VK_NULL_HANDLE;
     }
     m_mappedMaterialBuffer = nullptr;
+    if (m_textureTransformBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_textureTransformBuffer, nullptr);
+        m_textureTransformBuffer = VK_NULL_HANDLE;
+    }
+    if (m_textureTransformMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_textureTransformMemory, nullptr);
+        m_textureTransformMemory = VK_NULL_HANDLE;
+    }
+    m_mappedTextureTransformBuffer = nullptr;
     destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
     destroyMapped(m_shadowTileBuffers, m_shadowTileMemories, m_mappedShadowTileBuffers);
 
@@ -267,7 +282,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 17> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 18> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -336,6 +351,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
+    // Each draw's texture transforms, read by gbuffer.frag and triangle.frag.
+    bindings[17].binding = 17;
+    bindings[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[17].descriptorCount = 1;
+    bindings[17].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -483,6 +503,14 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_drawMaterials.size();
     CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
     std::memcpy(m_mappedMaterialBuffer, m_drawMaterials.data(), static_cast<size_t>(materialBytes));
+
+    if (m_drawTextureTransforms.size() != m_drawMaterials.size())
+    {
+        throw std::runtime_error("Every draw needs its texture transforms");
+    }
+    const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_drawTextureTransforms.size();
+    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformMemory, m_mappedTextureTransformBuffer);
+    std::memcpy(m_mappedTextureTransformBuffer, m_drawTextureTransforms.data(), static_cast<size_t>(transformBytes));
 }
 
 void VulkanUniformBuffer::CreateMappedBuffer(
@@ -522,7 +550,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
                                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 10},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 6}}};
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 7}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -581,7 +609,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 17> frameWrites{};
+        std::array<VkWriteDescriptorSet, 18> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -683,6 +711,13 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             write.descriptorCount = 1;
             write.pImageInfo = &ltcInfos[index];
         }
+        const VkDescriptorBufferInfo textureTransformInfo{m_textureTransformBuffer, 0, VK_WHOLE_SIZE};
+        frameWrites[17].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[17].dstSet = m_frameDescriptorSets[i];
+        frameWrites[17].dstBinding = 17;
+        frameWrites[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        frameWrites[17].descriptorCount = 1;
+        frameWrites[17].pBufferInfo = &textureTransformInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

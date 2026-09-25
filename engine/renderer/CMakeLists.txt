@@ -194,6 +194,7 @@ set(MINIENGINE_SHADER_INCLUDES
     ltc_common.glsl
     iridescence_common.glsl
     material_layers.glsl
+    material_uv.glsl
     pre_exposure.glsl
     scene_common.glsl
     pbr_common.glsl

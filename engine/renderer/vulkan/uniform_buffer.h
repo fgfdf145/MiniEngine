@@ -215,7 +215,7 @@ static_assert(
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
 // 1, the scene lights at binding 10, the light cluster grid at binding 11, each draw's material at
 // binding 12, the local shadow atlas at binding 13 and its tiles at binding 14, the LTC tables at
-// bindings 15 and 16, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// bindings 15 and 16, each draw's texture transforms at binding 17, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
@@ -271,7 +271,9 @@ class VulkanUniformBuffer
         EnvironmentDescriptorBindings environment,
         // One per draw slot, in slot order: binding 12 holds them and binding 2 gets as many
         // previous-model slots, so the two can never disagree about how many draws there are.
-        std::span<const GpuMaterialData> drawMaterials);
+        std::span<const GpuMaterialData> drawMaterials,
+        // Parallel to drawMaterials: set 0 binding 17.
+        std::span<const GpuTextureTransforms> drawTextureTransforms);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -337,6 +339,11 @@ class VulkanUniformBuffer
     VkDeviceMemory m_materialMemory = VK_NULL_HANDLE;
     void* m_mappedMaterialBuffer = nullptr;
     std::vector<GpuMaterialData> m_drawMaterials;
+    // Set 0 binding 17: every draw's texture transforms, like the materials written once.
+    VkBuffer m_textureTransformBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_textureTransformMemory = VK_NULL_HANDLE;
+    void* m_mappedTextureTransformBuffer = nullptr;
+    std::vector<GpuTextureTransforms> m_drawTextureTransforms;
     // Set 0 binding 10: every light the shader evaluates, kMaxSceneLights slots per image.
     std::vector<VkBuffer> m_lightBuffers;
     std::vector<VkDeviceMemory> m_lightMemories;

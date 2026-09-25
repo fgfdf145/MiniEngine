@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <optional>
 #include <stdexcept>
@@ -112,6 +113,29 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
 
 // Every submesh's material in submesh order, which is the draw slot order: BuildDrawItems passes the
 // submesh index as each draw's firstInstance.
+// Every submesh's texture transforms in draw slot order, beside CollectDrawMaterials.
+std::vector<GpuTextureTransforms> CollectDrawTextureTransforms(const std::vector<RenderSubmesh>& renderSubmeshes)
+{
+    std::vector<GpuTextureTransforms> transforms;
+    transforms.reserve(renderSubmeshes.size());
+    for (const RenderSubmesh& renderSubmesh : renderSubmeshes)
+    {
+        transforms.push_back(renderSubmesh.textureTransforms);
+    }
+    return transforms;
+}
+
+GpuTextureTransforms BuildGpuTextureTransforms(const MaterialTextureTransforms& transforms)
+{
+    static_assert(kGpuTextureTransformSlots == kMaterialTextureSlotCount, "one GPU transform per material texture slot");
+    GpuTextureTransforms gpu{};
+    for (uint32_t slot = 0; slot < kMaterialTextureSlotCount; ++slot)
+    {
+        ComputeTextureTransformRows(transforms[slot], &gpu.rows[slot * 8], &gpu.rows[slot * 8 + 4]);
+    }
+    return gpu;
+}
+
 std::vector<GpuMaterialData> CollectDrawMaterials(const std::vector<RenderSubmesh>& renderSubmeshes)
 {
     std::vector<GpuMaterialData> materials;
@@ -1319,7 +1343,8 @@ void VulkanRenderer::CreateDescriptorResources()
         m_shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(),
-        CollectDrawMaterials(m_renderSubmeshes));
+        CollectDrawMaterials(m_renderSubmeshes),
+        CollectDrawTextureTransforms(m_renderSubmeshes));
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
@@ -1564,6 +1589,7 @@ void VulkanRenderer::UploadSceneResources()
             *cpuRenderSubmesh.mesh, uploadBatch);
         flushUploadBatchIfNeeded();
         renderSubmesh.material = cpuRenderSubmesh.material;
+        renderSubmesh.textureTransforms = BuildGpuTextureTransforms(cpuRenderSubmesh.textureTransforms);
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
         renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
         renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
@@ -1859,7 +1885,8 @@ void VulkanRenderer::ApplyRenderContent(
             m_shadowPass->GetSampledBinding(),
             m_localShadowPass->GetSampledBinding(),
             BuildEnvironmentBindings(),
-            CollectDrawMaterials(newRenderSubmeshes));
+            CollectDrawMaterials(newRenderSubmeshes),
+            CollectDrawTextureTransforms(newRenderSubmeshes));
         // Wait only for our in-flight render frames to finish before destroying old resources.
         // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
         // present or transfer queues, and the new UBO above is built while the GPU may still
@@ -1964,6 +1991,8 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
         item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
         item.materialDescriptorSet = m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex);
         item.material = renderSubmesh.material;
+        // The alpha test samples the base colour where the main passes do.
+        std::memcpy(item.baseColorTransform, &renderSubmesh.textureTransforms.rows[0], sizeof(item.baseColorTransform));
         items.push_back(item);
     }
     // Opaque first, then mask, so the pass switches pipeline once.

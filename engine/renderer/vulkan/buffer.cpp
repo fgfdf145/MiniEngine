@@ -17,9 +17,9 @@ VkVertexInputBindingDescription GetVertexBindingDescription()
     return bindingDescription;
 }
 
-std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions()
+std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions()
 {
-    std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 6> attributeDescriptions{};
 
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
@@ -45,6 +45,11 @@ std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions(
     attributeDescriptions[4].location = 4;
     attributeDescriptions[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     attributeDescriptions[4].offset = static_cast<uint32_t>(offsetof(Vertex, tangent));
+
+    attributeDescriptions[5].binding = 0;
+    attributeDescriptions[5].location = 5;
+    attributeDescriptions[5].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[5].offset = static_cast<uint32_t>(offsetof(Vertex, texCoord1));
 
     return attributeDescriptions;
 }

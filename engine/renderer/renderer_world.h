@@ -50,6 +50,7 @@ struct CpuRenderSubmesh
     std::shared_ptr<const MeshData> mesh;
     GpuMaterialData material;
     MaterialTexturePaths textures;
+    MaterialTextureTransforms textureTransforms{};
     bool hasTexCoords = false;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;

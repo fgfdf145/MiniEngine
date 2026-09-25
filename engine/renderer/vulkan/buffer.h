@@ -12,7 +12,7 @@ namespace me
 {
 
 VkVertexInputBindingDescription GetVertexBindingDescription();
-std::array<VkVertexInputAttributeDescription, 5> GetVertexAttributeDescriptions();
+std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions();
 
 class VulkanBuffer
 {
