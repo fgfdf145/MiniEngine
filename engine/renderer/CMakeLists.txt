@@ -18,6 +18,8 @@ add_library(engine_render_core
     exposure.h
     light_clusters.cpp
     light_clusters.h
+    local_shadows.cpp
+    local_shadows.h
     material.h
     material_pipeline.cpp
     material_pipeline.h

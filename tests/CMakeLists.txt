@@ -391,6 +391,32 @@ endif()
 
 set_target_properties(miniengine_light_clusters_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_local_shadows_tests
+    local_shadows_tests.cpp
+)
+miniengine_group_target_sources(miniengine_local_shadows_tests)
+
+target_link_libraries(miniengine_local_shadows_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.local_shadows
+    COMMAND miniengine_local_shadows_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_local_shadows_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_local_shadows_tests>
+            $<TARGET_FILE_DIR:miniengine_local_shadows_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_local_shadows_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_taa_jitter_tests
     taa_jitter_tests.cpp
 )
