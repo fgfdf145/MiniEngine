@@ -97,6 +97,31 @@ by the rendered image.
   distance (about a millimetre on a 0.8 m sphere), as it physically is. Sponza: the floor picks up
   the lamp's gloss on its smoother patches; no fireflies, no noise.
 
+## Phase 1b: LTC Area Lights
+
+- **The table is fitted here**, not copied: `tools/ltc_fit/ltc_fit.cpp` fits Heitz et al.'s
+  `frame * [[m11, 0, m13], [0, m22, 0], [0, 0, 1]]` to this engine's lobe (GGX, height-correlated
+  Smith, F = 1) at 64 x 64 texel centres (roughness floored at 0.04; columns by `sqrt(1 - N.V)`),
+  by Nelder-Mead on the cubed difference under multiple importance sampling of both distributions,
+  each fit seeded from its neighbour. Two minutes at -O2. The output is committed as
+  `engine/renderer/ltc_table.cpp` and uploaded as two RGBA32F textures, set 0 bindings 15 and 16:
+  the inverse matrix, and (albedo, Fresnel share) so a lobe reflects `F0 norm + (1 - F0) fresnel`.
+- **Polygon integration** (`ltc_common.glsl`, compiled into `tests/ltc_tests.cpp`): Sutherland-Hodgman
+  clipping of the quad to the horizon, then Hill and Heitz's rational fit of the edge integral.
+  That fit already carries the `1 / (2 pi)`; the first draft divided by it again, which the test
+  against an exact form factor caught.
+- **Diffuse** now integrates the horizon-clipped cosine, the exact irradiance; the previous closed
+  form did not clip, which overestimated lights straddling the horizon. **Base and coat specular**
+  integrate the fitted lobe. **Anisotropic bases** keep the representative point.
+- **Accuracy of the fit**, against a dense integration of the real lobe over 78 rectangles around
+  the reflection direction (roughness 0.3 to 1, N.V 0.2 to 0.98): mean relative error 7.7%, worst
+  8% at N.V >= 0.8, worst 49% at N.V 0.2 for a light covering 6% of the lobe. That grazing error
+  is the method's known weak spot.
+- **Acceptance** (a 1.6 x 0.4 m panel over a glossy floor and three spheres, in the dark): the
+  representative point drew a sharp, bright rectangle on the roughness-0.3 metal sphere; LTC draws
+  the soft ellipse a lobe that rough makes of it, and keeps the crisp rectangle on the
+  roughness-0.1 sphere.
+
 ## Out of Scope
 
 - LTC area lights (phase 1b), tube lights, a sun-disk shape other than a circle.
