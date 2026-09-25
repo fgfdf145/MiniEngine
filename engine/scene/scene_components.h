@@ -31,6 +31,7 @@ struct LightComponent
     float spotOuterAngleDegrees = 30.0f; // Spot outer cone half-angle
     glm::vec2 areaSize{1.0f, 1.0f};      // Area light width x height in meters
     bool castShadows = true;             // Point, spot and area lights; the brightest directional one always does
+    float sourceRadius = 0.0f;           // Point and spot lights: the emitting sphere's radius in metres, 0 a point
 };
 
 struct ModelImportedMaterialInfo

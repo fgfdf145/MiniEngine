@@ -19,7 +19,9 @@ void Require(bool condition, const std::string& message)
     }
 }
 
-// Karis' analytic fit of the same table, as pbr_common.glsl's EnvironmentBrdfApprox has it.
+// Karis' analytic fit ("Physically Based Shading on Mobile", 2014) of the Smith-Schlick table the
+// shaders once used. They now sample this table everywhere; the fit stays as an independent
+// same-family bound.
 glm::vec2 KarisFit(float roughness, float NdV)
 {
     const glm::vec4 c0(-1.0f, -0.0275f, -0.572f, 0.022f);
@@ -62,12 +64,16 @@ void ConservesEnergyAndConverges()
         previousHeadOn = headOn.x + headOn.y;
         for (float NdV = 0.1f; NdV <= 1.0f; NdV += 0.1f)
         {
-            const glm::vec2 ab = IntegrateEnvironmentBrdf(roughness, NdV, 512);
-            const glm::vec2 reference = IntegrateEnvironmentBrdf(roughness, NdV, 4096);
+            const glm::vec2 ab = IntegrateEnvironmentBrdf(roughness, NdV, kEnvironmentBrdfSampleCount);
+            const glm::vec2 reference = IntegrateEnvironmentBrdf(roughness, NdV, 16384);
             const glm::vec2 fit = KarisFit(roughness, NdV);
             Require(ab.x >= 0.0f && ab.y >= 0.0f && ab.x + ab.y <= 1.0f + 1e-3f, "the table never reflects more than it receives");
-            Require(glm::length(ab - reference) < 0.01f, "512 samples are within 0.01 of 4096");
-            Require(std::fabs(ab.x - fit.x) < 0.2f && std::fabs(ab.y - fit.y) < 0.2f,
+            Require(glm::length(ab - reference) < 0.01f,
+                    "the table's sample count is within 0.01 of 16384 at roughness " + std::to_string(roughness) + ", N.V " + std::to_string(NdV) +
+                        ": " + std::to_string(glm::length(ab - reference)));
+            // The correlated visibility reflects less than Smith-Schlick at rough grazing angles,
+            // where the fit was made for the latter, hence the loose bound.
+            Require(std::fabs(ab.x - fit.x) < 0.3f && std::fabs(ab.y - fit.y) < 0.3f,
                     "roughness " + std::to_string(roughness) + ", N.V " + std::to_string(NdV) + " strays from Karis' fit");
         }
     }
@@ -89,7 +95,7 @@ void TableSamplesTexelCentres()
 // reflect more than it receives. Checked over the table the shader actually samples.
 void EnergyCompensationRestoresTheWhiteFurnace()
 {
-    const FloatTextureData table = BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, 64);
+    const FloatTextureData table = BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, 256);
     float largestCompensation = 0.0f;
     for (size_t texel = 0; texel < table.pixels.size(); texel += 4)
     {

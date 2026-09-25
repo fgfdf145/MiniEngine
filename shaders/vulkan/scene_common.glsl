@@ -26,7 +26,7 @@ struct SceneLightData
     vec4 positionAndRange;  // xyz = world position, w = range (metres)
     vec4 colorAndIntensity; // xyz = linear RGB color, w = intensity (lumens or lux)
     vec4 directionAndType;  // xyz = world direction the light travels (an area light's emitting normal), w = LightType
-    vec4 spotAndArea;       // x = cos(inner), y = cos(outer), z = areaW, w = areaH
+    vec4 spotAndArea;       // x = cos(inner), y = cos(outer), z = areaW (area) or source radius (point, spot), w = areaH
     vec4 areaRightAxis;     // xyz = world axis along areaW (area lights only)
 };
 

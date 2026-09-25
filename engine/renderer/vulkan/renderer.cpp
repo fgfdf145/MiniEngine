@@ -89,10 +89,11 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
                            // included, so the lit rectangle is scaled the same way to match it. The
                            // clamp is BuildTransformMatrix's.
                            const glm::vec3 scale = glm::max(transform.scale, WorldUnits::kMinimumScale3);
+                           // z is the area light's width, or the point or spot light's source radius.
                            gpu.spotAndArea = glm::vec4(
                                innerCos,
                                outerCos,
-                               light.areaSize.x * scale.x,
+                               light.type == LightType::Area ? light.areaSize.x * scale.x : std::max(light.sourceRadius, 0.0f),
                                light.areaSize.y * scale.y);
 
                            SceneLightCandidate candidate{};

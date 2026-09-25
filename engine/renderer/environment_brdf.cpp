@@ -30,9 +30,15 @@ glm::vec3 ImportanceSampleGgx(float u, float v, float roughness)
     return glm::vec3(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
 }
 
-float SchlickSmithG1(float NdX, float k)
+// The height-correlated Smith visibility, G / (4 N.L N.V), as VisibilitySmithGgxCorrelated in
+// shaders/vulkan/brdf_common.glsl: the direct lights use the same term, so the table's energy
+// compensation is that of the lobe they draw.
+float VisibilitySmithGgxCorrelated(float NdV, float NdL, float alpha)
 {
-    return NdX / (NdX * (1.0f - k) + k);
+    const float a2 = alpha * alpha;
+    const float ggxV = NdL * std::sqrt(NdV * NdV * (1.0f - a2) + a2);
+    const float ggxL = NdV * std::sqrt(NdL * NdL * (1.0f - a2) + a2);
+    return 0.5f / std::max(ggxV + ggxL, 1e-7f);
 }
 }
 
@@ -40,7 +46,7 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
 {
     NdV = std::clamp(NdV, 1e-4f, 1.0f);
     const glm::vec3 V(std::sqrt(1.0f - NdV * NdV), 0.0f, NdV);
-    const float k = roughness * roughness / 2.0f;
+    const float alpha = roughness * roughness;
     float a = 0.0f;
     float b = 0.0f;
     for (uint32_t i = 0; i < sampleCount; ++i)
@@ -52,9 +58,8 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
         const float VdH = std::clamp(glm::dot(V, H), 0.0f, 1.0f);
         if (NdL > 0.0f && NdH > 0.0f)
         {
-            const float G = SchlickSmithG1(NdV, k) * SchlickSmithG1(NdL, k);
-            // pdf = D NdH / (4 VdH); dividing the BRDF times NdL by it leaves G VdH / (NdH NdV).
-            const float visibility = G * VdH / (NdH * NdV);
+            // pdf = D NdH / (4 VdH); dividing D Vis NdL by it leaves 4 Vis NdL VdH / NdH.
+            const float visibility = 4.0f * VisibilitySmithGgxCorrelated(NdV, NdL, alpha) * NdL * VdH / NdH;
             const float fresnel = std::pow(1.0f - VdH, 5.0f);
             a += (1.0f - fresnel) * visibility;
             b += fresnel * visibility;
@@ -116,7 +121,14 @@ FloatTextureData BuildEnvironmentBrdfLut(uint32_t size, uint32_t sampleCount)
         for (uint32_t x = 0; x < size; ++x)
         {
             const float NdV = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
-            const glm::vec2 ab = IntegrateEnvironmentBrdf(roughness, NdV, sampleCount);
+            glm::vec2 ab = IntegrateEnvironmentBrdf(roughness, NdV, sampleCount);
+            // The true A + B never exceeds 1, but the correlated visibility's estimate can overshoot
+            // by its noise, and the energy compensation 1 / (A + B) must then not drop below 1.
+            const float albedo = ab.x + ab.y;
+            if (albedo > 1.0f)
+            {
+                ab /= albedo;
+            }
             float* texel = &table.pixels[(static_cast<size_t>(y) * size + x) * 4];
             texel[0] = ab.x;
             texel[1] = ab.y;

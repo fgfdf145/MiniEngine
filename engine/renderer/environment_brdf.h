@@ -9,14 +9,15 @@
 namespace me
 {
 
-// The DFG table set 0 binding 9 samples: 64 x 64, 512 samples per texel.
+// The DFG table set 0 binding 9 samples: 64 x 64, 2048 samples per texel. The correlated visibility
+// has more variance under GGX importance sampling than Schlick-Smith had, and 512 samples left up
+// to 0.013 of noise at grazing angles.
 inline constexpr uint32_t kEnvironmentBrdfLutSize = 64;
-inline constexpr uint32_t kEnvironmentBrdfSampleCount = 512;
+inline constexpr uint32_t kEnvironmentBrdfSampleCount = 2048;
 
 // The split-sum environment BRDF (Karis 2013): specular albedo = F0 * A + B for a GGX lobe of
-// this roughness seen at this N.V, integrated with sampleCount GGX importance samples and
-// Schlick-Smith visibility with k = alpha / 2 (alpha = roughness^2), the remapping Karis uses for
-// IBL.
+// this roughness seen at this N.V, integrated with sampleCount GGX importance samples and the
+// height-correlated Smith visibility the direct lights use (alpha = roughness^2).
 glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCount);
 
 // The factor that adds back the energy a single-scattering GGX lobe loses to light bouncing more

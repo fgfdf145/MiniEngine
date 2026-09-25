@@ -306,6 +306,13 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
         ImGui::Checkbox("Cast Shadows", &light.castShadows);
     }
 
+    // The size of the emitting sphere, which widens and dims the highlight on smooth surfaces.
+    if (light.type == LightType::Point || light.type == LightType::Spot)
+    {
+        ImGui::DragFloat("Source Radius (m)", &light.sourceRadius, 0.005f, 0.0f, 10.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        light.sourceRadius = std::max(light.sourceRadius, 0.0f);
+    }
+
     // Spot angles
     if (light.type == LightType::Spot)
     {

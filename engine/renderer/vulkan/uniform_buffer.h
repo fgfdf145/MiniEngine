@@ -71,7 +71,8 @@ inline constexpr uint32_t kMaterialTextureBindingCount = 18;
 // positionAndRange : xyz = world position, w = effective range (metres)
 // colorAndIntensity: xyz = linear RGB color, w = intensity (lumens or lux)
 // directionAndType : xyz = world direction (normalized), w = LightType enum cast to float
-// spotAndArea      : x = cos(innerAngle), y = cos(outerAngle), z = areaWidth, w = areaHeight
+// spotAndArea      : x = cos(innerAngle), y = cos(outerAngle), z = areaWidth (area) or source radius
+//                    in metres (point, spot), w = areaHeight
 struct GpuLightData
 {
     glm::vec4 positionAndRange{0.0f, 0.0f, 0.0f, 10.0f};
