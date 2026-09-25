@@ -71,6 +71,32 @@ by the rendered image.
 3. Sponza: diffuse slightly brighter at grazing angles on rough surfaces (Burley's retroreflection),
    rough metals slightly different; no edge glow on normal-mapped stone.
 
+## Amendments During Implementation
+
+- **A long-standing bug in `DistributionGGX`.** It floored `pi d^2` at `1e-4`; the true value at a
+  lobe's peak is `pi alpha^4`, far below that for any roughness under about 0.3, so every smooth
+  highlight was cut, by up to five orders of magnitude at the 0.04 roughness floor. Smooth spheres
+  under the sun showed a dim grey blur in the previous build as in this one until the floor went.
+  The denominator is now only kept positive.
+- **The DFG table takes 2048 samples** (was 512): the correlated visibility's estimator is noisier
+  under GGX importance sampling, 0.013 off at roughness 0.5, N.V 0.2 with 512. Noise can push
+  `A + B` a hair past 1, so the builder scales such texels back to 1.
+- **The uniform ambient and the coat's uniform ambient sample the DFG table** instead of Karis'
+  analytic fit, which approximates the Smith-Schlick table and would disagree with the lobe the
+  direct lights now draw. The test keeps the fit only as a loose same-family bound (0.3).
+- **Burley's albedo bound was wrong in the spec.** Smooth Burley loses most of its diffuse at
+  grazing angles (albedo 0.22 at N.V 0.05), which is the model, not an error. The test checks it
+  never exceeds 1.05, stays positive, equals Lambert head on when smooth, and keeps more at grazing
+  when rough.
+- **The GGX quadrature reference runs at roughness 0.5 and above**: a regular grid over outgoing
+  directions cannot resolve a lobe of roughness 0.2.
+- **Acceptance.** Smooth spheres (roughness 0.02 to 0.3, chrome 0.05) under the default sun: the
+  previous build shows a grey blur on the smooth black spheres, this one a crisp sun highlight. In
+  a dark scene, a 20000 lm lamp with source radius 0.2 m gives a visibly larger disk on the smooth
+  spheres than radius 0. The sun's own reflection in a mirror sphere is still sub-pixel at this
+  distance (about a millimetre on a 0.8 m sphere), as it physically is. Sponza: the floor picks up
+  the lamp's gloss on its smoother patches; no fireflies, no noise.
+
 ## Out of Scope
 
 - LTC area lights (phase 1b), tube lights, a sun-disk shape other than a circle.
