@@ -13,6 +13,7 @@
 #include "geometry_pass.h"
 #include "imgui_layer.h"
 #include "lighting_pass.h"
+#include "local_shadow_pass.h"
 #include "instance.h"
 #include "pipeline_set.h"
 #include "render_pass.h"
@@ -173,6 +174,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Logs when the number of lights left out by the light limit changes.
     void ReportDroppedLights(uint32_t droppedCount);
     void ReportDroppedClusterLights(uint32_t droppedCount);
+    void ReportDroppedLocalShadows(uint32_t droppedCount);
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
@@ -210,6 +212,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Device lifetime too: its image has a fixed size and is shared by every frame in flight, and
     // every VulkanUniformBuffer binds it into set 0.
     std::unique_ptr<VulkanShadowPass> m_shadowPass;
+    std::unique_ptr<VulkanLocalShadowPass> m_localShadowPass;
     // Device lifetime as well, for the same reasons: fixed-size images shared by every frame in
     // flight and bound into set 0 by every VulkanUniformBuffer.
     std::unique_ptr<VulkanAtmosphere> m_atmosphere;
@@ -255,6 +258,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool m_swapchainHdrRequested = false;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
+    uint32_t m_droppedLocalShadowCount = 0;
     // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
     // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
     // at the image lifetime boundaries keep it from describing a destroyed image even when no

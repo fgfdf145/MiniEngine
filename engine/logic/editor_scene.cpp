@@ -311,6 +311,8 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
                 lightData.areaSize.x = lightNode["area_size"][0].as<float>(lightData.areaSize.x);
                 lightData.areaSize.y = lightNode["area_size"][1].as<float>(lightData.areaSize.y);
             }
+            // Scenes saved before local shadows existed have no key and cast shadows.
+            lightData.castShadows = lightNode["cast_shadows"].as<bool>(lightData.castShadows);
             lightData.transform = ReadTransformComponent(lightNode["transform"], lightData.transform);
             sceneData.lights.push_back(lightData);
         }
@@ -367,6 +369,7 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::Key << "spot_outer_angle" << YAML::Value << light.spotOuterAngle;
         emitter << YAML::Key << "area_size" << YAML::Value << YAML::Flow << YAML::BeginSeq
                 << light.areaSize.x << light.areaSize.y << YAML::EndSeq;
+        emitter << YAML::Key << "cast_shadows" << YAML::Value << light.castShadows;
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
         EmitVec3(emitter, "translation", light.transform.translation);
         EmitVec3(emitter, "rotation", light.transform.rotationDegrees);
@@ -870,6 +873,7 @@ entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData
     light.spotInnerAngleDegrees = lightData.spotInnerAngle;
     light.spotOuterAngleDegrees = lightData.spotOuterAngle;
     light.areaSize = lightData.areaSize;
+    light.castShadows = lightData.castShadows;
     m_registry.emplace<LightComponent>(entity, light);
     m_sceneOrder.push_back(entity);
     return entity;
@@ -934,6 +938,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         lightData.spotInnerAngle = light.spotInnerAngleDegrees;
         lightData.spotOuterAngle = light.spotOuterAngleDegrees;
         lightData.areaSize = light.areaSize;
+        lightData.castShadows = light.castShadows;
         lightData.transform = transform;
         sceneData.lights.push_back(lightData);
     }

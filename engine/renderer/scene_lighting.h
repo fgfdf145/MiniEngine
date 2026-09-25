@@ -20,6 +20,8 @@ struct SceneLightCandidate
     glm::vec3 color{1.0f};
     // Lumens for point, spot and area lights, lux for directional, cd/m^2 for ambient.
     float intensity = 0.0f;
+    // LightComponent::castShadows; only local lights read it.
+    bool castShadows = true;
 };
 
 // The fallback ambient luminance in cd/m^2, used only when the scene has no Ambient light. It

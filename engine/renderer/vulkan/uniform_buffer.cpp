@@ -18,12 +18,14 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkDescriptorSetLayout materialSetLayout,
     const std::vector<MaterialTextureBinding>& materialBindings,
     TextureDescriptorBinding shadowMap,
+    TextureDescriptorBinding localShadowAtlas,
     EnvironmentDescriptorBindings environment,
     std::span<const GpuMaterialData> drawMaterials)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_materialBindings(materialBindings),
       m_shadowMap(shadowMap),
+      m_localShadowAtlas(localShadowAtlas),
       m_environment(environment),
       m_frameSetLayout(frameSetLayout),
       m_materialSetLayout(materialSetLayout),
@@ -119,6 +121,7 @@ void VulkanUniformBuffer::DestroyHandles()
     }
     m_mappedMaterialBuffer = nullptr;
     destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
+    destroyMapped(m_shadowTileBuffers, m_shadowTileMemories, m_mappedShadowTileBuffers);
 
     m_buffers.clear();
     m_memories.clear();
@@ -216,6 +219,21 @@ void VulkanUniformBuffer::Update(
     const bool clustered = lights.clustered && lights.clusters != nullptr;
     data.lightCounts = glm::uvec4(std::min(lights.directionalCount, lightCount), lightCount, clustered ? 1u : 0u, 0u);
     std::memcpy(m_mappedLightBuffers[imageIndex], lights.lights.data(), sizeof(GpuLightData) * lightCount);
+    // Every tile a light points at must be one uploaded here.
+    const uint32_t tileCount = static_cast<uint32_t>(lights.shadowTiles.size());
+    if (tileCount > kLocalShadowTileCount)
+    {
+        throw std::runtime_error("More local shadow tiles than the tile buffer holds");
+    }
+    for (uint32_t index = 0; index < lightCount; ++index)
+    {
+        const float tileRef = lights.lights[index].areaRightAxis.w;
+        if (tileRef < 0.0f || tileRef > static_cast<float>(tileCount))
+        {
+            throw std::runtime_error("A light points past the uploaded local shadow tiles");
+        }
+    }
+    std::memcpy(m_mappedShadowTileBuffers[imageIndex], lights.shadowTiles.data(), lights.shadowTiles.size_bytes());
     if (clustered)
     {
         const LightClusterGrid& grid = *lights.clusters;
@@ -249,7 +267,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 15> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -301,6 +319,15 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[12].descriptorCount = 1;
     bindings[12].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // The local shadow atlas (13) and its tiles (14), read by ShadeSurface.
+    bindings[13].binding = 13;
+    bindings[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[13].descriptorCount = 1;
+    bindings[13].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[14].binding = 14;
+    bindings[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[14].descriptorCount = 1;
+    bindings[14].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -430,8 +457,14 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     m_clusterBuffers.assign(imageCount, VK_NULL_HANDLE);
     m_clusterMemories.assign(imageCount, VK_NULL_HANDLE);
     m_mappedClusterBuffers.assign(imageCount, nullptr);
+    constexpr VkDeviceSize kShadowTileBytes = sizeof(GpuLocalShadowTile) * kLocalShadowTileCount;
+    m_shadowTileBuffers.assign(imageCount, VK_NULL_HANDLE);
+    m_shadowTileMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_mappedShadowTileBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
+        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileMemories[i], m_mappedShadowTileBuffers[i]);
+        std::memset(m_mappedShadowTileBuffers[i], 0, static_cast<size_t>(kShadowTileBytes));
         CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightMemories[i], m_mappedLightBuffers[i]);
         CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterMemories[i], m_mappedClusterBuffers[i]);
         // Empty until the first Update: no light, no cluster lists anything.
@@ -475,12 +508,13 @@ void VulkanUniformBuffer::CreateMappedBuffer(
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
     // One pool serves both sets the split produced: imageCount uniform buffers, shadow map
-    // samplers and five storage buffers (previous models, sky SH, lights, clusters, materials) for set 0 and thirteen samplers per material set for
+    // samplers and six storage buffers (previous models, sky SH, lights, clusters, materials, shadow
+    // tiles) for set 0 and thirteen samplers per material set for
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 7},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 5}}};
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 8},
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 6}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -539,7 +573,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 13> frameWrites{};
+        std::array<VkWriteDescriptorSet, 15> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -614,6 +648,20 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         frameWrites[12].descriptorCount = 1;
         frameWrites[12].pBufferInfo = &materialInfo;
+        const VkDescriptorImageInfo atlasInfo{m_localShadowAtlas.sampler, m_localShadowAtlas.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        frameWrites[13].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[13].dstSet = m_frameDescriptorSets[i];
+        frameWrites[13].dstBinding = 13;
+        frameWrites[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        frameWrites[13].descriptorCount = 1;
+        frameWrites[13].pImageInfo = &atlasInfo;
+        const VkDescriptorBufferInfo shadowTileInfo{m_shadowTileBuffers[i], 0, VK_WHOLE_SIZE};
+        frameWrites[14].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[14].dstSet = m_frameDescriptorSets[i];
+        frameWrites[14].dstBinding = 14;
+        frameWrites[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        frameWrites[14].descriptorCount = 1;
+        frameWrites[14].pBufferInfo = &shadowTileInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

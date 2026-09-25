@@ -100,6 +100,7 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
                            candidate.position = transform.translation;
                            candidate.color = light.color;
                            candidate.intensity = light.intensity;
+                           candidate.castShadows = light.castShadows;
 
                            collected.gpuLights.push_back(gpu);
                            collected.candidates.push_back(candidate);
@@ -602,6 +603,45 @@ void VulkanRenderer::DrawFrame()
             glm::uvec2(extent.width, extent.height));
     }
 
+    // Local light shadows: the atlas tiles go to the selected local lights in the selection's order,
+    // and each light learns its first tile through areaRightAxis.w (1 + tile, 0 for none).
+    std::vector<LocalShadowTile> localShadowTiles;
+    std::vector<GpuLocalShadowTile> gpuShadowTiles;
+    if (State().renderDebug.localLightShadows)
+    {
+        std::vector<LocalShadowLight> shadowLights;
+        shadowLights.reserve(selectedLights.size());
+        for (size_t index = 0; index < selectedLights.size(); ++index)
+        {
+            const GpuLightData& gpu = selectedLights[index];
+            const SceneLightCandidate& candidate = sceneLights.candidates[lightSelection.selected[index]];
+            LocalShadowLight shadowLight{};
+            shadowLight.type = candidate.type;
+            shadowLight.position = glm::vec3(gpu.positionAndRange);
+            shadowLight.direction = glm::vec3(gpu.directionAndType);
+            shadowLight.range = gpu.positionAndRange.w;
+            shadowLight.outerAngleRadians = std::acos(std::clamp(gpu.spotAndArea.y, -1.0f, 1.0f));
+            shadowLight.castShadows = candidate.castShadows;
+            shadowLights.push_back(shadowLight);
+        }
+        LocalShadowPlan plan = PlanLocalShadows(shadowLights, viewProjection);
+        for (size_t index = 0; index < selectedLights.size(); ++index)
+        {
+            selectedLights[index].areaRightAxis.w = static_cast<float>(plan.firstTile[index] + 1);
+        }
+        gpuShadowTiles.reserve(plan.tiles.size());
+        for (const LocalShadowTile& tile : plan.tiles)
+        {
+            gpuShadowTiles.push_back(GpuLocalShadowTile{tile.viewProjection, tile.atlasRect, glm::vec4(tile.texelScale, tile.cubeFace ? 1.0f : 0.0f, 0.0f, 0.0f)});
+        }
+        localShadowTiles = std::move(plan.tiles);
+        ReportDroppedLocalShadows(plan.droppedCount);
+    }
+    else
+    {
+        ReportDroppedLocalShadows(0);
+    }
+
     // The selection puts every directional light first, so the local lights the grid bins are the
     // tail of selectedLights, and the grid's indices point into the same array the shader reads.
     const bool clusteredLighting = State().renderDebug.clusteredLighting;
@@ -630,6 +670,7 @@ void VulkanRenderer::DrawFrame()
     lightUpload.directionalCount = directionalLightCount;
     lightUpload.clusters = clusteredLighting ? &lightClusters : nullptr;
     lightUpload.clustered = clusteredLighting;
+    lightUpload.shadowTiles = gpuShadowTiles;
 
     // This frame's EV, already adapted by UpdateAutoExposure, so every writer and reader of the
     // HDR target agrees on one pre-exposure.
@@ -650,7 +691,7 @@ void VulkanRenderer::DrawFrame()
         preExposure);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
-        shadowCascades.has_value() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
+        shadowCascades.has_value() || !localShadowTiles.empty() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
 
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
@@ -729,6 +770,8 @@ void VulkanRenderer::DrawFrame()
                                                   commandBuffer,
                                                   shadowDrawItems,
                                                   shadowCascades.has_value() ? &*shadowCascades : nullptr);
+                                              // The same, for the local lights' atlas.
+                                              m_localShadowPass->Record(commandBuffer, shadowDrawItems, localShadowTiles);
 
                                               // Ahead of the scene passes, whose fragment shaders sample the
                                               // LUTs; it orders itself with its own barriers (see
@@ -899,6 +942,11 @@ void VulkanRenderer::CreateDeviceResources()
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
+    m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_materialSetLayout->GetHandle());
 
     m_atmosphere = std::make_unique<VulkanAtmosphere>(
         m_device->GetPhysicalDevice(),
@@ -969,6 +1017,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
+    m_localShadowPass.reset();
     if (m_pipelineCache != VK_NULL_HANDLE)
     {
         vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
@@ -1218,6 +1267,7 @@ void VulkanRenderer::CreateDescriptorResources()
         m_materialSetLayout->GetHandle(),
         BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots),
         m_shadowPass->GetSampledBinding(),
+        m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(),
         CollectDrawMaterials(m_renderSubmeshes));
 }
@@ -1737,6 +1787,7 @@ void VulkanRenderer::ApplyRenderContent(
             m_materialSetLayout->GetHandle(),
             BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots),
             m_shadowPass->GetSampledBinding(),
+            m_localShadowPass->GetSampledBinding(),
             BuildEnvironmentBindings(),
             CollectDrawMaterials(newRenderSubmeshes));
         // Wait only for our in-flight render frames to finish before destroying old resources.
@@ -1945,6 +1996,24 @@ void VulkanRenderer::ReportDroppedClusterLights(uint32_t droppedCount)
     else
     {
         LOG_INFO("Every light fits in the light cluster index list again");
+    }
+}
+
+void VulkanRenderer::ReportDroppedLocalShadows(uint32_t droppedCount)
+{
+    // Logged when the count changes, like ReportDroppedLights.
+    if (droppedCount == m_droppedLocalShadowCount)
+    {
+        return;
+    }
+    m_droppedLocalShadowCount = droppedCount;
+    if (droppedCount > 0)
+    {
+        LOG_WARN("The local shadow atlas is full: {} lights in view cast no shadow", droppedCount);
+    }
+    else
+    {
+        LOG_INFO("Every shadow casting local light in view fits in the shadow atlas again");
     }
 }
 

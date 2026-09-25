@@ -51,6 +51,8 @@ struct LocalShadowTile
     float texelScale = 0.0f;
     // The tile's texel rectangle in the atlas, for the viewport.
     glm::uvec2 atlasOffsetTexels{0u};
+    // One of a cube's six faces: the shader picks the face from the light's first tile.
+    bool cubeFace = false;
 };
 
 struct LocalShadowPlan

@@ -302,6 +302,8 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     {
         ImGui::DragFloat("Range (m)", &light.range, 0.1f, 0.1f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         light.range = std::max(light.range, 0.01f);
+        // A slot in the local shadow atlas; lights past its capacity cast none (see the log).
+        ImGui::Checkbox("Cast Shadows", &light.castShadows);
     }
 
     // Spot angles

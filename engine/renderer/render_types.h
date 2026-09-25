@@ -89,6 +89,9 @@ struct RenderDebugSettings
     // Looks local lights up through the light cluster grid. Off, every pixel loops over all of them:
     // the comparison path, which must render the same image.
     bool clusteredLighting = true;
+    // Shadow maps for point, spot and area lights (the local shadow atlas). Off, no local light
+    // casts a shadow, as before they existed.
+    bool localLightShadows = true;
     // Temporal anti-aliasing: jittered projection plus the TAA resolve. Off, the frame is neither
     // jittered nor resolved, and renders exactly as it did before TAA existed.
     bool taa = true;

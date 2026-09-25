@@ -132,6 +132,7 @@ LocalShadowPlan PlanLocalShadows(std::span<const LocalShadowLight> lights, const
             for (uint32_t face = 0; face < kLocalShadowCubeFaceCount; ++face)
             {
                 plan.tiles.push_back(MakeTile(first + face, BuildLocalShadowCubeFace(light.position, light.range, face), kGuardWidening));
+                plan.tiles.back().cubeFace = true;
             }
         }
         else

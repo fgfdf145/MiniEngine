@@ -42,6 +42,7 @@ struct SerializedLightData
     float spotInnerAngle = 15.0f;
     float spotOuterAngle = 30.0f;
     glm::vec2 areaSize{1.0f, 1.0f};
+    bool castShadows = true;
     TransformComponent transform;
 };
 

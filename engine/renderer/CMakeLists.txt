@@ -123,6 +123,8 @@ add_library(engine_renderer
     vulkan/scene_pass_order.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
+    vulkan/local_shadow_pass.cpp
+    vulkan/local_shadow_pass.h
     vulkan/shadow_pass.cpp
     vulkan/shadow_pass.h
     vulkan/swapchain.cpp
@@ -184,6 +186,7 @@ set(MINIENGINE_SHADER_INCLUDES
     gt7_tonemap.glsl
     hdr_output.glsl
     ssr_common.glsl
+    local_shadow_common.glsl
     pre_exposure.glsl
     scene_common.glsl
     pbr_common.glsl

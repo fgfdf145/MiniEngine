@@ -3,6 +3,7 @@
 #include "../atmosphere.h"
 #include "../camera.h"
 #include "../light_clusters.h"
+#include "../local_shadows.h"
 #include "../material.h"
 #include "../specular_aa.h"
 #include "../shadow_cascades.h"
@@ -69,9 +70,23 @@ struct GpuLightData
     glm::vec4 directionAndType{0.0f, -1.0f, 0.0f, 1.0f}; // type 1 = point
     glm::vec4 spotAndArea{0.97f, 0.87f, 1.0f, 1.0f};
     // xyz = the world axis the area light's width runs along; its height runs along
-    // cross(direction, right). Only area lights read it.
+    // cross(direction, right). Only area lights read it. w = 1 + the light's first tile in the local
+    // shadow atlas, 0 when it casts no shadow (see LocalShadowPlan).
     glm::vec4 areaRightAxis{1.0f, 0.0f, 0.0f, 0.0f};
 };
+
+// One tile of the local shadow atlas as the shader reads it, set 0 binding 14. Matches
+// LocalShadowTileData in shaders/vulkan/pbr_common.glsl under std430.
+struct GpuLocalShadowTile
+{
+    glm::mat4 viewProjection{1.0f};
+    // uv offset xy, uv size zw.
+    glm::vec4 atlasRect{0.0f};
+    // x = LocalShadowTile::texelScale, y = 1 on a cube face; zw unused.
+    glm::vec4 params{0.0f};
+};
+
+static_assert(sizeof(GpuLocalShadowTile) == 96, "GpuLocalShadowTile must stay mat4 + 2 x vec4");
 
 // The storage buffer at set 0 binding 10 holds this many; SelectSceneLights drops the rest.
 static constexpr uint32_t kMaxSceneLights = 1024;
@@ -86,6 +101,9 @@ struct LightUpload
     const LightClusterGrid* clusters = nullptr;
     // Off: the shader loops over every local light, the brute-force comparison path.
     bool clustered = true;
+    // The local shadow atlas tiles the lights' areaRightAxis.w point into; at most
+    // kLocalShadowTileCount.
+    std::span<const GpuLocalShadowTile> shadowTiles;
 };
 
 // The directional shadow map as the shader reads it. Mirrors the shadow members at the end of
@@ -178,7 +196,7 @@ static_assert(
 
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
 // 1, the scene lights at binding 10, the light cluster grid at binding 11, each draw's material at
-// binding 12, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// binding 12, the local shadow atlas at binding 13 and its tiles at binding 14, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
@@ -230,6 +248,7 @@ class VulkanUniformBuffer
         VkDescriptorSetLayout materialSetLayout,
         const std::vector<MaterialTextureBinding>& materialBindings,
         TextureDescriptorBinding shadowMap,
+        TextureDescriptorBinding localShadowAtlas,
         EnvironmentDescriptorBindings environment,
         // One per draw slot, in slot order: binding 12 holds them and binding 2 gets as many
         // previous-model slots, so the two can never disagree about how many draws there are.
@@ -279,6 +298,7 @@ class VulkanUniformBuffer
     VkDevice m_device = VK_NULL_HANDLE;
     std::vector<MaterialTextureBinding> m_materialBindings;
     TextureDescriptorBinding m_shadowMap;
+    TextureDescriptorBinding m_localShadowAtlas;
     EnvironmentDescriptorBindings m_environment;
     VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
@@ -306,6 +326,10 @@ class VulkanUniformBuffer
     std::vector<VkBuffer> m_clusterBuffers;
     std::vector<VkDeviceMemory> m_clusterMemories;
     std::vector<void*> m_mappedClusterBuffers;
+    // Set 0 binding 14: the local shadow atlas tiles, kLocalShadowTileCount slots per image.
+    std::vector<VkBuffer> m_shadowTileBuffers;
+    std::vector<VkDeviceMemory> m_shadowTileMemories;
+    std::vector<void*> m_mappedShadowTileBuffers;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;

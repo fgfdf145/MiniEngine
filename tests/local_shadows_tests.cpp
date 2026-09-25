@@ -201,6 +201,28 @@ void AtlasCoordinatesStayInsideTheTile()
             "a point off the tile is clamped inside its guard band");
 }
 
+void ShaderConstantsMatchTheHeader()
+{
+    Require(shader::kLocalShadowTileTexels == static_cast<float>(kLocalShadowTileSize), "the shader's tile size");
+    Require(shader::kLocalShadowGuardFraction == kGuard, "the shader's guard band");
+    Require(shader::kLocalShadowNearPlaneMetres == kLocalShadowNearPlane, "the shader's near plane");
+}
+
+void CubeTilesAreMarked()
+{
+    LocalShadowLight point = MakeLight(LightType::Point, glm::vec3(0.0f, 2.0f, 0.0f));
+    LocalShadowLight spot = MakeLight(LightType::Spot, glm::vec3(0.0f, 2.0f, 0.0f));
+    spot.outerAngleRadians = glm::radians(30.0f);
+    const std::array<LocalShadowLight, 2> lights = {point, spot};
+    const LocalShadowPlan plan = PlanLocalShadows(lights, MakeCamera(glm::vec3(0.0f, 2.0f, 10.0f), glm::vec3(0.0f, 0.0f, -1.0f)));
+    Require(plan.tiles.size() == 7, "a cube and a spot");
+    for (size_t i = 0; i < 6; ++i)
+    {
+        Require(plan.tiles[i].cubeFace, "a cube's tiles are marked");
+    }
+    Require(!plan.tiles[6].cubeFace, "a spot's tile is not");
+}
+
 void FrustumSphereTest()
 {
     const glm::mat4 camera = MakeCamera(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
@@ -226,6 +248,8 @@ int main()
         TilesAreHandedOutInOrderUntilTheyRunOut();
         AtlasCoordinatesStayInsideTheTile();
         FrustumSphereTest();
+        ShaderConstantsMatchTheHeader();
+        CubeTilesAreMarked();
     }
     catch (const std::exception& error)
     {

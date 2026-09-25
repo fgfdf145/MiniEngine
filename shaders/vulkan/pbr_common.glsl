@@ -4,6 +4,7 @@
 // SceneLightData, the LIGHT_* and SHADOW_CASCADE_COUNT constants and the ubo block.
 #include "scene_common.glsl"
 #include "ssr_common.glsl"
+#include "local_shadow_common.glsl"
 // The sky's SH irradiance for the ambient term under a physical sky.
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
@@ -28,6 +29,24 @@ layout(set = 0, binding = 11, std430) readonly buffer LightClusterBuffer
     uint indices[];
 }
 lightClusters;
+
+// The local lights' shadow atlas (see VulkanLocalShadowPass), sampled with a LESS_OR_EQUAL depth
+// comparison, and its tiles (GpuLocalShadowTile). A light's areaRightAxis.w is 1 + its first tile,
+// 0 when it casts no shadow; a point or area light's six cube faces follow in SelectCubeFace order.
+layout(set = 0, binding = 13) uniform sampler2DShadow localShadowAtlas;
+
+struct LocalShadowTileData
+{
+    mat4 viewProjection;
+    vec4 atlasRect; // uv offset xy, uv size zw
+    vec4 params;    // x = world size of one texel at one metre from the light, y = 1 on a cube's tiles
+};
+
+layout(set = 0, binding = 14, std430) readonly buffer LocalShadowTileBuffer
+{
+    LocalShadowTileData tiles[];
+}
+localShadowTiles;
 
 const float PI = 3.14159265359;
 
@@ -440,6 +459,39 @@ float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
 }
 
 // ---------------------------------------------------------------------------
+// Local light shadows
+// ---------------------------------------------------------------------------
+
+// The fraction of a local light that reaches this point: 1 lit, 0 in shadow. The light must have a
+// tile (areaRightAxis.w > 0).
+float EvaluateLocalShadow(SceneLightData light, vec3 worldPos, vec3 geoNormal)
+{
+    vec3 fromLight = worldPos - light.positionAndRange.xyz;
+    int tileIndex = int(light.areaRightAxis.w) - 1;
+    // The planner marks the first tile of a cube; a spot light may have been given one too.
+    if (localShadowTiles.tiles[tileIndex].params.y > 0.5)
+        tileIndex += SelectCubeFace(fromLight);
+    LocalShadowTileData tile = localShadowTiles.tiles[tileIndex];
+
+    // The cascades' normal offset, with a texel that grows with the distance to the light.
+    float texel = tile.params.x * max(length(fromLight), kLocalShadowNearPlaneMetres);
+    vec3 offsetPos = worldPos + geoNormal * (texel * kShadowNormalOffsetTexels);
+    vec3 coords = LocalShadowAtlasCoordinates(tile.viewProjection * vec4(offsetPos, 1.0), tile.atlasRect, kLocalShadowGuardFraction);
+
+    float atlasTexel = tile.atlasRect.z / kLocalShadowTileTexels;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            // Zero gradients for the same reason as the cascades: non-uniform control flow.
+            lit += textureGrad(localShadowAtlas, vec3(coords.xy + vec2(x, y) * atlasTexel, coords.z), vec2(0.0), vec2(0.0));
+        }
+    }
+    return lit / 9.0;
+}
+
+// ---------------------------------------------------------------------------
 // Uniform ambient
 // ---------------------------------------------------------------------------
 
@@ -685,6 +737,22 @@ vec3 EvaluateCoatAmbient(CoatParams coat, vec3 V)
     return coatAlbedo * (sky + sceneAmbient);
 }
 
+// Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
+// like the directional caster, the lookup is skipped where the light contributes nothing.
+void ApplyLocalShadow(
+    SceneLightData light, vec3 worldPosition, vec3 geoNormal,
+    inout vec3 contribution, inout vec3 coatContribution, inout vec3 sheenContribution)
+{
+    if (light.areaRightAxis.w > 0.5 &&
+        (any(greaterThan(contribution, vec3(0.0))) || any(greaterThan(coatContribution, vec3(0.0)))))
+    {
+        float shadow = EvaluateLocalShadow(light, worldPosition, geoNormal);
+        contribution *= shadow;
+        coatContribution *= shadow;
+        sheenContribution *= shadow;
+    }
+}
+
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
 // (ambient + direct) with emissive added afterwards, so the forward image is unchanged by the move
@@ -762,8 +830,9 @@ vec3 ShadeSurface(
         uvec2 range = lightClusters.ranges[FindLightCluster(worldPosition)];
         for (uint k = 0u; k < range.y; ++k)
         {
-            directAccum += EvaluateSceneLight(
-                sceneLights.lights[lightClusters.indices[range.x + k]],
+            SceneLightData light = sceneLights.lights[lightClusters.indices[range.x + k]];
+            vec3 contribution = EvaluateSceneLight(
+                light,
                 worldPosition,
                 N, V,
                 albedo, metallic, roughness,
@@ -772,6 +841,8 @@ vec3 ShadeSurface(
                 coatContribution,
                 sheen,
                 sheenContribution);
+            ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
+            directAccum += contribution;
             coatAccum += coatContribution;
             sheenAccum += sheenContribution;
         }
@@ -780,8 +851,9 @@ vec3 ShadeSurface(
     {
         for (uint i = directionalCount; i < ubo.lightCounts.y; ++i)
         {
-            directAccum += EvaluateSceneLight(
-                sceneLights.lights[i],
+            SceneLightData light = sceneLights.lights[i];
+            vec3 contribution = EvaluateSceneLight(
+                light,
                 worldPosition,
                 N, V,
                 albedo, metallic, roughness,
@@ -790,6 +862,8 @@ vec3 ShadeSurface(
                 coatContribution,
                 sheen,
                 sheenContribution);
+            ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
+            directAccum += contribution;
             coatAccum += coatContribution;
             sheenAccum += sheenContribution;
         }

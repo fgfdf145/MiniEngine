@@ -5,6 +5,13 @@
 #ifndef LOCAL_SHADOW_COMMON_GLSL
 #define LOCAL_SHADOW_COMMON_GLSL
 
+// Must match kLocalShadowTileSize, kLocalShadowGuardTexels and kLocalShadowNearPlane in
+// engine/renderer/local_shadows.h; the test checks that they do.
+const float kLocalShadowTileTexels = 512.0f;
+// How far inside its tile, as a fraction of it, a lookup is kept.
+const float kLocalShadowGuardFraction = 2.0f / 512.0f;
+const float kLocalShadowNearPlaneMetres = 0.05f;
+
 // The cube face a direction from the light falls on: its major axis, in the order +X, -X, +Y, -Y,
 // +Z, -Z. BuildLocalShadowCubeFace builds the faces in the same order. Ties go to the earlier axis.
 int SelectCubeFace(vec3 direction)
