@@ -38,7 +38,8 @@ LoadedModelData LoadQuad(const std::filesystem::path& directory, bool mirrored)
     {
         std::ofstream file(directory / (name + ".gltf"));
         file << R"({ "asset": { "version": "2.0" },
-          "buffers": [{ "uri": ")" << name << R"(.bin", "byteLength": 140 }],
+          "buffers": [{ "uri": ")"
+             << name << R"(.bin", "byteLength": 140 }],
           "bufferViews": [
             { "buffer": 0, "byteOffset": 0, "byteLength": 48, "target": 34962 },
             { "buffer": 0, "byteOffset": 48, "byteLength": 48, "target": 34962 },
