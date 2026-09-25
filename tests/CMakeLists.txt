@@ -469,6 +469,32 @@ endif()
 
 set_target_properties(miniengine_brdf_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_ltc_tests
+    ltc_tests.cpp
+)
+miniengine_group_target_sources(miniengine_ltc_tests)
+
+target_link_libraries(miniengine_ltc_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.ltc
+    COMMAND miniengine_ltc_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_ltc_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_ltc_tests>
+            $<TARGET_FILE_DIR:miniengine_ltc_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_ltc_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_taa_jitter_tests
     taa_jitter_tests.cpp
 )

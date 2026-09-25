@@ -7,6 +7,7 @@
 #include "local_shadow_common.glsl"
 #include "anisotropy_common.glsl"
 #include "brdf_common.glsl"
+#include "ltc_common.glsl"
 // The sky's SH irradiance for the ambient term under a physical sky.
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
@@ -49,6 +50,18 @@ layout(set = 0, binding = 14, std430) readonly buffer LocalShadowTileBuffer
     LocalShadowTileData tiles[];
 }
 localShadowTiles;
+
+// The area lights' LTC tables (engine/renderer/ltc_table.h): the inverse matrices and the lobe's
+// (albedo, Fresnel share), 64 x 64 RGBA32F, x = sqrt(1 - N.V), y = roughness.
+layout(set = 0, binding = 15) uniform sampler2D ltcInverseMatrices;
+layout(set = 0, binding = 16) uniform sampler2D ltcAmplitudes;
+
+// Where (roughness, N.V) falls in the LTC tables, clamped to texel centres.
+vec2 LtcTableUv(float roughness, float NdV)
+{
+    const float size = 64.0;
+    return clamp(vec2(sqrt(1.0 - NdV), roughness), vec2(0.5 / size), vec2(1.0 - 0.5 / size));
+}
 
 const float PI = 3.14159265359;
 
@@ -312,28 +325,6 @@ float SmoothDistanceAttenuation(float distance, float range)
 // Rectangular area light
 // ---------------------------------------------------------------------------
 
-// The cosine-weighted solid angle of a polygon, the integral of dot(N, w) over the directions w
-// it covers, in Lambert's closed form: one term per edge. Corners must wind counterclockwise
-// about the light's emitting normal. Polygons crossing the receiver's horizon are not clipped,
-// which overestimates slightly there; the clamp only keeps the result from going negative.
-float RectangleFormFactor(vec3 worldPos, vec3 N, vec3 corners[4])
-{
-    float sum = 0.0;
-    for (int i = 0; i < 4; ++i)
-    {
-        vec3 a = normalize(corners[i] - worldPos);
-        vec3 b = normalize(corners[(i + 1) % 4] - worldPos);
-        vec3 edgeNormal = cross(b, a);
-        float sinAngle = length(edgeNormal);
-        if (sinAngle > 1e-7)
-        {
-            // atan rather than acos(dot): for a small or distant light the edge subtends a tiny
-            // angle, where acos near 1 loses most of its precision in fp32.
-            sum += atan(sinAngle, dot(a, b)) * dot(edgeNormal / sinAngle, N);
-        }
-    }
-    return max(0.5 * sum, 0.0);
-}
 
 // The specular BRDF value of a rectangular light for a surface with normal N and this roughness,
 // at the light's representative point, and the Fresnel term it used (the base's diffuse weight
@@ -382,12 +373,12 @@ vec3 AreaLightSpecular(
     return term * energyNormalization * F;
 }
 
-// A one-sided Lambertian rectangle. Diffuse uses the exact irradiance from RectangleFormFactor.
-// Specular uses a representative point, the point on the rectangle closest to the reflection
-// ray, renormalized for the angle the light subtends so the enlarged highlight does not add
-// energy. As the rectangle shrinks this converges to a point light emitting
-// flux / pi along its normal with a cosine falloff. The coat, when there is one, gets the same
-// treatment with its own normal and roughness, written to coatContribution.
+// A one-sided Lambertian rectangle, through linearly transformed cosines (Heitz et al. 2016,
+// ltc_common.glsl, tables fitted to this lobe by tools/ltc_fit): diffuse integrates the clamped
+// cosine over the rectangle clipped to the horizon, which is its exact irradiance, and the base's
+// and the coat's specular integrate the fitted lobe over it. An anisotropic base, which the
+// isotropic fit cannot follow, keeps the representative point of AreaLightSpecular. Sheen, broad
+// enough not to care, is evaluated toward the centre.
 vec3 EvaluateAreaLight(
     SceneLightData light,
     vec3 worldPos,
@@ -412,66 +403,71 @@ vec3 EvaluateAreaLight(
     if (dot(worldPos - center, lightNormal) <= 0.0)
         return vec3(0.0);
 
-    vec3 corners[4];
-    corners[0] = center - rightAxis * halfSize.x - upAxis * halfSize.y;
-    corners[1] = center + rightAxis * halfSize.x - upAxis * halfSize.y;
-    corners[2] = center + rightAxis * halfSize.x + upAxis * halfSize.y;
-    corners[3] = center - rightAxis * halfSize.x + upAxis * halfSize.y;
+    // Relative to the shaded point, which the LTC integration treats as the origin.
+    vec3 c0 = center - rightAxis * halfSize.x - upAxis * halfSize.y - worldPos;
+    vec3 c1 = center + rightAxis * halfSize.x - upAxis * halfSize.y - worldPos;
+    vec3 c2 = center + rightAxis * halfSize.x + upAxis * halfSize.y - worldPos;
+    vec3 c3 = center - rightAxis * halfSize.x + upAxis * halfSize.y - worldPos;
 
     // Lumens to luminance for a Lambertian emitter: flux / (pi * area).
     float area = 4.0 * halfSize.x * halfSize.y;
-    vec3 luminance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area));
-    float window = RangeWindow(distance(worldPos, center), light.positionAndRange.w);
+    vec3 luminance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / (PI * area)) *
+                     RangeWindow(distance(worldPos, center), light.positionAndRange.w);
 
     if (coat.factor > 0.0)
     {
-        float coatFormFactor = RectangleFormFactor(worldPos, coat.normal, corners);
-        if (coatFormFactor > 0.0)
-        {
-            vec3 coatFresnel;
-            coatContribution = AreaLightSpecular(
-                                   worldPos, coat.normal, V, coat.roughness, NoAnisotropy(), COAT_F0,
-                                   center, lightNormal, rightAxis, upAxis, halfSize, area,
-                                   coatFresnel) *
-                               (luminance * coatFormFactor * window);
-        }
+        vec2 uv = LtcTableUv(coat.roughness, max(dot(coat.normal, V), 0.0));
+        mat3 minv = LtcInverseMatrix(textureLod(ltcInverseMatrices, uv, 0.0), coat.normal, V);
+        vec2 amplitude = textureLod(ltcAmplitudes, uv, 0.0).rg;
+        float coverage = LtcIntegrateQuad(minv * c0, minv * c1, minv * c2, minv * c3);
+        coatContribution = luminance * (coverage * (COAT_F0 * amplitude.x + (1.0 - COAT_F0) * amplitude.y));
     }
 
-    float formFactor = RectangleFormFactor(worldPos, N, corners);
+    // The clipped cosine's integral is the form factor over pi; times pi and the luminance it is the
+    // irradiance.
+    mat3 cosineFrame = LtcInverseMatrix(vec4(1.0, 0.0, 0.0, 1.0), N, V);
+    float formFactor = LtcIntegrateQuad(cosineFrame * c0, cosineFrame * c1, cosineFrame * c2, cosineFrame * c3);
     if (formFactor <= 0.0)
         return vec3(0.0);
+    vec3 irradiance = luminance * (PI * formFactor);
 
-    vec3 irradiance = luminance * formFactor * window;
-
-    // The sheen lobe is broad, so it is evaluated toward the rectangle's centre and weighted by the
-    // form factor's irradiance, which already carries the cosine.
+    vec3 toCentre = normalize(center - worldPos);
+    vec3 centreH = normalize(V + toCentre);
+    float NdV = max(dot(N, V), 1e-4);
     if (HasSheen(sheen))
     {
-        vec3 L = normalize(center - worldPos);
-        vec3 H = normalize(V + L);
-        float NdL = max(dot(N, L), 1e-4);
         sheenContribution = sheen.color *
-                            (DistributionCharlie(sheen.roughness, max(dot(N, H), 0.0)) *
-                             VisibilityNeubelt(max(dot(N, V), 0.0), NdL)) *
+                            (DistributionCharlie(sheen.roughness, max(dot(N, centreH), 0.0)) *
+                             VisibilityNeubelt(NdV, max(dot(N, toCentre), 1e-4))) *
                             irradiance;
     }
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    vec3 F;
-    vec3 specular = AreaLightSpecular(
-                        worldPos, N, V, roughness, anisotropy, F0,
-                        center, lightNormal, rightAxis, upAxis, halfSize, area,
-                        F) *
-                    energyCompensation;
+    vec3 specular;
+    if (anisotropy.strength > 0.0)
+    {
+        vec3 F;
+        specular = AreaLightSpecular(
+                       worldPos, N, V, roughness, anisotropy, F0,
+                       center, lightNormal, rightAxis, upAxis, halfSize, area,
+                       F) *
+                   irradiance;
+    }
+    else
+    {
+        vec2 uv = LtcTableUv(roughness, NdV);
+        mat3 minv = LtcInverseMatrix(textureLod(ltcInverseMatrices, uv, 0.0), N, V);
+        vec2 amplitude = textureLod(ltcAmplitudes, uv, 0.0).rg;
+        float coverage = LtcIntegrateQuad(minv * c0, minv * c1, minv * c2, minv * c3);
+        specular = luminance * coverage * (F0 * amplitude.x + (vec3(1.0) - F0) * amplitude.y);
+    }
+    specular *= energyCompensation;
 
-    // Burley's diffuse, evaluated toward the rectangle's centre and applied to the exact irradiance.
-    vec3 toCentre = normalize(center - worldPos);
-    vec3 centreH = normalize(V + toCentre);
-    vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
-    vec3 diffuse = kD * albedo *
-                   BurleyDiffuse(max(dot(N, V), 1e-4), clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness);
+    // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
+    vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(V, centreH), 0.0), F0)) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
 
-    return (diffuse + specular) * irradiance;
+    return diffuse + specular;
 }
 
 // ---------------------------------------------------------------------------

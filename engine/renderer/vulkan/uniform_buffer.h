@@ -39,6 +39,9 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding prefiltered;
     // Binding 9: the DFG table, in SHADER_READ_ONLY_OPTIMAL.
     TextureDescriptorBinding brdfLut;
+    // Bindings 15 and 16: the area lights' LTC tables (ltc_table.h), in SHADER_READ_ONLY_OPTIMAL.
+    TextureDescriptorBinding ltcInverseMatrices;
+    TextureDescriptorBinding ltcAmplitudes;
 };
 
 struct MaterialTextureBinding
@@ -206,7 +209,8 @@ static_assert(
 
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
 // 1, the scene lights at binding 10, the light cluster grid at binding 11, each draw's material at
-// binding 12, the local shadow atlas at binding 13 and its tiles at binding 14, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// binding 12, the local shadow atlas at binding 13 and its tiles at binding 14, the LTC tables at
+// bindings 15 and 16, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds

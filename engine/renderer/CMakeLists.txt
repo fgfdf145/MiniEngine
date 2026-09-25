@@ -19,6 +19,8 @@ add_library(engine_render_core
     light_clusters.cpp
     light_clusters.h
     local_shadows.cpp
+    ltc_table.cpp
+    ltc_table.h
     local_shadows.h
     material.h
     material_pipeline.cpp
@@ -189,6 +191,7 @@ set(MINIENGINE_SHADER_INCLUDES
     local_shadow_common.glsl
     anisotropy_common.glsl
     brdf_common.glsl
+    ltc_common.glsl
     material_layers.glsl
     pre_exposure.glsl
     scene_common.glsl

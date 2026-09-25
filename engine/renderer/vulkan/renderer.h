@@ -224,6 +224,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The sky prefiltered for the specular lobe, and the DFG table it is weighted by.
     std::unique_ptr<VulkanEnvironmentProbe> m_environmentProbe;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;
+    // The area lights' LTC tables (ltc_table.h), one mip each, RGBA32F.
+    std::unique_ptr<VulkanTexture> m_ltcInverseMatrices;
+    std::unique_ptr<VulkanTexture> m_ltcAmplitudes;
     // Set 0 binding 6 when no HDRI is loaded.
     std::unique_ptr<VulkanTexture> m_defaultEnvironmentMap;
     // The loaded HDRI and the scene path it came from; empty until one loads.

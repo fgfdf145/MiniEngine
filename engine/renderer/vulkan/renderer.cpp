@@ -4,6 +4,7 @@
 #include "viewport_capture.h"
 
 #include <engine/renderer/environment_brdf.h>
+#include <engine/renderer/ltc_table.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/renderer/scene_lighting.h>
 
@@ -991,6 +992,19 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, kEnvironmentBrdfSampleCount),
         uploadBatch);
+    // The LTC tables; like the DFG table, the shader clamps its lookups to texel centres.
+    const auto ltcTexture = [](const std::array<float, kLtcTableSize * kLtcTableSize * 4>& table)
+    {
+        FloatTextureData data{};
+        data.width = static_cast<int>(kLtcTableSize);
+        data.height = static_cast<int>(kLtcTableSize);
+        data.pixels.assign(table.begin(), table.end());
+        return data;
+    };
+    m_ltcInverseMatrices = std::make_unique<VulkanTexture>(
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcInverseMatrices), uploadBatch);
+    m_ltcAmplitudes = std::make_unique<VulkanTexture>(
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
 }
 
@@ -1024,6 +1038,8 @@ void VulkanRenderer::DestroyDeviceResources()
     m_environmentMapPath.clear();
     m_defaultEnvironmentMap.reset();
     m_environmentBrdfLut.reset();
+    m_ltcInverseMatrices.reset();
+    m_ltcAmplitudes.reset();
     m_environmentProbe.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
@@ -1047,6 +1063,8 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
     bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};
+    bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetSampler()};
+    bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetSampler()};
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;
