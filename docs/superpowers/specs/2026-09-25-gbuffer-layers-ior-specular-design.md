@@ -86,6 +86,24 @@ Materials that use none of them render as before. The user accepts by the render
 3. A sphere with both coat and sheen shows both; deferred and forward agree.
 4. Sponza: within the run-to-run noise of the previous build.
 
+## Amendments During Implementation
+
+- **The shading id's values carried over.** Clearcoat 1 and sheen 2 keep their numbers as flags,
+  anisotropy keeps 4; only their meaning changed from "the one layer" to "one of the layers".
+  `EncodeShadingModel` became `EncodeShadingFlags`.
+- **The coat's specular AA** follows its own normal map when it has one (`NormalVariation` of the
+  coat normal, still taken in uniform control flow).
+- **Device selection skips** a device with fewer than eight colour attachments and logs why,
+  instead of failing later in pipeline creation.
+- **Acceptance.** Sponza against the LTC build: 3.9% of channels differ, as two runs of one build
+  do. Test spheres under the default sun: IOR 1.33, 1.5 and 2.4 reflect progressively more of the
+  sky; a specular colour of (3, 1.5, 0.3) warms a white dielectric's highlight; specular 0 removes
+  it; a rippled coat normal map over a smooth base breaks the coat's reflection into the ripple
+  pattern while the same coat without the map keeps one dot, and a rippled base under a smooth coat
+  keeps the coat's single dot over the base's soft ripples; coat with sheen and coat with sheen and
+  anisotropy render all their layers. Forward-only and deferred agree apart from the deferred
+  path's screen-space reflections.
+
 ## Out of Scope
 
 - Transmission and volume (phase 4) also read the IOR; this phase only imports and stores it.
