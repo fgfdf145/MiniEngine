@@ -56,7 +56,16 @@ struct MaterialTextureBinding
     TextureDescriptorBinding secondaryOcclusion;
     TextureDescriptorBinding secondaryEmissive;
     TextureDescriptorBinding blendMask;
+    TextureDescriptorBinding clearcoat;
+    TextureDescriptorBinding clearcoatRoughness;
+    TextureDescriptorBinding sheenColor;
+    TextureDescriptorBinding sheenRoughness;
+    TextureDescriptorBinding anisotropy;
 };
+
+// Set 1's combined image samplers, in binding order: the six primary maps, layer B's six, the
+// blend mask, then the five layer maps (material_layers.glsl).
+inline constexpr uint32_t kMaterialTextureBindingCount = 18;
 
 // Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
 // positionAndRange : xyz = world position, w = effective range (metres)

@@ -8,6 +8,7 @@
 #include <engine/asset/model_loader.h>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <unordered_set>
@@ -122,6 +123,11 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         material.roughnessTexturePath = resolveTex(rawMaterial.roughnessTexturePath);
         material.occlusionTexturePath = resolveTex(rawMaterial.occlusionTexturePath);
         material.emissiveTexturePath = resolveTex(rawMaterial.emissiveTexturePath);
+        material.clearcoatTexturePath = resolveTex(rawMaterial.clearcoatTexturePath);
+        material.clearcoatRoughnessTexturePath = resolveTex(rawMaterial.clearcoatRoughnessTexturePath);
+        material.sheenColorTexturePath = resolveTex(rawMaterial.sheenColorTexturePath);
+        material.sheenRoughnessTexturePath = resolveTex(rawMaterial.sheenRoughnessTexturePath);
+        material.anisotropyTexturePath = resolveTex(rawMaterial.anisotropyTexturePath);
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
@@ -191,7 +197,14 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         const ShadingModel shadingModel = clearcoat > 0.0f       ? ShadingModel::Clearcoat
                                           : sheenStrength > 0.0f ? ShadingModel::Sheen
                                                                  : ShadingModel::DefaultLit;
-        renderSubmesh.material.shadingModel[0] = static_cast<uint32_t>(shadingModel);
+        // The anisotropy angle shares GB5 with a coat but not with a sheen, which fills it.
+        const float anisotropyStrength = std::clamp(material.anisotropyStrength, 0.0f, 1.0f);
+        const bool anisotropic = anisotropyStrength > 0.0f && shadingModel != ShadingModel::Sheen;
+        renderSubmesh.material.shadingModel[0] =
+            static_cast<uint32_t>(shadingModel) | (anisotropic ? kShadingModelAnisotropyBit : 0u);
+        renderSubmesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
+        renderSubmesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
+        renderSubmesh.material.anisotropyFactors[2] = std::sin(material.anisotropyRotation);
         renderSubmesh.material.clearcoatFactors[0] = clearcoat;
         renderSubmesh.material.clearcoatFactors[1] = std::clamp(material.clearcoatRoughnessFactor, 0.0f, 1.0f);
         renderSubmesh.name = submesh.name;
@@ -224,6 +237,11 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
                                                            ? renderSubmesh.textures.emissive
                                                            : material.blendGraph.secondaryEmissiveTexturePath;
             renderSubmesh.textures.blendMask = material.blendGraph.blendMaskTexturePath;
+            renderSubmesh.textures.clearcoat = resolveTex(material.clearcoatTexturePath);
+            renderSubmesh.textures.clearcoatRoughness = resolveTex(material.clearcoatRoughnessTexturePath);
+            renderSubmesh.textures.sheenColor = resolveTex(material.sheenColorTexturePath);
+            renderSubmesh.textures.sheenRoughness = resolveTex(material.sheenRoughnessTexturePath);
+            renderSubmesh.textures.anisotropy = resolveTex(material.anisotropyTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }

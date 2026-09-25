@@ -854,6 +854,10 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.sheenColorFactor[1],
                 selectedMaterial.pbr.sheenColorFactor[2],
                 selectedMaterial.pbr.sheenRoughnessFactor);
+            ImGui::Text(
+                "Anisotropy %.2f  Rotation %.1f deg",
+                selectedMaterial.pbr.anisotropyStrength,
+                selectedMaterial.pbr.anisotropyRotation * (180.0f / 3.14159265f));
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

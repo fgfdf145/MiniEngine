@@ -844,11 +844,23 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= DragFloatInRange("Clearcoat Roughness", &pbr.clearcoatRoughnessFactor, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::ColorEdit3("Sheen Color", pbr.sheenColorFactor);
     changed |= DragFloatInRange("Sheen Roughness", &pbr.sheenRoughnessFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Anisotropy", &pbr.anisotropyStrength, 0.0f, 1.0f, "%.2f");
+    // Stored in radians as glTF has it; edited in degrees.
+    float rotationDegrees = pbr.anisotropyRotation * (180.0f / 3.14159265f);
+    if (ImGui::DragFloat("Anisotropy Rotation", &rotationDegrees, 1.0f, -180.0f, 180.0f, "%.1f deg"))
+    {
+        pbr.anisotropyRotation = rotationDegrees * (3.14159265f / 180.0f);
+        changed = true;
+    }
     // The G-buffer holds one of the two layers per pixel, and the coat is the one kept.
     const float sheenStrength = std::max({pbr.sheenColorFactor[0], pbr.sheenColorFactor[1], pbr.sheenColorFactor[2]});
     if (pbr.clearcoatFactor > 0.0f && sheenStrength > 0.0f)
     {
         ImGui::TextDisabled("Clearcoat and sheen together: only the clearcoat is rendered.");
+    }
+    else if (sheenStrength > 0.0f && pbr.anisotropyStrength > 0.0f)
+    {
+        ImGui::TextDisabled("Sheen and anisotropy together: the base is rendered isotropic.");
     }
     return changed;
 }

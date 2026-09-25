@@ -25,6 +25,7 @@ layout(set = 1, binding = 9) uniform sampler2D secondaryRoughnessTexture;
 layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
+#include "material_layers.glsl"
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -108,22 +109,30 @@ void main()
     // it lives in pbr_common.glsl so the forward comparison path and the deferred path cannot
     // drift.
     vec3 emissive = emissiveSample * material.emissiveFactor;
-    // The forward path reads the coat from the material, where the deferred path reads it from GB5.
+    // The forward path reads the layers from the material and its maps, where the deferred path
+    // reads them from GB5.
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
-    if (material.shadingModel.x == SHADING_MODEL_CLEARCOAT)
+    AnisotropyParams anisotropy = NoAnisotropy();
+    if (layers.layer == SHADING_MODEL_CLEARCOAT)
     {
-        coat.factor = clamp(material.clearcoatFactors.x, 0.0, 1.0);
-        coat.roughness = FilterRoughnessForSpecularAA(clamp(material.clearcoatFactors.y, 0.04, 1.0), coatNormalVariation);
+        coat.factor = layers.coatFactor;
+        coat.roughness = FilterRoughnessForSpecularAA(clamp(layers.coatRoughness, 0.04, 1.0), coatNormalVariation);
         coat.normal = geoNormal;
     }
-    else if (material.shadingModel.x == SHADING_MODEL_SHEEN)
+    else if (layers.layer == SHADING_MODEL_SHEEN)
     {
-        sheen.color = clamp(material.sheenFactors.rgb, 0.0, 1.0);
-        sheen.roughness = clamp(material.sheenFactors.a, 0.04, 1.0);
+        sheen.color = layers.sheenColor;
+        sheen.roughness = clamp(layers.sheenRoughness, 0.04, 1.0);
+    }
+    if (layers.anisotropic && layers.layer != SHADING_MODEL_SHEEN)
+    {
+        anisotropy.tangent = layers.anisotropyTangent;
+        anisotropy.strength = layers.anisotropyStrength;
     }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
-    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, vec4(0.0));
+    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, vec4(0.0));
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.

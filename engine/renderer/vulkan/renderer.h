@@ -77,6 +77,11 @@ struct MaterialTextureSlots
     uint32_t secondaryOcclusion = 0;
     uint32_t secondaryEmissive = 0;
     uint32_t blendMask = 0;
+    uint32_t clearcoat = 0;
+    uint32_t clearcoatRoughness = 0;
+    uint32_t sheenColor = 0;
+    uint32_t sheenRoughness = 0;
+    uint32_t anisotropy = 0;
 };
 
 // One texture of a content upload in progress: either created by that upload, or a live texture

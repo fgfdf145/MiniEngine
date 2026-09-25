@@ -164,7 +164,7 @@ std::filesystem::path TextureCacheDirectory()
 }
 
 // Every material texture file a textured submesh samples, with the usage its slot gives it.
-// UploadSceneResources assigns the same thirteen slots with the same usages.
+// UploadSceneResources assigns the same slots with the same usages.
 template <typename Visit>
 void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
 {
@@ -182,6 +182,11 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.secondaryOcclusion, TextureUsage::Data);
     visit(textures.secondaryEmissive, TextureUsage::Color);
     visit(textures.blendMask, TextureUsage::Data);
+    visit(textures.clearcoat, TextureUsage::Data);
+    visit(textures.clearcoatRoughness, TextureUsage::Data);
+    visit(textures.sheenColor, TextureUsage::Color);
+    visit(textures.sheenRoughness, TextureUsage::Data);
+    visit(textures.anisotropy, TextureUsage::Data);
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -249,7 +254,12 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             {textures[slots.secondaryRoughness]->GetImageView(), textures[slots.secondaryRoughness]->GetSampler()},
             {textures[slots.secondaryOcclusion]->GetImageView(), textures[slots.secondaryOcclusion]->GetSampler()},
             {textures[slots.secondaryEmissive]->GetImageView(), textures[slots.secondaryEmissive]->GetSampler()},
-            {textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler()}});
+            {textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler()},
+            {textures[slots.clearcoat]->GetImageView(), textures[slots.clearcoat]->GetSampler()},
+            {textures[slots.clearcoatRoughness]->GetImageView(), textures[slots.clearcoatRoughness]->GetSampler()},
+            {textures[slots.sheenColor]->GetImageView(), textures[slots.sheenColor]->GetSampler()},
+            {textures[slots.sheenRoughness]->GetImageView(), textures[slots.sheenRoughness]->GetSampler()},
+            {textures[slots.anisotropy]->GetImageView(), textures[slots.anisotropy]->GetSampler()}});
     }
 
     return bindings;
@@ -1488,13 +1498,19 @@ void VulkanRenderer::UploadSceneResources()
     const uint32_t defaultOcclusionIndex = acquireDefault("__default_occlusion__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
     const uint32_t defaultEmissiveIndex = acquireDefault("__default_emissive__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
     const uint32_t defaultBlendMaskIndex = acquireDefault("__default_blend_mask__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    // The layer maps multiply their factors, so white leaves the factors alone; the anisotropy map
+    // is a direction, and (1, 0.5) is +X, the tangent, at full strength.
+    const uint32_t defaultLayerIndex = acquireDefault("__default_layer__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    const uint32_t defaultSheenColorIndex = acquireDefault("__default_sheen_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+    const uint32_t defaultAnisotropyIndex = acquireDefault("__default_anisotropy__", CreateSolidTexture(255, 128, 255, 255), VulkanTextureFormat::LinearData);
 
     const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
     newMaterialTextureSlots.push_back(MaterialTextureSlots{
         defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
         defaultOcclusionIndex, defaultEmissiveIndex,
         defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
-        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex});
+        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
+        defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex});
 
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
@@ -1532,6 +1548,11 @@ void VulkanRenderer::UploadSceneResources()
         slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, TextureUsage::Data, slots.occlusion);
         slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, TextureUsage::Color, slots.emissive);
         slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, TextureUsage::Data, defaultBlendMaskIndex);
+        slots.clearcoat = loadTextureIndex(cpuRenderSubmesh.textures.clearcoat, TextureUsage::Data, defaultLayerIndex);
+        slots.clearcoatRoughness = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatRoughness, TextureUsage::Data, defaultLayerIndex);
+        slots.sheenColor = loadTextureIndex(cpuRenderSubmesh.textures.sheenColor, TextureUsage::Color, defaultSheenColorIndex);
+        slots.sheenRoughness = loadTextureIndex(cpuRenderSubmesh.textures.sheenRoughness, TextureUsage::Data, defaultLayerIndex);
+        slots.anisotropy = loadTextureIndex(cpuRenderSubmesh.textures.anisotropy, TextureUsage::Data, defaultAnisotropyIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);

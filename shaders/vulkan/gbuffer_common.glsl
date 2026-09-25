@@ -26,13 +26,18 @@ vec3 DecodeNormalOctahedral(vec2 encoded)
     return normalize(n);
 }
 
-// The shading model id in GB2.a: ShadingModel in engine/renderer/material.h. Stored as id / 255 in
-// the UNORM channel, so it round-trips exactly for every id below 256.
+// The shading model id in GB2.a: ShadingModel in engine/renderer/material.h in bits 0-1 (the layer
+// over the base) and SHADING_MODEL_ANISOTROPY_BIT. Stored as id / 255 in the UNORM channel, so it
+// round-trips exactly for every id below 256.
 const uint SHADING_MODEL_DEFAULT_LIT = 0u;
 // GB5.r = clearcoat factor, GB5.g = clearcoat roughness.
 const uint SHADING_MODEL_CLEARCOAT = 1u;
 // GB5.rgb = sheen colour, GB5.a = sheen roughness.
 const uint SHADING_MODEL_SHEEN = 2u;
+const uint SHADING_MODEL_LAYER_MASK = 3u;
+// An anisotropic base (lit or clearcoat layer only): GB5.b = the direction's angle over pi in the
+// frame OrthonormalTangent / OrthonormalBitangent build from the shading normal, GB5.a = strength.
+const uint SHADING_MODEL_ANISOTROPY_BIT = 4u;
 
 float EncodeShadingModel(uint shadingModel)
 {

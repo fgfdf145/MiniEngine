@@ -28,6 +28,12 @@ struct MaterialTexturePaths
     std::string secondaryOcclusion;
     std::string secondaryEmissive;
     std::string blendMask;
+    // The layer maps; only the primary layer has them.
+    std::string clearcoat;
+    std::string clearcoatRoughness;
+    std::string sheenColor;
+    std::string sheenRoughness;
+    std::string anisotropy;
 };
 
 struct CpuRenderSubmesh

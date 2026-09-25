@@ -355,7 +355,7 @@ VkDescriptorSetLayout VulkanFrameDescriptorSetLayout::GetHandle() const
 VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 13> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, kMaterialTextureBindingCount> bindings{};
     for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
     {
         bindings[bindingIndex].binding = bindingIndex;
@@ -513,7 +513,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * 13 + imageCount * 8},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 8},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 6}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -672,7 +672,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             const size_t descriptorIndex =
                 static_cast<size_t>(i) * m_materialBindings.size() + materialIndex;
 
-            const std::array<TextureDescriptorBinding, 13> textureBindings = {
+            const std::array<TextureDescriptorBinding, kMaterialTextureBindingCount> textureBindings = {
                 materialBinding.baseColor,
                 materialBinding.normal,
                 materialBinding.metallic,
@@ -685,9 +685,14 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 materialBinding.secondaryRoughness,
                 materialBinding.secondaryOcclusion,
                 materialBinding.secondaryEmissive,
-                materialBinding.blendMask};
+                materialBinding.blendMask,
+                materialBinding.clearcoat,
+                materialBinding.clearcoatRoughness,
+                materialBinding.sheenColor,
+                materialBinding.sheenRoughness,
+                materialBinding.anisotropy};
 
-            std::array<VkDescriptorImageInfo, 13> imageInfos{};
+            std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)
             {
                 imageInfos[textureBindingIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -695,7 +700,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 imageInfos[textureBindingIndex].sampler = textureBindings[textureBindingIndex].sampler;
             }
 
-            std::array<VkWriteDescriptorSet, 13> descriptorWrites{};
+            std::array<VkWriteDescriptorSet, kMaterialTextureBindingCount> descriptorWrites{};
             for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(descriptorWrites.size()); ++bindingIndex)
             {
                 descriptorWrites[bindingIndex].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

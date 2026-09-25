@@ -188,6 +188,7 @@ set(MINIENGINE_SHADER_INCLUDES
     ssr_common.glsl
     local_shadow_common.glsl
     anisotropy_common.glsl
+    material_layers.glsl
     pre_exposure.glsl
     scene_common.glsl
     pbr_common.glsl

@@ -6,6 +6,7 @@
 #include "normal_map.glsl"
 #include "material_common.glsl"
 #include "specular_aa.glsl"
+#include "anisotropy_common.glsl"
 
 layout(constant_id = 0) const bool kAlphaMask = false;
 
@@ -22,6 +23,7 @@ layout(set = 1, binding = 9) uniform sampler2D secondaryRoughnessTexture;
 layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
+#include "material_layers.glsl"
 
 // triangle.vert also writes world position at location 4. The G-buffer does not store it; the
 // lighting pass reconstructs it from depth, so the input is deliberately not declared here.
@@ -115,16 +117,27 @@ void main()
     // It is already face-flipped, so the lighting pass uses it as decoded.
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
     outSurface = vec4(metallic, roughness, ao, EncodeShadingModel(material.shadingModel.x));
-    // Clearcoat keeps its factor and roughness here, sheen its colour and roughness; every other
-    // model writes zeros.
+    // Clearcoat keeps its factor and roughness in .rg, sheen its colour and roughness in .rgba; an
+    // anisotropic base puts its angle and strength in .ba beside a coat or on its own. Unused
+    // channels are zero.
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
     // The coat's roughness is filtered from the floor the lighting pass would give it; with the
     // filter off it is stored as the material has it, as before.
     float coatRoughness = ubo.specularAntiAliasing.x > 0.5
-                              ? FilterRoughnessForSpecularAA(clamp(material.clearcoatFactors.y, 0.04, 1.0), coatNormalVariation)
-                              : material.clearcoatFactors.y;
-    outCustom = material.shadingModel.x == SHADING_MODEL_CLEARCOAT ? vec4(material.clearcoatFactors.x, coatRoughness, 0.0, 0.0)
-                : material.shadingModel.x == SHADING_MODEL_SHEEN   ? material.sheenFactors
-                                                                   : vec4(0.0);
+                              ? FilterRoughnessForSpecularAA(clamp(layers.coatRoughness, 0.04, 1.0), coatNormalVariation)
+                              : layers.coatRoughness;
+    vec4 custom = layers.layer == SHADING_MODEL_CLEARCOAT ? vec4(layers.coatFactor, coatRoughness, 0.0, 0.0)
+                  : layers.layer == SHADING_MODEL_SHEEN   ? vec4(layers.sheenColor, layers.sheenRoughness)
+                                                          : vec4(0.0);
+    if (layers.anisotropic && layers.layer != SHADING_MODEL_SHEEN)
+    {
+        // The angle is measured in the frame the lighting pass rebuilds from the normal it decodes,
+        // so it is built here from that same normal: N through GB1's half float octahedral encoding.
+        vec3 storedN = DecodeNormalOctahedral(unpackHalf2x16(packHalf2x16(EncodeNormalOctahedral(N))));
+        vec3 tangent = normalize(layers.anisotropyTangent - storedN * dot(storedN, layers.anisotropyTangent));
+        custom.ba = vec2(EncodeAnisotropyAngle(storedN, tangent), layers.anisotropyStrength);
+    }
+    outCustom = custom;
     // Pre-exposed like the HDR target (see pre_exposure.glsl), so an emissive far brighter than
     // B10G11R11's 65000 still fits; the lighting pass divides it back into physical units.
     outEmissive = vec4(emissiveSample * material.emissiveFactor * ubo.exposure.x, 0.0);

@@ -46,12 +46,17 @@ struct BlendGraphTexturePathRow
     const std::string MaterialTextureBlendGraph::* path = nullptr;
 };
 
-constexpr std::array<MaterialTexturePathRow, 6> kPrimaryMaterialTextureRows = {{{"Base Color", &ModelImportedMaterialInfo::baseColorTexturePath},
-                                                                                {"Normal", &ModelImportedMaterialInfo::normalTexturePath},
-                                                                                {"Metallic", &ModelImportedMaterialInfo::metallicTexturePath},
-                                                                                {"Roughness", &ModelImportedMaterialInfo::roughnessTexturePath},
-                                                                                {"Occlusion", &ModelImportedMaterialInfo::occlusionTexturePath},
-                                                                                {"Emissive", &ModelImportedMaterialInfo::emissiveTexturePath}}};
+constexpr std::array<MaterialTexturePathRow, 11> kPrimaryMaterialTextureRows = {{{"Base Color", &ModelImportedMaterialInfo::baseColorTexturePath},
+                                                                                 {"Normal", &ModelImportedMaterialInfo::normalTexturePath},
+                                                                                 {"Metallic", &ModelImportedMaterialInfo::metallicTexturePath},
+                                                                                 {"Roughness", &ModelImportedMaterialInfo::roughnessTexturePath},
+                                                                                 {"Occlusion", &ModelImportedMaterialInfo::occlusionTexturePath},
+                                                                                 {"Emissive", &ModelImportedMaterialInfo::emissiveTexturePath},
+                                                                                 {"Clearcoat", &ModelImportedMaterialInfo::clearcoatTexturePath},
+                                                                                 {"Clearcoat Roughness", &ModelImportedMaterialInfo::clearcoatRoughnessTexturePath},
+                                                                                 {"Sheen Color", &ModelImportedMaterialInfo::sheenColorTexturePath},
+                                                                                 {"Sheen Roughness", &ModelImportedMaterialInfo::sheenRoughnessTexturePath},
+                                                                                 {"Anisotropy", &ModelImportedMaterialInfo::anisotropyTexturePath}}};
 
 constexpr std::array<BlendGraphTexturePathRow, 7> kSecondaryMaterialTextureRows = {{{"Blend Mask", &MaterialTextureBlendGraph::blendMaskTexturePath},
                                                                                     {"Layer B Base", &MaterialTextureBlendGraph::secondaryBaseColorTexturePath},

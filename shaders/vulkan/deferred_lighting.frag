@@ -79,25 +79,34 @@ void main()
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     // GB5 means something only for the models that write it, so it is read only for them.
     uint shadingModel = DecodeShadingModel(surface.a);
+    uint layer = shadingModel & SHADING_MODEL_LAYER_MASK;
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
-    if (shadingModel == SHADING_MODEL_CLEARCOAT)
+    AnisotropyParams anisotropy = NoAnisotropy();
+    if (shadingModel != SHADING_MODEL_DEFAULT_LIT)
     {
-        vec2 coatFactors = texture(gbufferCustom, fragTexCoord).rg;
-        coat.factor = coatFactors.x;
-        coat.roughness = clamp(coatFactors.y, 0.04, 1.0);
-        coat.normal = geoNormal;
-    }
-    else if (shadingModel == SHADING_MODEL_SHEEN)
-    {
-        vec4 sheenFactors = texture(gbufferCustom, fragTexCoord);
-        sheen.color = sheenFactors.rgb;
-        sheen.roughness = clamp(sheenFactors.a, 0.04, 1.0);
+        vec4 custom = texture(gbufferCustom, fragTexCoord);
+        if (layer == SHADING_MODEL_CLEARCOAT)
+        {
+            coat.factor = custom.r;
+            coat.roughness = clamp(custom.g, 0.04, 1.0);
+            coat.normal = geoNormal;
+        }
+        else if (layer == SHADING_MODEL_SHEEN)
+        {
+            sheen.color = custom.rgb;
+            sheen.roughness = clamp(custom.a, 0.04, 1.0);
+        }
+        if ((shadingModel & SHADING_MODEL_ANISOTROPY_BIT) != 0u && layer != SHADING_MODEL_SHEEN)
+        {
+            anisotropy.tangent = DecodeAnisotropyTangent(N, custom.b);
+            anisotropy.strength = custom.a;
+        }
     }
     // Screen-space reflection in HDR target units; ShadeSurface wants physical radiance.
     vec4 reflection = texture(sceneReflections, fragTexCoord);
     reflection.rgb *= ubo.exposure.y;
-    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, reflection);
+    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, anisotropy, reflection);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
     // composites over this with an RGB-only write mask. Pre-exposed on the way out (see
