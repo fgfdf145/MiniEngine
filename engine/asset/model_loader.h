@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -73,6 +74,10 @@ struct ModelSubmeshData
     glm::vec3 boundsCenter{0.0f};
     float boundsRadius = 0.0f;
     uint32_t materialIndex = 0;
+    // KHR_materials_variants: the material each of the model's variants gives this primitive, one
+    // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
+    // has no mapping). Empty for a model without variants.
+    std::vector<uint32_t> variantMaterialIndices;
     bool hasTexCoords = false;
     bool hasNormals = false;
     bool hasTangents = false;
@@ -83,6 +88,8 @@ struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
     std::vector<ModelSubmeshData> submeshes;
+    // KHR_materials_variants' names, in the glTF's order.
+    std::vector<std::string> materialVariants;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
     glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;
@@ -92,6 +99,14 @@ struct LoadedModelData
         return !submeshes.empty();
     }
 };
+
+// The material a submesh draws with under a variant (an index into materialVariants); its own
+// material for no variant or an index past its list.
+uint32_t ResolveSubmeshMaterialIndex(const ModelSubmeshData& submesh, std::optional<uint32_t> variantIndex);
+
+// The index of the variant with this name; nullopt for the empty name (the default bindings) and
+// for a name the model does not have.
+std::optional<uint32_t> FindMaterialVariant(const LoadedModelData& model, const std::string& name);
 
 // Invoked from the loading thread with the overall load fraction in [0, 1].
 // Implementations must be cheap and thread-safe (typically an atomic store).

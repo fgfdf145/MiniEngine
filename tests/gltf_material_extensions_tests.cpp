@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -710,6 +711,97 @@ void SidecarKeepsClearcoat()
 }
 }
 
+// Two primitives over three materials and three variants: the first primitive maps "red" and
+// "blue", the second only "blue", with a bad material index and a repeated variant along the way.
+std::filesystem::path WriteVariantsFixture(const std::filesystem::path& directory, bool withExtension)
+{
+    const std::filesystem::path path = directory / "variants.gltf";
+    const std::string rootExtension =
+        withExtension ? R"("extensionsUsed": ["KHR_materials_variants"],
+      "extensions": { "KHR_materials_variants": { "variants": [{ "name": "red" }, { "name": "blue" }, { "name": " " }] } },)"
+                      : "";
+    const std::string firstMappings =
+        withExtension ? R"(, "extensions": { "KHR_materials_variants": { "mappings": [
+            { "material": 1, "variants": [0] },
+            { "material": 2, "variants": [1] },
+            { "material": 7, "variants": [2] },
+            { "material": 0, "variants": [0, 5] }
+          ] } })"
+                      : "";
+    const std::string secondMappings =
+        withExtension ? R"(, "extensions": { "KHR_materials_variants": { "mappings": [
+            { "material": 2, "variants": [1] }
+          ] } })"
+                      : "";
+    std::ofstream file(path);
+    file << R"({ "asset": { "version": "2.0" }, )" << rootExtension << R"(
+      "materials": [{ "name": "base" }, { "name": "red" }, { "name": "blue" }],
+      "buffers": [{ "uri": "variants.bin", "byteLength": 42 }],
+      "bufferViews": [
+        { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
+        { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 }
+      ],
+      "accessors": [
+        { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
+        { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+      ],
+      "meshes": [{ "primitives": [
+        { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 )"
+         << firstMappings << R"( },
+        { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 )"
+         << secondMappings << R"( }
+      ]}],
+      "nodes": [{ "mesh": 0 }], "scenes": [{ "nodes": [0] }], "scene": 0 })";
+    file.close();
+
+    std::ofstream buffer(directory / "variants.bin", std::ios::binary);
+    const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    const std::array<uint16_t, 3> indices = {0, 1, 2};
+    buffer.write(reinterpret_cast<const char*>(positions.data()), static_cast<std::streamsize>(sizeof(positions)));
+    buffer.write(reinterpret_cast<const char*>(indices.data()), static_cast<std::streamsize>(sizeof(indices)));
+    return path;
+}
+
+void ReadsMaterialVariants()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(WriteVariantsFixture(directory.path, true).string());
+    Require(model.materialVariants.size() == 3, "three variants were not read");
+    Require(model.materialVariants[0] == "red" && model.materialVariants[1] == "blue", "variant names were not read");
+    Require(model.materialVariants[2] == "Variant 2", "a blank variant name was not replaced by its index");
+    Require(model.submeshes.size() == 2, "the fixture's two primitives were not loaded");
+
+    const ModelSubmeshData& first = model.submeshes[0];
+    Require(first.variantMaterialIndices.size() == 3, "the first primitive has no entry per variant");
+    Require(first.variantMaterialIndices[0] == 1, "red keeps its first mapping, material 1");
+    Require(first.variantMaterialIndices[1] == 2, "blue maps the first primitive to material 2");
+    Require(first.variantMaterialIndices[2] == 0, "an out-of-range material leaves the primitive's own");
+
+    const ModelSubmeshData& second = model.submeshes[1];
+    Require(second.variantMaterialIndices.size() == 3, "the second primitive has no entry per variant");
+    Require(second.variantMaterialIndices[0] == 0, "an unmapped variant keeps the primitive's material");
+    Require(second.variantMaterialIndices[1] == 2, "blue maps the second primitive to material 2");
+
+    const LoadedModelData plain = ModelLoader::LoadModel(WriteVariantsFixture(directory.path, false).string());
+    Require(plain.materialVariants.empty(), "a model without the extension has variants");
+    Require(plain.submeshes[0].variantMaterialIndices.empty(), "a primitive without mappings has variant entries");
+}
+
+void ResolvesVariantMaterials()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(WriteVariantsFixture(directory.path, true).string());
+    const ModelSubmeshData& first = model.submeshes[0];
+    Require(ResolveSubmeshMaterialIndex(first, std::nullopt) == 0, "no variant is not the default material");
+    Require(ResolveSubmeshMaterialIndex(first, 0u) == 1, "red does not resolve to material 1");
+    Require(ResolveSubmeshMaterialIndex(first, 1u) == 2, "blue does not resolve to material 2");
+    Require(ResolveSubmeshMaterialIndex(first, 9u) == 0, "a variant past the list is not the default material");
+
+    Require(FindMaterialVariant(model, "blue") == std::optional<uint32_t>(1u), "blue was not found");
+    Require(!FindMaterialVariant(model, "green").has_value(), "an unknown variant was found");
+    Require(!FindMaterialVariant(model, "").has_value(), "the empty name is not the default");
+}
+
 int main()
 {
     try
@@ -729,6 +821,8 @@ int main()
         ReadsTextureTransformsAndUnlit();
         TransformRowsFollowGltf();
         ReadsSecondUvSet();
+        ReadsMaterialVariants();
+        ResolvesVariantMaterials();
     }
     catch (const std::exception& error)
     {

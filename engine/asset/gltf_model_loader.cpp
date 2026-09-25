@@ -1034,6 +1034,83 @@ std::string BuildSubmeshName(
     return "primitive_" + std::to_string(primitiveIndex);
 }
 
+// KHR_materials_variants on the root: the variants' names, an unnamed one called by its index.
+std::vector<std::string> ReadMaterialVariantNames(const tinygltf::Model& model)
+{
+    std::vector<std::string> names;
+    const auto found = model.extensions.find("KHR_materials_variants");
+    if (found == model.extensions.end() || !found->second.Has("variants") || !found->second.Get("variants").IsArray())
+    {
+        return names;
+    }
+    const tinygltf::Value& variants = found->second.Get("variants");
+    for (size_t index = 0; index < variants.ArrayLen(); ++index)
+    {
+        const tinygltf::Value& variant = variants.Get(static_cast<int>(index));
+        std::string name;
+        if (variant.Has("name") && variant.Get("name").IsString())
+        {
+            name = variant.Get("name").Get<std::string>();
+        }
+        const bool blank = std::all_of(name.begin(), name.end(), [](unsigned char c)
+                                       {
+                                           return std::isspace(c) != 0;
+                                       });
+        names.push_back(blank ? "Variant " + std::to_string(index) : name);
+    }
+    return names;
+}
+
+// KHR_materials_variants on a primitive: one material per variant, starting from the primitive's
+// own. A mapping with an out-of-range index is skipped; a variant mapped twice keeps its first.
+void ReadVariantMappings(const tinygltf::Primitive& primitive, const LoadedModelData& modelData, ModelSubmeshData& submesh)
+{
+    if (modelData.materialVariants.empty())
+    {
+        return;
+    }
+    submesh.variantMaterialIndices.assign(modelData.materialVariants.size(), submesh.materialIndex);
+    const auto found = primitive.extensions.find("KHR_materials_variants");
+    if (found == primitive.extensions.end() || !found->second.Has("mappings") || !found->second.Get("mappings").IsArray())
+    {
+        return;
+    }
+    std::vector<bool> mapped(modelData.materialVariants.size(), false);
+    const tinygltf::Value& mappings = found->second.Get("mappings");
+    for (size_t mappingIndex = 0; mappingIndex < mappings.ArrayLen(); ++mappingIndex)
+    {
+        const tinygltf::Value& mapping = mappings.Get(static_cast<int>(mappingIndex));
+        if (!mapping.Has("material") || !mapping.Get("material").IsNumber() || !mapping.Has("variants") ||
+            !mapping.Get("variants").IsArray())
+        {
+            continue;
+        }
+        const double material = mapping.Get("material").GetNumberAsDouble();
+        if (material < 0.0 || material >= static_cast<double>(modelData.materials.size()))
+        {
+            LOG_WARN("KHR_materials_variants maps to material {}, which the model does not have; skipped", material);
+            continue;
+        }
+        const tinygltf::Value& variants = mapping.Get("variants");
+        for (size_t index = 0; index < variants.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& variant = variants.Get(static_cast<int>(index));
+            const double variantIndex = variant.IsNumber() ? variant.GetNumberAsDouble() : -1.0;
+            if (variantIndex < 0.0 || variantIndex >= static_cast<double>(mapped.size()))
+            {
+                LOG_WARN("KHR_materials_variants maps variant {}, which the model does not have; skipped", variantIndex);
+                continue;
+            }
+            const size_t slot = static_cast<size_t>(variantIndex);
+            if (!mapped[slot])
+            {
+                mapped[slot] = true;
+                submesh.variantMaterialIndices[slot] = static_cast<uint32_t>(material);
+            }
+        }
+    }
+}
+
 void AppendPrimitive(
     const tinygltf::Model& model,
     const tinygltf::Node& node,
@@ -1114,6 +1191,7 @@ void AppendPrimitive(
     {
         submeshData.materialIndex = EnsureDefaultMaterial(modelData);
     }
+    ReadVariantMappings(primitive, modelData, submeshData);
     submeshData.hasTexCoords = !texCoords.empty();
     submeshData.hasNormals = !normals.empty();
     submeshData.hasTangents = !tangents.empty();
@@ -1381,6 +1459,7 @@ LoadedModelData BuildLoadedModelData(
     {
         modelData.materials.push_back(BuildMaterialData(tinyModel, material, modelPath));
     }
+    modelData.materialVariants = ReadMaterialVariantNames(tinyModel);
     progressTracker.Report(kProgressMaterialsDone);
 
     std::unordered_set<int> visitedNodes;

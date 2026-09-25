@@ -196,6 +196,29 @@ void ApplyMaterialDefinitions(const std::filesystem::path& modelPath, LoadedMode
 }
 }
 
+uint32_t ResolveSubmeshMaterialIndex(const ModelSubmeshData& submesh, std::optional<uint32_t> variantIndex)
+{
+    if (variantIndex.has_value() && *variantIndex < submesh.variantMaterialIndices.size())
+    {
+        return submesh.variantMaterialIndices[*variantIndex];
+    }
+    return submesh.materialIndex;
+}
+
+std::optional<uint32_t> FindMaterialVariant(const LoadedModelData& model, const std::string& name)
+{
+    if (name.empty())
+    {
+        return std::nullopt;
+    }
+    const auto found = std::find(model.materialVariants.begin(), model.materialVariants.end(), name);
+    if (found == model.materialVariants.end())
+    {
+        return std::nullopt;
+    }
+    return static_cast<uint32_t>(found - model.materialVariants.begin());
+}
+
 bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
 {
     const std::string extension = ToLowerCopy(path.extension().string());

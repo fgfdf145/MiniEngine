@@ -17,7 +17,7 @@ not change. See `2026-09-25-complete-brdf-program.md`.
 ## Decisions
 
 1. **Import.** The root extension's `variants` array becomes `LoadedModelData::materialVariants`, a
-   list of names (an unnamed or blank one is called `Variant <n>`). Each primitive's `mappings` become
+   list of names (a blank one is called `Variant <n>`; the extension requires names). Each primitive's `mappings` become
    `ModelSubmeshData::variantMaterialIndices`, one entry per variant, starting as the primitive's own
    material and overwritten where a mapping names the variant. A mapping with an out-of-range
    material or variant index is skipped with a warning; a variant named twice for one primitive keeps
@@ -43,7 +43,7 @@ not change. See `2026-09-25-complete-brdf-program.md`.
 
 ## Automated Verification
 
-- Import: names (including an unnamed variant), mappings over two primitives, a primitive with no
+- Import: names (a blank name becomes `Variant <n>`), mappings over two primitives, a primitive with no
   mappings keeps its material for every variant, an out-of-range material index is skipped, a
   repeated variant keeps its first mapping, a model without the extension has no variants.
 - `ResolveSubmeshMaterialIndex` for no variant, each variant, an index past the list;
