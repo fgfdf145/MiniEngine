@@ -1,0 +1,46 @@
+# Default sun and sky over a floor. Top row: a checker, the same checker scaled 4x, rotated 45 degrees and offset, the checker on
+# the second UV set (a planar projection), an unlit orange sphere, a Mask cutout through a 3x texture whose shadow
+# carries its holes. Bottom row: a stripe normal map, the same map rotated 90 degrees. Texture transforms, second UV
+# set and unlit (2026-09-26).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000101
+    tag: Spheres
+    model:
+      display_name: texture_transforms_unlit
+      source_path: models/texture_transforms_unlit/texture_transforms_unlit.gltf
+      source_uuid: 4cb655da-e8f6-4fad-b5ef-dec973e55272
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, -0.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000102
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 4, 0]
+      rotation: [55, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
