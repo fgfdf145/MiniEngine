@@ -78,6 +78,8 @@ struct ScenePassFrameContext
     // display-linear values relative to kUiWhiteNits.
     bool hdrOutput = false;
     float hdrPeakNits = 1000.0f;
+    // The Khronos reference view: Khronos PBR Neutral instead of GT7's operator.
+    bool pbrNeutralToneMapping = false;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the

@@ -50,6 +50,19 @@ class EditorRenderBackendBase : public IRenderBackend
     void InitializeEditorScene();
     void SaveEngineSettings();
 
+    // The bounds and aspect ratio the Khronos reference view last framed; it reframes when either
+    // changes (a scene finishing loading, the viewport resizing) and leaves the camera to the user
+    // in between.
+    struct KhronosReferenceFraming
+    {
+        glm::vec3 minBounds{0.0f};
+        glm::vec3 maxBounds{0.0f};
+        float aspectRatio = 1.0f;
+        bool operator==(const KhronosReferenceFraming&) const = default;
+    };
+    void UpdateKhronosReferenceFraming(RenderExtent extent);
+    std::optional<KhronosReferenceFraming> m_khronosReferenceFraming;
+
     Window& m_window;
     std::shared_ptr<RendererSharedState> m_sharedState;
     RenderBackendType m_backendType = RenderBackendType::Vulkan;

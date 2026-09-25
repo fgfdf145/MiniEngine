@@ -1109,3 +1109,29 @@ add_test(
 )
 
 set_target_properties(miniengine_asset_file_operations_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_khronos_reference_tests
+    khronos_reference_tests.cpp
+)
+miniengine_group_target_sources(miniengine_khronos_reference_tests)
+
+target_link_libraries(miniengine_khronos_reference_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.khronos_reference
+    COMMAND miniengine_khronos_reference_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_khronos_reference_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_khronos_reference_tests>
+            $<TARGET_FILE_DIR:miniengine_khronos_reference_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_khronos_reference_tests PROPERTIES FOLDER "Tests")

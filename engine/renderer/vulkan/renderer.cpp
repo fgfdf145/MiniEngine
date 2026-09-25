@@ -778,11 +778,15 @@ void VulkanRenderer::DrawFrame()
     // The forward-only order runs neither AO pass, so AO is off there by construction. History
     // advances once per recorded frame; a frame that does not accumulate invalidates the next.
     frame.ao = renderDebug.ao;
-    frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly;
+    frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
     frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
+    // The Khronos reference view renders what the Sample Viewer does: no glare or bloom (nor AO or
+    // SSR, above and below).
+    frame.pbrNeutralToneMapping = renderDebug.khronosReference;
+    frame.bloom.enabled = renderDebug.bloom.enabled && !renderDebug.khronosReference;
 
     frame.whiteBalance = UpdateWhiteBalance();
     frame.hdrOutput = m_swapchain->IsHdr();
@@ -796,7 +800,7 @@ void VulkanRenderer::DrawFrame()
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
-    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly;
+    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
     frame.ssrHistory = m_ssrHistory.Advance(SsrTraces(frame));
     // The history this frame writes carries this frame's pre-exposure.
     m_taaHistoryPreExposure = preExposure;
@@ -2123,7 +2127,7 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance()
 {
     Camera& camera = State().camera;
     const AutoWhiteBalanceSettings& settings = camera.autoWhiteBalance;
-    if (!settings.enabled)
+    if (!settings.enabled || State().renderDebug.khronosReference)
     {
         // Off shows the illuminant as it is; turned back on, the white point adapts from where it
         // was rather than from D65.
@@ -2151,6 +2155,17 @@ void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)
 {
     Camera& camera = State().camera;
     const AutoExposureSettings& settings = camera.autoExposure;
+    if (State().renderDebug.khronosReference)
+    {
+        // The Sample Viewer's exposure 1.0: an HDRI texel of 1 exposed to 1. Without an HDRI the
+        // exposure is left where it is.
+        const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
+        if (environment.mode == EnvironmentMode::Hdri)
+        {
+            camera.exposureEv100 = KhronosReferenceEv100(environment.hdri.intensity);
+        }
+        return;
+    }
     if (!settings.enabled || !m_exposurePass)
     {
         // Manual mode: exposureEv100 is the user's. When auto exposure is turned back on it

@@ -23,6 +23,10 @@ float PreExposureFromEv100(float ev100);
 // writes at currentPreExposure. 1 when there is no valid history or it carries no pre-exposure.
 float TaaHistoryScale(bool historyValid, float currentPreExposure, float historyPreExposure);
 
+// The EV100 that exposes an HDRI texel of 1 to 1 when the map is lit at hdriIntensity cd/m^2 per
+// unit: the Khronos glTF Sample Viewer's exposure 1.0, for the Khronos reference view.
+float KhronosReferenceEv100(float hdriIntensity);
+
 // EV100 range the editor exposes. 16 is a sunlit exterior, 8 an overcast one or a bright interior,
 // and 2 a dim interior lit by a few bulbs.
 inline constexpr float kMinExposureEv100 = -2.0f;

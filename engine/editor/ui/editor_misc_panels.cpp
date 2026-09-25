@@ -140,6 +140,9 @@ void EditorUiController::DrawGraphicsDebugPanel()
     if (ImGui::Begin("Graphics Debug", &m_showGraphicsDebugWindow))
     {
         ImGui::Checkbox("Forward only (comparison)", &m_renderDebug.forwardOnly);
+        // Renders as the Khronos glTF Sample Viewer does by default: PBR Neutral, fixed exposure,
+        // no glare, AO or SSR, and the viewer's camera framing whenever the scene or viewport changes.
+        ImGui::Checkbox("Khronos reference view (comparison)", &m_renderDebug.khronosReference);
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         ImGui::Checkbox("Local light shadows", &m_renderDebug.localLightShadows);

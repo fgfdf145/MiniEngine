@@ -1,5 +1,7 @@
 ﻿#include "editor_backend_base.h"
 
+#include <engine/logic/world_bounds.h>
+
 #include "services/entity_edit_service.h"
 #include "services/model_import_service.h"
 #include "services/scene_io_service.h"
@@ -388,8 +390,50 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     }
 }
 
+void EditorRenderBackendBase::UpdateKhronosReferenceFraming(RenderExtent extent)
+{
+    if (!State().renderDebug.khronosReference || extent.width == 0 || extent.height == 0)
+    {
+        m_khronosReferenceFraming.reset();
+        return;
+    }
+
+    // The union of every model's world bounds, as the viewer frames the whole scene.
+    bool any = false;
+    glm::vec3 sceneMin(0.0f);
+    glm::vec3 sceneMax(0.0f);
+    const IEditorWorld& world = EditorWorld();
+    for (const entt::entity entity : world.Registry().view<const ModelComponent>())
+    {
+        glm::vec3 minBounds;
+        glm::vec3 maxBounds;
+        if (!ComputeWorldModelBounds(world, entity, minBounds, maxBounds))
+        {
+            continue;
+        }
+        sceneMin = any ? glm::min(sceneMin, minBounds) : minBounds;
+        sceneMax = any ? glm::max(sceneMax, maxBounds) : maxBounds;
+        any = true;
+    }
+    if (!any)
+    {
+        return;
+    }
+
+    const KhronosReferenceFraming framing{
+        sceneMin,
+        sceneMax,
+        static_cast<float>(extent.width) / static_cast<float>(extent.height)};
+    if (m_khronosReferenceFraming != framing)
+    {
+        State().camera.FrameBoundsLikeKhronosViewer(framing.minBounds, framing.maxBounds, framing.aspectRatio);
+        m_khronosReferenceFraming = framing;
+    }
+}
+
 void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
 {
+    UpdateKhronosReferenceFraming(extent);
     const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
     const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
     State().viewportMatrices.view = State().camera.GetViewMatrix();

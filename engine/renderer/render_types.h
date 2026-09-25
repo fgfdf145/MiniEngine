@@ -108,5 +108,10 @@ struct RenderDebugSettings
     bool hdrOutput = false;
     float hdrPeakNits = 1000.0f;
     AoSettings ao;
+    // The Khronos reference view: renders as the Khronos glTF Sample Viewer does by default, to
+    // compare against it (docs/superpowers/specs/2026-09-26-khronos-reference-comparison-design.md).
+    // PBR Neutral tone mapping, an HDRI texel of 1 exposed to 1, no auto white balance, no
+    // glare/bloom, AO or SSR, and the viewer's camera framing. Off, nothing changes.
+    bool khronosReference = false;
 };
 }

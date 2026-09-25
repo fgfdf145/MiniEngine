@@ -100,6 +100,11 @@ class EditorUiController
     {
         return m_effectiveUiScale;
     }
+    // The Graphics Debug settings, for switches set from the command line before the first frame.
+    RenderDebugSettings& EditRenderDebug()
+    {
+        return m_renderDebug;
+    }
     EditorUiFrameResult Draw(
         Camera& camera,
         ViewportMatrices& matrices,

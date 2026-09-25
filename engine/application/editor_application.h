@@ -21,6 +21,9 @@ struct EditorApplicationOptions
     uint32_t maxFrames = 0;
     // With --frames: the viewport of the last frame is written here as a PNG.
     std::optional<std::string> capturePath;
+    // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
+    // Khronos glTF Sample Viewer.
+    bool khronosReference = false;
     EnginePaths::Overrides paths;
 };
 

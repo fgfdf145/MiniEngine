@@ -82,6 +82,27 @@ void Camera::Rotate(float deltaYaw, float deltaPitch)
     pitchDegrees = glm::clamp(pitchDegrees, -89.0f, 89.0f);
 }
 
+void Camera::FrameBoundsLikeKhronosViewer(const glm::vec3& minBounds, const glm::vec3& maxBounds, float aspectRatio)
+{
+    fovDegrees = 45.0f;
+    const glm::vec3 center = (minBounds + maxBounds) * 0.5f;
+    const glm::vec3 extent = maxBounds - minBounds;
+    // No minimum size: the viewer frames a 10 cm test model as closely as a 10 m one.
+    const float maxAxisLength = std::max(std::max(extent.x, extent.y), 1e-4f);
+    const float yfov = glm::radians(fovDegrees);
+    // Kept below 180 degrees, where the viewer's own rule breaks down (aspect ratios past 4).
+    const float xfov = std::min(yfov * std::max(aspectRatio, 1e-3f), 3.1f);
+    const float distance = std::max(maxAxisLength / 2.0f / std::tan(yfov / 2.0f), maxAxisLength / 2.0f / std::tan(xfov / 2.0f));
+
+    position = center + glm::vec3(0.0f, 0.0f, distance);
+    yawDegrees = -90.0f;
+    pitchDegrees = 0.0f;
+
+    const float radius = glm::length(extent) * 0.5f;
+    nearPlane = std::max(1e-3f, std::max(distance - radius, 0.0f) * 0.1f);
+    farPlane = std::max(WorldUnits::kDefaultCameraFarPlaneMeters, distance + radius * 8.0f);
+}
+
 void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
 {
     const glm::vec3 center = (minBounds + maxBounds) * 0.5f;

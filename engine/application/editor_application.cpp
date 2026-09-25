@@ -101,6 +101,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--khronos-reference")
+        {
+            options.khronosReference = true;
+            continue;
+        }
+
         if (argument == "--backend")
         {
             options.renderBackend = ParseRenderBackend(ReadRequiredArgument(i, argc, argv, argument));
@@ -179,6 +185,7 @@ int EditorApplication::Run()
     }
 
     auto sharedState = std::make_shared<RendererSharedState>();
+    sharedState->editorUi.EditRenderDebug().khronosReference = m_options.khronosReference;
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
     Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);

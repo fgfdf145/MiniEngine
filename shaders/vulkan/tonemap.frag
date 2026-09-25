@@ -4,6 +4,7 @@
 #include "gt7_tonemap.glsl"
 #include "pre_exposure.glsl"
 #include "hdr_output.glsl"
+#include "pbr_neutral.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
 
@@ -31,7 +32,8 @@ layout(push_constant) uniform TonemapConstants
     // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
     uint hdrOutput;
     float peakNits;
-    uint unused;
+    // 1 for Khronos PBR Neutral: the Khronos reference view.
+    uint pbrNeutral;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     vec4 whiteBalance[3];
 }
@@ -128,9 +130,16 @@ void main()
         // operator clamps at zero.
         color = mat3(constants.whiteBalance[0].xyz, constants.whiteBalance[1].xyz, constants.whiteBalance[2].xyz) * color;
 
+        if (constants.pbrNeutral != 0u)
+        {
+            // The Khronos reference view: the Sample Viewer's operator on the exposed value (its
+            // exposure 1.0 is the engine's exposed 1.0). Display linear; with HDR10 output it is
+            // shown relative to the UI white, as SDR content is.
+            color = KhronosPbrNeutral(max(color * kExposedPerFrameBufferUnit, vec3(0.0f)));
+        }
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.
-        if (constants.hdrOutput != 0u)
+        else if (constants.hdrOutput != 0u)
         {
             // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, then relative to the UI
             // white that imgui_hdr10.frag maps to kUiWhiteNits.

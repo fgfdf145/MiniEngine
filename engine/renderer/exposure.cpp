@@ -29,6 +29,12 @@ float PreExposureFromEv100(float ev100)
     return ExposureFromEv100(ev100) * kFrameBufferUnitsPerExposed;
 }
 
+float KhronosReferenceEv100(float hdriIntensity)
+{
+    // ExposureFromEv100(ev) = 1 / (1.2 * 2^ev) = 1 / hdriIntensity.
+    return std::log2(std::max(hdriIntensity, 1e-6f) / 1.2f);
+}
+
 float TaaHistoryScale(bool historyValid, float currentPreExposure, float historyPreExposure)
 {
     if (!historyValid || !(historyPreExposure > 0.0f))

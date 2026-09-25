@@ -21,7 +21,8 @@ struct TonemapPushConstants
     // 1 for HDR10 output (GT7's HDR curve for peakNits), 0 for SDR.
     uint32_t hdrOutput = 0;
     float peakNits = 1000.0f;
-    uint32_t unused = 0;
+    // 1 for Khronos PBR Neutral (the Khronos reference view), 0 for GT7's operator.
+    uint32_t pbrNeutral = 0;
     // The white balance matrix's columns, xyz used (see WhiteBalanceMatrix).
     glm::vec4 whiteBalance[3] = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
 };
@@ -145,6 +146,7 @@ void VulkanTonemapPass::Record(
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     constants.hdrOutput = frame.hdrOutput ? 1u : 0u;
     constants.peakNits = frame.hdrPeakNits;
+    constants.pbrNeutral = frame.pbrNeutralToneMapping ? 1u : 0u;
     for (int column = 0; column < 3; ++column)
     {
         constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);

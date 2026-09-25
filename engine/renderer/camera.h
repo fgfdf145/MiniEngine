@@ -32,6 +32,11 @@ class Camera
     void MoveUp(float amount);
     void Rotate(float deltaYaw, float deltaPitch);
     void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
+    // The Khronos glTF Sample Viewer's default view (UserCamera.resetView): vertical FOV 45 degrees,
+    // looking down -Z at the box's centre, from the distance at which the larger of its x and y
+    // extents fits both the vertical FOV and the horizontal one, which the viewer takes as the
+    // vertical FOV times the aspect ratio.
+    void FrameBoundsLikeKhronosViewer(const glm::vec3& minBounds, const glm::vec3& maxBounds, float aspectRatio);
 
     glm::vec3 position = WorldUnits::kDefaultCameraPositionMeters;
     glm::vec3 worldUp = {0.0f, 1.0f, 0.0f};
