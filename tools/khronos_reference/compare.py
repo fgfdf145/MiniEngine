@@ -3,7 +3,10 @@
 difference per scene. Writes assets/khronos/captures/compare.html (and diff/<name>.png).
 
   --jpeg   embeds JPEG copies (made with macOS sips) instead of the PNGs, for a page small enough
-           to publish."""
+           to publish.
+
+The page is written without <html>/<head>/<body>: browsers add them, and the claude.ai artifact
+host wraps the page in its own."""
 
 import base64
 import html
@@ -66,55 +69,135 @@ def main():
         print(f"{name:40s} mean difference {mean:5.1f} / 255")
         rows.append((name, feature_of(model), mean, [embed(p, jpeg) for p in (viewer_path, engine_path, diff_path)]))
 
-    body = []
-    for name, feature, mean, images in rows:
-        cells = "".join(f'<figure><img src="{src}" alt="{label} of {html.escape(name)}"><figcaption>{label}</figcaption></figure>'
-                        for label, src in zip(("Khronos Sample Viewer", "MiniEngine", f"Difference x{DIFF_GAIN}"), images))
-        body.append(f'<section><h2>{html.escape(name)} <small>{feature} · mean difference {mean:.1f}/255</small></h2>'
-                    f'<div class="row">{cells}</div></section>')
-    page = PAGE.replace("{{BODY}}", "\n".join(body))
+    page = render_page(rows)
     out = CAPTURES / "compare.html"
     out.write_text(page, encoding="utf-8")
     print(f"wrote {out}")
 
 
-PAGE = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Khronos Reference Comparison</title>
-<style>
-:root { --bg: #f6f6f4; --fg: #1d1d1b; --muted: #6b6b66; --card: #ffffff; --line: #deded8; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --bg: #151514; --fg: #ecece8; --muted: #9a9a94; --card: #1f1f1d; --line: #33332f; }
+# Scenes whose difference is understood, with the reason, shown beside their numbers.
+KNOWN_DIFFERENCES = {
+    "CompareIor": "Glass: needs KHR_materials_transmission (phase 4).",
+    "IORTestGrid": "Glass: needs KHR_materials_transmission (phase 4).",
+    "CompareAnisotropy": "The right sphere's flat face, lit through a radial direction map, is bright where the viewer is dark. Not yet explained.",
+    "TextureTransformTest": "The engine ignores glTF samplers: it repeats where the model asks for CLAMP_TO_EDGE.",
+    "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
 }
-:root[data-theme="dark"] { --bg: #151514; --fg: #ecece8; --muted: #9a9a94; --card: #1f1f1d; --line: #33332f; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
-main { max-width: 1400px; margin: 0 auto; padding: 24px 16px 64px; }
-h1 { font-size: 24px; margin: 0 0 4px; }
-.lede { color: var(--muted); margin: 0 0 24px; max-width: 70ch; }
-section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; margin: 0 0 16px; }
-h2 { font-size: 16px; margin: 0 0 10px; }
-h2 small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
+
+
+def status_of(name, mean):
+    if mean <= NOISE_FLOOR:
+        return "match", "Matches"
+    if name in KNOWN_DIFFERENCES:
+        return "known", "Known gap"
+    return "open", "Unexplained"
+
+
+def render_page(rows):
+    scale = max([mean for _, _, mean, _ in rows] + [NOISE_FLOOR * 2])
+    summary, sections = [], []
+    for name, feature, mean, images in rows:
+        state, label = status_of(name, mean)
+        anchor = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)
+        note = KNOWN_DIFFERENCES.get(name, "")
+        summary.append(
+            f'<tr><td><a href="#{anchor}">{html.escape(name)}</a></td><td class="feature">{feature.replace("_", " ")}</td>'
+            f'<td class="num">{mean:.1f}</td><td class="bar"><span style="width:{100 * mean / scale:.1f}%" class="{state}"></span></td>'
+            f'<td><span class="chip {state}">{label}</span></td></tr>')
+        cells = "".join(
+            f'<figure><img src="{src}" alt="{caption} rendering of {html.escape(name)}" loading="lazy"><figcaption>{caption}</figcaption></figure>'
+            for caption, src in zip(("Khronos Sample Viewer", "MiniEngine", f"Difference ×{DIFF_GAIN}"), images))
+        sections.append(
+            f'<section id="{anchor}"><header><h2>{html.escape(name)}</h2><span class="chip {state}">{label}</span>'
+            f'<span class="meta">{feature.replace("_", " ")} · mean difference <b>{mean:.1f}</b> / 255</span></header>'
+            + (f'<p class="note">{html.escape(note)}</p>' if note else "")
+            + f'<div class="row">{cells}</div></section>')
+    matched = sum(1 for name, _, mean, _ in rows if mean <= NOISE_FLOOR)
+    return (PAGE.replace("{{COUNT}}", str(len(rows))).replace("{{MATCHED}}", str(matched))
+            .replace("{{FLOOR}}", f"{NOISE_FLOOR:.0f}").replace("{{SUMMARY}}", "\n".join(summary))
+            .replace("{{SECTIONS}}", "\n".join(sections)))
+
+
+PAGE = """<title>MiniEngine vs Sample Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --fg: #17202a; --muted: #5d6b78; --line: #d9dfe5;
+  --accent: #0f766e; --match: #2f855a; --known: #b7791f; --open: #c53030; --bar: #e6eaee;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #11161b; --surface: #182028; --fg: #e6ebf0; --muted: #93a1ae; --line: #2a3541;
+    --accent: #2dd4bf; --match: #68d391; --known: #f6c35b; --open: #fc8181; --bar: #25303b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #11161b; --surface: #182028; --fg: #e6ebf0; --muted: #93a1ae; --line: #2a3541;
+  --accent: #2dd4bf; --match: #68d391; --known: #f6c35b; --open: #fc8181; --bar: #25303b;
+}
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); }
+main { max-width: 1320px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 64px; display: grid; gap: 28px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { color: var(--muted); margin: 6px 0 0; max-width: 72ch; }
+.conditions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+.conditions li { font: 12.5px/1 var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: var(--surface); }
+.summary { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.summary h2 { font-size: 15px; margin: 0; padding: 14px 16px 0; }
+.summary p { margin: 2px 0 0; padding: 0 16px; color: var(--muted); font-size: 13.5px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+th, td { text-align: left; padding: 7px 16px; border-top: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+td a { color: var(--fg); text-decoration: none; font-weight: 500; }
+td a:hover, td a:focus-visible { color: var(--accent); text-decoration: underline; }
+.feature { color: var(--muted); }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.bar { width: 40%; min-width: 120px; }
+.bar span { display: block; height: 8px; border-radius: 2px; background: var(--match); }
+.bar span.known { background: var(--known); } .bar span.open { background: var(--open); }
+td.bar { background-image: linear-gradient(var(--bar), var(--bar)); background-size: calc(100% - 32px) 8px; background-position: 16px center; background-repeat: no-repeat; }
+.chip { display: inline-block; font-size: 11.5px; font-weight: 500; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.match { color: var(--match); } .chip.known { color: var(--known); } .chip.open { color: var(--open); }
+section { display: grid; gap: 10px; scroll-margin-top: 16px; }
+section header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+section h2 { font-size: 17px; margin: 0; font-weight: 600; }
+.meta { color: var(--muted); font-size: 13.5px; }
+.meta b { font-family: var(--mono); font-weight: 500; color: var(--fg); }
+.note { margin: 0; font-size: 14px; max-width: 80ch; }
 .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-figure { margin: 0; }
-img { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
-figcaption { color: var(--muted); font-size: 13px; margin-top: 4px; }
-@media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+figure { margin: 0; display: grid; gap: 4px; }
+img { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; aspect-ratio: 667 / 541; }
+figcaption { color: var(--muted); font-size: 12.5px; }
+@media (max-width: 720px) { .row { grid-template-columns: 1fr; } .bar { min-width: 80px; } }
 </style>
-</head>
-<body>
 <main>
-<h1>Khronos reference comparison</h1>
-<p class="lede">Khronos glTF-Sample-Assets models rendered by the Khronos glTF Sample Viewer (left) and by MiniEngine's
-Khronos reference view (middle): the same Cannon_Exterior environment, exposure 1.0, Khronos PBR Neutral tone mapping and the
-viewer's camera framing. The right column is their absolute difference, amplified. The viewer blurs its background; the
-engine does not, so differences in the background are expected.</p>
-{{BODY}}
+<div>
+  <h1>MiniEngine vs Khronos Sample Viewer</h1>
+  <p class="lede">Khronos glTF-Sample-Assets test models rendered by the Khronos glTF Sample Viewer and by MiniEngine's Khronos
+  reference view under the same conditions. {{MATCHED}} of {{COUNT}} scenes match to within the noise floor. The difference image
+  is the absolute difference, amplified four times.</p>
+  <ul class="conditions">
+    <li>Cannon_Exterior, viewer rotation 90°</li><li>exposure 1.0</li><li>Khronos PBR Neutral</li>
+    <li>45° vertical FOV, viewer framing</li><li>background prefiltered at roughness 0.6</li><li>667 × 541</li>
+  </ul>
+</div>
+<div class="summary">
+  <h2>Mean difference per scene</h2>
+  <p>0 to 255 over RGB. Scenes at or below {{FLOOR}} match: the rest of the difference is anti-aliasing and texture filtering.</p>
+  <table>
+    <thead><tr><th>Scene</th><th>Feature</th><th class="num">Mean</th><th>Difference</th><th>Status</th></tr></thead>
+    <tbody>
+{{SUMMARY}}
+    </tbody>
+  </table>
+</div>
+{{SECTIONS}}
 </main>
-</body>
-</html>
 """
 
 if __name__ == "__main__":
