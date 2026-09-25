@@ -34,6 +34,9 @@ struct MaterialTexturePaths
     std::string sheenColor;
     std::string sheenRoughness;
     std::string anisotropy;
+    std::string specular;
+    std::string specularColor;
+    std::string clearcoatNormal;
 };
 
 struct CpuRenderSubmesh

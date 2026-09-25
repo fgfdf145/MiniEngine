@@ -78,35 +78,44 @@ void main()
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     // GB5 means something only for the models that write it, so it is read only for them.
-    uint shadingModel = DecodeShadingModel(surface.a);
-    uint layer = shadingModel & SHADING_MODEL_LAYER_MASK;
+    uint flags = DecodeShadingFlags(surface.a);
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
     AnisotropyParams anisotropy = NoAnisotropy();
-    if (shadingModel != SHADING_MODEL_DEFAULT_LIT)
+    SpecularParams specular = NoSpecularOverride();
+    if ((flags & (SHADING_FLAG_CLEARCOAT | SHADING_FLAG_ANISOTROPY)) != 0u)
     {
-        vec4 custom = texture(gbufferCustom, fragTexCoord);
-        if (layer == SHADING_MODEL_CLEARCOAT)
+        vec4 coatData = texture(gbufferCoat, fragTexCoord);
+        if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
         {
-            coat.factor = custom.r;
-            coat.roughness = clamp(custom.g, 0.04, 1.0);
-            coat.normal = geoNormal;
+            coat.factor = coatData.r;
+            coat.roughness = clamp(coatData.g, 0.04, 1.0);
+            coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u
+                              ? DecodeNormalOctahedral(texture(gbufferVelocity, fragTexCoord).ba)
+                              : geoNormal;
         }
-        else if (layer == SHADING_MODEL_SHEEN)
+        if ((flags & SHADING_FLAG_ANISOTROPY) != 0u)
         {
-            sheen.color = custom.rgb;
-            sheen.roughness = clamp(custom.a, 0.04, 1.0);
+            anisotropy.tangent = DecodeAnisotropyTangent(N, coatData.b);
+            anisotropy.strength = coatData.a;
         }
-        if ((shadingModel & SHADING_MODEL_ANISOTROPY_BIT) != 0u && layer != SHADING_MODEL_SHEEN)
-        {
-            anisotropy.tangent = DecodeAnisotropyTangent(N, custom.b);
-            anisotropy.strength = custom.a;
-        }
+    }
+    if ((flags & SHADING_FLAG_SHEEN) != 0u)
+    {
+        vec4 sheenData = texture(gbufferSheen, fragTexCoord);
+        sheen.color = sheenData.rgb;
+        sheen.roughness = clamp(sheenData.a, 0.04, 1.0);
+    }
+    if ((flags & SHADING_FLAG_SPECULAR) != 0u)
+    {
+        vec4 specularData = texture(gbufferSpecular, fragTexCoord);
+        specular.dielectricF0 = specularData.rgb * specularData.rgb;
+        specular.dielectricF90 = specularData.a;
     }
     // Screen-space reflection in HDR target units; ShadeSurface wants physical radiance.
     vec4 reflection = texture(sceneReflections, fragTexCoord);
     reflection.rgb *= ubo.exposure.y;
-    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, anisotropy, reflection);
+    vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, reflection);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass
     // composites over this with an RGB-only write mask. Pre-exposed on the way out (see

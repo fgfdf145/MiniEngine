@@ -128,6 +128,9 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         material.sheenColorTexturePath = resolveTex(rawMaterial.sheenColorTexturePath);
         material.sheenRoughnessTexturePath = resolveTex(rawMaterial.sheenRoughnessTexturePath);
         material.anisotropyTexturePath = resolveTex(rawMaterial.anisotropyTexturePath);
+        material.specularTexturePath = resolveTex(rawMaterial.specularTexturePath);
+        material.specularColorTexturePath = resolveTex(rawMaterial.specularColorTexturePath);
+        material.clearcoatNormalTexturePath = resolveTex(rawMaterial.clearcoatNormalTexturePath);
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
@@ -184,8 +187,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.material.nodeGraphFactors[1] = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
         renderSubmesh.material.nodeGraphFactors[2] = 1.0f;
         renderSubmesh.material.nodeGraphFactors[3] = 0.0f;
-        // A coat of zero is no coat: those draws keep the default model and its exact shading.
-        // A black sheen is no sheen. GB5 holds one layer per pixel, so a coat takes precedence.
+        // A coat of zero is no coat, a black sheen no sheen: those draws keep the plain base and its
+        // exact shading.
         const float clearcoat = std::clamp(material.clearcoatFactor, 0.0f, 1.0f);
         float sheenStrength = 0.0f;
         for (size_t index = 0; index < 3; ++index)
@@ -194,14 +197,28 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             sheenStrength = std::max(sheenStrength, renderSubmesh.material.sheenFactors[index]);
         }
         renderSubmesh.material.sheenFactors[3] = std::clamp(material.sheenRoughnessFactor, 0.0f, 1.0f);
-        const ShadingModel shadingModel = clearcoat > 0.0f       ? ShadingModel::Clearcoat
-                                          : sheenStrength > 0.0f ? ShadingModel::Sheen
-                                                                 : ShadingModel::DefaultLit;
-        // The anisotropy angle shares GB5 with a coat but not with a sheen, which fills it.
         const float anisotropyStrength = std::clamp(material.anisotropyStrength, 0.0f, 1.0f);
-        const bool anisotropic = anisotropyStrength > 0.0f && shadingModel != ShadingModel::Sheen;
+        const bool anisotropic = anisotropyStrength > 0.0f;
+        // The dielectric's reflectance, stored before the maps: the IOR's F0 tinted by the colour
+        // factor, and the specular factor. A surface at the defaults, with no maps, keeps the plain
+        // path (F0 0.04, F90 1) without reading GB5.
+        const float ior = SanitizeIor(material.ior);
+        const float reflectance = ior == 0.0f ? 1.0f : ((ior - 1.0f) / (ior + 1.0f)) * ((ior - 1.0f) / (ior + 1.0f));
+        for (size_t index = 0; index < 3; ++index)
+        {
+            renderSubmesh.material.specularFactors[index] = reflectance * std::max(material.specularColorFactor[index], 0.0f);
+        }
+        renderSubmesh.material.specularFactors[3] = std::clamp(material.specularFactor, 0.0f, 1.0f);
+        const bool customSpecular =
+            ior != 1.5f || material.specularFactor != 1.0f || material.specularColorFactor[0] != 1.0f ||
+            material.specularColorFactor[1] != 1.0f || material.specularColorFactor[2] != 1.0f ||
+            (submesh.hasTexCoords && (!material.specularTexturePath.empty() || !material.specularColorTexturePath.empty()));
+        const bool coatNormal = clearcoat > 0.0f && submesh.hasTexCoords && !material.clearcoatNormalTexturePath.empty();
         renderSubmesh.material.shadingModel[0] =
-            static_cast<uint32_t>(shadingModel) | (anisotropic ? kShadingModelAnisotropyBit : 0u);
+            (clearcoat > 0.0f ? kShadingFlagClearcoat : 0u) | (sheenStrength > 0.0f ? kShadingFlagSheen : 0u) |
+            (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
+            (coatNormal ? kShadingFlagCoatNormal : 0u);
+        renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
         renderSubmesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
         renderSubmesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
         renderSubmesh.material.anisotropyFactors[2] = std::sin(material.anisotropyRotation);
@@ -242,6 +259,9 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             renderSubmesh.textures.sheenColor = resolveTex(material.sheenColorTexturePath);
             renderSubmesh.textures.sheenRoughness = resolveTex(material.sheenRoughnessTexturePath);
             renderSubmesh.textures.anisotropy = resolveTex(material.anisotropyTexturePath);
+            renderSubmesh.textures.specular = resolveTex(material.specularTexturePath);
+            renderSubmesh.textures.specularColor = resolveTex(material.specularColorTexturePath);
+            renderSubmesh.textures.clearcoatNormal = resolveTex(material.clearcoatNormalTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }

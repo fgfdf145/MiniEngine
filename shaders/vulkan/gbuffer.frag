@@ -41,8 +41,10 @@ layout(location = 0) out vec4 outAlbedo;   // GB0 R8G8B8A8_SRGB: rgb albedo, a =
 layout(location = 1) out vec4 outNormal;   // GB1 R16G16B16A16_SFLOAT: rg shading normal, ba geometric normal, both octahedral
 layout(location = 2) out vec4 outSurface;  // GB2 R8G8B8A8_UNORM: metallic, roughness, occlusion, a = shading model
 layout(location = 3) out vec4 outEmissive; // GB3 B10G11R11_UFLOAT: rgb emissive
-layout(location = 4) out vec4 outVelocity; // R16G16_SFLOAT: current uv - previous uv
-layout(location = 5) out vec4 outCustom;   // GB5 R8G8B8A8_UNORM: meaning set by the shading model in GB2.a
+layout(location = 4) out vec4 outVelocity; // R16G16B16A16_SFLOAT: rg current uv - previous uv, ba the coat's normal (octahedral)
+layout(location = 5) out vec4 outSpecular; // GB5 R8G8B8A8_UNORM: rgb sqrt(dielectric F0), a dielectric F90
+layout(location = 6) out vec4 outCoat;     // GB6 R8G8B8A8_UNORM: coat factor, coat roughness, anisotropy angle, anisotropy strength
+layout(location = 7) out vec4 outSheen;    // GB7 R8G8B8A8_UNORM: sheen colour, sheen roughness
 
 void main()
 {
@@ -102,10 +104,11 @@ void main()
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
     // Both variations are taken here, in uniform control flow. The base's lobe varies with the
-    // normal-mapped normal; the coat's with the geometric normal it uses.
+    // normal-mapped normal; the coat's with its own (the geometric normal unless it has a map).
     roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
-    float coatNormalVariation = NormalVariation(geoNormal);
+    float coatNormalVariation = NormalVariation(layers.coatNormal);
     float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     // ---- Encode -----------------------------------------------------------
@@ -116,28 +119,28 @@ void main()
     // The geometric normal rides along for the shadow lookup's normal offset (see ShadeSurface).
     // It is already face-flipped, so the lighting pass uses it as decoded.
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
-    outSurface = vec4(metallic, roughness, ao, EncodeShadingModel(material.shadingModel.x));
-    // Clearcoat keeps its factor and roughness in .rg, sheen its colour and roughness in .rgba; an
-    // anisotropic base puts its angle and strength in .ba beside a coat or on its own. Unused
-    // channels are zero.
-    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
+    outSurface = vec4(metallic, roughness, ao, EncodeShadingFlags(layers.flags));
+    // Each layer target holds its layer where the flags say so and zeros elsewhere; the lighting
+    // pass reads only the flagged ones.
     // The coat's roughness is filtered from the floor the lighting pass would give it; with the
     // filter off it is stored as the material has it, as before.
     float coatRoughness = ubo.specularAntiAliasing.x > 0.5
                               ? FilterRoughnessForSpecularAA(clamp(layers.coatRoughness, 0.04, 1.0), coatNormalVariation)
                               : layers.coatRoughness;
-    vec4 custom = layers.layer == SHADING_MODEL_CLEARCOAT ? vec4(layers.coatFactor, coatRoughness, 0.0, 0.0)
-                  : layers.layer == SHADING_MODEL_SHEEN   ? vec4(layers.sheenColor, layers.sheenRoughness)
-                                                          : vec4(0.0);
-    if (layers.anisotropic && layers.layer != SHADING_MODEL_SHEEN)
+    vec4 coat = HasShadingFlag(layers.flags, SHADING_FLAG_CLEARCOAT) ? vec4(layers.coatFactor, coatRoughness, 0.0, 0.0) : vec4(0.0);
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_ANISOTROPY))
     {
         // The angle is measured in the frame the lighting pass rebuilds from the normal it decodes,
         // so it is built here from that same normal: N through GB1's half float octahedral encoding.
         vec3 storedN = DecodeNormalOctahedral(unpackHalf2x16(packHalf2x16(EncodeNormalOctahedral(N))));
         vec3 tangent = normalize(layers.anisotropyTangent - storedN * dot(storedN, layers.anisotropyTangent));
-        custom.ba = vec2(EncodeAnisotropyAngle(storedN, tangent), layers.anisotropyStrength);
+        coat.ba = vec2(EncodeAnisotropyAngle(storedN, tangent), layers.anisotropyStrength);
     }
-    outCustom = custom;
+    outCoat = coat;
+    outSheen = HasShadingFlag(layers.flags, SHADING_FLAG_SHEEN) ? vec4(layers.sheenColor, layers.sheenRoughness) : vec4(0.0);
+    // The square root spreads the usual dielectric F0 (0.02-0.08) over 36-72 of 255; 0.04 is 51
+    // exactly.
+    outSpecular = HasShadingFlag(layers.flags, SHADING_FLAG_SPECULAR) ? vec4(sqrt(layers.dielectricF0), layers.dielectricF90) : vec4(0.0);
     // Pre-exposed like the HDR target (see pre_exposure.glsl), so an emissive far brighter than
     // B10G11R11's 65000 still fits; the lighting pass divides it back into physical units.
     outEmissive = vec4(emissiveSample * material.emissiveFactor * ubo.exposure.x, 0.0);
@@ -146,5 +149,5 @@ void main()
     // the motion in UV units. A consumer finds the previous position at uv - velocity.
     vec2 currNdc = fragCurrClip.xy / fragCurrClip.w;
     vec2 prevNdc = fragPrevClip.xy / fragPrevClip.w;
-    outVelocity = vec4((currNdc - prevNdc) * 0.5, 0.0, 0.0);
+    outVelocity = vec4((currNdc - prevNdc) * 0.5, HasShadingFlag(layers.flags, SHADING_FLAG_COAT_NORMAL) ? EncodeNormalOctahedral(layers.coatNormal) : vec2(0.0));
 }

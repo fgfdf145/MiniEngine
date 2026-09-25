@@ -29,9 +29,13 @@ enum class RenderTargetId : uint32_t
     GBufferSurface,
     GBufferEmissive,
     GBufferVelocity,
-    // GB5: data whose meaning depends on the pixel's shading model (GB2.a). Clearcoat keeps its
-    // factor and roughness in .rg.
-    GBufferCustom,
+    // GB5: the dielectric's specular, rgb sqrt(F0) and a F90, for pixels with the custom specular
+    // flag (see SHADING_FLAG_* in shaders/vulkan/gbuffer_common.glsl).
+    GBufferSpecular,
+    // GB6: the coat's factor and roughness and the anisotropy's angle and strength.
+    GBufferCoat,
+    // GB7: the sheen's colour and roughness.
+    GBufferSheen,
     // Visibility bitmask AO: the noisy trace, then the filtered result the lighting pass reads.
     // Both are storage images written by compute.
     AoRaw,

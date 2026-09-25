@@ -45,11 +45,19 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
     {
         if (IsSuitable(device))
         {
-            m_physicalDevice = device;
-            m_queueFamilies = FindQueueFamilies(device);
-
             VkPhysicalDeviceProperties properties{};
             vkGetPhysicalDeviceProperties(device, &properties);
+            // The geometry pass writes eight G-buffer targets at once.
+            if (properties.limits.maxColorAttachments < 8)
+            {
+                LOG_WARN(
+                    "Skipping {}: it offers {} colour attachments and the G-buffer needs 8",
+                    properties.deviceName,
+                    properties.limits.maxColorAttachments);
+                continue;
+            }
+            m_physicalDevice = device;
+            m_queueFamilies = FindQueueFamilies(device);
             LOG_INFO("Selected physical device: {}", properties.deviceName);
             break;
         }

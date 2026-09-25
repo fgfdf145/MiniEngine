@@ -267,12 +267,16 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
 
     // Motion vectors: current UV minus previous UV, written by the geometry pass. Both of the
     // features ChooseFormat asks for are mandatory for this format, so it has no fallback.
-    static constexpr std::array<VkFormat, 1> kVelocityCandidates = {VK_FORMAT_R16G16_SFLOAT};
+    // .ba carries the coat's normal (octahedral), which needs the half floats' precision.
+    static constexpr std::array<VkFormat, 1> kVelocityCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
     describeGBufferTarget(RenderTargetId::GBufferVelocity, "G-buffer velocity", kVelocityCandidates);
 
-    // Per-shading-model data (GB5). RGBA8 is a mandatory color attachment and sampled format.
-    static constexpr std::array<VkFormat, 1> kCustomCandidates = {VK_FORMAT_R8G8B8A8_UNORM};
-    describeGBufferTarget(RenderTargetId::GBufferCustom, "G-buffer custom data", kCustomCandidates);
+    // The material layers (GB5 specular, GB6 coat and anisotropy, GB7 sheen). RGBA8 is a mandatory
+    // color attachment and sampled format.
+    static constexpr std::array<VkFormat, 1> kLayerCandidates = {VK_FORMAT_R8G8B8A8_UNORM};
+    describeGBufferTarget(RenderTargetId::GBufferSpecular, "G-buffer specular", kLayerCandidates);
+    describeGBufferTarget(RenderTargetId::GBufferCoat, "G-buffer coat", kLayerCandidates);
+    describeGBufferTarget(RenderTargetId::GBufferSheen, "G-buffer sheen", kLayerCandidates);
 
     // Visibility bitmask AO, written by compute through image stores. R32F is in the core list of
     // storage formats, so no shaderStorageImageExtendedFormats is needed, and it has no fallback.

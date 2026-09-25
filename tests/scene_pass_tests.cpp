@@ -281,13 +281,15 @@ void ForwardOnlyOrderSkipsTheDeferredPasses()
 
 void GBufferTargetsAreColorTargets()
 {
-    constexpr std::array<RenderTargetId, 6> gbuffer = {
+    constexpr std::array<RenderTargetId, 8> gbuffer = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
         RenderTargetId::GBufferEmissive,
         RenderTargetId::GBufferVelocity,
-        RenderTargetId::GBufferCustom};
+        RenderTargetId::GBufferSpecular,
+        RenderTargetId::GBufferCoat,
+        RenderTargetId::GBufferSheen};
 
     for (const RenderTargetId target : gbuffer)
     {

@@ -711,7 +711,10 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 materialBinding.clearcoatRoughness,
                 materialBinding.sheenColor,
                 materialBinding.sheenRoughness,
-                materialBinding.anisotropy};
+                materialBinding.anisotropy,
+                materialBinding.specular,
+                materialBinding.specularColor,
+                materialBinding.clearcoatNormal};
 
             std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)

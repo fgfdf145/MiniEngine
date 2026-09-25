@@ -1,50 +1,69 @@
 #ifndef MATERIAL_LAYERS_GLSL
 #define MATERIAL_LAYERS_GLSL
 
-// The layer maps of the material set (KHR_materials_clearcoat, _sheen and _anisotropy textures)
-// and what gbuffer.frag and triangle.frag both make of them. Each map multiplies its factor; an
-// absent one is bound as white, the anisotropy map as (1, 0.5, 1), so the factors alone apply.
-// Needs material_common.glsl, gbuffer_common.glsl and anisotropy_common.glsl.
+// The layer maps of the material set (the clearcoat, sheen, anisotropy and specular extensions'
+// textures) and what gbuffer.frag and triangle.frag both make of them. Each map multiplies its
+// factor; an absent one is bound as white, the anisotropy map as (1, 0.5, 1) and the coat normal
+// as the flat normal, so the factors alone apply. Needs material_common.glsl, gbuffer_common.glsl,
+// normal_map.glsl and anisotropy_common.glsl.
 
 layout(set = 1, binding = 13) uniform sampler2D clearcoatTexture;          // R
 layout(set = 1, binding = 14) uniform sampler2D clearcoatRoughnessTexture; // G
 layout(set = 1, binding = 15) uniform sampler2D sheenColorTexture;         // RGB, sRGB
 layout(set = 1, binding = 16) uniform sampler2D sheenRoughnessTexture;     // A
 layout(set = 1, binding = 17) uniform sampler2D anisotropyTexture;         // RG direction, B strength
+layout(set = 1, binding = 18) uniform sampler2D specularTexture;           // A
+layout(set = 1, binding = 19) uniform sampler2D specularColorTexture;      // RGB, sRGB
+layout(set = 1, binding = 20) uniform sampler2D clearcoatNormalTexture;    // tangent-space normal
 
 struct MaterialLayers
 {
-    // The layer the material's shading model id names, and whether its base is anisotropic.
-    uint layer;
-    bool anisotropic;
+    // SHADING_FLAG_* bits (gbuffer_common.glsl) the material carries.
+    uint flags;
     float coatFactor;
     // Perceptual, not yet floored or filtered.
     float coatRoughness;
+    // The geometric normal unless the coat has its own map.
+    vec3 coatNormal;
     vec3 sheenColor;
     float sheenRoughness;
     // World space, in the surface of the shading normal.
     vec3 anisotropyTangent;
     float anisotropyStrength;
+    // The dielectric's F0 and F90: 0.04 and 1 unless the specular flag is set.
+    vec3 dielectricF0;
+    float dielectricF90;
 };
+
+bool HasShadingFlag(uint flags, uint flag)
+{
+    return (flags & flag) != 0u;
+}
 
 // TBN is the geometric tangent frame (tangent, bitangent, geometric normal), N the shading normal.
 MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, vec3 N)
 {
     MaterialLayers layers;
-    layers.layer = material.shadingModel.x & SHADING_MODEL_LAYER_MASK;
-    layers.anisotropic = (material.shadingModel.x & SHADING_MODEL_ANISOTROPY_BIT) != 0u;
+    layers.flags = material.shadingModel.x;
 
     layers.coatFactor = 0.0;
     layers.coatRoughness = 0.0;
-    if (layers.layer == SHADING_MODEL_CLEARCOAT)
+    layers.coatNormal = TBN[2];
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_CLEARCOAT))
     {
         layers.coatFactor = clamp(material.clearcoatFactors.x * texture(clearcoatTexture, uv).r, 0.0, 1.0);
         layers.coatRoughness = clamp(material.clearcoatFactors.y * texture(clearcoatRoughnessTexture, uv).g, 0.0, 1.0);
+        if (HasShadingFlag(layers.flags, SHADING_FLAG_COAT_NORMAL))
+        {
+            vec3 coatSample = DecodeNormalMap(texture(clearcoatNormalTexture, uv));
+            coatSample.xy *= material.clearcoatFactors.z;
+            layers.coatNormal = normalize(TBN * coatSample);
+        }
     }
 
     layers.sheenColor = vec3(0.0);
     layers.sheenRoughness = 0.0;
-    if (layers.layer == SHADING_MODEL_SHEEN)
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_SHEEN))
     {
         layers.sheenColor = clamp(material.sheenFactors.rgb * texture(sheenColorTexture, uv).rgb, 0.0, 1.0);
         layers.sheenRoughness = clamp(material.sheenFactors.a * texture(sheenRoughnessTexture, uv).a, 0.0, 1.0);
@@ -52,7 +71,7 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
 
     layers.anisotropyTangent = TBN[0];
     layers.anisotropyStrength = 0.0;
-    if (layers.anisotropic)
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_ANISOTROPY))
     {
         vec3 sampled = texture(anisotropyTexture, uv).rgb;
         vec2 direction = AnisotropyDirection(sampled.rg, material.anisotropyFactors.y, material.anisotropyFactors.z);
@@ -65,6 +84,17 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
             layers.anisotropyTangent = tangent * inversesqrt(length2);
             layers.anisotropyStrength = clamp(material.anisotropyFactors.x * sampled.b, 0.0, 1.0);
         }
+    }
+
+    // KHR_materials_ior and KHR_materials_specular: F0 = min(ior F0 * colour, 1) * specular,
+    // F90 = specular, the factors times their maps.
+    layers.dielectricF0 = vec3(0.04);
+    layers.dielectricF90 = 1.0;
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_SPECULAR))
+    {
+        float specular = clamp(material.specularFactors.a * texture(specularTexture, uv).a, 0.0, 1.0);
+        layers.dielectricF0 = min(material.specularFactors.rgb * texture(specularColorTexture, uv).rgb, vec3(1.0)) * specular;
+        layers.dielectricF90 = specular;
     }
     return layers;
 }

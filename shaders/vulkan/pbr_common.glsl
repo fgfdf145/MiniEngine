@@ -131,6 +131,43 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Schlick with an F90 below 1 (KHR_materials_specular).
+vec3 FresnelSchlick(float cosTheta, vec3 F0, float F90)
+{
+    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// ---------------------------------------------------------------------------
+// Dielectric specular (KHR_materials_ior, KHR_materials_specular)
+// ---------------------------------------------------------------------------
+
+// The dielectric's reflectance at normal and grazing incidence: 0.04 and 1 for the plain base,
+// which is what NoSpecularOverride gives. Metals always reflect their albedo at F0 and 1 at F90;
+// SurfaceF0 and SurfaceF90 blend the two by the metallic weight.
+struct SpecularParams
+{
+    vec3 dielectricF0;
+    float dielectricF90;
+};
+
+SpecularParams NoSpecularOverride()
+{
+    SpecularParams specular;
+    specular.dielectricF0 = vec3(0.04);
+    specular.dielectricF90 = 1.0;
+    return specular;
+}
+
+vec3 SurfaceF0(vec3 albedo, float metallic, SpecularParams specular)
+{
+    return mix(specular.dielectricF0, albedo, metallic);
+}
+
+float SurfaceF90(float metallic, SpecularParams specular)
+{
+    return mix(specular.dielectricF90, 1.0, metallic);
+}
+
 // ---------------------------------------------------------------------------
 // Anisotropy (KHR_materials_anisotropy)
 // ---------------------------------------------------------------------------
@@ -177,11 +214,13 @@ vec3 EvaluateBRDF(
     vec3 specularL, float specularNormalization,
     vec3 albedo, float metallic, float roughness,
     AnisotropyParams anisotropy,
+    SpecularParams specularParams,
     vec3 energyCompensation,
     vec3 radiance)
 {
     float NdV = max(dot(N, V), 0.0);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = SurfaceF0(albedo, metallic, specularParams);
+    float F90 = SurfaceF90(metallic, specularParams);
     vec3 result = vec3(0.0);
 
     float NdL = max(dot(N, L), 0.0);
@@ -190,7 +229,7 @@ vec3 EvaluateBRDF(
         // Burley's diffuse (brdf_common.glsl), weighted by what the specular Fresnel toward the
         // centre leaves, as the Lambert term it replaced was.
         vec3 H = normalize(V + L);
-        vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(H, V), 0.0), F0)) * (1.0 - metallic);
+        vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(H, V), 0.0), F0, F90)) * (1.0 - metallic);
         result += kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
     }
 
@@ -198,7 +237,7 @@ vec3 EvaluateBRDF(
     if (specularNdL > 0.0)
     {
         vec3 H = normalize(V + specularL);
-        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0, F90);
         float term = anisotropy.strength > 0.0 ? AnisotropicSpecularTerm(N, V, specularL, H, roughness, anisotropy)
                                                : IsotropicSpecularTerm(N, V, specularL, H, roughness);
         result += term * specularNormalization * F * energyCompensation * radiance * specularNdL;
@@ -330,7 +369,7 @@ float SmoothDistanceAttenuation(float distance, float range)
 // at the light's representative point, and the Fresnel term it used (the base's diffuse weight
 // needs it). The caller multiplies by the irradiance.
 vec3 AreaLightSpecular(
-    vec3 worldPos, vec3 N, vec3 V, float roughness, AnisotropyParams anisotropy, vec3 F0,
+    vec3 worldPos, vec3 N, vec3 V, float roughness, AnisotropyParams anisotropy, vec3 F0, float F90,
     vec3 center, vec3 lightNormal, vec3 rightAxis, vec3 upAxis, vec2 halfSize, float area,
     out vec3 F)
 {
@@ -353,7 +392,7 @@ vec3 AreaLightSpecular(
     vec3 H = normalize(V + L);
     float NdV = max(dot(N, V), 0.0);
     float NdL = max(dot(N, L), 0.0);
-    F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+    F = FresnelSchlick(max(dot(H, V), 0.0), F0, F90);
 
     // Moving L to the representative point already spreads the highlight over the light's shape,
     // so the lobe itself is left alone and only renormalized: (alpha / widened)^2, with alpha
@@ -389,7 +428,8 @@ vec3 EvaluateAreaLight(
     out vec3 coatContribution,
     SheenParams sheen,
     out vec3 sheenContribution,
-    AnisotropyParams anisotropy)
+    AnisotropyParams anisotropy,
+    SpecularParams specularParams)
 {
     coatContribution = vec3(0.0);
     sheenContribution = vec3(0.0);
@@ -442,13 +482,14 @@ vec3 EvaluateAreaLight(
                             irradiance;
     }
 
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = SurfaceF0(albedo, metallic, specularParams);
+    float F90 = SurfaceF90(metallic, specularParams);
     vec3 specular;
     if (anisotropy.strength > 0.0)
     {
         vec3 F;
         specular = AreaLightSpecular(
-                       worldPos, N, V, roughness, anisotropy, F0,
+                       worldPos, N, V, roughness, anisotropy, F0, F90,
                        center, lightNormal, rightAxis, upAxis, halfSize, area,
                        F) *
                    irradiance;
@@ -459,12 +500,12 @@ vec3 EvaluateAreaLight(
         mat3 minv = LtcInverseMatrix(textureLod(ltcInverseMatrices, uv, 0.0), N, V);
         vec2 amplitude = textureLod(ltcAmplitudes, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(minv * c0, minv * c1, minv * c2, minv * c3);
-        specular = luminance * coverage * (F0 * amplitude.x + (vec3(1.0) - F0) * amplitude.y);
+        specular = luminance * coverage * (F0 * amplitude.x + (vec3(F90) - F0) * amplitude.y);
     }
     specular *= energyCompensation;
 
     // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
-    vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(V, centreH), 0.0), F0)) * (1.0 - metallic);
+    vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(V, centreH), 0.0), F0, F90)) * (1.0 - metallic);
     vec3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
 
     return diffuse + specular;
@@ -616,16 +657,18 @@ vec3 EvaluateUniformAmbient(
     vec3 N, vec3 geoNormal, vec3 V,
     vec3 albedo, float metallic, float roughness,
     vec3 luminance,
+    SpecularParams specular,
     float ao,
     vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = SurfaceF0(albedo, metallic, specular);
+    float F90 = SurfaceF90(metallic, specular);
     // The DFG table, as under a physical sky: Karis' analytic fit, used here before, approximated the
     // Smith-Schlick table and no longer matches the correlated lobe the direct lights draw.
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
     // Compensated with the same table it was computed from, so the white furnace holds.
-    vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
+    vec3 specularAlbedo = (F0 * environmentBrdf.x + F90 * environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
     return diffuseAlbedo * luminance * ao + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
@@ -644,7 +687,8 @@ vec3 EvaluateSceneLight(
     out vec3 coatContribution,
     SheenParams sheen,
     out vec3 sheenContribution,
-    AnisotropyParams anisotropy)
+    AnisotropyParams anisotropy,
+    SpecularParams specularParams)
 {
     coatContribution = vec3(0.0);
     sheenContribution = vec3(0.0);
@@ -709,7 +753,7 @@ vec3 EvaluateSceneLight(
         // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
         return EvaluateAreaLight(
             light, worldPos, N, V, albedo, metallic, roughness, energyCompensation,
-            coat, coatContribution, sheen, sheenContribution, anisotropy);
+            coat, coatContribution, sheen, sheenContribution, anisotropy, specularParams);
     }
     else
     {
@@ -729,7 +773,7 @@ vec3 EvaluateSceneLight(
     }
     float specularNormalization;
     vec3 specularL = SpecularLightDirection(source, N, V, roughness, specularNormalization);
-    return EvaluateBRDF(N, V, L, specularL, specularNormalization, albedo, metallic, roughness, anisotropy, energyCompensation, radiance);
+    return EvaluateBRDF(N, V, L, specularL, specularNormalization, albedo, metallic, roughness, anisotropy, specularParams, energyCompensation, radiance);
 }
 
 // Sky irradiance for a direction from the active sky's SH: the atmosphere's (computed on the GPU)
@@ -753,12 +797,13 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
 // weighted by the DFG table's F0 A + B. The scene's Ambient lights, but not the fallback, add their
 // uniform luminance.
-vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, float ao, vec4 reflection)
+vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, SpecularParams specular, float ao, vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = SurfaceF0(albedo, metallic, specular);
+    float F90 = SurfaceF90(metallic, specular);
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
-    vec3 specularAlbedo = (F0 * environmentBrdf.x + environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
+    vec3 specularAlbedo = (F0 * environmentBrdf.x + F90 * environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     // An anisotropic base reflects about the bent normal (AnisotropicBentNormal); the DFG weight
     // keeps the isotropic roughness.
@@ -864,6 +909,7 @@ vec3 ShadeSurface(
     CoatParams coat,
     SheenParams sheen,
     AnisotropyParams anisotropy,
+    SpecularParams specular,
     vec4 reflection)
 {
     // The CPU has already summed the scene's Ambient lights into ambientLuminance, or put the
@@ -872,13 +918,13 @@ vec3 ShadeSurface(
     // The AO darkens the diffuse lobe directly and the specular one through SpecularOcclusion; a
     // screen-space reflection (reflection.a > 0) replaces the occluded environment where it is trusted.
     vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
-                       ? EvaluateUniformAmbient(N, geoNormal, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb, ao, reflection)
-                       : EvaluateSkyAmbient(N, geoNormal, V, albedo, metallic, roughness, anisotropy, ao, reflection);
+                       ? EvaluateUniformAmbient(N, geoNormal, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb, specular, ao, reflection)
+                       : EvaluateSkyAmbient(N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, reflection);
 
     // One factor for every direct light: it depends only on the surface and the view. It comes
     // from the DFG table, which integrates the same height-correlated lobe the direct lights draw,
     // so it adds back exactly the energy that lobe loses.
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = SurfaceF0(albedo, metallic, specular);
     vec3 energyCompensation = SpecularEnergyCompensation(F0, SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0)));
 
     // Directional lights reach everywhere, so they are never binned: every pixel loops over them.
@@ -902,7 +948,8 @@ vec3 ShadeSurface(
             coatContribution,
             sheen,
             sheenContribution,
-            anisotropy);
+            anisotropy,
+            specular);
         // Skipped where the light contributes nothing, which includes every surface facing away
         // from it: those are dark already, and the lookup is the most expensive part of the loop.
         // The coat's normal can face the light where the base's does not, so it counts too.
@@ -938,7 +985,8 @@ vec3 ShadeSurface(
                 coatContribution,
                 sheen,
                 sheenContribution,
-                anisotropy);
+                anisotropy,
+                specular);
             ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
             directAccum += contribution;
             coatAccum += coatContribution;
@@ -960,7 +1008,8 @@ vec3 ShadeSurface(
                 coatContribution,
                 sheen,
                 sheenContribution,
-                anisotropy);
+                anisotropy,
+                specular);
             ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
             directAccum += contribution;
             coatAccum += coatContribution;

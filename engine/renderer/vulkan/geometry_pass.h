@@ -20,15 +20,18 @@ class VulkanGeometryPass : public IScenePass
   public:
     // Framebuffer attachment order: the six colors, then depth. gbuffer.frag's output locations
     // 0-5 are the first six entries.
-    static constexpr std::array<RenderTargetId, 7> kAttachments = {
+    static constexpr std::array<RenderTargetId, 9> kAttachments = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
         RenderTargetId::GBufferEmissive,
         RenderTargetId::GBufferVelocity,
-        RenderTargetId::GBufferCustom,
+        RenderTargetId::GBufferSpecular,
+        RenderTargetId::GBufferCoat,
+        RenderTargetId::GBufferSheen,
         RenderTargetId::SceneDepth};
-    static constexpr uint32_t kColorAttachmentCount = 6;
+    // The most MoltenVK offers on Apple GPUs; VulkanDevice refuses a device with fewer.
+    static constexpr uint32_t kColorAttachmentCount = 8;
 
     VulkanGeometryPass(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGeometryPass() override;

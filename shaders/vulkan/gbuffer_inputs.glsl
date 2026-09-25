@@ -13,9 +13,12 @@ layout(set = 2, binding = 3) uniform sampler2D gbufferEmissive;
 layout(set = 2, binding = 4) uniform sampler2D gbufferDepth;
 layout(set = 2, binding = 5) uniform sampler2D gbufferVelocity;
 layout(set = 2, binding = 6) uniform sampler2D sceneAo;
-// GB5: per-shading-model data; see SHADING_MODEL_* in gbuffer_common.glsl.
-layout(set = 2, binding = 7) uniform sampler2D gbufferCustom;
+// GB5 specular, GB6 coat and anisotropy, GB7 sheen; each read only for the pixels whose
+// SHADING_FLAG_* (gbuffer_common.glsl) say they hold something.
+layout(set = 2, binding = 7) uniform sampler2D gbufferSpecular;
+layout(set = 2, binding = 8) uniform sampler2D gbufferCoat;
+layout(set = 2, binding = 9) uniform sampler2D gbufferSheen;
 // Screen-space reflections: rgb radiance in HDR target units, a confidence (see ssr_resolve.comp).
-layout(set = 2, binding = 8) uniform sampler2D sceneReflections;
+layout(set = 2, binding = 10) uniform sampler2D sceneReflections;
 
 #endif

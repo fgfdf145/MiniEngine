@@ -82,6 +82,9 @@ struct MaterialTextureSlots
     uint32_t sheenColor = 0;
     uint32_t sheenRoughness = 0;
     uint32_t anisotropy = 0;
+    uint32_t specular = 0;
+    uint32_t specularColor = 0;
+    uint32_t clearcoatNormal = 0;
 };
 
 // One texture of a content upload in progress: either created by that upload, or a live texture

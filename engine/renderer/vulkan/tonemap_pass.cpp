@@ -69,10 +69,10 @@ ScenePassId VulkanTonemapPass::Id() const
 RenderPassIo VulkanTonemapPass::Io() const
 {
     // Binding set 2 requires every image in it to be in the read layout whenever this pass
-    // records, whether or not the selected view samples it, so all nine G-buffer inputs are
+    // records, whether or not the selected view samples it, so all eleven G-buffer inputs are
     // declared reads alongside the HDR target. In an order that never wrote them their contents
     // are undefined, and the renderer forces the view off.
-    static constexpr std::array<RenderTargetId, 10> kReads = {
+    static constexpr std::array<RenderTargetId, 12> kReads = {
         RenderTargetId::SceneTaa,
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
@@ -81,7 +81,9 @@ RenderPassIo VulkanTonemapPass::Io() const
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferVelocity,
         RenderTargetId::SceneAo,
-        RenderTargetId::GBufferCustom,
+        RenderTargetId::GBufferSpecular,
+        RenderTargetId::GBufferCoat,
+        RenderTargetId::GBufferSheen,
         RenderTargetId::SceneReflections};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneLdr};
 

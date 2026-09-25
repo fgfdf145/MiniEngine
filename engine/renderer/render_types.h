@@ -31,11 +31,14 @@ enum class GBufferDebugView : uint32_t
     // How many local lights each pixel's cluster lists, as a heat map. Drawn by the lighting pass,
     // so Blend surfaces still show shaded on top of it.
     LightClusters = 8,
-    // GB5 as stored: its channels mean what the pixel's shading model says (clearcoat: r factor,
-    // g roughness; sheen: rgb colour, a roughness).
-    Custom = 9,
+    // GB5 as stored: rgb sqrt(dielectric F0), black for pixels with the default specular.
+    Specular = 9,
     // The resolved screen-space reflections, tone mapped, dimmed where their confidence is low.
-    Reflections = 10
+    Reflections = 10,
+    // GB6 as stored: r coat factor, g coat roughness, b anisotropy angle.
+    Coat = 11,
+    // GB7 as stored: the sheen's colour.
+    Sheen = 12
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the

@@ -99,7 +99,8 @@ void main()
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
     // As gbuffer.frag: both variations here, in uniform control flow.
     roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
-    float coatNormalVariation = NormalVariation(geoNormal);
+    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
+    float coatNormalVariation = NormalVariation(layers.coatNormal);
     float ao = mix(1.0, aoSample, clamp(material.surfaceFactors.w, 0.0, 1.0));
 
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - fragWorldPosition);
@@ -111,28 +112,30 @@ void main()
     vec3 emissive = emissiveSample * material.emissiveFactor;
     // The forward path reads the layers from the material and its maps, where the deferred path
     // reads them from GB5.
-    MaterialLayers layers = EvaluateMaterialLayers(material, fragTexCoord, TBN, N);
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
     AnisotropyParams anisotropy = NoAnisotropy();
-    if (layers.layer == SHADING_MODEL_CLEARCOAT)
+    SpecularParams specular = NoSpecularOverride();
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_CLEARCOAT))
     {
         coat.factor = layers.coatFactor;
         coat.roughness = FilterRoughnessForSpecularAA(clamp(layers.coatRoughness, 0.04, 1.0), coatNormalVariation);
-        coat.normal = geoNormal;
+        coat.normal = layers.coatNormal;
     }
-    else if (layers.layer == SHADING_MODEL_SHEEN)
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_SHEEN))
     {
         sheen.color = layers.sheenColor;
         sheen.roughness = clamp(layers.sheenRoughness, 0.04, 1.0);
     }
-    if (layers.anisotropic && layers.layer != SHADING_MODEL_SHEEN)
+    if (HasShadingFlag(layers.flags, SHADING_FLAG_ANISOTROPY))
     {
         anisotropy.tangent = layers.anisotropyTangent;
         anisotropy.strength = layers.anisotropyStrength;
     }
+    specular.dielectricF0 = layers.dielectricF0;
+    specular.dielectricF90 = layers.dielectricF90;
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
-    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, vec4(0.0));
+    vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.

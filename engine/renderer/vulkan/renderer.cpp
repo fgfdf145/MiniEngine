@@ -189,6 +189,9 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.sheenColor, TextureUsage::Color);
     visit(textures.sheenRoughness, TextureUsage::Data);
     visit(textures.anisotropy, TextureUsage::Data);
+    visit(textures.specular, TextureUsage::Data);
+    visit(textures.specularColor, TextureUsage::Color);
+    visit(textures.clearcoatNormal, TextureUsage::Normal);
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -261,7 +264,10 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             {textures[slots.clearcoatRoughness]->GetImageView(), textures[slots.clearcoatRoughness]->GetSampler()},
             {textures[slots.sheenColor]->GetImageView(), textures[slots.sheenColor]->GetSampler()},
             {textures[slots.sheenRoughness]->GetImageView(), textures[slots.sheenRoughness]->GetSampler()},
-            {textures[slots.anisotropy]->GetImageView(), textures[slots.anisotropy]->GetSampler()}});
+            {textures[slots.anisotropy]->GetImageView(), textures[slots.anisotropy]->GetSampler()},
+            {textures[slots.specular]->GetImageView(), textures[slots.specular]->GetSampler()},
+            {textures[slots.specularColor]->GetImageView(), textures[slots.specularColor]->GetSampler()},
+            {textures[slots.clearcoatNormal]->GetImageView(), textures[slots.clearcoatNormal]->GetSampler()}});
     }
 
     return bindings;
@@ -1520,6 +1526,7 @@ void VulkanRenderer::UploadSceneResources()
     // The layer maps multiply their factors, so white leaves the factors alone; the anisotropy map
     // is a direction, and (1, 0.5) is +X, the tangent, at full strength.
     const uint32_t defaultLayerIndex = acquireDefault("__default_layer__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+    // White in sRGB, for the colour maps among the layers (sheen colour, specular colour).
     const uint32_t defaultSheenColorIndex = acquireDefault("__default_sheen_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
     const uint32_t defaultAnisotropyIndex = acquireDefault("__default_anisotropy__", CreateSolidTexture(255, 128, 255, 255), VulkanTextureFormat::LinearData);
 
@@ -1529,7 +1536,8 @@ void VulkanRenderer::UploadSceneResources()
         defaultOcclusionIndex, defaultEmissiveIndex,
         defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
         defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
-        defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex});
+        defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex,
+        defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex});
 
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
@@ -1572,6 +1580,9 @@ void VulkanRenderer::UploadSceneResources()
         slots.sheenColor = loadTextureIndex(cpuRenderSubmesh.textures.sheenColor, TextureUsage::Color, defaultSheenColorIndex);
         slots.sheenRoughness = loadTextureIndex(cpuRenderSubmesh.textures.sheenRoughness, TextureUsage::Data, defaultLayerIndex);
         slots.anisotropy = loadTextureIndex(cpuRenderSubmesh.textures.anisotropy, TextureUsage::Data, defaultAnisotropyIndex);
+        slots.specular = loadTextureIndex(cpuRenderSubmesh.textures.specular, TextureUsage::Data, defaultLayerIndex);
+        slots.specularColor = loadTextureIndex(cpuRenderSubmesh.textures.specularColor, TextureUsage::Color, defaultSheenColorIndex);
+        slots.clearcoatNormal = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatNormal, TextureUsage::Normal, defaultNormalIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);

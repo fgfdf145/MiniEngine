@@ -19,8 +19,10 @@ const uint GBUFFER_VIEW_EMISSIVE = 5u;
 const uint GBUFFER_VIEW_MOTION_VECTORS = 6u;
 const uint GBUFFER_VIEW_AMBIENT_OCCLUSION = 7u;
 const uint GBUFFER_VIEW_LIGHT_CLUSTERS = 8u;
-const uint GBUFFER_VIEW_CUSTOM = 9u;
+const uint GBUFFER_VIEW_SPECULAR = 9u;
 const uint GBUFFER_VIEW_REFLECTIONS = 10u;
+const uint GBUFFER_VIEW_COAT = 11u;
+const uint GBUFFER_VIEW_SHEEN = 12u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -85,11 +87,20 @@ void main()
         // The resolved screen-space AO alone, white where nothing occludes.
         color = vec3(texture(sceneAo, fragTexCoord).r);
     }
-    else if (constants.gbufferView == GBUFFER_VIEW_CUSTOM)
+    else if (constants.gbufferView == GBUFFER_VIEW_SPECULAR)
     {
-        // GB5 as stored. For clearcoat, red is the coat's factor and green its roughness; for sheen,
-        // rgb is its colour (its roughness, in alpha, does not show). Default Lit pixels are black.
-        color = texture(gbufferCustom, fragTexCoord).rgb;
+        // GB5 as stored: sqrt of the dielectric F0. Pixels with the default specular are black.
+        color = texture(gbufferSpecular, fragTexCoord).rgb;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_COAT)
+    {
+        // GB6 as stored: red the coat's factor, green its roughness, blue the anisotropy's angle.
+        color = texture(gbufferCoat, fragTexCoord).rgb;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_SHEEN)
+    {
+        // GB7 as stored: the sheen's colour (its roughness, in alpha, does not show).
+        color = texture(gbufferSheen, fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_REFLECTIONS)
     {

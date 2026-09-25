@@ -8,23 +8,21 @@
 namespace me
 {
 
-// Which lighting model shades a surface. Written to GB2.a by gbuffer.frag (id / 255), so it must
-// stay below 256 and match the SHADING_MODEL_* constants in shaders/vulkan/gbuffer_common.glsl.
-enum class ShadingModel : uint32_t
-{
-    DefaultLit = 0,
-    // A clear dielectric coat over the base (KHR_materials_clearcoat). GB5.rg holds its factor and
-    // roughness.
-    Clearcoat = 1,
-    // Cloth-like sheen over the base (KHR_materials_sheen). GB5.rgb holds its colour, GB5.a its
-    // roughness. A material with both a coat and a sheen gets Clearcoat: GB5 holds one layer.
-    Sheen = 2
-};
-
-// Set on top of the layer in the shading model id when the base is anisotropic
-// (KHR_materials_anisotropy); GB5.ba then holds the direction's angle and the strength. Never with
-// Sheen, which needs all of GB5. SHADING_MODEL_ANISOTROPY_BIT in gbuffer_common.glsl.
-inline constexpr uint32_t kShadingModelAnisotropyBit = 4u;
+// What a surface carries beyond the plain base, as bits of its shading flags. Written to GB2.a by
+// gbuffer.frag (flags / 255), so they must stay below 256 and match the SHADING_FLAG_* constants
+// in shaders/vulkan/gbuffer_common.glsl. The lighting pass reads only the G-buffer targets the
+// flags name, so a surface with none of them shades exactly as the plain base always did.
+// A clear dielectric coat (KHR_materials_clearcoat): GB6.rg.
+inline constexpr uint32_t kShadingFlagClearcoat = 1u;
+// Cloth-like sheen (KHR_materials_sheen): GB7.
+inline constexpr uint32_t kShadingFlagSheen = 2u;
+// An anisotropic base (KHR_materials_anisotropy): GB6.ba.
+inline constexpr uint32_t kShadingFlagAnisotropy = 4u;
+// A dielectric F0 and F90 other than 0.04 and 1 (KHR_materials_ior, KHR_materials_specular): GB5.
+inline constexpr uint32_t kShadingFlagSpecular = 8u;
+// A coat with its own normal map: the velocity target's .ba. Without it the coat takes the
+// geometric normal.
+inline constexpr uint32_t kShadingFlagCoatNormal = 16u;
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
 // binding 12, MaterialData in shaders/vulkan/material_common.glsl), indexed by the draw's slot.
@@ -39,17 +37,19 @@ struct alignas(16) GpuMaterialData
     float alphaCutoff = 0.5f;
     float surfaceFactors[4] = {0.0f, 1.0f, 1.0f, 1.0f};
     float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
-    // x = ShadingModel, plus kShadingModelAnisotropyBit for an anisotropic base; yzw reserved.
-    uint32_t shadingModel[4] = {static_cast<uint32_t>(ShadingModel::DefaultLit), 0u, 0u, 0u};
-    // x = clearcoat factor, y = clearcoat perceptual roughness, both [0, 1]; zw unused. Read only
-    // when shadingModel is Clearcoat.
+    // x = kShadingFlag* bits; yzw reserved.
+    uint32_t shadingModel[4] = {0u, 0u, 0u, 0u};
+    // x = clearcoat factor, y = clearcoat perceptual roughness, both [0, 1], z = the coat normal
+    // map's scale; w unused. Read only with kShadingFlagClearcoat.
     float clearcoatFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    // rgb = sheen colour (linear), a = sheen perceptual roughness. Read only when shadingModel is
-    // Sheen.
+    // rgb = sheen colour (linear), a = sheen perceptual roughness. Read only with kShadingFlagSheen.
     float sheenFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // x = anisotropy strength [0, 1], y = cos(rotation), z = sin(rotation); w unused. Read only with
-    // kShadingModelAnisotropyBit.
+    // kShadingFlagAnisotropy.
     float anisotropyFactors[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    // rgb = the dielectric F0 from the IOR times the specular colour factor (ComputeDielectricF0
+    // before its clamp and factor), a = the specular factor. Read only with kShadingFlagSpecular.
+    float specularFactors[4] = {0.04f, 0.04f, 0.04f, 1.0f};
 };
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
@@ -59,7 +59,7 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 128, "GpuMaterialData must stay 8 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 144, "GpuMaterialData must stay 9 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");
@@ -68,5 +68,6 @@ static_assert(offsetof(GpuMaterialData, shadingModel) == 64, "shadingModel must 
 static_assert(offsetof(GpuMaterialData, clearcoatFactors) == 80, "clearcoatFactors must be the sixth vec4");
 static_assert(offsetof(GpuMaterialData, sheenFactors) == 96, "sheenFactors must be the seventh vec4");
 static_assert(offsetof(GpuMaterialData, anisotropyFactors) == 112, "anisotropyFactors must be the eighth vec4");
+static_assert(offsetof(GpuMaterialData, specularFactors) == 128, "specularFactors must be the ninth vec4");
 static_assert(sizeof(ObjectPushConstants) == 64, "ObjectPushConstants must match triangle.vert's push constant block");
 }
