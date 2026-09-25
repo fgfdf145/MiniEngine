@@ -25,7 +25,7 @@ ENVIRONMENT_FILE = "Cannon_Exterior.hdr"
 HDRI_INTENSITY = 1.0
 HDRI_ROTATION_DEGREES = 180.0
 
-# The models compared, grouped by what they test. Phase 4 adds the transmission set.
+# The models compared, grouped by what they test.
 MODELS_BY_FEATURE = {
     "core": ["CompareBaseColor", "CompareMetallic", "CompareRoughness", "CompareNormal"],
     "clearcoat": ["CompareClearcoat", "ClearCoatTest"],
@@ -38,6 +38,10 @@ MODELS_BY_FEATURE = {
     "texture_transform": ["TextureTransformTest"],
     "unlit": ["UnlitTest"],
     "variants": ["MaterialsVariantsShoe"],
+    "transmission": ["CompareTransmission", "TransmissionTest", "TransmissionRoughnessTest", "TransmissionThinwallTestGrid"],
+    "volume": ["CompareVolume", "AttenuationTest", "DragonAttenuation"],
+    "dispersion": ["CompareDispersion", "DispersionTest", "DragonDispersion"],
+    "diffuse_transmission": ["DiffuseTransmissionTest", "DiffuseTransmissionTeacup"],
 }
 
 
