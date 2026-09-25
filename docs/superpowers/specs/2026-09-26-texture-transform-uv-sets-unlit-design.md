@@ -50,3 +50,20 @@ lit. With these, a glTF material using any of them shows as its author made it.
    the same texture on the second UV set shows that set's layout.
 2. An unlit sphere shows its flat colour under the sun and in the dark alike.
 3. Sponza: within the run-to-run noise of the previous build.
+
+## Amendments During Implementation
+
+- **Rotated tangent-space maps are turned back.** A normal map (and the coat's, and the anisotropy
+  direction map) read through a rotated texture points along the texture's rotated axes;
+  `RotateMaterialTangentXy` rotates its xy by the transform's rotation into the mesh's tangent frame.
+  The rotation is read from the matrix's first column, so a negative u scale flips it too. Scale is
+  otherwise ignored for the direction.
+- **Unlit colours come out close to, not equal to, themselves.** The GT7 curve is not the identity
+  below paper white: an unlit (1, 0.5, 0.1) shows as a lighter, slightly desaturated orange. Exact
+  would mean inverting the operator per pixel; the background does that on the CPU for one colour.
+- **Acceptance** (`tests/fixtures/render_scenes/scenes/texture_transforms_unlit.yaml`, default sun):
+  the transformed checker shows diamonds four times finer than the plain one; the second UV set
+  shows its planar projection; the unlit sphere is flat; the Mask cutout's shadow on the floor
+  carries the same holes as the sphere; the rotated stripe normal map runs horizontally with
+  consistent shading. Forward-only and deferred agree. Sponza: 4.0% of channels differ from the
+  previous build, the run-to-run floor.
