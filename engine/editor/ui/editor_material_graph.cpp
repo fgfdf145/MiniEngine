@@ -852,16 +852,16 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
         pbr.anisotropyRotation = rotationDegrees * (3.14159265f / 180.0f);
         changed = true;
     }
-    // The G-buffer holds one of the two layers per pixel, and the coat is the one kept.
-    const float sheenStrength = std::max({pbr.sheenColorFactor[0], pbr.sheenColorFactor[1], pbr.sheenColorFactor[2]});
-    if (pbr.clearcoatFactor > 0.0f && sheenStrength > 0.0f)
+    changed |= DragFloatInRange("Clearcoat Normal Scale", &pbr.clearcoatNormalScale, 0.0f, 4.0f, "%.2f");
+    // KHR_materials_ior and KHR_materials_specular: the dielectric's reflectance. 0 is an infinite
+    // index; 1 to 1.0 excluded is not an index and snaps back to 1.5.
+    if (ImGui::DragFloat("IOR", &pbr.ior, 0.01f, 0.0f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
     {
-        ImGui::TextDisabled("Clearcoat and sheen together: only the clearcoat is rendered.");
+        pbr.ior = SanitizeIor(pbr.ior);
+        changed = true;
     }
-    else if (sheenStrength > 0.0f && pbr.anisotropyStrength > 0.0f)
-    {
-        ImGui::TextDisabled("Sheen and anisotropy together: the base is rendered isotropic.");
-    }
+    changed |= DragFloatInRange("Specular", &pbr.specularFactor, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::ColorEdit3("Specular Color", pbr.specularColorFactor, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
     return changed;
 }
 

@@ -192,8 +192,10 @@ void Near(float actual, float expected, const std::string& what)
 }
 
 // Five images, one per layer map, each its own texture so a mix-up between them shows.
-const char* kLayerTextures = R"("images": [{ "uri": "cc.png" }, { "uri": "ccr.png" }, { "uri": "sc.png" }, { "uri": "sr.png" }, { "uri": "an.png" }],
-  "textures": [{ "source": 0 }, { "source": 1 }, { "source": 2 }, { "source": 3 }, { "source": 4 }],)";
+const char* kLayerTextures = R"("images": [{ "uri": "cc.png" }, { "uri": "ccr.png" }, { "uri": "sc.png" }, { "uri": "sr.png" }, { "uri": "an.png" },
+                 { "uri": "sp.png" }, { "uri": "spc.png" }, { "uri": "ccn.png" }],
+  "textures": [{ "source": 0 }, { "source": 1 }, { "source": 2 }, { "source": 3 }, { "source": 4 },
+               { "source": 5 }, { "source": 6 }, { "source": 7 }],)";
 
 void ReadsClearcoat()
 {
@@ -272,7 +274,7 @@ void ReadsLayerTextures()
             "layers",
             {R"({ "name": "layers", "extensions": {
                    "KHR_materials_clearcoat": { "clearcoatFactor": 1, "clearcoatTexture": { "index": 0 }, "clearcoatRoughnessTexture": { "index": 1 },
-                                                "clearcoatNormalTexture": { "index": 0 } },
+                                                "clearcoatNormalTexture": { "index": 7 } },
                    "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1], "sheenColorTexture": { "index": 2 }, "sheenRoughnessTexture": { "index": 3 } },
                    "KHR_materials_anisotropy": { "anisotropyStrength": 0.5, "anisotropyTexture": { "index": 4 } } } })",
              R"({ "name": "plain" })"},
@@ -352,6 +354,103 @@ void SidecarKeepsAnisotropyAndLayerMaps()
     Near(applied.anisotropyStrength, 0.5f, "applied strength");
     Near(applied.anisotropyRotation, 0.75f, "applied rotation");
     Require(applied.sheenRoughnessTexturePath == "sr.png", "applied layer maps");
+}
+
+void ReadsIorAndSpecular()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "specular",
+            {R"({ "name": "diamond", "extensions": { "KHR_materials_ior": { "ior": 2.4 },
+                   "KHR_materials_specular": { "specularFactor": 0.5, "specularColorFactor": [1, 0.5, 2],
+                                               "specularTexture": { "index": 5 }, "specularColorTexture": { "index": 6 } } } })",
+             R"({ "name": "infinite", "extensions": { "KHR_materials_ior": { "ior": 0 } } })",
+             R"({ "name": "invalid", "extensions": { "KHR_materials_ior": { "ior": 0.5 }, "KHR_materials_specular": { "specularFactor": 3 } } })",
+             R"({ "name": "coatnormal", "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 1,
+                   "clearcoatNormalTexture": { "index": 7, "scale": 0.25 } } } })",
+             R"({ "name": "plain" })"},
+            kLayerTextures)
+            .string());
+    Require(model.IsValid(), "the specular fixture loads");
+    const ModelMaterialData& diamond = MaterialNamed(model, "diamond");
+    Near(diamond.ior, 2.4f, "ior");
+    Near(diamond.specularFactor, 0.5f, "specular factor");
+    Near(diamond.specularColorFactor[2], 2.0f, "a specular colour above 1 is kept");
+    Near(diamond.pbr.ior, 2.4f, "ior in the PBR settings");
+    Near(diamond.pbr.specularColorFactor[1], 0.5f, "specular colour in the PBR settings");
+    Require(diamond.specularTexturePath == "sp.png" && diamond.specularColorTexturePath == "spc.png", "specular maps");
+    Near(MaterialNamed(model, "infinite").ior, 0.0f, "0 is an infinite index");
+    Near(MaterialNamed(model, "invalid").ior, 1.5f, "an index below 1 reads as the default");
+    Near(MaterialNamed(model, "invalid").specularFactor, 1.0f, "the specular factor clamps to 1");
+    const ModelMaterialData& coat = MaterialNamed(model, "coatnormal");
+    Require(coat.clearcoatNormalTexturePath == "ccn.png", "coat normal map");
+    Near(coat.clearcoatNormalScale, 0.25f, "coat normal scale");
+    const ModelMaterialData& plain = MaterialNamed(model, "plain");
+    Near(plain.ior, 1.5f, "default ior");
+    Near(plain.specularFactor, 1.0f, "default specular");
+    Near(plain.specularColorFactor[0], 1.0f, "default specular colour");
+    Near(plain.clearcoatNormalScale, 1.0f, "default coat normal scale");
+}
+
+void DielectricF0FollowsKhronos()
+{
+    const float white[3] = {1.0f, 1.0f, 1.0f};
+    float f0[3];
+    ComputeDielectricF0(1.5f, white, 1.0f, f0);
+    Near(f0[0], 0.04f, "ior 1.5 is F0 0.04");
+    ComputeDielectricF0(1.0f, white, 1.0f, f0);
+    Near(f0[0], 0.0f, "ior 1 reflects nothing");
+    ComputeDielectricF0(0.0f, white, 1.0f, f0);
+    Near(f0[0], 1.0f, "an infinite index reflects everything");
+    const float tint[3] = {1.0f, 0.5f, 100.0f};
+    ComputeDielectricF0(1.5f, tint, 0.5f, f0);
+    Near(f0[1], 0.01f, "the colour tints and the factor scales");
+    Near(f0[2], 0.5f, "F0 is clamped to 1 before the factor");
+    Near(SanitizeIor(-2.0f), 1.5f, "a negative index is invalid");
+}
+
+void SidecarKeepsIorAndSpecular()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "gem";
+    written.pbr.ior = 2.0f;
+    written.pbr.specularFactor = 0.25f;
+    written.pbr.specularColorFactor[1] = 0.5f;
+    written.pbr.clearcoatNormalScale = 0.5f;
+    written.specularTexturePath = "sp.png";
+    written.specularColorTexturePath = "spc.png";
+    written.clearcoatNormalTexturePath = "ccn.png";
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "gem.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.ior, 2.0f, "sidecar ior");
+    Near(read.pbr.specularFactor, 0.25f, "sidecar specular");
+    Near(read.pbr.specularColorFactor[1], 0.5f, "sidecar specular colour");
+    Near(read.pbr.clearcoatNormalScale, 0.5f, "sidecar coat normal scale");
+    Require(read.specularTexturePath == "sp.png" && read.specularColorTexturePath == "spc.png" &&
+                read.clearcoatNormalTexturePath == "ccn.png",
+            "sidecar maps");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Near(legacy.pbr.ior, 1.5f, "a legacy sidecar has the default ior");
+    Near(legacy.pbr.specularFactor, 1.0f, "and the default specular");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Near(applied.ior, 2.0f, "applied ior");
+    Near(applied.specularColorFactor[1], 0.5f, "applied specular colour");
+    Require(applied.clearcoatNormalTexturePath == "ccn.png", "applied coat normal map");
 }
 
 void SidecarKeepsSheen()
@@ -439,6 +538,9 @@ int main()
         ReadsLayerTextures();
         ReadsAnisotropy();
         SidecarKeepsAnisotropyAndLayerMaps();
+        ReadsIorAndSpecular();
+        DielectricF0FollowsKhronos();
+        SidecarKeepsIorAndSpecular();
     }
     catch (const std::exception& error)
     {

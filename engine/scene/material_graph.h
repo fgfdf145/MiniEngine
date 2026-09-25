@@ -17,6 +17,14 @@ enum class MaterialAlphaMode
 };
 
 std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value);
+
+// KHR_materials_ior accepts 0 (an infinite index) or anything from 1 up; values in between, and
+// negative ones, are not indices of refraction and read as 1.5, the extension's default.
+float SanitizeIor(float ior);
+
+// The dielectric F0 KHR_materials_ior and KHR_materials_specular give, before the maps:
+// min(((ior - 1) / (ior + 1))^2 * specularColor, 1) * specular. F90 is the specular factor.
+void ComputeDielectricF0(float ior, const float specularColor[3], float specular, float f0[3]);
 const char* ToString(MaterialAlphaMode mode);
 float ClampMaterialAlphaValue(float value);
 float ClampMaterialAlphaValue(float value, float fallback);
@@ -46,6 +54,14 @@ struct MaterialPbrSurfaceSettings
     // counter-clockwise from the tangent. A strength of 0 means an isotropic base.
     float anisotropyStrength = 0.0f;
     float anisotropyRotation = 0.0f;
+    // KHR_materials_ior: the dielectric's index of refraction; 1.5 gives the usual F0 of 0.04, 0
+    // stands for an infinite index (F0 = 1).
+    float ior = 1.5f;
+    // KHR_materials_specular: scales the dielectric's F0 and F90 alike, and tints its F0.
+    float specularFactor = 1.0f;
+    float specularColorFactor[3] = {1.0f, 1.0f, 1.0f};
+    // KHR_materials_clearcoat's clearcoatNormalTexture scale.
+    float clearcoatNormalScale = 1.0f;
 };
 
 struct MaterialGraphNodePosition

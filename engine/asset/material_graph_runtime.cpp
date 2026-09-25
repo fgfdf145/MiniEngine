@@ -510,6 +510,15 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["sheen_roughness_factor"] = node.pbr.sheenRoughnessFactor;
         pbr["anisotropy_strength"] = node.pbr.anisotropyStrength;
         pbr["anisotropy_rotation"] = node.pbr.anisotropyRotation;
+        pbr["ior"] = node.pbr.ior;
+        pbr["specular_factor"] = node.pbr.specularFactor;
+        YAML::Node specularColor(YAML::NodeType::Sequence);
+        for (float value : node.pbr.specularColorFactor)
+        {
+            specularColor.push_back(value);
+        }
+        pbr["specular_color_factor"] = specularColor;
+        pbr["clearcoat_normal_scale"] = node.pbr.clearcoatNormalScale;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -625,6 +634,14 @@ bool DeserializeMaterialShaderGraph(
                 0.0f,
                 1.0f);
             node.pbr.anisotropyRotation = ReadFloatOrFallback(pbrNode["anisotropy_rotation"], node.pbr.anisotropyRotation);
+            node.pbr.ior = SanitizeIor(ReadFloatOrFallback(pbrNode["ior"], node.pbr.ior));
+            node.pbr.specularFactor = std::clamp(ReadFloatOrFallback(pbrNode["specular_factor"], node.pbr.specularFactor), 0.0f, 1.0f);
+            ReadFloatSequence(pbrNode["specular_color_factor"], node.pbr.specularColorFactor, 3);
+            for (float& component : node.pbr.specularColorFactor)
+            {
+                component = std::max(component, 0.0f);
+            }
+            node.pbr.clearcoatNormalScale = ReadFloatOrFallback(pbrNode["clearcoat_normal_scale"], node.pbr.clearcoatNormalScale);
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

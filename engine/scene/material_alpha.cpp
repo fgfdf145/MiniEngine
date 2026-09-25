@@ -63,4 +63,23 @@ float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cu
         return 1.0f;
     }
 }
+
+float SanitizeIor(float ior)
+{
+    if (!std::isfinite(ior) || (ior != 0.0f && ior < 1.0f))
+    {
+        return 1.5f;
+    }
+    return ior;
+}
+
+void ComputeDielectricF0(float ior, const float specularColor[3], float specular, float f0[3])
+{
+    ior = SanitizeIor(ior);
+    const float reflectance = ior == 0.0f ? 1.0f : ((ior - 1.0f) / (ior + 1.0f)) * ((ior - 1.0f) / (ior + 1.0f));
+    for (size_t index = 0; index < 3; ++index)
+    {
+        f0[index] = std::min(reflectance * std::max(specularColor[index], 0.0f), 1.0f) * std::clamp(specular, 0.0f, 1.0f);
+    }
+}
 }

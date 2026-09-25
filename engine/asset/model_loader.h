@@ -28,6 +28,9 @@ struct ModelMaterialData
     std::string sheenColorTexturePath;
     std::string sheenRoughnessTexturePath;
     std::string anisotropyTexturePath;
+    std::string specularTexturePath;
+    std::string specularColorTexturePath;
+    std::string clearcoatNormalTexturePath;
     float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
@@ -45,6 +48,10 @@ struct ModelMaterialData
     float sheenRoughnessFactor = 0.0f;
     float anisotropyStrength = 0.0f;
     float anisotropyRotation = 0.0f;
+    float ior = 1.5f;
+    float specularFactor = 1.0f;
+    float specularColorFactor[3] = {1.0f, 1.0f, 1.0f};
+    float clearcoatNormalScale = 1.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

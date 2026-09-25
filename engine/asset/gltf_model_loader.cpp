@@ -753,13 +753,14 @@ ModelMaterialData BuildMaterialData(
         materialData.clearcoatRoughnessFactor = readUnitFactor("clearcoatRoughnessFactor");
         materialData.clearcoatTexturePath = readExtensionTexture(clearcoat->second, "clearcoatTexture");
         materialData.clearcoatRoughnessTexturePath = readExtensionTexture(clearcoat->second, "clearcoatRoughnessTexture");
-        // GB5 has no room for a second normal, so the coat keeps the geometric one.
-        if (clearcoat->second.Has("clearcoatNormalTexture"))
+        materialData.clearcoatNormalTexturePath = readExtensionTexture(clearcoat->second, "clearcoatNormalTexture");
+        if (clearcoat->second.Has("clearcoatNormalTexture") && clearcoat->second.Get("clearcoatNormalTexture").IsObject())
         {
-            LOG_WARN(
-                "Material '{}' in '{}' has a clearcoatNormalTexture, which is not supported; its coat uses the geometric normal",
-                material.name,
-                modelPath.string());
+            const tinygltf::Value& normalInfo = clearcoat->second.Get("clearcoatNormalTexture");
+            if (normalInfo.Has("scale") && normalInfo.Get("scale").IsNumber())
+            {
+                materialData.clearcoatNormalScale = static_cast<float>(normalInfo.Get("scale").GetNumberAsDouble());
+            }
         }
     }
 
@@ -786,13 +787,38 @@ ModelMaterialData BuildMaterialData(
         }
         materialData.sheenColorTexturePath = readExtensionTexture(sheen->second, "sheenColorTexture");
         materialData.sheenRoughnessTexturePath = readExtensionTexture(sheen->second, "sheenRoughnessTexture");
-        if (clearcoat != material.extensions.end() && materialData.clearcoatFactor > 0.0f)
+    }
+
+    // KHR_materials_ior. Absent: 1.5. SanitizeIor turns an invalid index into the default.
+    const auto ior = material.extensions.find("KHR_materials_ior");
+    if (ior != material.extensions.end() && ior->second.Has("ior") && ior->second.Get("ior").IsNumber())
+    {
+        materialData.ior = SanitizeIor(static_cast<float>(ior->second.Get("ior").GetNumberAsDouble()));
+    }
+
+    // KHR_materials_specular. Absent members take the extension's defaults: strength 1, white.
+    const auto specular = material.extensions.find("KHR_materials_specular");
+    if (specular != material.extensions.end())
+    {
+        if (specular->second.Has("specularFactor") && specular->second.Get("specularFactor").IsNumber())
         {
-            LOG_WARN(
-                "Material '{}' in '{}' has both clearcoat and sheen; only the clearcoat is rendered",
-                material.name,
-                modelPath.string());
+            materialData.specularFactor =
+                std::clamp(static_cast<float>(specular->second.Get("specularFactor").GetNumberAsDouble()), 0.0f, 1.0f);
         }
+        if (specular->second.Has("specularColorFactor") && specular->second.Get("specularColorFactor").IsArray())
+        {
+            const tinygltf::Value& color = specular->second.Get("specularColorFactor");
+            for (int index = 0; index < 3 && index < static_cast<int>(color.ArrayLen()); ++index)
+            {
+                if (color.Get(index).IsNumber())
+                {
+                    // Above 1 is allowed: the colour scales an F0 that is itself small.
+                    materialData.specularColorFactor[index] = std::max(static_cast<float>(color.Get(index).GetNumberAsDouble()), 0.0f);
+                }
+            }
+        }
+        materialData.specularTexturePath = readExtensionTexture(specular->second, "specularTexture");
+        materialData.specularColorTexturePath = readExtensionTexture(specular->second, "specularColorTexture");
     }
 
     // KHR_materials_anisotropy. Absent members take the extension's defaults: strength 0, rotation 0.
@@ -809,15 +835,6 @@ ModelMaterialData BuildMaterialData(
             materialData.anisotropyRotation = static_cast<float>(anisotropy->second.Get("anisotropyRotation").GetNumberAsDouble());
         }
         materialData.anisotropyTexturePath = readExtensionTexture(anisotropy->second, "anisotropyTexture");
-        const float sheenStrength =
-            std::max({materialData.sheenColorFactor[0], materialData.sheenColorFactor[1], materialData.sheenColorFactor[2]});
-        if (materialData.anisotropyStrength > 0.0f && sheenStrength > 0.0f && materialData.clearcoatFactor <= 0.0f)
-        {
-            LOG_WARN(
-                "Material '{}' in '{}' has both sheen and anisotropy; its base is rendered isotropic",
-                material.name,
-                modelPath.string());
-        }
     }
 
     const std::optional<MaterialAlphaMode> parsedAlphaMode =

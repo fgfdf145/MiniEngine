@@ -858,6 +858,13 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 "Anisotropy %.2f  Rotation %.1f deg",
                 selectedMaterial.pbr.anisotropyStrength,
                 selectedMaterial.pbr.anisotropyRotation * (180.0f / 3.14159265f));
+            ImGui::Text(
+                "IOR %.3f  Specular %.2f  Specular Color %.2f %.2f %.2f",
+                selectedMaterial.pbr.ior,
+                selectedMaterial.pbr.specularFactor,
+                selectedMaterial.pbr.specularColorFactor[0],
+                selectedMaterial.pbr.specularColorFactor[1],
+                selectedMaterial.pbr.specularColorFactor[2]);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

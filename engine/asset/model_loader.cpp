@@ -55,6 +55,13 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.sheenRoughnessFactor = material.sheenRoughnessFactor;
     pbr.anisotropyStrength = material.anisotropyStrength;
     pbr.anisotropyRotation = material.anisotropyRotation;
+    pbr.ior = material.ior;
+    pbr.specularFactor = material.specularFactor;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        pbr.specularColorFactor[index] = material.specularColorFactor[index];
+    }
+    pbr.clearcoatNormalScale = material.clearcoatNormalScale;
     return pbr;
 }
 
@@ -86,6 +93,13 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.sheenRoughnessFactor = pbr.sheenRoughnessFactor;
     material.anisotropyStrength = pbr.anisotropyStrength;
     material.anisotropyRotation = pbr.anisotropyRotation;
+    material.ior = pbr.ior;
+    material.specularFactor = pbr.specularFactor;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        material.specularColorFactor[index] = pbr.specularColorFactor[index];
+    }
+    material.clearcoatNormalScale = pbr.clearcoatNormalScale;
 }
 
 struct MaterialDefinitionFile
