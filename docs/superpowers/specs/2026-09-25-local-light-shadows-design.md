@@ -140,6 +140,24 @@ bool FrustumIntersectsSphere(const glm::mat4& viewProjection, const glm::vec3& c
 3. "Local light shadows" off: within the run-to-run noise of the previous build.
 4. Frame time reported with and without, with numbers.
 
+## Amendments During Implementation
+
+- **Cube tiles are marked, not inferred.** The shader first tested the spot's cosine against 60
+  degrees to decide whether a spot had a cube; that duplicates the planner's decision and can
+  disagree with it at exactly 60 degrees. The planner now flags cube tiles (`params.y = 1`) and the
+  shader reads the flag from the light's first tile.
+- **The shared constants moved into `local_shadow_common.glsl`** (tile size, guard band, near plane),
+  and the test checks them against the C++ header.
+- **Acceptance** (Sponza turned 90 degrees and lowered 1.7 m in front of the default camera, a dim
+  ambient light instead of the fallback): a point light in the nave throws the front columns'
+  shadows across the floor; a spot aimed past a column leaves the floor and wall behind it dark,
+  where without shadows it lit them through the column; no acne, no leaks at column feet, no seams
+  between cube faces visible at 2x zoom.
+- **Cost** (Apple M3, Debug build, 667 x 541, two cube lights and one spot, 13 tiles, frames
+  2500-3000 averaged over two runs each): about 22 ms a frame with local shadows, 12 ms without.
+  Every tile is redrawn every frame and every caster is tested against every tile on the CPU;
+  caching static tiles is the obvious next step if it matters.
+
 ## Out of Scope
 
 - Caching static shadow maps across frames, per-light tile resolution, soft shadows sized by the
