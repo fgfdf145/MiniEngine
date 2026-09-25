@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -21,6 +22,57 @@ std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value);
 // KHR_materials_ior accepts 0 (an infinite index) or anything from 1 up; values in between, and
 // negative ones, are not indices of refraction and read as 1.5, the extension's default.
 float SanitizeIor(float ior);
+
+// The material's texture slots, in the order of the material descriptor set's bindings (set 1,
+// VulkanUniformBuffer); texture transforms are kept per slot. Slots 6 to 12 are the blend graph's
+// layer B and mask, which glTF does not describe and which always sample untransformed.
+enum class MaterialTextureSlot : uint32_t
+{
+    BaseColor = 0,
+    Normal = 1,
+    Metallic = 2,
+    Roughness = 3,
+    Occlusion = 4,
+    Emissive = 5,
+    Clearcoat = 13,
+    ClearcoatRoughness = 14,
+    SheenColor = 15,
+    SheenRoughness = 16,
+    Anisotropy = 17,
+    Specular = 18,
+    SpecularColor = 19,
+    ClearcoatNormal = 20,
+    Iridescence = 21,
+    IridescenceThickness = 22
+};
+
+inline constexpr uint32_t kMaterialTextureSlotCount = 23;
+
+// The slot's name in a sidecar's texture_transforms, or nullptr for the blend graph's slots.
+const char* MaterialTextureSlotName(uint32_t slot);
+
+// KHR_texture_transform, plus the textureInfo's texCoord: which UV set a texture reads, and how that
+// UV is moved before sampling, uv' = offset + R(rotation) * (scale * uv) (glTF's T * R * S).
+struct TextureTransform
+{
+    float offset[2] = {0.0f, 0.0f};
+    // Radians, as glTF has it.
+    float rotation = 0.0f;
+    float scale[2] = {1.0f, 1.0f};
+    // 0 for TEXCOORD_0, 1 for TEXCOORD_1; the engine reads no others.
+    uint32_t texCoord = 0;
+
+    // Samples the first UV set untouched.
+    bool IsIdentity() const;
+};
+
+using MaterialTextureTransforms = std::array<TextureTransform, kMaterialTextureSlotCount>;
+
+bool AreIdentity(const MaterialTextureTransforms& transforms);
+
+// The transform as the shader applies it: uv' = (row0.x u + row0.y v + row0.z,
+// row1.x u + row1.y v + row1.z), with row0.w the UV set.
+void ComputeTextureTransformRows(const TextureTransform& transform, float row0[4], float row1[4]);
 
 // The dielectric F0 KHR_materials_ior and KHR_materials_specular give, before the maps:
 // min(((ior - 1) / (ior + 1))^2 * specularColor, 1) * specular. F90 is the specular factor.
@@ -68,6 +120,8 @@ struct MaterialPbrSurfaceSettings
     float iridescenceIor = 1.3f;
     float iridescenceThicknessMinimum = 100.0f;
     float iridescenceThicknessMaximum = 400.0f;
+    // KHR_materials_unlit: the base colour alone, no lighting.
+    bool unlit = false;
 };
 
 struct MaterialGraphNodePosition

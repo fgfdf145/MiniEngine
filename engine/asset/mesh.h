@@ -15,6 +15,8 @@ struct Vertex
     float texCoord[2];
     float normal[3];
     float tangent[4];
+    // TEXCOORD_1, zero when the mesh has none. Textures read it through their transform's texCoord.
+    float texCoord1[2];
 };
 
 struct MeshData

@@ -867,6 +867,8 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= DragFloatInRange("Iridescence IOR", &pbr.iridescenceIor, 1.0f, 3.0f, "%.2f");
     changed |= DragFloatInRange("Film Thickness Min (nm)", &pbr.iridescenceThicknessMinimum, 0.0f, 2000.0f, "%.0f");
     changed |= DragFloatInRange("Film Thickness Max (nm)", &pbr.iridescenceThicknessMaximum, 0.0f, 2000.0f, "%.0f");
+    // KHR_materials_unlit: the base colour alone, shown at the display's paper white.
+    changed |= ImGui::Checkbox("Unlit", &pbr.unlit);
     return changed;
 }
 

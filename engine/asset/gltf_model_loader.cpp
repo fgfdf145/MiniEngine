@@ -655,6 +655,49 @@ std::string ResolveImagePath(
     return {};
 }
 
+// KHR_texture_transform on a textureInfo, over the textureInfo's own texCoord (which the
+// extension's texCoord, when present, overrides). The engine reads two UV sets; a texture asking
+// for a third samples the second, with a warning.
+TextureTransform ReadTextureTransform(int texCoord, const tinygltf::Value* transformExtension, const std::filesystem::path& modelPath)
+{
+    TextureTransform transform{};
+    int set = texCoord;
+    if (transformExtension != nullptr && transformExtension->IsObject())
+    {
+        const tinygltf::Value& t = *transformExtension;
+        if (t.Has("offset") && t.Get("offset").IsArray() && t.Get("offset").ArrayLen() >= 2)
+        {
+            transform.offset[0] = static_cast<float>(t.Get("offset").Get(0).GetNumberAsDouble());
+            transform.offset[1] = static_cast<float>(t.Get("offset").Get(1).GetNumberAsDouble());
+        }
+        if (t.Has("rotation") && t.Get("rotation").IsNumber())
+        {
+            transform.rotation = static_cast<float>(t.Get("rotation").GetNumberAsDouble());
+        }
+        if (t.Has("scale") && t.Get("scale").IsArray() && t.Get("scale").ArrayLen() >= 2)
+        {
+            transform.scale[0] = static_cast<float>(t.Get("scale").Get(0).GetNumberAsDouble());
+            transform.scale[1] = static_cast<float>(t.Get("scale").Get(1).GetNumberAsDouble());
+        }
+        if (t.Has("texCoord") && t.Get("texCoord").IsInt())
+        {
+            set = t.Get("texCoord").GetNumberAsInt();
+        }
+    }
+    if (set > 1)
+    {
+        LOG_WARN("'{}' has a texture on TEXCOORD_{}; the engine reads two UV sets and uses TEXCOORD_1", modelPath.string(), set);
+    }
+    transform.texCoord = set >= 1 ? 1u : 0u;
+    return transform;
+}
+
+TextureTransform ReadTextureTransform(int texCoord, const tinygltf::ExtensionMap& extensions, const std::filesystem::path& modelPath)
+{
+    const auto found = extensions.find("KHR_texture_transform");
+    return ReadTextureTransform(texCoord, found != extensions.end() ? &found->second : nullptr, modelPath);
+}
+
 ModelMaterialData BuildMaterialData(
     const tinygltf::Model& model,
     const tinygltf::Material& material,
@@ -673,6 +716,11 @@ ModelMaterialData BuildMaterialData(
         }
     }
     materialData.baseColorTexturePath = ResolveImagePath(model, modelPath, pbr.baseColorTexture.index);
+    const auto setTransform = [&](MaterialTextureSlot slot, const TextureTransform& transform)
+    {
+        materialData.textureTransforms[static_cast<size_t>(slot)] = transform;
+    };
+    setTransform(MaterialTextureSlot::BaseColor, ReadTextureTransform(pbr.baseColorTexture.texCoord, pbr.baseColorTexture.extensions, modelPath));
     materialData.metallicFactor = static_cast<float>(pbr.metallicFactor);
     materialData.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
 
@@ -680,16 +728,24 @@ ModelMaterialData BuildMaterialData(
         ResolveImagePath(model, modelPath, pbr.metallicRoughnessTexture.index);
     materialData.metallicTexturePath = metallicRoughnessTexturePath;
     materialData.roughnessTexturePath = metallicRoughnessTexturePath;
+    // One glTF texture feeds both slots, so both take its transform.
+    const TextureTransform metallicRoughnessTransform =
+        ReadTextureTransform(pbr.metallicRoughnessTexture.texCoord, pbr.metallicRoughnessTexture.extensions, modelPath);
+    setTransform(MaterialTextureSlot::Metallic, metallicRoughnessTransform);
+    setTransform(MaterialTextureSlot::Roughness, metallicRoughnessTransform);
 
     if (material.normalTexture.index >= 0)
     {
         materialData.normalTexturePath = ResolveImagePath(model, modelPath, material.normalTexture.index);
+        setTransform(MaterialTextureSlot::Normal, ReadTextureTransform(material.normalTexture.texCoord, material.normalTexture.extensions, modelPath));
         materialData.normalScale = static_cast<float>(material.normalTexture.scale);
     }
 
     if (material.occlusionTexture.index >= 0)
     {
         materialData.occlusionTexturePath = ResolveImagePath(model, modelPath, material.occlusionTexture.index);
+        setTransform(
+            MaterialTextureSlot::Occlusion, ReadTextureTransform(material.occlusionTexture.texCoord, material.occlusionTexture.extensions, modelPath));
         materialData.occlusionStrength = static_cast<float>(material.occlusionTexture.strength);
     }
 
@@ -703,6 +759,7 @@ ModelMaterialData BuildMaterialData(
     if (material.emissiveTexture.index >= 0)
     {
         materialData.emissiveTexturePath = ResolveImagePath(model, modelPath, material.emissiveTexture.index);
+        setTransform(MaterialTextureSlot::Emissive, ReadTextureTransform(material.emissiveTexture.texCoord, material.emissiveTexture.extensions, modelPath));
         materialData.emissiveIntensity = 1.0f;
     }
 
@@ -727,14 +784,20 @@ ModelMaterialData BuildMaterialData(
     }
 
     // The texture a layer extension's textureInfo member points at, or "" when it has none.
-    const auto readExtensionTexture = [&](const tinygltf::Value& extension, const char* name) -> std::string
+    const auto readExtensionTexture = [&](const tinygltf::Value& extension, const char* name, MaterialTextureSlot slot) -> std::string
     {
         if (!extension.Has(name) || !extension.Get(name).IsObject() || !extension.Get(name).Has("index") ||
             !extension.Get(name).Get("index").IsInt())
         {
             return {};
         }
-        return ResolveImagePath(model, modelPath, extension.Get(name).Get("index").GetNumberAsInt());
+        const tinygltf::Value& info = extension.Get(name);
+        const int texCoord = info.Has("texCoord") && info.Get("texCoord").IsInt() ? info.Get("texCoord").GetNumberAsInt() : 0;
+        const tinygltf::Value* transform =
+            info.Has("extensions") && info.Get("extensions").Has("KHR_texture_transform") ? &info.Get("extensions").Get("KHR_texture_transform")
+                                                                                          : nullptr;
+        setTransform(slot, ReadTextureTransform(texCoord, transform, modelPath));
+        return ResolveImagePath(model, modelPath, info.Get("index").GetNumberAsInt());
     };
 
     // KHR_materials_clearcoat. Absent members take the extension's defaults, 0.
@@ -751,9 +814,9 @@ ModelMaterialData BuildMaterialData(
         };
         materialData.clearcoatFactor = readUnitFactor("clearcoatFactor");
         materialData.clearcoatRoughnessFactor = readUnitFactor("clearcoatRoughnessFactor");
-        materialData.clearcoatTexturePath = readExtensionTexture(clearcoat->second, "clearcoatTexture");
-        materialData.clearcoatRoughnessTexturePath = readExtensionTexture(clearcoat->second, "clearcoatRoughnessTexture");
-        materialData.clearcoatNormalTexturePath = readExtensionTexture(clearcoat->second, "clearcoatNormalTexture");
+        materialData.clearcoatTexturePath = readExtensionTexture(clearcoat->second, "clearcoatTexture", MaterialTextureSlot::Clearcoat);
+        materialData.clearcoatRoughnessTexturePath = readExtensionTexture(clearcoat->second, "clearcoatRoughnessTexture", MaterialTextureSlot::ClearcoatRoughness);
+        materialData.clearcoatNormalTexturePath = readExtensionTexture(clearcoat->second, "clearcoatNormalTexture", MaterialTextureSlot::ClearcoatNormal);
         if (clearcoat->second.Has("clearcoatNormalTexture") && clearcoat->second.Get("clearcoatNormalTexture").IsObject())
         {
             const tinygltf::Value& normalInfo = clearcoat->second.Get("clearcoatNormalTexture");
@@ -785,8 +848,8 @@ ModelMaterialData BuildMaterialData(
             materialData.sheenRoughnessFactor =
                 std::clamp(static_cast<float>(sheen->second.Get("sheenRoughnessFactor").GetNumberAsDouble()), 0.0f, 1.0f);
         }
-        materialData.sheenColorTexturePath = readExtensionTexture(sheen->second, "sheenColorTexture");
-        materialData.sheenRoughnessTexturePath = readExtensionTexture(sheen->second, "sheenRoughnessTexture");
+        materialData.sheenColorTexturePath = readExtensionTexture(sheen->second, "sheenColorTexture", MaterialTextureSlot::SheenColor);
+        materialData.sheenRoughnessTexturePath = readExtensionTexture(sheen->second, "sheenRoughnessTexture", MaterialTextureSlot::SheenRoughness);
     }
 
     // KHR_materials_ior. Absent: 1.5. SanitizeIor turns an invalid index into the default.
@@ -817,8 +880,8 @@ ModelMaterialData BuildMaterialData(
                 }
             }
         }
-        materialData.specularTexturePath = readExtensionTexture(specular->second, "specularTexture");
-        materialData.specularColorTexturePath = readExtensionTexture(specular->second, "specularColorTexture");
+        materialData.specularTexturePath = readExtensionTexture(specular->second, "specularTexture", MaterialTextureSlot::Specular);
+        materialData.specularColorTexturePath = readExtensionTexture(specular->second, "specularColorTexture", MaterialTextureSlot::SpecularColor);
     }
 
     // KHR_materials_iridescence. Absent members take the extension's defaults: factor 0, IOR 1.3,
@@ -836,8 +899,8 @@ ModelMaterialData BuildMaterialData(
         materialData.iridescenceIor = std::max(readNumber("iridescenceIor", 1.3f), 1.0f);
         materialData.iridescenceThicknessMinimum = std::max(readNumber("iridescenceThicknessMinimum", 100.0f), 0.0f);
         materialData.iridescenceThicknessMaximum = std::max(readNumber("iridescenceThicknessMaximum", 400.0f), 0.0f);
-        materialData.iridescenceTexturePath = readExtensionTexture(iridescence->second, "iridescenceTexture");
-        materialData.iridescenceThicknessTexturePath = readExtensionTexture(iridescence->second, "iridescenceThicknessTexture");
+        materialData.iridescenceTexturePath = readExtensionTexture(iridescence->second, "iridescenceTexture", MaterialTextureSlot::Iridescence);
+        materialData.iridescenceThicknessTexturePath = readExtensionTexture(iridescence->second, "iridescenceThicknessTexture", MaterialTextureSlot::IridescenceThickness);
     }
 
     // KHR_materials_anisotropy. Absent members take the extension's defaults: strength 0, rotation 0.
@@ -853,8 +916,11 @@ ModelMaterialData BuildMaterialData(
         {
             materialData.anisotropyRotation = static_cast<float>(anisotropy->second.Get("anisotropyRotation").GetNumberAsDouble());
         }
-        materialData.anisotropyTexturePath = readExtensionTexture(anisotropy->second, "anisotropyTexture");
+        materialData.anisotropyTexturePath = readExtensionTexture(anisotropy->second, "anisotropyTexture", MaterialTextureSlot::Anisotropy);
     }
+
+    // KHR_materials_unlit has no members: its presence is the whole of it.
+    materialData.unlit = material.extensions.find("KHR_materials_unlit") != material.extensions.end();
 
     const std::optional<MaterialAlphaMode> parsedAlphaMode =
         ParseMaterialAlphaMode(material.alphaMode);
@@ -1019,6 +1085,15 @@ void AppendPrimitive(
             throw std::runtime_error("glTF TEXCOORD_0 accessor count does not match POSITION accessor count");
         }
     }
+    std::vector<float> texCoords1;
+    if (const auto it = primitive.attributes.find("TEXCOORD_1"); it != primitive.attributes.end())
+    {
+        texCoords1 = ReadAccessorFloatComponents(model, it->second, 2);
+        if (texCoords1.size() / 2 != vertexCount)
+        {
+            throw std::runtime_error("glTF TEXCOORD_1 accessor count does not match POSITION accessor count");
+        }
+    }
     if (const auto it = primitive.attributes.find("COLOR_0"); it != primitive.attributes.end())
     {
         colors = ReadAccessorFloatComponents(model, it->second, 4);
@@ -1069,6 +1144,11 @@ void AppendPrimitive(
         {
             vertex.texCoord[0] = texCoords[vertexIndex * 2 + 0];
             vertex.texCoord[1] = texCoords[vertexIndex * 2 + 1];
+        }
+        if (!texCoords1.empty())
+        {
+            vertex.texCoord1[0] = texCoords1[vertexIndex * 2 + 0];
+            vertex.texCoord1[1] = texCoords1[vertexIndex * 2 + 1];
         }
 
         if (!colors.empty())

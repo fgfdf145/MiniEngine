@@ -523,6 +523,7 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["iridescence_ior"] = node.pbr.iridescenceIor;
         pbr["iridescence_thickness_minimum"] = node.pbr.iridescenceThicknessMinimum;
         pbr["iridescence_thickness_maximum"] = node.pbr.iridescenceThicknessMaximum;
+        pbr["unlit"] = node.pbr.unlit;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -652,6 +653,7 @@ bool DeserializeMaterialShaderGraph(
                 std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_minimum"], node.pbr.iridescenceThicknessMinimum), 0.0f);
             node.pbr.iridescenceThicknessMaximum =
                 std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_maximum"], node.pbr.iridescenceThicknessMaximum), 0.0f);
+            node.pbr.unlit = pbrNode["unlit"] && pbrNode["unlit"].IsScalar() ? pbrNode["unlit"].as<bool>(node.pbr.unlit) : node.pbr.unlit;
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

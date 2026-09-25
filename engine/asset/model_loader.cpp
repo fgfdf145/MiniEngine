@@ -66,6 +66,7 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.iridescenceIor = material.iridescenceIor;
     pbr.iridescenceThicknessMinimum = material.iridescenceThicknessMinimum;
     pbr.iridescenceThicknessMaximum = material.iridescenceThicknessMaximum;
+    pbr.unlit = material.unlit;
     return pbr;
 }
 
@@ -108,6 +109,7 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.iridescenceIor = pbr.iridescenceIor;
     material.iridescenceThicknessMinimum = pbr.iridescenceThicknessMinimum;
     material.iridescenceThicknessMaximum = pbr.iridescenceThicknessMaximum;
+    material.unlit = pbr.unlit;
 }
 
 struct MaterialDefinitionFile

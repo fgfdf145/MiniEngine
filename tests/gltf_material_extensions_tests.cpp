@@ -499,6 +499,144 @@ void ReadsIridescence()
     Require(read.iridescenceThicknessTexturePath == "ccr.png", "sidecar thickness map");
 }
 
+void ReadsTextureTransformsAndUnlit()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "transforms",
+            {R"({ "name": "transformed",
+                 "pbrMetallicRoughness": {
+                   "baseColorTexture": { "index": 0, "texCoord": 1 },
+                   "metallicRoughnessTexture": { "index": 1, "extensions": { "KHR_texture_transform": {
+                     "offset": [0.5, 0.25], "rotation": 1.5, "scale": [2, 3] } } } },
+                 "normalTexture": { "index": 2, "extensions": { "KHR_texture_transform": { "scale": [4, 4], "texCoord": 1 } } },
+                 "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 1,
+                   "clearcoatTexture": { "index": 0, "texCoord": 1, "extensions": { "KHR_texture_transform": { "offset": [0.1, 0.2] } } } } } })",
+             R"({ "name": "flat", "extensions": { "KHR_materials_unlit": {} } })",
+             R"({ "name": "plain" })"},
+            kLayerTextures)
+            .string());
+    Require(model.IsValid(), "the transform fixture loads");
+    const ModelMaterialData& transformed = MaterialNamed(model, "transformed");
+    const auto transformOf = [&](MaterialTextureSlot slot)
+    {
+        return transformed.textureTransforms[static_cast<size_t>(slot)];
+    };
+    Require(transformOf(MaterialTextureSlot::BaseColor).texCoord == 1, "texCoord 1 on the base colour");
+    Require(transformOf(MaterialTextureSlot::BaseColor).scale[0] == 1.0f, "no transform, identity otherwise");
+    Near(transformOf(MaterialTextureSlot::Metallic).offset[0], 0.5f, "metallic offset");
+    Near(transformOf(MaterialTextureSlot::Roughness).rotation, 1.5f, "roughness shares the metallic-roughness transform");
+    Near(transformOf(MaterialTextureSlot::Roughness).scale[1], 3.0f, "roughness scale");
+    Require(transformOf(MaterialTextureSlot::Normal).texCoord == 1, "the extension's texCoord overrides");
+    Near(transformOf(MaterialTextureSlot::Normal).scale[0], 4.0f, "normal scale");
+    Require(transformOf(MaterialTextureSlot::Clearcoat).texCoord == 1, "an extension texture's texCoord");
+    Near(transformOf(MaterialTextureSlot::Clearcoat).offset[1], 0.2f, "an extension texture's transform");
+    Require(transformOf(MaterialTextureSlot::Emissive).IsIdentity(), "untouched slots stay identity");
+    Require(!transformed.unlit, "a lit material");
+    Require(MaterialNamed(model, "flat").unlit && MaterialNamed(model, "flat").pbr.unlit, "KHR_materials_unlit");
+    Require(AreIdentity(MaterialNamed(model, "plain").textureTransforms), "a plain material has no transforms");
+
+    ModelImportedMaterialInfo info = BuildImportedMaterialInfo(transformed);
+    info.pbr.unlit = true;
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(info);
+    const std::filesystem::path path = directory.path / "transformed.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Require(read.pbr.unlit, "sidecar unlit");
+    Near(read.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Roughness)].rotation, 1.5f, "sidecar rotation");
+    Near(read.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Metallic)].scale[0], 2.0f, "sidecar scale");
+    Require(read.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Normal)].texCoord == 1, "sidecar texCoord");
+    Require(read.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Emissive)].IsIdentity(), "sidecar identity slots");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Require(!legacy.pbr.unlit && AreIdentity(legacy.textureTransforms), "a legacy sidecar is lit and untransformed");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Require(applied.unlit, "applied unlit");
+    Near(applied.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Clearcoat)].offset[0], 0.1f, "applied transform");
+}
+
+void TransformRowsFollowGltf()
+{
+    float row0[4];
+    float row1[4];
+    ComputeTextureTransformRows(TextureTransform{}, row0, row1);
+    Require(row0[0] == 1.0f && row0[1] == 0.0f && row0[2] == 0.0f && row1[0] == 0.0f && row1[1] == 1.0f && row1[2] == 0.0f,
+            "identity");
+    const auto apply = [&](float u, float v)
+    {
+        return std::array<float, 2>{row0[0] * u + row0[1] * v + row0[2], row1[0] * u + row1[1] * v + row1[2]};
+    };
+    TextureTransform offset{};
+    offset.offset[0] = 0.5f;
+    offset.offset[1] = -0.25f;
+    ComputeTextureTransformRows(offset, row0, row1);
+    Near(apply(0.1f, 0.2f)[0], 0.6f, "offset u");
+    Near(apply(0.1f, 0.2f)[1], -0.05f, "offset v");
+    TextureTransform rotation{};
+    rotation.rotation = 1.57079633f;
+    ComputeTextureTransformRows(rotation, row0, row1);
+    // glTF's R = [[cos, sin], [-sin, cos]]: (1, 0) goes to (0, -1).
+    Require(std::fabs(apply(1.0f, 0.0f)[0]) < 1e-6f && std::fabs(apply(1.0f, 0.0f)[1] + 1.0f) < 1e-6f, "a quarter turn");
+    TextureTransform all{};
+    all.offset[0] = 1.0f;
+    all.rotation = 1.57079633f;
+    all.scale[0] = 2.0f;
+    all.scale[1] = 3.0f;
+    all.texCoord = 1;
+    ComputeTextureTransformRows(all, row0, row1);
+    // T R S (0, 1): scale to (0, 3), rotate to (3, 0), offset to (4, 0).
+    Require(std::fabs(apply(0.0f, 1.0f)[0] - 4.0f) < 1e-5f && std::fabs(apply(0.0f, 1.0f)[1]) < 1e-5f, "scale, then rotate, then offset");
+    Require(row0[3] == 1.0f, "the UV set rides in row0.w");
+}
+
+void ReadsSecondUvSet()
+{
+    const ScopedFixtureDirectory directory;
+    const std::filesystem::path path = directory.path / "uv1.gltf";
+    std::ofstream file(path);
+    file << R"({ "asset": { "version": "2.0" },
+      "buffers": [{ "uri": "uv1.bin", "byteLength": 66 }],
+      "bufferViews": [
+        { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+        { "buffer": 0, "byteOffset": 36, "byteLength": 24 },
+        { "buffer": 0, "byteOffset": 60, "byteLength": 6 }
+      ],
+      "accessors": [
+        { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
+        { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC2" },
+        { "bufferView": 2, "componentType": 5123, "count": 3, "type": "SCALAR" }
+      ],
+      "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0, "TEXCOORD_0": 1, "TEXCOORD_1": 1 }, "indices": 2 }] }],
+      "nodes": [{ "mesh": 0 }], "scenes": [{ "nodes": [0] }], "scene": 0 })";
+    file.close();
+    std::ofstream buffer(directory.path / "uv1.bin", std::ios::binary);
+    const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    const std::array<float, 6> uvs = {0.0f, 0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    const std::array<uint16_t, 3> indices = {0, 1, 2};
+    buffer.write(reinterpret_cast<const char*>(positions.data()), sizeof(positions));
+    buffer.write(reinterpret_cast<const char*>(uvs.data()), sizeof(uvs));
+    buffer.write(reinterpret_cast<const char*>(indices.data()), sizeof(indices));
+    buffer.close();
+    const LoadedModelData model = ModelLoader::LoadModel(path.string());
+    Require(model.IsValid(), "the second UV set fixture loads");
+    bool found = false;
+    for (const Vertex& vertex : model.submeshes[0].mesh.vertices)
+    {
+        found = found || (vertex.texCoord1[0] == 0.25f && vertex.texCoord1[1] == 0.5f);
+    }
+    Require(found, "TEXCOORD_1 reaches the vertices");
+}
+
 void SidecarKeepsSheen()
 {
     const ScopedFixtureDirectory directory;
@@ -588,6 +726,9 @@ int main()
         DielectricF0FollowsKhronos();
         SidecarKeepsIorAndSpecular();
         ReadsIridescence();
+        ReadsTextureTransformsAndUnlit();
+        TransformRowsFollowGltf();
+        ReadsSecondUvSet();
     }
     catch (const std::exception& error)
     {

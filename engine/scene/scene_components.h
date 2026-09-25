@@ -56,6 +56,7 @@ struct ModelImportedMaterialInfo
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
+    MaterialTextureTransforms textureTransforms{};
 };
 
 struct ModelImportedSubmeshInfo

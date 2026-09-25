@@ -61,6 +61,8 @@ struct ModelMaterialData
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
+    MaterialTextureTransforms textureTransforms{};
+    bool unlit = false;
 };
 
 struct ModelSubmeshData

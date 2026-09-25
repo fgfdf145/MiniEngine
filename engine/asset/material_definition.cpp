@@ -148,7 +148,8 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.iridescenceThicknessTexturePath,
         material.pbr,
         material.blendGraph,
-        material.shaderGraph};
+        material.shaderGraph,
+        material.textureTransforms};
 }
 
 void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMaterialData& destination)
@@ -170,6 +171,8 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.clearcoatNormalTexturePath = source.clearcoatNormalTexturePath;
     destination.iridescenceTexturePath = source.iridescenceTexturePath;
     destination.iridescenceThicknessTexturePath = source.iridescenceThicknessTexturePath;
+    destination.textureTransforms = source.textureTransforms;
+    destination.unlit = source.pbr.unlit;
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
     destination.shaderGraph = source.shaderGraph;
@@ -267,7 +270,34 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     pbr["iridescence_ior"] = material.pbr.iridescenceIor;
     pbr["iridescence_thickness_minimum"] = material.pbr.iridescenceThicknessMinimum;
     pbr["iridescence_thickness_maximum"] = material.pbr.iridescenceThicknessMaximum;
+    pbr["unlit"] = material.pbr.unlit;
     node["pbr"] = pbr;
+
+    // Only the transforms that do something, keyed by slot name.
+    YAML::Node transforms(YAML::NodeType::Map);
+    for (uint32_t slot = 0; slot < kMaterialTextureSlotCount; ++slot)
+    {
+        const TextureTransform& transform = material.textureTransforms[slot];
+        const char* name = MaterialTextureSlotName(slot);
+        if (name == nullptr || transform.IsIdentity())
+        {
+            continue;
+        }
+        YAML::Node entry(YAML::NodeType::Map);
+        YAML::Node offset(YAML::NodeType::Sequence);
+        SerializeFloatSequence(offset, transform.offset, 2);
+        YAML::Node scale(YAML::NodeType::Sequence);
+        SerializeFloatSequence(scale, transform.scale, 2);
+        entry["offset"] = offset;
+        entry["rotation"] = transform.rotation;
+        entry["scale"] = scale;
+        entry["tex_coord"] = transform.texCoord;
+        transforms[name] = entry;
+    }
+    if (transforms.size() > 0)
+    {
+        node["texture_transforms"] = transforms;
+    }
 
     if (HasBlendData(material.blendGraph))
     {
@@ -329,6 +359,25 @@ bool LoadMaterialDefinition(
         material.iridescenceThicknessTexturePath =
             node["iridescence_thickness_texture_path"].as<std::string>(material.iridescenceThicknessTexturePath);
 
+        // Absent in sidecars written before transforms existed: every texture keeps its own.
+        if (const YAML::Node transformsNode = node["texture_transforms"]; transformsNode && transformsNode.IsMap())
+        {
+            for (uint32_t slot = 0; slot < kMaterialTextureSlotCount; ++slot)
+            {
+                const char* name = MaterialTextureSlotName(slot);
+                if (name == nullptr || !transformsNode[name] || !transformsNode[name].IsMap())
+                {
+                    continue;
+                }
+                const YAML::Node entry = transformsNode[name];
+                TextureTransform& transform = material.textureTransforms[slot];
+                ReadFloatSequence(entry["offset"], transform.offset);
+                transform.rotation = entry["rotation"].as<float>(transform.rotation);
+                ReadFloatSequence(entry["scale"], transform.scale);
+                transform.texCoord = std::min(entry["tex_coord"].as<uint32_t>(transform.texCoord), 1u);
+            }
+        }
+
         if (const YAML::Node pbrNode = node["pbr"]; pbrNode && pbrNode.IsMap())
         {
             ReadFloatSequence(pbrNode["base_color_factor"], material.pbr.baseColorFactor);
@@ -375,6 +424,7 @@ bool LoadMaterialDefinition(
                 std::max(pbrNode["iridescence_thickness_minimum"].as<float>(material.pbr.iridescenceThicknessMinimum), 0.0f);
             material.pbr.iridescenceThicknessMaximum =
                 std::max(pbrNode["iridescence_thickness_maximum"].as<float>(material.pbr.iridescenceThicknessMaximum), 0.0f);
+            material.pbr.unlit = pbrNode["unlit"].as<bool>(material.pbr.unlit);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {
