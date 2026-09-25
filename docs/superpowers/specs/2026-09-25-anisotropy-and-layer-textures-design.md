@@ -107,6 +107,26 @@ Materials that use none of them must render as before. The user accepts this by 
    texture tints the sheen.
 3. Sponza (no extension materials): within the run-to-run noise of the previous build.
 
+## Amendments During Implementation
+
+- **No clamp on the anisotropic visibility.** The sample viewer clamps `V_aniso` to 1; the test
+  against the isotropic height-correlated term caught that the clamp cuts off legitimate values
+  above 1 at grazing angles, so it only guards the division.
+- **Layer textures are resolved like the core maps**, so an out-of-range texture index in a layer
+  extension now fails the load as it does for `baseColorTexture`, where it used to be ignored with
+  a warning. Two existing fixtures pointed at a texture that did not exist and were given one.
+- **Acceptance.** Sponza: previous build against this one differs in 3.5-3.7% of channels, two runs
+  of this build in 3.9%. Test spheres (metal, roughness 0.35, under the default sun and sky): the
+  highlight stretches along the tangent as the strength rises from 0 to 1; a rotation of 90 degrees
+  and an anisotropy texture pointing along +V give the same vertical highlight; a striped
+  clearcoat texture shows in GB5 and in the lit image; a checker sheen colour texture tints the
+  sheen; coat plus anisotropy (car paint) stores both in GB5. Forward-only and deferred agree apart
+  from the screen-space reflections the forward path does not have.
+- **SSR stays isotropic**, as planned: on strongly anisotropic spheres the reflections of the
+  neighbouring spheres stay sharp while the sky reflection stretches.
+- **A coat of roughness 0.05 under the sun shows a one or two pixel highlight**: the sun is a
+  point light to the direct lighting. The test sphere used 0.25.
+
 ## Out of Scope
 
 - `clearcoatNormalTexture`, anisotropic SSR, anisotropic sheen, textures on layer B, KHR_texture_transform
