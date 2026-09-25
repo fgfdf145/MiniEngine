@@ -726,7 +726,18 @@ ModelMaterialData BuildMaterialData(
         }
     }
 
-    // KHR_materials_clearcoat, factors only. Absent members take the extension's defaults, 0.
+    // The texture a layer extension's textureInfo member points at, or "" when it has none.
+    const auto readExtensionTexture = [&](const tinygltf::Value& extension, const char* name) -> std::string
+    {
+        if (!extension.Has(name) || !extension.Get(name).IsObject() || !extension.Get(name).Has("index") ||
+            !extension.Get(name).Get("index").IsInt())
+        {
+            return {};
+        }
+        return ResolveImagePath(model, modelPath, extension.Get(name).Get("index").GetNumberAsInt());
+    };
+
+    // KHR_materials_clearcoat. Absent members take the extension's defaults, 0.
     const auto clearcoat = material.extensions.find("KHR_materials_clearcoat");
     if (clearcoat != material.extensions.end())
     {
@@ -740,20 +751,19 @@ ModelMaterialData BuildMaterialData(
         };
         materialData.clearcoatFactor = readUnitFactor("clearcoatFactor");
         materialData.clearcoatRoughnessFactor = readUnitFactor("clearcoatRoughnessFactor");
-        for (const char* texture : {"clearcoatTexture", "clearcoatRoughnessTexture", "clearcoatNormalTexture"})
+        materialData.clearcoatTexturePath = readExtensionTexture(clearcoat->second, "clearcoatTexture");
+        materialData.clearcoatRoughnessTexturePath = readExtensionTexture(clearcoat->second, "clearcoatRoughnessTexture");
+        // GB5 has no room for a second normal, so the coat keeps the geometric one.
+        if (clearcoat->second.Has("clearcoatNormalTexture"))
         {
-            if (clearcoat->second.Has(texture))
-            {
-                LOG_WARN(
-                    "Material '{}' in '{}' has a {}, which is not supported; its clearcoat uses the factors alone",
-                    material.name,
-                    modelPath.string(),
-                    texture);
-            }
+            LOG_WARN(
+                "Material '{}' in '{}' has a clearcoatNormalTexture, which is not supported; its coat uses the geometric normal",
+                material.name,
+                modelPath.string());
         }
     }
 
-    // KHR_materials_sheen, factors only. Absent members take the extension's defaults: black, 0.
+    // KHR_materials_sheen. Absent members take the extension's defaults: black, 0.
     const auto sheen = material.extensions.find("KHR_materials_sheen");
     if (sheen != material.extensions.end())
     {
@@ -774,21 +784,37 @@ ModelMaterialData BuildMaterialData(
             materialData.sheenRoughnessFactor =
                 std::clamp(static_cast<float>(sheen->second.Get("sheenRoughnessFactor").GetNumberAsDouble()), 0.0f, 1.0f);
         }
-        for (const char* texture : {"sheenColorTexture", "sheenRoughnessTexture"})
-        {
-            if (sheen->second.Has(texture))
-            {
-                LOG_WARN(
-                    "Material '{}' in '{}' has a {}, which is not supported; its sheen uses the factors alone",
-                    material.name,
-                    modelPath.string(),
-                    texture);
-            }
-        }
+        materialData.sheenColorTexturePath = readExtensionTexture(sheen->second, "sheenColorTexture");
+        materialData.sheenRoughnessTexturePath = readExtensionTexture(sheen->second, "sheenRoughnessTexture");
         if (clearcoat != material.extensions.end() && materialData.clearcoatFactor > 0.0f)
         {
             LOG_WARN(
                 "Material '{}' in '{}' has both clearcoat and sheen; only the clearcoat is rendered",
+                material.name,
+                modelPath.string());
+        }
+    }
+
+    // KHR_materials_anisotropy. Absent members take the extension's defaults: strength 0, rotation 0.
+    const auto anisotropy = material.extensions.find("KHR_materials_anisotropy");
+    if (anisotropy != material.extensions.end())
+    {
+        if (anisotropy->second.Has("anisotropyStrength") && anisotropy->second.Get("anisotropyStrength").IsNumber())
+        {
+            materialData.anisotropyStrength =
+                std::clamp(static_cast<float>(anisotropy->second.Get("anisotropyStrength").GetNumberAsDouble()), 0.0f, 1.0f);
+        }
+        if (anisotropy->second.Has("anisotropyRotation") && anisotropy->second.Get("anisotropyRotation").IsNumber())
+        {
+            materialData.anisotropyRotation = static_cast<float>(anisotropy->second.Get("anisotropyRotation").GetNumberAsDouble());
+        }
+        materialData.anisotropyTexturePath = readExtensionTexture(anisotropy->second, "anisotropyTexture");
+        const float sheenStrength =
+            std::max({materialData.sheenColorFactor[0], materialData.sheenColorFactor[1], materialData.sheenColorFactor[2]});
+        if (materialData.anisotropyStrength > 0.0f && sheenStrength > 0.0f && materialData.clearcoatFactor <= 0.0f)
+        {
+            LOG_WARN(
+                "Material '{}' in '{}' has both sheen and anisotropy; its base is rendered isotropic",
                 material.name,
                 modelPath.string());
         }

@@ -52,7 +52,11 @@ class ScopedFixtureDirectory
 
 // A glTF whose materials are the given JSON objects, one triangle per material so every one of them
 // is used and loaded.
-std::filesystem::path WriteModel(const std::filesystem::path& directory, const std::string& name, const std::vector<std::string>& materials)
+std::filesystem::path WriteModel(
+    const std::filesystem::path& directory,
+    const std::string& name,
+    const std::vector<std::string>& materials,
+    const std::string& extraRootMembers = "")
 {
     const std::filesystem::path path = directory / (name + ".gltf");
     std::string materialList;
@@ -64,7 +68,7 @@ std::filesystem::path WriteModel(const std::filesystem::path& directory, const s
                       std::to_string(index) + " }";
     }
     std::ofstream file(path);
-    file << R"({ "asset": { "version": "2.0" }, "materials": [)" << materialList << R"(],
+    file << R"({ "asset": { "version": "2.0" }, )" << extraRootMembers << R"( "materials": [)" << materialList << R"(],
       "buffers": [{ "uri": ")"
          << name << R"(.bin", "byteLength": 42 }],
       "bufferViews": [
@@ -187,6 +191,10 @@ void Near(float actual, float expected, const std::string& what)
     Require(std::fabs(actual - expected) < 1e-6f, what + ": expected " + std::to_string(expected) + ", got " + std::to_string(actual));
 }
 
+// Five images, one per layer map, each its own texture so a mix-up between them shows.
+const char* kLayerTextures = R"("images": [{ "uri": "cc.png" }, { "uri": "ccr.png" }, { "uri": "sc.png" }, { "uri": "sr.png" }, { "uri": "an.png" }],
+  "textures": [{ "source": 0 }, { "source": 1 }, { "source": 2 }, { "source": 3 }, { "source": 4 }],)";
+
 void ReadsClearcoat()
 {
     const ScopedFixtureDirectory directory;
@@ -198,7 +206,8 @@ void ReadsClearcoat()
              R"({ "name": "clamped", "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 3, "clearcoatRoughnessFactor": -1 } } })",
              R"({ "name": "defaults", "extensions": { "KHR_materials_clearcoat": {} } })",
              R"({ "name": "plain" })",
-             R"({ "name": "textured", "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 0.5, "clearcoatTexture": { "index": 0 } } } })"})
+             R"({ "name": "textured", "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 0.5, "clearcoatTexture": { "index": 0 } } } })"},
+            kLayerTextures)
             .string());
     Require(model.IsValid(), "the clearcoat fixture loads");
 
@@ -211,8 +220,9 @@ void ReadsClearcoat()
     Near(MaterialNamed(model, "defaults").clearcoatFactor, 0.0f, "extension default factor");
     Near(MaterialNamed(model, "plain").clearcoatFactor, 0.0f, "no extension, no coat");
     Near(MaterialNamed(model, "plain").clearcoatRoughnessFactor, 0.0f, "no extension, roughness 0");
-    // Coat textures are not supported; the factors still apply.
+    // A coat texture multiplies the factor, which is kept as it is.
     Near(MaterialNamed(model, "textured").clearcoatFactor, 0.5f, "textured coat keeps its factor");
+    Require(MaterialNamed(model, "textured").clearcoatTexturePath == "cc.png", "textured coat has its map");
 }
 
 void ReadsSheen()
@@ -227,7 +237,8 @@ void ReadsSheen()
              R"({ "name": "defaults", "extensions": { "KHR_materials_sheen": {} } })",
              R"({ "name": "plain" })",
              R"({ "name": "textured", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1], "sheenColorTexture": { "index": 0 } } } })",
-             R"({ "name": "both", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1] }, "KHR_materials_clearcoat": { "clearcoatFactor": 1 } } })"})
+             R"({ "name": "both", "extensions": { "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1] }, "KHR_materials_clearcoat": { "clearcoatFactor": 1 } } })"},
+            kLayerTextures)
             .string());
     Require(model.IsValid(), "the sheen fixture loads");
 
@@ -250,6 +261,97 @@ void ReadsSheen()
     // Both are kept; the renderer decides which layer the pixel gets.
     Near(MaterialNamed(model, "both").sheenColorFactor[0], 1.0f, "sheen kept beside a coat");
     Near(MaterialNamed(model, "both").clearcoatFactor, 1.0f, "coat kept beside a sheen");
+}
+
+void ReadsLayerTextures()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "layers",
+            {R"({ "name": "layers", "extensions": {
+                   "KHR_materials_clearcoat": { "clearcoatFactor": 1, "clearcoatTexture": { "index": 0 }, "clearcoatRoughnessTexture": { "index": 1 },
+                                                "clearcoatNormalTexture": { "index": 0 } },
+                   "KHR_materials_sheen": { "sheenColorFactor": [1, 1, 1], "sheenColorTexture": { "index": 2 }, "sheenRoughnessTexture": { "index": 3 } },
+                   "KHR_materials_anisotropy": { "anisotropyStrength": 0.5, "anisotropyTexture": { "index": 4 } } } })",
+             R"({ "name": "plain" })"},
+            kLayerTextures)
+            .string());
+    Require(model.IsValid(), "the layer texture fixture loads");
+    const ModelMaterialData& layers = MaterialNamed(model, "layers");
+    Require(layers.clearcoatTexturePath == "cc.png", "clearcoat texture: " + layers.clearcoatTexturePath);
+    Require(layers.clearcoatRoughnessTexturePath == "ccr.png", "clearcoat roughness texture: " + layers.clearcoatRoughnessTexturePath);
+    Require(layers.sheenColorTexturePath == "sc.png", "sheen colour texture: " + layers.sheenColorTexturePath);
+    Require(layers.sheenRoughnessTexturePath == "sr.png", "sheen roughness texture: " + layers.sheenRoughnessTexturePath);
+    Require(layers.anisotropyTexturePath == "an.png", "anisotropy texture: " + layers.anisotropyTexturePath);
+    const ModelMaterialData& plain = MaterialNamed(model, "plain");
+    Require(plain.clearcoatTexturePath.empty() && plain.sheenColorTexturePath.empty() && plain.anisotropyTexturePath.empty(),
+            "a material without the extensions has no layer maps");
+}
+
+void ReadsAnisotropy()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "anisotropy",
+            {R"({ "name": "brushed", "extensions": { "KHR_materials_anisotropy": { "anisotropyStrength": 0.6, "anisotropyRotation": 1.25 } } })",
+             R"({ "name": "clamped", "extensions": { "KHR_materials_anisotropy": { "anisotropyStrength": 4, "anisotropyRotation": -2 } } })",
+             R"({ "name": "defaults", "extensions": { "KHR_materials_anisotropy": {} } })",
+             R"({ "name": "plain" })"})
+            .string());
+    Require(model.IsValid(), "the anisotropy fixture loads");
+    Near(MaterialNamed(model, "brushed").anisotropyStrength, 0.6f, "strength");
+    Near(MaterialNamed(model, "brushed").anisotropyRotation, 1.25f, "rotation");
+    Near(MaterialNamed(model, "brushed").pbr.anisotropyStrength, 0.6f, "strength in the PBR settings");
+    Near(MaterialNamed(model, "brushed").pbr.anisotropyRotation, 1.25f, "rotation in the PBR settings");
+    Near(MaterialNamed(model, "clamped").anisotropyStrength, 1.0f, "strength clamps to 1");
+    Near(MaterialNamed(model, "clamped").anisotropyRotation, -2.0f, "any rotation is kept");
+    Near(MaterialNamed(model, "defaults").anisotropyStrength, 0.0f, "the extension's default strength is 0");
+    Near(MaterialNamed(model, "plain").anisotropyStrength, 0.0f, "no extension, isotropic");
+}
+
+void SidecarKeepsAnisotropyAndLayerMaps()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "brushed";
+    written.pbr.anisotropyStrength = 0.5f;
+    written.pbr.anisotropyRotation = 0.75f;
+    written.clearcoatTexturePath = "cc.png";
+    written.clearcoatRoughnessTexturePath = "ccr.png";
+    written.sheenColorTexturePath = "sc.png";
+    written.sheenRoughnessTexturePath = "sr.png";
+    written.anisotropyTexturePath = "an.png";
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "brushed.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.anisotropyStrength, 0.5f, "sidecar strength");
+    Near(read.pbr.anisotropyRotation, 0.75f, "sidecar rotation");
+    Require(read.clearcoatTexturePath == "cc.png" && read.clearcoatRoughnessTexturePath == "ccr.png" &&
+                read.sheenColorTexturePath == "sc.png" && read.sheenRoughnessTexturePath == "sr.png" &&
+                read.anisotropyTexturePath == "an.png",
+            "sidecar layer maps");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Near(legacy.pbr.anisotropyStrength, 0.0f, "a legacy sidecar is isotropic");
+    Require(legacy.anisotropyTexturePath.empty(), "a legacy sidecar has no layer maps");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Near(applied.anisotropyStrength, 0.5f, "applied strength");
+    Near(applied.anisotropyRotation, 0.75f, "applied rotation");
+    Require(applied.sheenRoughnessTexturePath == "sr.png", "applied layer maps");
 }
 
 void SidecarKeepsSheen()
@@ -334,6 +436,9 @@ int main()
         SidecarKeepsClearcoat();
         ReadsSheen();
         SidecarKeepsSheen();
+        ReadsLayerTextures();
+        ReadsAnisotropy();
+        SidecarKeepsAnisotropyAndLayerMaps();
     }
     catch (const std::exception& error)
     {

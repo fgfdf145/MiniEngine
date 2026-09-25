@@ -508,6 +508,8 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         }
         pbr["sheen_color_factor"] = sheenColor;
         pbr["sheen_roughness_factor"] = node.pbr.sheenRoughnessFactor;
+        pbr["anisotropy_strength"] = node.pbr.anisotropyStrength;
+        pbr["anisotropy_rotation"] = node.pbr.anisotropyRotation;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -618,6 +620,11 @@ bool DeserializeMaterialShaderGraph(
                 ReadFloatOrFallback(pbrNode["sheen_roughness_factor"], node.pbr.sheenRoughnessFactor),
                 0.0f,
                 1.0f);
+            node.pbr.anisotropyStrength = std::clamp(
+                ReadFloatOrFallback(pbrNode["anisotropy_strength"], node.pbr.anisotropyStrength),
+                0.0f,
+                1.0f);
+            node.pbr.anisotropyRotation = ReadFloatOrFallback(pbrNode["anisotropy_rotation"], node.pbr.anisotropyRotation);
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

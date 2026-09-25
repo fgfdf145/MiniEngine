@@ -53,6 +53,8 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
         pbr.sheenColorFactor[index] = material.sheenColorFactor[index];
     }
     pbr.sheenRoughnessFactor = material.sheenRoughnessFactor;
+    pbr.anisotropyStrength = material.anisotropyStrength;
+    pbr.anisotropyRotation = material.anisotropyRotation;
     return pbr;
 }
 
@@ -82,6 +84,8 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
         material.sheenColorFactor[index] = pbr.sheenColorFactor[index];
     }
     material.sheenRoughnessFactor = pbr.sheenRoughnessFactor;
+    material.anisotropyStrength = pbr.anisotropyStrength;
+    material.anisotropyRotation = pbr.anisotropyRotation;
 }
 
 struct MaterialDefinitionFile

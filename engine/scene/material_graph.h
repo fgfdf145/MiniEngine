@@ -42,6 +42,10 @@ struct MaterialPbrSurfaceSettings
     // colour means no sheen.
     float sheenColorFactor[3] = {0.0f, 0.0f, 0.0f};
     float sheenRoughnessFactor = 0.0f;
+    // KHR_materials_anisotropy: the strength [0, 1] and the direction's rotation in radians,
+    // counter-clockwise from the tangent. A strength of 0 means an isotropic base.
+    float anisotropyStrength = 0.0f;
+    float anisotropyRotation = 0.0f;
 };
 
 struct MaterialGraphNodePosition

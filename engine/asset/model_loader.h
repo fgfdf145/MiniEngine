@@ -22,6 +22,12 @@ struct ModelMaterialData
     std::string roughnessTexturePath;
     std::string occlusionTexturePath;
     std::string emissiveTexturePath;
+    // The layer maps (KHR_materials_clearcoat, _sheen, _anisotropy). Each multiplies its factor.
+    std::string clearcoatTexturePath;
+    std::string clearcoatRoughnessTexturePath;
+    std::string sheenColorTexturePath;
+    std::string sheenRoughnessTexturePath;
+    std::string anisotropyTexturePath;
     float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
@@ -37,6 +43,8 @@ struct ModelMaterialData
     float clearcoatRoughnessFactor = 0.0f;
     float sheenColorFactor[3] = {0.0f, 0.0f, 0.0f};
     float sheenRoughnessFactor = 0.0f;
+    float anisotropyStrength = 0.0f;
+    float anisotropyRotation = 0.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

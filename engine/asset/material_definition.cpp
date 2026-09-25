@@ -136,6 +136,11 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.roughnessTexturePath,
         material.occlusionTexturePath,
         material.emissiveTexturePath,
+        material.clearcoatTexturePath,
+        material.clearcoatRoughnessTexturePath,
+        material.sheenColorTexturePath,
+        material.sheenRoughnessTexturePath,
+        material.anisotropyTexturePath,
         material.pbr,
         material.blendGraph,
         material.shaderGraph};
@@ -150,6 +155,11 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.roughnessTexturePath = source.roughnessTexturePath;
     destination.occlusionTexturePath = source.occlusionTexturePath;
     destination.emissiveTexturePath = source.emissiveTexturePath;
+    destination.clearcoatTexturePath = source.clearcoatTexturePath;
+    destination.clearcoatRoughnessTexturePath = source.clearcoatRoughnessTexturePath;
+    destination.sheenColorTexturePath = source.sheenColorTexturePath;
+    destination.sheenRoughnessTexturePath = source.sheenRoughnessTexturePath;
+    destination.anisotropyTexturePath = source.anisotropyTexturePath;
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
     destination.shaderGraph = source.shaderGraph;
@@ -173,6 +183,8 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
         destination.sheenColorFactor[index] = source.pbr.sheenColorFactor[index];
     }
     destination.sheenRoughnessFactor = source.pbr.sheenRoughnessFactor;
+    destination.anisotropyStrength = source.pbr.anisotropyStrength;
+    destination.anisotropyRotation = source.pbr.anisotropyRotation;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -190,6 +202,11 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     node["roughness_texture_path"] = material.roughnessTexturePath;
     node["occlusion_texture_path"] = material.occlusionTexturePath;
     node["emissive_texture_path"] = material.emissiveTexturePath;
+    node["clearcoat_texture_path"] = material.clearcoatTexturePath;
+    node["clearcoat_roughness_texture_path"] = material.clearcoatRoughnessTexturePath;
+    node["sheen_color_texture_path"] = material.sheenColorTexturePath;
+    node["sheen_roughness_texture_path"] = material.sheenRoughnessTexturePath;
+    node["anisotropy_texture_path"] = material.anisotropyTexturePath;
 
     YAML::Node pbr(YAML::NodeType::Map);
     YAML::Node baseColor(YAML::NodeType::Sequence);
@@ -212,6 +229,8 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     SerializeFloatSequence(sheenColor, material.pbr.sheenColorFactor, 3);
     pbr["sheen_color_factor"] = sheenColor;
     pbr["sheen_roughness_factor"] = material.pbr.sheenRoughnessFactor;
+    pbr["anisotropy_strength"] = material.pbr.anisotropyStrength;
+    pbr["anisotropy_rotation"] = material.pbr.anisotropyRotation;
     node["pbr"] = pbr;
 
     if (HasBlendData(material.blendGraph))
@@ -260,6 +279,13 @@ bool LoadMaterialDefinition(
         material.roughnessTexturePath = node["roughness_texture_path"].as<std::string>(material.roughnessTexturePath);
         material.occlusionTexturePath = node["occlusion_texture_path"].as<std::string>(material.occlusionTexturePath);
         material.emissiveTexturePath = node["emissive_texture_path"].as<std::string>(material.emissiveTexturePath);
+        // Absent in sidecars written before the layer maps existed, which then keep what they had.
+        material.clearcoatTexturePath = node["clearcoat_texture_path"].as<std::string>(material.clearcoatTexturePath);
+        material.clearcoatRoughnessTexturePath =
+            node["clearcoat_roughness_texture_path"].as<std::string>(material.clearcoatRoughnessTexturePath);
+        material.sheenColorTexturePath = node["sheen_color_texture_path"].as<std::string>(material.sheenColorTexturePath);
+        material.sheenRoughnessTexturePath = node["sheen_roughness_texture_path"].as<std::string>(material.sheenRoughnessTexturePath);
+        material.anisotropyTexturePath = node["anisotropy_texture_path"].as<std::string>(material.anisotropyTexturePath);
 
         if (const YAML::Node pbrNode = node["pbr"]; pbrNode && pbrNode.IsMap())
         {
@@ -288,6 +314,11 @@ bool LoadMaterialDefinition(
                 pbrNode["sheen_roughness_factor"].as<float>(material.pbr.sheenRoughnessFactor),
                 0.0f,
                 1.0f);
+            material.pbr.anisotropyStrength = std::clamp(
+                pbrNode["anisotropy_strength"].as<float>(material.pbr.anisotropyStrength),
+                0.0f,
+                1.0f);
+            material.pbr.anisotropyRotation = pbrNode["anisotropy_rotation"].as<float>(material.pbr.anisotropyRotation);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {
