@@ -60,7 +60,9 @@ def scene_names():
             continue
         yield model, model, ""
         for variant in variants_of(gltf):
-            yield f"{model}-{variant}", model, variant
+            # File and capture names without spaces (DragonAttenuation's "Surface Color"): the
+            # capture script splits scene names on whitespace. The scene keeps the variant's name.
+            yield f"{model}-{variant.replace(' ', '_')}", model, variant
 
 
 def main():

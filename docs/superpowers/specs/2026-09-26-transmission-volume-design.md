@@ -87,3 +87,24 @@ build on the same refraction pass. See `2026-09-25-complete-brdf-program.md`.
    `CompareVolume` and `AttenuationTest` (colour deepens with thickness), `DragonAttenuation`,
    `CompareIor` and `IORTestGrid` (refraction grows with IOR). Crops side by side, not only the mean.
 2. The other comparison scenes and Sponza unchanged (no transmissive material: the copy never runs).
+
+## Amendments During Implementation
+
+- **Blur follows the material's roughness.** The copy's LOD and the transmission lobe take the
+  material's own roughness, not the floor-and-specular-AA roughness the reflection uses: geometric
+  specular AA widens small, curved surfaces' roughness (a 60-pixel sphere reached about 0.3) and
+  fogged clear glass (`IORTestGrid`, roughness 0).
+- **The node's scale is kept.** Node transforms are baked into the vertices at import, so the volume's
+  thickness lost the node scale the viewer multiplies it by (`AttenuationTest` scales its volumes by
+  0.25 to 2). `ModelSubmeshData::nodeScale` (the node matrix's column lengths) reaches the shader as
+  `GpuMaterialData::volumeScale` (13 x vec4, 208 bytes) and multiplies the entity's scale.
+- **The IOR** the ray refracts by rides in `attenuationColor.a` (the IOR itself; `specularFactors`
+  only holds the F0 made from it). KHR_materials_ior's 0 (infinite) is stored as 1000.
+- **Area lights** add no transmission lobe; point, spot and directional lights do.
+- **The copy's resolution.** The viewer renders its opaque scene a second time straight into its
+  1024 x 1024 texture; the engine copies the frame it already rendered. At the comparison's 667 x 541
+  viewport a small glass sphere that magnifies what is behind it about 3.7 times (`IORTestGrid`) shows
+  that as softer detail than the viewer's; the refracted shapes match (confirmed against the viewer's
+  own raw transmission sample through a debug build of it, `capture_server.py`'s `/viewer-debug/`).
+  At an editor-sized viewport the frame is larger than 1024 and the difference goes the other way.
+

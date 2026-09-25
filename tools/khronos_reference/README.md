@@ -47,6 +47,12 @@ The viewer is not scriptable from a shell, so its captures are taken in a browse
    wait for it to load, then run `await captureViewer("<Model>")` in the console. For a variant, click
    its radio button under Variants first and capture as `<Model>-<variant>`.
 
+`http://127.0.0.1:8765/viewer-debug/` is the same viewer with one debug output rewritten: choose
+"Transmission Strength" under Debug Channels and it shows the raw refracted sample
+(`f_specular_transmission`) instead, to compare the transmission lookup itself with the engine's.
+Select the channel through the page's own control (set the select's value and dispatch both `input`
+and `change`); the viewer ignores a value set without them.
+
 The page must be visible while it renders: a hidden browser tab stops drawing frames, and its canvas
 keeps its initial 300x150 size until it does.
 

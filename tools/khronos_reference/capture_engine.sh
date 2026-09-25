@@ -4,12 +4,15 @@
 #
 #   tools/khronos_reference/capture_engine.sh [CompareMetallic ...]
 #
-# FRAMES (default 1200) frames are rendered before the capture; APP overrides the executable.
+# FRAMES (default 1200) frames are rendered before the capture; APP overrides the executable;
+# SIZE (default 667x541, the viewer captures' size) is the size the scene renders at
+# (--viewport-size), whatever the editor's layout; the log must show it.
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 app=${APP:-$root/out/build/macos-debug/app/miniengine_app}
 frames=${FRAMES:-1200}
+size=${SIZE:-667x541}
 scenes=$root/assets/scenes/khronos
 out=$root/assets/khronos/captures/engine
 log=$(mktemp)
@@ -22,16 +25,17 @@ fi
 
 cd "$root"
 for name in "$@"; do
-    # A window manager that resizes the window mid-run (macOS Stage Manager) changes the viewport's
-    # aspect ratio and so the framing: the log must show exactly the two start-up resizes. One retry.
+    # The scene renders at SIZE whatever the window does; a capture must end at it. One retry.
     for attempt in 1 2; do
-        "$app" --scene "$scenes/$name.yaml" --khronos-reference --frames "$frames" --capture "$out/$name.png" >"$log" 2>&1 || true
+        "$app" --scene "$scenes/$name.yaml" --khronos-reference --viewport-size "$size" --frames "$frames" --capture "$out/$name.png" >"$log" 2>&1 || true
         resizes=$(grep -c "Scene render targets resized" "$log" || true)
-        if [ "$resizes" -eq 2 ] && [ -f "$out/$name.png" ]; then
+        final=$(grep -o 'resized to [0-9x]*' "$log" | tail -1 | sed 's/resized to //')
+        if [ "$final" = "$size" ] && [ -f "$out/$name.png" ]; then
             echo "$name: $(grep -o 'resized to [0-9x]*' "$log" | tail -1)"
             break
         fi
-        echo "$name: attempt $attempt saw $resizes resizes; $( [ "$attempt" -eq 1 ] && echo retrying || echo giving up)"
+        echo "$name: attempt $attempt saw $resizes resizes ending at $final, not $size; $( [ "$attempt" -eq 1 ] && echo retrying || echo giving up)"
+        rm -f "$out/$name.png"
     done
     if grep -q "\[error\]" "$log"; then
         grep "\[error\]" "$log" | sed "s/^/  $name: /"

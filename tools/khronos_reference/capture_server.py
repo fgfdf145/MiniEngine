@@ -97,11 +97,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if not path.startswith("/viewer/") or ".." in path:
+        # /viewer-debug/ is the same viewer with its "Transmission Factor" debug output showing the
+        # raw refracted sample instead (f_specular_transmission), for comparing the transmission
+        # lookup itself.
+        prefix = next((p for p in ("/viewer/", "/viewer-debug/") if path.startswith(p)), None)
+        if prefix is None or ".." in path:
             self.send_response(404)
             self.end_headers()
             return
-        relative = path[len("/viewer/"):] or "index.html"
+        relative = path[len(prefix):] or "index.html"
         found = viewer_file(relative)
         if found is None:
             self.send_response(404)
@@ -110,6 +114,11 @@ class Handler(BaseHTTPRequestHandler):
         body, content_type = found
         if relative == "index.html":
             body = body.replace(b"<head>", b"<head>" + CAPTURE_SCRIPT, 1)
+        if prefix == "/viewer-debug/" and relative == "GltfSVApp.js":
+            body = body.replace(
+                b"g_finalColor.rgb=vec3(materialInfo.transmissionFactor);",
+                b"g_finalColor.rgb=f_specular_transmission;",
+                1)
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
