@@ -50,6 +50,9 @@ assets/**/*.exr
 assets/**/*.dds
 # The render scenes installed from tests/fixtures/render_scenes by scripts/install-render-scenes.*.
 assets/scenes/test/
+# The Khronos reference comparison's downloads, generated scenes and captures (tools/khronos_reference).
+assets/khronos/
+assets/scenes/khronos/
 assets/**/*.ktx
 assets/**/*.ktx2
 
