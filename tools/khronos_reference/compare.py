@@ -77,8 +77,14 @@ def main():
 
 # Scenes whose difference is understood, with the reason, shown beside their numbers.
 KNOWN_DIFFERENCES = {
-    "CompareIor": "Glass: needs KHR_materials_transmission (phase 4).",
-    "IORTestGrid": "Glass: needs KHR_materials_transmission (phase 4).",
+    "IORTestGrid": "The small glass spheres magnify what is behind them about 3.7 times; the viewer re-renders that "
+                   "scene at 1024 x 1024, the engine copies its 667 x 541 frame, so the magnified detail is softer. "
+                   "The refracted shapes match the viewer's own raw transmission sample.",
+    "DispersionTest": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
+    "DragonDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
+    "CompareDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
+    "DiffuseTransmissionTest": "KHR_materials_diffuse_transmission is phase 4c.",
+    "DiffuseTransmissionTeacup": "KHR_materials_diffuse_transmission is phase 4c.",
     "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
 }
 NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
