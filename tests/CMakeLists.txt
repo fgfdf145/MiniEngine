@@ -1170,3 +1170,29 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_texture_sampler_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_tangent_generation_tests
+    tangent_generation_tests.cpp
+)
+miniengine_group_target_sources(miniengine_tangent_generation_tests)
+
+target_link_libraries(miniengine_tangent_generation_tests
+    PRIVATE
+        engine_asset
+)
+
+add_test(
+    NAME miniengine.tangent_generation
+    COMMAND miniengine_tangent_generation_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_tangent_generation_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_tangent_generation_tests>
+            $<TARGET_FILE_DIR:miniengine_tangent_generation_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_tangent_generation_tests PROPERTIES FOLDER "Tests")

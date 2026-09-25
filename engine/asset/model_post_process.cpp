@@ -132,8 +132,11 @@ void GenerateTangents(MeshData& meshData, bool hasTexCoords)
         const float inverseDeterminant = 1.0f / determinant;
         const glm::vec3 triangleTangent =
             (edge01 * deltaUv02.y - edge02 * deltaUv01.y) * inverseDeterminant;
+        // glTF's tangent-space +Y is the image's top, which is decreasing v (UV (0, 0) is the
+        // top-left corner): the bitangent is -dP/dv, as MikkTSpace gives on an exporter's V-up UVs
+        // and the Khronos Sample Viewer's cross(N, T) gives for unmirrored ones.
         const glm::vec3 triangleBitangent =
-            (edge02 * deltaUv01.x - edge01 * deltaUv02.x) * inverseDeterminant;
+            -(edge02 * deltaUv01.x - edge01 * deltaUv02.x) * inverseDeterminant;
 
         tangents[index0] += triangleTangent;
         tangents[index1] += triangleTangent;
