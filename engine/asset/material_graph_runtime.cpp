@@ -523,6 +523,16 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["iridescence_ior"] = node.pbr.iridescenceIor;
         pbr["iridescence_thickness_minimum"] = node.pbr.iridescenceThicknessMinimum;
         pbr["iridescence_thickness_maximum"] = node.pbr.iridescenceThicknessMaximum;
+        pbr["transmission_factor"] = node.pbr.transmissionFactor;
+        pbr["thickness_factor"] = node.pbr.thicknessFactor;
+        pbr["attenuation_distance"] = node.pbr.attenuationDistance;
+        YAML::Node attenuationColor(YAML::NodeType::Sequence);
+        attenuationColor.SetStyle(YAML::EmitterStyle::Flow);
+        for (const float value : node.pbr.attenuationColor)
+        {
+            attenuationColor.push_back(value);
+        }
+        pbr["attenuation_color"] = attenuationColor;
         pbr["unlit"] = node.pbr.unlit;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
@@ -653,6 +663,10 @@ bool DeserializeMaterialShaderGraph(
                 std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_minimum"], node.pbr.iridescenceThicknessMinimum), 0.0f);
             node.pbr.iridescenceThicknessMaximum =
                 std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_maximum"], node.pbr.iridescenceThicknessMaximum), 0.0f);
+            node.pbr.transmissionFactor = std::clamp(ReadFloatOrFallback(pbrNode["transmission_factor"], node.pbr.transmissionFactor), 0.0f, 1.0f);
+            node.pbr.thicknessFactor = std::max(ReadFloatOrFallback(pbrNode["thickness_factor"], node.pbr.thicknessFactor), 0.0f);
+            node.pbr.attenuationDistance = std::max(ReadFloatOrFallback(pbrNode["attenuation_distance"], node.pbr.attenuationDistance), 0.0f);
+            ReadFloatSequence(pbrNode["attenuation_color"], node.pbr.attenuationColor, 3);
             node.pbr.unlit = pbrNode["unlit"] && pbrNode["unlit"].IsScalar() ? pbrNode["unlit"].as<bool>(node.pbr.unlit) : node.pbr.unlit;
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))

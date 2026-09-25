@@ -389,6 +389,13 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
     HashQuantizedFloat(seed, pbr.iridescenceIor);
     HashQuantizedFloat(seed, pbr.iridescenceThicknessMinimum);
     HashQuantizedFloat(seed, pbr.iridescenceThicknessMaximum);
+    HashQuantizedFloat(seed, pbr.transmissionFactor);
+    HashQuantizedFloat(seed, pbr.thicknessFactor);
+    HashQuantizedFloat(seed, pbr.attenuationDistance);
+    for (const float value : pbr.attenuationColor)
+    {
+        HashQuantizedFloat(seed, value);
+    }
     HashCombine(seed, pbr.unlit);
 }
 

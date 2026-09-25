@@ -119,6 +119,10 @@ const char* MaterialTextureSlotName(uint32_t slot)
         return "iridescence";
     case MaterialTextureSlot::IridescenceThickness:
         return "iridescence_thickness";
+    case MaterialTextureSlot::Transmission:
+        return "transmission";
+    case MaterialTextureSlot::Thickness:
+        return "thickness";
     }
     return nullptr;
 }

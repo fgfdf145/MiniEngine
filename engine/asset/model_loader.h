@@ -34,6 +34,9 @@ struct ModelMaterialData
     std::string clearcoatNormalTexturePath;
     std::string iridescenceTexturePath;
     std::string iridescenceThicknessTexturePath;
+    // KHR_materials_transmission (R) and KHR_materials_volume (G); each multiplies its factor.
+    std::string transmissionTexturePath;
+    std::string thicknessTexturePath;
     float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
@@ -59,6 +62,10 @@ struct ModelMaterialData
     float iridescenceIor = 1.3f;
     float iridescenceThicknessMinimum = 100.0f;
     float iridescenceThicknessMaximum = 400.0f;
+    float transmissionFactor = 0.0f;
+    float thicknessFactor = 0.0f;
+    float attenuationDistance = 0.0f;
+    float attenuationColor[3] = {1.0f, 1.0f, 1.0f};
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
@@ -81,6 +88,10 @@ struct ModelSubmeshData
     // when the accessor has no min/max.
     glm::vec3 viewerBoundsCenter{0.0f};
     float viewerBoundsRadius = 0.0f;
+    // The glTF node's world scale per axis (its matrix's column lengths). The node transform is baked
+    // into the vertices, but a volume's thickness (KHR_materials_volume) is in mesh units and scales
+    // with it.
+    glm::vec3 nodeScale{1.0f};
     uint32_t materialIndex = 0;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant

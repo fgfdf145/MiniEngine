@@ -871,6 +871,14 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.iridescenceIor,
                 selectedMaterial.pbr.iridescenceThicknessMinimum,
                 selectedMaterial.pbr.iridescenceThicknessMaximum);
+            ImGui::Text(
+                "Transmission %.2f  Thickness %.3f  Attenuation %.3f m (%.2f, %.2f, %.2f)",
+                selectedMaterial.pbr.transmissionFactor,
+                selectedMaterial.pbr.thicknessFactor,
+                selectedMaterial.pbr.attenuationDistance,
+                selectedMaterial.pbr.attenuationColor[0],
+                selectedMaterial.pbr.attenuationColor[1],
+                selectedMaterial.pbr.attenuationColor[2]);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

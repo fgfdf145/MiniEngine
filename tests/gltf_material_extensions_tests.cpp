@@ -873,6 +873,96 @@ void SidecarKeepsSamplers()
     Require(applied.textureSamplers == written.textureSamplers, "applied samplers");
 }
 
+void ReadsTransmissionAndVolume()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string textures = R"("images": [{ "uri": "tr.png" }, { "uri": "th.png" }],
+      "samplers": [{ "wrapS": 33071 }],
+      "textures": [{ "source": 0 }, { "source": 1, "sampler": 0 }],)";
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "transmission",
+            {R"({ "name": "glass",
+                 "extensions": { "KHR_materials_transmission": { "transmissionFactor": 0.9, "transmissionTexture": { "index": 0 } },
+                                 "KHR_materials_volume": { "thicknessFactor": 0.25, "thicknessTexture": { "index": 1, "texCoord": 1 },
+                                                           "attenuationDistance": 0.5, "attenuationColor": [0.9, 0.5, 0.25] } } })",
+             R"({ "name": "thin", "extensions": { "KHR_materials_transmission": {} } })",
+             R"({ "name": "clear", "extensions": { "KHR_materials_transmission": { "transmissionFactor": 1 },
+                                                  "KHR_materials_volume": { "thicknessFactor": 1 } } })",
+             R"({ "name": "bad", "extensions": { "KHR_materials_transmission": { "transmissionFactor": 3 },
+                                                "KHR_materials_volume": { "thicknessFactor": -1, "attenuationDistance": -2 } } })",
+             R"({ "name": "plain" })"},
+            textures)
+            .string());
+    const ModelMaterialData& glass = MaterialNamed(model, "glass");
+    Near(glass.transmissionFactor, 0.9f, "transmission factor");
+    Near(glass.thicknessFactor, 0.25f, "thickness factor");
+    Near(glass.attenuationDistance, 0.5f, "attenuation distance");
+    Near(glass.attenuationColor[1], 0.5f, "attenuation colour");
+    Require(glass.transmissionTexturePath.find("tr.png") != std::string::npos, "the transmission map");
+    Require(glass.thicknessTexturePath.find("th.png") != std::string::npos, "the thickness map");
+    Require(glass.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Thickness)].texCoord == 1, "the thickness map's texCoord");
+    Require(glass.textureSamplers[static_cast<size_t>(MaterialTextureSlot::Thickness)].wrapS == TextureWrap::ClampToEdge,
+            "the thickness map's sampler");
+    Near(glass.pbr.transmissionFactor, 0.9f, "the pbr settings carry transmission");
+
+    const ModelMaterialData& thin = MaterialNamed(model, "thin");
+    Near(thin.transmissionFactor, 0.0f, "an empty transmission extension has factor 0");
+    Near(thin.thicknessFactor, 0.0f, "no volume is thin");
+    Near(thin.attenuationDistance, 0.0f, "no absorption is stored as 0");
+    Near(thin.attenuationColor[0], 1.0f, "the default attenuation colour is white");
+
+    const ModelMaterialData& clear = MaterialNamed(model, "clear");
+    Near(clear.attenuationDistance, 0.0f, "an infinite attenuation distance is stored as 0");
+
+    const ModelMaterialData& bad = MaterialNamed(model, "bad");
+    Near(bad.transmissionFactor, 1.0f, "transmission clamps to 1");
+    Near(bad.thicknessFactor, 0.0f, "a negative thickness is thin");
+    Near(bad.attenuationDistance, 0.0f, "a negative attenuation distance means no absorption");
+
+    Near(MaterialNamed(model, "plain").transmissionFactor, 0.0f, "a plain material transmits nothing");
+}
+
+void SidecarKeepsTransmissionAndVolume()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "glass";
+    written.pbr.transmissionFactor = 0.75f;
+    written.pbr.thicknessFactor = 0.2f;
+    written.pbr.attenuationDistance = 0.3f;
+    written.pbr.attenuationColor[2] = 0.4f;
+    written.transmissionTexturePath = "tr.png";
+    written.thicknessTexturePath = "th.png";
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "glass.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.transmissionFactor, 0.75f, "sidecar transmission");
+    Near(read.pbr.thicknessFactor, 0.2f, "sidecar thickness");
+    Near(read.pbr.attenuationDistance, 0.3f, "sidecar attenuation distance");
+    Near(read.pbr.attenuationColor[2], 0.4f, "sidecar attenuation colour");
+    Require(read.transmissionTexturePath == "tr.png" && read.thicknessTexturePath == "th.png", "sidecar maps");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Near(legacy.pbr.transmissionFactor, 0.0f, "a legacy sidecar transmits nothing");
+    Near(legacy.pbr.attenuationColor[0], 1.0f, "and has a white attenuation colour");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Near(applied.transmissionFactor, 0.75f, "applied transmission");
+    Near(applied.attenuationColor[2], 0.4f, "applied attenuation colour");
+    Require(applied.thicknessTexturePath == "th.png", "applied thickness map");
+}
+
 int main()
 {
     try
@@ -896,6 +986,8 @@ int main()
         ResolvesVariantMaterials();
         ReadsSamplers();
         SidecarKeepsSamplers();
+        ReadsTransmissionAndVolume();
+        SidecarKeepsTransmissionAndVolume();
     }
     catch (const std::exception& error)
     {

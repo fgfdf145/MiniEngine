@@ -66,6 +66,13 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.iridescenceIor = material.iridescenceIor;
     pbr.iridescenceThicknessMinimum = material.iridescenceThicknessMinimum;
     pbr.iridescenceThicknessMaximum = material.iridescenceThicknessMaximum;
+    pbr.transmissionFactor = material.transmissionFactor;
+    pbr.thicknessFactor = material.thicknessFactor;
+    pbr.attenuationDistance = material.attenuationDistance;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        pbr.attenuationColor[index] = material.attenuationColor[index];
+    }
     pbr.unlit = material.unlit;
     return pbr;
 }
@@ -109,6 +116,13 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.iridescenceIor = pbr.iridescenceIor;
     material.iridescenceThicknessMinimum = pbr.iridescenceThicknessMinimum;
     material.iridescenceThicknessMaximum = pbr.iridescenceThicknessMaximum;
+    material.transmissionFactor = pbr.transmissionFactor;
+    material.thicknessFactor = pbr.thicknessFactor;
+    material.attenuationDistance = pbr.attenuationDistance;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        material.attenuationColor[index] = pbr.attenuationColor[index];
+    }
     material.unlit = pbr.unlit;
 }
 

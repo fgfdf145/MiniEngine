@@ -43,10 +43,12 @@ enum class MaterialTextureSlot : uint32_t
     SpecularColor = 19,
     ClearcoatNormal = 20,
     Iridescence = 21,
-    IridescenceThickness = 22
+    IridescenceThickness = 22,
+    Transmission = 23,
+    Thickness = 24
 };
 
-inline constexpr uint32_t kMaterialTextureSlotCount = 23;
+inline constexpr uint32_t kMaterialTextureSlotCount = 25;
 
 // The slot's name in a sidecar's texture_transforms, or nullptr for the blend graph's slots.
 const char* MaterialTextureSlotName(uint32_t slot);
@@ -166,6 +168,15 @@ struct MaterialPbrSurfaceSettings
     float iridescenceIor = 1.3f;
     float iridescenceThicknessMinimum = 100.0f;
     float iridescenceThicknessMaximum = 400.0f;
+    // KHR_materials_transmission: the share of the dielectric base's diffuse light replaced by light
+    // transmitted through the surface. 0 is opaque.
+    float transmissionFactor = 0.0f;
+    // KHR_materials_volume: the thickness below the surface in mesh units (0 is a thin wall), and the
+    // absorption: white light turns attenuationColor after attenuationDistance metres. An
+    // attenuation distance of 0 stands for the extension's infinite default, no absorption.
+    float thicknessFactor = 0.0f;
+    float attenuationDistance = 0.0f;
+    float attenuationColor[3] = {1.0f, 1.0f, 1.0f};
     // KHR_materials_unlit: the base colour alone, no lighting.
     bool unlit = false;
 };

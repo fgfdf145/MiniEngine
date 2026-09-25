@@ -867,6 +867,12 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= DragFloatInRange("Iridescence IOR", &pbr.iridescenceIor, 1.0f, 3.0f, "%.2f");
     changed |= DragFloatInRange("Film Thickness Min (nm)", &pbr.iridescenceThicknessMinimum, 0.0f, 2000.0f, "%.0f");
     changed |= DragFloatInRange("Film Thickness Max (nm)", &pbr.iridescenceThicknessMaximum, 0.0f, 2000.0f, "%.0f");
+    // KHR_materials_transmission and _volume; transmission makes the material forward shaded, drawn
+    // over a copy of the scene behind it. Thickness 0 is a thin wall; attenuation distance 0 absorbs nothing.
+    changed |= DragFloatInRange("Transmission", &pbr.transmissionFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Thickness", &pbr.thicknessFactor, 0.0f, 10.0f, "%.3f");
+    changed |= DragFloatInRange("Attenuation Distance (m)", &pbr.attenuationDistance, 0.0f, 100.0f, "%.3f");
+    changed |= ImGui::ColorEdit3("Attenuation Color", pbr.attenuationColor);
     // KHR_materials_unlit: the base colour alone, shown at the display's paper white.
     changed |= ImGui::Checkbox("Unlit", &pbr.unlit);
     return changed;

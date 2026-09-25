@@ -912,6 +912,39 @@ ModelMaterialData BuildMaterialData(
         materialData.specularColorTexturePath = readExtensionTexture(specular->second, "specularColorTexture", MaterialTextureSlot::SpecularColor);
     }
 
+    // KHR_materials_transmission and KHR_materials_volume. Absent members take the extensions'
+    // defaults: transmission 0; thickness 0 (thin), no absorption (an infinite distance, stored as
+    // 0), a white attenuation colour.
+    const auto readExtensionNumber = [](const tinygltf::Value& extension, const char* name, float fallback)
+    {
+        return extension.Has(name) && extension.Get(name).IsNumber() ? static_cast<float>(extension.Get(name).GetNumberAsDouble()) : fallback;
+    };
+    if (const auto transmission = material.extensions.find("KHR_materials_transmission"); transmission != material.extensions.end())
+    {
+        materialData.transmissionFactor = std::clamp(readExtensionNumber(transmission->second, "transmissionFactor", 0.0f), 0.0f, 1.0f);
+        materialData.transmissionTexturePath =
+            readExtensionTexture(transmission->second, "transmissionTexture", MaterialTextureSlot::Transmission);
+    }
+    if (const auto volume = material.extensions.find("KHR_materials_volume"); volume != material.extensions.end())
+    {
+        materialData.thicknessFactor = std::max(readExtensionNumber(volume->second, "thicknessFactor", 0.0f), 0.0f);
+        materialData.thicknessTexturePath = readExtensionTexture(volume->second, "thicknessTexture", MaterialTextureSlot::Thickness);
+        const float distance = readExtensionNumber(volume->second, "attenuationDistance", 0.0f);
+        materialData.attenuationDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+        if (volume->second.Has("attenuationColor") && volume->second.Get("attenuationColor").IsArray() &&
+            volume->second.Get("attenuationColor").ArrayLen() >= 3)
+        {
+            const tinygltf::Value& color = volume->second.Get("attenuationColor");
+            for (int index = 0; index < 3; ++index)
+            {
+                if (color.Get(index).IsNumber())
+                {
+                    materialData.attenuationColor[index] = std::clamp(static_cast<float>(color.Get(index).GetNumberAsDouble()), 0.0f, 1.0f);
+                }
+            }
+        }
+    }
+
     // KHR_materials_iridescence. Absent members take the extension's defaults: factor 0, IOR 1.3,
     // thickness 100 to 400 nm.
     const auto iridescence = material.extensions.find("KHR_materials_iridescence");
@@ -1362,6 +1395,10 @@ void AppendPrimitive(
 
     ModelPostProcess::FinalizeSubmeshData(submeshData);
     SetViewerBounds(model.accessors[static_cast<size_t>(positionIt->second)], worldTransform, submeshData);
+    submeshData.nodeScale = glm::vec3(
+        glm::length(glm::vec3(worldTransform[0])),
+        glm::length(glm::vec3(worldTransform[1])),
+        glm::length(glm::vec3(worldTransform[2])));
     if (submeshData.mesh.IsValid())
     {
         modelData.submeshes.push_back(std::move(submeshData));

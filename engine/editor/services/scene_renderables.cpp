@@ -136,6 +136,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         material.clearcoatNormalTexturePath = resolveTex(rawMaterial.clearcoatNormalTexturePath);
         material.iridescenceTexturePath = resolveTex(rawMaterial.iridescenceTexturePath);
         material.iridescenceThicknessTexturePath = resolveTex(rawMaterial.iridescenceThicknessTexturePath);
+        material.transmissionTexturePath = resolveTex(rawMaterial.transmissionTexturePath);
+        material.thicknessTexturePath = resolveTex(rawMaterial.thicknessTexturePath);
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
@@ -240,6 +242,25 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             (clearcoat > 0.0f ? kShadingFlagClearcoat : 0u) | (sheenStrength > 0.0f ? kShadingFlagSheen : 0u) |
             (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
             (coatNormal ? kShadingFlagCoatNormal : 0u) | (iridescence > 0.0f ? kShadingFlagForward : 0u);
+        // Transmission sends the material to the forward pass, drawn over a copy of the scene behind
+        // it; the volume's thickness is in mesh units, its attenuation distance in metres.
+        const float transmission = std::clamp(material.transmissionFactor, 0.0f, 1.0f);
+        renderSubmesh.material.transmissionFactors[0] = transmission;
+        renderSubmesh.material.transmissionFactors[1] = std::max(material.thicknessFactor, 0.0f);
+        renderSubmesh.material.transmissionFactors[2] = std::max(material.attenuationDistance, 0.0f);
+        for (size_t index = 0; index < 3; ++index)
+        {
+            renderSubmesh.material.attenuationColor[index] = std::clamp(material.attenuationColor[index], 0.0f, 1.0f);
+        }
+        // The refraction IOR; KHR_materials_ior's 0 (an infinite index) bends every ray to the normal.
+        renderSubmesh.material.attenuationColor[3] = ior == 0.0f ? 1000.0f : ior;
+        renderSubmesh.material.volumeScale[0] = submesh.nodeScale.x;
+        renderSubmesh.material.volumeScale[1] = submesh.nodeScale.y;
+        renderSubmesh.material.volumeScale[2] = submesh.nodeScale.z;
+        if (transmission > 0.0f)
+        {
+            renderSubmesh.material.shadingModel[0] |= kShadingFlagTransmission | kShadingFlagForward;
+        }
         renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
         // Unlit shows the base colour alone; transforms only matter where there are textures.
         if (material.unlit)
@@ -297,6 +318,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             renderSubmesh.textures.clearcoatNormal = resolveTex(material.clearcoatNormalTexturePath);
             renderSubmesh.textures.iridescence = resolveTex(material.iridescenceTexturePath);
             renderSubmesh.textures.iridescenceThickness = resolveTex(material.iridescenceThicknessTexturePath);
+            renderSubmesh.textures.transmission = resolveTex(material.transmissionTexturePath);
+            renderSubmesh.textures.thickness = resolveTex(material.thicknessTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }
