@@ -73,6 +73,12 @@ struct ModelSubmeshData
     // building renderables doesn't have to walk every vertex again on the main thread.
     glm::vec3 boundsCenter{0.0f};
     float boundsRadius = 0.0f;
+    // The same box as the Khronos glTF Sample Viewer measures it, for framing like it: the POSITION
+    // accessor's min/max box transformed by the node, its axis-aligned bounds' centre and
+    // half-diagonal. Larger than the vertices' own box under a rotated node. The vertices' bounds
+    // when the accessor has no min/max.
+    glm::vec3 viewerBoundsCenter{0.0f};
+    float viewerBoundsRadius = 0.0f;
     uint32_t materialIndex = 0;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
@@ -107,6 +113,11 @@ uint32_t ResolveSubmeshMaterialIndex(const ModelSubmeshData& submesh, std::optio
 // The index of the variant with this name; nullopt for the empty name (the default bindings) and
 // for a name the model does not have.
 std::optional<uint32_t> FindMaterialVariant(const LoadedModelData& model, const std::string& name);
+
+// The Khronos glTF Sample Viewer's scene extents (getSceneExtents), for framing like it: each
+// submesh's viewer box (viewerBoundsCenter/Radius) grown to the cube around its bounding sphere, placed by
+// modelMatrix, and their union. False, leaving the outputs untouched, for a model without submeshes.
+bool ComputeKhronosViewerExtents(const LoadedModelData& model, const glm::mat4& modelMatrix, glm::vec3& minBounds, glm::vec3& maxBounds);
 
 // Invoked from the loading thread with the overall load fraction in [0, 1].
 // Implementations must be cheap and thread-safe (typically an atomic store).

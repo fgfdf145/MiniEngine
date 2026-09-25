@@ -146,7 +146,7 @@ void VulkanTonemapPass::Record(
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     constants.hdrOutput = frame.hdrOutput ? 1u : 0u;
     constants.peakNits = frame.hdrPeakNits;
-    constants.pbrNeutral = frame.pbrNeutralToneMapping ? 1u : 0u;
+    constants.pbrNeutral = frame.khronosReference ? 1u : 0u;
     for (int column = 0; column < 3; ++column)
     {
         constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);

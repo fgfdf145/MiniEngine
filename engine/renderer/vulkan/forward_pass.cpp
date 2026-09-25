@@ -118,12 +118,19 @@ void VulkanForwardPass::Record(
     vkCmdEndRenderPass(commandBuffer);
 }
 
+namespace
+{
+constexpr float kKhronosViewerBackgroundRoughness = 0.6f;
+}
+
 void VulkanForwardPass::RecordSky(VkCommandBuffer commandBuffer, const ScenePassFrameContext& frame) const
 {
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
-    const glm::vec4 background(kViewportBackgroundFrameBuffer, 1.0f);
+    // w: the roughness whose prefiltered environment the HDRI background shows, 0 for the map
+    // itself. The Khronos reference view blurs it as the Sample Viewer does (blurEnvironmentMap, 0.6).
+    const glm::vec4 background(kViewportBackgroundFrameBuffer, frame.khronosReference ? kKhronosViewerBackgroundRoughness : 0.0f);
     vkCmdPushConstants(commandBuffer, m_skyPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(background), &background);
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 }

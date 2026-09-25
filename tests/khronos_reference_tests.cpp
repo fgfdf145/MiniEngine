@@ -1,10 +1,16 @@
+#include <engine/asset/model_loader.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/exposure.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -117,6 +123,73 @@ void FramesLikeTheSampleViewer()
     Require(camera.farPlane > ExpectedDistance(1.0f, 3.0f, 0.5f) + 3.0f, "the far plane clips the model");
 }
 
+// The viewer grows each primitive's box to the cube around its bounding sphere before taking the
+// union (getExtentsFromAccessor), so two unit spheres side by side frame wider than their boxes.
+void ExtentsFollowTheSampleViewer()
+{
+    LoadedModelData model;
+    for (const float x : {-0.55f, 0.55f})
+    {
+        ModelSubmeshData submesh;
+        submesh.viewerBoundsCenter = glm::vec3(x, 0.0f, 0.0f);
+        submesh.viewerBoundsRadius = std::sqrt(3.0f) * 0.5f;
+        model.submeshes.push_back(submesh);
+    }
+    glm::vec3 minBounds(0.0f);
+    glm::vec3 maxBounds(0.0f);
+    Require(ComputeKhronosViewerExtents(model, glm::mat4(1.0f), minBounds, maxBounds), "a model with submeshes has no extents");
+    const float r = std::sqrt(3.0f) * 0.5f;
+    Require(Near(minBounds, glm::vec3(-0.55f - r, -r, -r)) && Near(maxBounds, glm::vec3(0.55f + r, r, r)),
+            "the extents are not the union of the spheres' cubes: " + Text(minBounds) + " " + Text(maxBounds));
+
+    // A placed entity: the cubes' corners move with it.
+    Require(ComputeKhronosViewerExtents(model, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f)), minBounds, maxBounds),
+            "a placed model has no extents");
+    Require(Near(minBounds, glm::vec3(-0.55f - r, 2.0f - r, -r)), "the extents do not follow the entity: " + Text(minBounds));
+
+    Require(!ComputeKhronosViewerExtents(LoadedModelData{}, glm::mat4(1.0f), minBounds, maxBounds), "an empty model has extents");
+}
+
+// The viewer transforms the POSITION accessor's box by the node before taking its bounds, so a
+// rotated node's box grows where the transformed vertices' own box would not.
+void LoaderKeepsTheViewersPrimitiveBounds()
+{
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "miniengine_khronos_reference_bounds";
+    std::filesystem::create_directories(directory);
+    {
+        std::ofstream file(directory / "rotated.gltf");
+        // A triangle (0,0,0) (1,0,0) (0,1,0) under a node turned 45 degrees about +Z.
+        file << R"({ "asset": { "version": "2.0" },
+          "buffers": [{ "uri": "rotated.bin", "byteLength": 42 }],
+          "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 }
+          ],
+          "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] },
+            { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+          ],
+          "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1 }] }],
+          "nodes": [{ "mesh": 0, "rotation": [0, 0, 0.38268343, 0.92387953] }],
+          "scenes": [{ "nodes": [0] }], "scene": 0 })";
+        std::ofstream buffer(directory / "rotated.bin", std::ios::binary);
+        const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const std::array<uint16_t, 3> indices = {0, 1, 2};
+        buffer.write(reinterpret_cast<const char*>(positions.data()), static_cast<std::streamsize>(sizeof(positions)));
+        buffer.write(reinterpret_cast<const char*>(indices.data()), static_cast<std::streamsize>(sizeof(indices)));
+    }
+    const LoadedModelData model = ModelLoader::LoadModel((directory / "rotated.gltf").string());
+    std::filesystem::remove_all(directory);
+
+    // The box's corners turned 45 degrees span x in [-0.707, 0.707] and y in [0, 1.414].
+    const ModelSubmeshData& submesh = model.submeshes.at(0);
+    Require(Near(submesh.viewerBoundsCenter, glm::vec3(0.0f, 0.70710678f, 0.0f), 1e-4f),
+            "the viewer's box centre is " + Text(submesh.viewerBoundsCenter));
+    Require(std::abs(submesh.viewerBoundsRadius - 1.0f) < 1e-4f,
+            "the viewer's half-diagonal is " + std::to_string(submesh.viewerBoundsRadius) + ", not 1");
+    Require(submesh.boundsRadius < submesh.viewerBoundsRadius - 0.1f, "the vertices' own bounds did not stay tighter");
+}
+
 void ExposesHdriTexelOneToOne()
 {
     for (const float intensity : {1.0f, 100.0f, 1000.0f, 30000.0f})
@@ -134,6 +207,8 @@ int main()
     {
         PbrNeutralMatchesKhronos();
         FramesLikeTheSampleViewer();
+        ExtentsFollowTheSampleViewer();
+        LoaderKeepsTheViewersPrimitiveBounds();
         ExposesHdriTexelOneToOne();
     }
     catch (const std::exception& error)

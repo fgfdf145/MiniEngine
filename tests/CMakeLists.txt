@@ -1117,6 +1117,7 @@ miniengine_group_target_sources(miniengine_khronos_reference_tests)
 
 target_link_libraries(miniengine_khronos_reference_tests
     PRIVATE
+        engine_asset
         engine_render_core
 )
 

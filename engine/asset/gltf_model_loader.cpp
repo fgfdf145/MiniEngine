@@ -1034,6 +1034,32 @@ std::string BuildSubmeshName(
     return "primitive_" + std::to_string(primitiveIndex);
 }
 
+// The Khronos Sample Viewer's box for a primitive (getExtentsFromAccessor): the POSITION accessor's
+// min/max corners through the node's transform, and the centre and half-diagonal of their bounds.
+// Keeps the vertices' bounds when the accessor declares none or is normalized.
+void SetViewerBounds(const tinygltf::Accessor& accessor, const glm::mat4& worldTransform, ModelSubmeshData& submesh)
+{
+    submesh.viewerBoundsCenter = submesh.boundsCenter;
+    submesh.viewerBoundsRadius = submesh.boundsRadius;
+    if (accessor.minValues.size() != 3 || accessor.maxValues.size() != 3 || accessor.normalized)
+    {
+        return;
+    }
+    const glm::vec3 minimum(accessor.minValues[0], accessor.minValues[1], accessor.minValues[2]);
+    const glm::vec3 maximum(accessor.maxValues[0], accessor.maxValues[1], accessor.maxValues[2]);
+    glm::vec3 boxMin(std::numeric_limits<float>::max());
+    glm::vec3 boxMax(-std::numeric_limits<float>::max());
+    for (int corner = 0; corner < 8; ++corner)
+    {
+        const glm::vec3 local((corner & 1) ? maximum.x : minimum.x, (corner & 2) ? maximum.y : minimum.y, (corner & 4) ? maximum.z : minimum.z);
+        const glm::vec3 point = glm::vec3(worldTransform * glm::vec4(local, 1.0f));
+        boxMin = glm::min(boxMin, point);
+        boxMax = glm::max(boxMax, point);
+    }
+    submesh.viewerBoundsCenter = (boxMin + boxMax) * 0.5f;
+    submesh.viewerBoundsRadius = glm::length(boxMax - boxMin) * 0.5f;
+}
+
 // KHR_materials_variants on the root: the variants' names, an unnamed one called by its index.
 std::vector<std::string> ReadMaterialVariantNames(const tinygltf::Model& model)
 {
@@ -1307,6 +1333,7 @@ void AppendPrimitive(
     }
 
     ModelPostProcess::FinalizeSubmeshData(submeshData);
+    SetViewerBounds(model.accessors[static_cast<size_t>(positionIt->second)], worldTransform, submeshData);
     if (submeshData.mesh.IsValid())
     {
         modelData.submeshes.push_back(std::move(submeshData));

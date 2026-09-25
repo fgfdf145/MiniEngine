@@ -219,6 +219,31 @@ std::optional<uint32_t> FindMaterialVariant(const LoadedModelData& model, const 
     return static_cast<uint32_t>(found - model.materialVariants.begin());
 }
 
+bool ComputeKhronosViewerExtents(const LoadedModelData& model, const glm::mat4& modelMatrix, glm::vec3& minBounds, glm::vec3& maxBounds)
+{
+    bool any = false;
+    glm::vec3 unionMin(0.0f);
+    glm::vec3 unionMax(0.0f);
+    for (const ModelSubmeshData& submesh : model.submeshes)
+    {
+        const glm::vec3 halfExtent(submesh.viewerBoundsRadius);
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const glm::vec3 sign((corner & 1) ? 1.0f : -1.0f, (corner & 2) ? 1.0f : -1.0f, (corner & 4) ? 1.0f : -1.0f);
+            const glm::vec3 point = glm::vec3(modelMatrix * glm::vec4(submesh.viewerBoundsCenter + sign * halfExtent, 1.0f));
+            unionMin = any ? glm::min(unionMin, point) : point;
+            unionMax = any ? glm::max(unionMax, point) : point;
+            any = true;
+        }
+    }
+    if (any)
+    {
+        minBounds = unionMin;
+        maxBounds = unionMax;
+    }
+    return any;
+}
+
 bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
 {
     const std::string extension = ToLowerCopy(path.extension().string());

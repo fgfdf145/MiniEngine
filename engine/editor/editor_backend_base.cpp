@@ -1,13 +1,13 @@
 ﻿#include "editor_backend_base.h"
 
-#include <engine/logic/world_bounds.h>
-
 #include "services/entity_edit_service.h"
 #include "services/model_import_service.h"
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 
 #include <engine/asset/asset_registry.h>
+#include <engine/asset/model_cache.h>
+#include <engine/asset/model_loader.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/platform/window/window.h>
@@ -398,16 +398,19 @@ void EditorRenderBackendBase::UpdateKhronosReferenceFraming(RenderExtent extent)
         return;
     }
 
-    // The union of every model's world bounds, as the viewer frames the whole scene.
+    // The whole scene, measured as the viewer measures it (ComputeKhronosViewerExtents). Models still
+    // loading are left out; the view reframes once they arrive.
     bool any = false;
     glm::vec3 sceneMin(0.0f);
     glm::vec3 sceneMax(0.0f);
     const IEditorWorld& world = EditorWorld();
     for (const entt::entity entity : world.Registry().view<const ModelComponent>())
     {
+        const std::string& sourcePath = world.GetModel(entity).sourcePath;
+        const std::shared_ptr<const LoadedModelData> model = sourcePath.empty() ? nullptr : ModelCache::Get(sourcePath);
         glm::vec3 minBounds;
         glm::vec3 maxBounds;
-        if (!ComputeWorldModelBounds(world, entity, minBounds, maxBounds))
+        if (!model || !ComputeKhronosViewerExtents(*model, world.GetModelMatrix(entity), minBounds, maxBounds))
         {
             continue;
         }
