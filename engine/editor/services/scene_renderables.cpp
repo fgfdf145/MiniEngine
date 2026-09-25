@@ -246,6 +246,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             renderSubmesh.material.shadingModel[0] |= kShadingFlagUnlit;
         }
+        renderSubmesh.textureSamplers = material.textureSamplers;
         if (submesh.hasTexCoords && !AreIdentity(material.textureTransforms))
         {
             renderSubmesh.textureTransforms = material.textureTransforms;

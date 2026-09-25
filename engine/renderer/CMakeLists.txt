@@ -123,6 +123,9 @@ add_library(engine_renderer
     vulkan/scene_pass.h
     vulkan/scene_pass_order.cpp
     vulkan/scene_pass_order.h
+    vulkan/sampler_cache.cpp
+    vulkan/sampler_settings.cpp
+    vulkan/sampler_settings.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
     vulkan/local_shadow_pass.cpp

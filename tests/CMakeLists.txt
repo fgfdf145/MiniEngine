@@ -1136,3 +1136,37 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_khronos_reference_tests PROPERTIES FOLDER "Tests")
+
+# sampler_settings.cpp calls no Vulkan entry point, so it is compiled in directly (as the scene pass
+# test does) and Vulkan::Vulkan supplies the headers only.
+add_executable(miniengine_texture_sampler_tests
+    texture_sampler_tests.cpp
+    ${PROJECT_SOURCE_DIR}/engine/renderer/vulkan/sampler_settings.cpp
+)
+
+target_include_directories(miniengine_texture_sampler_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(miniengine_texture_sampler_tests
+    PRIVATE
+        engine_scene
+        Vulkan::Vulkan
+)
+
+add_test(
+    NAME miniengine.texture_sampler
+    COMMAND miniengine_texture_sampler_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_texture_sampler_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_texture_sampler_tests>
+            $<TARGET_FILE_DIR:miniengine_texture_sampler_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_texture_sampler_tests PROPERTIES FOLDER "Tests")

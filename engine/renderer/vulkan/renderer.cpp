@@ -265,37 +265,43 @@ std::vector<const VulkanTexture*> ViewTextures(const std::vector<std::unique_ptr
 
 std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
     std::span<const VulkanTexture* const> textures,
-    const std::vector<MaterialTextureSlots>& materialTextureSlots)
+    const std::vector<MaterialTextureSlots>& materialTextureSlots,
+    VulkanSamplerCache& samplerCache)
 {
     std::vector<MaterialTextureBinding> bindings;
     bindings.reserve(materialTextureSlots.size());
 
     for (const MaterialTextureSlots& slots : materialTextureSlots)
     {
+        // The texture's view with the sampler its slot asks for; slot is the binding's index.
+        const auto bind = [&](uint32_t textureIndex, uint32_t slot)
+        {
+            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.Get(slots.samplers[slot])};
+        };
         bindings.push_back(MaterialTextureBinding{
-            {textures[slots.baseColor]->GetImageView(), textures[slots.baseColor]->GetSampler()},
-            {textures[slots.normal]->GetImageView(), textures[slots.normal]->GetSampler()},
-            {textures[slots.metallic]->GetImageView(), textures[slots.metallic]->GetSampler()},
-            {textures[slots.roughness]->GetImageView(), textures[slots.roughness]->GetSampler()},
-            {textures[slots.occlusion]->GetImageView(), textures[slots.occlusion]->GetSampler()},
-            {textures[slots.emissive]->GetImageView(), textures[slots.emissive]->GetSampler()},
-            {textures[slots.secondaryBaseColor]->GetImageView(), textures[slots.secondaryBaseColor]->GetSampler()},
-            {textures[slots.secondaryNormal]->GetImageView(), textures[slots.secondaryNormal]->GetSampler()},
-            {textures[slots.secondaryMetallic]->GetImageView(), textures[slots.secondaryMetallic]->GetSampler()},
-            {textures[slots.secondaryRoughness]->GetImageView(), textures[slots.secondaryRoughness]->GetSampler()},
-            {textures[slots.secondaryOcclusion]->GetImageView(), textures[slots.secondaryOcclusion]->GetSampler()},
-            {textures[slots.secondaryEmissive]->GetImageView(), textures[slots.secondaryEmissive]->GetSampler()},
-            {textures[slots.blendMask]->GetImageView(), textures[slots.blendMask]->GetSampler()},
-            {textures[slots.clearcoat]->GetImageView(), textures[slots.clearcoat]->GetSampler()},
-            {textures[slots.clearcoatRoughness]->GetImageView(), textures[slots.clearcoatRoughness]->GetSampler()},
-            {textures[slots.sheenColor]->GetImageView(), textures[slots.sheenColor]->GetSampler()},
-            {textures[slots.sheenRoughness]->GetImageView(), textures[slots.sheenRoughness]->GetSampler()},
-            {textures[slots.anisotropy]->GetImageView(), textures[slots.anisotropy]->GetSampler()},
-            {textures[slots.specular]->GetImageView(), textures[slots.specular]->GetSampler()},
-            {textures[slots.specularColor]->GetImageView(), textures[slots.specularColor]->GetSampler()},
-            {textures[slots.clearcoatNormal]->GetImageView(), textures[slots.clearcoatNormal]->GetSampler()},
-            {textures[slots.iridescence]->GetImageView(), textures[slots.iridescence]->GetSampler()},
-            {textures[slots.iridescenceThickness]->GetImageView(), textures[slots.iridescenceThickness]->GetSampler()}});
+            bind(slots.baseColor, 0),
+            bind(slots.normal, 1),
+            bind(slots.metallic, 2),
+            bind(slots.roughness, 3),
+            bind(slots.occlusion, 4),
+            bind(slots.emissive, 5),
+            bind(slots.secondaryBaseColor, 6),
+            bind(slots.secondaryNormal, 7),
+            bind(slots.secondaryMetallic, 8),
+            bind(slots.secondaryRoughness, 9),
+            bind(slots.secondaryOcclusion, 10),
+            bind(slots.secondaryEmissive, 11),
+            bind(slots.blendMask, 12),
+            bind(slots.clearcoat, 13),
+            bind(slots.clearcoatRoughness, 14),
+            bind(slots.sheenColor, 15),
+            bind(slots.sheenRoughness, 16),
+            bind(slots.anisotropy, 17),
+            bind(slots.specular, 18),
+            bind(slots.specularColor, 19),
+            bind(slots.clearcoatNormal, 20),
+            bind(slots.iridescence, 21),
+            bind(slots.iridescenceThickness, 22)});
     }
 
     return bindings;
@@ -394,6 +400,14 @@ VulkanRenderer::VulkanRenderer(
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
         m_device->GetGraphicsQueue());
+    {
+        VkPhysicalDeviceFeatures features{};
+        vkGetPhysicalDeviceFeatures(m_device->GetPhysicalDevice(), &features);
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(m_device->GetPhysicalDevice(), &properties);
+        const float maxAnisotropy = features.samplerAnisotropy ? std::min(16.0f, properties.limits.maxSamplerAnisotropy) : 0.0f;
+        m_samplerCache = std::make_unique<VulkanSamplerCache>(m_device->GetHandle(), maxAnisotropy);
+    }
     CreateDeviceResources();
     // Half the hardware threads: the rest stay free for the frame loop and for the band-parallel
     // encoding inside each texture.
@@ -432,6 +446,7 @@ VulkanRenderer::~VulkanRenderer()
     m_textures.clear();
     m_stagedTextures.clear();
     m_renderSubmeshes.clear();
+    m_samplerCache.reset();
     DestroyDeviceResources();
     m_device.reset();
     m_instance.reset();
@@ -1343,7 +1358,7 @@ void VulkanRenderer::CreateDescriptorResources()
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
-        BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots),
+        BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots, *m_samplerCache),
         m_shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(),
@@ -1608,6 +1623,7 @@ void VulkanRenderer::UploadSceneResources()
         }
 
         MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
+        slots.samplers = cpuRenderSubmesh.textureSamplers;
         slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, TextureUsage::Color, defaultBaseColorIndex);
         slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, TextureUsage::Normal, defaultNormalIndex);
         slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, TextureUsage::Data, defaultMetallicIndex);
@@ -1885,7 +1901,7 @@ void VulkanRenderer::ApplyRenderContent(
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
             m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
-            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots),
+            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots, *m_samplerCache),
             m_shadowPass->GetSampledBinding(),
             m_localShadowPass->GetSampledBinding(),
             BuildEnvironmentBindings(),

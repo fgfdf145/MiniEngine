@@ -51,6 +51,8 @@ struct CpuRenderSubmesh
     GpuMaterialData material;
     MaterialTexturePaths textures;
     MaterialTextureTransforms textureTransforms{};
+    // Each slot's glTF sampler: wrapping and filtering (VulkanSamplerCache).
+    MaterialTextureSamplers textureSamplers{};
     bool hasTexCoords = false;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
