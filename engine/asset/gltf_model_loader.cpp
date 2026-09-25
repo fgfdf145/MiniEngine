@@ -698,6 +698,22 @@ TextureTransform ReadTextureTransform(int texCoord, const tinygltf::ExtensionMap
     return ReadTextureTransform(texCoord, found != extensions.end() ? &found->second : nullptr, modelPath);
 }
 
+// The sampler of the texture at textureIndex (glTF's textures[i].sampler), or the default.
+TextureSampler ReadTextureSampler(const tinygltf::Model& model, int textureIndex)
+{
+    if (textureIndex < 0 || static_cast<size_t>(textureIndex) >= model.textures.size())
+    {
+        return TextureSampler{};
+    }
+    const int samplerIndex = model.textures[static_cast<size_t>(textureIndex)].sampler;
+    if (samplerIndex < 0 || static_cast<size_t>(samplerIndex) >= model.samplers.size())
+    {
+        return TextureSampler{};
+    }
+    const tinygltf::Sampler& sampler = model.samplers[static_cast<size_t>(samplerIndex)];
+    return TextureSamplerFromGltf(sampler.wrapS, sampler.wrapT, sampler.magFilter, sampler.minFilter);
+}
+
 ModelMaterialData BuildMaterialData(
     const tinygltf::Model& model,
     const tinygltf::Material& material,
@@ -720,7 +736,13 @@ ModelMaterialData BuildMaterialData(
     {
         materialData.textureTransforms[static_cast<size_t>(slot)] = transform;
     };
+    // The glTF sampler of the texture a slot reads; the default without a texture or a sampler.
+    const auto setSampler = [&](MaterialTextureSlot slot, int textureIndex)
+    {
+        materialData.textureSamplers[static_cast<size_t>(slot)] = ReadTextureSampler(model, textureIndex);
+    };
     setTransform(MaterialTextureSlot::BaseColor, ReadTextureTransform(pbr.baseColorTexture.texCoord, pbr.baseColorTexture.extensions, modelPath));
+    setSampler(MaterialTextureSlot::BaseColor, pbr.baseColorTexture.index);
     materialData.metallicFactor = static_cast<float>(pbr.metallicFactor);
     materialData.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
 
@@ -733,11 +755,14 @@ ModelMaterialData BuildMaterialData(
         ReadTextureTransform(pbr.metallicRoughnessTexture.texCoord, pbr.metallicRoughnessTexture.extensions, modelPath);
     setTransform(MaterialTextureSlot::Metallic, metallicRoughnessTransform);
     setTransform(MaterialTextureSlot::Roughness, metallicRoughnessTransform);
+    setSampler(MaterialTextureSlot::Metallic, pbr.metallicRoughnessTexture.index);
+    setSampler(MaterialTextureSlot::Roughness, pbr.metallicRoughnessTexture.index);
 
     if (material.normalTexture.index >= 0)
     {
         materialData.normalTexturePath = ResolveImagePath(model, modelPath, material.normalTexture.index);
         setTransform(MaterialTextureSlot::Normal, ReadTextureTransform(material.normalTexture.texCoord, material.normalTexture.extensions, modelPath));
+        setSampler(MaterialTextureSlot::Normal, material.normalTexture.index);
         materialData.normalScale = static_cast<float>(material.normalTexture.scale);
     }
 
@@ -746,6 +771,7 @@ ModelMaterialData BuildMaterialData(
         materialData.occlusionTexturePath = ResolveImagePath(model, modelPath, material.occlusionTexture.index);
         setTransform(
             MaterialTextureSlot::Occlusion, ReadTextureTransform(material.occlusionTexture.texCoord, material.occlusionTexture.extensions, modelPath));
+        setSampler(MaterialTextureSlot::Occlusion, material.occlusionTexture.index);
         materialData.occlusionStrength = static_cast<float>(material.occlusionTexture.strength);
     }
 
@@ -760,6 +786,7 @@ ModelMaterialData BuildMaterialData(
     {
         materialData.emissiveTexturePath = ResolveImagePath(model, modelPath, material.emissiveTexture.index);
         setTransform(MaterialTextureSlot::Emissive, ReadTextureTransform(material.emissiveTexture.texCoord, material.emissiveTexture.extensions, modelPath));
+        setSampler(MaterialTextureSlot::Emissive, material.emissiveTexture.index);
         materialData.emissiveIntensity = 1.0f;
     }
 
@@ -797,6 +824,7 @@ ModelMaterialData BuildMaterialData(
             info.Has("extensions") && info.Get("extensions").Has("KHR_texture_transform") ? &info.Get("extensions").Get("KHR_texture_transform")
                                                                                           : nullptr;
         setTransform(slot, ReadTextureTransform(texCoord, transform, modelPath));
+        setSampler(slot, info.Get("index").GetNumberAsInt());
         return ResolveImagePath(model, modelPath, info.Get("index").GetNumberAsInt());
     };
 

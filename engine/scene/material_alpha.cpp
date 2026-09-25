@@ -128,6 +128,52 @@ bool TextureTransform::IsIdentity() const
     return offset[0] == 0.0f && offset[1] == 0.0f && rotation == 0.0f && scale[0] == 1.0f && scale[1] == 1.0f && texCoord == 0;
 }
 
+TextureSampler TextureSamplerFromGltf(int wrapS, int wrapT, int magFilter, int minFilter)
+{
+    const auto wrap = [](int value)
+    {
+        switch (value)
+        {
+        case 33071:
+            return TextureWrap::ClampToEdge;
+        case 33648:
+            return TextureWrap::MirroredRepeat;
+        default:
+            return TextureWrap::Repeat;
+        }
+    };
+    TextureSampler sampler;
+    sampler.wrapS = wrap(wrapS);
+    sampler.wrapT = wrap(wrapT);
+    if (magFilter == 9728)
+    {
+        sampler.magFilter = TextureFilter::Nearest;
+    }
+    switch (minFilter)
+    {
+    case 9728: // NEAREST
+        sampler.minFilter = TextureFilter::Nearest;
+        sampler.mipFilter = TextureMipFilter::None;
+        break;
+    case 9729: // LINEAR
+        sampler.mipFilter = TextureMipFilter::None;
+        break;
+    case 9984: // NEAREST_MIPMAP_NEAREST
+        sampler.minFilter = TextureFilter::Nearest;
+        sampler.mipFilter = TextureMipFilter::Nearest;
+        break;
+    case 9985: // LINEAR_MIPMAP_NEAREST
+        sampler.mipFilter = TextureMipFilter::Nearest;
+        break;
+    case 9986: // NEAREST_MIPMAP_LINEAR
+        sampler.minFilter = TextureFilter::Nearest;
+        break;
+    default: // LINEAR_MIPMAP_LINEAR, unset or unknown
+        break;
+    }
+    return sampler;
+}
+
 bool AreIdentity(const MaterialTextureTransforms& transforms)
 {
     return std::all_of(transforms.begin(), transforms.end(), [](const TextureTransform& transform)

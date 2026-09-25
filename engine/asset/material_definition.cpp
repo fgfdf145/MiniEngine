@@ -15,6 +15,75 @@ namespace me
 
 namespace
 {
+// A sampler's fields as a sidecar writes them.
+const char* TextureWrapName(TextureWrap wrap)
+{
+    switch (wrap)
+    {
+    case TextureWrap::ClampToEdge:
+        return "clamp_to_edge";
+    case TextureWrap::MirroredRepeat:
+        return "mirrored_repeat";
+    default:
+        return "repeat";
+    }
+}
+
+const char* TextureFilterName(TextureFilter filter)
+{
+    return filter == TextureFilter::Nearest ? "nearest" : "linear";
+}
+
+const char* TextureMipFilterName(TextureMipFilter filter)
+{
+    switch (filter)
+    {
+    case TextureMipFilter::Nearest:
+        return "nearest";
+    case TextureMipFilter::None:
+        return "none";
+    default:
+        return "linear";
+    }
+}
+
+// The reverse; an empty or unknown value keeps the fallback.
+TextureWrap ParseTextureWrap(const std::string& value, TextureWrap fallback)
+{
+    for (const TextureWrap wrap : {TextureWrap::Repeat, TextureWrap::ClampToEdge, TextureWrap::MirroredRepeat})
+    {
+        if (value == TextureWrapName(wrap))
+        {
+            return wrap;
+        }
+    }
+    return fallback;
+}
+
+TextureFilter ParseTextureFilter(const std::string& value, TextureFilter fallback)
+{
+    for (const TextureFilter filter : {TextureFilter::Linear, TextureFilter::Nearest})
+    {
+        if (value == TextureFilterName(filter))
+        {
+            return filter;
+        }
+    }
+    return fallback;
+}
+
+TextureMipFilter ParseTextureMipFilter(const std::string& value, TextureMipFilter fallback)
+{
+    for (const TextureMipFilter filter : {TextureMipFilter::Linear, TextureMipFilter::Nearest, TextureMipFilter::None})
+    {
+        if (value == TextureMipFilterName(filter))
+        {
+            return filter;
+        }
+    }
+    return fallback;
+}
+
 template <size_t Count>
 void ReadFloatSequence(const YAML::Node& node, float (&destination)[Count])
 {
@@ -149,7 +218,8 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.pbr,
         material.blendGraph,
         material.shaderGraph,
-        material.textureTransforms};
+        material.textureTransforms,
+        material.textureSamplers};
 }
 
 void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMaterialData& destination)
@@ -172,6 +242,7 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.iridescenceTexturePath = source.iridescenceTexturePath;
     destination.iridescenceThicknessTexturePath = source.iridescenceThicknessTexturePath;
     destination.textureTransforms = source.textureTransforms;
+    destination.textureSamplers = source.textureSamplers;
     destination.unlit = source.pbr.unlit;
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
@@ -299,6 +370,29 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
         node["texture_transforms"] = transforms;
     }
 
+    // Only the samplers that differ from the default, keyed by slot name.
+    YAML::Node samplers(YAML::NodeType::Map);
+    for (uint32_t slot = 0; slot < kMaterialTextureSlotCount; ++slot)
+    {
+        const TextureSampler& sampler = material.textureSamplers[slot];
+        const char* name = MaterialTextureSlotName(slot);
+        if (name == nullptr || sampler.IsDefault())
+        {
+            continue;
+        }
+        YAML::Node entry(YAML::NodeType::Map);
+        entry["wrap_s"] = TextureWrapName(sampler.wrapS);
+        entry["wrap_t"] = TextureWrapName(sampler.wrapT);
+        entry["mag_filter"] = TextureFilterName(sampler.magFilter);
+        entry["min_filter"] = TextureFilterName(sampler.minFilter);
+        entry["mip_filter"] = TextureMipFilterName(sampler.mipFilter);
+        samplers[name] = entry;
+    }
+    if (samplers.size() > 0)
+    {
+        node["texture_samplers"] = samplers;
+    }
+
     if (HasBlendData(material.blendGraph))
     {
         const MaterialTextureBlendGraph& blendGraph = material.blendGraph;
@@ -375,6 +469,26 @@ bool LoadMaterialDefinition(
                 transform.rotation = entry["rotation"].as<float>(transform.rotation);
                 ReadFloatSequence(entry["scale"], transform.scale);
                 transform.texCoord = std::min(entry["tex_coord"].as<uint32_t>(transform.texCoord), 1u);
+            }
+        }
+
+        // Absent in sidecars written before samplers were read: every texture keeps the default.
+        if (const YAML::Node samplersNode = node["texture_samplers"]; samplersNode && samplersNode.IsMap())
+        {
+            for (uint32_t slot = 0; slot < kMaterialTextureSlotCount; ++slot)
+            {
+                const char* name = MaterialTextureSlotName(slot);
+                if (name == nullptr || !samplersNode[name] || !samplersNode[name].IsMap())
+                {
+                    continue;
+                }
+                const YAML::Node entry = samplersNode[name];
+                TextureSampler& sampler = material.textureSamplers[slot];
+                sampler.wrapS = ParseTextureWrap(entry["wrap_s"].as<std::string>(""), sampler.wrapS);
+                sampler.wrapT = ParseTextureWrap(entry["wrap_t"].as<std::string>(""), sampler.wrapT);
+                sampler.magFilter = ParseTextureFilter(entry["mag_filter"].as<std::string>(""), sampler.magFilter);
+                sampler.minFilter = ParseTextureFilter(entry["min_filter"].as<std::string>(""), sampler.minFilter);
+                sampler.mipFilter = ParseTextureMipFilter(entry["mip_filter"].as<std::string>(""), sampler.mipFilter);
             }
         }
 

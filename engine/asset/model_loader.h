@@ -63,6 +63,8 @@ struct ModelMaterialData
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
     MaterialTextureTransforms textureTransforms{};
+    // Each slot's glTF sampler; the metallic and roughness slots share the metallic-roughness one.
+    MaterialTextureSamplers textureSamplers{};
     bool unlit = false;
 };
 

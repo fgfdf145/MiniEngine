@@ -70,6 +70,52 @@ using MaterialTextureTransforms = std::array<TextureTransform, kMaterialTextureS
 
 bool AreIdentity(const MaterialTextureTransforms& transforms);
 
+// A glTF sampler (textures[i].sampler): how a texture wraps outside [0, 1] on each axis and how it
+// is filtered. The default is the engine's sampler for every texture before samplers were read:
+// repeat, linear, linear mipmaps (with anisotropic filtering).
+enum class TextureWrap : uint8_t
+{
+    Repeat,
+    ClampToEdge,
+    MirroredRepeat
+};
+
+enum class TextureFilter : uint8_t
+{
+    Linear,
+    Nearest
+};
+
+// How minification moves between mip levels; None samples the base level only (glTF's NEAREST and
+// LINEAR minification filters).
+enum class TextureMipFilter : uint8_t
+{
+    Linear,
+    Nearest,
+    None
+};
+
+struct TextureSampler
+{
+    TextureWrap wrapS = TextureWrap::Repeat;
+    TextureWrap wrapT = TextureWrap::Repeat;
+    TextureFilter magFilter = TextureFilter::Linear;
+    TextureFilter minFilter = TextureFilter::Linear;
+    TextureMipFilter mipFilter = TextureMipFilter::Linear;
+
+    bool IsDefault() const
+    {
+        return *this == TextureSampler{};
+    }
+    bool operator==(const TextureSampler&) const = default;
+};
+
+using MaterialTextureSamplers = std::array<TextureSampler, kMaterialTextureSlotCount>;
+
+// glTF's sampler enums (-1 where the sampler leaves a field out). Unset or unknown values keep the
+// default: glTF leaves undefined filtering to the implementation, and wrapping defaults to REPEAT.
+TextureSampler TextureSamplerFromGltf(int wrapS, int wrapT, int magFilter, int minFilter);
+
 // The transform as the shader applies it: uv' = (row0.x u + row0.y v + row0.z,
 // row1.x u + row1.y v + row1.z), with row0.w the UV set.
 void ComputeTextureTransformRows(const TextureTransform& transform, float row0[4], float row1[4]);

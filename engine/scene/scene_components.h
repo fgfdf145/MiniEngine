@@ -57,6 +57,7 @@ struct ModelImportedMaterialInfo
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
     MaterialTextureTransforms textureTransforms{};
+    MaterialTextureSamplers textureSamplers{};
 };
 
 struct ModelImportedSubmeshInfo

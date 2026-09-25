@@ -802,6 +802,77 @@ void ResolvesVariantMaterials()
     Require(!FindMaterialVariant(model, "").has_value(), "the empty name is not the default");
 }
 
+void ReadsSamplers()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string textures = R"("images": [{ "uri": "a.png" }, { "uri": "b.png" }, { "uri": "c.png" }],
+      "samplers": [{ "wrapS": 33071, "wrapT": 33071, "magFilter": 9728, "minFilter": 9728 }, { "wrapS": 33648 }],
+      "textures": [{ "source": 0, "sampler": 0 }, { "source": 1, "sampler": 1 }, { "source": 2 }],)";
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "samplers",
+            {R"({ "name": "sampled",
+                 "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 }, "metallicRoughnessTexture": { "index": 1 } },
+                 "normalTexture": { "index": 1 }, "occlusionTexture": { "index": 2 },
+                 "extensions": { "KHR_materials_clearcoat": { "clearcoatFactor": 1, "clearcoatTexture": { "index": 0 } } } })"},
+            textures)
+            .string());
+    const ModelMaterialData& material = MaterialNamed(model, "sampled");
+    const auto samplerOf = [&](MaterialTextureSlot slot)
+    {
+        return material.textureSamplers[static_cast<size_t>(slot)];
+    };
+    const TextureSampler base = samplerOf(MaterialTextureSlot::BaseColor);
+    Require(base.wrapS == TextureWrap::ClampToEdge && base.wrapT == TextureWrap::ClampToEdge, "the base colour clamps");
+    Require(base.magFilter == TextureFilter::Nearest && base.minFilter == TextureFilter::Nearest && base.mipFilter == TextureMipFilter::None,
+            "the base colour is nearest-filtered without mipmaps");
+    Require(samplerOf(MaterialTextureSlot::Normal).wrapS == TextureWrap::MirroredRepeat, "the normal map mirrors");
+    Require(samplerOf(MaterialTextureSlot::Normal).wrapT == TextureWrap::Repeat, "an unset axis repeats");
+    Require(samplerOf(MaterialTextureSlot::Metallic) == samplerOf(MaterialTextureSlot::Normal) &&
+                samplerOf(MaterialTextureSlot::Roughness) == samplerOf(MaterialTextureSlot::Normal),
+            "metallic and roughness share the metallic-roughness texture's sampler");
+    Require(samplerOf(MaterialTextureSlot::Occlusion).IsDefault(), "a texture without a sampler keeps the default");
+    Require(samplerOf(MaterialTextureSlot::Clearcoat) == base, "an extension texture's sampler");
+    Require(samplerOf(MaterialTextureSlot::Emissive).IsDefault(), "an empty slot keeps the default");
+}
+
+void SidecarKeepsSamplers()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "sampled";
+    TextureSampler& base = written.textureSamplers[static_cast<size_t>(MaterialTextureSlot::BaseColor)];
+    base.wrapS = TextureWrap::ClampToEdge;
+    base.wrapT = TextureWrap::MirroredRepeat;
+    base.magFilter = TextureFilter::Nearest;
+    base.minFilter = TextureFilter::Nearest;
+    base.mipFilter = TextureMipFilter::None;
+    written.textureSamplers[static_cast<size_t>(MaterialTextureSlot::SheenColor)].mipFilter = TextureMipFilter::Nearest;
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::string text = YAML::Dump(root);
+    Require(text.find("texture_samplers") != std::string::npos && text.find("normal:") == std::string::npos,
+            "only non-default samplers are written");
+    const std::filesystem::path path = directory.path / "sampled.material.yaml";
+    std::ofstream(path) << text;
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Require(read.textureSamplers == written.textureSamplers, "the samplers survive the sidecar");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Require(legacy.textureSamplers == MaterialTextureSamplers{}, "a legacy sidecar keeps the default samplers");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Require(applied.textureSamplers == written.textureSamplers, "applied samplers");
+}
+
 int main()
 {
     try
@@ -823,6 +894,8 @@ int main()
         ReadsSecondUvSet();
         ReadsMaterialVariants();
         ResolvesVariantMaterials();
+        ReadsSamplers();
+        SidecarKeepsSamplers();
     }
     catch (const std::exception& error)
     {
