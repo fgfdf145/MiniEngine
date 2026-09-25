@@ -21,6 +21,9 @@ struct VulkanDrawItem
     uint32_t motionSlot = 0;
     // An Opaque or Mask draw the forward pass shades (kShadingFlagForward).
     bool forwardShaded = false;
+    // A transmissive Opaque or Mask draw (kShadingFlagTransmission): drawn only by the translucent
+    // forward pass, never by the geometry pass or into shadow maps.
+    bool transmissive = false;
 };
 
 struct VulkanFrameSyncObjects

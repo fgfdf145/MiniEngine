@@ -29,6 +29,10 @@ inline constexpr uint32_t kShadingFlagCoatNormal = 16u;
 inline constexpr uint32_t kShadingFlagForward = 32u;
 // KHR_materials_unlit: the base colour, shown at the display's paper white, no lighting.
 inline constexpr uint32_t kShadingFlagUnlit = 64u;
+// KHR_materials_transmission (with _volume): drawn after the scene behind it is copied (the
+// transmission copy), which it samples through its surface. Always with kShadingFlagForward, and
+// unlike other forward-shaded surfaces it is not in the G-buffer at all.
+inline constexpr uint32_t kShadingFlagTransmission = 128u;
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
 // binding 12, MaterialData in shaders/vulkan/material_common.glsl), indexed by the draw's slot.
@@ -60,18 +64,27 @@ struct alignas(16) GpuMaterialData
     // x = iridescence factor, y = the film's IOR, z = thickness minimum, w = maximum (nm). Read only
     // by the forward pass, which is where a film sends a material (kShadingFlagForward).
     float iridescenceFactors[4] = {0.0f, 1.3f, 100.0f, 400.0f};
+    // x = transmission [0, 1], y = volume thickness (mesh units, 0 = thin), z = attenuation distance
+    // (metres, 0 = no absorption), w = dispersion (phase 4b). Read only with kShadingFlagTransmission.
+    float transmissionFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // rgb = the attenuation colour; a = the IOR the view ray refracts by (KHR_materials_ior; its 0,
+    // an infinite index, is stored as a large one).
+    float attenuationColor[4] = {1.0f, 1.0f, 1.0f, 1.5f};
+    // xyz = the glTF node's scale per axis, which the vertices already carry baked in; the volume's
+    // thickness scales by it and the entity's scale. w unused.
+    float volumeScale[4] = {1.0f, 1.0f, 1.0f, 0.0f};
 };
 
 // Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.glsl): per
 // slot, in the material set's binding order, two rows, (a, b, tx, UV set) and (c, d, ty, 0), as
 // ComputeTextureTransformRows writes them.
-inline constexpr uint32_t kGpuTextureTransformSlots = 23;
+inline constexpr uint32_t kGpuTextureTransformSlots = 25;
 struct GpuTextureTransforms
 {
     float rows[kGpuTextureTransformSlots * 8] = {};
 };
 
-static_assert(sizeof(GpuTextureTransforms) == 23 * 32, "GpuTextureTransforms must stay two vec4 per slot");
+static_assert(sizeof(GpuTextureTransforms) == 25 * 32, "GpuTextureTransforms must stay two vec4 per slot");
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
 // once it outgrew the 128 bytes Vulkan guarantees for push constants.
@@ -80,7 +93,7 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 160, "GpuMaterialData must stay 10 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 208, "GpuMaterialData must stay 13 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");

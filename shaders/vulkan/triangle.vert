@@ -37,6 +37,9 @@ layout(location = 6) out vec4 fragPrevClip;
 // The draw's slot (its firstInstance), which the fragment shaders index the material buffer with.
 layout(location = 7) flat out uint fragDrawSlot;
 layout(location = 8) out vec2 fragTexCoord1;
+// The model matrix's per-axis scale, for the volume's thickness (KHR_materials_volume), which is in
+// mesh units.
+layout(location = 9) flat out vec3 fragModelScale;
 
 void main()
 {
@@ -66,4 +69,5 @@ void main()
     fragWorldTangent = vec4(worldTangent, inTangent.w);
     fragWorldPosition = worldPosition.xyz;
     fragDrawSlot = uint(gl_InstanceIndex);
+    fragModelScale = vec3(length(drawData.model[0].xyz), length(drawData.model[1].xyz), length(drawData.model[2].xyz));
 }

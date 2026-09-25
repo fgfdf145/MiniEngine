@@ -16,8 +16,10 @@ VulkanForwardPass::VulkanForwardPass(
     VkDevice device,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_device(device)
+    VkDescriptorSetLayout frameSetLayout,
+    ForwardPassPart part)
+    : m_device(device),
+      m_part(part)
 {
     // A throw out of a constructor skips the destructor, so everything created before the failure
     // would leak with it. DestroyHandles skips null handles, so unwinding whatever got created is
@@ -58,7 +60,7 @@ VulkanForwardPass::~VulkanForwardPass()
 
 ScenePassId VulkanForwardPass::Id() const
 {
-    return ScenePassId::Forward;
+    return m_part == ForwardPassPart::OpaqueAndSky ? ScenePassId::Forward : ScenePassId::ForwardTranslucent;
 }
 
 RenderPassIo VulkanForwardPass::Io() const
@@ -77,7 +79,8 @@ void VulkanForwardPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    const bool ownsFrame = frame.forwardFilter == ForwardDrawFilter::All;
+    // Only the opaque half ever clears: the translucent half always draws over it.
+    const bool ownsFrame = m_part == ForwardPassPart::OpaqueAndSky && frame.forwardFilter == ForwardDrawFilter::All;
 
     std::array<VkClearValue, 2> clearValues{};
     // The clear lands in the HDR target and is tone mapped with everything else. It stands for no
@@ -102,19 +105,24 @@ void VulkanForwardPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
-    // Opaque and Mask first: all of them when this pass owns the frame; otherwise the lighting
-    // pass shaded all but the forward-shaded ones, which land here on the depth the geometry pass
-    // wrote for them. Then the sky into whatever no geometry covered, then Blend items over both.
-    if (ownsFrame)
+    if (m_part == ForwardPassPart::OpaqueAndSky)
     {
-        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
+        // Opaque and Mask first: all of them when this pass owns the frame; otherwise the lighting
+        // pass shaded all but the forward-shaded ones, which land here on the depth the geometry
+        // pass wrote for them. Then the sky into whatever no geometry covered.
+        RecordMaterialDrawItems(
+            commandBuffer,
+            *frame.forwardPipelines,
+            frame.frameDescriptorSet,
+            ownsFrame ? frame.OpaqueDrawItems() : frame.ForwardShadedDrawItems());
+        RecordSky(commandBuffer, frame);
     }
     else
     {
-        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.ForwardShadedDrawItems());
+        // Over the transmission copy of the above: transmissive items, then Blend over everything.
+        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.TransmissiveDrawItems());
+        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());
     }
-    RecordSky(commandBuffer, frame);
-    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());
     vkCmdEndRenderPass(commandBuffer);
 }
 

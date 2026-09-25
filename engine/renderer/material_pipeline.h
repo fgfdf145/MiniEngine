@@ -32,6 +32,9 @@ struct MaterialDrawSortKey
     // An Opaque or Mask draw the forward pass shades (kShadingFlagForward). Ignored for Blend, which
     // the forward pass always shades.
     bool forwardShaded = false;
+    // A transmissive Opaque or Mask draw (kShadingFlagTransmission): drawn after the transmission
+    // copy, back to front, never in the G-buffer. Ignored for Blend, which is drawn after it anyway.
+    bool transmissive = false;
 };
 
 inline constexpr size_t kMaterialPipelineVariantCount = 6;

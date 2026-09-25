@@ -30,12 +30,34 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
                                                   {
                                                       return keys[index].pipeline.alphaMode != MaterialAlphaMode::Blend;
                                                   });
+    // Back to front, NaN depths last: Blend draws, and transmissive ones, each see only what was
+    // drawn before them.
+    const auto backToFront = [&](size_t lhs, size_t rhs)
+    {
+        const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);
+        const bool rhsIsNaN = std::isnan(keys[rhs].viewDepth);
+        if (lhsIsNaN != rhsIsNaN)
+        {
+            return !lhsIsNaN;
+        }
+        if (lhsIsNaN)
+        {
+            return false;
+        }
+        return keys[lhs].viewDepth > keys[rhs].viewDepth;
+    };
+    // Transmissive Opaque and Mask draws go last among them: they are drawn after the scene behind
+    // them has been copied.
+    const auto transmissiveBegin = std::stable_partition(order.begin(), blendBegin, [&](size_t index)
+                                                         {
+                                                             return !keys[index].transmissive;
+                                                         });
     // Opaque and Mask draws depth-test and depth-write, so their relative order does not change
     // the image: group them by pipeline variant instead, which collapses the redundant
     // vkCmdBindPipeline calls an interleaved submesh list would otherwise produce. The ones the
     // forward pass shades go after the deferred ones, so each pass records a contiguous run. Blend
-    // draws below keep their back-to-front order — correctness there outranks pipeline batching.
-    std::stable_sort(order.begin(), blendBegin, [&](size_t lhs, size_t rhs)
+    // and transmissive draws keep their back-to-front order: correctness there outranks batching.
+    std::stable_sort(order.begin(), transmissiveBegin, [&](size_t lhs, size_t rhs)
                      {
                          if (keys[lhs].forwardShaded != keys[rhs].forwardShaded)
                          {
@@ -44,20 +66,8 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
                          return GetMaterialPipelineIndex(keys[lhs].pipeline) <
                                 GetMaterialPipelineIndex(keys[rhs].pipeline);
                      });
-    std::stable_sort(blendBegin, order.end(), [&](size_t lhs, size_t rhs)
-                     {
-                         const bool lhsIsNaN = std::isnan(keys[lhs].viewDepth);
-                         const bool rhsIsNaN = std::isnan(keys[rhs].viewDepth);
-                         if (lhsIsNaN != rhsIsNaN)
-                         {
-                             return !lhsIsNaN;
-                         }
-                         if (lhsIsNaN)
-                         {
-                             return false;
-                         }
-                         return keys[lhs].viewDepth > keys[rhs].viewDepth;
-                     });
+    std::stable_sort(transmissiveBegin, blendBegin, backToFront);
+    std::stable_sort(blendBegin, order.end(), backToFront);
     return order;
 }
 }

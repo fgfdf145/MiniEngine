@@ -188,6 +188,40 @@ void LoaderKeepsTheViewersPrimitiveBounds()
     Require(std::abs(submesh.viewerBoundsRadius - 1.0f) < 1e-4f,
             "the viewer's half-diagonal is " + std::to_string(submesh.viewerBoundsRadius) + ", not 1");
     Require(submesh.boundsRadius < submesh.viewerBoundsRadius - 0.1f, "the vertices' own bounds did not stay tighter");
+    Require(glm::length(submesh.nodeScale - glm::vec3(1.0f)) < 1e-5f, "a rotated node has no scale");
+}
+
+// Node transforms are baked into the vertices, so a volume's thickness (KHR_materials_volume, in
+// mesh units) needs the node's scale kept beside them, per axis as the viewer takes it.
+void LoaderKeepsTheNodeScale()
+{
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "miniengine_khronos_reference_scale";
+    std::filesystem::create_directories(directory);
+    {
+        std::ofstream file(directory / "scaled.gltf");
+        file << R"({ "asset": { "version": "2.0" },
+          "buffers": [{ "uri": "scaled.bin", "byteLength": 42 }],
+          "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 }
+          ],
+          "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] },
+            { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+          ],
+          "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1 }] }],
+          "nodes": [{ "children": [1], "scale": [2, 2, 2] }, { "mesh": 0, "scale": [0.5, 1.5, 3], "rotation": [0, 0, 0.38268343, 0.92387953] }],
+          "scenes": [{ "nodes": [0] }], "scene": 0 })";
+        std::ofstream buffer(directory / "scaled.bin", std::ios::binary);
+        const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const std::array<uint16_t, 3> indices = {0, 1, 2};
+        buffer.write(reinterpret_cast<const char*>(positions.data()), static_cast<std::streamsize>(sizeof(positions)));
+        buffer.write(reinterpret_cast<const char*>(indices.data()), static_cast<std::streamsize>(sizeof(indices)));
+    }
+    const LoadedModelData model = ModelLoader::LoadModel((directory / "scaled.gltf").string());
+    std::filesystem::remove_all(directory);
+    const glm::vec3 scale = model.submeshes.at(0).nodeScale;
+    Require(glm::length(scale - glm::vec3(1.0f, 3.0f, 6.0f)) < 1e-4f, "the node's world scale per axis is kept: " + Text(scale));
 }
 
 void ExposesHdriTexelOneToOne()
@@ -209,6 +243,7 @@ int main()
         FramesLikeTheSampleViewer();
         ExtentsFollowTheSampleViewer();
         LoaderKeepsTheViewersPrimitiveBounds();
+        LoaderKeepsTheNodeScale();
         ExposesHdriTexelOneToOne();
     }
     catch (const std::exception& error)

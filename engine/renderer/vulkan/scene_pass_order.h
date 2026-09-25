@@ -19,6 +19,8 @@ enum class ScenePassId
     SsrResolve,
     Lighting,
     Forward,
+    TransmissionCopy,
+    ForwardTranslucent,
     Taa,
     Bloom,
     ExposureHistogram,

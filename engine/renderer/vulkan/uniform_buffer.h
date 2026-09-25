@@ -42,6 +42,8 @@ struct EnvironmentDescriptorBindings
     // Bindings 15 and 16: the area lights' LTC tables (ltc_table.h), in SHADER_READ_ONLY_OPTIMAL.
     TextureDescriptorBinding ltcInverseMatrices;
     TextureDescriptorBinding ltcAmplitudes;
+    // Binding 18: the transmission copy (VulkanTransmissionImage), in SHADER_READ_ONLY_OPTIMAL.
+    TextureDescriptorBinding transmission;
 };
 
 struct MaterialTextureBinding
@@ -69,11 +71,13 @@ struct MaterialTextureBinding
     TextureDescriptorBinding clearcoatNormal;
     TextureDescriptorBinding iridescence;
     TextureDescriptorBinding iridescenceThickness;
+    TextureDescriptorBinding transmission;
+    TextureDescriptorBinding thickness;
 };
 
 // Set 1's combined image samplers, in binding order: the six primary maps, layer B's six, the
 // blend mask, then the ten layer maps (material_layers.glsl).
-inline constexpr uint32_t kMaterialTextureBindingCount = 23;
+inline constexpr uint32_t kMaterialTextureBindingCount = 25;
 
 // Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
 // positionAndRange : xyz = world position, w = effective range (metres)

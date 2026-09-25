@@ -44,6 +44,8 @@ const uint SHADING_FLAG_COAT_NORMAL = 16u;
 const uint SHADING_FLAG_FORWARD = 32u;
 // KHR_materials_unlit: GB0's colour at paper white, no lighting.
 const uint SHADING_FLAG_UNLIT = 64u;
+// KHR_materials_transmission: forward shaded over the transmission copy; never in the G-buffer.
+const uint SHADING_FLAG_TRANSMISSION = 128u;
 
 float EncodeShadingFlags(uint flags)
 {

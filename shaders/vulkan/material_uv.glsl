@@ -6,7 +6,7 @@
 // binding 17). A material with no transform (shadingModel.y == 0) samples the first UV set as it is
 // and never reads the buffer. Needs material_common.glsl.
 
-#define MATERIAL_TEXTURE_SLOT_COUNT 23u
+#define MATERIAL_TEXTURE_SLOT_COUNT 25u
 
 layout(set = 0, binding = 17, std430) readonly buffer MaterialTextureTransformBuffer
 {

@@ -17,6 +17,8 @@ layout(set = 1, binding = 19) uniform sampler2D specularColorTexture;      // RG
 layout(set = 1, binding = 20) uniform sampler2D clearcoatNormalTexture;    // tangent-space normal
 layout(set = 1, binding = 21) uniform sampler2D iridescenceTexture;        // R
 layout(set = 1, binding = 22) uniform sampler2D iridescenceThicknessTexture; // G
+layout(set = 1, binding = 23) uniform sampler2D transmissionTexture;         // R
+layout(set = 1, binding = 24) uniform sampler2D thicknessTexture;            // G
 
 struct MaterialLayers
 {

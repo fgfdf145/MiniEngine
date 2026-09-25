@@ -218,6 +218,8 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.clearcoatNormal, TextureUsage::Normal);
     visit(textures.iridescence, TextureUsage::Data);
     visit(textures.iridescenceThickness, TextureUsage::Data);
+    visit(textures.transmission, TextureUsage::Data);
+    visit(textures.thickness, TextureUsage::Data);
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -301,7 +303,9 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             bind(slots.specularColor, 19),
             bind(slots.clearcoatNormal, 20),
             bind(slots.iridescence, 21),
-            bind(slots.iridescenceThickness, 22)});
+            bind(slots.iridescenceThickness, 22),
+            bind(slots.transmission, 23),
+            bind(slots.thickness, 24)});
     }
 
     return bindings;
@@ -778,6 +782,16 @@ void VulkanRenderer::DrawFrame()
                 return !item.forwardShaded;
             }) -
         drawItems.begin());
+    // The transmissive ones are the tail of those, drawn after the transmission copy.
+    frame.transmissiveDrawItemBegin = static_cast<size_t>(
+        std::partition_point(
+            drawItems.begin() + static_cast<std::ptrdiff_t>(frame.forwardShadedDrawItemBegin),
+            drawItems.begin() + static_cast<std::ptrdiff_t>(frame.blendDrawItemBegin),
+            [](const VulkanDrawItem& item)
+            {
+                return !item.transmissive;
+            }) -
+        drawItems.begin());
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
@@ -1022,6 +1036,7 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle());
+    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle());
 
     m_atmosphere = std::make_unique<VulkanAtmosphere>(
         m_device->GetPhysicalDevice(),
@@ -1108,6 +1123,7 @@ void VulkanRenderer::DestroyDeviceResources()
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
     m_localShadowPass.reset();
+    m_transmissionImage.reset();
     if (m_pipelineCache != VK_NULL_HANDLE)
     {
         vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
@@ -1128,6 +1144,7 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};
     bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetSampler()};
     bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetSampler()};
+    bindings.transmission = m_transmissionImage->GetSampledBinding();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;
@@ -1230,7 +1247,8 @@ void VulkanRenderer::CreateScenePasses()
         m_device->GetHandle(),
         m_pipelineCache,
         *m_sceneTargets,
-        m_frameSetLayout->GetHandle());
+        m_frameSetLayout->GetHandle(),
+        ForwardPassPart::OpaqueAndSky);
 
     MaterialPipelineSetConfig geometryConfig{};
     geometryConfig.fragmentShader = "gbuffer.frag.spv";
@@ -1287,6 +1305,19 @@ void VulkanRenderer::CreateScenePasses()
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(forwardPass));
+    m_scenePasses.push_back(std::make_unique<VulkanTransmissionCopyPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        *m_transmissionImage));
+    // Compatible with the opaque half's render pass, so the same forward pipelines draw in it.
+    m_scenePasses.push_back(std::make_unique<VulkanForwardPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        ForwardPassPart::Translucent));
     auto taaPass = std::make_unique<VulkanTaaPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -1597,6 +1628,7 @@ void VulkanRenderer::UploadSceneResources()
         defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
         defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex,
         defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex,
+        defaultLayerIndex, defaultLayerIndex,
         defaultLayerIndex, defaultLayerIndex});
 
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
@@ -1648,6 +1680,8 @@ void VulkanRenderer::UploadSceneResources()
         slots.iridescence = loadTextureIndex(cpuRenderSubmesh.textures.iridescence, TextureUsage::Data, defaultLayerIndex);
         slots.iridescenceThickness =
             loadTextureIndex(cpuRenderSubmesh.textures.iridescenceThickness, TextureUsage::Data, defaultLayerIndex);
+        slots.transmission = loadTextureIndex(cpuRenderSubmesh.textures.transmission, TextureUsage::Data, defaultLayerIndex);
+        slots.thickness = loadTextureIndex(cpuRenderSubmesh.textures.thickness, TextureUsage::Data, defaultLayerIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
@@ -1960,7 +1994,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
             glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
         const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
                                    (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
-        sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded});
+        const bool transmissive = forwardShaded && (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u;
+        sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded, transmissive});
         unsorted.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),
             renderSubmesh.buffer->GetIndexHandle(),
@@ -1971,7 +2006,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
             // The slot is the submesh index, which is also where DrawFrame put this submesh's
             // previous model matrix.
             static_cast<uint32_t>(submeshIndex),
-            forwardShaded});
+            forwardShaded,
+            transmissive});
     }
 
     std::vector<VulkanDrawItem> ordered;
@@ -1991,7 +2027,9 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
     {
         // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
         // wrong more often than none, so they cast none.
-        if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend)
+        // Transmissive surfaces let most light through; they cast none either.
+        if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend ||
+            (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u)
         {
             continue;
         }

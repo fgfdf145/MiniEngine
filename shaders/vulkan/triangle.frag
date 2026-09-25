@@ -28,6 +28,10 @@ layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
 #include "material_layers.glsl"
+#include "transmission_common.glsl"
+
+// The scene behind transmissive surfaces (VulkanTransmissionCopyPass): pre-exposed, full mip chain.
+layout(set = 0, binding = 18) uniform sampler2D transmissionCopy;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -36,6 +40,7 @@ layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 4) in vec3 fragWorldPosition;
 layout(location = 7) flat in uint fragDrawSlot;
 layout(location = 8) in vec2 fragTexCoord1;
+layout(location = 9) flat in vec3 fragModelScale;
 
 layout(location = 0) out vec4 outColor;
 
@@ -107,6 +112,10 @@ void main()
         blendWeight);
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
+    // The material's own roughness, before the floor and specular AA below: what blurs transmitted
+    // light (the transmission copy's LOD, as the Khronos sample viewer takes it). Geometric specular
+    // AA widens reflections against aliasing; it would fog clear glass.
+    float materialRoughness = clamp(material.surfaceFactors.y * roughnessSample, 0.0, 1.0);
     float roughness = clamp(material.surfaceFactors.y * roughnessSample, 0.04, 1.0);
     // As gbuffer.frag: both variations here, in uniform control flow.
     roughness = FilterRoughnessForSpecularAA(roughness, NormalVariation(N));
@@ -153,6 +162,26 @@ void main()
         specular.iridescenceFresnel = EvaluateIridescence(
             material.iridescenceFactors.y, max(dot(N, V), 1e-4), layers.iridescenceThickness,
             SurfaceF0(albedo.rgb, metallic, specular));
+    }
+    if (HasShadingFlag(material.shadingModel.x, SHADING_FLAG_TRANSMISSION))
+    {
+        // What is behind the surface, where the view ray leaves the volume (straight behind a thin
+        // wall), from the transmission copy at the viewer's blur for the material's roughness. The copy holds
+        // pre-exposed values; the shading below is in radiance until its final exposure.
+        float transmission = clamp(
+            material.transmissionFactors.x * texture(transmissionTexture, MaterialSlotUv(material, fragDrawSlot, 23u, fragTexCoord, fragTexCoord1)).r,
+            0.0, 1.0);
+        float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
+        float ior = max(material.attenuationColor.a, 1.0);
+        vec3 exitPoint = TransmissionExitPoint(fragWorldPosition, N, V, ior, thickness, fragModelScale * material.volumeScale.xyz);
+        vec4 exitClip = ubo.proj * ubo.view * vec4(exitPoint, 1.0);
+        vec2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
+        vec3 behind = textureLod(transmissionCopy, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
+        vec3 absorption = ApplyVolumeAttenuation(vec3(1.0), length(exitPoint - fragWorldPosition), material.attenuationColor.rgb, material.transmissionFactors.z);
+        specular.transmissionFactor = transmission;
+        specular.transmittedRadiance = behind * absorption * albedo.rgb;
+        specular.transmissionTint = absorption * albedo.rgb;
+        specular.transmissionAlpha = max(TransmissionRoughness(roughness * roughness, ior), 1e-3);
     }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));

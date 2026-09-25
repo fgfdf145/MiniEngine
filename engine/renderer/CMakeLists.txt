@@ -141,6 +141,8 @@ add_library(engine_renderer
     vulkan/texture.cpp
     vulkan/texture.h
     vulkan/tonemap_pass.cpp
+    vulkan/transmission_copy.cpp
+    vulkan/transmission_copy.h
     vulkan/tonemap_pass.h
     vulkan/uniform_buffer.cpp
     vulkan/uniform_buffer.h
@@ -182,6 +184,7 @@ set(MINIENGINE_SHADER_SOURCES
     imgui_hdr10.frag
     ssr_trace.comp
     ssr_resolve.comp
+    transmission_copy.comp
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
@@ -196,6 +199,8 @@ set(MINIENGINE_SHADER_INCLUDES
     brdf_common.glsl
     ltc_common.glsl
     iridescence_common.glsl
+    transmission_common.glsl
+    pbr_neutral.glsl
     material_layers.glsl
     material_uv.glsl
     pre_exposure.glsl

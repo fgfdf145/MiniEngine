@@ -40,8 +40,13 @@ struct ScenePassFrameContext
     // index of the first Blend item, so the two halves are views of one vector, never copies.
     std::span<const VulkanDrawItem> drawItems;
     size_t blendDrawItemBegin = 0;
-    // The first Opaque or Mask item the forward pass shades; they run up to blendDrawItemBegin.
+    // The first Opaque or Mask item the forward pass shades; they run up to
+    // transmissiveDrawItemBegin.
     size_t forwardShadedDrawItemBegin = 0;
+    // The first transmissive Opaque or Mask item (kShadingFlagTransmission), drawn back to front by
+    // the translucent forward pass over the transmission copy; they run up to blendDrawItemBegin
+    // and are not in the G-buffer.
+    size_t transmissiveDrawItemBegin = 0;
     // triangle.frag against the HDR target.
     const VulkanPipelineSet* forwardPipelines = nullptr;
     ForwardDrawFilter forwardFilter = ForwardDrawFilter::All;
@@ -89,13 +94,18 @@ struct ScenePassFrameContext
 
     std::span<const VulkanDrawItem> OpaqueDrawItems() const
     {
-        return drawItems.first(blendDrawItemBegin);
+        return drawItems.first(transmissiveDrawItemBegin);
     }
 
     // Drawn by the geometry pass like the rest of OpaqueDrawItems, shaded by the forward pass.
     std::span<const VulkanDrawItem> ForwardShadedDrawItems() const
     {
-        return drawItems.subspan(forwardShadedDrawItemBegin, blendDrawItemBegin - forwardShadedDrawItemBegin);
+        return drawItems.subspan(forwardShadedDrawItemBegin, transmissiveDrawItemBegin - forwardShadedDrawItemBegin);
+    }
+
+    std::span<const VulkanDrawItem> TransmissiveDrawItems() const
+    {
+        return drawItems.subspan(transmissiveDrawItemBegin, blendDrawItemBegin - transmissiveDrawItemBegin);
     }
 
     std::span<const VulkanDrawItem> BlendDrawItems() const

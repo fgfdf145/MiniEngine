@@ -282,7 +282,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 18> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 19> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -356,6 +356,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[17].descriptorCount = 1;
     bindings[17].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // The transmission copy, sampled by triangle.frag for transmissive surfaces.
+    bindings[18].binding = 18;
+    bindings[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[18].descriptorCount = 1;
+    bindings[18].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -549,7 +554,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 10},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 11},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 7}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -609,7 +614,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 18> frameWrites{};
+        std::array<VkWriteDescriptorSet, 19> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -718,6 +723,13 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         frameWrites[17].descriptorCount = 1;
         frameWrites[17].pBufferInfo = &textureTransformInfo;
+        const VkDescriptorImageInfo transmissionInfo{m_environment.transmission.sampler, m_environment.transmission.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        frameWrites[18].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        frameWrites[18].dstSet = m_frameDescriptorSets[i];
+        frameWrites[18].dstBinding = 18;
+        frameWrites[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        frameWrites[18].descriptorCount = 1;
+        frameWrites[18].pImageInfo = &transmissionInfo;
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 
@@ -751,7 +763,9 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 materialBinding.specularColor,
                 materialBinding.clearcoatNormal,
                 materialBinding.iridescence,
-                materialBinding.iridescenceThickness};
+                materialBinding.iridescenceThickness,
+                materialBinding.transmission,
+                materialBinding.thickness};
 
             std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)

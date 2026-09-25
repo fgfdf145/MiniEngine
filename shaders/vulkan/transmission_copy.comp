@@ -1,0 +1,30 @@
+#version 450
+
+// The transmission copy's base level: the HDR target, everything opaque and the sky drawn, resampled
+// bilinearly into the fixed-size copy (VulkanTransmissionCopyPass), which then builds its mipmaps.
+// Pre-exposed values, as the HDR target holds them (pre_exposure.glsl).
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0) uniform sampler2D sceneHdr;
+layout(set = 1, binding = 1, rgba16f) uniform writeonly image2D copyLevel0;
+
+// Must match TransmissionCopyConstants in engine/renderer/vulkan/transmission_copy.cpp.
+layout(push_constant) uniform TransmissionCopyConstants
+{
+    uvec2 extent;
+}
+constants;
+
+void main()
+{
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, constants.extent)))
+    {
+        return;
+    }
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(constants.extent);
+    // An infinite input would spread into every mip; the target never holds more than fp16's range.
+    vec3 color = min(textureLod(sceneHdr, uv, 0.0).rgb, vec3(65504.0));
+    imageStore(copyLevel0, ivec2(pixel), vec4(color, 1.0));
+}

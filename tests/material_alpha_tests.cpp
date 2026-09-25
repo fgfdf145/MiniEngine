@@ -222,6 +222,19 @@ int main()
             forwardOrder == std::vector<size_t>({2, 0, 4, 3, 5, 1}),
             "forward-shaded draws must sit between the deferred ones and Blend");
 
+        // Transmissive draws (forward shaded, never in the G-buffer) follow the forward-shaded ones,
+        // back to front, and precede Blend; a transmissive Blend draw stays with the Blend draws.
+        const std::array<MaterialDrawSortKey, 6> transmissiveKeys{{{{MaterialAlphaMode::Opaque, false}, 0.0f},
+                                                                   {{MaterialAlphaMode::Opaque, false}, 1.0f, true, true},
+                                                                   {{MaterialAlphaMode::Blend, false}, 5.0f},
+                                                                   {{MaterialAlphaMode::Mask, true}, 3.0f, true, true},
+                                                                   {{MaterialAlphaMode::Opaque, false}, 0.0f, true},
+                                                                   {{MaterialAlphaMode::Blend, false}, 2.0f, true, true}}};
+        const std::vector<size_t> transmissiveOrder = BuildMaterialDrawOrder(transmissiveKeys);
+        Require(
+            transmissiveOrder == std::vector<size_t>({0, 4, 3, 1, 2, 5}),
+            "transmissive draws must sit between the forward-shaded ones and Blend, back to front");
+
         const float nanDepth = std::numeric_limits<float>::quiet_NaN();
         const std::array<MaterialDrawSortKey, 6> nanSortKeys{{{{MaterialAlphaMode::Blend, false}, nanDepth},
                                                               {{MaterialAlphaMode::Blend, false}, 2.0f},

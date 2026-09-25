@@ -154,6 +154,14 @@ struct SpecularParams
     // is used.
     float iridescenceFactor;
     vec3 iridescenceFresnel;
+    // KHR_materials_transmission (forward pass only): the share of the dielectric diffuse replaced
+    // by transmitted light; the light behind the surface as the transmission copy gave it, already
+    // attenuated and tinted (radiance, not pre-exposed); for direct lights, the tint (base colour
+    // times the volume's attenuation) and the IOR-scaled GGX alpha of the transmission lobe.
+    float transmissionFactor;
+    vec3 transmittedRadiance;
+    vec3 transmissionTint;
+    float transmissionAlpha;
 };
 
 SpecularParams NoSpecularOverride()
@@ -163,7 +171,24 @@ SpecularParams NoSpecularOverride()
     specular.dielectricF90 = 1.0;
     specular.iridescenceFactor = 0.0;
     specular.iridescenceFresnel = vec3(0.0);
+    specular.transmissionFactor = 0.0;
+    specular.transmittedRadiance = vec3(0.0);
+    specular.transmissionTint = vec3(0.0);
+    specular.transmissionAlpha = 0.0;
     return specular;
+}
+
+// The image-based diffuse with transmission: the transmitted light takes the diffuse lobe's place
+// by the transmission factor, under the same Fresnel and metal weights; the ambient occlusion,
+// which is about light reaching the front of the surface, does not darken it.
+vec3 MixTransmittedAmbient(vec3 diffuse, float metallic, vec3 specularAlbedo, SpecularParams specular)
+{
+    if (specular.transmissionFactor <= 0.0)
+    {
+        return diffuse;
+    }
+    vec3 transmitted = (1.0 - metallic) * (vec3(1.0) - specularAlbedo) * specular.transmittedRadiance;
+    return mix(diffuse, transmitted, specular.transmissionFactor);
 }
 
 // The base's Fresnel: Schlick's, or the film's by its weight.
@@ -248,14 +273,32 @@ vec3 EvaluateBRDF(
     vec3 result = vec3(0.0);
 
     float NdL = max(dot(N, L), 0.0);
+    vec3 diffuse = vec3(0.0);
     if (NdL > 0.0)
     {
         // Burley's diffuse (brdf_common.glsl), weighted by what the specular Fresnel toward the
         // centre leaves, as the Lambert term it replaced was.
         vec3 H = normalize(V + L);
         vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
-        result += kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
+        diffuse = kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
     }
+    if (specularParams.transmissionFactor > 0.0)
+    {
+        // Light through the surface from behind, as the Khronos sample viewer draws it: the GGX lobe
+        // about the light mirrored through the surface's plane, with the IOR-scaled alpha, tinted.
+        // It takes the diffuse lobe's place by the transmission factor, under the same weights.
+        vec3 mirrored = normalize(L + 2.0 * N * dot(-L, N));
+        vec3 H = normalize(mirrored + V);
+        float a2 = specularParams.transmissionAlpha * specularParams.transmissionAlpha;
+        float NdH = max(dot(N, H), 0.0);
+        float denominator = max(NdH * NdH * (a2 - 1.0) + 1.0, 1e-7);
+        float D = a2 / (PI * denominator * denominator);
+        float visibility = VisibilitySmithGgxCorrelated(max(NdV, 1e-4), max(dot(N, mirrored), 0.0), specularParams.transmissionAlpha);
+        vec3 kD = (vec3(1.0) - BaseFresnel(max(NdV, 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+        vec3 transmitted = kD * specularParams.transmissionTint * D * visibility * radiance;
+        diffuse = mix(diffuse, transmitted, specularParams.transmissionFactor);
+    }
+    result += diffuse;
 
     float specularNdL = max(dot(N, specularL), 0.0);
     if (specularNdL > 0.0)
@@ -696,7 +739,8 @@ vec3 EvaluateUniformAmbient(
     vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
-    return diffuseAlbedo * luminance * ao + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
+    vec3 diffuse = MixTransmittedAmbient(diffuseAlbedo * luminance * ao, metallic, specularAlbedo, specular);
+    return diffuse + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
 }
 
 // ---------------------------------------------------------------------------
@@ -835,7 +879,7 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
     vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
     vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + sceneAmbient;
-    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao;
+    vec3 diffuse = MixTransmittedAmbient(diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, specularAlbedo, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 

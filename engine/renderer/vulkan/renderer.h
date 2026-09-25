@@ -11,6 +11,7 @@
 #include "forward_pass.h"
 #include "gbuffer_inputs.h"
 #include "sampler_settings.h"
+#include "transmission_copy.h"
 #include "geometry_pass.h"
 #include "imgui_layer.h"
 #include "lighting_pass.h"
@@ -89,6 +90,8 @@ struct MaterialTextureSlots
     uint32_t clearcoatNormal = 0;
     uint32_t iridescence = 0;
     uint32_t iridescenceThickness = 0;
+    uint32_t transmission = 0;
+    uint32_t thickness = 0;
     // The sampler each binding pairs its texture with, in binding order (MaterialTextureSlot); the
     // blend graph's slots keep the default.
     MaterialTextureSamplers samplers{};
@@ -259,6 +262,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::optional<uint32_t> m_lastRecordedImageIndex;
     // Material textures' samplers, shared by every descriptor that asks for the same settings.
     std::unique_ptr<VulkanSamplerCache> m_samplerCache;
+    // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).
+    std::unique_ptr<VulkanTransmissionImage> m_transmissionImage;
     std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;
