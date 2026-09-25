@@ -1,0 +1,59 @@
+# Default sun and sky; black dielectric spheres of roughness 0.02, 0.1, 0.3, chrome 0.05, white 0.9, and a 20000 lm
+# point lamp (source radius 0). The crisp sun highlight on smooth spheres checks the GGX floor fix. BRDF accuracy (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000101
+    tag: Spheres
+    model:
+      display_name: smooth_spheres
+      source_path: models/smooth_spheres/smooth_spheres.gltf
+      source_uuid: cb19e58b-ccc6-4ed3-afcf-73ec8b055fa8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, -1.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000102
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 4, 0]
+      rotation: [55, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000103
+    tag: Lamp
+    light_type: point
+    color: [1, 0.9, 0.8]
+    intensity: 20000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [1.2, 1.0, 0.8]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

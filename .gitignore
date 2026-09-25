@@ -48,6 +48,8 @@ assets/**/*.tga
 assets/**/*.hdr
 assets/**/*.exr
 assets/**/*.dds
+# The render scenes installed from tests/fixtures/render_scenes by scripts/install-render-scenes.*.
+assets/scenes/test/
 assets/**/*.ktx
 assets/**/*.ktx2
 

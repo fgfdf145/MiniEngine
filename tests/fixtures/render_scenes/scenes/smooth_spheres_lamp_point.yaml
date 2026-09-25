@@ -1,0 +1,59 @@
+# The smooth spheres in the dark under a 20000 lm point lamp of source radius 0. Compare with
+# smooth_spheres_lamp_sized.yaml. BRDF accuracy (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000101
+    tag: Spheres
+    model:
+      display_name: smooth_spheres
+      source_path: models/smooth_spheres/smooth_spheres.gltf
+      source_uuid: cb19e58b-ccc6-4ed3-afcf-73ec8b055fa8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, -1.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000103
+    tag: Lamp
+    light_type: point
+    color: [1, 0.9, 0.8]
+    intensity: 20000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [1.2, 1.0, 0.8]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000104
+    tag: Ambient
+    light_type: ambient
+    color: [0.6, 0.7, 1]
+    intensity: 0.5
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

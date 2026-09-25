@@ -134,3 +134,9 @@ Documentation options:
 The generated `Doxyfile` is written next to the HTML in `out/docs`; it is expanded from `docs/Doxyfile.in`, which is the file to edit when changing what gets documented. Parse warnings go to `out/docs/doxygen-warnings.log`, and the script prints how many there were. `out/` is git-ignored, so nothing generated here is committed.
 
 Each run deletes `out/docs/html` first, so symbols removed from the sources do not linger as stale pages. Call and caller graphs make a full run noticeably slower than a plain Doxygen build; that cost is the reason they are on.
+
+## Render Scenes
+
+`install-render-scenes.sh` / `install-render-scenes.ps1` copy the rendering acceptance scenes from
+`tests/fixtures/render_scenes` into `assets/` (models and scenes are kept out of version control
+there). See `tests/fixtures/render_scenes/README.md`.

@@ -1,0 +1,58 @@
+# A 1.6 x 0.4 m area light over a glossy floor and three spheres (red roughness 0.1, grey 0.6, metal 0.3), in the dark.
+# LTC area lights (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000201
+    tag: Area
+    model:
+      display_name: area_light_floor
+      source_path: models/area_light_floor/area_light_floor.gltf
+      source_uuid: aa255755-f8c3-4a13-9791-ceade6795006
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -0.6, -1.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000202
+    tag: Panel
+    light_type: area
+    color: [1, 0.95, 0.9]
+    intensity: 6000
+    range: 15
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1.6, 0.4]
+    cast_shadows: false
+    transform:
+      translation: [0, 1.0, 0.0]
+      rotation: [-60, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000203
+    tag: Ambient
+    light_type: ambient
+    color: [0.6, 0.7, 1]
+    intensity: 0.3
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

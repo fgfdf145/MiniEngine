@@ -1,0 +1,45 @@
+# Default sun and sky. Top row: metal spheres of anisotropy 0, 0.25, 0.5, 0.75, 1. Bottom row: rotation 90 degrees,
+# an anisotropy texture pointing along +V, a striped clearcoat texture, a checker sheen colour texture, coat plus
+# anisotropy (car paint). Anisotropy and layer textures (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000101
+    tag: Spheres
+    model:
+      display_name: anisotropy_layers
+      source_path: models/anisotropy_layers/anisotropy_layers.gltf
+      source_uuid: 7a0786b1-91b4-401b-812a-bfc4364aca10
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, -1.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000102
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 4, 0]
+      rotation: [55, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

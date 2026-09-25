@@ -1,0 +1,86 @@
+# Sponza turned 90 degrees and lowered 1.7 m in front of the default camera: a point, a spot and an area light
+# with shadows, and a dim ambient light instead of the fallback. Local-light shadows (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000001
+    tag: Sponza
+    model:
+      display_name: NewSponza_Main_glTF_003
+      source_path: NewSponza_Main_glTF_003/NewSponza_Main_glTF_003.gltf
+      source_uuid: 119d77d6-e852-482a-9c53-f817202d6dba
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -1.7, 0]
+      rotation: [0, 90, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000010
+    tag: Point
+    light_type: point
+    color: [1, 0.85, 0.7]
+    intensity: 40000
+    range: 14
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 0.3, -4]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000011
+    tag: Spot
+    light_type: spot
+    color: [1, 0.85, 0.7]
+    intensity: 60000
+    range: 14
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [2.5, 3, -9]
+      rotation: [20, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000012
+    tag: Area
+    light_type: area
+    color: [1, 0.85, 0.7]
+    intensity: 20000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [0.6, 0.6]
+    cast_shadows: true
+    transform:
+      translation: [-2.5, 1, -12]
+      rotation: [0, 30, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000013
+    tag: Ambient
+    light_type: ambient
+    color: [0.6, 0.7, 1]
+    intensity: 0.3
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

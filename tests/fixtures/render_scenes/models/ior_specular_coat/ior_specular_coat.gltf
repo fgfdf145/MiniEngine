@@ -1,0 +1,551 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "extensionsUsed": [
+    "KHR_materials_ior",
+    "KHR_materials_specular",
+    "KHR_materials_clearcoat",
+    "KHR_materials_sheen",
+    "KHR_materials_anisotropy"
+  ],
+  "images": [
+    {
+      "uri": "textures/bumps.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0
+    }
+  ],
+  "materials": [
+    {
+      "name": "ior133",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.02,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.08
+      },
+      "extensions": {
+        "KHR_materials_ior": {
+          "ior": 1.33
+        }
+      }
+    },
+    {
+      "name": "ior15",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.02,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.08
+      },
+      "extensions": {}
+    },
+    {
+      "name": "ior24",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.02,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.08
+      },
+      "extensions": {
+        "KHR_materials_ior": {
+          "ior": 2.4
+        }
+      }
+    },
+    {
+      "name": "tinted",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.8,
+          0.8,
+          0.8,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.15
+      },
+      "extensions": {
+        "KHR_materials_specular": {
+          "specularColorFactor": [
+            3,
+            1.5,
+            0.3
+          ]
+        }
+      }
+    },
+    {
+      "name": "nospec",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.5,
+          0.5,
+          0.5,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.15
+      },
+      "extensions": {
+        "KHR_materials_specular": {
+          "specularFactor": 0
+        }
+      }
+    },
+    {
+      "name": "peel",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.5,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      },
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 1,
+          "clearcoatRoughnessFactor": 0.03,
+          "clearcoatNormalTexture": {
+            "index": 0,
+            "scale": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "peelbase",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.5,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      },
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 1,
+          "clearcoatRoughnessFactor": 0.03
+        }
+      }
+    },
+    {
+      "name": "coatsheen",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.05,
+          0.05,
+          0.25,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      },
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 1,
+          "clearcoatRoughnessFactor": 0.05
+        },
+        "KHR_materials_sheen": {
+          "sheenColorFactor": [
+            1,
+            0.6,
+            0.6
+          ],
+          "sheenRoughnessFactor": 0.4
+        }
+      }
+    },
+    {
+      "name": "allthree",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.6,
+          0.6,
+          0.7,
+          1
+        ],
+        "metallicFactor": 1,
+        "roughnessFactor": 0.35
+      },
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 0.8,
+          "clearcoatRoughnessFactor": 0.05
+        },
+        "KHR_materials_sheen": {
+          "sheenColorFactor": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "sheenRoughnessFactor": 0.5
+        },
+        "KHR_materials_anisotropy": {
+          "anisotropyStrength": 0.8
+        }
+      }
+    },
+    {
+      "name": "bumpybase",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.5,
+          0.02,
+          0.02,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      },
+      "extensions": {
+        "KHR_materials_clearcoat": {
+          "clearcoatFactor": 1,
+          "clearcoatRoughnessFactor": 0.03
+        }
+      },
+      "normalTexture": {
+        "index": 0
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 1
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 2
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 3
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 4
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 5
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 6
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 7
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 8
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 9
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "translation": [
+        -2.0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 1,
+      "translation": [
+        -1.0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 2,
+      "translation": [
+        0.0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 3,
+      "translation": [
+        1.0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 4,
+      "translation": [
+        2.0,
+        0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 5,
+      "translation": [
+        -2.0,
+        -0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 6,
+      "translation": [
+        -1.0,
+        -0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 7,
+      "translation": [
+        0.0,
+        -0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 8,
+      "translation": [
+        1.0,
+        -0.5,
+        0
+      ]
+    },
+    {
+      "mesh": 9,
+      "translation": [
+        2.0,
+        -0.5,
+        0
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    }
+  ],
+  "scene": 0,
+  "buffers": [
+    {
+      "uri": "buffers/ior_specular_coat.bin",
+      "byteLength": 152112
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 25740
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 25740,
+      "byteLength": 25740
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 51480,
+      "byteLength": 17160
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 68640,
+      "byteLength": 34320
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 102960,
+      "byteLength": 49152
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 2145,
+      "type": "VEC3",
+      "min": [
+        -0.4,
+        -0.4,
+        -0.4
+      ],
+      "max": [
+        0.4,
+        0.4,
+        0.4
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 2145,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 2145,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 2145,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 12288,
+      "type": "SCALAR"
+    }
+  ]
+}

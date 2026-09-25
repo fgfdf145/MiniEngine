@@ -1,0 +1,44 @@
+# Default sun and sky. Black spheres with thin films of 250, 400 and 550 nm, an anodised-look metal (film IOR 1.8,
+# 300 nm) and a control with no film. Forward-shaded materials and iridescence (2026-09-25).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000101
+    tag: Spheres
+    model:
+      display_name: iridescence
+      source_path: models/iridescence/iridescence.gltf
+      source_uuid: a5bccb1c-7014-4b83-af13-aa817dc74f52
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, -1.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000102
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    transform:
+      translation: [0, 4, 0]
+      rotation: [55, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
