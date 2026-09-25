@@ -58,3 +58,11 @@ glTF, not an extension.
    its mean difference drops toward the noise floor.
 2. The rest of the Khronos comparison and Sponza: within the run-to-run noise of the previous build
    (their textures use the default or repeat samplers).
+
+## Acceptance (2026-09-26)
+
+- `TextureTransformTest` against the Sample Viewer: 5.6 to 2.7 mean difference; the arrows stay inside
+  their clamped textures, as in the viewer.
+- The other 25 Khronos comparison scenes: the same mean difference to the tenth as before.
+- Sponza: its one glTF sampler (LINEAR, LINEAR_MIPMAP_LINEAR, REPEAT) is the default setting, which
+  builds the sampler Sponza had before, so it renders as before by construction; not recaptured.
