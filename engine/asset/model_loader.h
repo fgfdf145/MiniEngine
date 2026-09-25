@@ -31,6 +31,8 @@ struct ModelMaterialData
     std::string specularTexturePath;
     std::string specularColorTexturePath;
     std::string clearcoatNormalTexturePath;
+    std::string iridescenceTexturePath;
+    std::string iridescenceThicknessTexturePath;
     float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
@@ -52,6 +54,10 @@ struct ModelMaterialData
     float specularFactor = 1.0f;
     float specularColorFactor[3] = {1.0f, 1.0f, 1.0f};
     float clearcoatNormalScale = 1.0f;
+    float iridescenceFactor = 0.0f;
+    float iridescenceIor = 1.3f;
+    float iridescenceThicknessMinimum = 100.0f;
+    float iridescenceThicknessMaximum = 400.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

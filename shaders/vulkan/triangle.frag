@@ -134,6 +134,15 @@ void main()
     }
     specular.dielectricF0 = layers.dielectricF0;
     specular.dielectricF90 = layers.dielectricF90;
+    if (layers.iridescenceFactor > 0.0)
+    {
+        // The film's Fresnel once per pixel at N.V, as the Khronos sample viewer evaluates it, over
+        // the surface's own F0.
+        specular.iridescenceFactor = layers.iridescenceFactor;
+        specular.iridescenceFresnel = EvaluateIridescence(
+            material.iridescenceFactors.y, max(dot(N, V), 1e-4), layers.iridescenceThickness,
+            SurfaceF0(albedo.rgb, metallic, specular));
+    }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));
 

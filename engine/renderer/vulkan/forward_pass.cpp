@@ -102,11 +102,16 @@ void VulkanForwardPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
-    // Opaque and Mask first (only when this pass owns the frame; otherwise the lighting pass drew
-    // them), then the sky into whatever no geometry covered, then Blend items over both.
+    // Opaque and Mask first: all of them when this pass owns the frame; otherwise the lighting
+    // pass shaded all but the forward-shaded ones, which land here on the depth the geometry pass
+    // wrote for them. Then the sky into whatever no geometry covered, then Blend items over both.
     if (ownsFrame)
     {
         RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
+    }
+    else
+    {
+        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.ForwardShadedDrawItems());
     }
     RecordSky(commandBuffer, frame);
     RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());

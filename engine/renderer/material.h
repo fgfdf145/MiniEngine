@@ -23,6 +23,10 @@ inline constexpr uint32_t kShadingFlagSpecular = 8u;
 // A coat with its own normal map: the velocity target's .ba. Without it the coat takes the
 // geometric normal.
 inline constexpr uint32_t kShadingFlagCoatNormal = 16u;
+// Shaded by the forward pass (features with no room in the G-buffer, such as iridescence). The
+// geometry pass still writes the surface, so depth, motion, normals and AO stay; the lighting pass
+// skips its pixels and the forward pass draws over them.
+inline constexpr uint32_t kShadingFlagForward = 32u;
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
 // binding 12, MaterialData in shaders/vulkan/material_common.glsl), indexed by the draw's slot.
@@ -50,6 +54,9 @@ struct alignas(16) GpuMaterialData
     // rgb = the dielectric F0 from the IOR times the specular colour factor (ComputeDielectricF0
     // before its clamp and factor), a = the specular factor. Read only with kShadingFlagSpecular.
     float specularFactors[4] = {0.04f, 0.04f, 0.04f, 1.0f};
+    // x = iridescence factor, y = the film's IOR, z = thickness minimum, w = maximum (nm). Read only
+    // by the forward pass, which is where a film sends a material (kShadingFlagForward).
+    float iridescenceFactors[4] = {0.0f, 1.3f, 100.0f, 400.0f};
 };
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
@@ -59,7 +66,7 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 144, "GpuMaterialData must stay 9 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 160, "GpuMaterialData must stay 10 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");
@@ -69,5 +76,6 @@ static_assert(offsetof(GpuMaterialData, clearcoatFactors) == 80, "clearcoatFacto
 static_assert(offsetof(GpuMaterialData, sheenFactors) == 96, "sheenFactors must be the seventh vec4");
 static_assert(offsetof(GpuMaterialData, anisotropyFactors) == 112, "anisotropyFactors must be the eighth vec4");
 static_assert(offsetof(GpuMaterialData, specularFactors) == 128, "specularFactors must be the ninth vec4");
+static_assert(offsetof(GpuMaterialData, iridescenceFactors) == 144, "iridescenceFactors must be the tenth vec4");
 static_assert(sizeof(ObjectPushConstants) == 64, "ObjectPushConstants must match triangle.vert's push constant block");
 }

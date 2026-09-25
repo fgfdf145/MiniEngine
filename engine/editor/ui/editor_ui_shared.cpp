@@ -46,7 +46,7 @@ struct BlendGraphTexturePathRow
     const std::string MaterialTextureBlendGraph::* path = nullptr;
 };
 
-constexpr std::array<MaterialTexturePathRow, 14> kPrimaryMaterialTextureRows = {{{"Base Color", &ModelImportedMaterialInfo::baseColorTexturePath},
+constexpr std::array<MaterialTexturePathRow, 16> kPrimaryMaterialTextureRows = {{{"Base Color", &ModelImportedMaterialInfo::baseColorTexturePath},
                                                                                  {"Normal", &ModelImportedMaterialInfo::normalTexturePath},
                                                                                  {"Metallic", &ModelImportedMaterialInfo::metallicTexturePath},
                                                                                  {"Roughness", &ModelImportedMaterialInfo::roughnessTexturePath},
@@ -59,7 +59,9 @@ constexpr std::array<MaterialTexturePathRow, 14> kPrimaryMaterialTextureRows = {
                                                                                  {"Anisotropy", &ModelImportedMaterialInfo::anisotropyTexturePath},
                                                                                  {"Specular", &ModelImportedMaterialInfo::specularTexturePath},
                                                                                  {"Specular Color", &ModelImportedMaterialInfo::specularColorTexturePath},
-                                                                                 {"Clearcoat Normal", &ModelImportedMaterialInfo::clearcoatNormalTexturePath}}};
+                                                                                 {"Clearcoat Normal", &ModelImportedMaterialInfo::clearcoatNormalTexturePath},
+                                                                                 {"Iridescence", &ModelImportedMaterialInfo::iridescenceTexturePath},
+                                                                                 {"Film Thickness", &ModelImportedMaterialInfo::iridescenceThicknessTexturePath}}};
 
 constexpr std::array<BlendGraphTexturePathRow, 7> kSecondaryMaterialTextureRows = {{{"Blend Mask", &MaterialTextureBlendGraph::blendMaskTexturePath},
                                                                                     {"Layer B Base", &MaterialTextureBlendGraph::secondaryBaseColorTexturePath},

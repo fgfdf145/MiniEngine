@@ -453,6 +453,52 @@ void SidecarKeepsIorAndSpecular()
     Require(applied.clearcoatNormalTexturePath == "ccn.png", "applied coat normal map");
 }
 
+void ReadsIridescence()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "iridescence",
+            {R"({ "name": "bubble", "extensions": { "KHR_materials_iridescence": { "iridescenceFactor": 0.75, "iridescenceIor": 1.4,
+                   "iridescenceThicknessMinimum": 250, "iridescenceThicknessMaximum": 600,
+                   "iridescenceTexture": { "index": 0 }, "iridescenceThicknessTexture": { "index": 1 } } } })",
+             R"({ "name": "defaults", "extensions": { "KHR_materials_iridescence": {} } })",
+             R"({ "name": "wild", "extensions": { "KHR_materials_iridescence": { "iridescenceFactor": 5, "iridescenceIor": 0.2,
+                   "iridescenceThicknessMinimum": -3 } } })"},
+            kLayerTextures)
+            .string());
+    Require(model.IsValid(), "the iridescence fixture loads");
+    const ModelMaterialData& bubble = MaterialNamed(model, "bubble");
+    Near(bubble.iridescenceFactor, 0.75f, "factor");
+    Near(bubble.iridescenceIor, 1.4f, "film ior");
+    Near(bubble.iridescenceThicknessMinimum, 250.0f, "thickness minimum");
+    Near(bubble.iridescenceThicknessMaximum, 600.0f, "thickness maximum");
+    Near(bubble.pbr.iridescenceFactor, 0.75f, "factor in the PBR settings");
+    Require(bubble.iridescenceTexturePath == "cc.png" && bubble.iridescenceThicknessTexturePath == "ccr.png", "iridescence maps");
+    const ModelMaterialData& defaults = MaterialNamed(model, "defaults");
+    Near(defaults.iridescenceFactor, 0.0f, "default factor");
+    Near(defaults.iridescenceIor, 1.3f, "default film ior");
+    Near(defaults.iridescenceThicknessMinimum, 100.0f, "default minimum");
+    Near(defaults.iridescenceThicknessMaximum, 400.0f, "default maximum");
+    const ModelMaterialData& wild = MaterialNamed(model, "wild");
+    Near(wild.iridescenceFactor, 1.0f, "factor clamps to 1");
+    Near(wild.iridescenceIor, 1.0f, "film ior clamps to 1");
+    Near(wild.iridescenceThicknessMinimum, 0.0f, "thickness clamps to 0");
+
+    ModelImportedMaterialInfo info = BuildImportedMaterialInfo(bubble);
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(info);
+    const std::filesystem::path path = directory.path / "bubble.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.iridescenceIor, 1.4f, "sidecar film ior");
+    Near(read.pbr.iridescenceThicknessMaximum, 600.0f, "sidecar maximum");
+    Require(read.iridescenceThicknessTexturePath == "ccr.png", "sidecar thickness map");
+}
+
 void SidecarKeepsSheen()
 {
     const ScopedFixtureDirectory directory;
@@ -541,6 +587,7 @@ int main()
         ReadsIorAndSpecular();
         DielectricF0FollowsKhronos();
         SidecarKeepsIorAndSpecular();
+        ReadsIridescence();
     }
     catch (const std::exception& error)
     {

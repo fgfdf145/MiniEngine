@@ -40,6 +40,8 @@ const uint SHADING_FLAG_ANISOTROPY = 4u;
 const uint SHADING_FLAG_SPECULAR = 8u;
 // The velocity target's .ba: the coat's own normal, octahedral.
 const uint SHADING_FLAG_COAT_NORMAL = 16u;
+// Shaded by the forward pass; the lighting pass skips the pixel.
+const uint SHADING_FLAG_FORWARD = 32u;
 
 float EncodeShadingFlags(uint flags)
 {

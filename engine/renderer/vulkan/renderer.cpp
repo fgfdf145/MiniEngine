@@ -192,6 +192,8 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.specular, TextureUsage::Data);
     visit(textures.specularColor, TextureUsage::Color);
     visit(textures.clearcoatNormal, TextureUsage::Normal);
+    visit(textures.iridescence, TextureUsage::Data);
+    visit(textures.iridescenceThickness, TextureUsage::Data);
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -267,7 +269,9 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             {textures[slots.anisotropy]->GetImageView(), textures[slots.anisotropy]->GetSampler()},
             {textures[slots.specular]->GetImageView(), textures[slots.specular]->GetSampler()},
             {textures[slots.specularColor]->GetImageView(), textures[slots.specularColor]->GetSampler()},
-            {textures[slots.clearcoatNormal]->GetImageView(), textures[slots.clearcoatNormal]->GetSampler()}});
+            {textures[slots.clearcoatNormal]->GetImageView(), textures[slots.clearcoatNormal]->GetSampler()},
+            {textures[slots.iridescence]->GetImageView(), textures[slots.iridescence]->GetSampler()},
+            {textures[slots.iridescenceThickness]->GetImageView(), textures[slots.iridescenceThickness]->GetSampler()}});
     }
 
     return bindings;
@@ -725,6 +729,16 @@ void VulkanRenderer::DrawFrame()
                 return item.pipelineKey.alphaMode != MaterialAlphaMode::Blend;
             }) -
         drawItems.begin());
+    // The forward-shaded Opaque and Mask draws are the tail of the non-Blend run.
+    frame.forwardShadedDrawItemBegin = static_cast<size_t>(
+        std::partition_point(
+            drawItems.begin(),
+            drawItems.begin() + static_cast<std::ptrdiff_t>(frame.blendDrawItemBegin),
+            [](const VulkanDrawItem& item)
+            {
+                return !item.forwardShaded;
+            }) -
+        drawItems.begin());
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
@@ -1180,6 +1194,7 @@ void VulkanRenderer::CreateScenePasses()
     geometryConfig.colorAttachmentCount = VulkanGeometryPass::kColorAttachmentCount;
     geometryConfig.writeAlpha = true;
     geometryConfig.allowBlending = false;
+    geometryConfig.depthLessOrEqual = false;
 
     // Both sets are built here, while the typed pass pointers are in hand: the pipelines depend on
     // nothing but these render passes and the two device lifetime set layouts.
@@ -1537,7 +1552,8 @@ void VulkanRenderer::UploadSceneResources()
         defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
         defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
         defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex,
-        defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex});
+        defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex,
+        defaultLayerIndex, defaultLayerIndex});
 
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
@@ -1583,6 +1599,9 @@ void VulkanRenderer::UploadSceneResources()
         slots.specular = loadTextureIndex(cpuRenderSubmesh.textures.specular, TextureUsage::Data, defaultLayerIndex);
         slots.specularColor = loadTextureIndex(cpuRenderSubmesh.textures.specularColor, TextureUsage::Color, defaultSheenColorIndex);
         slots.clearcoatNormal = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatNormal, TextureUsage::Normal, defaultNormalIndex);
+        slots.iridescence = loadTextureIndex(cpuRenderSubmesh.textures.iridescence, TextureUsage::Data, defaultLayerIndex);
+        slots.iridescenceThickness =
+            loadTextureIndex(cpuRenderSubmesh.textures.iridescenceThickness, TextureUsage::Data, defaultLayerIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
@@ -1892,7 +1911,9 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
             State().viewportMatrices.view *
             drawConstants.model *
             glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
-        sortKeys.push_back({pipelineKey, -viewCenter.z});
+        const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
+                                   (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
+        sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded});
         unsorted.push_back(VulkanDrawItem{
             renderSubmesh.buffer->GetVertexHandle(),
             renderSubmesh.buffer->GetIndexHandle(),
@@ -1902,7 +1923,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
             pipelineKey,
             // The slot is the submesh index, which is also where DrawFrame put this submesh's
             // previous model matrix.
-            static_cast<uint32_t>(submeshIndex)});
+            static_cast<uint32_t>(submeshIndex),
+            forwardShaded});
     }
 
     std::vector<VulkanDrawItem> ordered;

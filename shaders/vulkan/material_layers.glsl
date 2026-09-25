@@ -15,6 +15,8 @@ layout(set = 1, binding = 17) uniform sampler2D anisotropyTexture;         // RG
 layout(set = 1, binding = 18) uniform sampler2D specularTexture;           // A
 layout(set = 1, binding = 19) uniform sampler2D specularColorTexture;      // RGB, sRGB
 layout(set = 1, binding = 20) uniform sampler2D clearcoatNormalTexture;    // tangent-space normal
+layout(set = 1, binding = 21) uniform sampler2D iridescenceTexture;        // R
+layout(set = 1, binding = 22) uniform sampler2D iridescenceThicknessTexture; // G
 
 struct MaterialLayers
 {
@@ -33,6 +35,9 @@ struct MaterialLayers
     // The dielectric's F0 and F90: 0.04 and 1 unless the specular flag is set.
     vec3 dielectricF0;
     float dielectricF90;
+    // The thin film (forward pass only): its weight and thickness in nanometres.
+    float iridescenceFactor;
+    float iridescenceThickness;
 };
 
 bool HasShadingFlag(uint flags, uint flag)
@@ -95,6 +100,15 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, vec2 uv, mat3 TBN, 
         float specular = clamp(material.specularFactors.a * texture(specularTexture, uv).a, 0.0, 1.0);
         layers.dielectricF0 = min(material.specularFactors.rgb * texture(specularColorTexture, uv).rgb, vec3(1.0)) * specular;
         layers.dielectricF90 = specular;
+    }
+
+    layers.iridescenceFactor = 0.0;
+    layers.iridescenceThickness = 0.0;
+    if (material.iridescenceFactors.x > 0.0)
+    {
+        layers.iridescenceFactor = clamp(material.iridescenceFactors.x * texture(iridescenceTexture, uv).r, 0.0, 1.0);
+        layers.iridescenceThickness =
+            mix(material.iridescenceFactors.z, material.iridescenceFactors.w, texture(iridescenceThicknessTexture, uv).g);
     }
     return layers;
 }

@@ -35,6 +35,9 @@ struct MaterialPipelineSetConfig
     // variants so GetMaterialPipelineIndex needs no second mapping; turning blending off keeps
     // those unused variants from declaring blend state against G-buffer attachments.
     bool allowBlending = true;
+    // LESS for the geometry pass. The forward pass uses LESS_OR_EQUAL: the forward-shaded opaque
+    // draws land on depth the geometry pass already wrote for them, from the same vertex shader.
+    bool depthLessOrEqual = true;
 };
 
 class VulkanPipelineSet

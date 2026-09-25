@@ -209,6 +209,19 @@ int main()
         }
         Require(pipelineBinds == 6, "grouped draw order did not minimize pipeline binds");
 
+        // Forward-shaded Opaque and Mask draws follow the deferred ones and precede Blend, grouped
+        // by pipeline variant like them.
+        const std::array<MaterialDrawSortKey, 6> forwardKeys{{{{MaterialAlphaMode::Opaque, false}, 0.0f, true},
+                                                              {{MaterialAlphaMode::Blend, false}, 1.0f, true},
+                                                              {{MaterialAlphaMode::Opaque, false}, 0.0f},
+                                                              {{MaterialAlphaMode::Mask, false}, 0.0f, true},
+                                                              {{MaterialAlphaMode::Opaque, true}, 0.0f, true},
+                                                              {{MaterialAlphaMode::Blend, false}, 3.0f}}};
+        const std::vector<size_t> forwardOrder = BuildMaterialDrawOrder(forwardKeys);
+        Require(
+            forwardOrder == std::vector<size_t>({2, 0, 4, 3, 5, 1}),
+            "forward-shaded draws must sit between the deferred ones and Blend");
+
         const float nanDepth = std::numeric_limits<float>::quiet_NaN();
         const std::array<MaterialDrawSortKey, 6> nanSortKeys{{{{MaterialAlphaMode::Blend, false}, nanDepth},
                                                               {{MaterialAlphaMode::Blend, false}, 2.0f},

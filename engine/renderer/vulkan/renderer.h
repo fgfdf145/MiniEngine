@@ -85,6 +85,8 @@ struct MaterialTextureSlots
     uint32_t specular = 0;
     uint32_t specularColor = 0;
     uint32_t clearcoatNormal = 0;
+    uint32_t iridescence = 0;
+    uint32_t iridescenceThickness = 0;
 };
 
 // One texture of a content upload in progress: either created by that upload, or a live texture

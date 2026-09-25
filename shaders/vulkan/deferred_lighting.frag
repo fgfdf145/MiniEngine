@@ -79,6 +79,12 @@ void main()
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
     // GB5 means something only for the models that write it, so it is read only for them.
     uint flags = DecodeShadingFlags(surface.a);
+    // The forward pass shades this pixel over whatever is written here.
+    if ((flags & SHADING_FLAG_FORWARD) != 0u)
+    {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
     AnisotropyParams anisotropy = NoAnisotropy();

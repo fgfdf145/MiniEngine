@@ -519,6 +519,10 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         }
         pbr["specular_color_factor"] = specularColor;
         pbr["clearcoat_normal_scale"] = node.pbr.clearcoatNormalScale;
+        pbr["iridescence_factor"] = node.pbr.iridescenceFactor;
+        pbr["iridescence_ior"] = node.pbr.iridescenceIor;
+        pbr["iridescence_thickness_minimum"] = node.pbr.iridescenceThicknessMinimum;
+        pbr["iridescence_thickness_maximum"] = node.pbr.iridescenceThicknessMaximum;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -642,6 +646,12 @@ bool DeserializeMaterialShaderGraph(
                 component = std::max(component, 0.0f);
             }
             node.pbr.clearcoatNormalScale = ReadFloatOrFallback(pbrNode["clearcoat_normal_scale"], node.pbr.clearcoatNormalScale);
+            node.pbr.iridescenceFactor = std::clamp(ReadFloatOrFallback(pbrNode["iridescence_factor"], node.pbr.iridescenceFactor), 0.0f, 1.0f);
+            node.pbr.iridescenceIor = std::max(ReadFloatOrFallback(pbrNode["iridescence_ior"], node.pbr.iridescenceIor), 1.0f);
+            node.pbr.iridescenceThicknessMinimum =
+                std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_minimum"], node.pbr.iridescenceThicknessMinimum), 0.0f);
+            node.pbr.iridescenceThicknessMaximum =
+                std::max(ReadFloatOrFallback(pbrNode["iridescence_thickness_maximum"], node.pbr.iridescenceThicknessMaximum), 0.0f);
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

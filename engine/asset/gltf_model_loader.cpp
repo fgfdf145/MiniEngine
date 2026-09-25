@@ -821,6 +821,25 @@ ModelMaterialData BuildMaterialData(
         materialData.specularColorTexturePath = readExtensionTexture(specular->second, "specularColorTexture");
     }
 
+    // KHR_materials_iridescence. Absent members take the extension's defaults: factor 0, IOR 1.3,
+    // thickness 100 to 400 nm.
+    const auto iridescence = material.extensions.find("KHR_materials_iridescence");
+    if (iridescence != material.extensions.end())
+    {
+        const auto readNumber = [&](const char* name, float fallback)
+        {
+            return iridescence->second.Has(name) && iridescence->second.Get(name).IsNumber()
+                       ? static_cast<float>(iridescence->second.Get(name).GetNumberAsDouble())
+                       : fallback;
+        };
+        materialData.iridescenceFactor = std::clamp(readNumber("iridescenceFactor", 0.0f), 0.0f, 1.0f);
+        materialData.iridescenceIor = std::max(readNumber("iridescenceIor", 1.3f), 1.0f);
+        materialData.iridescenceThicknessMinimum = std::max(readNumber("iridescenceThicknessMinimum", 100.0f), 0.0f);
+        materialData.iridescenceThicknessMaximum = std::max(readNumber("iridescenceThicknessMaximum", 400.0f), 0.0f);
+        materialData.iridescenceTexturePath = readExtensionTexture(iridescence->second, "iridescenceTexture");
+        materialData.iridescenceThicknessTexturePath = readExtensionTexture(iridescence->second, "iridescenceThicknessTexture");
+    }
+
     // KHR_materials_anisotropy. Absent members take the extension's defaults: strength 0, rotation 0.
     const auto anisotropy = material.extensions.find("KHR_materials_anisotropy");
     if (anisotropy != material.extensions.end())

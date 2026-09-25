@@ -192,6 +192,7 @@ set(MINIENGINE_SHADER_INCLUDES
     anisotropy_common.glsl
     brdf_common.glsl
     ltc_common.glsl
+    iridescence_common.glsl
     material_layers.glsl
     pre_exposure.glsl
     scene_common.glsl

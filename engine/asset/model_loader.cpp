@@ -62,6 +62,10 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
         pbr.specularColorFactor[index] = material.specularColorFactor[index];
     }
     pbr.clearcoatNormalScale = material.clearcoatNormalScale;
+    pbr.iridescenceFactor = material.iridescenceFactor;
+    pbr.iridescenceIor = material.iridescenceIor;
+    pbr.iridescenceThicknessMinimum = material.iridescenceThicknessMinimum;
+    pbr.iridescenceThicknessMaximum = material.iridescenceThicknessMaximum;
     return pbr;
 }
 
@@ -100,6 +104,10 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
         material.specularColorFactor[index] = pbr.specularColorFactor[index];
     }
     material.clearcoatNormalScale = pbr.clearcoatNormalScale;
+    material.iridescenceFactor = pbr.iridescenceFactor;
+    material.iridescenceIor = pbr.iridescenceIor;
+    material.iridescenceThicknessMinimum = pbr.iridescenceThicknessMinimum;
+    material.iridescenceThicknessMaximum = pbr.iridescenceThicknessMaximum;
 }
 
 struct MaterialDefinitionFile

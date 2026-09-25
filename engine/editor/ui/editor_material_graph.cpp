@@ -862,6 +862,11 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     }
     changed |= DragFloatInRange("Specular", &pbr.specularFactor, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::ColorEdit3("Specular Color", pbr.specularColorFactor, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+    // KHR_materials_iridescence; a film makes the material forward shaded.
+    changed |= DragFloatInRange("Iridescence", &pbr.iridescenceFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Iridescence IOR", &pbr.iridescenceIor, 1.0f, 3.0f, "%.2f");
+    changed |= DragFloatInRange("Film Thickness Min (nm)", &pbr.iridescenceThicknessMinimum, 0.0f, 2000.0f, "%.0f");
+    changed |= DragFloatInRange("Film Thickness Max (nm)", &pbr.iridescenceThicknessMaximum, 0.0f, 2000.0f, "%.0f");
     return changed;
 }
 

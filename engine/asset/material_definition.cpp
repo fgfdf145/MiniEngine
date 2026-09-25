@@ -144,6 +144,8 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.specularTexturePath,
         material.specularColorTexturePath,
         material.clearcoatNormalTexturePath,
+        material.iridescenceTexturePath,
+        material.iridescenceThicknessTexturePath,
         material.pbr,
         material.blendGraph,
         material.shaderGraph};
@@ -166,6 +168,8 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.specularTexturePath = source.specularTexturePath;
     destination.specularColorTexturePath = source.specularColorTexturePath;
     destination.clearcoatNormalTexturePath = source.clearcoatNormalTexturePath;
+    destination.iridescenceTexturePath = source.iridescenceTexturePath;
+    destination.iridescenceThicknessTexturePath = source.iridescenceThicknessTexturePath;
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
     destination.shaderGraph = source.shaderGraph;
@@ -198,6 +202,10 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
         destination.specularColorFactor[index] = source.pbr.specularColorFactor[index];
     }
     destination.clearcoatNormalScale = source.pbr.clearcoatNormalScale;
+    destination.iridescenceFactor = source.pbr.iridescenceFactor;
+    destination.iridescenceIor = source.pbr.iridescenceIor;
+    destination.iridescenceThicknessMinimum = source.pbr.iridescenceThicknessMinimum;
+    destination.iridescenceThicknessMaximum = source.pbr.iridescenceThicknessMaximum;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -223,6 +231,8 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     node["specular_texture_path"] = material.specularTexturePath;
     node["specular_color_texture_path"] = material.specularColorTexturePath;
     node["clearcoat_normal_texture_path"] = material.clearcoatNormalTexturePath;
+    node["iridescence_texture_path"] = material.iridescenceTexturePath;
+    node["iridescence_thickness_texture_path"] = material.iridescenceThicknessTexturePath;
 
     YAML::Node pbr(YAML::NodeType::Map);
     YAML::Node baseColor(YAML::NodeType::Sequence);
@@ -253,6 +263,10 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     SerializeFloatSequence(specularColor, material.pbr.specularColorFactor, 3);
     pbr["specular_color_factor"] = specularColor;
     pbr["clearcoat_normal_scale"] = material.pbr.clearcoatNormalScale;
+    pbr["iridescence_factor"] = material.pbr.iridescenceFactor;
+    pbr["iridescence_ior"] = material.pbr.iridescenceIor;
+    pbr["iridescence_thickness_minimum"] = material.pbr.iridescenceThicknessMinimum;
+    pbr["iridescence_thickness_maximum"] = material.pbr.iridescenceThicknessMaximum;
     node["pbr"] = pbr;
 
     if (HasBlendData(material.blendGraph))
@@ -311,6 +325,9 @@ bool LoadMaterialDefinition(
         material.specularTexturePath = node["specular_texture_path"].as<std::string>(material.specularTexturePath);
         material.specularColorTexturePath = node["specular_color_texture_path"].as<std::string>(material.specularColorTexturePath);
         material.clearcoatNormalTexturePath = node["clearcoat_normal_texture_path"].as<std::string>(material.clearcoatNormalTexturePath);
+        material.iridescenceTexturePath = node["iridescence_texture_path"].as<std::string>(material.iridescenceTexturePath);
+        material.iridescenceThicknessTexturePath =
+            node["iridescence_thickness_texture_path"].as<std::string>(material.iridescenceThicknessTexturePath);
 
         if (const YAML::Node pbrNode = node["pbr"]; pbrNode && pbrNode.IsMap())
         {
@@ -352,6 +369,12 @@ bool LoadMaterialDefinition(
                 component = std::max(component, 0.0f);
             }
             material.pbr.clearcoatNormalScale = pbrNode["clearcoat_normal_scale"].as<float>(material.pbr.clearcoatNormalScale);
+            material.pbr.iridescenceFactor = std::clamp(pbrNode["iridescence_factor"].as<float>(material.pbr.iridescenceFactor), 0.0f, 1.0f);
+            material.pbr.iridescenceIor = std::max(pbrNode["iridescence_ior"].as<float>(material.pbr.iridescenceIor), 1.0f);
+            material.pbr.iridescenceThicknessMinimum =
+                std::max(pbrNode["iridescence_thickness_minimum"].as<float>(material.pbr.iridescenceThicknessMinimum), 0.0f);
+            material.pbr.iridescenceThicknessMaximum =
+                std::max(pbrNode["iridescence_thickness_maximum"].as<float>(material.pbr.iridescenceThicknessMaximum), 0.0f);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {

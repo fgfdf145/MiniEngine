@@ -154,7 +154,7 @@ VulkanPipelineSet::VulkanPipelineSet(
                 variant.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
                 variant.depthStencil.depthTestEnable = VK_TRUE;
                 variant.depthStencil.depthWriteEnable = state.depthWriteEnabled ? VK_TRUE : VK_FALSE;
-                variant.depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+                variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
                 variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
                 variant.depthStencil.stencilTestEnable = VK_FALSE;
 

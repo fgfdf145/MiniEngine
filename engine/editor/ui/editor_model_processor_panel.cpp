@@ -865,6 +865,12 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.specularColorFactor[0],
                 selectedMaterial.pbr.specularColorFactor[1],
                 selectedMaterial.pbr.specularColorFactor[2]);
+            ImGui::Text(
+                "Iridescence %.2f  IOR %.2f  Thickness %.0f-%.0f nm",
+                selectedMaterial.pbr.iridescenceFactor,
+                selectedMaterial.pbr.iridescenceIor,
+                selectedMaterial.pbr.iridescenceThicknessMinimum,
+                selectedMaterial.pbr.iridescenceThicknessMaximum);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

@@ -131,6 +131,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         material.specularTexturePath = resolveTex(rawMaterial.specularTexturePath);
         material.specularColorTexturePath = resolveTex(rawMaterial.specularColorTexturePath);
         material.clearcoatNormalTexturePath = resolveTex(rawMaterial.clearcoatNormalTexturePath);
+        material.iridescenceTexturePath = resolveTex(rawMaterial.iridescenceTexturePath);
+        material.iridescenceThicknessTexturePath = resolveTex(rawMaterial.iridescenceThicknessTexturePath);
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
@@ -214,10 +216,16 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             material.specularColorFactor[1] != 1.0f || material.specularColorFactor[2] != 1.0f ||
             (submesh.hasTexCoords && (!material.specularTexturePath.empty() || !material.specularColorTexturePath.empty()));
         const bool coatNormal = clearcoat > 0.0f && submesh.hasTexCoords && !material.clearcoatNormalTexturePath.empty();
+        // A thin film has no room in the G-buffer: it sends the material to the forward pass.
+        const float iridescence = std::clamp(material.iridescenceFactor, 0.0f, 1.0f);
+        renderSubmesh.material.iridescenceFactors[0] = iridescence;
+        renderSubmesh.material.iridescenceFactors[1] = std::max(material.iridescenceIor, 1.0f);
+        renderSubmesh.material.iridescenceFactors[2] = std::max(material.iridescenceThicknessMinimum, 0.0f);
+        renderSubmesh.material.iridescenceFactors[3] = std::max(material.iridescenceThicknessMaximum, 0.0f);
         renderSubmesh.material.shadingModel[0] =
             (clearcoat > 0.0f ? kShadingFlagClearcoat : 0u) | (sheenStrength > 0.0f ? kShadingFlagSheen : 0u) |
             (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
-            (coatNormal ? kShadingFlagCoatNormal : 0u);
+            (coatNormal ? kShadingFlagCoatNormal : 0u) | (iridescence > 0.0f ? kShadingFlagForward : 0u);
         renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
         renderSubmesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
         renderSubmesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
@@ -262,6 +270,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             renderSubmesh.textures.specular = resolveTex(material.specularTexturePath);
             renderSubmesh.textures.specularColor = resolveTex(material.specularColorTexturePath);
             renderSubmesh.textures.clearcoatNormal = resolveTex(material.clearcoatNormalTexturePath);
+            renderSubmesh.textures.iridescence = resolveTex(material.iridescenceTexturePath);
+            renderSubmesh.textures.iridescenceThickness = resolveTex(material.iridescenceThicknessTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }

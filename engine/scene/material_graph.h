@@ -62,6 +62,12 @@ struct MaterialPbrSurfaceSettings
     float specularColorFactor[3] = {1.0f, 1.0f, 1.0f};
     // KHR_materials_clearcoat's clearcoatNormalTexture scale.
     float clearcoatNormalScale = 1.0f;
+    // KHR_materials_iridescence: the thin film's weight, index of refraction and thickness range in
+    // nanometres (the thickness map picks between them). A factor of 0 means no film.
+    float iridescenceFactor = 0.0f;
+    float iridescenceIor = 1.3f;
+    float iridescenceThicknessMinimum = 100.0f;
+    float iridescenceThicknessMaximum = 400.0f;
 };
 
 struct MaterialGraphNodePosition

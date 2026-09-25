@@ -51,6 +51,8 @@ struct ModelImportedMaterialInfo
     std::string specularTexturePath;
     std::string specularColorTexturePath;
     std::string clearcoatNormalTexturePath;
+    std::string iridescenceTexturePath;
+    std::string iridescenceThicknessTexturePath;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

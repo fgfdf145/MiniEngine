@@ -8,6 +8,7 @@
 #include "anisotropy_common.glsl"
 #include "brdf_common.glsl"
 #include "ltc_common.glsl"
+#include "iridescence_common.glsl"
 // The sky's SH irradiance for the ambient term under a physical sky.
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
@@ -148,6 +149,11 @@ struct SpecularParams
 {
     vec3 dielectricF0;
     float dielectricF90;
+    // A thin film over the base (forward pass only): its weight, and its Fresnel at N.V
+    // (EvaluateIridescence), which replaces Schlick's by that weight wherever the base's Fresnel
+    // is used.
+    float iridescenceFactor;
+    vec3 iridescenceFresnel;
 };
 
 SpecularParams NoSpecularOverride()
@@ -155,7 +161,25 @@ SpecularParams NoSpecularOverride()
     SpecularParams specular;
     specular.dielectricF0 = vec3(0.04);
     specular.dielectricF90 = 1.0;
+    specular.iridescenceFactor = 0.0;
+    specular.iridescenceFresnel = vec3(0.0);
     return specular;
+}
+
+// The base's Fresnel: Schlick's, or the film's by its weight.
+vec3 BaseFresnel(float cosTheta, vec3 F0, float F90, SpecularParams specular)
+{
+    vec3 schlick = FresnelSchlick(cosTheta, F0, F90);
+    return specular.iridescenceFactor > 0.0 ? mix(schlick, specular.iridescenceFresnel, specular.iridescenceFactor) : schlick;
+}
+
+// The base lobe's directional albedo for a split-sum pair (A, B) (or the LTC's (norm, fresnel)):
+// F0 A + F90 B for Schlick; the film's Fresnel is taken as constant over the lobe, F (A + B).
+vec3 BaseSpecularAlbedo(vec2 ab, vec3 F0, float F90, SpecularParams specular)
+{
+    vec3 schlick = F0 * ab.x + F90 * ab.y;
+    return specular.iridescenceFactor > 0.0 ? mix(schlick, specular.iridescenceFresnel * (ab.x + ab.y), specular.iridescenceFactor)
+                                            : schlick;
 }
 
 vec3 SurfaceF0(vec3 albedo, float metallic, SpecularParams specular)
@@ -229,7 +253,7 @@ vec3 EvaluateBRDF(
         // Burley's diffuse (brdf_common.glsl), weighted by what the specular Fresnel toward the
         // centre leaves, as the Lambert term it replaced was.
         vec3 H = normalize(V + L);
-        vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(H, V), 0.0), F0, F90)) * (1.0 - metallic);
+        vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
         result += kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
     }
 
@@ -237,7 +261,7 @@ vec3 EvaluateBRDF(
     if (specularNdL > 0.0)
     {
         vec3 H = normalize(V + specularL);
-        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0, F90);
+        vec3 F = BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams);
         float term = anisotropy.strength > 0.0 ? AnisotropicSpecularTerm(N, V, specularL, H, roughness, anisotropy)
                                                : IsotropicSpecularTerm(N, V, specularL, H, roughness);
         result += term * specularNormalization * F * energyCompensation * radiance * specularNdL;
@@ -500,12 +524,13 @@ vec3 EvaluateAreaLight(
         mat3 minv = LtcInverseMatrix(textureLod(ltcInverseMatrices, uv, 0.0), N, V);
         vec2 amplitude = textureLod(ltcAmplitudes, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(minv * c0, minv * c1, minv * c2, minv * c3);
-        specular = luminance * coverage * (F0 * amplitude.x + (vec3(F90) - F0) * amplitude.y);
+        // F0 norm + (F90 - F0) fresnel, as the split-sum pair (norm - fresnel, fresnel).
+        specular = luminance * coverage * BaseSpecularAlbedo(vec2(amplitude.x - amplitude.y, amplitude.y), F0, F90, specularParams);
     }
     specular *= energyCompensation;
 
     // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
-    vec3 kD = (vec3(1.0) - FresnelSchlick(max(dot(V, centreH), 0.0), F0, F90)) * (1.0 - metallic);
+    vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(V, centreH), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
     vec3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
 
     return diffuse + specular;
@@ -668,7 +693,7 @@ vec3 EvaluateUniformAmbient(
     // Smith-Schlick table and no longer matches the correlated lobe the direct lights draw.
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
     // Compensated with the same table it was computed from, so the white furnace holds.
-    vec3 specularAlbedo = (F0 * environmentBrdf.x + F90 * environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
+    vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
     return diffuseAlbedo * luminance * ao + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
@@ -803,7 +828,7 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     vec3 F0 = SurfaceF0(albedo, metallic, specular);
     float F90 = SurfaceF90(metallic, specular);
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
-    vec3 specularAlbedo = (F0 * environmentBrdf.x + F90 * environmentBrdf.y) * SpecularEnergyCompensation(F0, environmentBrdf);
+    vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     // An anisotropic base reflects about the bent normal (AnisotropicBentNormal); the DFG weight
     // keeps the isotropic roughness.

@@ -29,6 +29,9 @@ struct MaterialDrawSortKey
 {
     MaterialPipelineKey pipeline;
     float viewDepth = 0.0f;
+    // An Opaque or Mask draw the forward pass shades (kShadingFlagForward). Ignored for Blend, which
+    // the forward pass always shades.
+    bool forwardShaded = false;
 };
 
 inline constexpr size_t kMaterialPipelineVariantCount = 6;

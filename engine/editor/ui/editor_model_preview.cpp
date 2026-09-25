@@ -385,6 +385,10 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
         HashQuantizedFloat(seed, component);
     }
     HashQuantizedFloat(seed, pbr.clearcoatNormalScale);
+    HashQuantizedFloat(seed, pbr.iridescenceFactor);
+    HashQuantizedFloat(seed, pbr.iridescenceIor);
+    HashQuantizedFloat(seed, pbr.iridescenceThicknessMinimum);
+    HashQuantizedFloat(seed, pbr.iridescenceThicknessMaximum);
 }
 
 void HashPreviewBlendGraph(size_t& seed, const MaterialTextureBlendGraph& blendGraph)

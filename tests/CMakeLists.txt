@@ -495,6 +495,32 @@ endif()
 
 set_target_properties(miniengine_ltc_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_iridescence_tests
+    iridescence_tests.cpp
+)
+miniengine_group_target_sources(miniengine_iridescence_tests)
+
+target_link_libraries(miniengine_iridescence_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.iridescence
+    COMMAND miniengine_iridescence_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_iridescence_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_iridescence_tests>
+            $<TARGET_FILE_DIR:miniengine_iridescence_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_iridescence_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_taa_jitter_tests
     taa_jitter_tests.cpp
 )

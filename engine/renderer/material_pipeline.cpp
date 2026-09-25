@@ -32,10 +32,15 @@ std::vector<size_t> BuildMaterialDrawOrder(std::span<const MaterialDrawSortKey> 
                                                   });
     // Opaque and Mask draws depth-test and depth-write, so their relative order does not change
     // the image: group them by pipeline variant instead, which collapses the redundant
-    // vkCmdBindPipeline calls an interleaved submesh list would otherwise produce. Blend draws
-    // below keep their back-to-front order — correctness there outranks pipeline batching.
+    // vkCmdBindPipeline calls an interleaved submesh list would otherwise produce. The ones the
+    // forward pass shades go after the deferred ones, so each pass records a contiguous run. Blend
+    // draws below keep their back-to-front order — correctness there outranks pipeline batching.
     std::stable_sort(order.begin(), blendBegin, [&](size_t lhs, size_t rhs)
                      {
+                         if (keys[lhs].forwardShaded != keys[rhs].forwardShaded)
+                         {
+                             return !keys[lhs].forwardShaded;
+                         }
                          return GetMaterialPipelineIndex(keys[lhs].pipeline) <
                                 GetMaterialPipelineIndex(keys[rhs].pipeline);
                      });
