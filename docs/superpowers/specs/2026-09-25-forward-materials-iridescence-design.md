@@ -55,3 +55,19 @@ anodised metal, colour-shift paint). See `2026-09-25-complete-brdf-program.md`.
 2. A forward-shaded sphere moving under TAA does not smear (motion vectors kept); it casts and
    receives shadows.
 3. Sponza: within the run-to-run noise of the previous build.
+
+## Amendments During Implementation
+
+- **No film is exactly the base.** The paper's formula fades the film's index to air as its
+  thickness goes to zero, but Schlick's approximation of that vanishing interface still reflects
+  about 60% at grazing angles (the Khronos sample viewer lets this through). The result itself now
+  fades to the base's Schlick Fresnel with the same factor.
+- **Clamped to 1 per channel.** The Gaussian colour-matching fit and the conversion to Rec. 709 push
+  saturated interference colours slightly past 1 in one channel (1.09 at 75 nm).
+- **Area lights on an anisotropic, iridescent base** keep Schlick's Fresnel in their
+  representative-point path; every other base Fresnel (direct, LTC, split sum, diffuse weight) goes
+  through `BaseFresnel` / `BaseSpecularAlbedo`.
+- **Acceptance.** Black dielectric spheres (roughness 0.1) with films of 250, 400 and 550 nm under
+  the default sun: the sun's highlight turns gold, green and magenta, and each rim shifts hue with
+  the view angle; an anodised-look metal (film IOR 1.8, 300 nm) gains a teal rim; factor 0 is the
+  plain sphere. Sponza: 4.0% of channels differ from the previous build, 3.9% between two runs.
