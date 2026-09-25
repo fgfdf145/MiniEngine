@@ -41,12 +41,20 @@ From `s2025_PBS_Physically_Based_Tone_Mapping_GT7.pdf` (pages 21-25) and
    pixel, all in a redesigned G-buffer.
 3. **The forward material path and iridescence.** Routing by material flag;
    `KHR_materials_iridescence` (thin-film interference, Belcour and Barla 2017).
+3b. **Material variants.** `KHR_materials_variants` (added 2026-09-26): a model carries several
+   material bindings per primitive and one is chosen by name at load or in the editor (a car's
+   colour options). Import and selection only; no shader change.
 4. **Transmission.** `KHR_materials_transmission` (rough refraction from a mip chain of the opaque
    scene colour), `KHR_materials_volume` (Beer-Lambert through thickness), `KHR_materials_dispersion`,
    `KHR_materials_diffuse_transmission`.
-5. **Car paint flakes** (not a glTF extension: an engine material parameter set in the editor and
-   the sidecar) and **subsurface scattering** (screen-space diffusion; glTF has no ratified
+5. **Subsurface scattering** (screen-space diffusion; glTF has no ratified
    extension, the draft `KHR_materials_subsurface` is followed where it helps).
+
+## Deferred
+
+- **Car paint flakes** (GT7's paint; not a glTF extension, an engine material parameter set in the
+  editor and the sidecar). Deferred by the user on 2026-09-26 until the Khronos material model is
+  complete: the standard extensions come first.
 
 ## What Cannot Be Done Here
 
