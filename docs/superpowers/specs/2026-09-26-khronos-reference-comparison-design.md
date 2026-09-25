@@ -93,8 +93,11 @@ colour, metallic, roughness, normal, clearcoat (both), sheen (both), specular (b
 variant. Known differences:
 
 - `CompareIor` 14.5, `IORTestGrid` 12.3: glass through `KHR_materials_transmission`, phase 4.
-- `CompareAnisotropy` 6.1: the right sphere's flat face, lit by a radial direction map, is bright
-  where the viewer shows it dark with a thin streak. Not yet explained.
+- `CompareAnisotropy` 6.1: the spun face's bright and dark sectors turned the wrong way. Root cause:
+  tangents generated for meshes without TANGENT put the bitangent along dP/dv, the image's bottom,
+  where glTF's +Y is its top; normal maps were flipped in Y too (`CompareNormal`'s raised weave
+  rendered engraved, which the mean difference barely showed). Fixed in 273a66f: CompareAnisotropy
+  3.8, CompareNormal 2.6.
 - `TextureTransformTest` 5.6: the engine ignored glTF samplers and repeated where the model asks for
   CLAMP_TO_EDGE. Fixed by `2026-09-26-gltf-samplers-design.md`: 2.7.
 - `UnlitTest` 5.8: the viewer shows unlit colours without tone mapping; the engine tone maps them on

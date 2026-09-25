@@ -79,7 +79,6 @@ def main():
 KNOWN_DIFFERENCES = {
     "CompareIor": "Glass: needs KHR_materials_transmission (phase 4).",
     "IORTestGrid": "Glass: needs KHR_materials_transmission (phase 4).",
-    "CompareAnisotropy": "The right sphere's flat face, lit through a radial direction map, is bright where the viewer is dark. Not yet explained.",
     "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
 }
 NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
