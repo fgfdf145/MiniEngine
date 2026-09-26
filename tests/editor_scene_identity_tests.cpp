@@ -30,6 +30,7 @@ int main()
         first.entityUuid = "11111111-1111-4111-8111-111111111111";
         first.tagName = "First";
         first.modelMaterialVariant = "beach";
+        first.modelUseModelLights = false;
         const entt::entity firstEntity = world->CreateEntity(first);
 
         SerializedEntityData duplicate{};
@@ -61,6 +62,8 @@ int main()
         Require(yaml.find("version: 3") != std::string::npos, "scene yaml version was not upgraded to v3");
         Require(yaml.find("selected_entity_uuid") != std::string::npos, "selected uuid missing from scene yaml");
         Require(yaml.find("entity_uuid") != std::string::npos, "entity uuid missing from scene yaml");
+        Require(yaml.find("use_model_lights: false") != std::string::npos, "model lights turned off missing from scene yaml");
+        Require(yaml.find("use_model_lights: true") == std::string::npos, "model lights on, the default, written to scene yaml");
 
         const SerializedSceneData loaded = LoadEditorSceneDataFromFile(scenePath.string());
         std::unique_ptr<IEditorWorld> restoredWorld = CreateEditorWorld();
@@ -71,6 +74,8 @@ int main()
         Require(restored.entities[0].entityUuid == first.entityUuid, "model uuid changed on round-trip");
         Require(restored.entities[0].modelMaterialVariant == "beach", "material variant changed on round-trip");
         Require(restored.entities[1].modelMaterialVariant.empty(), "an entity without a variant gained one");
+        Require(!restored.entities[0].modelUseModelLights, "model lights turned off did not survive yaml round-trip");
+        Require(restored.entities[1].modelUseModelLights, "model lights are on unless a scene turns them off");
         Require(restored.lights[0].entityUuid == light.entityUuid, "light uuid changed on round-trip");
 
         std::error_code removeError;

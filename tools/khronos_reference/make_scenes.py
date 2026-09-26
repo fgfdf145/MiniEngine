@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Writes one scene per compared model (and per material variant) into assets/scenes/khronos/:
-the model at the origin, the Sample Viewer's environment, and the model's own directional lights
-(KHR_lights_punctual), which the viewer lights it with too."""
+the model at the origin and the Sample Viewer's environment. The model's own lights
+(KHR_lights_punctual), which the viewer lights it with too, come with the model: the engine imports them."""
 
 import json
-import math
 
 from common import (ASSETS, ENVIRONMENT_FILE, ENVIRONMENTS, HDRI_INTENSITY, HDRI_ROTATION_DEGREES, SCENES,
                     all_models, model_gltf)
@@ -29,7 +28,7 @@ entities:
       translation: [0, 0, 0]
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
-lights:{lights}
+lights: []
 environment:
   mode: hdri
   hdri:
@@ -46,94 +45,6 @@ editor:
     rotation_snap: 15
     scale_snap: [1, 1, 1]
 """
-
-
-LIGHT = """
-  - entity_uuid: 00000000-0000-4000-8000-00000000d{index:03d}
-    tag: {name}
-    light_type: directional
-    color: [{r}, {g}, {b}]
-    intensity: {intensity}
-    range: 10
-    spot_inner_angle: 20
-    spot_outer_angle: 35
-    area_size: [1, 1]
-    cast_shadows: false
-    transform:
-      translation: [0, 0, 0]
-      rotation: [{x}, 0, {z}]
-      scale: [1, 1, 1]"""
-
-
-def multiply(a, b):
-    """4x4 matrices as column-major lists of 16, glTF's layout."""
-    return [sum(a[k * 4 + row] * b[column * 4 + k] for k in range(4)) for column in range(4) for row in range(4)]
-
-
-def node_matrix(node):
-    if "matrix" in node:
-        return list(node["matrix"])
-    tx, ty, tz = node.get("translation", [0, 0, 0])
-    qx, qy, qz, qw = node.get("rotation", [0, 0, 0, 1])
-    sx, sy, sz = node.get("scale", [1, 1, 1])
-    rotation = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy + qz * qw), 2 * (qx * qz - qy * qw), 0,
-                2 * (qx * qy - qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz + qx * qw), 0,
-                2 * (qx * qz + qy * qw), 2 * (qy * qz - qx * qw), 1 - 2 * (qx * qx + qy * qy), 0,
-                0, 0, 0, 1]
-    scale = [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, 0, 0, 0, 1]
-    translation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, ty, tz, 1]
-    return multiply(translation, multiply(rotation, scale))
-
-
-def engine_light_rotation(direction):
-    """The engine's Euler angles (degrees, X then Y then Z, BuildLightRotation) that turn a
-    directional light's local -Y into direction: with Y at 0 the light points along
-    (sin z, -cos z cos x, -cos z sin x)."""
-    dx, dy, dz = direction
-    z = math.asin(max(-1.0, min(1.0, dx)))
-    x = math.atan2(-dz, -dy)
-    return math.degrees(x), math.degrees(z)
-
-
-def directional_lights(document):
-    """(name, colour, intensity in lux, world direction) of every directional light the default
-    scene's nodes place; a light shines down its node's -Z. Point and spot lights are reported."""
-    lights = document.get("extensions", {}).get("KHR_lights_punctual", {}).get("lights", [])
-    nodes = document.get("nodes", [])
-    found = []
-
-    def visit(index, parent):
-        node = nodes[index]
-        world = multiply(parent, node_matrix(node))
-        light_index = node.get("extensions", {}).get("KHR_lights_punctual", {}).get("light")
-        if light_index is not None:
-            light = lights[light_index]
-            if light.get("type") == "directional":
-                direction = [-world[8], -world[9], -world[10]]
-                length = math.sqrt(sum(c * c for c in direction)) or 1.0
-                found.append((light.get("name", f"Light{light_index}"), light.get("color", [1, 1, 1]),
-                              light.get("intensity", 1.0), [c / length for c in direction]))
-            else:
-                print(f"  skipped {light.get('type')} light {light.get('name', light_index)}: not supported here")
-        for child in node.get("children", []):
-            visit(child, world)
-
-    scenes = document.get("scenes", [])
-    roots = scenes[document.get("scene", 0)].get("nodes", []) if scenes else range(len(nodes))
-    identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-    for root in roots:
-        visit(root, identity)
-    return found
-
-
-def lights_yaml(gltf):
-    document = json.loads(gltf.read_text(encoding="utf-8"))
-    entries = []
-    for index, (name, color, intensity, direction) in enumerate(directional_lights(document)):
-        x, z = engine_light_rotation(direction)
-        entries.append(LIGHT.format(index=index + 1, name=name, r=color[0], g=color[1], b=color[2],
-                                    intensity=intensity, x=round(x, 4), z=round(z, 4)))
-    return "".join(entries) if entries else " []"
 
 
 def variants_of(gltf):
@@ -166,7 +77,7 @@ def main():
         title = model + (f", variant {variant}" if variant else "")
         (SCENES / f"{name}.yaml").write_text(
             SCENE.format(title=title, model=model, source=source, variant=variant, hdri=hdri,
-                         intensity=HDRI_INTENSITY, rotation=HDRI_ROTATION_DEGREES, lights=lights_yaml(model_gltf(model))),
+                         intensity=HDRI_INTENSITY, rotation=HDRI_ROTATION_DEGREES),
             encoding="utf-8")
         count += 1
     print(f"wrote {count} scenes to {SCENES}")

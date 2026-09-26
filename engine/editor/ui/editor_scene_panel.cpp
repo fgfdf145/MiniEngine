@@ -551,6 +551,16 @@ void EditorUiController::DrawScenePanel(
                         }
                     }
 
+                    if (metadata.modelLightCount > 0)
+                    {
+                        bool useModelLights = model.useModelLights;
+                        const std::string label = "Model Lights (" + std::to_string(metadata.modelLightCount) + ")";
+                        if (ImGui::Checkbox(label.c_str(), &useModelLights))
+                        {
+                            result.actions.selectedUseModelLights = useModelLights;
+                        }
+                    }
+
                     DrawImportedModelInspector(metadata);
                 }
 

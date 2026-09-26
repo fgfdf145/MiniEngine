@@ -1,5 +1,7 @@
 #include <engine/renderer/scene_lighting.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -108,6 +110,21 @@ void DarkDirectionalLightCastsNoShadow()
     const SceneLightSelection selection = SelectSceneLights(lights, glm::vec3(0.0f), 8);
     Require(SelectShadowCasterLight(lights, selection) == -1, "a zero intensity sun must not render a shadow map");
 }
+// A model light goes through its entity's transform: translated, rotated and scaled for its
+// position, only rotated for its direction, which stays unit length.
+void ModelLightsFollowTheirEntity()
+{
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(10.0f, 0.0f, 0.0f));
+    model = glm::rotate(model, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::scale(model, glm::vec3(2.0f));
+    const PlacedModelLight placed = PlaceModelLight(model, glm::vec3(0.0f, 1.0f, 1.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+    Require(NearlyEqual(placed.position, glm::vec3(12.0f, 2.0f, 0.0f)), "a model light's position must go through the whole transform");
+    Require(NearlyEqual(placed.direction, glm::vec3(-1.0f, 0.0f, 0.0f)), "a model light's direction must turn with its entity and stay unit length");
+
+    const PlacedModelLight flattened =
+        PlaceModelLight(glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, 1.0f, 0.0f)), glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+    Require(NearlyEqual(flattened.direction, glm::vec3(0.0f, 0.0f, -1.0f)), "a transform that collapses the direction must keep the model's");
+}
 }
 
 int main()
@@ -121,6 +138,7 @@ int main()
         LocalLightsRankByIlluminanceAtTheCamera();
         TiesKeepSceneOrder();
         DarkDirectionalLightCastsNoShadow();
+        ModelLightsFollowTheirEntity();
     }
     catch (const std::exception& error)
     {

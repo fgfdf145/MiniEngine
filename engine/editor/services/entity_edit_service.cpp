@@ -449,6 +449,43 @@ void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::st
         variant.empty() ? std::string("default") : variant);
 }
 
+void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelLights)
+{
+    if (!state.GetEditorWorld().HasSelection() ||
+        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
+    {
+        throw std::runtime_error("No selected model entity available to toggle its model lights");
+    }
+
+    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
+    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
+    const ModelComponent previousModel = model;
+    if (model.sourcePath.empty())
+    {
+        throw std::runtime_error("The selected entity does not reference an imported model");
+    }
+
+    model.useModelLights = useModelLights;
+
+    try
+    {
+        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
+        RefreshDirtySceneRenderables(state);
+    }
+    catch (...)
+    {
+        model = previousModel;
+        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
+        throw;
+    }
+
+    state.lastModelLoadError.clear();
+    LOG_INFO(
+        "Model lights of '{}': {}",
+        state.GetEditorWorld().GetTag(selectedEntity).name,
+        useModelLights ? "on" : "off");
+}
+
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 {
     if (!state.GetEditorWorld().HasSelection() ||
