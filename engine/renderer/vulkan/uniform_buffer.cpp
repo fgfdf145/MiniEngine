@@ -226,6 +226,7 @@ void VulkanUniformBuffer::Update(
     const glm::vec3& cameraPosition,
     const glm::vec3& ambientLuminance,
     bool usesFallbackAmbient,
+    const std::array<glm::vec3, 3>& ambientGradient,
     const LightUpload& lights,
     const ShadowUniformData& shadow,
     const glm::mat4& prevViewProj,
@@ -250,6 +251,10 @@ void VulkanUniformBuffer::Update(
     data.invViewProj = glm::inverse(matrices.renderProjection * matrices.view);
     data.cameraWorldPosition = glm::vec4(cameraPosition, 1.0f);
     data.ambientLuminance = glm::vec4(ambientLuminance, usesFallbackAmbient ? 1.0f : 0.0f);
+    for (size_t channel = 0; channel < ambientGradient.size(); ++channel)
+    {
+        data.ambientGradient[channel] = glm::vec4(ambientGradient[channel], 0.0f);
+    }
 
     // The shader indexes the light buffer with these counts and with the grid's indices, so all of
     // them are checked against what the buffers hold rather than trusted.

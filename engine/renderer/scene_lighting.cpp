@@ -44,6 +44,21 @@ SceneLightSelection SelectSceneLights(
             hasAmbientLight = true;
             selection.ambientLuminance += light.color * light.intensity;
             break;
+        case LightType::Hemisphere:
+        {
+            hasAmbientLight = true;
+            const glm::vec3 sky = light.color * light.intensity;
+            const glm::vec3 ground = light.groundColor * light.intensity;
+            const float upLength = glm::length(light.up);
+            const glm::vec3 up = upLength > 1e-6f ? light.up / upLength : glm::vec3(0.0f, 1.0f, 0.0f);
+            selection.ambientLuminance += 0.5f * (sky + ground);
+            const glm::vec3 halfDifference = 0.5f * (sky - ground);
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                selection.ambientGradient[channel] += halfDifference[channel] * up;
+            }
+            break;
+        }
         case LightType::Directional:
             directional.push_back(index);
             break;

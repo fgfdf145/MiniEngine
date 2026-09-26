@@ -18,20 +18,22 @@ enum class LightType : uint32_t
     Point = 1,       // Omnidirectional point light
     Spot = 2,        // Cone spotlight
     Area = 3,        // Rectangular area light (approximate)
-    Ambient = 4      // Global ambient (no position or direction)
+    Ambient = 4,     // Global ambient (no position or direction)
+    Hemisphere = 5   // Sky colour above the transform's up axis, ground colour below (no position)
 };
 
 struct LightComponent
 {
     LightType type = LightType::Point;
     glm::vec3 color{1.0f, 1.0f, 1.0f};
-    float intensity = 1000.0f;           // Lumens (point/spot/area), lux (directional) or cd/m^2 (ambient)
-    float range = 10.0f;                 // Effective range in meters
-    float spotInnerAngleDegrees = 15.0f; // Spot inner cone half-angle
-    float spotOuterAngleDegrees = 30.0f; // Spot outer cone half-angle
-    glm::vec2 areaSize{1.0f, 1.0f};      // Area light width x height in meters
-    bool castShadows = true;             // Point, spot and area lights; the brightest directional one always does
-    float sourceRadius = 0.0f;           // Point and spot lights: the emitting sphere's radius in metres, 0 a point
+    float intensity = 1000.0f;                // Lumens (point/spot/area), lux (directional) or cd/m^2 (ambient, hemisphere)
+    float range = 10.0f;                      // Effective range in meters
+    float spotInnerAngleDegrees = 15.0f;      // Spot inner cone half-angle
+    float spotOuterAngleDegrees = 30.0f;      // Spot outer cone half-angle
+    glm::vec2 areaSize{1.0f, 1.0f};           // Area light width x height in meters
+    bool castShadows = true;                  // Point, spot and area lights; the brightest directional one always does
+    float sourceRadius = 0.0f;                // Point and spot lights: the emitting sphere's radius in metres, 0 a point
+    glm::vec3 groundColor{0.3f, 0.25f, 0.2f}; // Hemisphere lights: the colour below the horizon; color is the sky's
 };
 
 struct ModelImportedMaterialInfo

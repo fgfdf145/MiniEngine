@@ -786,7 +786,7 @@ BaseSpecularAlbedos EvaluateBaseSpecularAlbedos(vec2 environmentBrdf, vec3 albed
     return albedos;
 }
 
-// Outgoing radiance from an environment of the same luminance in every direction. For that
+// Outgoing radiance from the scene's Ambient and Hemisphere lights (SceneAmbientAlong). For a uniform
 // environment the split sum is exact apart from the BRDF fit: the prefiltered radiance is the
 // luminance itself whatever the roughness. Metals get only the specular lobe, tinted by their F0,
 // and the diffuse lobe keeps whatever energy the specular one did not reflect.
@@ -804,7 +804,6 @@ vec3 SpecularAmbientRadiance(vec3 environment, vec4 reflection, float NdV, float
 vec3 EvaluateUniformAmbient(
     vec3 N, vec3 geoNormal, vec3 V,
     vec3 albedo, float metallic, float roughness,
-    vec3 luminance,
     SpecularParams specular,
     float ao,
     vec4 reflection)
@@ -817,10 +816,11 @@ vec3 EvaluateUniformAmbient(
     BaseSpecularAlbedos albedos = EvaluateBaseSpecularAlbedos(environmentBrdf, albedo, metallic, specular);
     vec3 specularAlbedo = albedos.total;
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - albedos.dielectric);
-    float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
-    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * luminance * ao, luminance * ao, metallic, albedos.dielectric, specular);
+    vec3 R = reflect(-V, N);
+    float horizon = HorizonSpecularOcclusion(R, geoNormal);
+    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * SceneAmbientAlong(N) * ao, SceneAmbientAlong(-N) * ao, metallic, albedos.dielectric, specular);
     diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
-    return diffuse + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
+    return diffuse + specularAlbedo * SpecularAmbientRadiance(SceneAmbientAlong(R), reflection, NdV, ao, roughness, horizon);
 }
 
 // ---------------------------------------------------------------------------
@@ -957,8 +957,8 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
 
 // The ambient term under a physical sky, split-sum (Karis 2013): the diffuse lobe sees the SH
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
-// weighted by the DFG table's F0 A + B. The scene's Ambient lights, but not the fallback, add their
-// uniform luminance.
+// weighted by the DFG table's F0 A + B. The scene's Ambient and Hemisphere lights, but not the
+// fallback, add theirs (SceneLightsAmbientAlong).
 vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, SpecularParams specular, float ao, vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
@@ -969,12 +969,11 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     // An anisotropic base reflects about the bent normal (AnisotropicBentNormal); the DFG weight
     // keeps the isotropic roughness.
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
-    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
-    vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + sceneAmbient;
-    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao;
+    vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R);
+    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(N)) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
-        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, albedos.dielectric, specular);
+        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(-N)) * ao, metallic, albedos.dielectric, specular);
     }
     diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, HorizonSpecularOcclusion(R, geoNormal));
@@ -1017,12 +1016,11 @@ vec3 EvaluateSheenAmbient(vec3 N, vec3 V, SheenParams sheen)
     float albedo = SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
     if (EnvironmentMode() == ENVIRONMENT_NONE)
     {
-        return sheen.color * albedo * ubo.ambientLuminance.rgb;
+        return sheen.color * albedo * SceneAmbientAlong(reflect(-V, N));
     }
     vec3 R = reflect(-V, N);
     vec3 sky = textureLod(prefilteredEnvironment, R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
-    return sheen.color * albedo * (sky + sceneAmbient);
+    return sheen.color * albedo * (sky + SceneLightsAmbientAlong(R));
 }
 
 // The coat's share of the ambient term: its lobe's directional albedo (0.04 A + B) times what the
@@ -1034,14 +1032,13 @@ vec3 EvaluateCoatAmbient(CoatParams coat, vec3 V)
     if (EnvironmentMode() == ENVIRONMENT_NONE)
     {
         vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
-        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * ubo.ambientLuminance.rgb;
+        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * SceneAmbientAlong(reflect(-V, coat.normal));
     }
     vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
     vec3 coatAlbedo = COAT_F0 * environmentBrdf.x + environmentBrdf.y;
     vec3 R = reflect(-V, coat.normal);
     vec3 sky = textureLod(prefilteredEnvironment, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
-    return coatAlbedo * (sky + sceneAmbient);
+    return coatAlbedo * (sky + SceneLightsAmbientAlong(R));
 }
 
 // Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
@@ -1086,7 +1083,7 @@ vec3 ShadeSurface(
     // The AO darkens the diffuse lobe directly and the specular one through SpecularOcclusion; a
     // screen-space reflection (reflection.a > 0) replaces the occluded environment where it is trusted.
     vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
-                       ? EvaluateUniformAmbient(N, geoNormal, V, albedo, metallic, roughness, ubo.ambientLuminance.rgb, specular, ao, reflection)
+                       ? EvaluateUniformAmbient(N, geoNormal, V, albedo, metallic, roughness, specular, ao, reflection)
                        : EvaluateSkyAmbient(N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, reflection);
 
     // One factor for every direct light: it depends only on the surface and the view. It comes
@@ -1251,14 +1248,13 @@ vec3 ScatterEnteringLight(
     vec3 back;
     if (EnvironmentMode() == ENVIRONMENT_NONE)
     {
-        front = ubo.ambientLuminance.rgb;
-        back = ubo.ambientLuminance.rgb;
+        front = SceneAmbientAlong(N);
+        back = SceneAmbientAlong(-N);
     }
     else
     {
-        vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
-        front = EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient;
-        back = EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient;
+        front = EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(N);
+        back = EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(-N);
     }
     vec3 light = (vec3(1.0) - specularAlbedo) * color * singleScatter * (front + back * backAttenuation * (1.0 - singleScatter));
 

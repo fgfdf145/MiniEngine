@@ -47,6 +47,7 @@ struct SerializedLightData
     glm::vec2 areaSize{1.0f, 1.0f};
     bool castShadows = true;
     float sourceRadius = 0.0f;
+    glm::vec3 groundColor{0.3f, 0.25f, 0.2f};
     TransformComponent transform;
 };
 

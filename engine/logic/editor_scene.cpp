@@ -37,6 +37,8 @@ const char* LightTypeToString(LightType type)
         return "area";
     case LightType::Ambient:
         return "ambient";
+    case LightType::Hemisphere:
+        return "hemisphere";
     default:
         return "point";
     }
@@ -52,6 +54,8 @@ LightType LightTypeFromString(const std::string& value)
         return LightType::Area;
     if (value == "ambient")
         return LightType::Ambient;
+    if (value == "hemisphere")
+        return LightType::Hemisphere;
     return LightType::Point;
 }
 
@@ -318,6 +322,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             lightData.castShadows = lightNode["cast_shadows"].as<bool>(lightData.castShadows);
             // Absent in scenes saved before lights had a size: a point.
             lightData.sourceRadius = std::max(lightNode["source_radius"].as<float>(lightData.sourceRadius), 0.0f);
+            lightData.groundColor = ReadVec3(lightNode["ground_color"], lightData.groundColor);
             lightData.transform = ReadTransformComponent(lightNode["transform"], lightData.transform);
             sceneData.lights.push_back(lightData);
         }
@@ -384,6 +389,7 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
                 << light.areaSize.x << light.areaSize.y << YAML::EndSeq;
         emitter << YAML::Key << "cast_shadows" << YAML::Value << light.castShadows;
         emitter << YAML::Key << "source_radius" << YAML::Value << light.sourceRadius;
+        EmitVec3(emitter, "ground_color", light.groundColor);
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
         EmitVec3(emitter, "translation", light.transform.translation);
         EmitVec3(emitter, "rotation", light.transform.rotationDegrees);
@@ -905,6 +911,7 @@ entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData
     light.areaSize = lightData.areaSize;
     light.castShadows = lightData.castShadows;
     light.sourceRadius = lightData.sourceRadius;
+    light.groundColor = lightData.groundColor;
     m_registry.emplace<LightComponent>(entity, light);
     m_sceneOrder.push_back(entity);
     return entity;
@@ -973,6 +980,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         lightData.areaSize = light.areaSize;
         lightData.castShadows = light.castShadows;
         lightData.sourceRadius = light.sourceRadius;
+        lightData.groundColor = light.groundColor;
         lightData.transform = transform;
         sceneData.lights.push_back(lightData);
     }

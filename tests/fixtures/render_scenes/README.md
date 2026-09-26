@@ -30,6 +30,7 @@ out/build/macos-debug/app/miniengine_app --scene assets/scenes/test/iridescence.
 | `smooth_spheres_sun.yaml` | Smooth black spheres, chrome and white under the sun: crisp sun highlights | BRDF accuracy (GGX floor fix) |
 | `smooth_spheres_lamp_point.yaml` | The same spheres in the dark under a point lamp of radius 0 | BRDF accuracy (source radius) |
 | `smooth_spheres_lamp_sized.yaml` | The same lamp with a 0.2 m source radius: highlights become disks | BRDF accuracy (source radius) |
+| `smooth_spheres_hemisphere.yaml` | The same spheres under only a hemisphere light: blue sky above, brown ground below | Hemisphere light |
 | `area_light_floor.yaml` | A 1.6 x 0.4 m panel over a glossy floor and three spheres | LTC area lights |
 | `ior_specular_coat.yaml` | IOR 1.33 / 1.5 / 2.4, specular colour and 0; coat normal map; coat, sheen and anisotropy together | G-buffer layers, IOR, specular |
 | `iridescence.yaml` | Thin films of 250, 400, 550 nm, an anodised metal, a control | Forward-shaded materials, iridescence |

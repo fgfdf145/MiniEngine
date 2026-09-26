@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -18,8 +19,11 @@ struct SceneLightCandidate
     LightType type = LightType::Point;
     glm::vec3 position{0.0f};
     glm::vec3 color{1.0f};
-    // Lumens for point, spot and area lights, lux for directional, cd/m^2 for ambient.
+    // Lumens for point, spot and area lights, lux for directional, cd/m^2 for ambient and hemisphere.
     float intensity = 0.0f;
+    // Hemisphere lights: the unit up axis (sky above it) and the ground's colour below it.
+    glm::vec3 up{0.0f, 1.0f, 0.0f};
+    glm::vec3 groundColor{0.0f};
     // LightComponent::castShadows; only local lights read it.
     bool castShadows = true;
 };
@@ -32,12 +36,18 @@ glm::vec3 GetFallbackAmbientLuminance();
 struct SceneLightSelection
 {
     // Indices into the candidate span of the lights the shader evaluates, most important first.
-    // Ambient lights never appear here: they are folded into ambientLuminance instead, so they do
-    // not take up one of the limited shader light slots.
+    // Ambient and Hemisphere lights never appear here: they are folded into ambientLuminance and
+    // ambientGradient instead, so they do not take up one of the limited shader light slots.
     std::vector<uint32_t> selected;
-    // Linear RGB luminance in cd/m^2: the sum of every Ambient light, or the fallback when the
-    // scene has none.
+    // Linear RGB luminance in cd/m^2: the sum of every Ambient light and of every Hemisphere light's
+    // mean of sky and ground, or the fallback when the scene has neither.
     glm::vec3 ambientLuminance{0.0f};
+    // The Hemisphere lights' direction-dependent half, one vector per colour channel: the luminance
+    // arriving along the unit direction d is ambientLuminance + (dot(gradient[0], d), dot(gradient[1],
+    // d), dot(gradient[2], d)). A hemisphere light is sky S above its up axis u and ground G below; its
+    // irradiance on a surface facing n is pi (S (1 + n.u) / 2 + G (1 - n.u) / 2), linear in n, so
+    // any number of them sum exactly into this one constant and one gradient.
+    std::array<glm::vec3, 3> ambientGradient{};
     bool usesFallbackAmbient = false;
     // Non-ambient lights left out because the scene has more than maxLights of them.
     uint32_t droppedCount = 0;

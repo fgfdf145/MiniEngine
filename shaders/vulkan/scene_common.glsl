@@ -11,6 +11,7 @@
 #define LIGHT_SPOT 2
 #define LIGHT_AREA 3
 #define LIGHT_AMBIENT 4
+#define LIGHT_HEMISPHERE 5
 
 #define SHADOW_CASCADE_COUNT 4
 
@@ -35,8 +36,10 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     mat4 view;
     mat4 proj;
     vec4 cameraWorldPosition;
-    // xyz = ambient luminance in cd/m^2: the sum of the scene's Ambient lights, or the fallback when
-    // it has none; w = 1 when it is the fallback. Ambient lights are folded in here on the CPU and never appear among the lights.
+    // xyz = ambient luminance in cd/m^2: the sum of the scene's Ambient lights and the direction-free
+    // half of its Hemisphere lights, or the fallback when it has neither; w = 1 when it is the
+    // fallback. Both are folded in here on the CPU and never appear among the lights; the
+    // direction-dependent half is ambientGradient.
     vec4 ambientLuminance;
     // The lights are in the storage buffer at binding 10 (see pbr_common.glsl), directional ones first.
     uvec4 lightCounts;       // x = directional count, y = total count, z = 1 to look up through the cluster grid, 0 to loop over all
@@ -69,7 +72,29 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     // x = pre-exposure (physical radiance to HDR target units, see pre_exposure.glsl), y = its
     // inverse. Every writer of the HDR target and GB3 multiplies its final value by x.
     vec4 exposure;
+    // The Hemisphere lights' direction-dependent half, one row per colour channel: the ambient
+    // luminance seen along a unit direction d is ambientLuminance.rgb + (row_r . d, row_g . d,
+    // row_b . d) (see SceneAmbientAlong). xyz used. Appended last.
+    vec4 ambientGradient[3];
 }
 ubo;
+
+// The scene's ambient luminance (cd/m^2) arriving along the unit direction d: its Ambient lights
+// plus its Hemisphere lights, each of which is sky above its up axis and ground below. A hemisphere
+// light's irradiance on a surface facing n is exactly pi times this along n, so the diffuse lobe
+// reads it at the normal; the specular lobe reads it along the reflection, which is the
+// cosine-blurred radiance rather than the hard horizon, exact for a rough lobe.
+vec3 SceneAmbientAlong(vec3 d)
+{
+    return max(ubo.ambientLuminance.rgb +
+                   vec3(dot(ubo.ambientGradient[0].xyz, d), dot(ubo.ambientGradient[1].xyz, d), dot(ubo.ambientGradient[2].xyz, d)),
+               vec3(0.0));
+}
+
+// The same, but zero when it is only the fallback: under a physical sky the sky takes its place.
+vec3 SceneLightsAmbientAlong(vec3 d)
+{
+    return ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : SceneAmbientAlong(d);
+}
 
 #endif

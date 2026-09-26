@@ -106,6 +106,10 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world, const Rendere
                            candidate.color = light.color;
                            candidate.intensity = light.intensity;
                            candidate.castShadows = light.castShadows;
+                           // A hemisphere light's sky is above the axis a directional light would
+                           // shine down.
+                           candidate.up = -direction;
+                           candidate.groundColor = light.groundColor;
 
                            collected.gpuLights.push_back(gpu);
                            collected.candidates.push_back(candidate);
@@ -788,6 +792,7 @@ void VulkanRenderer::DrawFrame()
         State().camera.position,
         lightSelection.ambientLuminance,
         lightSelection.usesFallbackAmbient,
+        lightSelection.ambientGradient,
         lightUpload,
         shadowData,
         motion.previousViewProjection,

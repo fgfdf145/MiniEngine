@@ -269,7 +269,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     {
         constexpr LightType kTypes[] = {
             LightType::Directional, LightType::Point, LightType::Spot,
-            LightType::Area, LightType::Ambient};
+            LightType::Area, LightType::Ambient, LightType::Hemisphere};
         for (LightType t : kTypes)
         {
             const bool selected = t == light.type;
@@ -283,14 +283,19 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
         ImGui::EndCombo();
     }
 
-    // Color
-    ImGui::ColorEdit3("Color", &light.color.x, ImGuiColorEditFlags_Float);
+    // Color; a hemisphere light's is its sky's, and it has a ground colour below the horizon.
+    ImGui::ColorEdit3(light.type == LightType::Hemisphere ? "Sky Color" : "Color", &light.color.x, ImGuiColorEditFlags_Float);
+    if (light.type == LightType::Hemisphere)
+    {
+        ImGui::ColorEdit3("Ground Color", &light.groundColor.x, ImGuiColorEditFlags_Float);
+        ImGui::TextDisabled("Sky above the light's up axis (rotate it to tilt)");
+    }
 
     // Intensity with unit label
     const char* intensityUnit = "lm"; // lumens for most lights
     if (light.type == LightType::Directional)
         intensityUnit = "lx";
-    if (light.type == LightType::Ambient)
+    if (light.type == LightType::Ambient || light.type == LightType::Hemisphere)
         intensityUnit = "cd/m^2";
 
     const std::string intensityLabel = std::string("Intensity (") + intensityUnit + ")";
@@ -298,7 +303,7 @@ void DrawLightComponentEditor(LightComponent& light, float uiScale)
     light.intensity = std::max(light.intensity, 0.0f);
 
     // Range
-    if (light.type != LightType::Directional && light.type != LightType::Ambient)
+    if (light.type != LightType::Directional && light.type != LightType::Ambient && light.type != LightType::Hemisphere)
     {
         ImGui::DragFloat("Range (m)", &light.range, 0.1f, 0.1f, 1000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         light.range = std::max(light.range, 0.01f);
@@ -395,6 +400,7 @@ void EditorUiController::DrawScenePanel(
             addLight(LightType::Spot, "Spot");
             addLight(LightType::Area, "Area");
             addLight(LightType::Ambient, "Ambient");
+            addLight(LightType::Hemisphere, "Hemisphere");
             ImGui::EndPopup();
         }
 

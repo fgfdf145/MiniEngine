@@ -288,6 +288,8 @@ void DrawLightViewportIcon(
         badge = "A";
     else if (type == LightType::Ambient)
         badge = "*";
+    else if (type == LightType::Hemisphere)
+        badge = "H";
 
     const ImVec2 textSize = ImGui::CalcTextSize(badge);
     drawList->AddText(

@@ -271,6 +271,8 @@ const char* GetLightTypeLabel(LightType type)
         return "Area";
     case LightType::Ambient:
         return "Ambient";
+    case LightType::Hemisphere:
+        return "Hemisphere";
     default:
         return "Unknown";
     }
@@ -290,6 +292,8 @@ ImU32 GetLightTypeColor(LightType type)
         return IM_COL32(180, 255, 160, 255);
     case LightType::Ambient:
         return IM_COL32(200, 180, 255, 255);
+    case LightType::Hemisphere:
+        return IM_COL32(150, 200, 255, 255);
     default:
         return IM_COL32(220, 220, 220, 255);
     }

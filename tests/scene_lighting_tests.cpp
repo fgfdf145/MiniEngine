@@ -65,6 +65,36 @@ void ZeroIntensityAmbientMakesTheSceneDark()
     Require(NearlyEqual(selection.ambientLuminance, glm::vec3(0.0f)), "a zero intensity ambient light must give no ambient");
 }
 
+// The luminance the shader reads along d (SceneAmbientAlong in scene_common.glsl).
+glm::vec3 AmbientAlong(const SceneLightSelection& selection, const glm::vec3& d)
+{
+    return selection.ambientLuminance + glm::vec3(
+                                            glm::dot(selection.ambientGradient[0], d),
+                                            glm::dot(selection.ambientGradient[1], d),
+                                            glm::dot(selection.ambientGradient[2], d));
+}
+
+void HemisphereLightsFoldIntoAConstantAndAGradient()
+{
+    SceneLightCandidate hemisphere = MakeLight(LightType::Hemisphere, glm::vec3(5.0f), 2.0f, glm::vec3(1.0f, 0.5f, 0.25f));
+    hemisphere.groundColor = glm::vec3(0.0f, 0.5f, 1.0f);
+    hemisphere.up = glm::vec3(0.0f, 2.0f, 0.0f); // not unit length: the selection normalizes it
+    const std::vector<SceneLightCandidate> lights = {hemisphere, MakeLight(LightType::Point, glm::vec3(0.0f), 100.0f)};
+    const SceneLightSelection selection = SelectSceneLights(lights, glm::vec3(0.0f), 8);
+
+    Require(!selection.usesFallbackAmbient, "a hemisphere light must turn the fallback off");
+    Require(selection.selected.size() == 1 && selection.selected[0] == 1, "a hemisphere light must not take a shader light slot");
+    Require(NearlyEqual(AmbientAlong(selection, glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(2.0f, 1.0f, 0.5f)), "straight up must see the sky");
+    Require(NearlyEqual(AmbientAlong(selection, glm::vec3(0.0f, -1.0f, 0.0f)), glm::vec3(0.0f, 1.0f, 2.0f)), "straight down must see the ground");
+    // A wall's irradiance is pi times the mean of sky and ground.
+    Require(NearlyEqual(AmbientAlong(selection, glm::vec3(1.0f, 0.0f, 0.0f)), glm::vec3(1.0f, 1.0f, 1.25f)), "a horizontal direction must see the mean");
+
+    // With an Ambient light the two add.
+    const std::vector<SceneLightCandidate> both = {hemisphere, MakeLight(LightType::Ambient, glm::vec3(0.0f), 1.0f)};
+    const SceneLightSelection summed = SelectSceneLights(both, glm::vec3(0.0f), 8);
+    Require(NearlyEqual(AmbientAlong(summed, glm::vec3(0.0f, 1.0f, 0.0f)), glm::vec3(3.0f, 2.0f, 1.5f)), "an ambient light must add to a hemisphere light");
+}
+
 void DirectionalLightsRankFirstBrightestFirst()
 {
     const std::vector<SceneLightCandidate> lights = {
@@ -134,6 +164,7 @@ int main()
         NoLightsUsesTheFallbackAmbient();
         AmbientLightsReplaceTheFallbackAndTakeNoSlot();
         ZeroIntensityAmbientMakesTheSceneDark();
+        HemisphereLightsFoldIntoAConstantAndAGradient();
         DirectionalLightsRankFirstBrightestFirst();
         LocalLightsRankByIlluminanceAtTheCamera();
         TiesKeepSceneOrder();

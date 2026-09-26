@@ -11,6 +11,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstddef>
 #include <span>
 #include <vector>
@@ -179,8 +180,11 @@ struct alignas(16) CameraUniformData
     // specular_aa.h); w unused. Appended last.
     glm::vec4 specularAntiAliasing{0.0f};
     // x = pre-exposure, physical radiance to HDR target units (see PreExposureFromEv100);
-    // y = 1 / pre-exposure; zw unused. Appended last.
+    // y = 1 / pre-exposure; zw unused.
     glm::vec4 exposure{1.0f, 1.0f, 0.0f, 0.0f};
+    // The Hemisphere lights' direction-dependent half, one row per colour channel (see
+    // SceneLightSelection::ambientGradient); xyz used. Appended last.
+    glm::vec4 ambientGradient[3]{};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -192,8 +196,12 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, ambientGradient) ==
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16,
+    "ambientGradient must follow exposure with no padding");
 static_assert(
     offsetof(CameraUniformData, exposure) ==
         kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16,
@@ -304,6 +312,7 @@ class VulkanUniformBuffer
         const glm::vec3& cameraPosition,
         const glm::vec3& ambientLuminance,
         bool usesFallbackAmbient,
+        const std::array<glm::vec3, 3>& ambientGradient,
         const LightUpload& lights,
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,
