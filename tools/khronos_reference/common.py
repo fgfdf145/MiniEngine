@@ -42,11 +42,32 @@ MODELS_BY_FEATURE = {
     "volume": ["CompareVolume", "AttenuationTest", "DragonAttenuation"],
     "dispersion": ["CompareDispersion", "DispersionTest", "DragonDispersion"],
     "diffuse_transmission": ["DiffuseTransmissionTest", "DiffuseTransmissionTeacup"],
+    "volume_scatter": ["ScatteringSkull", "ScatteringSkullDraftKey"],
+    "instancing": ["SimpleInstancing"],
+}
+
+# Models made locally from a fetched one, not in glTF-Sample-Assets: name -> (source model, the edit to
+# its .gltf text). The viewer loads them from capture_server.py's /models/.
+# ScatteringSkull names its multi-scatter colour multiscatterColorFactor, which the Sample Viewer does
+# not read (it reads the draft's multiscatterColor), so the viewer shows it without scattering; this
+# copy uses the draft's name, so both renderers scatter.
+DERIVED_MODELS = {
+    "ScatteringSkullDraftKey": ("ScatteringSkull", lambda text: text.replace('"multiscatterColorFactor"', '"multiscatterColor"')),
 }
 
 
 def all_models():
     return [model for models in MODELS_BY_FEATURE.values() for model in models]
+
+
+def viewer_model_url(model):
+    """Where the Sample Viewer loads the model from: the sample assets, or the capture server for a
+    derived one."""
+    gltf = model_gltf(model)
+    name = gltf.name if gltf else f"{model}.gltf"
+    if model in DERIVED_MODELS:
+        return f"http://127.0.0.1:8765/models/{model}/{name}"
+    return f"{SAMPLE_ASSETS_RAW}/Models/{model}/glTF/{name}"
 
 
 def model_gltf(model):

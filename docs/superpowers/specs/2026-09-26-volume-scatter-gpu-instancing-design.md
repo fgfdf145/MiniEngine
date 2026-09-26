@@ -99,3 +99,23 @@ Read from `glTF-Sample-Renderer` at cc27919 (2026-09-22), the renderer the viewe
 
 `SimpleInstancing`, `ScatteringSkull` (spec key) and the original against the viewer; no change on the
 other compared scenes (they have no scatter materials or instancing).
+
+## Results (2026-09-26)
+
+Mean difference against the viewer, 0 to 255 (noise floor about 3):
+
+| Scene | Mean |
+|---|---|
+| SimpleInstancing | 2.1 (6.6 before the default material fix below) |
+| ScatteringSkullDraftKey | 2.4 |
+| ScatteringSkull (original key; the viewer does not scatter it and draws it black) | 28.9, expected |
+
+Every other compared scene is unchanged to 0.1 (all 40 recaptured with this build).
+
+- **The diffusion matters, and in the viewer's direction**: over the skull, the engine with the
+  gather is 1.21 from the viewer; with the gather forced to the centre sample (a temporary change,
+  not committed) it is 2.01.
+- **Found on the way: glTF's default material.** `SimpleInstancing` has no materials. The loader gave a
+  primitive without one `ModelMaterialData{}` (metallic 0, and no pbr settings), and, in a model with
+  materials, the model's first material instead. It now appends glTF's default (a material without
+  members: white, metallic 1, roughness 1) after the model's own materials when a primitive needs it.

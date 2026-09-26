@@ -4,7 +4,8 @@ captures it posts back to assets/khronos/captures/viewer/<name>.png. See README.
 
 The viewer's files are proxied from its release site and kept in memory: served from the same
 origin as /save, the page can post its captures, which a browser may refuse from the public site
-to a local address. Models and environments still come from raw.githubusercontent.com."""
+to a local address. Models and environments still come from raw.githubusercontent.com, apart from
+the locally derived models (common.DERIVED_MODELS), served from assets/khronos/models/ on /models/."""
 
 import mimetypes
 import re
@@ -14,7 +15,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from common import CAPTURES
+from common import CAPTURES, DERIVED_MODELS, MODELS
 
 PORT = 8765
 OUTPUT = CAPTURES / "viewer"
@@ -96,8 +97,31 @@ class Handler(BaseHTTPRequestHandler):
         self.cors()
         self.end_headers()
 
+    def serve_model(self, path):
+        """A derived model's file: /models/<model>/<file>."""
+        parts = path.split("/")[2:]
+        if len(parts) < 2 or parts[0] not in DERIVED_MODELS or ".." in parts:
+            self.send_response(404)
+            self.end_headers()
+            return
+        file = MODELS.joinpath(*parts)
+        if not file.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = file.read_bytes()
+        self.send_response(200)
+        self.cors()
+        self.send_header("Content-Type", mimetypes.guess_type(file.name)[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if path.startswith("/models/"):
+            self.serve_model(path)
+            return
         # /viewer-debug/ is the same viewer with its "Transmission Factor" debug output showing the
         # raw refracted sample instead (f_specular_transmission), for comparing the transmission
         # lookup itself.

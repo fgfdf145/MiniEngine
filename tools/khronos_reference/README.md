@@ -47,7 +47,9 @@ The viewer is not scriptable from a shell, so its captures are taken in a browse
 3. For each model, open
    `http://127.0.0.1:8765/viewer/?model=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/<Model>/glTF/<Model>.gltf`,
    wait for it to load, then run `await captureViewer("<Model>")` in the console. For a variant, click
-   its radio button under Variants first and capture as `<Model>-<variant>`.
+   its radio button under Variants first and capture as `<Model>-<variant>`. A derived model (below)
+   loads from the capture server instead:
+   `http://127.0.0.1:8765/viewer/?model=http://127.0.0.1:8765/models/<Model>/<Model>.gltf`.
 
 `http://127.0.0.1:8765/viewer-debug/` is the same viewer with one debug output rewritten: choose
 "Transmission Strength" under Debug Channels and it shows the raw refracted sample
@@ -78,6 +80,15 @@ resolution. `--jpeg` embeds half-size JPEG copies instead, for a page small enou
 - **Background**: the viewer shows the environment prefiltered at roughness 0.6; the reference view
   shows the engine's prefiltered map at the same roughness.
 - **Exposure and tone mapping**: the viewer's exposure 1.0 and Khronos PBR Neutral.
+- **Derived models** (`DERIVED_MODELS` in `common.py`) are local copies of a fetched model with its
+  `.gltf` edited, made by `fetch.py` and served to the viewer on `/models/`. `ScatteringSkullDraftKey`
+  is `ScatteringSkull` with its `multiscatterColorFactor` renamed to the draft extension's
+  `multiscatterColor`: the viewer reads only the draft's name, so it draws the original skull without
+  scattering (black, since its diffuse transmission passes through a dense volume), while the engine
+  reads both names. The copy's `.gltf` is named after it: two files of one name make the engine's
+  lookup of a scene's model by file name ambiguous.
+- **Instancing**: the viewer frames `SimpleInstancing` by its mesh at the node, leaving the instances
+  out, and so does the engine; the view is filled by the nearest cube's face.
 - **Output encoding**: the viewer writes `pow(x, 1/2.2)`, not the sRGB curve, and so lifts the darks (a
   display-linear 0.0004 is 7 of 255 there, 1 of 255 through sRGB). The reference view writes the same
   (`KhronosViewerOutputForSrgbTarget`). Before it, IORTestGrid's black spheres looked far darker in

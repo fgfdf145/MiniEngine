@@ -6,7 +6,9 @@ import json
 import sys
 import urllib.request
 
-from common import (ENVIRONMENT_FILE, ENVIRONMENT_URL, ENVIRONMENTS, MODELS, SAMPLE_ASSETS,
+import shutil
+
+from common import (DERIVED_MODELS, ENVIRONMENT_FILE, ENVIRONMENT_URL, ENVIRONMENTS, MODELS, SAMPLE_ASSETS,
                     SAMPLE_ASSETS_RAW, all_models)
 
 
@@ -22,7 +24,8 @@ def download(url, destination):
 
 
 def main():
-    wanted = set(sys.argv[1:]) or set(all_models())
+    requested = set(sys.argv[1:]) or set(all_models())
+    wanted = {DERIVED_MODELS[model][0] if model in DERIVED_MODELS else model for model in requested}
     tree_url = f"https://api.github.com/repos/{SAMPLE_ASSETS}/git/trees/main?recursive=1"
     with urllib.request.urlopen(tree_url) as response:
         tree = json.load(response)
@@ -44,7 +47,20 @@ def main():
         total += written
 
     total += download(ENVIRONMENT_URL, ENVIRONMENTS / ENVIRONMENT_FILE)
-    missing = [model for model in sorted(wanted) if not any((MODELS / model).glob("*.gltf"))]
+    # The derived models: the source's files, the .gltf edited and named after the model (the engine
+    # finds a scene's model by its file name when the stored path does not resolve, which two files of
+    # one name would make ambiguous). Rewritten every run.
+    for model in sorted(requested & set(DERIVED_MODELS)):
+        source, edit = DERIVED_MODELS[model]
+        target = MODELS / model
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(MODELS / source, target, ignore=shutil.ignore_patterns("*.miniengine_asset.yaml"))
+        for gltf in list(target.glob("*.gltf")):
+            (target / f"{model}.gltf").write_text(edit(gltf.read_text(encoding="utf-8")), encoding="utf-8")
+            if gltf.name != f"{model}.gltf":
+                gltf.unlink()
+        print(f"{model} derived from {source}")
+    missing = [model for model in sorted(wanted | requested) if not any((MODELS / model).glob("*.gltf"))]
     print(f"downloaded {total / 1e6:.1f} MB")
     if missing:
         sys.exit("no glTF flavour found for: " + ", ".join(missing))
