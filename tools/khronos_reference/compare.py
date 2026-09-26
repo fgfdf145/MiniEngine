@@ -79,14 +79,10 @@ def main():
 # Scenes whose difference is understood, with the reason, shown beside their numbers.
 KNOWN_DIFFERENCES = {
     "IORTestGrid": "The glass spheres magnify what is behind them about 3.7 times. The viewer magnifies its scene copy "
-                   "with nearest filtering (hard, stair-stepped edges), the engine bilinearly (soft edges), and the "
-                   "engine's geometric specular AA widens the small spheres' reflections. Not explained yet: the first "
-                   "column's spheres are darker in the engine.",
-    "DispersionTest": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
-    "DragonDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
-    "CompareDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
-    "DiffuseTransmissionTest": "KHR_materials_diffuse_transmission is phase 4c.",
-    "DiffuseTransmissionTeacup": "KHR_materials_diffuse_transmission is phase 4c.",
+                   "with nearest filtering (hard, stair-stepped edges), the engine bilinearly (soft edges); the "
+                   "engine's roughness-0 reflections are also softer. The first column's dark spheres match since the "
+                   "reference view encodes with the viewer's 2.2 gamma.",
+    "DispersionTest": "Most of the rest is the draped backdrop, whose folds differ from the viewer's.",
     "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
 }
 NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
