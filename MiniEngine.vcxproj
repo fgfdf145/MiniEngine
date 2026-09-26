@@ -132,11 +132,51 @@
     <ClCompile Include="app\**\*.c;app\**\*.cc;app\**\*.cpp;app\**\*.cxx;engine\**\*.c;engine\**\*.cc;engine\**\*.cpp;engine\**\*.cxx;tests\**\*.c;tests\**\*.cc;tests\**\*.cpp;tests\**\*.cxx" />
     <ClInclude Include="app\**\*.h;app\**\*.hh;app\**\*.hpp;app\**\*.hxx;app\**\*.inl;engine\**\*.h;engine\**\*.hh;engine\**\*.hpp;engine\**\*.hxx;engine\**\*.inl;tests\**\*.h;tests\**\*.hh;tests\**\*.hpp;tests\**\*.hxx;tests\**\*.inl" />
   </ItemGroup>
+  <!-- Listed one by one: Solution Explorer ignores the per-item Filter for wildcard items,
+       so globbed files here would all land flat at the project root. Mirror additions in the .filters file. -->
   <ItemGroup>
-    <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt" />
-    <None Include="README.md;docs\**\*.md" Exclude="docs\superpowers\**" />
-    <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md" />
-    <None Include="vcpkg.json;miniengine.settings.json" />
+    <None Include="CMakeLists.txt" />
+    <None Include="CMakePresets.json" />
+    <None Include="cmake\MiniEngineBuildOptions.cmake" />
+    <None Include="cmake\MiniEngineDependencies.cmake" />
+    <None Include="cmake\MiniEngineDocs.cmake" />
+    <None Include="cmake\MiniEngineEmbedFile.cmake" />
+    <None Include="cmake\MiniEngineFormat.cmake" />
+    <None Include="cmake\MiniEngineFormatSupport.cmake" />
+    <None Include="cmake\MiniEngineIde.cmake" />
+    <None Include="cmake\MiniEngineVcpkg.cmake" />
+    <None Include="cmake\vcpkg-overlay-ports\bc7enc-rdo\portfile.cmake" />
+    <None Include="cmake\vcpkg-overlay-ports\tinygltf\portfile.cmake" />
+    <None Include="app\CMakeLists.txt" />
+    <None Include="engine\application\CMakeLists.txt" />
+    <None Include="engine\asset\CMakeLists.txt" />
+    <None Include="engine\core\CMakeLists.txt" />
+    <None Include="engine\editor\CMakeLists.txt" />
+    <None Include="engine\logic\CMakeLists.txt" />
+    <None Include="engine\platform\CMakeLists.txt" />
+    <None Include="engine\renderer\CMakeLists.txt" />
+    <None Include="engine\scene\CMakeLists.txt" />
+    <None Include="tests\CMakeLists.txt" />
+    <None Include="miniengine.settings.json" />
+    <None Include="vcpkg.json" />
+    <None Include="docs\PROJECT_SUMMARY.md" />
+    <None Include="README.md" />
+    <None Include="docs\references\gt7-rendering-notes.md" />
+    <None Include="scripts\README.md" />
+    <None Include="scripts\bootstrap-deps.ps1" />
+    <None Include="scripts\build.ps1" />
+    <None Include="scripts\build-docs.ps1" />
+    <None Include="scripts\check-format.ps1" />
+    <None Include="scripts\format-code.ps1" />
+    <None Include="scripts\generate-sln.ps1" />
+    <None Include="scripts\install-render-scenes.ps1" />
+    <None Include="scripts\MiniEngineFormatCommand.ps1" />
+    <None Include="scripts\bootstrap-deps.sh" />
+    <None Include="scripts\build.sh" />
+    <None Include="scripts\build-docs.sh" />
+    <None Include="scripts\check-format.sh" />
+    <None Include="scripts\format-code.sh" />
+    <None Include="scripts\install-render-scenes.sh" />
     <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl" />
   </ItemGroup>
 
