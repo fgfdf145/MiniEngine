@@ -30,3 +30,6 @@
 CMakeLists.txt text eol=crlf
 .gitignore text eol=crlf
 .gitattributes text eol=crlf
+
+# Fonts embedded into the editor binary.
+*.ttf binary

@@ -4,6 +4,7 @@
 #include "../imgui/imgui_impl_vulkan.h"
 
 #include <engine/core/paths/engine_paths.h>
+#include <engine/editor/editor_icons.h>
 
 #include <imgui.h>
 #include <array>
@@ -251,6 +252,8 @@ void ConfigureImGuiFonts(ImGuiIO& io)
         const std::string cjkFontPathString = cjkFontPath.string();
         fonts->AddFontFromFileTTF(cjkFontPathString.c_str(), cjkConfig.SizePixels, &cjkConfig);
     }
+
+    MergeEditorIconFont(*fonts, fontConfig.SizePixels);
 
     io.FontDefault = defaultFont;
 }
