@@ -2,6 +2,7 @@
 
 #include <glm/geometric.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -27,57 +28,41 @@ glm::vec3 ChooseOrthogonalTangent(const glm::vec3& normal)
     return tangent;
 }
 
-void GenerateNormals(MeshData& meshData)
+// glTF: "When normals are not specified, client implementations MUST calculate flat normals." Each
+// triangle gets corners of its own, copies of the shared vertices, carrying its face normal; a
+// degenerate triangle points up.
+void GenerateFlatNormals(MeshData& meshData)
 {
-    for (Vertex& vertex : meshData.vertices)
-    {
-        vertex.normal[0] = 0.0f;
-        vertex.normal[1] = 0.0f;
-        vertex.normal[2] = 0.0f;
-    }
-
+    std::vector<Vertex> vertices;
+    vertices.reserve(meshData.indices.size());
     for (size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
     {
-        Vertex& vertex0 = meshData.vertices[meshData.indices[index + 0]];
-        Vertex& vertex1 = meshData.vertices[meshData.indices[index + 1]];
-        Vertex& vertex2 = meshData.vertices[meshData.indices[index + 2]];
+        std::array<Vertex, 3> corners = {
+            meshData.vertices[meshData.indices[index + 0]],
+            meshData.vertices[meshData.indices[index + 1]],
+            meshData.vertices[meshData.indices[index + 2]]};
 
-        const glm::vec3 position0(vertex0.position[0], vertex0.position[1], vertex0.position[2]);
-        const glm::vec3 position1(vertex1.position[0], vertex1.position[1], vertex1.position[2]);
-        const glm::vec3 position2(vertex2.position[0], vertex2.position[1], vertex2.position[2]);
+        const glm::vec3 position0(corners[0].position[0], corners[0].position[1], corners[0].position[2]);
+        const glm::vec3 position1(corners[1].position[0], corners[1].position[1], corners[1].position[2]);
+        const glm::vec3 position2(corners[2].position[0], corners[2].position[1], corners[2].position[2]);
+        const glm::vec3 faceNormal = glm::cross(position1 - position0, position2 - position0);
+        const glm::vec3 normal = glm::length(faceNormal) <= std::numeric_limits<float>::epsilon()
+                                     ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                     : glm::normalize(faceNormal);
 
-        const glm::vec3 edge01 = position1 - position0;
-        const glm::vec3 edge02 = position2 - position0;
-        const glm::vec3 faceNormal = glm::cross(edge01, edge02);
-        if (glm::length(faceNormal) <= std::numeric_limits<float>::epsilon())
+        for (Vertex& corner : corners)
         {
-            continue;
-        }
-
-        const glm::vec3 normalizedFaceNormal = glm::normalize(faceNormal);
-        for (Vertex* vertex : {&vertex0, &vertex1, &vertex2})
-        {
-            vertex->normal[0] += normalizedFaceNormal.x;
-            vertex->normal[1] += normalizedFaceNormal.y;
-            vertex->normal[2] += normalizedFaceNormal.z;
+            corner.normal[0] = normal.x;
+            corner.normal[1] = normal.y;
+            corner.normal[2] = normal.z;
+            vertices.push_back(corner);
         }
     }
 
-    for (Vertex& vertex : meshData.vertices)
+    meshData.vertices = std::move(vertices);
+    for (size_t index = 0; index < meshData.indices.size(); ++index)
     {
-        glm::vec3 normal(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
-        if (glm::length(normal) <= std::numeric_limits<float>::epsilon())
-        {
-            normal = glm::vec3(0.0f, 1.0f, 0.0f);
-        }
-        else
-        {
-            normal = glm::normalize(normal);
-        }
-
-        vertex.normal[0] = normal.x;
-        vertex.normal[1] = normal.y;
-        vertex.normal[2] = normal.z;
+        meshData.indices[index] = static_cast<uint32_t>(index);
     }
 }
 
@@ -189,7 +174,7 @@ void ModelPostProcess::FinalizeSubmeshData(ModelSubmeshData& submeshData)
 
     if (!submeshData.hasNormals)
     {
-        GenerateNormals(submeshData.mesh);
+        GenerateFlatNormals(submeshData.mesh);
         submeshData.hasNormals = true;
     }
 
