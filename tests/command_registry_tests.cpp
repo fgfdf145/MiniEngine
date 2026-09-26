@@ -154,7 +154,33 @@ void TestEditorCommands()
     {
         ++resets;
     };
-    RegisterEditorCommands(registry, state, window);
+    int opens = 0;
+    int saves = 0;
+    int deletes = 0;
+    bool hasSelection = false;
+    std::vector<LightType> createdLights;
+    EditorSceneCommands scene;
+    scene.openScene = [&opens]
+    {
+        ++opens;
+    };
+    scene.saveScene = [&saves]
+    {
+        ++saves;
+    };
+    scene.deleteSelection = [&deletes]
+    {
+        ++deletes;
+    };
+    scene.hasSelection = [&hasSelection]
+    {
+        return hasSelection;
+    };
+    scene.createLight = [&createdLights](LightType type)
+    {
+        createdLights.push_back(type);
+    };
+    RegisterEditorCommands(registry, state, window, scene);
 
     const CommandMenuNode& root = registry.GetMenuRoot();
     const std::vector<std::string> expectedMenus = {"File", "Edit", "Scene", "View", "Render", "Tools", "Window", "Help"};
@@ -209,6 +235,18 @@ void TestEditorCommands()
     registry.Execute("scene.play");
     registry.Execute("scene.pause");
     Require(IsCommandChecked(*registry.Find("scene.pause")) && IsCommandEnabled(*registry.Find("scene.step")), "paused: pause is on and step runs");
+
+    // The scene commands reach the functions they were given; the others do nothing.
+    registry.Execute("file.open_scene");
+    registry.Execute("file.save_scene");
+    Require(opens == 1 && saves == 1, "open and save reach the controller");
+    Require(registry.Execute("file.save_scene_as"), "a command with no function still runs, as a no-op");
+    Require(!IsCommandEnabled(*registry.Find("edit.delete")), "delete needs a selection");
+    hasSelection = true;
+    Require(registry.Execute("edit.delete") && deletes == 1, "delete runs with a selection");
+    registry.Execute("scene.create_light.spot");
+    registry.Execute("scene.create_light.area");
+    Require(createdLights == std::vector<LightType>{LightType::Spot, LightType::Area}, "each create light command names its type");
 
     // The Window menu is the panels it was given.
     const CommandMenuNode* windowMenu = FindMenu(root, "Window");

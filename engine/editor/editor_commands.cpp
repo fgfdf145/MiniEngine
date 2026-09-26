@@ -69,19 +69,25 @@ void Todo()
 {
 }
 
-void RegisterFileCommands(CommandRegistry& registry)
+// The command's function, or a no-op while it has none.
+std::function<void()> OrTodo(const std::function<void()>& execute)
 {
-    Add(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_FA_FILE, ImGuiMod_Ctrl | ImGuiKey_N, Todo);
-    Add(registry, "file.open_scene", "Open Scene", "File/Open Scene...", ICON_FA_FOLDER_OPEN, ImGuiMod_Ctrl | ImGuiKey_O, Todo);
-    Add(registry, "file.save_scene", "Save Scene", "File/Save Scene", ICON_FA_FLOPPY_DISK, ImGuiMod_Ctrl | ImGuiKey_S, Todo);
-    Add(registry, "file.save_scene_as", "Save Scene As", "File/Save Scene As...", "", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, Todo);
-    registry.AddSeparator("File");
-    Add(registry, "file.import_model", "Import Model", "File/Import Model...", ICON_FA_FILE_IMPORT, ImGuiMod_Ctrl | ImGuiKey_I, Todo);
-    registry.AddSeparator("File");
-    Add(registry, "file.exit", "Exit", "File/Exit", ICON_FA_RIGHT_FROM_BRACKET, 0, Todo);
+    return execute ? execute : std::function<void()>(Todo);
 }
 
-void RegisterEditCommands(CommandRegistry& registry)
+void RegisterFileCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
+{
+    Add(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_FA_FILE, ImGuiMod_Ctrl | ImGuiKey_N, OrTodo(scene.newScene));
+    Add(registry, "file.open_scene", "Open Scene", "File/Open Scene...", ICON_FA_FOLDER_OPEN, ImGuiMod_Ctrl | ImGuiKey_O, OrTodo(scene.openScene));
+    Add(registry, "file.save_scene", "Save Scene", "File/Save Scene", ICON_FA_FLOPPY_DISK, ImGuiMod_Ctrl | ImGuiKey_S, OrTodo(scene.saveScene));
+    Add(registry, "file.save_scene_as", "Save Scene As", "File/Save Scene As...", "", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, OrTodo(scene.saveSceneAs));
+    registry.AddSeparator("File");
+    Add(registry, "file.import_model", "Import Model", "File/Import Model...", ICON_FA_FILE_IMPORT, ImGuiMod_Ctrl | ImGuiKey_I, OrTodo(scene.importModel));
+    registry.AddSeparator("File");
+    Add(registry, "file.exit", "Exit", "File/Exit", ICON_FA_RIGHT_FROM_BRACKET, 0, OrTodo(scene.exit));
+}
+
+void RegisterEditCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
 {
     Add(registry, "edit.undo", "Undo", "Edit/Undo", ICON_FA_ROTATE_LEFT, ImGuiMod_Ctrl | ImGuiKey_Z, Todo);
     Add(registry, "edit.redo", "Redo", "Edit/Redo", ICON_FA_ROTATE_RIGHT, ImGuiMod_Ctrl | ImGuiKey_Y, Todo);
@@ -91,18 +97,29 @@ void RegisterEditCommands(CommandRegistry& registry)
     Add(registry, "edit.paste", "Paste", "Edit/Paste", ICON_FA_PASTE, ImGuiMod_Ctrl | ImGuiKey_V, Todo);
     Add(registry, "edit.duplicate", "Duplicate", "Edit/Duplicate", ICON_FA_CLONE, ImGuiMod_Ctrl | ImGuiKey_D, Todo);
     registry.AddSeparator("Edit");
-    Add(registry, "edit.delete", "Delete", "Edit/Delete", ICON_FA_TRASH_CAN, ImGuiKey_Delete, Todo);
+    Add(registry, "edit.delete", "Delete", "Edit/Delete", ICON_FA_TRASH_CAN, ImGuiKey_Delete, OrTodo(scene.deleteSelection), {}, scene.hasSelection);
     registry.AddSeparator("Edit");
     Add(registry, "edit.preferences", "Preferences", "Edit/Preferences...", ICON_FA_GEAR, ImGuiMod_Ctrl | ImGuiKey_Comma, Todo);
 }
 
-void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state)
+void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
-    Add(registry, "scene.create_entity", "Create Empty Entity", "Scene/Create Empty Entity", ICON_FA_CUBE, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_N, Todo);
-    Add(registry, "scene.create_light.directional", "Create Directional Light", "Scene/Create Light/Directional", ICON_FA_SUN, 0, Todo);
-    Add(registry, "scene.create_light.point", "Create Point Light", "Scene/Create Light/Point", ICON_FA_LIGHTBULB, 0, Todo);
-    Add(registry, "scene.create_light.spot", "Create Spot Light", "Scene/Create Light/Spot", "", 0, Todo);
-    Add(registry, "scene.create_light.area", "Create Area Light", "Scene/Create Light/Area", "", 0, Todo);
+    Add(registry, "scene.create_entity", "Create Empty Entity", "Scene/Create Empty Entity", ICON_FA_CUBE, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_N, OrTodo(scene.createEntity));
+    const auto createLight = [&scene](LightType type) -> std::function<void()>
+    {
+        if (!scene.createLight)
+        {
+            return Todo;
+        }
+        return [createLight = scene.createLight, type]
+        {
+            createLight(type);
+        };
+    };
+    Add(registry, "scene.create_light.directional", "Create Directional Light", "Scene/Create Light/Directional", ICON_FA_SUN, 0, createLight(LightType::Directional));
+    Add(registry, "scene.create_light.point", "Create Point Light", "Scene/Create Light/Point", ICON_FA_LIGHTBULB, 0, createLight(LightType::Point));
+    Add(registry, "scene.create_light.spot", "Create Spot Light", "Scene/Create Light/Spot", "", 0, createLight(LightType::Spot));
+    Add(registry, "scene.create_light.area", "Create Area Light", "Scene/Create Light/Area", "", 0, createLight(LightType::Area));
     registry.AddSeparator("Scene");
 
     // Play controls. Play stops again while playing; Step advances one frame while paused.
@@ -141,10 +158,11 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state)
     registry.AddSeparator("Scene");
     Add(registry, "scene.settings", "Scene Settings", "Scene/Scene Settings...", ICON_FA_SLIDERS, 0, Todo);
     registry.AddSeparator("Scene");
-    Add(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_FA_BROOM, 0, Todo);
+    Add(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_FA_BROOM, 0, OrTodo(scene.clearScene));
 
-    // Toolbar only: the viewport's R key already toggles translate and rotate.
-    // TODO: drive the gizmo operation (IEditorWorld::GetGizmoSettings) from transformTool.
+    // Toolbar only: the viewport's R key already toggles the tools. The editor UI drives the gizmo
+    // from transformTool: Move is the combined translate and rotate gizmo, Scale the scale one.
+    // TODO: a rotate-only gizmo (scenes store only combined or scale).
     AddOption(registry, "tool.move", "Move", "", ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, 0, state.transformTool, TransformTool::Move);
     AddOption(registry, "tool.rotate", "Rotate", "", ICON_FA_ROTATE, 0, state.transformTool, TransformTool::Rotate);
     AddOption(registry, "tool.scale", "Scale", "", ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, 0, state.transformTool, TransformTool::Scale);
@@ -152,7 +170,8 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state)
 
 void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state)
 {
-    // TODO: every View command should reach the renderer's debug settings.
+    // The editor UI shows the Lit, Albedo and Normal views through the G-buffer debug view.
+    // TODO: every other View command should reach the renderer's debug settings.
     Add(
         registry, "view.wireframe", "Wireframe", "View/Wireframe", ICON_FA_DRAW_POLYGON, ImGuiMod_Alt | ImGuiKey_W,
         [&state]
@@ -191,7 +210,8 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state)
 
 void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state)
 {
-    // TODO: every Render command should reach the renderer's pipeline settings.
+    // The editor UI turns TAA on and off.
+    // TODO: every other Render command should reach the renderer's pipeline settings.
     const auto rayTracingSupported = [&state]
     {
         return state.rayTracingSupported;
@@ -224,7 +244,7 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     Add(registry, "render.reload_shaders", "Reload Shaders", "Render/Reload Shaders", ICON_FA_ARROWS_ROTATE, ImGuiMod_Ctrl | ImGuiKey_R, Todo);
 }
 
-void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state)
+void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
     Add(
         registry, "tools.command_palette", "Command Palette", "Tools/Command Palette...", ICON_FA_TERMINAL, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P,
@@ -233,7 +253,7 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state)
             state.commandPaletteRequested = true;
         });
     registry.AddSeparator("Tools");
-    Add(registry, "tools.capture_viewport", "Capture Viewport", "Tools/Capture Viewport", ICON_FA_CAMERA, ImGuiKey_F12, Todo);
+    Add(registry, "tools.capture_viewport", "Capture Viewport", "Tools/Capture Viewport", ICON_FA_CAMERA, ImGuiKey_F12, OrTodo(scene.captureViewport));
     Add(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_FA_FILE_LINES, 0, Todo);
     registry.AddSeparator("Tools");
     Add(registry, "tools.clear_shader_cache", "Clear Shader Cache", "Tools/Clear Shader Cache", ICON_FA_TRASH_CAN, 0, Todo);
@@ -283,14 +303,18 @@ void RegisterHelpCommands(CommandRegistry& registry)
 }
 }
 
-void RegisterEditorCommands(CommandRegistry& registry, EditorCommandState& state, const EditorWindowCommands& window)
+void RegisterEditorCommands(
+    CommandRegistry& registry,
+    EditorCommandState& state,
+    const EditorWindowCommands& window,
+    const EditorSceneCommands& scene)
 {
-    RegisterFileCommands(registry);
-    RegisterEditCommands(registry);
-    RegisterSceneCommands(registry, state);
+    RegisterFileCommands(registry, scene);
+    RegisterEditCommands(registry, scene);
+    RegisterSceneCommands(registry, state, scene);
     RegisterViewCommands(registry, state);
     RegisterRenderCommands(registry, state);
-    RegisterToolsCommands(registry, state);
+    RegisterToolsCommands(registry, state, scene);
     RegisterWindowCommands(registry, window);
     RegisterHelpCommands(registry);
 }

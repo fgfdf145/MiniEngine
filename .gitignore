@@ -62,3 +62,6 @@ assets/**/*.ktx2
 
 # glTF 内嵌贴图解码缓存：由 gltf_model_loader 写入的派生数据，不进版本控制。
 /.cache/
+
+# Viewport captures (Tools > Capture Viewport)
+/captures/

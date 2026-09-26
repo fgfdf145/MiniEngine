@@ -101,6 +101,51 @@ void StartupSceneHasAtmosphereAndSun()
     Require(directionalLights == 1, "the startup scene has one sun");
     Require(sunIntensity == kDefaultSunIlluminanceLux, "the sun has the default illuminance");
 }
+
+int CountLights(const IEditorWorld& world, LightType type)
+{
+    int count = 0;
+    world.ForEachLight(
+        [&](entt::entity, const TagComponent&, const TransformComponent&, const LightComponent& light)
+        {
+            count += light.type == type ? 1 : 0;
+        });
+    return count;
+}
+
+void NewSceneKeepsOnlySunAndSky()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->CreateTwoCubeTestScene();
+    world->SetSceneFilePath("scenes/test.yaml");
+    world->GetGizmoSettings().operation = ImGuizmo::SCALE;
+    SceneEnvironment hdri{};
+    hdri.mode = EnvironmentMode::Hdri;
+    world->SetEnvironment(hdri);
+
+    world->CreateEmptyScene();
+    Require(world->Registry().view<const ModelComponent>().size() == 0u, "a new scene has no models");
+    Require(CountLights(*world, LightType::Directional) == 1, "a new scene has the startup sun");
+    Require(world->GetEnvironment().mode == EnvironmentMode::Atmosphere, "a new scene uses the atmosphere");
+    Require(!world->HasSelection(), "nothing is selected in a new scene");
+    Require(world->GetGizmoSettings().operation == ImGuizmo::SCALE, "a new scene keeps the gizmo settings");
+}
+
+void ClearKeepsEnvironmentAndFile()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->CreateTwoCubeTestScene();
+    world->SetSceneFilePath("scenes/test.yaml");
+    SceneEnvironment hdri{};
+    hdri.mode = EnvironmentMode::Hdri;
+    world->SetEnvironment(hdri);
+
+    world->Clear();
+    Require(!world->HasEntities(), "clearing removes every entity");
+    Require(!world->HasSelection(), "and the selection");
+    Require(world->GetEnvironment() == hdri, "clearing keeps the environment");
+    Require(world->GetSceneFilePath() == "scenes/test.yaml", "clearing keeps the scene file");
+}
 }
 
 int main()
@@ -110,6 +155,8 @@ int main()
         RoundTripsThroughYaml();
         MissingNodeLoadsAsNone();
         StartupSceneHasAtmosphereAndSun();
+        NewSceneKeepsOnlySunAndSky();
+        ClearKeepsEnvironmentAndFile();
     }
     catch (const std::exception& error)
     {

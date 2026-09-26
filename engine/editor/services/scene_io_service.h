@@ -19,5 +19,13 @@ void StartAsyncSceneLoad(RendererSharedState& state, const std::string& path);
 bool PumpAsyncSceneLoad(RendererSharedState& state);
 
 void SaveScene(RendererSharedState& state, const std::string& path);
+
+// File > New Scene: the startup scene's sun and atmosphere and nothing else, not yet saved
+// anywhere. Throws while a model or scene is loading.
+void NewScene(RendererSharedState& state);
+
+// Scene > Clear Scene: removes every entity; the environment and the scene's file are kept.
+// Throws while a model or scene is loading.
+void ClearScene(RendererSharedState& state);
 }
 }
