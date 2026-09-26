@@ -5,7 +5,7 @@
 Light surfaces with the sky. When the scene's environment is the atmosphere or an HDRI, the
 ambient term becomes the sky's irradiance for the surface normal, as L2 spherical harmonics,
 instead of a constant luminance, still attenuated by material occlusion and VBAO. Phase 3 of the
-IBL roadmap in `docs/superpowers/specs/2026-09-23-float-textures-design.md`; phase 4 replaces the
+IBL roadmap in `docs/design/2026-09-23-float-textures-design.md`; phase 4 replaces the
 interim specular term.
 
 ## Current State

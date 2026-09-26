@@ -14,7 +14,7 @@ antialiasing are later built on, plus the one editor capability that falls
 out of a G-buffer for free: pixel-accurate entity picking.
 
 This design supersedes sub-project P4 of
-`2026-09-04-raytracing-hybrid-pipeline-design.md`. P4 specified an HDR
+the ray tracing hybrid pipeline plan (2026-09-04, since dropped). P4 specified an HDR
 intermediate target, `SAMPLED_BIT` on depth, a multi-pass and barrier
 abstraction extracted from `RecordSceneLayer`, and tone mapping moved out of
 `triangle.frag`. All four are delivered here as phase one. P0 through P3 and

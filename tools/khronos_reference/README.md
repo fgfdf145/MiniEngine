@@ -2,7 +2,7 @@
 
 Renders Khronos' `glTF-Sample-Assets` test models in MiniEngine and in the Khronos glTF Sample Viewer
 under the same conditions and puts them side by side, so material work is accepted against the
-Khronos implementation. Design: `docs/superpowers/specs/2026-09-26-khronos-reference-comparison-design.md`.
+Khronos implementation. Design: `docs/design/2026-09-26-khronos-reference-comparison-design.md`.
 
 Everything it writes goes under `assets/` (not version controlled): models and the environment in
 `assets/khronos/`, scenes in `assets/scenes/khronos/`, captures and the comparison page in

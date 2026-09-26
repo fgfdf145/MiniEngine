@@ -9,7 +9,7 @@ transmittance and fogs distant geometry with aerial perspective, all in the engi
 units (lux, cd/m^2).
 
 This is phase 2 of the image-based lighting roadmap in
-`docs/superpowers/specs/2026-09-23-float-textures-design.md`. Phases 3 and 4 (diffuse and specular
+`docs/design/2026-09-23-float-textures-design.md`. Phases 3 and 4 (diffuse and specular
 IBL) will capture whichever sky is active into a cubemap; this phase draws the sky directly from
 its source and captures nothing.
 
