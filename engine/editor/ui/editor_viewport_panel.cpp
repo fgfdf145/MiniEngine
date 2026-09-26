@@ -386,7 +386,8 @@ void RefreshViewportMatrices(
 void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const ViewportOverlayRect& viewportRect)
 {
     ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard || !scene.HasSelection() || !viewportRect.focused)
+    // Ctrl+R and the like are editor commands (ProcessCommandShortcuts), not these keys.
+    if (io.WantCaptureKeyboard || io.KeyCtrl || io.KeyAlt || io.KeySuper || !scene.HasSelection() || !viewportRect.focused)
     {
         return;
     }

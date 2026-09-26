@@ -1,17 +1,48 @@
 ﻿#include "editor_ui.h"
+#include "ui/editor_menu_toolbar.h"
 #include "ui/editor_ui_internal.h"
 
 #include <engine/logic/editor_world.h>
 #include <engine/platform/ui/ui_scale.h>
+#include <IconsFontAwesome6.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 
 #include <cmath>
 #include <filesystem>
 #include <system_error>
+#include <utility>
 
 namespace me
 {
+
+EditorUiController::EditorUiController()
+{
+    RegisterCommands();
+}
+
+void EditorUiController::RegisterCommands()
+{
+    // The Window menu lists these, in this order. A new panel needs a line here and nothing else.
+    m_panels = {
+        {"scene", "Scene", ICON_FA_SITEMAP, &m_showSceneWindow},
+        {"viewport", "Viewport", ICON_FA_DISPLAY, &m_showViewportWindow},
+        {"camera", "Camera", ICON_FA_VIDEO, &m_showCameraWindow},
+        {"graphics_debug", "Graphics Debug", ICON_FA_BUG, &m_showGraphicsDebugWindow},
+        {"assets", "Assets", ICON_FA_FOLDER_TREE, &m_showAssetManagerWindow},
+        {"input_monitor", "Input Monitor", ICON_FA_KEYBOARD, &m_showInputMonitorWindow},
+        {"theme", "Theme", ICON_FA_PALETTE, &m_showThemeWindow},
+    };
+
+    EditorWindowCommands window;
+    window.panels = m_panels;
+    window.resetLayout = [this]
+    {
+        m_resetDockLayoutRequested = true;
+    };
+    RegisterEditorCommands(m_commands, m_commandState, window);
+    m_toolbarLayout = BuildEditorToolbarLayout();
+}
 
 void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& settings)
 {
@@ -80,18 +111,14 @@ EditorUiFrameResult EditorUiController::Draw(
         }
     }
 
-    const float toolbarHeight = 44.0f * m_effectiveUiScale;
-    DrawDockspaceBelowToolbar(toolbarHeight);
-
-    DrawTopToolbar(
-        m_showCameraWindow,
-        m_showAssetManagerWindow,
-        m_showInputMonitorWindow,
-        m_showSceneWindow,
-        m_showThemeWindow,
-        m_showViewportWindow,
-        m_showGraphicsDebugWindow,
-        m_effectiveUiScale);
+    // Shortcuts first, so what they change shows in this frame's menus and panels. The menu bar
+    // and the toolbar come before the dock space, which fills the area they leave.
+    ProcessCommandShortcuts(m_commands);
+    DrawMainMenu(m_commands);
+    DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
+    DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
+    // TODO: draw the command palette while m_commandState.commandPaletteRequested is set.
+    m_commandState.commandPaletteRequested = false;
 
     if (m_showCameraWindow)
     {

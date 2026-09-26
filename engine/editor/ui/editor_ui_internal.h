@@ -52,15 +52,8 @@ bool DragIntInRange(const char* label, int* value, int min, int max);
 // this every frame from the same place, not only when the button was pressed.
 std::optional<std::string> PickFilePath(FileDialogType type, bool requested);
 
-// --- editor_dock_toolbar.cpp ----------------------------------------------
-void DrawTopToolbar(
-    bool& showCameraWindow,
-    bool& showAssetManagerWindow,
-    bool& showInputMonitorWindow,
-    bool& showSceneWindow,
-    bool& showThemeWindow,
-    bool& showViewportWindow,
-    bool& showGraphicsDebugWindow,
-    float effectiveUiScale);
-ImGuiID DrawDockspaceBelowToolbar(float toolbarHeight);
+// --- editor_dockspace.cpp -------------------------------------------------
+// The dock space over the main viewport's work area, with the default layout when it is empty.
+// `resetLayout` puts every window back where the default layout has it.
+ImGuiID DrawEditorDockspace(bool resetLayout);
 }

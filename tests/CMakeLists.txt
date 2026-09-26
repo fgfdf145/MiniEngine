@@ -1081,6 +1081,34 @@ add_test(
 
 set_target_properties(miniengine_asset_paths_tests PROPERTIES FOLDER "Tests")
 
+# The editor's command registry, and the menus and toolbar built from it. Links engine_editor for
+# the commands; nothing is drawn.
+add_executable(miniengine_command_registry_tests
+    command_registry_tests.cpp
+)
+miniengine_group_target_sources(miniengine_command_registry_tests)
+
+target_link_libraries(miniengine_command_registry_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_command_registry_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_command_registry_tests>
+            $<TARGET_FILE_DIR:miniengine_command_registry_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.command_registry
+    COMMAND miniengine_command_registry_tests
+)
+
+set_target_properties(miniengine_command_registry_tests PROPERTIES FOLDER "Tests")
+
 # Drives ModelImportService's import, paste and delete against a scratch asset tree. Those live in
 # engine_editor, so this target links it; none of the renderer code runs.
 add_executable(miniengine_asset_file_operations_tests

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "command_registry.h"
+#include "editor_commands.h"
 #include "engine_settings.h"
 
 #include <engine/renderer/camera.h>
@@ -93,6 +95,11 @@ struct EditorUiFrameResult
 class EditorUiController
 {
   public:
+    EditorUiController();
+    // The registered commands hold pointers into the controller, so it stays where it was made.
+    EditorUiController(const EditorUiController&) = delete;
+    EditorUiController& operator=(const EditorUiController&) = delete;
+
     void BeginFrame(SDL_Window* window, const EngineSettings& settings);
     void WriteEngineSettings(EngineSettings& settings) const;
     // Window DPI scale times the user's UI scale multiplier; the ImGui style is scaled by it.
@@ -132,6 +139,7 @@ class EditorUiController
     void QueueDroppedFile(std::string path);
 
   private:
+    void RegisterCommands();
     void ApplyEngineSettings(const EngineSettings& settings);
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
@@ -228,5 +236,12 @@ class EditorUiController
     bool m_inputMonitorAutoScroll = true;
     std::vector<std::string> m_inputMonitorMessages;
     uint64_t m_inputMonitorMessagesRevision = 0;
+
+    // Main menu, toolbar and shortcuts, all built from m_commands.
+    CommandRegistry m_commands;
+    EditorCommandState m_commandState;
+    std::vector<EditorPanel> m_panels; // what the Window menu shows and hides
+    ToolbarLayout m_toolbarLayout;
+    bool m_resetDockLayoutRequested = false;
 };
 }
