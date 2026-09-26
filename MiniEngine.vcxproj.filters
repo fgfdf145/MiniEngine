@@ -21,6 +21,63 @@
     <Filter Include="Configuration">
       <UniqueIdentifier>{91924350-A632-4707-B944-65F21F92046F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="CMake\Modules">
+      <UniqueIdentifier>{135C2B13-7E26-423F-B5A1-E0952EDF99A0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Modules\vcpkg-overlay-ports">
+      <UniqueIdentifier>{D8BF6B5D-AFDA-4098-A607-A5F5949344EC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Modules\vcpkg-overlay-ports\bc7enc-rdo">
+      <UniqueIdentifier>{75E18CB1-8B8E-4F94-85E4-F2FE30B1797A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Modules\vcpkg-overlay-ports\tinygltf">
+      <UniqueIdentifier>{BC603B3C-193D-4BD4-9A18-EF2EB42F3675}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets">
+      <UniqueIdentifier>{CBED3E7E-4929-4713-82E6-7AA500556AF9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\app">
+      <UniqueIdentifier>{13E72B1B-0A7B-4DA2-8984-36F01DD4F164}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine">
+      <UniqueIdentifier>{977F80D3-99B8-47C7-8BFD-CE9F81BFB917}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\application">
+      <UniqueIdentifier>{7FE3D43F-D4E8-4BFC-9D4A-C432F4B54BFE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\asset">
+      <UniqueIdentifier>{9A3B2389-1A1E-4990-868C-C66F3CB545CE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\core">
+      <UniqueIdentifier>{3845EF53-477A-46A8-B4CB-A55D15D447F5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\editor">
+      <UniqueIdentifier>{A81906C5-4E45-4688-8518-62CB41876C5E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\logic">
+      <UniqueIdentifier>{D0B27175-DC5D-4C3D-BCAB-5665DD828BFB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\platform">
+      <UniqueIdentifier>{268C745E-12BD-4931-9387-87D135419FF3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\renderer">
+      <UniqueIdentifier>{4E8D83EF-2BD8-43BC-A994-027D4651842D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\engine\scene">
+      <UniqueIdentifier>{2B4ACE28-AC91-4C86-B999-CD4C783AF366}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="CMake\Targets\tests">
+      <UniqueIdentifier>{7CE0928F-1C80-4D25-BAC9-95250794E45C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Documentation\references">
+      <UniqueIdentifier>{BB8459F3-0561-4F3C-A51E-1B068B51E39E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts\PowerShell">
+      <UniqueIdentifier>{27CBE73E-2E89-4ED5-AB81-79E27B317459}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts\Shell">
+      <UniqueIdentifier>{1779F5C8-7947-4E69-BBD3-8800FE5A9552}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Shaders">
       <UniqueIdentifier>{911BFDA5-F958-43A4-AEBA-CC7B60A368F2}</UniqueIdentifier>
       <Extensions>vert;frag;comp;glsl</Extensions>
@@ -35,17 +92,131 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt">
+    <None Include="CMakeLists.txt">
       <Filter>CMake</Filter>
     </None>
-    <None Include="README.md;docs\**\*.md" Exclude="docs\superpowers\**">
+    <None Include="CMakePresets.json">
+      <Filter>CMake</Filter>
+    </None>
+    <None Include="cmake\MiniEngineBuildOptions.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineDependencies.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineDocs.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineEmbedFile.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineFormat.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineFormatSupport.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineIde.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\MiniEngineVcpkg.cmake">
+      <Filter>CMake\Modules</Filter>
+    </None>
+    <None Include="cmake\vcpkg-overlay-ports\bc7enc-rdo\portfile.cmake">
+      <Filter>CMake\Modules\vcpkg-overlay-ports\bc7enc-rdo</Filter>
+    </None>
+    <None Include="cmake\vcpkg-overlay-ports\tinygltf\portfile.cmake">
+      <Filter>CMake\Modules\vcpkg-overlay-ports\tinygltf</Filter>
+    </None>
+    <None Include="app\CMakeLists.txt">
+      <Filter>CMake\Targets\app</Filter>
+    </None>
+    <None Include="engine\application\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\application</Filter>
+    </None>
+    <None Include="engine\asset\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\asset</Filter>
+    </None>
+    <None Include="engine\core\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\core</Filter>
+    </None>
+    <None Include="engine\editor\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\editor</Filter>
+    </None>
+    <None Include="engine\logic\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\logic</Filter>
+    </None>
+    <None Include="engine\platform\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\platform</Filter>
+    </None>
+    <None Include="engine\renderer\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\renderer</Filter>
+    </None>
+    <None Include="engine\scene\CMakeLists.txt">
+      <Filter>CMake\Targets\engine\scene</Filter>
+    </None>
+    <None Include="tests\CMakeLists.txt">
+      <Filter>CMake\Targets\tests</Filter>
+    </None>
+    <None Include="miniengine.settings.json">
+      <Filter>Configuration</Filter>
+    </None>
+    <None Include="vcpkg.json">
+      <Filter>Configuration</Filter>
+    </None>
+    <None Include="docs\PROJECT_SUMMARY.md">
       <Filter>Documentation</Filter>
     </None>
-    <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md">
+    <None Include="README.md">
+      <Filter>Documentation</Filter>
+    </None>
+    <None Include="docs\references\gt7-rendering-notes.md">
+      <Filter>Documentation\references</Filter>
+    </None>
+    <None Include="scripts\README.md">
       <Filter>Scripts</Filter>
     </None>
-    <None Include="vcpkg.json;miniengine.settings.json">
-      <Filter>Configuration</Filter>
+    <None Include="scripts\bootstrap-deps.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\build.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\build-docs.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\check-format.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\format-code.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\generate-sln.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\install-render-scenes.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\MiniEngineFormatCommand.ps1">
+      <Filter>Scripts\PowerShell</Filter>
+    </None>
+    <None Include="scripts\bootstrap-deps.sh">
+      <Filter>Scripts\Shell</Filter>
+    </None>
+    <None Include="scripts\build.sh">
+      <Filter>Scripts\Shell</Filter>
+    </None>
+    <None Include="scripts\build-docs.sh">
+      <Filter>Scripts\Shell</Filter>
+    </None>
+    <None Include="scripts\check-format.sh">
+      <Filter>Scripts\Shell</Filter>
+    </None>
+    <None Include="scripts\format-code.sh">
+      <Filter>Scripts\Shell</Filter>
+    </None>
+    <None Include="scripts\install-render-scenes.sh">
+      <Filter>Scripts\Shell</Filter>
     </None>
     <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl">
       <Filter>Shaders</Filter>
