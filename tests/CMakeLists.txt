@@ -1304,6 +1304,32 @@ endif()
 
 set_target_properties(miniengine_transmission_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_volume_scatter_tests
+    volume_scatter_tests.cpp
+)
+miniengine_group_target_sources(miniengine_volume_scatter_tests)
+
+target_link_libraries(miniengine_volume_scatter_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.volume_scatter
+    COMMAND miniengine_volume_scatter_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_volume_scatter_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_volume_scatter_tests>
+            $<TARGET_FILE_DIR:miniengine_volume_scatter_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_volume_scatter_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_viewport_extent_tests
     viewport_extent_tests.cpp
 )

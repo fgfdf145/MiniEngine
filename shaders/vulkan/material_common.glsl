@@ -2,7 +2,7 @@
 #define MATERIAL_COMMON_GLSL
 
 // One draw's material: GpuMaterialData in engine/renderer/material.h, member for member (std430,
-// 14 x vec4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
+// 15 x vec4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
 struct MaterialData
 {
     vec4 baseColorFactor;
@@ -18,8 +18,9 @@ struct MaterialData
     vec4 iridescenceFactors;  // x factor, y film IOR, z thickness minimum, w maximum (nm); forward pass only
     vec4 transmissionFactors; // x transmission, y thickness, z attenuation distance, w dispersion; with SHADING_FLAG_TRANSMISSION
     vec4 attenuationColor;    // rgb attenuation colour, a the refraction IOR
-    vec4 volumeScale;         // xyz the glTF node's scale, which the volume's thickness follows
+    vec4 volumeScale;         // xyz the glTF node's scale, which the volume's thickness follows; w 1 when the material scatters
     vec4 diffuseTransmission; // rgb colour factor, a factor (KHR_materials_diffuse_transmission); forward pass only
+    vec4 volumeScatter;       // rgb multi-scatter colour, a anisotropy (KHR_materials_volume_scatter); with volumeScale.w
 };
 
 layout(set = 0, binding = 12, std430) readonly buffer MaterialBuffer

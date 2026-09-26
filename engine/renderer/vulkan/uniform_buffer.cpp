@@ -171,6 +171,29 @@ void VulkanUniformBuffer::SetEnvironmentMap(TextureDescriptorBinding environment
     }
 }
 
+void VulkanUniformBuffer::SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth)
+{
+    m_environment.scatterLight = light;
+    m_environment.scatterDepth = depth;
+    const std::array<VkDescriptorImageInfo, 2> infos = {
+        VkDescriptorImageInfo{light.sampler, light.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        VkDescriptorImageInfo{depth.sampler, depth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    for (VkDescriptorSet set : m_frameDescriptorSets)
+    {
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (uint32_t index = 0; index < 2; ++index)
+        {
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = set;
+            writes[index].dstBinding = 19 + index;
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[index].pImageInfo = &infos[index];
+        }
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+}
+
 VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) const
 {
     if (imageIndex >= m_imageCount)
@@ -282,7 +305,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 19> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 21> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -361,6 +384,15 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[18].descriptorCount = 1;
     bindings[18].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // The scatter pre-pass's light and depth (VulkanScatterPass), sampled by triangle.frag for
+    // materials that scatter (KHR_materials_volume_scatter).
+    for (uint32_t binding : {19u, 20u})
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -554,7 +586,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 11},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 13},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 7}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -614,7 +646,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 19> frameWrites{};
+        std::array<VkWriteDescriptorSet, 21> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -730,6 +762,17 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         frameWrites[18].descriptorCount = 1;
         frameWrites[18].pImageInfo = &transmissionInfo;
+        const VkDescriptorImageInfo scatterLightInfo{m_environment.scatterLight.sampler, m_environment.scatterLight.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo scatterDepthInfo{m_environment.scatterDepth.sampler, m_environment.scatterDepth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        for (uint32_t binding : {19u, 20u})
+        {
+            frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            frameWrites[binding].dstSet = m_frameDescriptorSets[i];
+            frameWrites[binding].dstBinding = binding;
+            frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            frameWrites[binding].descriptorCount = 1;
+            frameWrites[binding].pImageInfo = binding == 19u ? &scatterLightInfo : &scatterDepthInfo;
+        }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 

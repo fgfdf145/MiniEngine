@@ -14,15 +14,18 @@ namespace
 // items, which cannot be deferred; in the forward-only order it receives every item. That filter
 // travels in ScenePassFrameContext, not here; this function decides order, not content. The same
 // holds for the two AO passes: they are always in the deferred order, and whether they do any work
-// is the frame context's ao.enabled; the two SSR passes likewise follow ssr.enabled. TAA is in both orders, so both meter and tone map its output;
+// is the frame context's ao.enabled; the two SSR passes likewise follow ssr.enabled. The scatter pre-pass
+// is in both, right before the forward pass whose scattering materials sample it; it draws nothing on
+// a frame without them. TAA is in both orders, so both meter and tone map its output;
 // the forward-only order has no motion vectors, and there the pass only copies the image through.
-constexpr std::array<ScenePassId, 13> kDeferredOrder = {
+constexpr std::array<ScenePassId, 14> kDeferredOrder = {
     ScenePassId::Geometry,
     ScenePassId::AoTrace,
     ScenePassId::AoResolve,
     ScenePassId::SsrTrace,
     ScenePassId::SsrResolve,
     ScenePassId::Lighting,
+    ScenePassId::Scatter,
     ScenePassId::Forward,
     ScenePassId::TransmissionCopy,
     ScenePassId::ForwardTranslucent,
@@ -31,7 +34,8 @@ constexpr std::array<ScenePassId, 13> kDeferredOrder = {
     ScenePassId::ExposureHistogram,
     ScenePassId::Tonemap};
 
-constexpr std::array<ScenePassId, 7> kForwardOnlyOrder = {
+constexpr std::array<ScenePassId, 8> kForwardOnlyOrder = {
+    ScenePassId::Scatter,
     ScenePassId::Forward,
     ScenePassId::TransmissionCopy,
     ScenePassId::ForwardTranslucent,

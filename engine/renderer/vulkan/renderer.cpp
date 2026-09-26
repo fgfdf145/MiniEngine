@@ -837,6 +837,16 @@ void VulkanRenderer::DrawFrame()
         drawItems.begin());
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
+    std::vector<VulkanDrawItem> scatterDrawItems;
+    for (const VulkanDrawItem& item : drawItems)
+    {
+        if (item.scatters)
+        {
+            scatterDrawItems.push_back(item);
+        }
+    }
+    frame.scatterDrawItems = scatterDrawItems;
+    frame.scatterPipelines = m_scatterPipelines.get();
     frame.frameDescriptorSet = m_uniformBuffer->GetFrameDescriptorSet(imageIndex);
     frame.gbufferDescriptorSet = m_gbufferDescriptors->GetSet(*m_sceneTargets, imageIndex, frame.frameSlot);
     // The order and the forward filter both derive from this one switch, here, so they cannot
@@ -1035,7 +1045,9 @@ void VulkanRenderer::DestroySwapchainResources()
     // is undefined again, so the tracker goes back to square one with it.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_scatterPass = nullptr;
     m_forwardPipelines.reset();
+    m_scatterPipelines.reset();
     m_geometryPipelines.reset();
     m_gbufferDescriptors.reset();
     if (m_sceneTargets)
@@ -1188,6 +1200,8 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetSampler()};
     bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetSampler()};
     bindings.transmission = m_transmissionImage->GetSampledBinding();
+    bindings.scatterLight = m_scatterPass->GetLightBinding();
+    bindings.scatterDepth = m_scatterPass->GetDepthBinding();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;
@@ -1281,7 +1295,9 @@ void VulkanRenderer::CreateScenePasses()
     // every owned pass to follow them; see SyncSceneTargets.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_scatterPass = nullptr;
     m_forwardPipelines.reset();
+    m_scatterPipelines.reset();
     m_geometryPipelines.reset();
     m_gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *m_sceneTargets);
 
@@ -1317,6 +1333,22 @@ void VulkanRenderer::CreateScenePasses()
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         MaterialPipelineSetConfig{});
+    // The scatter pre-pass: the forward shader's inputs, its own output (light and draw slot, alpha
+    // included), its own depth, no blending.
+    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *m_sceneTargets);
+    MaterialPipelineSetConfig scatterConfig{};
+    scatterConfig.writeAlpha = true;
+    scatterConfig.allowBlending = false;
+    scatterConfig.depthLessOrEqual = false;
+    scatterConfig.scatterPrepass = true;
+    m_scatterPipelines = std::make_unique<VulkanPipelineSet>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        scatterPass->GetRenderPass(),
+        m_frameSetLayout->GetHandle(),
+        m_materialSetLayout->GetHandle(),
+        scatterConfig);
+    m_scatterPass = scatterPass.get();
 
     // A rebuilt exposure pass starts with zeroed histograms, which meter as empty, so auto
     // exposure holds its current EV for the kMaxFramesInFlight frames until real ones arrive.
@@ -1347,6 +1379,7 @@ void VulkanRenderer::CreateScenePasses()
         m_frameSetLayout->GetHandle(),
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
+    m_scenePasses.push_back(std::move(scatterPass));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::make_unique<VulkanTransmissionCopyPass>(
         m_device->GetHandle(),
@@ -1500,6 +1533,11 @@ void VulkanRenderer::SyncSceneTargets()
     for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
     {
         pass->OnTargetsRebuilt(*m_sceneTargets);
+    }
+    // The scatter pass recreated its images at the new extent; set 0 still names the old ones.
+    if (m_uniformBuffer)
+    {
+        m_uniformBuffer->SetScatterImages(m_scatterPass->GetLightBinding(), m_scatterPass->GetDepthBinding());
     }
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
@@ -2053,7 +2091,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, 
             // previous model matrix.
             static_cast<uint32_t>(submeshIndex),
             forwardShaded,
-            transmissive});
+            transmissive,
+            MaterialScatters(renderSubmesh.material)});
     }
 
     std::vector<VulkanDrawItem> ordered;

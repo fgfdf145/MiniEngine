@@ -49,6 +49,10 @@ struct ScenePassFrameContext
     size_t transmissiveDrawItemBegin = 0;
     // triangle.frag against the HDR target.
     const VulkanPipelineSet* forwardPipelines = nullptr;
+    // KHR_materials_volume_scatter: every draw item whose material scatters, in drawItems' order, and
+    // triangle.frag under kScatterPrepass against the scatter pre-pass's images (VulkanScatterPass).
+    std::span<const VulkanDrawItem> scatterDrawItems;
+    const VulkanPipelineSet* scatterPipelines = nullptr;
     ForwardDrawFilter forwardFilter = ForwardDrawFilter::All;
     // gbuffer.frag against GB0-GB3.
     const VulkanPipelineSet* geometryPipelines = nullptr;

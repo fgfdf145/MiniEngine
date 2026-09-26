@@ -11,6 +11,7 @@
 #include "forward_pass.h"
 #include "gbuffer_inputs.h"
 #include "sampler_settings.h"
+#include "scatter_pass.h"
 #include "transmission_copy.h"
 #include "geometry_pass.h"
 #include "imgui_layer.h"
@@ -316,7 +317,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     // reads its histograms. Set and cleared together with the list, so it is null exactly when
     // the list is empty, which UpdateAutoExposure already checks for.
     VulkanExposureHistogramPass* m_exposurePass = nullptr;
+    // Owned by m_scenePasses like the exposure pass; its images back set 0 bindings 19 and 20.
+    VulkanScatterPass* m_scatterPass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
+    // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
+    std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;
     std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;

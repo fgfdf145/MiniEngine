@@ -2,6 +2,9 @@
 #extension GL_GOOGLE_include_directive : require
 
 layout(constant_id = 0) const bool kAlphaMask = false;
+// The scatter pre-pass (VulkanScatterPass): writes the light entering a scattering surface and its
+// draw slot instead of the shaded colour.
+layout(constant_id = 1) const bool kScatterPrepass = false;
 
 #include "scene_common.glsl"
 #include "atmosphere_sampling.glsl"
@@ -29,9 +32,14 @@ layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
 #include "material_layers.glsl"
 #include "transmission_common.glsl"
+#include "volume_scatter_common.glsl"
 
 // The scene behind transmissive surfaces (VulkanTransmissionCopyPass): pre-exposed, full mip chain.
 layout(set = 0, binding = 18) uniform sampler2D transmissionCopy;
+// The scatter pre-pass (VulkanScatterPass): the light entering each scattering surface, pre-exposed,
+// with its draw slot + 1 in alpha (0 where nothing scatters), and that surface's own depth.
+layout(set = 0, binding = 19) uniform sampler2D scatterLight;
+layout(set = 0, binding = 20) uniform sampler2D scatterDepth;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -57,6 +65,64 @@ vec4 SampleTransmission(vec3 N, vec3 V, float ior, float thickness, vec3 volumeS
     vec2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
     vec3 behind = textureLod(transmissionCopy, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
     return vec4(behind, length(exitPoint - fragWorldPosition));
+}
+
+// The pre-pass's id for a draw: its slot + 1, kept exact in the RGBA16F target's alpha (a half float
+// holds every integer to 2048). Draws 2047 slots apart share an id, which only matters where two of
+// them scatter side by side.
+float ScatterDrawId(uint drawSlot)
+{
+    return float(drawSlot % 2047u + 1u);
+}
+
+// A pre-pass pixel's world position, from its own depth.
+vec3 ScatterWorldPosition(vec2 uv, float depth)
+{
+    vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    return world.xyz / world.w;
+}
+
+// KHR_materials_volume_scatter's diffusion, as the Khronos sample viewer gathers it
+// (getSubsurfaceScattering): the pre-pass's light around this pixel, over a disk as wide as the
+// largest channel of the scatter radius (attenuation distance times the multi-scatter colour), each
+// sample of the same draw weighted by the Burley profile at its distance from this point over its
+// pdf. In radiance. A disk within one pixel is the pixel itself. Unlike the viewer, whose disk is
+// the width's texel size on both axes, the disk is round in pixels.
+vec3 GatherSubsurfaceScattering(vec3 multiscatter, float attenuationDistance)
+{
+    vec2 extent = vec2(textureSize(scatterLight, 0));
+    vec2 uv = gl_FragCoord.xy / extent;
+    vec4 center = textureLod(scatterLight, uv, 0.0);
+    float inverseExposure = 1.0 / max(ubo.exposure.x, 1e-20);
+    vec3 scatterDistance = attenuationDistance * multiscatter;
+    float maxDistance = max(scatterDistance.r, max(scatterDistance.g, scatterDistance.b));
+    vec3 centerPosition = ScatterWorldPosition(uv, textureLod(scatterDepth, uv, 0.0).r);
+    float metresPerPixel = distance(centerPosition, ScatterWorldPosition(uv + vec2(1.0 / extent.x, 0.0), textureLod(scatterDepth, uv, 0.0).r));
+    float maxRadiusPixels = maxDistance / max(metresPerPixel, 1e-12);
+    if (maxRadiusPixels <= 1.0)
+    {
+        return center.rgb * inverseExposure;
+    }
+
+    vec3 d = BurleyShape(max(vec3(BurleyMinimumRadius()), scatterDistance / maxDistance) * maxDistance);
+    vec3 totalWeight = vec3(0.0);
+    vec3 total = vec3(0.0);
+    for (int i = 0; i < kScatterSampleCount; ++i)
+    {
+        vec3 scatterSample = BurleyScatterSample(i);
+        vec2 offset = vec2(cos(scatterSample.x), sin(scatterSample.x)) * scatterSample.y * maxRadiusPixels / extent;
+        vec2 sampleUv = uv + offset;
+        vec4 sampled = textureLod(scatterLight, sampleUv, 0.0);
+        if (sampled.a != center.a)
+        {
+            continue;
+        }
+        vec3 samplePosition = ScatterWorldPosition(sampleUv, textureLod(scatterDepth, sampleUv, 0.0).r);
+        vec3 weight = BurleyProfile(d, distance(samplePosition, centerPosition)) * scatterSample.z;
+        totalWeight += weight;
+        total += weight * sampled.rgb;
+    }
+    return total / max(totalWeight, vec3(0.0001)) * inverseExposure;
 }
 
 void main()
@@ -212,6 +278,8 @@ void main()
         specular.transmissionTint = absorption * albedo.rgb;
         specular.transmissionAlpha = max(TransmissionRoughness(roughness * roughness, ior), 1e-3);
     }
+    vec3 diffuseTransmissionColor = vec3(0.0);
+    vec3 diffuseTransmissionAttenuation = vec3(1.0);
     if (material.diffuseTransmission.a > 0.0)
     {
         // KHR_materials_diffuse_transmission: the factor times its map's A, the colour times its map,
@@ -219,14 +287,37 @@ void main()
         specular.diffuseTransmissionFactor = clamp(
             material.diffuseTransmission.a * texture(diffuseTransmissionTexture, MaterialSlotUv(material, fragDrawSlot, 25u, fragTexCoord, fragTexCoord1)).a,
             0.0, 1.0);
-        vec3 color = material.diffuseTransmission.rgb *
-                     texture(diffuseTransmissionColorTexture, MaterialSlotUv(material, fragDrawSlot, 26u, fragTexCoord, fragTexCoord1)).rgb;
+        diffuseTransmissionColor = material.diffuseTransmission.rgb *
+                                   texture(diffuseTransmissionColorTexture, MaterialSlotUv(material, fragDrawSlot, 26u, fragTexCoord, fragTexCoord1)).rgb;
         float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
         float distance = DiffuseTransmissionDistance(thickness, fragModelScale * material.volumeScale.xyz);
-        specular.diffuseTransmissionColor = ApplyVolumeAttenuation(color, distance, material.attenuationColor.rgb, material.transmissionFactors.z);
+        diffuseTransmissionAttenuation = ApplyVolumeAttenuation(vec3(1.0), distance, material.attenuationColor.rgb, material.transmissionFactors.z);
+        specular.diffuseTransmissionColor = diffuseTransmissionColor * diffuseTransmissionAttenuation;
     }
+    // KHR_materials_volume_scatter: of the light through the volume, the single-scatter albedo's share
+    // scatters (the pre-pass gathers it, the gather below diffuses it) and the rest passes.
+    bool scatters = material.volumeScale.w > 0.5;
+    vec3 singleScatter = scatters ? MultiToSingleScatter(material.volumeScatter.rgb) : vec3(0.0);
+    if (kScatterPrepass)
+    {
+        vec3 entering = scatters ? ScatterEnteringLight(
+                                       fragWorldPosition, N, geoNormal, V, roughness, specular.diffuseTransmissionFactor,
+                                       diffuseTransmissionColor, diffuseTransmissionAttenuation, singleScatter, sheen, specular)
+                                 : vec3(0.0);
+        outColor = vec4(entering * ubo.exposure.x, ScatterDrawId(fragDrawSlot));
+        return;
+    }
+    specular.diffuseTransmissionColor *= vec3(1.0) - singleScatter;
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));
+    if (scatters)
+    {
+        // The diffused light leaves through the transmission colour, weighted as the viewer weights it:
+        // not through metal, the coat's reflection, a film or specular transmission.
+        float coatFresnel = coat.factor > 0.0 ? FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x : 0.0;
+        color += GatherSubsurfaceScattering(material.volumeScatter.rgb, material.transmissionFactors.z) * diffuseTransmissionColor *
+                 (1.0 - metallic) * (1.0 - coat.factor * coatFresnel) * (1.0 - specular.iridescenceFactor) * (1.0 - specular.transmissionFactor);
+    }
 
     // The atmosphere between the surface and the camera, before blending: an approximation for
     // Blend items, exact for the forward-only order's opaque ones.

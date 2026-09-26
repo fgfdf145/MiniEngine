@@ -18,6 +18,9 @@ enum class ScenePassId
     SsrTrace,
     SsrResolve,
     Lighting,
+    // The scatter pre-pass of KHR_materials_volume_scatter (VulkanScatterPass), ahead of the forward
+    // pass that samples it.
+    Scatter,
     Forward,
     TransmissionCopy,
     ForwardTranslucent,

@@ -71,13 +71,25 @@ struct alignas(16) GpuMaterialData
     // an infinite index, is stored as a large one).
     float attenuationColor[4] = {1.0f, 1.0f, 1.0f, 1.5f};
     // xyz = the glTF node's scale per axis, which the vertices already carry baked in; the volume's
-    // thickness scales by it and the entity's scale. w unused.
+    // thickness scales by it and the entity's scale. w = 1 when the material scatters
+    // (KHR_materials_volume_scatter with diffuse transmission, MaterialScatters), else 0.
     float volumeScale[4] = {1.0f, 1.0f, 1.0f, 0.0f};
     // KHR_materials_diffuse_transmission: rgb = the transmitted light's colour factor, a = the factor.
     // A factor above 0 makes the material forward shaded (kShadingFlagForward); the forward pass
     // reads it, no flag bit (GB2.a keeps the flags below 256).
     float diffuseTransmission[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+    // KHR_materials_volume_scatter: rgb = the multi-scatter colour, a = the scatter anisotropy (kept,
+    // not shaded, as by the Khronos sample viewer). Read only where volumeScale.w marks the material as
+    // scattering, by the forward pass (diffuse transmission already sends it there) and the scatter
+    // pre-pass.
+    float volumeScatter[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
+
+// Whether the scatter pre-pass draws the material and the forward pass diffuses its light.
+inline bool MaterialScatters(const GpuMaterialData& material)
+{
+    return material.volumeScale[3] > 0.5f;
+}
 
 // Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.glsl): per
 // slot, in the material set's binding order, two rows, (a, b, tx, UV set) and (c, d, ty, 0), as
@@ -97,8 +109,9 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 224, "GpuMaterialData must stay 14 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 240, "GpuMaterialData must stay 15 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, diffuseTransmission) == 208, "diffuseTransmission must be the fourteenth vec4");
+static_assert(offsetof(GpuMaterialData, volumeScatter) == 224, "volumeScatter must be the fifteenth vec4");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");

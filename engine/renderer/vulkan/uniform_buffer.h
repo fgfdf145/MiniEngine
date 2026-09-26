@@ -44,6 +44,10 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding ltcAmplitudes;
     // Binding 18: the transmission copy (VulkanTransmissionImage), in SHADER_READ_ONLY_OPTIMAL.
     TextureDescriptorBinding transmission;
+    // Bindings 19 and 20: the scatter pre-pass's light and depth (VulkanScatterPass), in
+    // SHADER_READ_ONLY_OPTIMAL. They follow the scene's extent: SetScatterImages repoints them.
+    TextureDescriptorBinding scatterLight;
+    TextureDescriptorBinding scatterDepth;
 };
 
 struct MaterialTextureBinding
@@ -221,7 +225,8 @@ static_assert(
 // Set 0: the per-frame camera uniform buffer at binding 0, the directional shadow map at binding
 // 1, the scene lights at binding 10, the light cluster grid at binding 11, each draw's material at
 // binding 12, the local shadow atlas at binding 13 and its tiles at binding 14, the LTC tables at
-// bindings 15 and 16, each draw's texture transforms at binding 17, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
+// bindings 15 and 16, each draw's texture transforms at binding 17, the transmission copy at binding
+// 18, the scatter pre-pass's light and depth at bindings 19 and 20, and each draw's previous model matrix at binding 2 (a storage buffer read by triangle.vert for
 // motion vectors). Split out from the material set so that the camera write leaves the
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
@@ -289,6 +294,9 @@ class VulkanUniformBuffer
     // Points set 0 binding 6 of every frame set at another environment map. The caller has waited
     // for every frame in flight: the sets must not be in use while they are written.
     void SetEnvironmentMap(TextureDescriptorBinding environmentMap);
+    // Points set 0 bindings 19 and 20 of every frame set at the scatter pre-pass's recreated images,
+    // under the same condition.
+    void SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth);
     VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
     void Update(
         uint32_t imageIndex,

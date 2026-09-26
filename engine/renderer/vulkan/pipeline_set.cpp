@@ -19,8 +19,13 @@ namespace
 // copied or moved before vkCreateGraphicsPipelines consumes it.
 struct PipelineVariantState
 {
-    VkBool32 alphaMaskEnabled = VK_FALSE;
-    VkSpecializationMapEntry specializationEntry{};
+    // The fragment stage's specialization constants 0 (kAlphaMask) and 1 (kScatterPrepass), in order.
+    struct Constants
+    {
+        VkBool32 alphaMaskEnabled = VK_FALSE;
+        VkBool32 scatterPrepass = VK_FALSE;
+    } constants;
+    std::array<VkSpecializationMapEntry, 2> specializationEntries{};
     VkSpecializationInfo specialization{};
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     VkPipelineRasterizationStateCreateInfo rasterizer{};
@@ -119,14 +124,14 @@ VulkanPipelineSet::VulkanPipelineSet(
                 const size_t index = GetMaterialPipelineIndex(key);
                 PipelineVariantState& variant = variants[index];
 
-                variant.alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
-                variant.specializationEntry.constantID = 0;
-                variant.specializationEntry.offset = 0;
-                variant.specializationEntry.size = sizeof(variant.alphaMaskEnabled);
-                variant.specialization.mapEntryCount = 1;
-                variant.specialization.pMapEntries = &variant.specializationEntry;
-                variant.specialization.dataSize = sizeof(variant.alphaMaskEnabled);
-                variant.specialization.pData = &variant.alphaMaskEnabled;
+                variant.constants.alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
+                variant.constants.scatterPrepass = config.scatterPrepass ? VK_TRUE : VK_FALSE;
+                variant.specializationEntries[0] = {0, offsetof(PipelineVariantState::Constants, alphaMaskEnabled), sizeof(VkBool32)};
+                variant.specializationEntries[1] = {1, offsetof(PipelineVariantState::Constants, scatterPrepass), sizeof(VkBool32)};
+                variant.specialization.mapEntryCount = static_cast<uint32_t>(variant.specializationEntries.size());
+                variant.specialization.pMapEntries = variant.specializationEntries.data();
+                variant.specialization.dataSize = sizeof(variant.constants);
+                variant.specialization.pData = &variant.constants;
 
                 variant.stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
                 variant.stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;

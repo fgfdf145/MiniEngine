@@ -793,32 +793,19 @@ vec3 EvaluateUniformAmbient(
 // ---------------------------------------------------------------------------
 // Per-light contribution
 // ---------------------------------------------------------------------------
-vec3 EvaluateSceneLight(
-    SceneLightData light,
-    vec3 worldPos,
-    vec3 N, vec3 V,
-    vec3 albedo, float metallic, float roughness,
-    vec3 energyCompensation,
-    CoatParams coat,
-    out vec3 coatContribution,
-    SheenParams sheen,
-    out vec3 sheenContribution,
-    AnisotropyParams anisotropy,
-    SpecularParams specularParams)
+
+// What a directional, point or spot light sends to worldPos: the direction toward it, the irradiance
+// on a surface facing it (lux) and its source for the specular lobe. False for the other types
+// (ambient, which is folded into ambientLuminance, and area lights, which integrate over their
+// rectangle instead).
+bool PunctualIncidence(SceneLightData light, vec3 worldPos, out vec3 L, out vec3 radiance, out LightSource source)
 {
-    coatContribution = vec3(0.0);
-    sheenContribution = vec3(0.0);
     int lightType = int(light.directionAndType.w);
-
-    if (lightType == LIGHT_AMBIENT)
-        return vec3(0.0); // handled as ambient term below
-
-    vec3 L;
-    vec3 radiance;
-    LightSource source;
     source.toLight = vec3(0.0);
     source.size = 0.0;
     source.directional = false;
+    L = vec3(0.0, 0.0, 1.0);
+    radiance = vec3(0.0);
 
     if (lightType == LIGHT_DIRECTIONAL)
     {
@@ -864,19 +851,45 @@ vec3 EvaluateSceneLight(
         float coneOmega = max(2.0 * PI * (1.0 - outerCos), 0.0001);
         radiance = light.colorAndIntensity.rgb * (light.colorAndIntensity.w / coneOmega) * att * spotAtt;
     }
-    else if (lightType == LIGHT_AREA)
+    else
+    {
+        return false;
+    }
+    source.L = L;
+    return true;
+}
+
+vec3 EvaluateSceneLight(
+    SceneLightData light,
+    vec3 worldPos,
+    vec3 N, vec3 V,
+    vec3 albedo, float metallic, float roughness,
+    vec3 energyCompensation,
+    CoatParams coat,
+    out vec3 coatContribution,
+    SheenParams sheen,
+    out vec3 sheenContribution,
+    AnisotropyParams anisotropy,
+    SpecularParams specularParams)
+{
+    coatContribution = vec3(0.0);
+    sheenContribution = vec3(0.0);
+
+    if (int(light.directionAndType.w) == LIGHT_AREA)
     {
         // Integrates over the rectangle itself, so it does not go through EvaluateBRDF.
         return EvaluateAreaLight(
             light, worldPos, N, V, albedo, metallic, roughness, energyCompensation,
             coat, coatContribution, sheen, sheenContribution, anisotropy, specularParams);
     }
-    else
+    vec3 L;
+    vec3 radiance;
+    LightSource source;
+    if (!PunctualIncidence(light, worldPos, L, radiance, source))
     {
-        return vec3(0.0);
+        return vec3(0.0); // an ambient light is part of the ambient term
     }
 
-    source.L = L;
     if (coat.factor > 0.0)
     {
         float coatNormalization;
@@ -1164,6 +1177,102 @@ vec3 ShadeSurface(
         color = color * (1.0 - coat.factor * coatFresnel) + coat.factor * (coatAmbient + coatAccum);
     }
     return color;
+}
+
+// ---------------------------------------------------------------------------
+// Volume scatter (KHR_materials_volume_scatter)
+// ---------------------------------------------------------------------------
+
+// One light's diffuse light entering a scattering surface, as the Khronos sample viewer's scatter
+// pre-pass gathers it (scatter.frag): from in front, the Lambertian lobe through the transmission
+// colour and the single-scatter albedo; from behind, the light through the volume
+// (backAttenuation) that is not absorbed on the way, (1 - singleScatter) of it, scattered again. The
+// dielectric's Fresnel weights both, about the light mirrored through the surface from behind.
+vec3 ScatterEnteringDirect(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 color, vec3 backAttenuation, vec3 singleScatter, SpecularParams specular)
+{
+    float NdL = dot(N, L);
+    vec3 lightDirection = NdL < 0.0 ? normalize(L - 2.0 * N * NdL) : L;
+    vec3 F = FresnelSchlick(max(dot(V, normalize(lightDirection + V)), 0.0), specular.dielectricF0, specular.dielectricF90);
+    vec3 entering = NdL > 0.0 ? color * singleScatter * NdL : color * backAttenuation * (1.0 - singleScatter) * singleScatter * -NdL;
+    return (vec3(1.0) - F) * entering * radiance / PI;
+}
+
+// The scatter pre-pass's colour for one surface point (in radiance; the caller pre-exposes it): the
+// image-based light from both sides and every directional and local light (shadowed, unlike the
+// viewer, which has no shadows; area lights are left out, as the viewer has none), all through the
+// diffuse transmission factor, the base's Fresnel and the sheen's scaling. No ambient occlusion, as
+// in the viewer. color is the diffuse transmission colour (factor times map), backAttenuation the
+// volume's attenuation through the thickness.
+vec3 ScatterEnteringLight(
+    vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, float roughness,
+    float diffuseTransmissionFactor, vec3 color, vec3 backAttenuation, vec3 singleScatter,
+    SheenParams sheen, SpecularParams specular)
+{
+    float NdV = max(dot(N, V), 0.0);
+    vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
+    vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, specular.dielectricF0, specular.dielectricF90, specular) *
+                          SpecularEnergyCompensation(specular.dielectricF0, environmentBrdf);
+    vec3 front;
+    vec3 back;
+    if (EnvironmentMode() == ENVIRONMENT_NONE)
+    {
+        front = ubo.ambientLuminance.rgb;
+        back = ubo.ambientLuminance.rgb;
+    }
+    else
+    {
+        vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
+        front = EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient;
+        back = EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient;
+    }
+    vec3 light = (vec3(1.0) - specularAlbedo) * color * singleScatter * (front + back * backAttenuation * (1.0 - singleScatter));
+
+    int shadowLightIndex = int(ubo.shadowParams.x);
+    for (uint i = 0u; i < ubo.lightCounts.x; ++i)
+    {
+        vec3 L;
+        vec3 radiance;
+        LightSource source;
+        if (!PunctualIncidence(sceneLights.lights[i], worldPosition, L, radiance, source))
+        {
+            continue;
+        }
+        vec3 contribution = ScatterEnteringDirect(N, V, L, radiance, color, backAttenuation, singleScatter, specular);
+        if (int(i) == shadowLightIndex && any(greaterThan(contribution, vec3(0.0))))
+        {
+            contribution *= EvaluateDirectionalShadow(worldPosition, ShadowOffsetNormal(geoNormal, L, true));
+        }
+        light += contribution;
+    }
+    uint localBegin = ubo.lightCounts.x;
+    uint localCount = ubo.lightCounts.y - ubo.lightCounts.x;
+    uvec2 range = uvec2(0u, localCount);
+    if (ubo.lightCounts.z != 0u)
+    {
+        range = lightClusters.ranges[FindLightCluster(worldPosition)];
+    }
+    for (uint k = 0u; k < range.y; ++k)
+    {
+        SceneLightData sceneLight = ubo.lightCounts.z != 0u ? sceneLights.lights[lightClusters.indices[range.x + k]] : sceneLights.lights[localBegin + k];
+        vec3 L;
+        vec3 radiance;
+        LightSource source;
+        if (!PunctualIncidence(sceneLight, worldPosition, L, radiance, source))
+        {
+            continue;
+        }
+        vec3 contribution = ScatterEnteringDirect(N, V, L, radiance, color, backAttenuation, singleScatter, specular);
+        vec3 noCoat = vec3(0.0);
+        vec3 noSheen = vec3(0.0);
+        ApplyLocalShadow(sceneLight, worldPosition, geoNormal, true, contribution, noCoat, noSheen);
+        light += contribution;
+    }
+
+    if (HasSheen(sheen))
+    {
+        light *= 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) * SampleSheenAlbedo(sheen.roughness, NdV);
+    }
+    return light * diffuseTransmissionFactor;
 }
 
 #endif

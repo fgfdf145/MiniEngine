@@ -121,6 +121,8 @@ add_library(engine_renderer
     vulkan/renderer.cpp
     vulkan/renderer.h
     vulkan/scene_pass.h
+    vulkan/scatter_pass.cpp
+    vulkan/scatter_pass.h
     vulkan/scene_pass_order.cpp
     vulkan/scene_pass_order.h
     vulkan/sampler_cache.cpp
@@ -200,6 +202,7 @@ set(MINIENGINE_SHADER_INCLUDES
     ltc_common.glsl
     iridescence_common.glsl
     transmission_common.glsl
+    volume_scatter_common.glsl
     pbr_neutral.glsl
     material_layers.glsl
     material_uv.glsl

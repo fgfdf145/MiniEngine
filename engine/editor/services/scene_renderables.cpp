@@ -276,6 +276,17 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             renderSubmesh.material.shadingModel[0] |= kShadingFlagForward;
         }
+        // Volume scatter diffuses the light that diffuse transmission lets into the volume; without it
+        // the Khronos sample viewer's pre-pass gathers nothing, so nothing scatters.
+        if (material.volumeScatter && diffuseTransmission > 0.0f)
+        {
+            renderSubmesh.material.volumeScale[3] = 1.0f;
+            for (size_t index = 0; index < 3; ++index)
+            {
+                renderSubmesh.material.volumeScatter[index] = std::clamp(material.multiscatterColor[index], 0.0f, 1.0f);
+            }
+            renderSubmesh.material.volumeScatter[3] = ClampScatterAnisotropy(material.scatterAnisotropy);
+        }
         renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
         // Unlit shows the base colour alone; transforms only matter where there are textures.
         if (material.unlit)

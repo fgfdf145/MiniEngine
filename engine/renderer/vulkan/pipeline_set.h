@@ -38,6 +38,9 @@ struct MaterialPipelineSetConfig
     // LESS for the geometry pass. The forward pass uses LESS_OR_EQUAL: the forward-shaded opaque
     // draws land on depth the geometry pass already wrote for them, from the same vertex shader.
     bool depthLessOrEqual = true;
+    // triangle.frag's kScatterPrepass (constant 1): the scatter pre-pass's set, which writes the light
+    // entering the surface and the draw slot instead of the shaded colour.
+    bool scatterPrepass = false;
 };
 
 class VulkanPipelineSet

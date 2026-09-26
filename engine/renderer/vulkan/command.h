@@ -24,6 +24,9 @@ struct VulkanDrawItem
     // A transmissive Opaque or Mask draw (kShadingFlagTransmission): drawn only by the translucent
     // forward pass, never by the geometry pass or into shadow maps.
     bool transmissive = false;
+    // Its material scatters (KHR_materials_volume_scatter, MaterialScatters): the scatter pre-pass
+    // draws it as well.
+    bool scatters = false;
 };
 
 struct VulkanFrameSyncObjects
