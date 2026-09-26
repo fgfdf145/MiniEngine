@@ -138,6 +138,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         material.iridescenceThicknessTexturePath = resolveTex(rawMaterial.iridescenceThicknessTexturePath);
         material.transmissionTexturePath = resolveTex(rawMaterial.transmissionTexturePath);
         material.thicknessTexturePath = resolveTex(rawMaterial.thicknessTexturePath);
+        material.diffuseTransmissionTexturePath = resolveTex(rawMaterial.diffuseTransmissionTexturePath);
+        material.diffuseTransmissionColorTexturePath = resolveTex(rawMaterial.diffuseTransmissionColorTexturePath);
         importedMaterials.push_back(BuildImportedMaterialInfo(material));
     }
 
@@ -261,6 +263,18 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             renderSubmesh.material.shadingModel[0] |= kShadingFlagTransmission | kShadingFlagForward;
         }
+        renderSubmesh.material.transmissionFactors[3] = std::max(material.dispersion, 0.0f);
+        // Diffuse transmission is shaded by the forward pass, which reads the factor itself.
+        const float diffuseTransmission = std::clamp(material.diffuseTransmissionFactor, 0.0f, 1.0f);
+        for (size_t index = 0; index < 3; ++index)
+        {
+            renderSubmesh.material.diffuseTransmission[index] = std::clamp(material.diffuseTransmissionColor[index], 0.0f, 1.0f);
+        }
+        renderSubmesh.material.diffuseTransmission[3] = diffuseTransmission;
+        if (diffuseTransmission > 0.0f)
+        {
+            renderSubmesh.material.shadingModel[0] |= kShadingFlagForward;
+        }
         renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
         // Unlit shows the base colour alone; transforms only matter where there are textures.
         if (material.unlit)
@@ -320,6 +334,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             renderSubmesh.textures.iridescenceThickness = resolveTex(material.iridescenceThicknessTexturePath);
             renderSubmesh.textures.transmission = resolveTex(material.transmissionTexturePath);
             renderSubmesh.textures.thickness = resolveTex(material.thicknessTexturePath);
+            renderSubmesh.textures.diffuseTransmission = resolveTex(material.diffuseTransmissionTexturePath);
+            renderSubmesh.textures.diffuseTransmissionColor = resolveTex(material.diffuseTransmissionColorTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }

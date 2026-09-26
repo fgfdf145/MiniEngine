@@ -65,7 +65,7 @@ struct alignas(16) GpuMaterialData
     // by the forward pass, which is where a film sends a material (kShadingFlagForward).
     float iridescenceFactors[4] = {0.0f, 1.3f, 100.0f, 400.0f};
     // x = transmission [0, 1], y = volume thickness (mesh units, 0 = thin), z = attenuation distance
-    // (metres, 0 = no absorption), w = dispersion (phase 4b). Read only with kShadingFlagTransmission.
+    // (metres, 0 = no absorption), w = dispersion (KHR_materials_dispersion, 0 = none). Read only with kShadingFlagTransmission.
     float transmissionFactors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // rgb = the attenuation colour; a = the IOR the view ray refracts by (KHR_materials_ior; its 0,
     // an infinite index, is stored as a large one).
@@ -73,18 +73,22 @@ struct alignas(16) GpuMaterialData
     // xyz = the glTF node's scale per axis, which the vertices already carry baked in; the volume's
     // thickness scales by it and the entity's scale. w unused.
     float volumeScale[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+    // KHR_materials_diffuse_transmission: rgb = the transmitted light's colour factor, a = the factor.
+    // A factor above 0 makes the material forward shaded (kShadingFlagForward); the forward pass
+    // reads it, no flag bit (GB2.a keeps the flags below 256).
+    float diffuseTransmission[4] = {1.0f, 1.0f, 1.0f, 0.0f};
 };
 
 // Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.glsl): per
 // slot, in the material set's binding order, two rows, (a, b, tx, UV set) and (c, d, ty, 0), as
 // ComputeTextureTransformRows writes them.
-inline constexpr uint32_t kGpuTextureTransformSlots = 25;
+inline constexpr uint32_t kGpuTextureTransformSlots = 27;
 struct GpuTextureTransforms
 {
     float rows[kGpuTextureTransformSlots * 8] = {};
 };
 
-static_assert(sizeof(GpuTextureTransforms) == 25 * 32, "GpuTextureTransforms must stay two vec4 per slot");
+static_assert(sizeof(GpuTextureTransforms) == 27 * 32, "GpuTextureTransforms must stay two vec4 per slot");
 
 // The per-draw push constant: only the model matrix. The material moved to the material buffer
 // once it outgrew the 128 bytes Vulkan guarantees for push constants.
@@ -93,7 +97,8 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 208, "GpuMaterialData must stay 13 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 224, "GpuMaterialData must stay 14 x vec4 to match the shader struct");
+static_assert(offsetof(GpuMaterialData, diffuseTransmission) == 208, "diffuseTransmission must be the fourteenth vec4");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");
 static_assert(offsetof(GpuMaterialData, alphaCutoff) == 28, "alphaCutoff must stay in the emissive vec4's w component");
 static_assert(offsetof(GpuMaterialData, surfaceFactors) == 32, "surfaceFactors must be the third vec4");

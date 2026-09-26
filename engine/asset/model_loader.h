@@ -37,6 +37,9 @@ struct ModelMaterialData
     // KHR_materials_transmission (R) and KHR_materials_volume (G); each multiplies its factor.
     std::string transmissionTexturePath;
     std::string thicknessTexturePath;
+    // KHR_materials_diffuse_transmission: the factor's map (A) and the colour's (RGB, sRGB).
+    std::string diffuseTransmissionTexturePath;
+    std::string diffuseTransmissionColorTexturePath;
     float baseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float emissiveColor[3] = {0.0f, 0.0f, 0.0f};
     float metallicFactor = 0.0f;
@@ -66,6 +69,9 @@ struct ModelMaterialData
     float thicknessFactor = 0.0f;
     float attenuationDistance = 0.0f;
     float attenuationColor[3] = {1.0f, 1.0f, 1.0f};
+    float dispersion = 0.0f;
+    float diffuseTransmissionFactor = 0.0f;
+    float diffuseTransmissionColor[3] = {1.0f, 1.0f, 1.0f};
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

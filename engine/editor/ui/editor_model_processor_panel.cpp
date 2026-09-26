@@ -879,6 +879,13 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.attenuationColor[0],
                 selectedMaterial.pbr.attenuationColor[1],
                 selectedMaterial.pbr.attenuationColor[2]);
+            ImGui::Text(
+                "Dispersion %.2f  Diffuse Transmission %.2f (%.2f, %.2f, %.2f)",
+                selectedMaterial.pbr.dispersion,
+                selectedMaterial.pbr.diffuseTransmissionFactor,
+                selectedMaterial.pbr.diffuseTransmissionColor[0],
+                selectedMaterial.pbr.diffuseTransmissionColor[1],
+                selectedMaterial.pbr.diffuseTransmissionColor[2]);
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

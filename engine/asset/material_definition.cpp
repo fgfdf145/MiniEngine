@@ -217,6 +217,8 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.iridescenceThicknessTexturePath,
         material.transmissionTexturePath,
         material.thicknessTexturePath,
+        material.diffuseTransmissionTexturePath,
+        material.diffuseTransmissionColorTexturePath,
         material.pbr,
         material.blendGraph,
         material.shaderGraph,
@@ -245,6 +247,8 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.iridescenceThicknessTexturePath = source.iridescenceThicknessTexturePath;
     destination.transmissionTexturePath = source.transmissionTexturePath;
     destination.thicknessTexturePath = source.thicknessTexturePath;
+    destination.diffuseTransmissionTexturePath = source.diffuseTransmissionTexturePath;
+    destination.diffuseTransmissionColorTexturePath = source.diffuseTransmissionColorTexturePath;
     destination.textureTransforms = source.textureTransforms;
     destination.textureSamplers = source.textureSamplers;
     destination.unlit = source.pbr.unlit;
@@ -290,7 +294,10 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     for (size_t index = 0; index < 3; ++index)
     {
         destination.attenuationColor[index] = source.pbr.attenuationColor[index];
+        destination.diffuseTransmissionColor[index] = source.pbr.diffuseTransmissionColor[index];
     }
+    destination.dispersion = source.pbr.dispersion;
+    destination.diffuseTransmissionFactor = source.pbr.diffuseTransmissionFactor;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -320,6 +327,8 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     node["iridescence_thickness_texture_path"] = material.iridescenceThicknessTexturePath;
     node["transmission_texture_path"] = material.transmissionTexturePath;
     node["thickness_texture_path"] = material.thicknessTexturePath;
+    node["diffuse_transmission_texture_path"] = material.diffuseTransmissionTexturePath;
+    node["diffuse_transmission_color_texture_path"] = material.diffuseTransmissionColorTexturePath;
 
     YAML::Node pbr(YAML::NodeType::Map);
     YAML::Node baseColor(YAML::NodeType::Sequence);
@@ -360,6 +369,11 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     YAML::Node attenuationColor(YAML::NodeType::Sequence);
     SerializeFloatSequence(attenuationColor, material.pbr.attenuationColor, 3);
     pbr["attenuation_color"] = attenuationColor;
+    pbr["dispersion"] = material.pbr.dispersion;
+    pbr["diffuse_transmission_factor"] = material.pbr.diffuseTransmissionFactor;
+    YAML::Node diffuseTransmissionColor(YAML::NodeType::Sequence);
+    SerializeFloatSequence(diffuseTransmissionColor, material.pbr.diffuseTransmissionColor, 3);
+    pbr["diffuse_transmission_color"] = diffuseTransmissionColor;
     pbr["unlit"] = material.pbr.unlit;
     node["pbr"] = pbr;
 
@@ -473,6 +487,10 @@ bool LoadMaterialDefinition(
             node["iridescence_thickness_texture_path"].as<std::string>(material.iridescenceThicknessTexturePath);
         material.transmissionTexturePath = node["transmission_texture_path"].as<std::string>(material.transmissionTexturePath);
         material.thicknessTexturePath = node["thickness_texture_path"].as<std::string>(material.thicknessTexturePath);
+        material.diffuseTransmissionTexturePath =
+            node["diffuse_transmission_texture_path"].as<std::string>(material.diffuseTransmissionTexturePath);
+        material.diffuseTransmissionColorTexturePath =
+            node["diffuse_transmission_color_texture_path"].as<std::string>(material.diffuseTransmissionColorTexturePath);
 
         // Absent in sidecars written before transforms existed: every texture keeps its own.
         if (const YAML::Node transformsNode = node["texture_transforms"]; transformsNode && transformsNode.IsMap())
@@ -567,6 +585,15 @@ bool LoadMaterialDefinition(
                 std::max(pbrNode["attenuation_distance"].as<float>(material.pbr.attenuationDistance), 0.0f);
             ReadFloatSequence(pbrNode["attenuation_color"], material.pbr.attenuationColor);
             for (float& component : material.pbr.attenuationColor)
+            {
+                component = std::clamp(component, 0.0f, 1.0f);
+            }
+            // Absent in sidecars written before 4b and 4c: no dispersion, no diffuse transmission.
+            material.pbr.dispersion = std::max(pbrNode["dispersion"].as<float>(material.pbr.dispersion), 0.0f);
+            material.pbr.diffuseTransmissionFactor =
+                std::clamp(pbrNode["diffuse_transmission_factor"].as<float>(material.pbr.diffuseTransmissionFactor), 0.0f, 1.0f);
+            ReadFloatSequence(pbrNode["diffuse_transmission_color"], material.pbr.diffuseTransmissionColor);
+            for (float& component : material.pbr.diffuseTransmissionColor)
             {
                 component = std::clamp(component, 0.0f, 1.0f);
             }

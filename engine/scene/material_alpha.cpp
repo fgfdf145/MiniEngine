@@ -123,6 +123,10 @@ const char* MaterialTextureSlotName(uint32_t slot)
         return "transmission";
     case MaterialTextureSlot::Thickness:
         return "thickness";
+    case MaterialTextureSlot::DiffuseTransmission:
+        return "diffuse_transmission";
+    case MaterialTextureSlot::DiffuseTransmissionColor:
+        return "diffuse_transmission_color";
     }
     return nullptr;
 }

@@ -45,10 +45,12 @@ enum class MaterialTextureSlot : uint32_t
     Iridescence = 21,
     IridescenceThickness = 22,
     Transmission = 23,
-    Thickness = 24
+    Thickness = 24,
+    DiffuseTransmission = 25,
+    DiffuseTransmissionColor = 26
 };
 
-inline constexpr uint32_t kMaterialTextureSlotCount = 25;
+inline constexpr uint32_t kMaterialTextureSlotCount = 27;
 
 // The slot's name in a sidecar's texture_transforms, or nullptr for the blend graph's slots.
 const char* MaterialTextureSlotName(uint32_t slot);
@@ -177,6 +179,13 @@ struct MaterialPbrSurfaceSettings
     float thicknessFactor = 0.0f;
     float attenuationDistance = 0.0f;
     float attenuationColor[3] = {1.0f, 1.0f, 1.0f};
+    // KHR_materials_dispersion: how far the refraction's IOR spreads over the three channels
+    // ((ior - 1) * 0.025 * dispersion either side of green). 0 disperses nothing.
+    float dispersion = 0.0f;
+    // KHR_materials_diffuse_transmission: the share of the diffuse lobe that passes through the
+    // surface as a Lambertian lobe on its far side, and that light's colour.
+    float diffuseTransmissionFactor = 0.0f;
+    float diffuseTransmissionColor[3] = {1.0f, 1.0f, 1.0f};
     // KHR_materials_unlit: the base colour alone, no lighting.
     bool unlit = false;
 };

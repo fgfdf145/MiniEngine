@@ -533,6 +533,15 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
             attenuationColor.push_back(value);
         }
         pbr["attenuation_color"] = attenuationColor;
+        pbr["dispersion"] = node.pbr.dispersion;
+        pbr["diffuse_transmission_factor"] = node.pbr.diffuseTransmissionFactor;
+        YAML::Node diffuseTransmissionColor(YAML::NodeType::Sequence);
+        diffuseTransmissionColor.SetStyle(YAML::EmitterStyle::Flow);
+        for (const float value : node.pbr.diffuseTransmissionColor)
+        {
+            diffuseTransmissionColor.push_back(value);
+        }
+        pbr["diffuse_transmission_color"] = diffuseTransmissionColor;
         pbr["unlit"] = node.pbr.unlit;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
@@ -667,6 +676,10 @@ bool DeserializeMaterialShaderGraph(
             node.pbr.thicknessFactor = std::max(ReadFloatOrFallback(pbrNode["thickness_factor"], node.pbr.thicknessFactor), 0.0f);
             node.pbr.attenuationDistance = std::max(ReadFloatOrFallback(pbrNode["attenuation_distance"], node.pbr.attenuationDistance), 0.0f);
             ReadFloatSequence(pbrNode["attenuation_color"], node.pbr.attenuationColor, 3);
+            node.pbr.dispersion = std::max(ReadFloatOrFallback(pbrNode["dispersion"], node.pbr.dispersion), 0.0f);
+            node.pbr.diffuseTransmissionFactor =
+                std::clamp(ReadFloatOrFallback(pbrNode["diffuse_transmission_factor"], node.pbr.diffuseTransmissionFactor), 0.0f, 1.0f);
+            ReadFloatSequence(pbrNode["diffuse_transmission_color"], node.pbr.diffuseTransmissionColor, 3);
             node.pbr.unlit = pbrNode["unlit"] && pbrNode["unlit"].IsScalar() ? pbrNode["unlit"].as<bool>(node.pbr.unlit) : node.pbr.unlit;
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))

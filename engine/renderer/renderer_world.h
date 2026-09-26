@@ -41,6 +41,8 @@ struct MaterialTexturePaths
     std::string iridescenceThickness;
     std::string transmission;
     std::string thickness;
+    std::string diffuseTransmission;
+    std::string diffuseTransmissionColor;
 };
 
 struct CpuRenderSubmesh

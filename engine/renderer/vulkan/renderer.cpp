@@ -220,6 +220,8 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.iridescenceThickness, TextureUsage::Data);
     visit(textures.transmission, TextureUsage::Data);
     visit(textures.thickness, TextureUsage::Data);
+    visit(textures.diffuseTransmission, TextureUsage::Data);
+    visit(textures.diffuseTransmissionColor, TextureUsage::Color);
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -305,7 +307,9 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             bind(slots.iridescence, 21),
             bind(slots.iridescenceThickness, 22),
             bind(slots.transmission, 23),
-            bind(slots.thickness, 24)});
+            bind(slots.thickness, 24),
+            bind(slots.diffuseTransmission, 25),
+            bind(slots.diffuseTransmissionColor, 26)});
     }
 
     return bindings;
@@ -1683,6 +1687,9 @@ void VulkanRenderer::UploadSceneResources()
             loadTextureIndex(cpuRenderSubmesh.textures.iridescenceThickness, TextureUsage::Data, defaultLayerIndex);
         slots.transmission = loadTextureIndex(cpuRenderSubmesh.textures.transmission, TextureUsage::Data, defaultLayerIndex);
         slots.thickness = loadTextureIndex(cpuRenderSubmesh.textures.thickness, TextureUsage::Data, defaultLayerIndex);
+        slots.diffuseTransmission = loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmission, TextureUsage::Data, defaultLayerIndex);
+        slots.diffuseTransmissionColor =
+            loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmissionColor, TextureUsage::Color, defaultSheenColorIndex);
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);

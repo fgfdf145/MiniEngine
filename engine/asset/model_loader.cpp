@@ -72,7 +72,10 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     for (size_t index = 0; index < 3; ++index)
     {
         pbr.attenuationColor[index] = material.attenuationColor[index];
+        pbr.diffuseTransmissionColor[index] = material.diffuseTransmissionColor[index];
     }
+    pbr.dispersion = material.dispersion;
+    pbr.diffuseTransmissionFactor = material.diffuseTransmissionFactor;
     pbr.unlit = material.unlit;
     return pbr;
 }
@@ -122,7 +125,10 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     for (size_t index = 0; index < 3; ++index)
     {
         material.attenuationColor[index] = pbr.attenuationColor[index];
+        material.diffuseTransmissionColor[index] = pbr.diffuseTransmissionColor[index];
     }
+    material.dispersion = pbr.dispersion;
+    material.diffuseTransmissionFactor = pbr.diffuseTransmissionFactor;
     material.unlit = pbr.unlit;
 }
 

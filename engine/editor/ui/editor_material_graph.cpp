@@ -873,6 +873,12 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     changed |= DragFloatInRange("Thickness", &pbr.thicknessFactor, 0.0f, 10.0f, "%.3f");
     changed |= DragFloatInRange("Attenuation Distance (m)", &pbr.attenuationDistance, 0.0f, 100.0f, "%.3f");
     changed |= ImGui::ColorEdit3("Attenuation Color", pbr.attenuationColor);
+    // KHR_materials_dispersion spreads the refraction's IOR by wavelength (through a volume only).
+    changed |= DragFloatInRange("Dispersion", &pbr.dispersion, 0.0f, 10.0f, "%.2f");
+    // KHR_materials_diffuse_transmission: the share of the diffuse light passing through the surface;
+    // above 0 the material is forward shaded.
+    changed |= DragFloatInRange("Diffuse Transmission", &pbr.diffuseTransmissionFactor, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::ColorEdit3("Diffuse Transmission Color", pbr.diffuseTransmissionColor);
     // KHR_materials_unlit: the base colour alone, shown at the display's paper white.
     changed |= ImGui::Checkbox("Unlit", &pbr.unlit);
     return changed;

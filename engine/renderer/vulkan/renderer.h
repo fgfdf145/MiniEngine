@@ -92,6 +92,8 @@ struct MaterialTextureSlots
     uint32_t iridescenceThickness = 0;
     uint32_t transmission = 0;
     uint32_t thickness = 0;
+    uint32_t diffuseTransmission = 0;
+    uint32_t diffuseTransmissionColor = 0;
     // The sampler each binding pairs its texture with, in binding order (MaterialTextureSlot); the
     // blend graph's slots keep the default.
     MaterialTextureSamplers samplers{};

@@ -945,6 +945,36 @@ ModelMaterialData BuildMaterialData(
         }
     }
 
+    // KHR_materials_dispersion: 0 (none) when absent or negative.
+    if (const auto dispersion = material.extensions.find("KHR_materials_dispersion"); dispersion != material.extensions.end())
+    {
+        materialData.dispersion = std::max(readExtensionNumber(dispersion->second, "dispersion", 0.0f), 0.0f);
+    }
+    // KHR_materials_diffuse_transmission (Release Candidate). Absent members take the extension's
+    // defaults: factor 0, a white colour.
+    if (const auto diffuseTransmission = material.extensions.find("KHR_materials_diffuse_transmission");
+        diffuseTransmission != material.extensions.end())
+    {
+        const tinygltf::Value& extension = diffuseTransmission->second;
+        materialData.diffuseTransmissionFactor = std::clamp(readExtensionNumber(extension, "diffuseTransmissionFactor", 0.0f), 0.0f, 1.0f);
+        materialData.diffuseTransmissionTexturePath =
+            readExtensionTexture(extension, "diffuseTransmissionTexture", MaterialTextureSlot::DiffuseTransmission);
+        materialData.diffuseTransmissionColorTexturePath =
+            readExtensionTexture(extension, "diffuseTransmissionColorTexture", MaterialTextureSlot::DiffuseTransmissionColor);
+        if (extension.Has("diffuseTransmissionColorFactor") && extension.Get("diffuseTransmissionColorFactor").IsArray() &&
+            extension.Get("diffuseTransmissionColorFactor").ArrayLen() >= 3)
+        {
+            const tinygltf::Value& color = extension.Get("diffuseTransmissionColorFactor");
+            for (int index = 0; index < 3; ++index)
+            {
+                if (color.Get(index).IsNumber())
+                {
+                    materialData.diffuseTransmissionColor[index] = std::clamp(static_cast<float>(color.Get(index).GetNumberAsDouble()), 0.0f, 1.0f);
+                }
+            }
+        }
+    }
+
     // KHR_materials_iridescence. Absent members take the extension's defaults: factor 0, IOR 1.3,
     // thickness 100 to 400 nm.
     const auto iridescence = material.extensions.find("KHR_materials_iridescence");

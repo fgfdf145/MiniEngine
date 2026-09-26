@@ -963,6 +963,104 @@ void SidecarKeepsTransmissionAndVolume()
     Require(applied.thicknessTexturePath == "th.png", "applied thickness map");
 }
 
+void ReadsDispersionAndDiffuseTransmission()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string textures = R"("images": [{ "uri": "dt.png" }, { "uri": "dtc.png" }],
+      "samplers": [{ "wrapS": 33071 }],
+      "textures": [{ "source": 0 }, { "source": 1, "sampler": 0 }],)";
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "diffuse_transmission",
+            {R"({ "name": "gem",
+                 "extensions": { "KHR_materials_transmission": { "transmissionFactor": 1 },
+                                 "KHR_materials_volume": { "thicknessFactor": 1 },
+                                 "KHR_materials_dispersion": { "dispersion": 2.5 } } })",
+             R"({ "name": "leaf",
+                 "extensions": { "KHR_materials_diffuse_transmission": {
+                     "diffuseTransmissionFactor": 0.75, "diffuseTransmissionTexture": { "index": 0 },
+                     "diffuseTransmissionColorFactor": [0.5, 1.0, 0.25],
+                     "diffuseTransmissionColorTexture": { "index": 1, "texCoord": 1 } } } })",
+             R"({ "name": "empty", "extensions": { "KHR_materials_diffuse_transmission": {}, "KHR_materials_dispersion": {} } })",
+             R"({ "name": "bad", "extensions": { "KHR_materials_diffuse_transmission": { "diffuseTransmissionFactor": 4,
+                                                                                         "diffuseTransmissionColorFactor": [2, -1, 0.5] },
+                                                "KHR_materials_dispersion": { "dispersion": -3 } } })",
+             R"({ "name": "plain" })"},
+            textures)
+            .string());
+    const ModelMaterialData& gem = MaterialNamed(model, "gem");
+    Near(gem.dispersion, 2.5f, "dispersion");
+    Near(gem.pbr.dispersion, 2.5f, "the pbr settings carry dispersion");
+
+    const ModelMaterialData& leaf = MaterialNamed(model, "leaf");
+    Near(leaf.diffuseTransmissionFactor, 0.75f, "diffuse transmission factor");
+    Near(leaf.diffuseTransmissionColor[0], 0.5f, "diffuse transmission colour r");
+    Near(leaf.diffuseTransmissionColor[2], 0.25f, "diffuse transmission colour b");
+    Require(leaf.diffuseTransmissionTexturePath.find("dt.png") != std::string::npos, "the diffuse transmission map");
+    Require(leaf.diffuseTransmissionColorTexturePath.find("dtc.png") != std::string::npos, "the diffuse transmission colour map");
+    Require(leaf.textureTransforms[static_cast<size_t>(MaterialTextureSlot::DiffuseTransmissionColor)].texCoord == 1,
+            "the colour map's texCoord");
+    Require(leaf.textureSamplers[static_cast<size_t>(MaterialTextureSlot::DiffuseTransmissionColor)].wrapS == TextureWrap::ClampToEdge,
+            "the colour map's sampler");
+    Near(leaf.pbr.diffuseTransmissionFactor, 0.75f, "the pbr settings carry diffuse transmission");
+    Near(leaf.pbr.diffuseTransmissionColor[1], 1.0f, "the pbr settings carry its colour");
+
+    const ModelMaterialData& empty = MaterialNamed(model, "empty");
+    Near(empty.diffuseTransmissionFactor, 0.0f, "an empty extension has factor 0");
+    Near(empty.diffuseTransmissionColor[0], 1.0f, "and a white colour");
+    Near(empty.dispersion, 0.0f, "an empty dispersion extension disperses nothing");
+
+    const ModelMaterialData& bad = MaterialNamed(model, "bad");
+    Near(bad.diffuseTransmissionFactor, 1.0f, "the factor clamps to 1");
+    Near(bad.diffuseTransmissionColor[0], 1.0f, "the colour clamps to 1");
+    Near(bad.diffuseTransmissionColor[1], 0.0f, "and to 0");
+    Near(bad.dispersion, 0.0f, "a negative dispersion is none");
+
+    const ModelMaterialData& plain = MaterialNamed(model, "plain");
+    Near(plain.diffuseTransmissionFactor, 0.0f, "a plain material transmits nothing diffusely");
+    Near(plain.dispersion, 0.0f, "nor disperses");
+}
+
+void SidecarKeepsDispersionAndDiffuseTransmission()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "leaf";
+    written.pbr.dispersion = 1.5f;
+    written.pbr.diffuseTransmissionFactor = 0.6f;
+    written.pbr.diffuseTransmissionColor[1] = 0.3f;
+    written.diffuseTransmissionTexturePath = "dt.png";
+    written.diffuseTransmissionColorTexturePath = "dtc.png";
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "leaf.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Near(read.pbr.dispersion, 1.5f, "sidecar dispersion");
+    Near(read.pbr.diffuseTransmissionFactor, 0.6f, "sidecar diffuse transmission");
+    Near(read.pbr.diffuseTransmissionColor[1], 0.3f, "sidecar diffuse transmission colour");
+    Require(read.diffuseTransmissionTexturePath == "dt.png" && read.diffuseTransmissionColorTexturePath == "dtc.png", "sidecar maps");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Near(legacy.pbr.dispersion, 0.0f, "a legacy sidecar disperses nothing");
+    Near(legacy.pbr.diffuseTransmissionFactor, 0.0f, "nor transmits diffusely");
+    Near(legacy.pbr.diffuseTransmissionColor[2], 1.0f, "and has a white diffuse transmission colour");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Near(applied.dispersion, 1.5f, "applied dispersion");
+    Near(applied.diffuseTransmissionFactor, 0.6f, "applied diffuse transmission");
+    Near(applied.diffuseTransmissionColor[1], 0.3f, "applied diffuse transmission colour");
+    Require(applied.diffuseTransmissionColorTexturePath == "dtc.png", "applied colour map");
+}
+
 int main()
 {
     try
@@ -988,6 +1086,8 @@ int main()
         SidecarKeepsSamplers();
         ReadsTransmissionAndVolume();
         SidecarKeepsTransmissionAndVolume();
+        ReadsDispersionAndDiffuseTransmission();
+        SidecarKeepsDispersionAndDiffuseTransmission();
     }
     catch (const std::exception& error)
     {

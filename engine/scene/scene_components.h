@@ -55,6 +55,8 @@ struct ModelImportedMaterialInfo
     std::string iridescenceThicknessTexturePath;
     std::string transmissionTexturePath;
     std::string thicknessTexturePath;
+    std::string diffuseTransmissionTexturePath;
+    std::string diffuseTransmissionColorTexturePath;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

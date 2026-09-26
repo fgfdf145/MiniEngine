@@ -19,6 +19,8 @@ layout(set = 1, binding = 21) uniform sampler2D iridescenceTexture;        // R
 layout(set = 1, binding = 22) uniform sampler2D iridescenceThicknessTexture; // G
 layout(set = 1, binding = 23) uniform sampler2D transmissionTexture;         // R
 layout(set = 1, binding = 24) uniform sampler2D thicknessTexture;            // G
+layout(set = 1, binding = 25) uniform sampler2D diffuseTransmissionTexture;  // A
+layout(set = 1, binding = 26) uniform sampler2D diffuseTransmissionColorTexture; // RGB, sRGB
 
 struct MaterialLayers
 {
