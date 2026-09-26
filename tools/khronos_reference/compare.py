@@ -84,6 +84,11 @@ KNOWN_DIFFERENCES = {
                    "reference view encodes with the viewer's 2.2 gamma.",
     "DispersionTest": "Most of the rest is the draped backdrop, whose folds differ from the viewer's.",
     "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
+    "ScatteringSkull": "The model names its multi-scatter colour multiscatterColorFactor; the viewer reads only the draft's "
+                       "multiscatterColor, so it does not scatter and the skull's diffuse transmission through its dense "
+                       "volume leaves it black. The engine reads both names. ScatteringSkullDraftKey is the same model "
+                       "with the draft's name, which both scatter.",
+    "SimpleInstancing": "The viewer frames the mesh at its node, without the instances, so the nearest cube's face fills the view.",
 }
 NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
 
