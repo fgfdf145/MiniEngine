@@ -35,8 +35,8 @@ Read from the release build at `https://github.khronos.org/glTF-Sample-Viewer-Re
      only; added 2026-09-26);
    - exposure is manual, set so the scene's HDRI texel value 1 is exposed to 1 (the viewer's
      exposure 1.0); auto exposure and auto white balance are off;
-   - glare/bloom, screen-space AO, SSR and geometric specular AA are off: the viewer has none of them
-     (specular AA widens the roughness of small curved surfaces, added 2026-09-26). TAA stays (the
+   - glare/bloom, screen-space AO, SSR, geometric specular AA and shadows are off: the viewer has none
+     of them (specular AA widens the roughness of small curved surfaces; both added 2026-09-26). TAA stays (the
      viewer uses MSAA; both converge on the same edges);
    - the camera is framed by the viewer's rule above over every model in the scene
      (`ComputeKhronosViewerExtents` from each submesh's cached bounding sphere,

@@ -20,7 +20,9 @@ python3 tools/khronos_reference/make_scenes.py
 
 `fetch.py` downloads the glTF flavour of every model listed in `common.py` (about 20 MB) and
 `Cannon_Exterior.hdr`, keeping files already present; pass model names to fetch only those.
-`make_scenes.py` writes one scene per model and one per material variant.
+`make_scenes.py` writes one scene per model and one per material variant, with the model's own
+directional lights (`KHR_lights_punctual`, lux as glTF has it, no shadows), which the viewer lights it
+with too; point and spot lights are reported and left out.
 
 ## 2. Engine captures
 
@@ -29,7 +31,7 @@ tools/khronos_reference/capture_engine.sh
 ```
 
 Runs every scene with `--khronos-reference --viewport-size 1334x1082` (PBR Neutral, an HDRI texel exposed to 1, no glare, AO,
-SSR or specular AA, the viewer's framing, the viewer's blurred background) into `captures/engine/`. About 25 s per
+SSR, specular AA or shadows, the viewer's framing, the viewer's blurred background) into `captures/engine/`. About 25 s per
 scene. A run whose window was resized mid-way (macOS Stage Manager) is retried once.
 
 ## 3. Sample Viewer captures

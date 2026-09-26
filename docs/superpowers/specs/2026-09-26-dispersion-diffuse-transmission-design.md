@@ -70,8 +70,11 @@ Read from the viewer release the captures come from (`GltfSVApp.js`, 2026-09-26)
   dispersion` either side; IOR 1 does not spread.
 - Import: dispersion; the diffuse transmission factors, both textures and defaults; the forward flag;
   sidecar round trip; legacy sidecar keeps the defaults.
-- The light direction conversion in `make_scenes.py`: glTF's -Z through the node matrix, then the
-  engine's Euler angles whose rotation of -Y gives it.
+- `ShadowOffsetNormal`: a light in front or an opaque surface keeps the geometric normal; a
+  transmitting surface lit from behind flips it. `DiffuseTransmissionDistance`: thickness times the
+  mean scale.
+- The light direction conversion in `make_scenes.py` (checked in the session, not a committed test):
+  glTF's -Z through the node matrix, then the engine's Euler angles whose rotation of -Y gives it.
 
 ## Manual Acceptance (by image)
 
@@ -80,3 +83,26 @@ Read from the viewer release the captures come from (`GltfSVApp.js`, 2026-09-26)
 2. `CompareDispersion`, `DispersionTest` and `DragonDispersion`: colour fringes grow with the
    dispersion and the IOR, crops side by side.
 3. Every other comparison scene unchanged within the noise (their materials have neither extension).
+
+## Amendments During Implementation
+
+- **The reference view draws no shadows.** The engine's brightest directional light always casts a
+  shadow (a scene light's `cast_shadows` only governs local lights), and `DiffuseTransmissionTest`'s
+  bars behind the panels shadowed their backlight: a dark band across every panel (mean difference
+  3.8). The viewer has no shadows, so the Khronos reference view skips the cascades and the local
+  atlas (3.2); the caster remains the sun for the sky and exposure.
+- **The ambient occlusion darkens the diffusely transmitted ambient.** Decision 4 first kept it
+  unoccluded, as 4a's specular transmission is. `DiffuseTransmissionTeacup`'s saucer underside then
+  showed bright where the viewer's is dark (6.8): its baked occlusion there is 0.14, and the viewer
+  multiplies all image-based light by the occlusion map. A translucent asset's baked occlusion is
+  authored for its transmitted light too, so the engine follows the viewer here (2.7). 4a's specular
+  transmission keeps its unoccluded light (the viewer darkens that as well; no compared model shows it).
+
+## Results (2026-09-26, 40 scenes)
+
+`DiffuseTransmissionTest` 11.4 to 3.2 and `DiffuseTransmissionTeacup` 5.5 to 2.7: the panels brighten
+and take the transmission colour with the factor, the stripes and logos show through, and the cup's
+decoration fades where light passes the porcelain. The dispersion scenes now show the viewer's colour
+fringes (`CompareDispersion` 2.6, `DragonDispersion` 3.6); `DispersionTest` stays 4.0, most of it the
+draped backdrop's folds, which differ from the viewer's before and after this work. Every other scene's
+mean difference is unchanged.
