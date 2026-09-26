@@ -21,11 +21,16 @@ inline constexpr uint32_t kEnvironmentBrdfSampleCount = 2048;
 glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCount);
 
 // The factor that adds back the energy a single-scattering GGX lobe loses to light bouncing more
-// than once between microfacets (Fdez-Aguera 2019, in Filament's form): 1 + F0 (1 / (A + B) - 1),
-// with (A, B) = IntegrateEnvironmentBrdf's result. A + B is the lobe's directional albedo for
-// F0 = 1, so a perfect conductor reflects exactly everything once its specular term is scaled by
-// this; rough metals gain the most, dielectrics almost nothing. pbr_common.glsl's
-// SpecularEnergyCompensation is the same formula.
+// than once between microfacets (Fdez-Aguera 2019): with (A, B) = IntegrateEnvironmentBrdf's result,
+// E_ms = 1 - (A + B) the energy the single-scattering lobe misses for F0 = 1 and F_avg = F0 +
+// (1 - F0) / 21 the hemispherical average of Schlick's Fresnel, the multiple-scattering lobe is
+// E_ss E_ms F_avg / (1 - F_avg E_ms), so the whole lobe is the single-scattering one times
+// 1 + E_ms F_avg / (1 - F_avg E_ms). The Khronos Sample Viewer's IBL computes the same
+// (getIBLGGXFresnel). For F0 = 1 it is 1 / (A + B), so a perfect conductor reflects exactly
+// everything; rough metals gain the most, dielectrics almost nothing. It replaced Filament's
+// 1 + F0 (1 / (A + B) - 1), which agrees at F0 = 0 and 1 but brightens coloured metals in between
+// (up to 11% at F0 = 0.5 on a rough lobe). pbr_common.glsl's SpecularEnergyCompensation is the
+// same formula.
 glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& environmentBrdf);
 
 // The directional albedo of the sheen lobe (KHR_materials_sheen, Filament's model): the integral of

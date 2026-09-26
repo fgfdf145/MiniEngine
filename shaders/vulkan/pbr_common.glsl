@@ -248,6 +248,16 @@ float SurfaceF90(float metallic, SpecularParams specular)
     return mix(specular.dielectricF90, 1.0, metallic);
 }
 
+// What the diffuse lobe keeps: it lives only in the dielectric share of the surface (1 - metallic)
+// and under the dielectric's Fresnel alone. Blending the metal's F0 in as well, as SurfaceF0 does
+// for the specular lobe, would take a partly metallic surface's metal reflection out of its
+// dielectric diffuse a second time. The Khronos Sample Viewer mixes a dielectric BRDF (diffuse
+// under the dielectric's Fresnel) and a metal one by the metallic weight; this is that.
+vec3 DiffuseWeight(float cosTheta, float metallic, SpecularParams specular)
+{
+    return (vec3(1.0) - BaseFresnel(cosTheta, specular.dielectricF0, specular.dielectricF90, specular)) * (1.0 - metallic);
+}
+
 // ---------------------------------------------------------------------------
 // Anisotropy (KHR_materials_anisotropy)
 // ---------------------------------------------------------------------------
@@ -307,10 +317,10 @@ vec3 EvaluateBRDF(
     vec3 diffuse = vec3(0.0);
     if (NdL > 0.0)
     {
-        // Burley's diffuse (brdf_common.glsl), weighted by what the specular Fresnel toward the
+        // Burley's diffuse (brdf_common.glsl), weighted by what the dielectric's Fresnel toward the
         // centre leaves, as the Lambert term it replaced was.
         vec3 H = normalize(V + L);
-        vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+        vec3 kD = DiffuseWeight(max(dot(H, V), 0.0), metallic, specularParams);
         diffuse = kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
     }
     if (specularParams.diffuseTransmissionFactor > 0.0)
@@ -324,7 +334,7 @@ vec3 EvaluateBRDF(
         {
             vec3 mirrored = normalize(L + 2.0 * N * backNdL);
             vec3 H = normalize(mirrored + V);
-            vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+            vec3 kD = DiffuseWeight(max(dot(H, V), 0.0), metallic, specularParams);
             diffuse += specularParams.diffuseTransmissionFactor * kD * specularParams.diffuseTransmissionColor * (backNdL / PI) * radiance;
         }
     }
@@ -340,7 +350,7 @@ vec3 EvaluateBRDF(
         float denominator = max(NdH * NdH * (a2 - 1.0) + 1.0, 1e-7);
         float D = a2 / (PI * denominator * denominator);
         float visibility = VisibilitySmithGgxCorrelated(max(NdV, 1e-4), max(dot(N, mirrored), 0.0), specularParams.transmissionAlpha);
-        vec3 kD = (vec3(1.0) - BaseFresnel(max(NdV, 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+        vec3 kD = DiffuseWeight(max(NdV, 0.0), metallic, specularParams);
         vec3 transmitted = kD * specularParams.transmissionTint * D * visibility * radiance;
         diffuse = mix(diffuse, transmitted, specularParams.transmissionFactor);
     }
@@ -619,7 +629,7 @@ vec3 EvaluateAreaLight(
     specular *= energyCompensation;
 
     // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
-    vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(V, centreH), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+    vec3 kD = DiffuseWeight(max(dot(V, centreH), 0.0), metallic, specularParams);
     vec3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
 
     return diffuse + specular;
@@ -741,15 +751,39 @@ vec2 SampleEnvironmentBrdf(float roughness, float NdV)
 }
 
 // Scales a single-scattering GGX specular term up by the energy the lobe loses to light bouncing
-// between microfacets more than once (Fdez-Aguera 2019, in Filament's form). environmentBrdf is
-// the (A, B) pair the specular term was computed with: A + B is the lobe's directional albedo for
-// F0 = 1, so a perfect conductor then reflects exactly all it receives. Rough metals gain the most;
-// dielectrics, with their small F0, barely change. SpecularEnergyCompensation in
+// between microfacets more than once (Fdez-Aguera 2019, as the Khronos Sample Viewer's
+// getIBLGGXFresnel has it): 1 + E_ms F_avg / (1 - F_avg E_ms) with E_ms = 1 - (A + B) and F_avg the
+// average Fresnel. environmentBrdf is the (A, B) pair the specular term was computed with: A + B is
+// the lobe's directional albedo for F0 = 1, so a perfect conductor then reflects exactly all it
+// receives. Rough metals gain the most; dielectrics, with their small F0, barely change. SpecularEnergyCompensation in
 // engine/renderer/environment_brdf.cpp is the same formula and carries the tests.
 vec3 SpecularEnergyCompensation(vec3 F0, vec2 environmentBrdf)
 {
-    float singleScatterAlbedo = max(environmentBrdf.x + environmentBrdf.y, 1e-4);
-    return vec3(1.0) + F0 * (1.0 / singleScatterAlbedo - 1.0);
+    float lostEnergy = clamp(1.0 - (environmentBrdf.x + environmentBrdf.y), 0.0, 1.0 - 1e-4);
+    vec3 averageFresnel = F0 + (vec3(1.0) - F0) / 21.0;
+    return vec3(1.0) + lostEnergy * averageFresnel / (vec3(1.0) - averageFresnel * lostEnergy);
+}
+
+// The base's split-sum specular albedo with its multiple scattering, and the dielectric share's alone
+// (what the diffuse lobe sits under, see DiffuseWeight). Each of the two lobes, the dielectric's
+// and the metal's, is compensated for its own F0 and then blended by the metallic weight, as the
+// Khronos Sample Viewer mixes them; compensating the blended F0 would not be the same, the factor
+// being non-linear in F0.
+struct BaseSpecularAlbedos
+{
+    vec3 total;
+    vec3 dielectric;
+};
+
+BaseSpecularAlbedos EvaluateBaseSpecularAlbedos(vec2 environmentBrdf, vec3 albedo, float metallic, SpecularParams specular)
+{
+    BaseSpecularAlbedos albedos;
+    albedos.dielectric = BaseSpecularAlbedo(environmentBrdf, specular.dielectricF0, specular.dielectricF90, specular) *
+                         SpecularEnergyCompensation(specular.dielectricF0, environmentBrdf);
+    vec3 metal = metallic > 0.0 ? BaseSpecularAlbedo(environmentBrdf, albedo, 1.0, specular) * SpecularEnergyCompensation(albedo, environmentBrdf)
+                                : vec3(0.0);
+    albedos.total = mix(albedos.dielectric, metal, metallic);
+    return albedos;
 }
 
 // Outgoing radiance from an environment of the same luminance in every direction. For that
@@ -776,17 +810,16 @@ vec3 EvaluateUniformAmbient(
     vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
-    vec3 F0 = SurfaceF0(albedo, metallic, specular);
-    float F90 = SurfaceF90(metallic, specular);
     // The DFG table, as under a physical sky: Karis' analytic fit, used here before, approximated the
     // Smith-Schlick table and no longer matches the correlated lobe the direct lights draw.
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
     // Compensated with the same table it was computed from, so the white furnace holds.
-    vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
-    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+    BaseSpecularAlbedos albedos = EvaluateBaseSpecularAlbedos(environmentBrdf, albedo, metallic, specular);
+    vec3 specularAlbedo = albedos.total;
+    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - albedos.dielectric);
     float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
-    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * luminance * ao, luminance * ao, metallic, specularAlbedo, specular);
-    diffuse = MixTransmittedAmbient(diffuse, metallic, specularAlbedo, specular);
+    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * luminance * ao, luminance * ao, metallic, albedos.dielectric, specular);
+    diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
 }
 
@@ -929,11 +962,10 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
 vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, SpecularParams specular, float ao, vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
-    vec3 F0 = SurfaceF0(albedo, metallic, specular);
-    float F90 = SurfaceF90(metallic, specular);
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
-    vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
-    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+    BaseSpecularAlbedos albedos = EvaluateBaseSpecularAlbedos(environmentBrdf, albedo, metallic, specular);
+    vec3 specularAlbedo = albedos.total;
+    vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - albedos.dielectric);
     // An anisotropic base reflects about the bent normal (AnisotropicBentNormal); the DFG weight
     // keeps the isotropic roughness.
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
@@ -942,9 +974,9 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
-        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, specularAlbedo, specular);
+        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, albedos.dielectric, specular);
     }
-    diffuse = MixTransmittedAmbient(diffuse, metallic, specularAlbedo, specular);
+    diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 
@@ -1060,8 +1092,11 @@ vec3 ShadeSurface(
     // One factor for every direct light: it depends only on the surface and the view. It comes
     // from the DFG table, which integrates the same height-correlated lobe the direct lights draw,
     // so it adds back exactly the energy that lobe loses.
-    vec3 F0 = SurfaceF0(albedo, metallic, specular);
-    vec3 energyCompensation = SpecularEnergyCompensation(F0, SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0)));
+    // Per lobe, as EvaluateBaseSpecularAlbedos compensates them: the blended lobe's factor is the
+    // two compensated albedos' blend over the uncompensated blended albedo.
+    vec2 directEnvironmentBrdf = SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0));
+    vec3 uncompensated = BaseSpecularAlbedo(directEnvironmentBrdf, SurfaceF0(albedo, metallic, specular), SurfaceF90(metallic, specular), specular);
+    vec3 energyCompensation = EvaluateBaseSpecularAlbedos(directEnvironmentBrdf, albedo, metallic, specular).total / max(uncompensated, vec3(1e-4));
 
     // Directional lights reach everywhere, so they are never binned: every pixel loops over them.
     // The shadow caster is always one of them.

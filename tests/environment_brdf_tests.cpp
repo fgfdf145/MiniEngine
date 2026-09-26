@@ -186,6 +186,22 @@ void TableHoldsSheenAlbedoInBlue()
     }
 }
 
+// Fdez-Aguera's multiple-scattering lobe, as the Khronos Sample Viewer adds it: for F0 = 0.5 on a
+// lobe of albedo A + B the whole lobe is FssEss + FssEss E_ms F_avg / (1 - F_avg E_ms).
+void CompensationFollowsFdezAguera()
+{
+    const glm::vec2 ab(0.45f, 0.05f);
+    const float f0 = 0.5f;
+    const float single = f0 * ab.x + ab.y;
+    const float lost = 1.0f - (ab.x + ab.y);
+    const float average = f0 + (1.0f - f0) / 21.0f;
+    const float expected = single + single * lost * average / (1.0f - average * lost);
+    const float compensated = single * SpecularEnergyCompensation(glm::vec3(f0), ab).x;
+    Require(std::fabs(compensated - expected) < 1e-5f, "F0 0.5 follows Fdez-Aguera, got " + std::to_string(compensated));
+    // Filament's 1 + F0 (1 / (A + B) - 1) would have given 1.5 here, brighter than the model.
+    Require(SpecularEnergyCompensation(glm::vec3(f0), ab).x < 1.4f, "a coloured metal is not over-brightened");
+}
+
 // A dielectric's F0 is small, so its lobe barely loses energy and the factor stays near 1.
 void DielectricsBarelyChange()
 {
@@ -205,6 +221,7 @@ int main()
         ConservesEnergyAndConverges();
         TableSamplesTexelCentres();
         EnergyCompensationRestoresTheWhiteFurnace();
+        CompensationFollowsFdezAguera();
         DielectricsBarelyChange();
         SheenAlbedoIsBoundedAndMatchesQuadrature();
         TableHoldsSheenAlbedoInBlue();

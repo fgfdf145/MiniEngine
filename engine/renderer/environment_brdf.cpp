@@ -70,8 +70,9 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
 
 glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& environmentBrdf)
 {
-    const float singleScatterAlbedo = std::max(environmentBrdf.x + environmentBrdf.y, 1e-4f);
-    return glm::vec3(1.0f) + f0 * (1.0f / singleScatterAlbedo - 1.0f);
+    const float lostEnergy = std::clamp(1.0f - (environmentBrdf.x + environmentBrdf.y), 0.0f, 1.0f - 1e-4f);
+    const glm::vec3 averageFresnel = f0 + (glm::vec3(1.0f) - f0) / 21.0f;
+    return glm::vec3(1.0f) + lostEnergy * averageFresnel / (glm::vec3(1.0f) - averageFresnel * lostEnergy);
 }
 
 float IntegrateSheenAlbedo(float roughness, float NdV, uint32_t sampleCount)
