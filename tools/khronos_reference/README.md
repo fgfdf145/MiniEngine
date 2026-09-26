@@ -28,7 +28,7 @@ python3 tools/khronos_reference/make_scenes.py
 tools/khronos_reference/capture_engine.sh
 ```
 
-Runs every scene with `--khronos-reference` (PBR Neutral, an HDRI texel exposed to 1, no glare, AO or
+Runs every scene with `--khronos-reference --viewport-size 1334x1082` (PBR Neutral, an HDRI texel exposed to 1, no glare, AO or
 SSR, the viewer's framing, the viewer's blurred background) into `captures/engine/`. About 25 s per
 scene. A run whose window was resized mid-way (macOS Stage Manager) is retried once.
 
@@ -40,8 +40,8 @@ The viewer is not scriptable from a shell, so its captures are taken in a browse
    release site) on `http://127.0.0.1:8765/viewer/` and writes what the page posts to
    `captures/viewer/`. The page gets a `captureViewer(name)` function and a WebGL context that keeps
    its drawing buffer.
-2. Size the browser viewport to the engine captures, 667x541 CSS pixels (the page scales the canvas
-   to that size, and refuses a canvas of another aspect ratio).
+2. Size the browser viewport to 667x541 CSS pixels: at 2 pixels per point the canvas is 1334x1082, the
+   engine captures' default size (the page refuses a canvas of another aspect ratio).
 3. For each model, open
    `http://127.0.0.1:8765/viewer/?model=https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/<Model>/glTF/<Model>.gltf`,
    wait for it to load, then run `await captureViewer("<Model>")` in the console. For a variant, click
@@ -63,8 +63,8 @@ python3 tools/khronos_reference/compare.py
 ```
 
 Prints the mean absolute difference per scene (0 to 255, over RGB) and writes
-`captures/compare.html`: viewer, engine and their difference amplified four times. `--jpeg` embeds
-JPEG copies instead, for a page small enough to publish.
+`captures/compare.html`: viewer, engine and their difference amplified four times, compared at full
+resolution. `--jpeg` embeds half-size JPEG copies instead, for a page small enough to publish.
 
 ## Matching the Viewer
 

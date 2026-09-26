@@ -22,8 +22,9 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 VIEWER_SITE = "https://github.khronos.org/glTF-Sample-Viewer-Release/"
 # Injected at the top of the viewer's page. The viewer's WebGL context clears its drawing buffer
 # once a frame is shown, which reads back as black; preserving it lets captureViewer read the last
-# frame at any time. captureViewer(name, width, height) scales the canvas to the engine capture's
-# size and posts it to /save; it refuses a canvas of another aspect ratio, which would stretch.
+# frame at any time. captureViewer(name, width, height) posts the canvas at the engine capture's size
+# (by default the canvas's own 1334 x 1082 at 2 pixels per point) to /save; it refuses a canvas of
+# another aspect ratio, which would stretch.
 CAPTURE_SCRIPT = b"""<script>
 (function () {
   const getContext = HTMLCanvasElement.prototype.getContext;
@@ -33,7 +34,7 @@ CAPTURE_SCRIPT = b"""<script>
     }
     return getContext.call(this, type, attributes);
   };
-  window.captureViewer = async function (name, width = 667, height = 541) {
+  window.captureViewer = async function (name, width = 1334, height = 1082) {
     // The viewer sizes its canvas (and refits its camera to the new aspect) on a resize event, and
     // an emulated viewport size may not have sent one: resize until the backing store matches.
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -5,14 +5,14 @@
 #   tools/khronos_reference/capture_engine.sh [CompareMetallic ...]
 #
 # FRAMES (default 1200) frames are rendered before the capture; APP overrides the executable;
-# SIZE (default 667x541, the viewer captures' size) is the size the scene renders at
+# SIZE (default 1334x1082, the viewer's canvas at 2 pixels per point) is the size the scene renders at
 # (--viewport-size), whatever the editor's layout; the log must show it.
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 app=${APP:-$root/out/build/macos-debug/app/miniengine_app}
 frames=${FRAMES:-1200}
-size=${SIZE:-667x541}
+size=${SIZE:-1334x1082}
 scenes=$root/assets/scenes/khronos
 out=$root/assets/khronos/captures/engine
 log=$(mktemp)

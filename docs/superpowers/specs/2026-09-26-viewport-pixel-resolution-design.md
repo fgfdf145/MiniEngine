@@ -41,3 +41,11 @@ the same reason: the browser draws the Sample Viewer at 2 pixels per point.
    framing and exposure; the Render Size readout shows twice the panel's point size.
 2. The Khronos comparison at 1334x1082 against full-resolution viewer captures: the mean differences
    stay at or below their 667x541 values; `IORTestGrid`'s magnified refraction sharpens.
+
+## Acceptance (2026-09-26)
+
+- The 40 comparison scenes at 1334x1082 against native viewer captures: every mean difference at or
+  below its 667x541 value (`IORTestGrid` 5.8).
+- `IORTestGrid`'s magnified refraction did not sharpen: it was never the resolution. The viewer
+  magnifies its scene copy with nearest filtering and the engine's specular AA widens the small
+  spheres' reflections (the transmission and volume spec's amendment).

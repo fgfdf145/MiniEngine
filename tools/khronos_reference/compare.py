@@ -44,7 +44,8 @@ def embed(path, jpeg):
         return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "image.jpg"
-        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "85", str(path), "--out", str(out)],
+        # Half size: three full-resolution images per scene would outgrow a publishable page.
+        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "85", "-Z", "667", str(path), "--out", str(out)],
                        check=True, capture_output=True)
         return "data:image/jpeg;base64," + base64.b64encode(out.read_bytes()).decode()
 
@@ -77,9 +78,10 @@ def main():
 
 # Scenes whose difference is understood, with the reason, shown beside their numbers.
 KNOWN_DIFFERENCES = {
-    "IORTestGrid": "The small glass spheres magnify what is behind them about 3.7 times; the viewer re-renders that "
-                   "scene at 1024 x 1024, the engine copies its 667 x 541 frame, so the magnified detail is softer. "
-                   "The refracted shapes match the viewer's own raw transmission sample.",
+    "IORTestGrid": "The glass spheres magnify what is behind them about 3.7 times. The viewer magnifies its scene copy "
+                   "with nearest filtering (hard, stair-stepped edges), the engine bilinearly (soft edges), and the "
+                   "engine's geometric specular AA widens the small spheres' reflections. Not explained yet: the first "
+                   "column's spheres are darker in the engine.",
     "DispersionTest": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
     "DragonDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
     "CompareDispersion": "KHR_materials_dispersion is phase 4b: the engine refracts every channel alike.",
@@ -175,7 +177,7 @@ section h2 { font-size: 17px; margin: 0; font-weight: 600; }
 .note { margin: 0; font-size: 14px; max-width: 80ch; }
 .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 figure { margin: 0; display: grid; gap: 4px; }
-img { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; aspect-ratio: 667 / 541; }
+img { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; aspect-ratio: 1334 / 1082; }
 figcaption { color: var(--muted); font-size: 12.5px; }
 @media (max-width: 720px) { .row { grid-template-columns: 1fr; } .bar { min-width: 80px; } }
 </style>
@@ -187,7 +189,7 @@ figcaption { color: var(--muted); font-size: 12.5px; }
   is the absolute difference, amplified four times.</p>
   <ul class="conditions">
     <li>Cannon_Exterior, viewer rotation 90°</li><li>exposure 1.0</li><li>Khronos PBR Neutral</li>
-    <li>45° vertical FOV, viewer framing</li><li>background prefiltered at roughness 0.6</li><li>667 × 541</li>
+    <li>45° vertical FOV, viewer framing</li><li>background prefiltered at roughness 0.6</li><li>1334 × 1082 pixels, shown at half size</li>
   </ul>
 </div>
 <div class="summary">

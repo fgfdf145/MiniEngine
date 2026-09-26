@@ -101,10 +101,12 @@ build on the same refraction pass. See `2026-09-25-complete-brdf-program.md`.
 - **The IOR** the ray refracts by rides in `attenuationColor.a` (the IOR itself; `specularFactors`
   only holds the F0 made from it). KHR_materials_ior's 0 (infinite) is stored as 1000.
 - **Area lights** add no transmission lobe; point, spot and directional lights do.
-- **The copy's resolution.** The viewer renders its opaque scene a second time straight into its
-  1024 x 1024 texture; the engine copies the frame it already rendered. At the comparison's 667 x 541
-  viewport a small glass sphere that magnifies what is behind it about 3.7 times (`IORTestGrid`) shows
-  that as softer detail than the viewer's; the refracted shapes match (confirmed against the viewer's
-  own raw transmission sample through a debug build of it, `capture_server.py`'s `/viewer-debug/`).
-  At an editor-sized viewport the frame is larger than 1024 and the difference goes the other way.
-
+- **Why `IORTestGrid`'s refraction is softer than the viewer's.** First put down to the copy's
+  resolution; refuted at 1334 x 1082, where the engine's glass stayed soft with TAA off, LOD 0 and
+  the copy sharp at an undistorted lookup. The viewer's scene texture (`GltfSVApp.js`,
+  `opaqueRenderTexture`) magnifies with `NEAREST`: where a small sphere magnifies the copy about 3.7
+  times its edges stay hard and stair-stepped, where the engine's linear filter makes them soft. The
+  engine keeps the linear filter (no staircase). The rest is the reflection: geometric specular AA
+  widens the small spheres' roughness, which the viewer does not do (a capture with it off shows the
+  reflected clouds as sharp as the viewer's). The viewer's texture is also 8-bit RGBA, so it clips
+  transmitted radiance above 1 where the engine's RGBA16F copy does not.
