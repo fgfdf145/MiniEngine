@@ -752,7 +752,8 @@ void VulkanRenderer::DrawFrame()
         motion.previousModels,
         environmentData,
         viewProjection,
-        State().renderDebug.specularAntiAliasing,
+        // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
+        State().renderDebug.specularAntiAliasing && !State().renderDebug.khronosReference,
         preExposure);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =

@@ -28,8 +28,8 @@ python3 tools/khronos_reference/make_scenes.py
 tools/khronos_reference/capture_engine.sh
 ```
 
-Runs every scene with `--khronos-reference --viewport-size 1334x1082` (PBR Neutral, an HDRI texel exposed to 1, no glare, AO or
-SSR, the viewer's framing, the viewer's blurred background) into `captures/engine/`. About 25 s per
+Runs every scene with `--khronos-reference --viewport-size 1334x1082` (PBR Neutral, an HDRI texel exposed to 1, no glare, AO,
+SSR or specular AA, the viewer's framing, the viewer's blurred background) into `captures/engine/`. About 25 s per
 scene. A run whose window was resized mid-way (macOS Stage Manager) is retried once.
 
 ## 3. Sample Viewer captures

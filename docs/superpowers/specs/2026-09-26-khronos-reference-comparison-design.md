@@ -32,8 +32,9 @@ Read from the release build at `https://github.khronos.org/glTF-Sample-Viewer-Re
      `pbr_neutral.glsl`) instead of GT7's, applied to the exposed value (`hdr * kExposedPerFrameBufferUnit`);
    - exposure is manual, set so the scene's HDRI texel value 1 is exposed to 1 (the viewer's
      exposure 1.0); auto exposure and auto white balance are off;
-   - glare/bloom, screen-space AO and SSR are off: the viewer has none of them. TAA stays (the viewer
-     uses MSAA; both converge on the same edges);
+   - glare/bloom, screen-space AO, SSR and geometric specular AA are off: the viewer has none of them
+     (specular AA widens the roughness of small curved surfaces, added 2026-09-26). TAA stays (the
+     viewer uses MSAA; both converge on the same edges);
    - the camera is framed by the viewer's rule above over every model in the scene
      (`ComputeKhronosViewerExtents` from each submesh's cached bounding sphere,
      `Camera::FrameBoundsLikeKhronosViewer`), again whenever those extents or the viewport's aspect
