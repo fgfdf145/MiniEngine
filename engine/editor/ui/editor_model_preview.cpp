@@ -398,6 +398,12 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
     }
     HashQuantizedFloat(seed, pbr.dispersion);
     HashQuantizedFloat(seed, pbr.diffuseTransmissionFactor);
+    HashCombine(seed, pbr.volumeScatter);
+    for (const float value : pbr.multiscatterColor)
+    {
+        HashQuantizedFloat(seed, value);
+    }
+    HashQuantizedFloat(seed, pbr.scatterAnisotropy);
     for (const float value : pbr.diffuseTransmissionColor)
     {
         HashQuantizedFloat(seed, value);

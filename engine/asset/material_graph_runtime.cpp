@@ -542,6 +542,15 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
             diffuseTransmissionColor.push_back(value);
         }
         pbr["diffuse_transmission_color"] = diffuseTransmissionColor;
+        pbr["volume_scatter"] = node.pbr.volumeScatter;
+        YAML::Node multiscatterColor(YAML::NodeType::Sequence);
+        multiscatterColor.SetStyle(YAML::EmitterStyle::Flow);
+        for (const float value : node.pbr.multiscatterColor)
+        {
+            multiscatterColor.push_back(value);
+        }
+        pbr["multiscatter_color"] = multiscatterColor;
+        pbr["scatter_anisotropy"] = node.pbr.scatterAnisotropy;
         pbr["unlit"] = node.pbr.unlit;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
@@ -680,6 +689,11 @@ bool DeserializeMaterialShaderGraph(
             node.pbr.diffuseTransmissionFactor =
                 std::clamp(ReadFloatOrFallback(pbrNode["diffuse_transmission_factor"], node.pbr.diffuseTransmissionFactor), 0.0f, 1.0f);
             ReadFloatSequence(pbrNode["diffuse_transmission_color"], node.pbr.diffuseTransmissionColor, 3);
+            node.pbr.volumeScatter = pbrNode["volume_scatter"] && pbrNode["volume_scatter"].IsScalar()
+                                         ? pbrNode["volume_scatter"].as<bool>(node.pbr.volumeScatter)
+                                         : node.pbr.volumeScatter;
+            ReadFloatSequence(pbrNode["multiscatter_color"], node.pbr.multiscatterColor, 3);
+            node.pbr.scatterAnisotropy = ClampScatterAnisotropy(ReadFloatOrFallback(pbrNode["scatter_anisotropy"], node.pbr.scatterAnisotropy));
             node.pbr.unlit = pbrNode["unlit"] && pbrNode["unlit"].IsScalar() ? pbrNode["unlit"].as<bool>(node.pbr.unlit) : node.pbr.unlit;
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))

@@ -1061,10 +1061,98 @@ void SidecarKeepsDispersionAndDiffuseTransmission()
     Require(applied.diffuseTransmissionColorTexturePath == "dtc.png", "applied colour map");
 }
 
+// KHR_materials_volume_scatter (draft): the multi-scatter colour and the anisotropy, only with a volume.
+// The draft calls the colour multiscatterColor; ScatteringSkull (and the successor proposal) call it
+// multiscatterColorFactor, read when the draft's name is absent.
+void ReadsVolumeScatter()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string volume = R"("KHR_materials_volume": { "thicknessFactor": 1, "attenuationDistance": 0.02 },
+                                  "KHR_materials_diffuse_transmission": { "diffuseTransmissionFactor": 1 })";
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "volume_scatter",
+            {R"({ "name": "wax", "extensions": { )" + volume + R"(,
+                 "KHR_materials_volume_scatter": { "multiscatterColor": [0.5, 0.25, 1.0], "scatterAnisotropy": 0.3 } } })",
+             R"({ "name": "skull", "extensions": { )" + volume + R"(,
+                 "KHR_materials_volume_scatter": { "multiscatterColorFactor": [0.2, 0.4, 0.6] } } })",
+             R"({ "name": "both", "extensions": { )" + volume + R"(,
+                 "KHR_materials_volume_scatter": { "multiscatterColor": [0.1, 0.1, 0.1], "multiscatterColorFactor": [0.9, 0.9, 0.9] } } })",
+             R"({ "name": "empty", "extensions": { )" + volume + R"(, "KHR_materials_volume_scatter": {} } })",
+             R"({ "name": "bad", "extensions": { )" + volume + R"(,
+                 "KHR_materials_volume_scatter": { "multiscatterColor": [2, -1, 0.5], "scatterAnisotropy": 3 } } })",
+             R"({ "name": "novolume", "extensions": { "KHR_materials_volume_scatter": { "multiscatterColor": [0.5, 0.5, 0.5] } } })",
+             R"({ "name": "plain" })"})
+            .string());
+    const ModelMaterialData& wax = MaterialNamed(model, "wax");
+    Require(wax.volumeScatter, "the extension with a volume scatters");
+    Near(wax.multiscatterColor[0], 0.5f, "multi-scatter colour r");
+    Near(wax.multiscatterColor[1], 0.25f, "multi-scatter colour g");
+    Near(wax.scatterAnisotropy, 0.3f, "anisotropy");
+    Require(wax.pbr.volumeScatter, "the pbr settings carry the switch");
+    Near(wax.pbr.multiscatterColor[2], 1.0f, "the pbr settings carry the colour");
+    Near(wax.pbr.scatterAnisotropy, 0.3f, "the pbr settings carry the anisotropy");
+
+    const ModelMaterialData& skull = MaterialNamed(model, "skull");
+    Require(skull.volumeScatter, "the sample model's key scatters too");
+    Near(skull.multiscatterColor[1], 0.4f, "multiscatterColorFactor is read");
+    Near(MaterialNamed(model, "both").multiscatterColor[0], 0.1f, "the draft's name wins");
+
+    const ModelMaterialData& empty = MaterialNamed(model, "empty");
+    Require(empty.volumeScatter, "an empty extension still scatters");
+    Near(empty.multiscatterColor[0], 0.0f, "with the default black multi-scatter colour");
+    Near(empty.scatterAnisotropy, 0.0f, "and isotropic");
+
+    const ModelMaterialData& bad = MaterialNamed(model, "bad");
+    Near(bad.multiscatterColor[0], 1.0f, "the colour clamps to 1");
+    Near(bad.multiscatterColor[1], 0.0f, "and to 0");
+    Require(bad.scatterAnisotropy < 1.0f && bad.scatterAnisotropy > 0.9f, "the anisotropy stays inside (-1, 1)");
+
+    Require(!MaterialNamed(model, "novolume").volumeScatter, "without KHR_materials_volume nothing scatters");
+    Require(!MaterialNamed(model, "plain").volumeScatter, "a plain material does not scatter");
+}
+
+void SidecarKeepsVolumeScatter()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "wax";
+    written.pbr.volumeScatter = true;
+    written.pbr.multiscatterColor[1] = 0.6f;
+    written.pbr.scatterAnisotropy = -0.4f;
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "wax.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    Require(read.pbr.volumeScatter, "sidecar volume scatter");
+    Near(read.pbr.multiscatterColor[1], 0.6f, "sidecar multi-scatter colour");
+    Near(read.pbr.scatterAnisotropy, -0.4f, "sidecar anisotropy");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Require(!legacy.pbr.volumeScatter, "a legacy sidecar does not scatter");
+    Near(legacy.pbr.multiscatterColor[0], 0.0f, "and has a black multi-scatter colour");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Require(applied.volumeScatter, "applied volume scatter");
+    Near(applied.multiscatterColor[1], 0.6f, "applied multi-scatter colour");
+    Near(applied.scatterAnisotropy, -0.4f, "applied anisotropy");
+}
+
 int main()
 {
     try
     {
+        ReadsVolumeScatter();
+        SidecarKeepsVolumeScatter();
         ReadsEmissiveStrength();
         ReadsClearcoat();
         SidecarKeepsClearcoat();

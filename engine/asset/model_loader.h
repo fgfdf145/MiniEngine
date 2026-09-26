@@ -73,6 +73,9 @@ struct ModelMaterialData
     float dispersion = 0.0f;
     float diffuseTransmissionFactor = 0.0f;
     float diffuseTransmissionColor[3] = {1.0f, 1.0f, 1.0f};
+    bool volumeScatter = false;
+    float multiscatterColor[3] = {0.0f, 0.0f, 0.0f};
+    float scatterAnisotropy = 0.0f;
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;

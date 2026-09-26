@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -132,6 +133,15 @@ float ClampMaterialAlphaValue(float value);
 float ClampMaterialAlphaValue(float value, float fallback);
 float ResolveMaterialCoverageAlpha(MaterialAlphaMode mode, float alpha, float cutoff);
 
+// KHR_materials_volume_scatter's anisotropy lies in the open interval (-1, 1): at either end the
+// Henyey-Greenstein phase function degenerates to a delta.
+inline constexpr float kMaxScatterAnisotropy = 0.99f;
+
+inline float ClampScatterAnisotropy(float anisotropy)
+{
+    return std::clamp(anisotropy, -kMaxScatterAnisotropy, kMaxScatterAnisotropy);
+}
+
 struct MaterialPbrSurfaceSettings
 {
     float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -186,6 +196,13 @@ struct MaterialPbrSurfaceSettings
     // surface as a Lambertian lobe on its far side, and that light's colour.
     float diffuseTransmissionFactor = 0.0f;
     float diffuseTransmissionColor[3] = {1.0f, 1.0f, 1.0f};
+    // KHR_materials_volume_scatter (draft): subsurface scattering inside the volume, as the Khronos
+    // sample viewer diffuses it through the screen (only with a volume and diffuse transmission). The
+    // multi-scatter albedo (the medium's colour after many bounces) and the Henyey-Greenstein
+    // anisotropy, kept but not shaded (the viewer ignores it too).
+    bool volumeScatter = false;
+    float multiscatterColor[3] = {0.0f, 0.0f, 0.0f};
+    float scatterAnisotropy = 0.0f;
     // KHR_materials_unlit: the base colour alone, no lighting.
     bool unlit = false;
 };

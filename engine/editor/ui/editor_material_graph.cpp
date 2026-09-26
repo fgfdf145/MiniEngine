@@ -879,6 +879,13 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     // above 0 the material is forward shaded.
     changed |= DragFloatInRange("Diffuse Transmission", &pbr.diffuseTransmissionFactor, 0.0f, 1.0f, "%.2f");
     changed |= ImGui::ColorEdit3("Diffuse Transmission Color", pbr.diffuseTransmissionColor);
+    // KHR_materials_volume_scatter: shows through a volume with diffuse transmission above 0.
+    changed |= ImGui::Checkbox("Volume Scatter", &pbr.volumeScatter);
+    changed |= ImGui::ColorEdit3("Multi-scatter Color", pbr.multiscatterColor);
+    if (DragFloatInRange("Scatter Anisotropy", &pbr.scatterAnisotropy, -kMaxScatterAnisotropy, kMaxScatterAnisotropy, "%.2f"))
+    {
+        changed = true;
+    }
     // KHR_materials_unlit: the base colour alone, shown at the display's paper white.
     changed |= ImGui::Checkbox("Unlit", &pbr.unlit);
     return changed;

@@ -992,6 +992,39 @@ ModelMaterialData BuildMaterialData(
             }
         }
     }
+    // KHR_materials_volume_scatter (draft): scattering in the medium KHR_materials_volume defines, so
+    // ignored without it. The draft names the colour multiscatterColor; ScatteringSkull, the one
+    // sample model, and the successor proposal (KHR_materials_scatter) name it
+    // multiscatterColorFactor, read when the draft's name is absent. Defaults: black, isotropic.
+    if (const auto volumeScatter = material.extensions.find("KHR_materials_volume_scatter"); volumeScatter != material.extensions.end())
+    {
+        const tinygltf::Value& extension = volumeScatter->second;
+        if (material.extensions.find("KHR_materials_volume") == material.extensions.end())
+        {
+            LOG_WARN("glTF material '{}' uses KHR_materials_volume_scatter without KHR_materials_volume; it does not scatter", material.name);
+        }
+        else
+        {
+            materialData.volumeScatter = true;
+            const char* colorKey = extension.Has("multiscatterColor") ? "multiscatterColor" : "multiscatterColorFactor";
+            if (std::string_view(colorKey) == "multiscatterColorFactor" && extension.Has(colorKey))
+            {
+                LOG_INFO("glTF material '{}' names its multi-scatter colour multiscatterColorFactor, not the draft's multiscatterColor", material.name);
+            }
+            if (extension.Has(colorKey) && extension.Get(colorKey).IsArray() && extension.Get(colorKey).ArrayLen() >= 3)
+            {
+                const tinygltf::Value& color = extension.Get(colorKey);
+                for (int index = 0; index < 3; ++index)
+                {
+                    if (color.Get(index).IsNumber())
+                    {
+                        materialData.multiscatterColor[index] = std::clamp(static_cast<float>(color.Get(index).GetNumberAsDouble()), 0.0f, 1.0f);
+                    }
+                }
+            }
+            materialData.scatterAnisotropy = ClampScatterAnisotropy(readExtensionNumber(extension, "scatterAnisotropy", 0.0f));
+        }
+    }
 
     // KHR_materials_iridescence. Absent members take the extension's defaults: factor 0, IOR 1.3,
     // thickness 100 to 400 nm.
@@ -1253,6 +1286,10 @@ void AppendPrimitive(
     const tinygltf::Primitive& primitive,
     size_t primitiveIndex,
     const glm::mat4& worldTransform,
+    // The node's own world transform: what the Khronos Sample Viewer frames by, which leaves out
+    // an EXT_mesh_gpu_instancing instance's transform. worldTransform otherwise.
+    const glm::mat4& viewerBoundsTransform,
+    const std::string& nameSuffix,
     LoadedModelData& modelData)
 {
     const auto positionIt = primitive.attributes.find("POSITION");
@@ -1316,7 +1353,7 @@ void AppendPrimitive(
     }
 
     ModelSubmeshData submeshData{};
-    submeshData.name = BuildSubmeshName(node, mesh, primitiveIndex);
+    submeshData.name = BuildSubmeshName(node, mesh, primitiveIndex) + nameSuffix;
     if (primitive.material >= 0)
     {
         EnsureIndexInRange(static_cast<size_t>(primitive.material), modelData.materials.size(), "material");
@@ -1442,7 +1479,7 @@ void AppendPrimitive(
     }
 
     ModelPostProcess::FinalizeSubmeshData(submeshData);
-    SetViewerBounds(model.accessors[static_cast<size_t>(positionIt->second)], worldTransform, submeshData);
+    SetViewerBounds(model.accessors[static_cast<size_t>(positionIt->second)], viewerBoundsTransform, submeshData);
     submeshData.nodeScale = glm::vec3(
         glm::length(glm::vec3(worldTransform[0])),
         glm::length(glm::vec3(worldTransform[1])),
@@ -1614,6 +1651,64 @@ std::optional<ModelLightData> BuildModelLight(const tinygltf::Light& source, con
     return light;
 }
 
+// EXT_mesh_gpu_instancing: each instance's T * R * S, from the node's TRANSLATION, ROTATION and
+// SCALE accessors (each optional, all of one count; the rotation may be normalized bytes or shorts).
+// Empty for a node without the extension.
+std::vector<glm::mat4> ReadGpuInstanceTransforms(const tinygltf::Model& model, const tinygltf::Node& node)
+{
+    const auto found = node.extensions.find("EXT_mesh_gpu_instancing");
+    if (found == node.extensions.end() || !found->second.Has("attributes") || !found->second.Get("attributes").IsObject())
+    {
+        return {};
+    }
+    const tinygltf::Value& attributes = found->second.Get("attributes");
+    std::optional<size_t> count;
+    const auto read = [&](const char* semantic, size_t components) -> std::vector<float>
+    {
+        if (!attributes.Has(semantic) || !attributes.Get(semantic).IsInt())
+        {
+            return {};
+        }
+        const int accessorIndex = attributes.Get(semantic).GetNumberAsInt();
+        EnsureIndexInRange(static_cast<size_t>(accessorIndex), model.accessors.size(), "accessor");
+        const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIndex)];
+        if (tinygltf::GetNumComponentsInType(static_cast<uint32_t>(accessor.type)) != static_cast<int>(components))
+        {
+            throw std::runtime_error(std::string("EXT_mesh_gpu_instancing ") + semantic + " has the wrong accessor type");
+        }
+        if (count.has_value() && *count != accessor.count)
+        {
+            throw std::runtime_error("EXT_mesh_gpu_instancing attributes of one node have different counts");
+        }
+        count = accessor.count;
+        return ReadAccessorFloatComponents(model, accessorIndex, components);
+    };
+    const std::vector<float> translations = read("TRANSLATION", 3);
+    const std::vector<float> rotations = read("ROTATION", 4);
+    const std::vector<float> scales = read("SCALE", 3);
+
+    std::vector<glm::mat4> transforms(count.value_or(0), glm::mat4(1.0f));
+    for (size_t instance = 0; instance < transforms.size(); ++instance)
+    {
+        glm::mat4& transform = transforms[instance];
+        if (!translations.empty())
+        {
+            transform = glm::translate(transform, glm::vec3(translations[instance * 3], translations[instance * 3 + 1], translations[instance * 3 + 2]));
+        }
+        if (!rotations.empty())
+        {
+            const glm::quat rotation(
+                rotations[instance * 4 + 3], rotations[instance * 4], rotations[instance * 4 + 1], rotations[instance * 4 + 2]);
+            transform *= glm::mat4_cast(glm::normalize(rotation));
+        }
+        if (!scales.empty())
+        {
+            transform = glm::scale(transform, glm::vec3(scales[instance * 3], scales[instance * 3 + 1], scales[instance * 3 + 2]));
+        }
+    }
+    return transforms;
+}
+
 void TraverseNode(
     const tinygltf::Model& model,
     int nodeIndex,
@@ -1644,16 +1739,41 @@ void TraverseNode(
     {
         EnsureIndexInRange(static_cast<size_t>(node.mesh), model.meshes.size(), "mesh");
         const tinygltf::Mesh& mesh = model.meshes[static_cast<size_t>(node.mesh)];
+        // EXT_mesh_gpu_instancing: every instance is baked into its own copy of the mesh, as node
+        // transforms are, and the plain mesh is not drawn.
+        const std::vector<glm::mat4> instances = ReadGpuInstanceTransforms(model, node);
+        if (!instances.empty())
+        {
+            LOG_INFO("glTF node '{}' draws its mesh at {} instances", node.name, instances.size());
+        }
         for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
         {
-            AppendPrimitive(
-                model,
-                node,
-                mesh,
-                mesh.primitives[primitiveIndex],
-                primitiveIndex,
-                worldTransform,
-                modelData);
+            if (instances.empty())
+            {
+                AppendPrimitive(
+                    model,
+                    node,
+                    mesh,
+                    mesh.primitives[primitiveIndex],
+                    primitiveIndex,
+                    worldTransform,
+                    worldTransform,
+                    {},
+                    modelData);
+            }
+            for (size_t instance = 0; instance < instances.size(); ++instance)
+            {
+                AppendPrimitive(
+                    model,
+                    node,
+                    mesh,
+                    mesh.primitives[primitiveIndex],
+                    primitiveIndex,
+                    worldTransform * instances[instance],
+                    worldTransform,
+                    "/instance_" + std::to_string(instance),
+                    modelData);
+            }
             progressTracker.ReportPrimitiveProcessed();
         }
     }
@@ -1746,7 +1866,8 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 21> kImplementedExtensions = {
+constexpr std::array<std::string_view, 23> kImplementedExtensions = {
+    "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
     "KHR_lights_punctual",
@@ -1763,6 +1884,7 @@ constexpr std::array<std::string_view, 21> kImplementedExtensions = {
     "KHR_materials_unlit",
     "KHR_materials_variants",
     "KHR_materials_volume",
+    "KHR_materials_volume_scatter",
     "KHR_mesh_quantization",
     "KHR_meshopt_compression",
     "KHR_texture_basisu",

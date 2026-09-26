@@ -295,9 +295,12 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     {
         destination.attenuationColor[index] = source.pbr.attenuationColor[index];
         destination.diffuseTransmissionColor[index] = source.pbr.diffuseTransmissionColor[index];
+        destination.multiscatterColor[index] = source.pbr.multiscatterColor[index];
     }
     destination.dispersion = source.pbr.dispersion;
     destination.diffuseTransmissionFactor = source.pbr.diffuseTransmissionFactor;
+    destination.volumeScatter = source.pbr.volumeScatter;
+    destination.scatterAnisotropy = source.pbr.scatterAnisotropy;
     destination.opacity = ClampMaterialAlphaValue(source.pbr.opacity, 1.0f);
     destination.alphaMode = source.pbr.alphaMode;
     destination.alphaCutoff = ClampMaterialAlphaValue(source.pbr.alphaCutoff, 0.5f);
@@ -374,6 +377,11 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     YAML::Node diffuseTransmissionColor(YAML::NodeType::Sequence);
     SerializeFloatSequence(diffuseTransmissionColor, material.pbr.diffuseTransmissionColor, 3);
     pbr["diffuse_transmission_color"] = diffuseTransmissionColor;
+    pbr["volume_scatter"] = material.pbr.volumeScatter;
+    YAML::Node multiscatterColor(YAML::NodeType::Sequence);
+    SerializeFloatSequence(multiscatterColor, material.pbr.multiscatterColor, 3);
+    pbr["multiscatter_color"] = multiscatterColor;
+    pbr["scatter_anisotropy"] = material.pbr.scatterAnisotropy;
     pbr["unlit"] = material.pbr.unlit;
     node["pbr"] = pbr;
 
@@ -597,6 +605,14 @@ bool LoadMaterialDefinition(
             {
                 component = std::clamp(component, 0.0f, 1.0f);
             }
+            // Absent in sidecars written before volume scatter: none.
+            material.pbr.volumeScatter = pbrNode["volume_scatter"].as<bool>(material.pbr.volumeScatter);
+            ReadFloatSequence(pbrNode["multiscatter_color"], material.pbr.multiscatterColor);
+            for (float& component : material.pbr.multiscatterColor)
+            {
+                component = std::clamp(component, 0.0f, 1.0f);
+            }
+            material.pbr.scatterAnisotropy = ClampScatterAnisotropy(pbrNode["scatter_anisotropy"].as<float>(material.pbr.scatterAnisotropy));
             material.pbr.unlit = pbrNode["unlit"].as<bool>(material.pbr.unlit);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))

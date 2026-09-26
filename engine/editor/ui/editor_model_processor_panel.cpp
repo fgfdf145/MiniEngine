@@ -886,6 +886,15 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                 selectedMaterial.pbr.diffuseTransmissionColor[0],
                 selectedMaterial.pbr.diffuseTransmissionColor[1],
                 selectedMaterial.pbr.diffuseTransmissionColor[2]);
+            if (selectedMaterial.pbr.volumeScatter)
+            {
+                ImGui::Text(
+                    "Volume Scatter (%.2f, %.2f, %.2f)  Anisotropy %.2f",
+                    selectedMaterial.pbr.multiscatterColor[0],
+                    selectedMaterial.pbr.multiscatterColor[1],
+                    selectedMaterial.pbr.multiscatterColor[2],
+                    selectedMaterial.pbr.scatterAnisotropy);
+            }
             ImGui::Text("Alpha Mode: %s", ToString(selectedMaterial.pbr.alphaMode));
             if (selectedMaterial.pbr.alphaMode == MaterialAlphaMode::Mask)
             {

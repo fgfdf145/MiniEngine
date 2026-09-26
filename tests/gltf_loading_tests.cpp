@@ -499,11 +499,121 @@ void PunctualLightsImport()
 }
 }
 
+const ModelSubmeshData& SubmeshNamed(const LoadedModelData& model, const std::string& name)
+{
+    for (const ModelSubmeshData& submesh : model.submeshes)
+    {
+        if (submesh.name == name)
+        {
+            return submesh;
+        }
+    }
+    throw std::runtime_error("no submesh named " + name);
+}
+
+bool HasVertexAt(const MeshData& mesh, const glm::vec3& position)
+{
+    return std::any_of(mesh.vertices.begin(), mesh.vertices.end(), [&position](const Vertex& vertex)
+                       {
+                           return Near(vertex.position[0], position.x) && Near(vertex.position[1], position.y) && Near(vertex.position[2], position.z);
+                       });
+}
+
+// A triangle on a node at x = 10 with EXT_mesh_gpu_instancing: nodeAttributes names the instance
+// accessors 2 (TRANSLATION, two float vec3), 3 (ROTATION, two normalized short vec4) and 4 (SCALE, two
+// float vec3); extraAccessors are appended after them.
+std::filesystem::path WriteInstancedTriangle(
+    const std::filesystem::path& directory,
+    const std::string& name,
+    const std::string& nodeAttributes,
+    const std::string& extraAccessors = "")
+{
+    std::vector<unsigned char> bytes;
+    Append<float>(bytes, {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f});
+    Append<uint16_t>(bytes, {0, 1, 2});
+    Pad4(bytes);
+    const size_t translationOffset = bytes.size();
+    Append<float>(bytes, {0.0f, 0.0f, 0.0f, 0.0f, 5.0f, 0.0f});
+    const size_t rotationOffset = bytes.size();
+    // Identity, then 90 degrees about +Z as normalized shorts (sqrt(1/2) * 32767 = 23170).
+    Append<int16_t>(bytes, {0, 0, 0, 32767, 0, 0, 23170, 23170});
+    const size_t scaleOffset = bytes.size();
+    Append<float>(bytes, {1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f});
+    WriteBytes(directory / (name + ".bin"), bytes);
+    std::ofstream(directory / (name + ".gltf")) << R"({ "asset": { "version": "2.0" },
+      "extensionsUsed": ["EXT_mesh_gpu_instancing"], "extensionsRequired": ["EXT_mesh_gpu_instancing"],
+      "buffers": [{ "uri": ")" << name << R"(.bin", "byteLength": )"
+                                                << bytes.size() << R"( }],
+      "bufferViews": [
+        { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+        { "buffer": 0, "byteOffset": 36, "byteLength": 6 },
+        { "buffer": 0, "byteOffset": )" << translationOffset
+                                                << R"(, "byteLength": 24 },
+        { "buffer": 0, "byteOffset": )" << rotationOffset
+                                                << R"(, "byteLength": 16 },
+        { "buffer": 0, "byteOffset": )" << scaleOffset
+                                                << R"(, "byteLength": 24 }
+      ],
+      "accessors": [
+        { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] },
+        { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+        { "bufferView": 2, "componentType": 5126, "count": 2, "type": "VEC3" },
+        { "bufferView": 3, "componentType": 5122, "normalized": true, "count": 2, "type": "VEC4" },
+        { "bufferView": 4, "componentType": 5126, "count": 2, "type": "VEC3" })"
+                                                << extraAccessors << R"(
+      ],
+      "meshes": [{ "name": "tri", "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1 }] }],
+      "nodes": [{ "name": "grid", "mesh": 0, "translation": [10, 0, 0],
+                  "extensions": { "EXT_mesh_gpu_instancing": { "attributes": { )"
+                                                << nodeAttributes << R"( } } } }],
+      "scenes": [{ "nodes": [0] }], "scene": 0 })";
+    return directory / (name + ".gltf");
+}
+
+// EXT_mesh_gpu_instancing: every instance becomes its own copy of the mesh at NodeWorld * T * R * S,
+// the plain mesh is not drawn, the viewer's framing box stays the node's, and a required extension
+// loads.
+void GpuInstancesExpand()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteInstancedTriangle(directory.path, "instanced", R"("TRANSLATION": 2, "ROTATION": 3, "SCALE": 4)").string());
+    Require(model.submeshes.size() == 2, "two instances, not " + std::to_string(model.submeshes.size()) + " submeshes");
+
+    const ModelSubmeshData& first = SubmeshNamed(model, "grid/tri/primitive_0/instance_0");
+    Require(HasVertexAt(first.mesh, glm::vec3(11.0f, 0.0f, 0.0f)) && HasVertexAt(first.mesh, glm::vec3(10.0f, 1.0f, 0.0f)),
+            "an identity instance sits at the node");
+
+    // (1, 0, 0) scaled by 2, turned 90 degrees about Z, moved up 5, then by the node.
+    const ModelSubmeshData& second = SubmeshNamed(model, "grid/tri/primitive_0/instance_1");
+    Require(HasVertexAt(second.mesh, glm::vec3(10.0f, 7.0f, 0.0f)), "scale, then rotation, then translation, then the node");
+    Require(HasVertexAt(second.mesh, glm::vec3(8.0f, 5.0f, 0.0f)), "(0, 1, 0) turns to (-2, 0, 0)");
+    Require(Near(second.nodeScale.x, 2.0f, 1e-3f), "the volume scale includes the instance's");
+    Require(Near(second.viewerBoundsCenter.x, 10.5f) && Near(second.viewerBoundsCenter.y, 0.5f),
+            "the viewer frames the mesh at the node, whatever the instances");
+
+    // Missing attributes default: no rotation, unit scale.
+    const LoadedModelData translated =
+        ModelLoader::LoadModel(WriteInstancedTriangle(directory.path, "translated", R"("TRANSLATION": 2)").string());
+    Require(translated.submeshes.size() == 2, "two translated instances");
+    Require(HasVertexAt(SubmeshNamed(translated, "grid/tri/primitive_0/instance_1").mesh, glm::vec3(11.0f, 5.0f, 0.0f)),
+            "a translation alone moves the instance");
+
+    // Attributes of different counts cannot be paired and fail the import.
+    const std::string mismatched = LoadError(WriteInstancedTriangle(
+        directory.path,
+        "mismatched",
+        R"("TRANSLATION": 2, "SCALE": 5)",
+        R"(, { "bufferView": 4, "componentType": 5126, "count": 1, "type": "VEC3" })"));
+    Require(mismatched.find("EXT_mesh_gpu_instancing") != std::string::npos, "mismatched counts do not fail by name: '" + mismatched + "'");
+}
+
 int main()
 {
     try
     {
         RequiredExtensionsAreChecked();
+        GpuInstancesExpand();
         QuantizedAttributesDecode();
         PunctualLightsImport();
         MeshoptBufferViewsDecode();

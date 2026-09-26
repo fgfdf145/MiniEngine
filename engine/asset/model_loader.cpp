@@ -73,9 +73,12 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     {
         pbr.attenuationColor[index] = material.attenuationColor[index];
         pbr.diffuseTransmissionColor[index] = material.diffuseTransmissionColor[index];
+        pbr.multiscatterColor[index] = material.multiscatterColor[index];
     }
     pbr.dispersion = material.dispersion;
     pbr.diffuseTransmissionFactor = material.diffuseTransmissionFactor;
+    pbr.volumeScatter = material.volumeScatter;
+    pbr.scatterAnisotropy = material.scatterAnisotropy;
     pbr.unlit = material.unlit;
     return pbr;
 }
@@ -126,9 +129,12 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     {
         material.attenuationColor[index] = pbr.attenuationColor[index];
         material.diffuseTransmissionColor[index] = pbr.diffuseTransmissionColor[index];
+        material.multiscatterColor[index] = pbr.multiscatterColor[index];
     }
     material.dispersion = pbr.dispersion;
     material.diffuseTransmissionFactor = pbr.diffuseTransmissionFactor;
+    material.volumeScatter = pbr.volumeScatter;
+    material.scatterAnisotropy = pbr.scatterAnisotropy;
     material.unlit = pbr.unlit;
 }
 
