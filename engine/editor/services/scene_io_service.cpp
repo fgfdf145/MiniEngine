@@ -1,5 +1,6 @@
 ﻿#include "scene_io_service.h"
 
+#include "entity_edit_service.h"
 #include "scene_renderables.h"
 
 #include <engine/editor/renderer_shared_state.h>
@@ -90,6 +91,15 @@ void ResolveSceneAssetReferences(SerializedSceneData& sceneData)
             entity.modelBaseColorTextureOverridePath,
             entity.modelBaseColorTextureOverrideUuid,
             "texture override");
+    }
+}
+
+// A load finishing afterwards would place its model into, or replace, the scene just reset.
+void ThrowIfLoading(const RendererSharedState& state)
+{
+    if (state.asyncLoad.IsLoading() || state.asyncSceneLoad.IsLoading())
+    {
+        throw std::runtime_error("A load is in progress. Please wait.");
     }
 }
 
@@ -202,6 +212,26 @@ void SaveScene(RendererSharedState& state, const std::string& path)
     state.GetEditorWorld().SetSceneFilePath(path);
     state.lastSceneIoError.clear();
     LOG_INFO("Saved scene successfully: {}", path);
+}
+
+void NewScene(RendererSharedState& state)
+{
+    ThrowIfLoading(state);
+    EntityEditService::ClearViewportModelPreview(state, false);
+    state.GetEditorWorld().CreateEmptyScene();
+    state.GetEditorWorld().SetSceneFilePath("");
+    RebuildSceneRenderables(state);
+    state.lastSceneIoError.clear();
+    LOG_INFO("Started a new scene");
+}
+
+void ClearScene(RendererSharedState& state)
+{
+    ThrowIfLoading(state);
+    EntityEditService::ClearViewportModelPreview(state, false);
+    state.GetEditorWorld().Clear();
+    RebuildSceneRenderables(state);
+    LOG_INFO("Cleared the scene");
 }
 }
 }

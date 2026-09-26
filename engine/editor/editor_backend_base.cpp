@@ -359,6 +359,25 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         State().pendingScenePath = *uiFrame.actions.selectedSceneLoadPath;
     }
+    if (uiFrame.actions.newScene || uiFrame.actions.clearScene)
+    {
+        try
+        {
+            if (uiFrame.actions.newScene)
+            {
+                SceneIoService::NewScene(State());
+            }
+            else
+            {
+                SceneIoService::ClearScene(State());
+            }
+        }
+        catch (const std::exception& error)
+        {
+            State().lastSceneIoError = error.what();
+            LOG_ERROR("Failed to reset the scene: {}", error.what());
+        }
+    }
     if (uiFrame.actions.captureViewport)
     {
         // The frame on screen, before this one records: viewport_<local date>_<time>.png.

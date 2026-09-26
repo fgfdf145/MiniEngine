@@ -82,6 +82,8 @@ struct EditorUiActions
     bool createSceneEntity = false;
     bool deleteSelectedSceneEntity = false;
     bool captureViewport = false; // written as a PNG under ProjectRoot()/captures
+    bool newScene = false;        // confirmed by the user
+    bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
 };
 
@@ -149,6 +151,8 @@ class EditorUiController
     void ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene);
     // Runs the File commands asked for this frame, asking for a path where they need one.
     void HandleFileCommands(IEditorWorld& scene, EditorUiFrameResult& result);
+    // Asks before New Scene or Clear Scene throws the scene's contents away.
+    void DrawSceneResetConfirmModal(EditorUiFrameResult& result);
     void ApplyEngineSettings(const EngineSettings& settings);
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
@@ -257,6 +261,13 @@ class EditorUiController
     bool m_saveSceneRequested = false;
     bool m_saveSceneAsRequested = false;
     bool m_importModelRequested = false;
+    enum class SceneReset
+    {
+        New,
+        Clear
+    };
+    std::optional<SceneReset> m_pendingSceneReset; // waiting for the confirmation modal
+    bool m_openSceneResetModal = false;
     EditorUiActions m_commandActions; // what the Edit and Scene commands asked for this frame
     bool m_hasSceneSelection = false; // at the start of this frame, for Delete
 };

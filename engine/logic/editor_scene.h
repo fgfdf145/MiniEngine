@@ -15,6 +15,7 @@ class EditorScene final : public IEditorWorld
     void LoadConfig(const std::string& path) override;
     void SetSceneFilePath(const std::string& path) override;
     void CreateTwoCubeTestScene() override;
+    void CreateEmptyScene() override;
     void Clear() override;
     entt::entity CreateEntity(const SerializedEntityData& entityData) override;
     entt::entity CreateLightEntity(const SerializedLightData& lightData) override;
@@ -76,6 +77,8 @@ class EditorScene final : public IEditorWorld
 
   private:
     void EnsureSelection();
+    // The startup scene's sun and atmosphere, added to what the scene holds.
+    void AddDefaultSunAndSky();
     void OnEntityDestroyed(entt::registry& registry, entt::entity entity);
     void OnSceneEntityIdDestroyed(entt::registry& registry, entt::entity entity);
     std::string AdoptOrCreateEntityUuid(const std::string& requestedUuid);

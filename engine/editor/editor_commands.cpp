@@ -77,7 +77,7 @@ std::function<void()> OrTodo(const std::function<void()>& execute)
 
 void RegisterFileCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
 {
-    Add(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_FA_FILE, ImGuiMod_Ctrl | ImGuiKey_N, Todo);
+    Add(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_FA_FILE, ImGuiMod_Ctrl | ImGuiKey_N, OrTodo(scene.newScene));
     Add(registry, "file.open_scene", "Open Scene", "File/Open Scene...", ICON_FA_FOLDER_OPEN, ImGuiMod_Ctrl | ImGuiKey_O, OrTodo(scene.openScene));
     Add(registry, "file.save_scene", "Save Scene", "File/Save Scene", ICON_FA_FLOPPY_DISK, ImGuiMod_Ctrl | ImGuiKey_S, OrTodo(scene.saveScene));
     Add(registry, "file.save_scene_as", "Save Scene As", "File/Save Scene As...", "", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, OrTodo(scene.saveSceneAs));
@@ -158,7 +158,7 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
     registry.AddSeparator("Scene");
     Add(registry, "scene.settings", "Scene Settings", "Scene/Scene Settings...", ICON_FA_SLIDERS, 0, Todo);
     registry.AddSeparator("Scene");
-    Add(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_FA_BROOM, 0, Todo);
+    Add(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_FA_BROOM, 0, OrTodo(scene.clearScene));
 
     // Toolbar only: the viewport's R key already toggles the tools. The editor UI drives the gizmo
     // from transformTool: Move is the combined translate and rotate gizmo, Scale the scale one.

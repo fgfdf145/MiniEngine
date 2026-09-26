@@ -485,7 +485,18 @@ void EditorScene::CreateTwoCubeTestScene()
 
     CreateEntity(leftCube);
     CreateEntity(rightCube);
+    AddDefaultSunAndSky();
+    EnsureSelection();
+}
 
+void EditorScene::CreateEmptyScene()
+{
+    Clear();
+    AddDefaultSunAndSky();
+}
+
+void EditorScene::AddDefaultSunAndSky()
+{
     // The atmosphere needs a sun to light it: 35 degrees up, behind the default camera, which looks
     // down -Z. A directional light shines along its local -Y; 55 degrees about X tips that toward -Z.
     // (Y is applied before X in BuildLightRotation, so it cannot turn a -Y light; azimuth would need
@@ -500,7 +511,6 @@ void EditorScene::CreateTwoCubeTestScene()
 
     m_environment = SceneEnvironment{};
     m_environment.mode = EnvironmentMode::Atmosphere;
-    EnsureSelection();
 }
 
 void EditorScene::Clear()

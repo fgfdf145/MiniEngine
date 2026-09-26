@@ -43,6 +43,16 @@ void EditorUiController::RegisterCommands()
     };
 
     EditorSceneCommands scene;
+    scene.newScene = [this]
+    {
+        m_pendingSceneReset = SceneReset::New;
+        m_openSceneResetModal = true;
+    };
+    scene.clearScene = [this]
+    {
+        m_pendingSceneReset = SceneReset::Clear;
+        m_openSceneResetModal = true;
+    };
     scene.openScene = [this]
     {
         m_openSceneRequested = true;
@@ -170,6 +180,7 @@ EditorUiFrameResult EditorUiController::Draw(
     DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
     result.actions = std::exchange(m_commandActions, {});
     HandleFileCommands(scene, result);
+    DrawSceneResetConfirmModal(result);
     // TODO: draw the command palette while m_commandState.commandPaletteRequested is set.
     m_commandState.commandPaletteRequested = false;
 
@@ -338,6 +349,50 @@ void EditorUiController::HandleFileCommands(IEditorWorld& scene, EditorUiFrameRe
     m_saveSceneAsRequested = false;
     m_openSceneRequested = false;
     m_importModelRequested = false;
+}
+
+void EditorUiController::DrawSceneResetConfirmModal(EditorUiFrameResult& result)
+{
+    constexpr const char* kTitle = "Discard Scene Contents?";
+    if (m_openSceneResetModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openSceneResetModal = false;
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+    const bool newScene = m_pendingSceneReset == SceneReset::New;
+    if (newScene)
+    {
+        ImGui::TextUnformatted("Start a new scene? Every entity is removed and the scene is no longer tied to its file;");
+        ImGui::TextUnformatted("a sun and the default atmosphere are added.");
+    }
+    else
+    {
+        ImGui::TextUnformatted("Remove every entity from the scene? The environment and the scene's file are kept.");
+    }
+    ImGui::TextUnformatted("Changes not saved to the scene file are lost. This cannot be undone.");
+    ImGui::Separator();
+
+    const float uiScale = ImGui::GetStyle().FontScaleMain;
+    if (ImGui::Button(newScene ? "New Scene" : "Clear Scene", ImVec2(120.0f * uiScale, 0.0f)))
+    {
+        result.actions.newScene = newScene;
+        result.actions.clearScene = !newScene;
+        m_pendingSceneReset.reset();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f * uiScale, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        m_pendingSceneReset.reset();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)

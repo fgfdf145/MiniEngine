@@ -69,6 +69,10 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
     virtual void LoadConfig(const std::string& path) = 0;
     virtual void SetSceneFilePath(const std::string& path) = 0;
     virtual void CreateTwoCubeTestScene() = 0;
+    // A new scene: the startup scene's sun and atmosphere and nothing else, nothing selected. The
+    // gizmo settings and the scene file path are kept.
+    virtual void CreateEmptyScene() = 0;
+    // Removes every entity; the environment, the gizmo settings and the scene file path are kept.
     virtual void Clear() = 0;
     virtual entt::entity CreateEntity(const SerializedEntityData& entityData) = 0;
     virtual entt::entity CreateLightEntity(const SerializedLightData& lightData) = 0;

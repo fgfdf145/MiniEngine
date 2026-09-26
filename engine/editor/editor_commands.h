@@ -98,6 +98,7 @@ struct EditorWindowCommands
 // function is empty does nothing, as do the commands with no function here yet.
 struct EditorSceneCommands
 {
+    std::function<void()> newScene;
     std::function<void()> openScene;
     std::function<void()> saveScene;
     std::function<void()> saveSceneAs;
@@ -105,6 +106,7 @@ struct EditorSceneCommands
     std::function<void()> exit;
     std::function<void()> deleteSelection;
     std::function<bool()> hasSelection; // enables Delete; empty means always enabled
+    std::function<void()> clearScene;
     std::function<void()> createEntity;
     std::function<void(LightType)> createLight;
     std::function<void()> captureViewport;
