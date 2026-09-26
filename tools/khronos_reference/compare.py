@@ -89,6 +89,9 @@ KNOWN_DIFFERENCES = {
                        "volume leaves it black. The engine reads both names. ScatteringSkullDraftKey is the same model "
                        "with the draft's name, which both scatter.",
     "SimpleInstancing": "The viewer frames the mesh at its node, without the instances, so the nearest cube's face fills the view.",
+    "NormalTangentMirrorTest": "The normal-mapped squares imitate spheres on flat quads: toward their rims the reflection "
+                               "points below the quad's plane, which the engine's horizon specular occlusion darkens and "
+                               "the viewer, which has none, does not.",
 }
 NOISE_FLOOR = 5.0  # mean difference of scenes that match; TAA, MSAA and filtering differ
 

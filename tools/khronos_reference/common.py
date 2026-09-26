@@ -44,6 +44,16 @@ MODELS_BY_FEATURE = {
     "diffuse_transmission": ["DiffuseTransmissionTest", "DiffuseTransmissionTeacup"],
     "volume_scatter": ["ScatteringSkull", "ScatteringSkullDraftKey"],
     "instancing": ["SimpleInstancing"],
+    # The core specification: geometry, texture coordinates, alpha, vertex colours, lights.
+    "core_spec": ["MetalRoughSpheres", "MetalRoughSpheresNoTextures", "EnvironmentTest", "NormalTangentTest",
+                  "NormalTangentMirrorTest", "NegativeScaleTest", "OrientationTest", "AlphaBlendModeTest",
+                  "CompareAlphaCoverage", "TwoSidedPlane", "VertexColorTest", "BoxVertexColors",
+                  "TextureCoordinateTest", "MultiUVTest", "TextureSettingsTest", "TextureLinearInterpolationTest",
+                  "TextureEncodingTest"],
+    "lights": ["LightsPunctualLamp", "PointLightIntensityTest", "DirectionalLight"],
+    # Complete assets that combine the above.
+    "assets": ["DamagedHelmet", "BoomBox", "WaterBottle", "Lantern", "SunglassesKhronos", "ToyCar", "SheenChair",
+               "CarConcept"],
 }
 
 # Models made locally from a fetched one, not in glTF-Sample-Assets: name -> (source model, the edit to

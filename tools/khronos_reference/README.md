@@ -18,7 +18,7 @@ python3 tools/khronos_reference/fetch.py
 python3 tools/khronos_reference/make_scenes.py
 ```
 
-`fetch.py` downloads the glTF flavour of every model listed in `common.py` (about 20 MB) and
+`fetch.py` downloads the glTF flavour of every model listed in `common.py` (about 100 MB) and
 `Cannon_Exterior.hdr`, keeping files already present; pass model names to fetch only those.
 `make_scenes.py` writes one scene per model and one per material variant, with no light entities:
 the model's own lights (`KHR_lights_punctual`), which the viewer lights it with too, are imported by
