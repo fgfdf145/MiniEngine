@@ -1188,14 +1188,8 @@ add_test(
     COMMAND miniengine_texture_sampler_tests
 )
 
-if(WIN32)
-    add_custom_command(TARGET miniengine_texture_sampler_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:miniengine_texture_sampler_tests>
-            $<TARGET_FILE_DIR:miniengine_texture_sampler_tests>
-        COMMAND_EXPAND_LISTS
-    )
-endif()
+# No runtime DLL copy: this target links no shared libraries, so $<TARGET_RUNTIME_DLLS> is empty and
+# `cmake -E copy_if_different` would fail with only a destination argument.
 
 set_target_properties(miniengine_texture_sampler_tests PROPERTIES FOLDER "Tests")
 
