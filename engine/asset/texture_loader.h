@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -65,6 +66,13 @@ class TextureLoader
     // sources that store rows bottom-up. A float image is clamped to [0, 1] and
     // its colour sRGB-encoded, for previews.
     static TextureData LoadRGBA8(const std::string& path, bool flipVertically = false);
+
+    // KTX2 (KHR_texture_basisu), by its file identifier.
+    static bool IsKtx2(const std::uint8_t* bytes, size_t size);
+    // A KTX2 image's base level as RGBA8, rows top-down: Basis Universal (ETC1S or UASTC)
+    // transcoded, an uncompressed 8-bit RGBA image as it is. Throws std::runtime_error, naming
+    // source, for any other format, for data libktx cannot read, and in a build without libktx.
+    static TextureData DecodeKtx2(const std::uint8_t* bytes, size_t size, const std::string& source);
 };
 
 // Float to IEEE half. NaN becomes 0; everything else, infinities included, clamps to

@@ -9,6 +9,8 @@
     asset_registry.h
     compressed_texture_cache.cpp
     compressed_texture_cache.h
+    gltf_compression.cpp
+    gltf_compression.h
     gltf_model_loader.cpp
     gltf_model_loader.h
     material_definition.cpp
@@ -52,4 +54,13 @@ target_link_libraries(engine_asset
     PRIVATE
         unofficial::bc7enc-rdo::bc7enc-rdo
         unofficial::tinyexr::tinyexr
+        meshoptimizer::meshoptimizer
+        draco::draco
 )
+
+if(TARGET KTX::ktx)
+    target_link_libraries(engine_asset PRIVATE KTX::ktx)
+    target_compile_definitions(engine_asset PRIVATE MINIENGINE_HAS_KTX=1)
+else()
+    target_compile_definitions(engine_asset PRIVATE MINIENGINE_HAS_KTX=0)
+endif()

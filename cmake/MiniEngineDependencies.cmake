@@ -133,6 +133,12 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(unofficial-bc7enc-rdo CONFIG REQUIRED)
 find_package(tinyexr CONFIG REQUIRED)
+# glTF compressed geometry: EXT/KHR_meshopt_compression and KHR_draco_mesh_compression.
+find_package(meshoptimizer CONFIG REQUIRED)
+find_package(draco CONFIG REQUIRED)
+# KHR_texture_basisu. vcpkg's ktx port does not build for x86 Windows, where vcpkg.json leaves it
+# out: that build loads no KTX2 textures and says so when a model asks for one.
+find_package(Ktx CONFIG)
 find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
 
 if(NOT Vulkan_GLSLC_EXECUTABLE)

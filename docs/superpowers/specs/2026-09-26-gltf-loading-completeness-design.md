@@ -50,8 +50,11 @@ lights `DirectionalLight`, `PointLightIntensityTest`, `LightsPunctualLamp` again
 
 ## Risks
 
-- tinygltf may reject a buffer without `uri` in a `.gltf` (the meshopt fallback). If so the JSON is
-  patched before tinygltf parses it; to be found when the first meshopt file loads.
+- tinygltf rejects a buffer without `uri` in a `.gltf` (the meshopt fallback), and in a `.glb` reads it
+  from the BIN chunk, which is shorter. Resolved: the JSON (the `.glb`'s JSON chunk) is patched before
+  tinygltf parses it, each fallback buffer given one byte of inline data.
+- vcpkg's ktx port does not build for x86 Windows. There vcpkg.json leaves it out and KTX2 textures
+  fail to load with a message.
 - New vcpkg dependencies (draco, meshoptimizer, ktx) lengthen a clean configure.
 
 ## Automated Verification

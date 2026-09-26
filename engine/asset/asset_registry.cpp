@@ -79,7 +79,8 @@ bool HasRegistrableExtension(const std::filesystem::path& p)
     // Models and textures: the asset types other files reference today.
     return ext == ".gltf" || ext == ".glb" ||
            ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds";
+           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||
+           ext == ".ktx2";
 }
 
 bool IsUnderRootLocked(const std::string& normalizedKey)

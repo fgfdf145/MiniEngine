@@ -1233,6 +1233,9 @@ miniengine_group_target_sources(miniengine_gltf_loading_tests)
 target_link_libraries(miniengine_gltf_loading_tests
     PRIVATE
         engine_asset
+        # The compressed geometry tests encode their fixtures with the libraries' own encoders.
+        meshoptimizer::meshoptimizer
+        draco::draco
 )
 
 add_test(
@@ -1250,6 +1253,36 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_gltf_loading_tests PROPERTIES FOLDER "Tests")
+
+# KHR_texture_basisu, where the build has libktx (not x86 Windows).
+if(TARGET KTX::ktx)
+    add_executable(miniengine_ktx2_texture_tests
+        ktx2_texture_tests.cpp
+    )
+    miniengine_group_target_sources(miniengine_ktx2_texture_tests)
+
+    target_link_libraries(miniengine_ktx2_texture_tests
+        PRIVATE
+            engine_asset
+            KTX::ktx
+    )
+
+    add_test(
+        NAME miniengine.ktx2_textures
+        COMMAND miniengine_ktx2_texture_tests
+    )
+
+    if(WIN32)
+        add_custom_command(TARGET miniengine_ktx2_texture_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:miniengine_ktx2_texture_tests>
+                $<TARGET_FILE_DIR:miniengine_ktx2_texture_tests>
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
+
+    set_target_properties(miniengine_ktx2_texture_tests PROPERTIES FOLDER "Tests")
+endif()
 
 add_executable(miniengine_transmission_tests
     transmission_tests.cpp

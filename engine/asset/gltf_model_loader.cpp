@@ -1,6 +1,8 @@
 ﻿#include "gltf_model_loader.h"
 
+#include "gltf_compression.h"
 #include "model_post_process.h"
+#include "texture_loader.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -24,9 +26,12 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -601,6 +606,18 @@ bool WriteUnpackedImage(const tinygltf::Image& image, const std::filesystem::pat
     return true;
 }
 
+// The image a texture samples: KHR_texture_basisu's KTX2 image when it names one, which the loader
+// reads, over the core source, then only a fallback for viewers without KTX2.
+int TextureImageSource(const tinygltf::Texture& texture)
+{
+    const auto basisu = texture.extensions.find("KHR_texture_basisu");
+    if (basisu != texture.extensions.end() && basisu->second.IsObject() && basisu->second.Has("source"))
+    {
+        return basisu->second.Get("source").GetNumberAsInt();
+    }
+    return texture.source;
+}
+
 std::string ResolveImagePath(
     const tinygltf::Model& model,
     const std::filesystem::path& modelPath,
@@ -613,13 +630,14 @@ std::string ResolveImagePath(
 
     EnsureIndexInRange(static_cast<size_t>(textureIndex), model.textures.size(), "texture");
     const tinygltf::Texture& texture = model.textures[static_cast<size_t>(textureIndex)];
-    if (texture.source < 0)
+    const int source = TextureImageSource(texture);
+    if (source < 0)
     {
         return {};
     }
 
-    EnsureIndexInRange(static_cast<size_t>(texture.source), model.images.size(), "image");
-    const tinygltf::Image& image = model.images[static_cast<size_t>(texture.source)];
+    EnsureIndexInRange(static_cast<size_t>(source), model.images.size(), "image");
+    const tinygltf::Image& image = model.images[static_cast<size_t>(source)];
 
     if (const std::string externalPath = ResolveExternalImagePath(modelPath, image); !externalPath.empty())
     {
@@ -639,7 +657,7 @@ std::string ResolveImagePath(
     // rather than to a path that resolves to nothing.
     const std::string relativePath =
         (std::filesystem::path(kUnpackedTextureDirectory) /
-         BuildEmbeddedTextureFileName(image, static_cast<size_t>(texture.source)))
+         BuildEmbeddedTextureFileName(image, static_cast<size_t>(source)))
             .generic_string();
 
     std::error_code ec;
@@ -1485,6 +1503,31 @@ bool LoadGltfImageData(
         return true;
     }
 
+    // An embedded KTX2 image (KHR_texture_basisu) is transcoded here, so it unpacks to a PNG like
+    // any other embedded image.
+    if (image != nullptr && TextureLoader::IsKtx2(bytes, static_cast<size_t>(std::max(size, 0))))
+    {
+        try
+        {
+            TextureData decoded = TextureLoader::DecodeKtx2(bytes, static_cast<size_t>(size), image->name.empty() ? "image " + std::to_string(imageIndex) : image->name);
+            image->width = decoded.width;
+            image->height = decoded.height;
+            image->component = 4;
+            image->bits = 8;
+            image->pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+            image->image = std::move(decoded.pixels);
+            return true;
+        }
+        catch (const std::exception& decodeError)
+        {
+            if (error != nullptr)
+            {
+                *error += decodeError.what();
+            }
+            return false;
+        }
+    }
+
     // Installing a custom image loader bypasses TinyGLTF::SetPreserveImageChannels,
     // so the equivalent option must be forwarded to the default decoder here.
     tinygltf::LoadImageDataOption imageDataOption;
@@ -1703,7 +1746,9 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 17> kImplementedExtensions = {
+constexpr std::array<std::string_view, 21> kImplementedExtensions = {
+    "EXT_meshopt_compression",
+    "KHR_draco_mesh_compression",
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
@@ -1719,12 +1764,105 @@ constexpr std::array<std::string_view, 17> kImplementedExtensions = {
     "KHR_materials_variants",
     "KHR_materials_volume",
     "KHR_mesh_quantization",
+    "KHR_meshopt_compression",
+    "KHR_texture_basisu",
     "KHR_texture_transform",
     "KHR_xmp_json_ld"};
 
 bool IsImplementedExtension(const std::string& name)
 {
     return std::find(kImplementedExtensions.begin(), kImplementedExtensions.end(), name) != kImplementedExtensions.end();
+}
+
+// tinygltf's base directory for a file: everything up to its last separator.
+std::string GltfBaseDirectory(const std::string& path)
+{
+    const size_t separator = path.find_last_of("/\\");
+    return separator == std::string::npos ? std::string{} : path.substr(0, separator + 1);
+}
+
+uint32_t ReadLittleEndian32(const unsigned char* bytes)
+{
+    return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+           (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+void WriteLittleEndian32(unsigned char* bytes, uint32_t value)
+{
+    for (int index = 0; index < 4; ++index)
+    {
+        bytes[index] = static_cast<unsigned char>(value >> (8 * index));
+    }
+}
+
+constexpr size_t kGlbHeaderSize = 20; // file header and the JSON chunk's header
+constexpr uint32_t kGlbJsonChunk = 0x4E4F534A;
+
+// Parses a .gltf or .glb. A meshopt-compressed file has its fallback buffers given placeholder data
+// first (ReplaceMeshoptFallbackBuffers); every other file goes to tinygltf untouched. Only a .glb's
+// JSON chunk is read to decide, so a large .glb is not read twice.
+bool ParseGltfFile(
+    tinygltf::TinyGLTF& loader,
+    tinygltf::Model& model,
+    std::string& errors,
+    std::string& warnings,
+    const std::filesystem::path& path,
+    bool binary)
+{
+    const std::string pathString = path.string();
+    std::ifstream file(path, std::ios::binary);
+    if (file && !binary)
+    {
+        const std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (const std::optional<std::string> patched = ReplaceMeshoptFallbackBuffers(json))
+        {
+            return loader.LoadASCIIFromString(
+                &model, &errors, &warnings, patched->data(), static_cast<unsigned int>(patched->size()), GltfBaseDirectory(pathString));
+        }
+    }
+    else if (file)
+    {
+        std::array<unsigned char, kGlbHeaderSize> header{};
+        std::string json;
+        std::error_code sizeError;
+        const uintmax_t fileSize = std::filesystem::file_size(path, sizeError);
+        if (!sizeError && file.read(reinterpret_cast<char*>(header.data()), header.size()) && std::memcmp(header.data(), "glTF", 4) == 0 &&
+            ReadLittleEndian32(header.data() + 16) == kGlbJsonChunk && ReadLittleEndian32(header.data() + 12) <= fileSize - kGlbHeaderSize)
+        {
+            json.resize(ReadLittleEndian32(header.data() + 12));
+            file.read(json.data(), static_cast<std::streamsize>(json.size()));
+        }
+        std::optional<std::string> patched = file ? ReplaceMeshoptFallbackBuffers(json) : std::nullopt;
+        if (patched)
+        {
+            // The new JSON chunk, padded as GLB requires, then the rest of the file as it is.
+            patched->resize((patched->size() + 3) & ~static_cast<size_t>(3), ' ');
+            std::vector<unsigned char> glb(header.begin(), header.end());
+            glb.insert(glb.end(), patched->begin(), patched->end());
+            glb.insert(glb.end(), std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            WriteLittleEndian32(glb.data() + 8, static_cast<uint32_t>(glb.size()));
+            WriteLittleEndian32(glb.data() + 12, static_cast<uint32_t>(patched->size()));
+            return loader.LoadBinaryFromMemory(
+                &model, &errors, &warnings, glb.data(), static_cast<unsigned int>(glb.size()), GltfBaseDirectory(pathString));
+        }
+    }
+    return binary ? loader.LoadBinaryFromFile(&model, &errors, &warnings, pathString)
+                  : loader.LoadASCIIFromFile(&model, &errors, &warnings, pathString);
+}
+
+// Geometry stored compressed (meshopt buffer views, Draco primitives) decoded into plain buffers, so
+// every accessor read afterwards sees ordinary data.
+void DecodeCompressedGeometry(tinygltf::Model& model, const std::filesystem::path& modelPath)
+{
+    try
+    {
+        DecodeMeshoptBufferViews(model);
+        DecodeDracoPrimitives(model);
+    }
+    catch (const std::exception& error)
+    {
+        throw std::runtime_error("glTF model '" + modelPath.string() + "': " + error.what());
+    }
 }
 
 void CheckExtensions(const tinygltf::Model& model, const std::filesystem::path& modelPath)
@@ -1774,13 +1912,9 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     std::string errors;
     bool loaded = false;
 
-    if (extension == ".glb")
+    if (extension == ".glb" || extension == ".gltf")
     {
-        loaded = loader.LoadBinaryFromFile(&tinyModel, &errors, &warnings, modelPath.string());
-    }
-    else if (extension == ".gltf")
-    {
-        loaded = loader.LoadASCIIFromFile(&tinyModel, &errors, &warnings, modelPath.string());
+        loaded = ParseGltfFile(loader, tinyModel, errors, warnings, modelPath, extension == ".glb");
     }
     else
     {
@@ -1799,6 +1933,7 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     }
 
     CheckExtensions(tinyModel, modelPath);
+    DecodeCompressedGeometry(tinyModel, modelPath);
 
     if (progress)
     {
@@ -1823,13 +1958,9 @@ void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelP
     std::string errors;
     bool loaded = false;
 
-    if (extension == ".glb")
+    if (extension == ".glb" || extension == ".gltf")
     {
-        loaded = loader.LoadBinaryFromFile(&model, &errors, &warnings, modelPath.string());
-    }
-    else if (extension == ".gltf")
-    {
-        loaded = loader.LoadASCIIFromFile(&model, &errors, &warnings, modelPath.string());
+        loaded = ParseGltfFile(loader, model, errors, warnings, modelPath, extension == ".glb");
     }
     else
     {

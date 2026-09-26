@@ -58,7 +58,8 @@ bool IsTextureExt(const std::filesystem::path& p)
 {
     const std::string ext = ToLower(p.extension().string());
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds";
+           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||
+           ext == ".ktx2";
 }
 
 bool IsHiddenAsset(const std::filesystem::path& p)

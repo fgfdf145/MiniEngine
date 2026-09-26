@@ -4,6 +4,10 @@
 #include <stb_image.h>
 #include <tinyexr.h>
 
+#if MINIENGINE_HAS_KTX
+#include <ktx.h>
+#endif
+
 #include <glm/gtc/packing.hpp>
 
 #include <algorithm>
@@ -13,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +36,16 @@ std::string LowerExtension(const std::filesystem::path& path)
                        return static_cast<char>(std::tolower(c));
                    });
     return ext;
+}
+
+std::vector<std::uint8_t> ReadFileBytes(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+    {
+        throw std::runtime_error("Failed to open texture '" + path + "'");
+    }
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
 bool IsPortableMapExtension(const std::string& path)
@@ -225,8 +240,92 @@ HalfFloatTextureData PackRgba16Float(const FloatTextureData& image)
     return packed;
 }
 
+bool TextureLoader::IsKtx2(const std::uint8_t* bytes, size_t size)
+{
+    static constexpr std::uint8_t kIdentifier[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+    return bytes != nullptr && size >= sizeof(kIdentifier) && std::memcmp(bytes, kIdentifier, sizeof(kIdentifier)) == 0;
+}
+
+TextureData TextureLoader::DecodeKtx2(const std::uint8_t* bytes, size_t size, const std::string& source)
+{
+#if MINIENGINE_HAS_KTX
+    ktxTexture2* texture = nullptr;
+    KTX_error_code result = ktxTexture2_CreateFromMemory(bytes, size, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &texture);
+    if (result != KTX_SUCCESS)
+    {
+        throw std::runtime_error("Failed to load KTX2 texture '" + source + "': " + ktxErrorString(result));
+    }
+    struct Destroy
+    {
+        ktxTexture2* texture;
+        ~Destroy()
+        {
+            ktxTexture_Destroy(ktxTexture(texture));
+        }
+    } destroy{texture};
+
+    if (ktxTexture2_NeedsTranscoding(texture))
+    {
+        result = ktxTexture2_TranscodeBasis(texture, KTX_TTF_RGBA32, 0);
+        if (result != KTX_SUCCESS)
+        {
+            throw std::runtime_error("Failed to transcode KTX2 texture '" + source + "': " + ktxErrorString(result));
+        }
+    }
+    // VK_FORMAT_R8G8B8A8_UNORM and VK_FORMAT_R8G8B8A8_SRGB: what Basis transcodes to, and the one
+    // uncompressed layout read directly. Whether the texels are sRGB is the material slot's call.
+    constexpr ktx_uint32_t kRgba8Unorm = 37;
+    constexpr ktx_uint32_t kRgba8Srgb = 43;
+    if (texture->vkFormat != kRgba8Unorm && texture->vkFormat != kRgba8Srgb)
+    {
+        throw std::runtime_error(
+            "KTX2 texture '" + source + "' has VkFormat " + std::to_string(texture->vkFormat) +
+            "; only Basis Universal and 8-bit RGBA KTX2 textures are supported");
+    }
+
+    ktx_size_t offset = 0;
+    result = ktxTexture_GetImageOffset(ktxTexture(texture), 0, 0, 0, &offset);
+    if (result != KTX_SUCCESS)
+    {
+        throw std::runtime_error("KTX2 texture '" + source + "' has no base level: " + ktxErrorString(result));
+    }
+    TextureData decoded{};
+    decoded.width = static_cast<int>(texture->baseWidth);
+    decoded.height = static_cast<int>(texture->baseHeight);
+    decoded.channelCount = 4;
+    const size_t rowSize = static_cast<size_t>(decoded.width) * 4;
+    const size_t rowPitch = ktxTexture_GetRowPitch(ktxTexture(texture), 0);
+    const ktx_uint8_t* data = ktxTexture_GetData(ktxTexture(texture)) + offset;
+    if (rowPitch < rowSize || offset + rowPitch * static_cast<size_t>(decoded.height) > ktxTexture_GetDataSize(ktxTexture(texture)))
+    {
+        throw std::runtime_error("KTX2 texture '" + source + "' has a base level smaller than its size");
+    }
+    decoded.pixels.resize(rowSize * static_cast<size_t>(decoded.height));
+    for (int row = 0; row < decoded.height; ++row)
+    {
+        std::memcpy(decoded.pixels.data() + static_cast<size_t>(row) * rowSize, data + static_cast<size_t>(row) * rowPitch, rowSize);
+    }
+    return decoded;
+#else
+    (void)bytes;
+    (void)size;
+    throw std::runtime_error("KTX2 texture '" + source + "' cannot be loaded: this build has no libktx");
+#endif
+}
+
 TextureData TextureLoader::LoadRGBA8(const std::string& path, bool flipVertically)
 {
+    if (LowerExtension(path) == ".ktx2")
+    {
+        const std::vector<std::uint8_t> bytes = ReadFileBytes(path);
+        TextureData texture = DecodeKtx2(bytes.data(), bytes.size(), path);
+        if (flipVertically)
+        {
+            FlipRows(texture);
+        }
+        return texture;
+    }
+
     if (IsFloatImageFile(path))
     {
         TextureData texture = ToDisplayRgba8(LoadRGBA32F(path));
