@@ -608,11 +608,29 @@ void GpuInstancesExpand()
     Require(mismatched.find("EXT_mesh_gpu_instancing") != std::string::npos, "mismatched counts do not fail by name: '" + mismatched + "'");
 }
 
+// A primitive without a material draws with glTF's default one (white, metallic 1, roughness 1), its
+// own entry after the model's materials, never one of them.
+void MissingMaterialsUseTheDefault()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData alone = ModelLoader::LoadModel(WriteTriangle(directory.path, "alone", "").string());
+    Require(alone.materials.size() == 1, "one default material");
+    const ModelMaterialData& fallback = alone.materials.at(alone.submeshes.at(0).materialIndex);
+    Require(Near(fallback.metallicFactor, 1.0f) && Near(fallback.roughnessFactor, 1.0f), "glTF's default is metallic 1, roughness 1");
+    Require(Near(fallback.pbr.metallicFactor, 1.0f) && Near(fallback.pbr.roughnessFactor, 1.0f), "and so are its pbr settings");
+
+    const LoadedModelData mixed = ModelLoader::LoadModel(
+        WriteTriangle(directory.path, "mixed", R"("materials": [{ "name": "red", "pbrMetallicRoughness": { "metallicFactor": 0 } }],)").string());
+    Require(mixed.materials.size() == 2, "the model's material and the default");
+    Require(mixed.submeshes.at(0).materialIndex == 1, "the primitive without a material does not take the model's first");
+}
+
 int main()
 {
     try
     {
         RequiredExtensionsAreChecked();
+        MissingMaterialsUseTheDefault();
         GpuInstancesExpand();
         QuantizedAttributesDecode();
         PunctualLightsImport();

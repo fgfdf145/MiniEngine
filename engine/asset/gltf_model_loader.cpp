@@ -1074,14 +1074,32 @@ ModelMaterialData BuildMaterialData(
     return materialData;
 }
 
-uint32_t EnsureDefaultMaterial(LoadedModelData& modelData)
+// glTF's default material, for primitives that name none: white, metallic 1, roughness 1, as a
+// material without members. BuildLoadedModelData appends it after the model's own materials when a
+// primitive needs it, so its index is the model's material count.
+uint32_t DefaultMaterialIndex(const tinygltf::Model& model, const LoadedModelData& modelData)
 {
-    if (modelData.materials.empty())
+    const uint32_t index = static_cast<uint32_t>(model.materials.size());
+    if (index >= modelData.materials.size())
     {
-        modelData.materials.push_back(ModelMaterialData{});
+        throw std::runtime_error("glTF primitive without a material, but no default material was built");
     }
+    return index;
+}
 
-    return 0;
+bool AnyPrimitiveWithoutMaterial(const tinygltf::Model& model)
+{
+    for (const tinygltf::Mesh& mesh : model.meshes)
+    {
+        for (const tinygltf::Primitive& primitive : mesh.primitives)
+        {
+            if (primitive.material < 0)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::vector<uint32_t> BuildTriangleIndices(std::span<const uint32_t> primitiveIndices, int mode)
@@ -1356,12 +1374,12 @@ void AppendPrimitive(
     submeshData.name = BuildSubmeshName(node, mesh, primitiveIndex) + nameSuffix;
     if (primitive.material >= 0)
     {
-        EnsureIndexInRange(static_cast<size_t>(primitive.material), modelData.materials.size(), "material");
+        EnsureIndexInRange(static_cast<size_t>(primitive.material), model.materials.size(), "material");
         submeshData.materialIndex = static_cast<uint32_t>(primitive.material);
     }
     else
     {
-        submeshData.materialIndex = EnsureDefaultMaterial(modelData);
+        submeshData.materialIndex = DefaultMaterialIndex(model, modelData);
     }
     ReadVariantMappings(primitive, modelData, submeshData);
     submeshData.hasTexCoords = !texCoords.empty();
@@ -1800,6 +1818,10 @@ LoadedModelData BuildLoadedModelData(
     for (const tinygltf::Material& material : tinyModel.materials)
     {
         modelData.materials.push_back(BuildMaterialData(tinyModel, material, modelPath));
+    }
+    if (AnyPrimitiveWithoutMaterial(tinyModel))
+    {
+        modelData.materials.push_back(BuildMaterialData(tinyModel, tinygltf::Material{}, modelPath));
     }
     modelData.materialVariants = ReadMaterialVariantNames(tinyModel);
     progressTracker.Report(kProgressMaterialsDone);
