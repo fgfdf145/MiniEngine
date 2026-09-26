@@ -30,6 +30,9 @@ Read from the release build at `https://github.khronos.org/glTF-Sample-Viewer-Re
    Debug checkbox, and `--khronos-reference` on the command line). While on:
    - tone mapping is Khronos PBR Neutral (the published reference implementation, in
      `pbr_neutral.glsl`) instead of GT7's, applied to the exposed value (`hdr * kExposedPerFrameBufferUnit`);
+   - the output is encoded as the viewer encodes it, with a 2.2 gamma rather than the sRGB curve
+     (`KhronosViewerOutputForSrgbTarget`, the value the sRGB target turns into `pow(x, 1/2.2)`; SDR
+     only; added 2026-09-26);
    - exposure is manual, set so the scene's HDRI texel value 1 is exposed to 1 (the viewer's
      exposure 1.0); auto exposure and auto white balance are off;
    - glare/bloom, screen-space AO, SSR and geometric specular AA are off: the viewer has none of them
@@ -103,6 +106,14 @@ variant. Known differences:
   CLAMP_TO_EDGE. Fixed by `2026-09-26-gltf-samplers-design.md`: 2.7.
 - `UnlitTest` 5.8: the viewer shows unlit colours without tone mapping; the engine tone maps them on
   purpose (see the unlit design).
+
+Later on 2026-09-26, over 40 scenes: turning off specular AA in the reference view (the viewer has
+none) kept every mean difference or lowered it by up to 0.3; encoding the output with the viewer's
+2.2 gamma lowered 30 of 40 (TextureTransformTest 2.8 to 2.0, ClearCoatTest 4.2 to 3.2, most now 2.5
+to 3.2). IORTestGrid's black spheres with specular 0.25 had looked far darker in the engine; their
+reflections now match the viewer's within 1% (they did within 2% before, decoded by each image's own
+curve). Its mean stays 5.8: the engine's roughness-0 reflections and refraction are softer than the
+viewer's. UnlitTest rose from 5.9 to 6.4, since the viewer does not tone map unlit colours.
 
 Two causes found on the way and fixed: emissive colours are cd/m^2 in the engine and plain units in
 the viewer, so the scenes light the HDRI at 1 cd/m^2 per unit (ClearCoatTest's labels went from

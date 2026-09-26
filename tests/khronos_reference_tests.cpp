@@ -91,6 +91,29 @@ void PbrNeutralMatchesKhronos()
     Require(std::abs(atStart.r - start) < 1e-4f, "the curve jumps where compression starts");
 }
 
+// The hardware sRGB encode the LDR target applies on write.
+float EncodeSrgb(float linear)
+{
+    return linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+}
+
+// The Sample Viewer encodes its output with a pure 2.2 gamma, not the sRGB curve. Written through
+// the sRGB target, the reference view's output must come out as the viewer's.
+void OutputEncodesLikeTheViewer()
+{
+    for (const float value : {0.0f, 0.0004f, 0.002f, 0.01f, 0.05f, 0.18f, 0.5f, 0.9f, 1.0f})
+    {
+        const glm::vec3 written = shader::KhronosViewerOutputForSrgbTarget(glm::vec3(value));
+        const float expected = std::pow(value, 1.0f / 2.2f);
+        Require(std::abs(EncodeSrgb(written.g) - expected) < 1e-5f,
+                "display linear " + std::to_string(value) + " is encoded as " + std::to_string(EncodeSrgb(written.g)) + ", not the viewer's " +
+                    std::to_string(expected));
+    }
+    // Near black the viewer's gamma is far brighter than sRGB's linear segment: 0.0004 is about
+    // 7 of 255 there and 1 of 255 in sRGB.
+    Require(shader::KhronosViewerOutputForSrgbTarget(glm::vec3(0.0004f)).r > 0.002f, "near black is not lifted as the viewer lifts it");
+}
+
 // The Sample Viewer's rule: target the box centre, look down -Z, back off until the larger of the
 // x and y extents fits the vertical FOV and the horizontal one (vertical FOV times aspect).
 float ExpectedDistance(float width, float height, float aspect)
@@ -240,6 +263,7 @@ int main()
     try
     {
         PbrNeutralMatchesKhronos();
+        OutputEncodesLikeTheViewer();
         FramesLikeTheSampleViewer();
         ExtentsFollowTheSampleViewer();
         LoaderKeepsTheViewersPrimitiveBounds();

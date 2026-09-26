@@ -136,6 +136,11 @@ void main()
             // exposure 1.0 is the engine's exposed 1.0). Display linear; with HDR10 output it is
             // shown relative to the UI white, as SDR content is.
             color = KhronosPbrNeutral(max(color * kExposedPerFrameBufferUnit, vec3(0.0f)));
+            // On an SDR display, also the viewer's encoding: a 2.2 gamma instead of the sRGB curve.
+            if (constants.hdrOutput == 0u)
+            {
+                color = KhronosViewerOutputForSrgbTarget(color);
+            }
         }
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.

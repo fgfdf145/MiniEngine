@@ -76,3 +76,7 @@ resolution. `--jpeg` embeds half-size JPEG copies instead, for a page small enou
 - **Background**: the viewer shows the environment prefiltered at roughness 0.6; the reference view
   shows the engine's prefiltered map at the same roughness.
 - **Exposure and tone mapping**: the viewer's exposure 1.0 and Khronos PBR Neutral.
+- **Output encoding**: the viewer writes `pow(x, 1/2.2)`, not the sRGB curve, and so lifts the darks (a
+  display-linear 0.0004 is 7 of 255 there, 1 of 255 through sRGB). The reference view writes the same
+  (`KhronosViewerOutputForSrgbTarget`). Before it, IORTestGrid's black spheres looked far darker in
+  the engine although their reflections agreed to 2% once each image was decoded by its own curve.

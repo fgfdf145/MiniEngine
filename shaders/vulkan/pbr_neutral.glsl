@@ -31,3 +31,22 @@ vec3 KhronosPbrNeutral(vec3 color)
     float g = 1.0f - 1.0f / (kPbrNeutralDesaturation * (peak - newPeak) + 1.0f);
     return mix(color, vec3(newPeak), g);
 }
+
+// The Sample Viewer encodes its display-linear output with a pure 2.2 gamma (tonemapping.glsl,
+// linearTosRGB), not the sRGB curve. The LDR target applies the sRGB curve on write, so this returns
+// the value that curve turns into the viewer's encoding. Near black the two differ most: 0.0004 is
+// about 7 of 255 in the viewer and 1 of 255 through sRGB, which made dark reflections look much
+// darker in the engine than in the viewer (IORTestGrid's black spheres).
+float KhronosViewerChannelForSrgbTarget(float displayLinear)
+{
+    float encoded = pow(max(displayLinear, 0.0f), 1.0f / 2.2f);
+    return encoded <= 0.04045f ? encoded / 12.92f : pow((encoded + 0.055f) / 1.055f, 2.4f);
+}
+
+vec3 KhronosViewerOutputForSrgbTarget(vec3 displayLinear)
+{
+    return vec3(
+        KhronosViewerChannelForSrgbTarget(displayLinear.r),
+        KhronosViewerChannelForSrgbTarget(displayLinear.g),
+        KhronosViewerChannelForSrgbTarget(displayLinear.b));
+}
