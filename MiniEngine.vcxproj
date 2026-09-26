@@ -134,7 +134,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt" />
-    <None Include="README.md;docs\**\*.md" />
+    <None Include="README.md;docs\**\*.md" Exclude="docs\superpowers\**" />
     <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md" />
     <None Include="vcpkg.json;miniengine.settings.json" />
     <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl" />

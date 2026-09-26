@@ -38,7 +38,7 @@
     <None Include="CMakeLists.txt;CMakePresets.json;cmake\**\*.cmake;app\CMakeLists.txt;engine\**\CMakeLists.txt;tests\CMakeLists.txt">
       <Filter>CMake</Filter>
     </None>
-    <None Include="README.md;docs\**\*.md">
+    <None Include="README.md;docs\**\*.md" Exclude="docs\superpowers\**">
       <Filter>Documentation</Filter>
     </None>
     <None Include="scripts\**\*.ps1;scripts\**\*.sh;scripts\**\*.md">
