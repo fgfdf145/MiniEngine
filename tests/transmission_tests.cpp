@@ -58,6 +58,20 @@ void LodFollowsTheViewer()
     Require(std::abs(shader::TransmissionLod(0.5f, 1.25f) - 2.5f) < 1e-5f, "roughness scales by clamp(2 IOR - 2)");
 }
 
+// KHR_materials_dispersion as the Khronos sample viewer spreads it: (ior - 1) * 0.025 * dispersion
+// either side of green, red bending least.
+void DispersionSpreadsTheIor()
+{
+    const glm::vec3 none = shader::DispersedIors(1.5f, 0.0f);
+    Require(glm::length(none - glm::vec3(1.5f)) < 1e-6f, "no dispersion gives one IOR");
+    const glm::vec3 spread = shader::DispersedIors(1.5f, 2.0f);
+    const float half = 0.5f * 0.025f * 2.0f;
+    Require(glm::length(spread - glm::vec3(1.5f - half, 1.5f, 1.5f + half)) < 1e-6f, "the spread is (ior - 1) * 0.025 * dispersion");
+    Require(spread.r < spread.g && spread.g < spread.b, "red bends least, blue most");
+    const glm::vec3 air = shader::DispersedIors(1.0f, 5.0f);
+    Require(glm::length(air - glm::vec3(1.0f)) < 1e-6f, "IOR 1 does not spread");
+}
+
 void AttenuationIsBeerLambert()
 {
     const glm::vec3 white(1.0f);
@@ -77,6 +91,7 @@ int main()
         VolumesRefractThroughTheirThickness();
         LodFollowsTheViewer();
         AttenuationIsBeerLambert();
+        DispersionSpreadsTheIor();
     }
     catch (const std::exception& error)
     {

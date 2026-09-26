@@ -39,6 +39,14 @@ float TransmissionLod(float perceptualRoughness, float ior)
     return log2(kTransmissionCopySize) * TransmissionRoughness(perceptualRoughness, ior);
 }
 
+// KHR_materials_dispersion: the IOR for red, green and blue, spread (ior - 1) * 0.025 * dispersion
+// either side of the material's, as the Khronos sample viewer spreads it. Red bends least.
+vec3 DispersedIors(float ior, float dispersion)
+{
+    float halfSpread = (ior - 1.0f) * 0.025f * dispersion;
+    return vec3(ior - halfSpread, ior, ior + halfSpread);
+}
+
 // Beer-Lambert through distance: white light turns attenuationColor after attenuationDistance. An
 // attenuation distance of 0 stands for infinity, no absorption.
 vec3 ApplyVolumeAttenuation(vec3 radiance, float distance, vec3 attenuationColor, float attenuationDistance)

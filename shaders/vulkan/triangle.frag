@@ -47,6 +47,18 @@ layout(location = 0) out vec4 outColor;
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+// What is behind a transmissive surface for one IOR: the transmission copy where the view ray
+// refracted by it leaves the volume (straight behind a thin wall), at the viewer's blur for the
+// material's roughness, in radiance (the copy is pre-exposed); a = the ray's length in the volume.
+vec4 SampleTransmission(vec3 N, vec3 V, float ior, float thickness, vec3 volumeScale, float materialRoughness)
+{
+    vec3 exitPoint = TransmissionExitPoint(fragWorldPosition, N, V, ior, thickness, volumeScale);
+    vec4 exitClip = ubo.proj * ubo.view * vec4(exitPoint, 1.0);
+    vec2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
+    vec3 behind = textureLod(transmissionCopy, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
+    return vec4(behind, length(exitPoint - fragWorldPosition));
+}
+
 void main()
 {
     MaterialData material = materialData.materials[fragDrawSlot];
@@ -173,11 +185,28 @@ void main()
             0.0, 1.0);
         float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
         float ior = max(material.attenuationColor.a, 1.0);
-        vec3 exitPoint = TransmissionExitPoint(fragWorldPosition, N, V, ior, thickness, fragModelScale * material.volumeScale.xyz);
-        vec4 exitClip = ubo.proj * ubo.view * vec4(exitPoint, 1.0);
-        vec2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
-        vec3 behind = textureLod(transmissionCopy, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
-        vec3 absorption = ApplyVolumeAttenuation(vec3(1.0), length(exitPoint - fragWorldPosition), material.attenuationColor.rgb, material.transmissionFactors.z);
+        vec3 volumeScale = fragModelScale * material.volumeScale.xyz;
+        vec3 behind;
+        vec3 absorption;
+        float dispersion = material.transmissionFactors.w;
+        if (dispersion > 0.0 && thickness > 0.0)
+        {
+            // KHR_materials_dispersion: each channel refracts by its own IOR and takes its own
+            // sample, blur and absorption along its own ray.
+            vec3 iors = DispersedIors(ior, dispersion);
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                vec4 sampled = SampleTransmission(N, V, iors[channel], thickness, volumeScale, materialRoughness);
+                behind[channel] = sampled[channel];
+                absorption[channel] = ApplyVolumeAttenuation(vec3(1.0), sampled.a, material.attenuationColor.rgb, material.transmissionFactors.z)[channel];
+            }
+        }
+        else
+        {
+            vec4 sampled = SampleTransmission(N, V, ior, thickness, volumeScale, materialRoughness);
+            behind = sampled.rgb;
+            absorption = ApplyVolumeAttenuation(vec3(1.0), sampled.a, material.attenuationColor.rgb, material.transmissionFactors.z);
+        }
         specular.transmissionFactor = transmission;
         specular.transmittedRadiance = behind * absorption * albedo.rgb;
         specular.transmissionTint = absorption * albedo.rgb;
