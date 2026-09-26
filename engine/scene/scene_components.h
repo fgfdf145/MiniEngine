@@ -117,6 +117,8 @@ struct ModelComponent
     // KHR_materials_variants: the name of the variant this entity wears, empty for the glTF's
     // default bindings. By name so a re-exported glTF that reorders its variants keeps the choice.
     std::string materialVariant;
+    // KHR_lights_punctual: whether the lights the model carries shine, through this entity's transform.
+    bool useModelLights = true;
 };
 
 struct ModelBoundsComponent
@@ -135,5 +137,7 @@ struct EditorModelMetadataComponent
     std::vector<ModelImportedSubmeshInfo> importedSubmeshes;
     // KHR_materials_variants' names, for the variant picker.
     std::vector<std::string> materialVariants;
+    // How many KHR_lights_punctual lights the model carries (the model lights checkbox shows then).
+    uint32_t modelLightCount = 0;
 };
 }

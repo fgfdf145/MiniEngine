@@ -3,6 +3,7 @@
 #include "mesh.h"
 
 #include <engine/scene/material_graph.h>
+#include <engine/scene/scene_components.h>
 #include <glm/glm.hpp>
 
 #include <filesystem>
@@ -109,10 +110,30 @@ struct ModelSubmeshData
     std::string name;
 };
 
+// A light the model carries (KHR_lights_punctual), in the model's space and the engine's units:
+// lumens for point and spot lights (glTF's candela times the light's solid angle), lux for
+// directional ones. It shines through the model entity's transform, not as a scene entity.
+struct ModelLightData
+{
+    std::string name;
+    LightType type = LightType::Point;
+    glm::vec3 color{1.0f};
+    float intensity = 0.0f;
+    // Metres; glTF's undefined (infinite) range made finite where the light falls to 1e-3 lux.
+    float range = 10.0f;
+    // Spot cone half-angles.
+    float innerAngleDegrees = 0.0f;
+    float outerAngleDegrees = 45.0f;
+    glm::vec3 position{0.0f};
+    // Where the light travels: the node's -Z, unit length.
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
 struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
     std::vector<ModelSubmeshData> submeshes;
+    std::vector<ModelLightData> lights;
     // KHR_materials_variants' names, in the glTF's order.
     std::vector<std::string> materialVariants;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};

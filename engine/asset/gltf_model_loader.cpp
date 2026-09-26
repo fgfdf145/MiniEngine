@@ -1523,6 +1523,54 @@ struct GltfLoadProgressTracker
     }
 };
 
+// A KHR_lights_punctual light at its node's world transform, in the engine's units; nullopt (with a
+// warning) for a type the extension does not define.
+std::optional<ModelLightData> BuildModelLight(const tinygltf::Light& source, const glm::mat4& worldTransform)
+{
+    constexpr float kPi = 3.14159265358979f;
+    // The illuminance an infinite-range light is cut off at: its range is where it falls this low.
+    constexpr float kRangeCutoffLux = 1e-3f;
+    constexpr float kMaxDerivedRange = 1000.0f;
+
+    ModelLightData light{};
+    light.name = source.name;
+    if (source.color.size() >= 3)
+    {
+        light.color = glm::clamp(glm::vec3(static_cast<float>(source.color[0]), static_cast<float>(source.color[1]), static_cast<float>(source.color[2])), 0.0f, 1.0f);
+    }
+    const float intensity = std::max(static_cast<float>(source.intensity), 0.0f);
+    light.position = glm::vec3(worldTransform[3]);
+    const glm::vec3 forward = glm::vec3(worldTransform * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
+    light.direction = glm::length(forward) > 0.0f ? glm::normalize(forward) : glm::vec3(0.0f, 0.0f, -1.0f);
+    light.range = source.range > 0.0 ? static_cast<float>(source.range)
+                                     : std::min(std::sqrt(intensity / kRangeCutoffLux), kMaxDerivedRange);
+    if (source.type == "directional")
+    {
+        light.type = LightType::Directional;
+        light.intensity = intensity;
+    }
+    else if (source.type == "point")
+    {
+        light.type = LightType::Point;
+        light.intensity = intensity * 4.0f * kPi;
+    }
+    else if (source.type == "spot")
+    {
+        light.type = LightType::Spot;
+        const float outer = std::clamp(static_cast<float>(source.spot.outerConeAngle), 0.0f, 0.5f * kPi);
+        const float inner = std::clamp(static_cast<float>(source.spot.innerConeAngle), 0.0f, outer);
+        light.innerAngleDegrees = glm::degrees(inner);
+        light.outerAngleDegrees = glm::degrees(outer);
+        light.intensity = intensity * 2.0f * kPi * (1.0f - std::cos(outer));
+    }
+    else
+    {
+        LOG_WARN("Ignoring KHR_lights_punctual light '{}' of unknown type '{}'", source.name, source.type);
+        return std::nullopt;
+    }
+    return light;
+}
+
 void TraverseNode(
     const tinygltf::Model& model,
     int nodeIndex,
@@ -1539,6 +1587,15 @@ void TraverseNode(
     EnsureIndexInRange(static_cast<size_t>(nodeIndex), model.nodes.size(), "node");
     const tinygltf::Node& node = model.nodes[static_cast<size_t>(nodeIndex)];
     const glm::mat4 worldTransform = parentTransform * BuildNodeMatrix(node);
+
+    if (node.light >= 0)
+    {
+        EnsureIndexInRange(static_cast<size_t>(node.light), model.lights.size(), "light");
+        if (std::optional<ModelLightData> light = BuildModelLight(model.lights[static_cast<size_t>(node.light)], worldTransform))
+        {
+            modelData.lights.push_back(std::move(*light));
+        }
+    }
 
     if (node.mesh >= 0)
     {
@@ -1646,7 +1703,8 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 16> kImplementedExtensions = {
+constexpr std::array<std::string_view, 17> kImplementedExtensions = {
+    "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
     "KHR_materials_diffuse_transmission",

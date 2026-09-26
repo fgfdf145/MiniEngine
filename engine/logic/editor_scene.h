@@ -58,7 +58,8 @@ class EditorScene final : public IEditorWorld
         bool hasBounds,
         const std::vector<ModelImportedMaterialInfo>& importedMaterials,
         const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes,
-        const std::vector<std::string>& materialVariants) override;
+        const std::vector<std::string>& materialVariants,
+        uint32_t modelLightCount) override;
 
     glm::mat4 GetModelMatrix(entt::entity entity) const override;
     void ApplyTransformMatrix(entt::entity entity, const glm::mat4& matrix) override;
