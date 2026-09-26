@@ -2,6 +2,7 @@
 #include "ui/editor_menu_toolbar.h"
 #include "ui/editor_ui_internal.h"
 
+#include <engine/core/paths/engine_paths.h>
 #include <engine/logic/editor_world.h>
 #include <engine/platform/ui/ui_scale.h>
 #include <IconsFontAwesome6.h>
@@ -40,7 +41,53 @@ void EditorUiController::RegisterCommands()
     {
         m_resetDockLayoutRequested = true;
     };
-    RegisterEditorCommands(m_commands, m_commandState, window);
+
+    EditorSceneCommands scene;
+    scene.openScene = [this]
+    {
+        m_openSceneRequested = true;
+    };
+    scene.saveScene = [this]
+    {
+        m_saveSceneRequested = true;
+    };
+    scene.saveSceneAs = [this]
+    {
+        m_saveSceneAsRequested = true;
+    };
+    scene.importModel = [this]
+    {
+        m_importModelRequested = true;
+    };
+    // The same way out as closing the window.
+    scene.exit = []
+    {
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
+    };
+    scene.deleteSelection = [this]
+    {
+        m_commandActions.deleteSelectedSceneEntity = true;
+    };
+    scene.hasSelection = [this]
+    {
+        return m_hasSceneSelection;
+    };
+    scene.createEntity = [this]
+    {
+        m_commandActions.createSceneEntity = true;
+    };
+    // Named as the Scene panel's Add Light names them.
+    scene.createLight = [this](LightType type)
+    {
+        m_commandActions.createLightEntity = EditorUiActions::LightCreate{std::string(GetLightTypeLabel(type)) + " Light", type};
+    };
+    scene.captureViewport = [this]
+    {
+        m_commandActions.captureViewport = true;
+    };
+    RegisterEditorCommands(m_commands, m_commandState, window, scene);
     m_toolbarLayout = BuildEditorToolbarLayout();
 }
 
@@ -113,10 +160,16 @@ EditorUiFrameResult EditorUiController::Draw(
 
     // Shortcuts first, so what they change shows in this frame's menus and panels. The menu bar
     // and the toolbar come before the dock space, which fills the area they leave.
+    m_hasSceneSelection = scene.HasSelection();
+    SyncCommandStateFromEditor(scene);
+    const EditorCommandState commandStateBefore = m_commandState;
     ProcessCommandShortcuts(m_commands);
     DrawMainMenu(m_commands);
     DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
+    ApplyCommandStateToEditor(commandStateBefore, scene);
     DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
+    result.actions = std::exchange(m_commandActions, {});
+    HandleFileCommands(scene, result);
     // TODO: draw the command palette while m_commandState.commandPaletteRequested is set.
     m_commandState.commandPaletteRequested = false;
 
@@ -174,6 +227,117 @@ EditorUiFrameResult EditorUiController::Draw(
 
     result.renderDebug = m_renderDebug;
     return result;
+}
+
+void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
+{
+    m_commandState.transformTool =
+        scene.GetGizmoSettings().operation == ImGuizmo::SCALE ? TransformTool::Scale : TransformTool::Move;
+    // The other G-buffer views have no View command; the menu keeps its last choice for them.
+    switch (m_renderDebug.gbufferView)
+    {
+    case GBufferDebugView::Off:
+        m_commandState.debugView = ViewportDebugView::Lit;
+        break;
+    case GBufferDebugView::Albedo:
+        m_commandState.debugView = ViewportDebugView::Albedo;
+        break;
+    case GBufferDebugView::Normal:
+        m_commandState.debugView = ViewportDebugView::Normal;
+        break;
+    default:
+        break;
+    }
+    m_commandState.antiAliasing = m_renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
+}
+
+void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene)
+{
+    // A choice with nothing behind it yet changes nothing, and the next frame's sync shows the
+    // editor's own state again.
+    if (m_commandState.transformTool != before.transformTool)
+    {
+        GizmoSettings& gizmo = scene.GetGizmoSettings();
+        switch (m_commandState.transformTool)
+        {
+        case TransformTool::Move:
+            gizmo.operation = kCombinedGizmoOperation;
+            break;
+        case TransformTool::Scale:
+            gizmo.operation = ImGuizmo::SCALE;
+            break;
+        case TransformTool::Rotate:
+            break;
+        }
+    }
+    if (m_commandState.debugView != before.debugView)
+    {
+        switch (m_commandState.debugView)
+        {
+        case ViewportDebugView::Lit:
+            m_renderDebug.gbufferView = GBufferDebugView::Off;
+            break;
+        case ViewportDebugView::Albedo:
+            m_renderDebug.gbufferView = GBufferDebugView::Albedo;
+            break;
+        case ViewportDebugView::Normal:
+            m_renderDebug.gbufferView = GBufferDebugView::Normal;
+            break;
+        default:
+            break;
+        }
+    }
+    if (m_commandState.antiAliasing != before.antiAliasing)
+    {
+        m_renderDebug.taa = m_commandState.antiAliasing == AntiAliasingMode::Taa;
+    }
+}
+
+void EditorUiController::HandleFileCommands(IEditorWorld& scene, EditorUiFrameResult& result)
+{
+    // Each prompt has its own ID, so the typed-path fallback modals do not share one popup.
+    // Save goes to the current path if already set; otherwise it asks, like Save As.
+    const bool saveToCurrentPath = m_saveSceneRequested && !scene.GetSceneFilePath().empty();
+    if (saveToCurrentPath)
+    {
+        result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
+    }
+    ImGui::PushID("file.save_scene");
+    if (const std::optional<std::string> savePath =
+            PickFilePath(FileDialogType::SaveScene, (m_saveSceneRequested && !saveToCurrentPath) || m_saveSceneAsRequested);
+        savePath.has_value())
+    {
+        result.actions.selectedSceneSavePath = *savePath;
+    }
+    ImGui::PopID();
+
+    ImGui::PushID("file.open_scene");
+    if (const std::optional<std::string> loadPath = PickFilePath(FileDialogType::OpenScene, m_openSceneRequested);
+        loadPath.has_value())
+    {
+        result.actions.selectedSceneLoadPath = *loadPath;
+    }
+    ImGui::PopID();
+
+    // The model goes into the folder the asset browser shows, which opens to show it and to ask
+    // when the model's folder is taken.
+    ImGui::PushID("file.import_model");
+    if (const std::optional<std::string> sourcePath = PickFilePath(FileDialogType::OpenModel, m_importModelRequested);
+        sourcePath.has_value())
+    {
+        if (!m_assetManager.has_value())
+        {
+            m_assetManager.emplace(EnginePaths::AssetsRoot());
+        }
+        m_showAssetManagerWindow = true;
+        RequestModelImport(*sourcePath, result);
+    }
+    ImGui::PopID();
+
+    m_saveSceneRequested = false;
+    m_saveSceneAsRequested = false;
+    m_openSceneRequested = false;
+    m_importModelRequested = false;
 }
 
 void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)

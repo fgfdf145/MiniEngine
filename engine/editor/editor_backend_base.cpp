@@ -359,6 +359,30 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         State().pendingScenePath = *uiFrame.actions.selectedSceneLoadPath;
     }
+    if (uiFrame.actions.captureViewport)
+    {
+        // The frame on screen, before this one records: viewport_<local date>_<time>.png.
+        SDL_DateTime now{};
+        SDL_Time ticks = 0;
+        if (!SDL_GetCurrentTime(&ticks) || !SDL_TimeToDateTime(ticks, &now, true))
+        {
+            now = SDL_DateTime{};
+        }
+        char name[64];
+        std::snprintf(
+            name, sizeof(name), "viewport_%04d%02d%02d_%02d%02d%02d.png",
+            now.year, now.month, now.day, now.hour, now.minute, now.second);
+        const std::filesystem::path path = EnginePaths::ProjectRoot() / "captures" / name;
+        try
+        {
+            std::filesystem::create_directories(path.parent_path());
+            CaptureViewport(path);
+        }
+        catch (const std::exception& error)
+        {
+            LOG_ERROR("Failed to capture the viewport to '{}': {}", path.string(), error.what());
+        }
+    }
     if (uiFrame.actions.selectedSceneSavePath.has_value())
     {
         try
