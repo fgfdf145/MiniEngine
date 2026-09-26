@@ -6,6 +6,7 @@
 #include "ssr_common.glsl"
 #include "local_shadow_common.glsl"
 #include "anisotropy_common.glsl"
+#include "transmission_common.glsl"
 #include "brdf_common.glsl"
 #include "ltc_common.glsl"
 #include "iridescence_common.glsl"
@@ -162,6 +163,11 @@ struct SpecularParams
     vec3 transmittedRadiance;
     vec3 transmissionTint;
     float transmissionAlpha;
+    // KHR_materials_diffuse_transmission (forward pass only): the share of the diffuse lobe that
+    // passes through the surface as a Lambertian lobe on its far side, and that light's colour (the
+    // colour factor and map, times the volume's attenuation).
+    float diffuseTransmissionFactor;
+    vec3 diffuseTransmissionColor;
 };
 
 SpecularParams NoSpecularOverride()
@@ -175,7 +181,32 @@ SpecularParams NoSpecularOverride()
     specular.transmittedRadiance = vec3(0.0);
     specular.transmissionTint = vec3(0.0);
     specular.transmissionAlpha = 0.0;
+    specular.diffuseTransmissionFactor = 0.0;
+    specular.diffuseTransmissionColor = vec3(0.0);
     return specular;
+}
+
+// Whether light passes through the surface at all: its shadow lookups then offset toward a light
+// behind it (ShadowOffsetNormal).
+bool Transmits(SpecularParams specular)
+{
+    return specular.transmissionFactor > 0.0 || specular.diffuseTransmissionFactor > 0.0;
+}
+
+// The image-based diffuse with diffuse transmission, as the Khronos sample viewer mixes it: the
+// irradiance from behind the surface (backIrradiance, for -N) through the transmission colour takes
+// the front lobe's place by the factor, under the same Fresnel and metal weights. The caller passes
+// it darkened by the ambient occlusion, as the viewer darkens all its image-based light: a translucent
+// asset's baked occlusion is authored for it (DiffuseTransmissionTeacup's saucer underside). Specular
+// transmission mixes over the result (MixTransmittedAmbient).
+vec3 MixDiffuseTransmittedAmbient(vec3 diffuse, vec3 backIrradiance, float metallic, vec3 specularAlbedo, SpecularParams specular)
+{
+    if (specular.diffuseTransmissionFactor <= 0.0)
+    {
+        return diffuse;
+    }
+    vec3 transmitted = (1.0 - metallic) * (vec3(1.0) - specularAlbedo) * specular.diffuseTransmissionColor * backIrradiance;
+    return mix(diffuse, transmitted, specular.diffuseTransmissionFactor);
 }
 
 // The image-based diffuse with transmission: the transmitted light takes the diffuse lobe's place
@@ -281,6 +312,21 @@ vec3 EvaluateBRDF(
         vec3 H = normalize(V + L);
         vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
         diffuse = kD * albedo * BurleyDiffuse(max(NdV, 1e-4), NdL, max(dot(L, H), 0.0), roughness) * radiance * NdL;
+    }
+    if (specularParams.diffuseTransmissionFactor > 0.0)
+    {
+        // Diffuse transmission, as the Khronos sample viewer draws it: the front lobe keeps 1 - factor;
+        // a light behind the surface adds a Lambertian lobe through it, in the transmission colour,
+        // weighted by the Fresnel about the light mirrored through the surface's plane.
+        diffuse *= 1.0 - specularParams.diffuseTransmissionFactor;
+        float backNdL = -dot(N, L);
+        if (backNdL > 0.0)
+        {
+            vec3 mirrored = normalize(L + 2.0 * N * backNdL);
+            vec3 H = normalize(mirrored + V);
+            vec3 kD = (vec3(1.0) - BaseFresnel(max(dot(H, V), 0.0), F0, F90, specularParams)) * (1.0 - metallic);
+            diffuse += specularParams.diffuseTransmissionFactor * kD * specularParams.diffuseTransmissionColor * (backNdL / PI) * radiance;
+        }
     }
     if (specularParams.transmissionFactor > 0.0)
     {
@@ -739,7 +785,8 @@ vec3 EvaluateUniformAmbient(
     vec3 specularAlbedo = BaseSpecularAlbedo(environmentBrdf, F0, F90, specular) * SpecularEnergyCompensation(F0, environmentBrdf);
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     float horizon = HorizonSpecularOcclusion(reflect(-V, N), geoNormal);
-    vec3 diffuse = MixTransmittedAmbient(diffuseAlbedo * luminance * ao, metallic, specularAlbedo, specular);
+    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * luminance * ao, luminance * ao, metallic, specularAlbedo, specular);
+    diffuse = MixTransmittedAmbient(diffuse, metallic, specularAlbedo, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(luminance, reflection, NdV, ao, roughness, horizon);
 }
 
@@ -879,7 +926,12 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
     vec3 sceneAmbient = ubo.ambientLuminance.w > 0.5 ? vec3(0.0) : ubo.ambientLuminance.rgb;
     vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + sceneAmbient;
-    vec3 diffuse = MixTransmittedAmbient(diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, specularAlbedo, specular);
+    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + sceneAmbient) * ao;
+    if (specular.diffuseTransmissionFactor > 0.0)
+    {
+        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + sceneAmbient) * ao, metallic, specularAlbedo, specular);
+    }
+    diffuse = MixTransmittedAmbient(diffuse, metallic, specularAlbedo, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 
@@ -949,14 +1001,16 @@ vec3 EvaluateCoatAmbient(CoatParams coat, vec3 V)
 
 // Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
 // like the directional caster, the lookup is skipped where the light contributes nothing.
+// A surface that transmits offsets its lookup toward a light behind it (ShadowOffsetNormal).
 void ApplyLocalShadow(
-    SceneLightData light, vec3 worldPosition, vec3 geoNormal,
+    SceneLightData light, vec3 worldPosition, vec3 geoNormal, bool transmits,
     inout vec3 contribution, inout vec3 coatContribution, inout vec3 sheenContribution)
 {
     if (light.areaRightAxis.w > 0.5 &&
         (any(greaterThan(contribution, vec3(0.0))) || any(greaterThan(coatContribution, vec3(0.0)))))
     {
-        float shadow = EvaluateLocalShadow(light, worldPosition, geoNormal);
+        vec3 toLight = light.positionAndRange.xyz - worldPosition;
+        float shadow = EvaluateLocalShadow(light, worldPosition, ShadowOffsetNormal(geoNormal, toLight, transmits));
         contribution *= shadow;
         coatContribution *= shadow;
         sheenContribution *= shadow;
@@ -1025,7 +1079,8 @@ vec3 ShadeSurface(
         if (int(i) == shadowLightIndex &&
             (any(greaterThan(contribution, vec3(0.0))) || any(greaterThan(coatContribution, vec3(0.0)))))
         {
-            float shadow = EvaluateDirectionalShadow(worldPosition, geoNormal);
+            float shadow = EvaluateDirectionalShadow(
+                worldPosition, ShadowOffsetNormal(geoNormal, -sceneLights.lights[i].directionAndType.xyz, Transmits(specular)));
             contribution *= shadow;
             coatContribution *= shadow;
             sheenContribution *= shadow;
@@ -1056,7 +1111,7 @@ vec3 ShadeSurface(
                 sheenContribution,
                 anisotropy,
                 specular);
-            ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
+            ApplyLocalShadow(light, worldPosition, geoNormal, Transmits(specular), contribution, coatContribution, sheenContribution);
             directAccum += contribution;
             coatAccum += coatContribution;
             sheenAccum += sheenContribution;
@@ -1079,7 +1134,7 @@ vec3 ShadeSurface(
                 sheenContribution,
                 anisotropy,
                 specular);
-            ApplyLocalShadow(light, worldPosition, geoNormal, contribution, coatContribution, sheenContribution);
+            ApplyLocalShadow(light, worldPosition, geoNormal, Transmits(specular), contribution, coatContribution, sheenContribution);
             directAccum += contribution;
             coatAccum += coatContribution;
             sheenAccum += sheenContribution;

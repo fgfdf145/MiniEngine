@@ -60,6 +60,26 @@ void LodFollowsTheViewer()
 
 // KHR_materials_dispersion as the Khronos sample viewer spreads it: (ior - 1) * 0.025 * dispersion
 // either side of green, red bending least.
+// The shadow lookup offsets its receiver along the geometric normal, away from a light behind the
+// surface; a surface that passes light through offsets toward that light instead, so a leaf lit
+// from behind is not in its own shadow.
+void TransmittingSurfacesOffsetShadowsTowardTheLight()
+{
+    const glm::vec3 normal(0.0f, 0.0f, 1.0f);
+    const glm::vec3 front(0.0f, 0.6f, 0.8f);
+    const glm::vec3 behind(0.0f, 0.6f, -0.8f);
+    Require(Near(shader::ShadowOffsetNormal(normal, front, true), normal), "a light in front keeps the normal");
+    Require(Near(shader::ShadowOffsetNormal(normal, behind, false), normal), "an opaque surface keeps the normal");
+    Require(Near(shader::ShadowOffsetNormal(normal, behind, true), -normal), "a transmitting surface lit from behind flips it");
+}
+
+// The viewer attenuates diffusely transmitted light through the thickness times the node's mean scale.
+void DiffuseTransmissionThicknessFollowsTheMeanScale()
+{
+    Require(std::abs(shader::DiffuseTransmissionDistance(0.5f, glm::vec3(1.0f, 2.0f, 3.0f)) - 1.0f) < 1e-6f, "0.5 at mean scale 2");
+    Require(shader::DiffuseTransmissionDistance(0.0f, glm::vec3(4.0f)) == 0.0f, "a thin surface has no distance");
+}
+
 void DispersionSpreadsTheIor()
 {
     const glm::vec3 none = shader::DispersedIors(1.5f, 0.0f);
@@ -92,6 +112,8 @@ int main()
         LodFollowsTheViewer();
         AttenuationIsBeerLambert();
         DispersionSpreadsTheIor();
+        TransmittingSurfacesOffsetShadowsTowardTheLight();
+        DiffuseTransmissionThicknessFollowsTheMeanScale();
     }
     catch (const std::exception& error)
     {

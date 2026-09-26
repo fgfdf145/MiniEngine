@@ -47,6 +47,22 @@ vec3 DispersedIors(float ior, float dispersion)
     return vec3(ior - halfSpread, ior, ior + halfSpread);
 }
 
+// KHR_materials_diffuse_transmission: the distance its light is attenuated through (with
+// KHR_materials_volume), the thickness times the node's mean scale, as the sample viewer takes it.
+float DiffuseTransmissionDistance(float thickness, vec3 modelScale)
+{
+    return thickness * (modelScale.x + modelScale.y + modelScale.z) / 3.0f;
+}
+
+// The normal a shadow lookup offsets its receiver along. It moves away from the light's side of the
+// surface to escape acne; a surface that passes light through (either transmission) and is lit
+// from behind moves toward the light instead, or it would sit in its own shadow. Other casters
+// still block that light.
+vec3 ShadowOffsetNormal(vec3 geoNormal, vec3 L, bool transmits)
+{
+    return transmits && dot(geoNormal, L) < 0.0f ? -geoNormal : geoNormal;
+}
+
 // Beer-Lambert through distance: white light turns attenuationColor after attenuationDistance. An
 // attenuation distance of 0 stands for infinity, no absorption.
 vec3 ApplyVolumeAttenuation(vec3 radiance, float distance, vec3 attenuationColor, float attenuationDistance)

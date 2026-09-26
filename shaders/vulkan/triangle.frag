@@ -212,6 +212,19 @@ void main()
         specular.transmissionTint = absorption * albedo.rgb;
         specular.transmissionAlpha = max(TransmissionRoughness(roughness * roughness, ior), 1e-3);
     }
+    if (material.diffuseTransmission.a > 0.0)
+    {
+        // KHR_materials_diffuse_transmission: the factor times its map's A, the colour times its map,
+        // attenuated through the volume's thickness (times the node's mean scale) when it has one.
+        specular.diffuseTransmissionFactor = clamp(
+            material.diffuseTransmission.a * texture(diffuseTransmissionTexture, MaterialSlotUv(material, fragDrawSlot, 25u, fragTexCoord, fragTexCoord1)).a,
+            0.0, 1.0);
+        vec3 color = material.diffuseTransmission.rgb *
+                     texture(diffuseTransmissionColorTexture, MaterialSlotUv(material, fragDrawSlot, 26u, fragTexCoord, fragTexCoord1)).rgb;
+        float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
+        float distance = DiffuseTransmissionDistance(thickness, fragModelScale * material.volumeScale.xyz);
+        specular.diffuseTransmissionColor = ApplyVolumeAttenuation(color, distance, material.attenuationColor.rgb, material.transmissionFactors.z);
+    }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));
 
