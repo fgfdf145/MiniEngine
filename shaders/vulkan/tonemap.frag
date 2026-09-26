@@ -24,6 +24,7 @@ const uint GBUFFER_VIEW_SPECULAR = 9u;
 const uint GBUFFER_VIEW_REFLECTIONS = 10u;
 const uint GBUFFER_VIEW_COAT = 11u;
 const uint GBUFFER_VIEW_SHEEN = 12u;
+const uint GBUFFER_VIEW_INDIRECT_DIFFUSE = 13u;
 
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
@@ -110,6 +111,12 @@ void main()
         // scaled by its confidence: black where the environment is used instead.
         vec4 reflection = texture(sceneReflections, fragTexCoord);
         color = TonemapFrameBufferRec709(min(reflection.rgb, vec3(65504.0))) * reflection.a;
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_INDIRECT_DIFFUSE)
+    {
+        // The light arriving by one bounce, in HDR target units, before any surface's albedo, tone
+        // mapped like the image.
+        color = TonemapFrameBufferRec709(min(texture(sceneGi, fragTexCoord).rgb, vec3(65504.0)));
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
     {

@@ -55,12 +55,12 @@ VkShaderModule VulkanShaderModule::GetHandle() const
     return m_module;
 }
 
-VkRenderPass CreateFullscreenRenderPass(VkDevice device, VkFormat colorFormat, const char* label)
+VkRenderPass CreateFullscreenRenderPass(VkDevice device, VkFormat colorFormat, const char* label, VkAttachmentLoadOp loadOp)
 {
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = colorFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.loadOp = loadOp;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -161,9 +161,16 @@ VkPipeline CreateFullscreenPipeline(
 
     // Every full-screen pass covers every pixel and writes all four channels: the tone mapping pass
     // must leave LDR alpha at 1.0 for ImGui, and the lighting pass writes HDR alpha 1.0 so the
-    // forward blend pass composites over an opaque base.
+    // forward blend pass composites over an opaque base. An additive pass (the GI composite) adds
+    // its rgb over the attachment and keeps the alpha there.
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.blendEnable = options.additiveBlend ? VK_TRUE : VK_FALSE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlendAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT |
         VK_COLOR_COMPONENT_G_BIT |

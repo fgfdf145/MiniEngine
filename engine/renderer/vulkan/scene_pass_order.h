@@ -18,6 +18,11 @@ enum class ScenePassId
     SsrTrace,
     SsrResolve,
     Lighting,
+    // One-bounce indirect diffuse (gi_pass.h): the trace over the lit image, its filter, and the
+    // composite that adds it back to the lit image.
+    GiTrace,
+    GiResolve,
+    GiComposite,
     // The scatter pre-pass of KHR_materials_volume_scatter (VulkanScatterPass), ahead of the forward
     // pass that samples it.
     Scatter,

@@ -181,7 +181,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 13> kGBufferViewNames = {
+        static constexpr std::array<const char*, 14> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -194,7 +194,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: specular (sqrt F0)",
             "Screen-space reflections",
             "G-buffer: coat and anisotropy",
-            "G-buffer: sheen"};
+            "G-buffer: sheen",
+            "Indirect diffuse (one bounce)"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
@@ -220,6 +221,24 @@ void EditorUiController::DrawGraphicsDebugPanel()
         if (ImGui::SmallButton("Reset##ao"))
         {
             ao = AoSettings{};
+        }
+
+        // One bounce of the lit image onto its neighbours, through the same bitmask as the AO.
+        ImGui::SeparatorText("Indirect diffuse (one bounce)");
+        GiSettings& gi = m_renderDebug.gi;
+        ImGui::Checkbox("Enabled##gi", &gi.enabled);
+        ImGui::BeginDisabled(!gi.enabled);
+        DragFloatInRange("Radius (m)##gi", &gi.radius, 0.25f, 10.0f, "%.2f");
+        DragFloatInRange("Thickness (m)##gi", &gi.thickness, 0.01f, 2.0f, "%.2f");
+        DragFloatInRange("Strength##gi", &gi.strength, 0.0f, 4.0f, "%.2f");
+        DragIntInRange("Slices##gi", &gi.sliceCount, 1, 4);
+        DragIntInRange("Steps##gi", &gi.stepCount, 2, 32);
+        ImGui::Checkbox("Spatial filter##gi", &gi.spatialFilter);
+        ImGui::Checkbox("Temporal filter##gi", &gi.temporalFilter);
+        ImGui::EndDisabled();
+        if (ImGui::SmallButton("Reset##gi"))
+        {
+            gi = GiSettings{};
         }
         ImGui::EndDisabled();
     }

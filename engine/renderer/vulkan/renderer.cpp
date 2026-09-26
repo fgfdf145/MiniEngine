@@ -867,6 +867,11 @@ void VulkanRenderer::DrawFrame()
     frame.ao = renderDebug.ao;
     frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
     frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
+    // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
+    // view has none, as the Sample Viewer.
+    frame.gi = renderDebug.gi;
+    frame.gi.enabled = renderDebug.gi.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    frame.giHistory = m_giHistory.Advance(frame.gi.enabled && frame.gi.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
@@ -1036,6 +1041,7 @@ void VulkanRenderer::CreateSwapchainResources()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
     CreateScenePasses();
@@ -1390,6 +1396,24 @@ void VulkanRenderer::CreateScenePasses()
         m_frameSetLayout->GetHandle(),
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
+    m_scenePasses.push_back(std::make_unique<VulkanGiTracePass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
+    m_scenePasses.push_back(std::make_unique<VulkanGiResolvePass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle()));
+    m_scenePasses.push_back(std::make_unique<VulkanGiCompositePass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        m_gbufferDescriptors->GetEmptySetLayout(),
+        m_gbufferDescriptors->GetSetLayout()));
     m_scenePasses.push_back(std::move(scatterPass));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::make_unique<VulkanTransmissionCopyPass>(
@@ -1553,6 +1577,7 @@ void VulkanRenderer::SyncSceneTargets()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
     LOG_INFO(

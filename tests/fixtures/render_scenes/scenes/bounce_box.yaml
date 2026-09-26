@@ -1,0 +1,62 @@
+# A white floor in the sun and a white wall facing away from it, nothing else: no sky, no ambient light
+# (a zero Ambient light turns the fallback off). Without indirect light the wall is black; with the
+# one-bounce indirect diffuse its foot glows with the floor's light, fading upward. One-bounce indirect
+# diffuse (2026-09-27).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000301
+    tag: BounceBox
+    model:
+      display_name: bounce_box
+      source_path: models/bounce_box/bounce_box.gltf
+      source_uuid: b12f84c6-d275-446e-9d80-cd95c1e8aaff
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -1.5, -3]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000302
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 100000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 4, 0]
+      rotation: [-10, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000303
+    tag: No ambient
+    light_type: ambient
+    color: [1, 1, 1]
+    intensity: 0
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

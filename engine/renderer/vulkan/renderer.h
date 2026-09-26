@@ -20,6 +20,7 @@
 #include "instance.h"
 #include "pipeline_set.h"
 #include "render_pass.h"
+#include "gi_pass.h"
 #include "scene_render_targets.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
@@ -298,6 +299,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Which AO history image each frame reads and writes. Reset with the motion history, because
     // the resolve pass recreates its history images at the same points.
     TemporalHistory m_aoHistory;
+    TemporalHistory m_giHistory;
     TemporalHistory m_ssrHistory;
     TemporalHistory m_taaHistory;
     // The pre-exposure the TAA history was written with; 0 before any frame wrote it.

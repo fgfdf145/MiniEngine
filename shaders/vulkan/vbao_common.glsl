@@ -1,9 +1,11 @@
 #ifndef VBAO_COMMON_GLSL
 #define VBAO_COMMON_GLSL
 
-// Shared by vbao_trace.comp and vbao_resolve.comp. Include scene_common.glsl first.
+// Shared by vbao_trace.comp and vbao_resolve.comp, and by the indirect diffuse passes that march the
+// same bitmask (gi_trace.comp, gi_resolve.comp). Include scene_common.glsl first.
 
-// Must match AoPushConstants in engine/renderer/vulkan/ao_pass.cpp.
+// Must match AoPushConstants in engine/renderer/vulkan/ao_pass.cpp and GiPushConstants in
+// engine/renderer/vulkan/gi_pass.cpp.
 layout(push_constant) uniform AoConstants
 {
     vec2 extent;
@@ -11,7 +13,7 @@ layout(push_constant) uniform AoConstants
     float radius;         // metres
     float thickness;      // metres
     float maxPixelRadius; // screen-space cap on the search, pixels
-    float unused;
+    float strength;       // the indirect diffuse passes' multiplier on the bounced light; AO ignores it
     uint sliceCount;
     uint stepCount;
     uint frameIndex;

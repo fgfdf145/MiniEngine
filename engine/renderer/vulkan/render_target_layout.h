@@ -47,6 +47,10 @@ enum class RenderTargetId : uint32_t
     // The TAA resolve's output, written by compute: the anti-aliased HDR image the exposure
     // histogram and tone mapping read.
     SceneTaa,
+    // One-bounce indirect diffuse, written by compute: the raw trace, then the filtered result the
+    // composite adds to the lit image. rgb pre-exposed radiance.
+    GiRaw,
+    SceneGi,
     Count
 };
 

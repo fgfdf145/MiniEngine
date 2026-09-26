@@ -20,5 +20,8 @@ layout(set = 2, binding = 8) uniform sampler2D gbufferCoat;
 layout(set = 2, binding = 9) uniform sampler2D gbufferSheen;
 // Screen-space reflections: rgb radiance in HDR target units, a confidence (see ssr_resolve.comp).
 layout(set = 2, binding = 10) uniform sampler2D sceneReflections;
+// One-bounce indirect diffuse: rgb pre-exposed radiance (see gi_resolve.comp). Written after the
+// lighting pass, so only the composite and the debug view read anything meaningful from it.
+layout(set = 2, binding = 11) uniform sampler2D sceneGi;
 
 #endif

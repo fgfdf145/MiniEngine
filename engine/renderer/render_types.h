@@ -54,7 +54,9 @@ enum class GBufferDebugView : uint32_t
     // GB6 as stored: r coat factor, g coat roughness, b anisotropy angle.
     Coat = 11,
     // GB7 as stored: the sheen's colour.
-    Sheen = 12
+    Sheen = 12,
+    // The resolved one-bounce indirect diffuse light (SceneGi), tone mapped, before the albedo.
+    IndirectDiffuse = 13
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the
@@ -70,6 +72,25 @@ struct AoSettings
     int sliceCount = 2;
     // Per side of each slice.
     int stepCount = 8;
+    bool spatialFilter = true;
+    bool temporalFilter = true;
+};
+
+// One bounce of diffuse light in screen space (see gi_trace.comp): the lit image, as far as the
+// screen shows it, lights its neighbours through the visibility bitmask the AO marches. Not
+// persisted. The pass clamps every value again before the shader sees it.
+struct GiSettings
+{
+    bool enabled = true;
+    // World-space search radius, in metres: how far light bounces.
+    float radius = 3.0f;
+    // Assumed thickness of every depth sample, in metres, as for the AO.
+    float thickness = 0.5f;
+    int sliceCount = 2;
+    // Per side of each slice.
+    int stepCount = 12;
+    // Multiplies the bounced light; 1 is the physical value.
+    float strength = 1.0f;
     bool spatialFilter = true;
     bool temporalFilter = true;
 };
@@ -124,10 +145,11 @@ struct RenderDebugSettings
     bool hdrOutput = false;
     float hdrPeakNits = 1000.0f;
     AoSettings ao;
+    GiSettings gi;
     // The Khronos reference view: renders as the Khronos glTF Sample Viewer does by default, to
     // compare against it (docs/design/2026-09-26-khronos-reference-comparison-design.md).
     // PBR Neutral tone mapping, an HDRI texel of 1 exposed to 1, no auto white balance, no
-    // glare/bloom, AO or SSR, and the viewer's camera framing. Off, nothing changes.
+    // glare/bloom, AO, GI or SSR, and the viewer's camera framing. Off, nothing changes.
     bool khronosReference = false;
     // The scene's resolution as a share of the viewport's pixels (see ScaleViewportExtent), from 0.25
     // to 1: below 1 it renders fewer pixels and is stretched to fill the panel.

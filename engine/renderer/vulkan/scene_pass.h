@@ -75,6 +75,10 @@ struct ScenePassFrameContext
     // What TAA multiplies its history by (see TaaHistoryScale): 1 without valid history.
     float taaHistoryScale = 1.0f;
     BloomSettings bloom;
+    // One-bounce indirect diffuse settings; enabled is already false in the forward-only order, and
+    // its history as aoHistory is the AO resolve's.
+    GiSettings gi;
+    TemporalHistoryFrame giHistory;
     // SSR settings; enabled is already false in the forward-only order.
     SsrSettings ssr;
     // Which SSR resolve history image is read and written, and whether the read one is valid.
