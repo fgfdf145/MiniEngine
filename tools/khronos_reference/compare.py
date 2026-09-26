@@ -188,7 +188,7 @@ figcaption { color: var(--muted); font-size: 12.5px; }
   reference view under the same conditions. {{MATCHED}} of {{COUNT}} scenes match to within the noise floor. The difference image
   is the absolute difference, amplified four times.</p>
   <ul class="conditions">
-    <li>Cannon_Exterior, viewer rotation 90°</li><li>exposure 1.0</li><li>Khronos PBR Neutral</li>
+    <li>Cannon_Exterior, viewer rotation 90°</li><li>exposure 1.0</li><li>Khronos PBR Neutral, 2.2 gamma output</li><li>no specular AA</li>
     <li>45° vertical FOV, viewer framing</li><li>background prefiltered at roughness 0.6</li><li>1334 × 1082 pixels, shown at half size</li>
   </ul>
 </div>
