@@ -1642,6 +1642,57 @@ LoadedModelData BuildLoadedModelData(
 }
 }
 
+namespace
+{
+// The extensions this loader implements. A model that requires another fails to import rather than
+// drawing wrong; one that only uses another loads, with a warning.
+constexpr std::array<std::string_view, 16> kImplementedExtensions = {
+    "KHR_materials_anisotropy",
+    "KHR_materials_clearcoat",
+    "KHR_materials_diffuse_transmission",
+    "KHR_materials_dispersion",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_iridescence",
+    "KHR_materials_sheen",
+    "KHR_materials_specular",
+    "KHR_materials_transmission",
+    "KHR_materials_unlit",
+    "KHR_materials_variants",
+    "KHR_materials_volume",
+    "KHR_mesh_quantization",
+    "KHR_texture_transform",
+    "KHR_xmp_json_ld"};
+
+bool IsImplementedExtension(const std::string& name)
+{
+    return std::find(kImplementedExtensions.begin(), kImplementedExtensions.end(), name) != kImplementedExtensions.end();
+}
+
+void CheckExtensions(const tinygltf::Model& model, const std::filesystem::path& modelPath)
+{
+    std::string missing;
+    for (const std::string& name : model.extensionsRequired)
+    {
+        if (!IsImplementedExtension(name))
+        {
+            missing += (missing.empty() ? "" : ", ") + name;
+        }
+    }
+    if (!missing.empty())
+    {
+        throw std::runtime_error("glTF model '" + modelPath.string() + "' requires extensions MiniEngine does not implement: " + missing);
+    }
+    for (const std::string& name : model.extensionsUsed)
+    {
+        if (!IsImplementedExtension(name))
+        {
+            LOG_WARN("glTF model '{}' uses {}, which MiniEngine ignores", modelPath.string(), name);
+        }
+    }
+}
+}
+
 LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)
 {
     const std::filesystem::path modelPath = std::filesystem::path(path).lexically_normal();
@@ -1688,6 +1739,8 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
             "Failed to load glTF model '" + modelPath.string() + "'" +
             (errors.empty() ? std::string{} : ": " + errors));
     }
+
+    CheckExtensions(tinyModel, modelPath);
 
     if (progress)
     {
