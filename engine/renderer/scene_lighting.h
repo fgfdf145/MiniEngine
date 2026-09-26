@@ -55,6 +55,20 @@ SceneLightSelection SelectSceneLights(
     const glm::vec3& cameraPosition,
     uint32_t maxLights);
 
+// A light a model carries (KHR_lights_punctual), placed in the world through its entity's model
+// matrix.
+struct PlacedModelLight
+{
+    glm::vec3 position{0.0f};
+    // Where the light travels, unit length.
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
+// Moves a model light from the model's space into the world. The direction goes through the
+// matrix's linear part, as the loader turned the node's -Z, and is normalized again so an entity's
+// scale does not change it; a matrix that collapses it keeps the model-space direction.
+PlacedModelLight PlaceModelLight(const glm::mat4& modelMatrix, const glm::vec3& position, const glm::vec3& direction);
+
 // The index into selection.selected of the light that casts shadows, or -1 when none does. Only
 // directional lights cast shadows so far, and SelectSceneLights puts the brightest one first.
 int32_t SelectShadowCasterLight(

@@ -54,7 +54,11 @@ struct ScopedFixtureDirectory
 };
 
 // One float triangle, and whatever the caller adds to the root object.
-std::filesystem::path WriteTriangle(const std::filesystem::path& directory, const std::string& name, const std::string& extraRootMembers)
+std::filesystem::path WriteTriangle(
+    const std::filesystem::path& directory,
+    const std::string& name,
+    const std::string& extraRootMembers,
+    const std::string& nodes = R"([{ "mesh": 0 }])")
 {
     const std::filesystem::path path = directory / (name + ".gltf");
     std::ofstream(path) << R"({ "asset": { "version": "2.0" }, )" << extraRootMembers << R"(
@@ -69,7 +73,7 @@ std::filesystem::path WriteTriangle(const std::filesystem::path& directory, cons
         { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
       ],
       "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1 }] }],
-      "nodes": [{ "mesh": 0 }], "scenes": [{ "nodes": [0] }], "scene": 0 })";
+      "nodes": )" << nodes << R"(, "scenes": [{ "nodes": [0] }], "scene": 0 })";
     std::ofstream buffer(directory / (name + ".bin"), std::ios::binary);
     const std::array<float, 9> positions = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     const std::array<uint16_t, 3> indices = {0, 1, 2};
@@ -192,6 +196,70 @@ void QuantizedAttributesDecode()
     }
     Require(foundX && foundY, "unnormalized shorts decode to their integer values, not " + seen);
 }
+
+const ModelLightData& LightNamed(const LoadedModelData& model, const std::string& name)
+{
+    for (const ModelLightData& light : model.lights)
+    {
+        if (light.name == name)
+        {
+            return light;
+        }
+    }
+    throw std::runtime_error("no light named " + name);
+}
+
+bool Near3(const glm::vec3& a, const glm::vec3& b)
+{
+    return glm::length(a - b) < 1e-4f;
+}
+
+// KHR_lights_punctual: each light with its node's world transform, in the engine's units (glTF's
+// candela becomes lumens over the light's solid angle; lux stays lux), an undefined range made finite.
+void PunctualLightsImport()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteTriangle(
+            directory.path,
+            "lights",
+            R"("extensionsUsed": ["KHR_lights_punctual"],
+               "extensions": { "KHR_lights_punctual": { "lights": [
+                 { "name": "sun", "type": "directional", "color": [1, 0.5, 0.25], "intensity": 2 },
+                 { "name": "bulb", "type": "point", "intensity": 10 },
+                 { "name": "cone", "type": "spot", "intensity": 5, "range": 4, "spot": { "innerConeAngle": 0.2, "outerConeAngle": 0.5 } },
+                 { "name": "plain", "type": "spot", "spot": {} } ] } },)",
+            R"([{ "mesh": 0, "children": [1, 2, 3, 4] },
+                { "rotation": [-0.70710678, 0, 0, 0.70710678], "extensions": { "KHR_lights_punctual": { "light": 0 } } },
+                { "translation": [1, 2, 3], "extensions": { "KHR_lights_punctual": { "light": 1 } } },
+                { "translation": [0, 1, 0], "extensions": { "KHR_lights_punctual": { "light": 2 } } },
+                { "extensions": { "KHR_lights_punctual": { "light": 3 } } }])")
+            .string());
+    Require(model.lights.size() == 4, "four lights, not " + std::to_string(model.lights.size()));
+
+    const ModelLightData& sun = LightNamed(model, "sun");
+    Require(sun.type == LightType::Directional, "the sun is directional");
+    Require(Near3(sun.direction, glm::vec3(0.0f, -1.0f, 0.0f)), "the sun shines down its node's -Z");
+    Require(Near(sun.intensity, 2.0f), "directional lux stays lux");
+    Require(Near3(sun.color, glm::vec3(1.0f, 0.5f, 0.25f)), "the colour");
+
+    const ModelLightData& bulb = LightNamed(model, "bulb");
+    Require(bulb.type == LightType::Point, "the bulb is a point light");
+    Require(Near3(bulb.position, glm::vec3(1.0f, 2.0f, 3.0f)), "at its node");
+    Require(Near(bulb.intensity, 10.0f * 4.0f * 3.14159265f, 1e-3f), "10 cd is 40 pi lumens");
+    Require(Near(bulb.range, 100.0f, 1e-3f), "an undefined range ends where the light falls to 1e-3 lux");
+
+    const ModelLightData& cone = LightNamed(model, "cone");
+    Require(cone.type == LightType::Spot, "the cone is a spot light");
+    Require(Near3(cone.direction, glm::vec3(0.0f, 0.0f, -1.0f)), "a spot shines down -Z");
+    Require(Near(cone.range, 4.0f), "a given range is kept");
+    Require(Near(cone.innerAngleDegrees, 0.2f * 57.2957795f, 1e-3f) && Near(cone.outerAngleDegrees, 0.5f * 57.2957795f, 1e-3f), "the cone");
+    Require(Near(cone.intensity, 5.0f * 2.0f * 3.14159265f * (1.0f - std::cos(0.5f)), 1e-3f), "candela to lumens over the outer cone");
+
+    const ModelLightData& plain = LightNamed(model, "plain");
+    Require(Near(plain.innerAngleDegrees, 0.0f) && Near(plain.outerAngleDegrees, 45.0f, 1e-3f), "glTF's default cone");
+    Require(Near(plain.intensity, 2.0f * 3.14159265f * (1.0f - std::cos(3.14159265f / 4.0f)), 1e-3f), "glTF's default intensity of 1 cd");
+}
 }
 
 int main()
@@ -200,6 +268,7 @@ int main()
     {
         RequiredExtensionsAreChecked();
         QuantizedAttributesDecode();
+        PunctualLightsImport();
     }
     catch (const std::exception& error)
     {

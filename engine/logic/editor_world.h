@@ -30,6 +30,7 @@ struct SerializedEntityData
     std::string modelBaseColorTextureOverrideUuid;
     // KHR_materials_variants: the variant's name, empty for the glTF's default bindings.
     std::string modelMaterialVariant;
+    bool modelUseModelLights = true;
     TransformComponent transform;
 };
 
@@ -96,7 +97,8 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
         bool hasBounds,
         const std::vector<ModelImportedMaterialInfo>& importedMaterials,
         const std::vector<ModelImportedSubmeshInfo>& importedSubmeshes,
-        const std::vector<std::string>& materialVariants) = 0;
+        const std::vector<std::string>& materialVariants,
+        uint32_t modelLightCount) = 0;
 
     virtual void ApplySceneData(const SerializedSceneData& sceneData) = 0;
     virtual SerializedSceneData CaptureSceneData() const = 0;

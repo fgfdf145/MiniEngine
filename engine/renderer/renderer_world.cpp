@@ -91,4 +91,30 @@ glm::mat4 RendererWorld::GetModelMatrix(entt::entity entity) const
 {
     return GetSceneWorld().GetModelMatrix(entity);
 }
+
+void RendererWorld::SetModelLights(std::vector<CpuModelLight> modelLights)
+{
+    m_modelLights = std::move(modelLights);
+}
+
+void RendererWorld::ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights)
+{
+    RemoveEntityModelLights(entity);
+    m_modelLights.insert(m_modelLights.end(), std::make_move_iterator(modelLights.begin()), std::make_move_iterator(modelLights.end()));
+}
+
+bool RendererWorld::RemoveEntityModelLights(entt::entity entity)
+{
+    return std::erase_if(
+               m_modelLights,
+               [entity](const CpuModelLight& light)
+               {
+                   return light.entity == entity;
+               }) != 0;
+}
+
+const std::vector<CpuModelLight>& RendererWorld::GetModelLights() const
+{
+    return m_modelLights;
+}
 }

@@ -71,7 +71,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
             true,
             {},
             {},
-            {});
+            {},
+            0);
 
         const ModelMaterialData material{};
         CpuRenderSubmesh renderSubmesh{};
@@ -350,7 +351,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         modelData.hasBounds,
         importedMaterials,
         importedSubmeshes,
-        modelData.materialVariants);
+        modelData.materialVariants,
+        static_cast<uint32_t>(modelData.lights.size()));
     return renderSubmeshes;
 }
 
@@ -373,9 +375,43 @@ void TrimModelCache(RendererSharedState& state)
 }
 }
 
+// The lights a model entity's model carries, while its model lights are on; none for the default
+// cube or a model not loaded yet.
+std::vector<CpuModelLight> BuildEntityModelLights(RendererSharedState& state, entt::entity entity)
+{
+    const ModelComponent& model = state.GetEditorWorld().GetModel(entity);
+    std::vector<CpuModelLight> lights;
+    if (model.sourcePath.empty() || !model.useModelLights)
+    {
+        return lights;
+    }
+    const std::shared_ptr<const LoadedModelData> modelData = ModelCache::Get(model.sourcePath);
+    if (!modelData)
+    {
+        return lights;
+    }
+    lights.reserve(modelData->lights.size());
+    for (const ModelLightData& source : modelData->lights)
+    {
+        CpuModelLight light{};
+        light.entity = entity;
+        light.light.type = source.type;
+        light.light.color = source.color;
+        light.light.intensity = source.intensity;
+        light.light.range = source.range;
+        light.light.spotInnerAngleDegrees = source.innerAngleDegrees;
+        light.light.spotOuterAngleDegrees = source.outerAngleDegrees;
+        light.position = source.position;
+        light.direction = source.direction;
+        lights.push_back(light);
+    }
+    return lights;
+}
+
 void RebuildSceneRenderables(RendererSharedState& state)
 {
     std::vector<CpuRenderSubmesh> newRenderSubmeshes;
+    std::vector<CpuModelLight> newModelLights;
     IEditorWorld& world = state.GetEditorWorld();
     for (entt::entity entity : world.Registry().view<const ModelComponent>())
     {
@@ -384,9 +420,12 @@ void RebuildSceneRenderables(RendererSharedState& state)
             newRenderSubmeshes.end(),
             std::make_move_iterator(entitySubmeshes.begin()),
             std::make_move_iterator(entitySubmeshes.end()));
+        std::vector<CpuModelLight> entityLights = BuildEntityModelLights(state, entity);
+        newModelLights.insert(newModelLights.end(), entityLights.begin(), entityLights.end());
     }
 
     state.rendererWorld.SetRenderSubmeshes(std::move(newRenderSubmeshes));
+    state.rendererWorld.SetModelLights(std::move(newModelLights));
     world.ClearAllModelRenderableDirty();
     state.renderablesDirty = true;
     TrimModelCache(state);
@@ -416,11 +455,13 @@ bool RefreshDirtySceneRenderables(RendererSharedState& state)
     for (entt::entity entity : staleEntities)
     {
         changed |= state.rendererWorld.RemoveEntityRenderSubmeshes(entity);
+        changed |= state.rendererWorld.RemoveEntityModelLights(entity);
     }
 
     for (auto& [entity, renderSubmeshes] : replacements)
     {
         state.rendererWorld.ReplaceEntityRenderSubmeshes(entity, std::move(renderSubmeshes));
+        state.rendererWorld.ReplaceEntityModelLights(entity, BuildEntityModelLights(state, entity));
         world.ClearModelRenderableDirty(entity);
         changed = true;
     }

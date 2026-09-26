@@ -3,6 +3,7 @@
 #include "material.h"
 #include <engine/asset/mesh.h>
 
+#include <engine/scene/scene_components.h>
 #include <engine/scene/scene_world.h>
 
 #include <memory>
@@ -65,6 +66,19 @@ struct CpuRenderSubmesh
     std::string name;
 };
 
+// A light a model carries (KHR_lights_punctual), in the model's space: it shines through its
+// entity's transform while ModelComponent::useModelLights is on. Not a scene entity, so saving and
+// reloading a scene never duplicates it.
+struct CpuModelLight
+{
+    entt::entity entity = entt::null;
+    // Type, colour, intensity (engine units), range and cone; the transform fields go unused.
+    LightComponent light;
+    glm::vec3 position{0.0f};
+    // Where the light travels, unit length.
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
 class RendererWorld
 {
   public:
@@ -80,8 +94,14 @@ class RendererWorld
     const std::vector<CpuRenderSubmesh>& GetRenderSubmeshes() const;
     glm::mat4 GetModelMatrix(entt::entity entity) const;
 
+    void SetModelLights(std::vector<CpuModelLight> modelLights);
+    void ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights);
+    bool RemoveEntityModelLights(entt::entity entity);
+    const std::vector<CpuModelLight>& GetModelLights() const;
+
   private:
     ISceneWorld* m_sceneWorld = nullptr;
     std::vector<CpuRenderSubmesh> m_renderSubmeshes;
+    std::vector<CpuModelLight> m_modelLights;
 };
 }

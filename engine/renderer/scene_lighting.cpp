@@ -90,6 +90,16 @@ SceneLightSelection SelectSceneLights(
     return selection;
 }
 
+PlacedModelLight PlaceModelLight(const glm::mat4& modelMatrix, const glm::vec3& position, const glm::vec3& direction)
+{
+    PlacedModelLight placed{};
+    placed.position = glm::vec3(modelMatrix * glm::vec4(position, 1.0f));
+    const glm::vec3 worldDirection = glm::vec3(modelMatrix * glm::vec4(direction, 0.0f));
+    const float length = glm::length(worldDirection);
+    placed.direction = length > 1e-6f ? worldDirection / length : glm::normalize(direction);
+    return placed;
+}
+
 int32_t SelectShadowCasterLight(
     std::span<const SceneLightCandidate> candidates,
     const SceneLightSelection& selection)

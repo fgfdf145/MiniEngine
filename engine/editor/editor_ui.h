@@ -68,6 +68,8 @@ struct EditorUiActions
     std::optional<std::string> selectedBaseColorTexturePath;
     // KHR_materials_variants: the variant picked for the selected model, empty for its default.
     std::optional<std::string> selectedMaterialVariant;
+    // KHR_lights_punctual: whether the selected model's own lights shine.
+    std::optional<bool> selectedUseModelLights;
     std::optional<std::string> selectedSceneLoadPath;
     std::optional<std::string> selectedSceneSavePath;
     std::vector<std::string> deleteAssetPaths;

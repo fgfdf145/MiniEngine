@@ -64,7 +64,9 @@ struct CollectedSceneLights
     std::vector<SceneLightCandidate> candidates;
 };
 
-CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
+// The scene's light entities, then the lights models carry (KHR_lights_punctual) through their
+// entities' transforms.
+CollectedSceneLights CollectSceneLights(const IEditorWorld& world, const RendererWorld& rendererWorld)
 {
     CollectedSceneLights collected;
     world.ForEachLight([&](
@@ -108,6 +110,40 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world)
                            collected.gpuLights.push_back(gpu);
                            collected.candidates.push_back(candidate);
                        });
+
+    for (const CpuModelLight& modelLight : rendererWorld.GetModelLights())
+    {
+        // An entity deleted this frame keeps its lights until the renderables refresh.
+        if (!world.HasModelComponent(modelLight.entity))
+        {
+            continue;
+        }
+        const LightComponent& light = modelLight.light;
+        const PlacedModelLight placed =
+            PlaceModelLight(rendererWorld.GetModelMatrix(modelLight.entity), modelLight.position, modelLight.direction);
+
+        GpuLightData gpu{};
+        gpu.positionAndRange = glm::vec4(placed.position, light.range);
+        gpu.colorAndIntensity = glm::vec4(light.color, light.intensity);
+        gpu.directionAndType = glm::vec4(placed.direction, static_cast<float>(light.type));
+        gpu.areaRightAxis = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        // glTF's punctual lights have no size: z is a zero source radius.
+        gpu.spotAndArea = glm::vec4(
+            std::cos(glm::radians(light.spotInnerAngleDegrees)),
+            std::cos(glm::radians(light.spotOuterAngleDegrees)),
+            0.0f,
+            0.0f);
+
+        SceneLightCandidate candidate{};
+        candidate.type = light.type;
+        candidate.position = placed.position;
+        candidate.color = light.color;
+        candidate.intensity = light.intensity;
+        candidate.castShadows = light.castShadows;
+
+        collected.gpuLights.push_back(gpu);
+        collected.candidates.push_back(candidate);
+    }
     return collected;
 }
 
@@ -526,7 +562,7 @@ void VulkanRenderer::DrawFrame()
     ImGui::Render();
 
     const CollectedSceneLights sceneLights =
-        State().editorWorld ? CollectSceneLights(*State().editorWorld) : CollectedSceneLights{};
+        State().editorWorld ? CollectSceneLights(*State().editorWorld, State().rendererWorld) : CollectedSceneLights{};
     const SceneLightSelection lightSelection =
         SelectSceneLights(sceneLights.candidates, State().camera.position, kMaxSceneLights);
     ReportDroppedLights(lightSelection.droppedCount);

@@ -331,6 +331,18 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 error.what());
         }
     }
+    if (uiFrame.actions.selectedUseModelLights.has_value())
+    {
+        try
+        {
+            EntityEditService::ApplySelectedModelUseModelLights(State(), *uiFrame.actions.selectedUseModelLights);
+        }
+        catch (const std::exception& error)
+        {
+            State().lastModelLoadError = error.what();
+            LOG_ERROR("Failed to toggle the selected model's lights: {}", error.what());
+        }
+    }
     if (uiFrame.actions.clearSelectedBaseColorTexture)
     {
         try
