@@ -42,9 +42,11 @@ struct WhiteBalanceReferences
 };
 
 // How much the view counts against the light references in the estimate, at equal luminance.
-// The view dominates: a light the camera barely sees (the sun on a far wall of an interior) must not
-// tint everything else.
-inline constexpr float kWhiteBalanceFrameWeight = 0.75f;
+// The lights dominate: the view's average is surface colour times light, so a large coloured
+// surface (a red wall, a lawn) would otherwise pass for a tinted illuminant and the balance would
+// swing with the camera. The view still counts, so a light the camera barely sees (the sun on a far
+// wall of an interior) does not decide the balance alone.
+inline constexpr float kWhiteBalanceFrameWeight = 0.25f;
 
 glm::vec3 Rec709ToXyz(const glm::vec3& rgb);
 glm::vec3 XyzToRec709(const glm::vec3& xyz);

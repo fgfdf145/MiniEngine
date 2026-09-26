@@ -90,8 +90,9 @@ void AWarmSunPullsTheEstimate()
 
 void TheViewTempersTheLights()
 {
-    // A 3000 K sun the camera barely sees: the view reads neutral, so the estimate lands mostly on
-    // the view (kWhiteBalanceFrameWeight, in XYZ at equal luminance), far from 3000 K.
+    // A 3000 K sun under a neutral view: the view pulls the estimate toward D65 by
+    // kWhiteBalanceFrameWeight (in XYZ at equal luminance), but the lights still lead, so a coloured
+    // view cannot swing the balance far on its own.
     const glm::vec2 sunXy = PlanckianXy(3000.0f);
     const glm::vec3 sunXyz(sunXy.x / sunXy.y, 1.0f, (1.0f - sunXy.x - sunXy.y) / sunXy.y);
     WhiteBalanceReferences references;
@@ -99,7 +100,8 @@ void TheViewTempersTheLights()
     const float lightsOnly = CorrelatedColorTemperature(EstimateIlluminantXy(references));
     references.frameColorRgb = glm::vec3(1.0f);
     const float withView = CorrelatedColorTemperature(EstimateIlluminantXy(references));
-    Require(withView > lightsOnly + 1000.0f && withView < 6000.0f, "a neutral view pulls the estimate toward D65: " + std::to_string(withView));
+    Require(withView > lightsOnly + 300.0f, "a neutral view pulls the estimate toward D65: " + std::to_string(withView));
+    Require(withView < 4500.0f, "the lights still lead the estimate: " + std::to_string(withView));
     // The view alone, with no light references, meets the virtual D65 light halfway.
     WhiteBalanceReferences viewOnly;
     viewOnly.frameColorRgb = glm::vec3(1.0f);
