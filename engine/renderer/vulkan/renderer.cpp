@@ -545,7 +545,9 @@ void VulkanRenderer::DrawFrame()
     ShadowUniformData shadowData{};
     std::optional<ShadowCascades> shadowCascades;
     const int32_t shadowLightIndex = SelectShadowCasterLight(sceneLights.candidates, lightSelection);
-    if (shadowLightIndex >= 0)
+    // The Khronos reference view draws no shadows, as the Sample Viewer does not; the caster stays
+    // the sun for the sky and exposure below.
+    if (shadowLightIndex >= 0 && !State().renderDebug.khronosReference)
     {
         const VkExtent2D extent = m_sceneTargets->GetExtent();
         ShadowCameraInput shadowCamera{};
@@ -676,7 +678,7 @@ void VulkanRenderer::DrawFrame()
     // and each light learns its first tile through areaRightAxis.w (1 + tile, 0 for none).
     std::vector<LocalShadowTile> localShadowTiles;
     std::vector<GpuLocalShadowTile> gpuShadowTiles;
-    if (State().renderDebug.localLightShadows)
+    if (State().renderDebug.localLightShadows && !State().renderDebug.khronosReference)
     {
         std::vector<LocalShadowLight> shadowLights;
         shadowLights.reserve(selectedLights.size());
