@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace me
@@ -15,6 +17,20 @@ struct RenderExtent
         return width > 0 && height > 0;
     }
 };
+
+// The scene's render size for a viewport panel of widthPoints x heightPoints (the UI's unit), on a
+// display with pixelsPerPoint (2 on Retina), at renderScale: the display's pixels, scaled, rounded, at
+// least 1 x 1. Rendering at the size in points showed a quarter of the pixels on a Retina display.
+inline RenderExtent ScaleViewportExtent(float widthPoints, float heightPoints, float pixelsPerPoint, float renderScale)
+{
+    const float scale = pixelsPerPoint * renderScale;
+    const auto pixels = [scale](float points)
+    {
+        const float value = std::round(points * scale);
+        return value >= 1.0f ? static_cast<uint32_t>(value) : 1u;
+    };
+    return RenderExtent{pixels(widthPoints), pixels(heightPoints)};
+}
 
 // What the viewport shows instead of the tone mapped image. The numeric values are the
 // tonemap.frag push constant and must match the GBUFFER_VIEW_* constants there.
@@ -113,5 +129,8 @@ struct RenderDebugSettings
     // PBR Neutral tone mapping, an HDRI texel of 1 exposed to 1, no auto white balance, no
     // glare/bloom, AO or SSR, and the viewer's camera framing. Off, nothing changes.
     bool khronosReference = false;
+    // The scene's resolution as a share of the viewport's pixels (see ScaleViewportExtent), from 0.25
+    // to 1: below 1 it renders fewer pixels and is stretched to fill the panel.
+    float renderScale = 1.0f;
 };
 }

@@ -77,11 +77,11 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
     return rect;
 }
 
-RenderExtent BuildViewportExtent(const ViewportOverlayRect& rect)
+// The panel's size is in points; the scene renders at the display's pixels (DisplayFramebufferScale,
+// 2 on Retina) times the render scale.
+RenderExtent BuildViewportExtent(const ViewportOverlayRect& rect, float renderScale)
 {
-    return RenderExtent{
-        std::max(static_cast<uint32_t>(std::lround(rect.size.x)), 1u),
-        std::max(static_cast<uint32_t>(std::lround(rect.size.y)), 1u)};
+    return ScaleViewportExtent(rect.size.x, rect.size.y, ImGui::GetIO().DisplayFramebufferScale.x, renderScale);
 }
 
 void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTextureId)
@@ -925,7 +925,7 @@ void EditorUiController::DrawViewportPanel(
             ImGui::EndDragDropTarget();
         }
 
-        result.viewportExtent = BuildViewportExtent(viewportRect);
+        result.viewportExtent = BuildViewportExtent(viewportRect, std::clamp(m_renderDebug.renderScale, 0.25f, 1.0f));
         result.viewportInteractionRect = SDL_FRect{
             viewportRect.origin.x,
             viewportRect.origin.y,

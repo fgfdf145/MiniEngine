@@ -1222,3 +1222,29 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_transmission_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_viewport_extent_tests
+    viewport_extent_tests.cpp
+)
+miniengine_group_target_sources(miniengine_viewport_extent_tests)
+
+target_link_libraries(miniengine_viewport_extent_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.viewport_extent
+    COMMAND miniengine_viewport_extent_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_viewport_extent_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_viewport_extent_tests>
+            $<TARGET_FILE_DIR:miniengine_viewport_extent_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_viewport_extent_tests PROPERTIES FOLDER "Tests")

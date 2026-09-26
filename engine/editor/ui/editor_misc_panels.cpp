@@ -143,6 +143,12 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // Renders as the Khronos glTF Sample Viewer does by default: PBR Neutral, fixed exposure,
         // no glare, AO or SSR, and the viewer's camera framing whenever the scene or viewport changes.
         ImGui::Checkbox("Khronos reference view (comparison)", &m_renderDebug.khronosReference);
+        // The scene's share of the viewport's pixels: 100 % renders every display pixel.
+        float renderScalePercent = m_renderDebug.renderScale * 100.0f;
+        if (ImGui::SliderFloat("Render scale", &renderScalePercent, 25.0f, 100.0f, "%.0f %%"))
+        {
+            m_renderDebug.renderScale = renderScalePercent / 100.0f;
+        }
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         ImGui::Checkbox("Local light shadows", &m_renderDebug.localLightShadows);
