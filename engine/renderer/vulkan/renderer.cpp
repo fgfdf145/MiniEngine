@@ -932,7 +932,8 @@ void VulkanRenderer::DrawFrame()
                                               m_environmentProbe->Record(
                                                   commandBuffer,
                                                   frame.frameDescriptorSet,
-                                                  environmentMode != EnvironmentMode::None);
+                                                  environmentMode != EnvironmentMode::None,
+                                                  environmentData);
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -1256,6 +1257,11 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                 if (m_uniformBuffer)
                 {
                     m_uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), texture->GetSampler()});
+                }
+                if (m_environmentProbe)
+                {
+                    // A new image behind the same parameters: the cached capture shows the old one.
+                    m_environmentProbe->Invalidate();
                 }
                 m_environmentMap = std::move(texture);
                 m_environmentMapPath = path;

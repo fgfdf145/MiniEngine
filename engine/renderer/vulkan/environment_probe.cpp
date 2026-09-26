@@ -4,6 +4,8 @@
 
 #include <engine/core/paths/engine_paths.h>
 
+#include <cmath>
+#include <cstring>
 #include <stdexcept>
 
 namespace me
@@ -37,6 +39,19 @@ void GlobalBarrier(
 uint32_t GroupCount(uint32_t size)
 {
     return (size + 7) / 8;
+}
+
+// What decides the captured sky: the uniform block, with the camera reduced to what the capture
+// sees of it. The HDRI ignores the camera; the atmosphere's sky-view depends on the altitude only
+// (the planet is round, but a kilometre's walk turns it by a hundredth of a degree), kept to the
+// metre.
+EnvironmentUniformData CaptureKey(const EnvironmentUniformData& environment)
+{
+    EnvironmentUniformData key = environment;
+    const bool hdri = static_cast<EnvironmentMode>(static_cast<uint32_t>(environment.sunDirectionAndMode.w)) == EnvironmentMode::Hdri;
+    const float altitudeMeters = hdri ? 0.0f : std::round(glm::length(glm::vec3(environment.cameraPositionKm)) * 1000.0f);
+    key.cameraPositionKm = glm::vec4(0.0f, altitudeMeters, 0.0f, 0.0f);
+    return key;
 }
 }
 
@@ -96,8 +111,18 @@ TextureDescriptorBinding VulkanEnvironmentProbe::GetPrefilteredBinding() const
     return TextureDescriptorBinding{m_prefiltered.cubeView, m_sampler};
 }
 
-void VulkanEnvironmentProbe::Record(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, bool physicalSky)
+void VulkanEnvironmentProbe::Invalidate()
 {
+    m_captured = false;
+}
+
+void VulkanEnvironmentProbe::Record(
+    VkCommandBuffer commandBuffer,
+    VkDescriptorSet frameDescriptorSet,
+    bool physicalSky,
+    const EnvironmentUniformData& environment)
+{
+    const bool initializing = !m_imagesInitialized;
     if (!m_imagesInitialized)
     {
         std::array<VkImageMemoryBarrier, 2> barriers{};
@@ -128,6 +153,20 @@ void VulkanEnvironmentProbe::Record(VkCommandBuffer commandBuffer, VkDescriptorS
         m_imagesInitialized = true;
     }
 
+    const EnvironmentUniformData key = CaptureKey(environment);
+    const bool capture = physicalSky && !(m_captured && std::memcmp(&key, &m_capturedEnvironment, sizeof(key)) == 0);
+    m_captured = physicalSky && (m_captured || capture);
+    if (capture)
+    {
+        m_capturedEnvironment = key;
+    }
+    else if (!initializing)
+    {
+        // The cubes already hold this sky (or nothing samples them under None); the barrier after
+        // the capture or clear that filled them made them visible to every later fragment shader.
+        return;
+    }
+
     // The previous frame's reads and this frame's clears before this frame's writes.
     GlobalBarrier(
         commandBuffer,
@@ -136,7 +175,7 @@ void VulkanEnvironmentProbe::Record(VkCommandBuffer commandBuffer, VkDescriptorS
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
 
-    if (physicalSky)
+    if (capture)
     {
         const std::array<VkDescriptorSet, 2> captureSets = {frameDescriptorSet, m_descriptorSets[0]};
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_capturePipeline);

@@ -79,9 +79,10 @@ def main():
 # Scenes whose difference is understood, with the reason, shown beside their numbers.
 KNOWN_DIFFERENCES = {
     "IORTestGrid": "The glass spheres magnify what is behind them about 3.7 times. The viewer magnifies its scene copy "
-                   "with nearest filtering (hard, stair-stepped edges), the engine bilinearly (soft edges); the "
-                   "engine's roughness-0 reflections are also softer. The first column's dark spheres match since the "
-                   "reference view encodes with the viewer's 2.2 gamma.",
+                   "with nearest filtering (hard, stair-stepped edges), the engine bilinearly (soft edges). The "
+                   "roughness-0 reflections matched once the environment cube went from 128 to 256 per face "
+                   "(5.8 -> 3.4). The first column's dark spheres match since the reference view encodes with the "
+                   "viewer's 2.2 gamma.",
     "DispersionTest": "Most of the rest is the draped backdrop, whose folds differ from the viewer's.",
     "UnlitTest": "The viewer shows unlit colours without tone mapping; the engine tone maps them on purpose.",
     "ScatteringSkull": "The model names its multi-scatter colour multiscatterColorFactor; the viewer reads only the draft's "

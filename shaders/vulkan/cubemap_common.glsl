@@ -4,8 +4,8 @@
 #define CUBEMAP_COMMON_GLSL
 
 // Must match engine/renderer/vulkan/environment_probe.cpp.
-const float RADIANCE_CUBE_SIZE = 128.0;
-const float RADIANCE_CUBE_MIP_COUNT = 8.0;
+const float RADIANCE_CUBE_SIZE = 256.0;
+const float RADIANCE_CUBE_MIP_COUNT = 9.0;
 const float PREFILTER_MIP_COUNT = 6.0;
 
 // Vulkan's cube face orientation: face 0..5 = +X, -X, +Y, -Y, +Z, -Z; uv with t growing down.
