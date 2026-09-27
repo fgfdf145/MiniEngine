@@ -92,6 +92,8 @@ add_library(engine_renderer
     vulkan/ao_pass.h
     vulkan/gi_pass.cpp
     vulkan/gi_pass.h
+    vulkan/gpu_timer.cpp
+    vulkan/gpu_timer.h
     vulkan/bloom_pass.cpp
     vulkan/bloom_pass.h
     vulkan/atmosphere.cpp

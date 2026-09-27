@@ -21,6 +21,7 @@
 #include "pipeline_set.h"
 #include "render_pass.h"
 #include "gi_pass.h"
+#include "gpu_timer.h"
 #include "ddgi_debug_pass.h"
 #include "ray_scene.h"
 #include "ddgi.h"
@@ -135,6 +136,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CaptureViewport(const std::filesystem::path& path) override;
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReference(const DdgiReferenceRequest& reference) override;
+    void LogFrameTimings() const override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -375,5 +377,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
+    // GPU time per pass, and the CPU's time per frame outside the waits, for LogFrameTimings.
+    std::unique_ptr<VulkanGpuTimer> m_gpuTimer;
+    std::vector<double> m_cpuFrameMs;
+    std::vector<double> m_cpuWaitMs;
+    uint32_t m_cpuFrameCursor = 0;
 };
 }

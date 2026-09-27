@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "gpu_timer.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/material.h>
@@ -79,7 +80,8 @@ class VulkanShadowPass
     void Record(
         VkCommandBuffer commandBuffer,
         std::span<const ShadowDrawItem> drawItems,
-        const ShadowCascades* cascades) const;
+        const ShadowCascades* cascades,
+        VulkanGpuTimer* timer = nullptr) const;
 
   private:
     void CreateImage(VkPhysicalDevice physicalDevice);

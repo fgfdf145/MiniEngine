@@ -52,6 +52,50 @@ constexpr std::array<ScenePassId, 8> kForwardOnlyOrder = {
     ScenePassId::Tonemap};
 }
 
+const char* ScenePassName(ScenePassId id)
+{
+    switch (id)
+    {
+    case ScenePassId::Geometry:
+        return "Geometry";
+    case ScenePassId::AoTrace:
+        return "AoTrace";
+    case ScenePassId::AoResolve:
+        return "AoResolve";
+    case ScenePassId::SsrTrace:
+        return "SsrTrace";
+    case ScenePassId::SsrResolve:
+        return "SsrResolve";
+    case ScenePassId::Lighting:
+        return "Lighting";
+    case ScenePassId::GiTrace:
+        return "GiTrace";
+    case ScenePassId::GiResolve:
+        return "GiResolve";
+    case ScenePassId::GiComposite:
+        return "GiComposite";
+    case ScenePassId::DdgiDebug:
+        return "DdgiDebug";
+    case ScenePassId::Scatter:
+        return "Scatter";
+    case ScenePassId::Forward:
+        return "Forward";
+    case ScenePassId::TransmissionCopy:
+        return "TransmissionCopy";
+    case ScenePassId::ForwardTranslucent:
+        return "ForwardTranslucent";
+    case ScenePassId::Taa:
+        return "Taa";
+    case ScenePassId::Bloom:
+        return "Bloom";
+    case ScenePassId::ExposureHistogram:
+        return "ExposureHistogram";
+    case ScenePassId::Tonemap:
+        return "Tonemap";
+    }
+    return "Unknown";
+}
+
 std::span<const ScenePassId> BuildScenePassOrder(bool forwardOnly)
 {
     return forwardOnly

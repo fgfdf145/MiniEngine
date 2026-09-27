@@ -91,8 +91,11 @@ TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
 void VulkanShadowPass::Record(
     VkCommandBuffer commandBuffer,
     std::span<const ShadowDrawItem> drawItems,
-    const ShadowCascades* cascades) const
+    const ShadowCascades* cascades,
+    VulkanGpuTimer* timer) const
 {
+    static constexpr std::array<const char*, kShadowCascadeCount> kCascadeNames = {
+        "Shadows/C0", "Shadows/C1", "Shadows/C2", "Shadows/C3"};
     VkClearValue clearValue{};
     clearValue.depthStencil = {1.0f, 0};
 
@@ -159,6 +162,10 @@ void VulkanShadowPass::Record(
         }
 
         vkCmdEndRenderPass(commandBuffer);
+        if (timer != nullptr)
+        {
+            timer->Mark(commandBuffer, kCascadeNames[cascadeIndex]);
+        }
     }
 }
 

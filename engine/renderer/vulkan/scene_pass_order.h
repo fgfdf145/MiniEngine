@@ -45,4 +45,7 @@ enum class ScenePassId
 // The returned span points at storage with static lifetime, so it is valid for as long as the
 // program and costs no allocation per frame.
 std::span<const ScenePassId> BuildScenePassOrder(bool forwardOnly);
+
+// The enumerator's name, for logs and timings. Static storage.
+const char* ScenePassName(ScenePassId id);
 }

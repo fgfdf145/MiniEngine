@@ -503,6 +503,7 @@ VulkanRenderer::~VulkanRenderer()
 void VulkanRenderer::DrawFrame()
 {
     const FrameStallReporter stallReporter;
+    const auto frameStart = std::chrono::steady_clock::now();
 
     if (!TickSharedFrame())
     {
@@ -531,7 +532,9 @@ void VulkanRenderer::DrawFrame()
     SyncSceneTargets();
 
     uint32_t imageIndex = 0;
+    const auto waitStart = std::chrono::steady_clock::now();
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
+    const double waitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
         RecreateSwapchain();
@@ -1007,6 +1010,7 @@ void VulkanRenderer::DrawFrame()
                                               // before it is read, so discarding its contents is what we want
                                               // anyway.
                                               m_layoutTracker.Reset();
+                                              m_gpuTimer->BeginFrame(commandBuffer, frame.frameSlot);
 
                                               // Ahead of the scene passes, whose material pass samples it. It
                                               // orders itself through its render pass dependencies and never
@@ -1014,9 +1018,11 @@ void VulkanRenderer::DrawFrame()
                                               m_shadowPass->Record(
                                                   commandBuffer,
                                                   shadowDrawItems,
-                                                  shadowCascades.has_value() ? &*shadowCascades : nullptr);
+                                                  shadowCascades.has_value() ? &*shadowCascades : nullptr,
+                                                  m_gpuTimer.get());
                                               // The same, for the local lights' atlas.
                                               m_localShadowPass->Record(commandBuffer, shadowDrawItems, localShadowTiles);
+                                              m_gpuTimer->Mark(commandBuffer, "LocalShadows");
 
                                               // Ahead of the scene passes, whose fragment shaders sample the
                                               // LUTs; it orders itself with its own barriers (see
@@ -1026,15 +1032,18 @@ void VulkanRenderer::DrawFrame()
                                                   frame.frameDescriptorSet,
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot);
+                                              m_gpuTimer->Mark(commandBuffer, "Atmosphere");
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
                                                   frame.frameDescriptorSet,
                                                   environmentMode != EnvironmentMode::None,
                                                   environmentData);
+                                              m_gpuTimer->Mark(commandBuffer, "EnvironmentProbe");
                                               // The ray materials, when content changed, and the barrier that
                                               // makes the ray scene visible to every trace after it.
                                               m_rayScene->Record(commandBuffer);
+                                              m_gpuTimer->Mark(commandBuffer, "RayScene");
                                               // The probes trace the ray scene and must be current before
                                               // any surface samples them.
                                               m_ddgi->Record(
@@ -1044,6 +1053,7 @@ void VulkanRenderer::DrawFrame()
                                                   frame.frameSlot,
                                                   m_ddgiFrameIndex++,
                                                   ddgiHysteresis);
+                                              m_gpuTimer->Mark(commandBuffer, "Ddgi");
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -1056,9 +1066,27 @@ void VulkanRenderer::DrawFrame()
                                               RecordTransitions(commandBuffer, imguiIo, frame);
 
                                               RecordEditorLayer(commandBuffer, imageIndex);
+                                              m_gpuTimer->Mark(commandBuffer, "ImGui");
                                           });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
     m_lastRecordedImageIndex = imageIndex;
+    {
+        const double frameMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+        const auto push = [this](std::vector<double>& samples, double value)
+        {
+            if (samples.size() < VulkanGpuTimer::kAverageFrames)
+            {
+                samples.push_back(value);
+            }
+            else
+            {
+                samples[m_cpuFrameCursor % VulkanGpuTimer::kAverageFrames] = value;
+            }
+        };
+        push(m_cpuFrameMs, frameMs - waitMs);
+        push(m_cpuWaitMs, waitMs);
+        ++m_cpuFrameCursor;
+    }
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
@@ -1269,6 +1297,38 @@ void VulkanRenderer::CreateDeviceResources()
     m_ltcAmplitudes = std::make_unique<VulkanTexture>(
         m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
+
+    m_gpuTimer = std::make_unique<VulkanGpuTimer>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_device->GetQueueFamilies().graphicsFamily.value(),
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+}
+
+void VulkanRenderer::LogFrameTimings() const
+{
+    const auto average = [](const std::vector<double>& samples)
+    {
+        double sum = 0.0;
+        for (double sample : samples)
+        {
+            sum += sample;
+        }
+        return samples.empty() ? 0.0 : sum / static_cast<double>(samples.size());
+    };
+    LOG_INFO(
+        "Frame timings over the last {} frames: CPU {:.2f} ms recording, {:.2f} ms waiting on the GPU; GPU {:.2f} ms",
+        m_cpuFrameMs.size(),
+        average(m_cpuFrameMs),
+        average(m_cpuWaitMs),
+        m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0);
+    if (m_gpuTimer)
+    {
+        for (const VulkanGpuTimer::Section& section : m_gpuTimer->GetSections())
+        {
+            LOG_INFO("  GPU {:<20} {:7.3f} ms", section.name, section.averageMs);
+        }
+    }
 }
 
 void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
@@ -1297,6 +1357,7 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
 
 void VulkanRenderer::DestroyDeviceResources()
 {
+    m_gpuTimer.reset();
     m_environmentMap.reset();
     m_environmentMapPath.clear();
     m_defaultEnvironmentMap.reset();
@@ -2383,6 +2444,7 @@ void VulkanRenderer::RecordScenePasses(
         const IScenePass* pass = FindScenePass(id);
         RecordTransitions(commandBuffer, pass->Io(), frame);
         pass->Record(commandBuffer, *m_sceneTargets, frame);
+        m_gpuTimer->Mark(commandBuffer, ScenePassName(id));
     }
 }
 

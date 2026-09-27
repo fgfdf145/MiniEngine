@@ -51,5 +51,9 @@ class IRenderBackend
         (void)request;
         throw std::runtime_error("This render backend cannot compare DDGI with a reference");
     }
+    // Logs the recent frames' average CPU and per-pass GPU times. For verification runs (--frames).
+    virtual void LogFrameTimings() const
+    {
+    }
 };
 }

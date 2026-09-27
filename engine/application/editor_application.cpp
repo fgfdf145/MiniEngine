@@ -416,6 +416,10 @@ int EditorApplication::Run()
         }
     }
 
+    if (m_options.maxFrames > 0)
+    {
+        renderer->LogFrameTimings();
+    }
     if (m_options.capturePath.has_value())
     {
         renderer->CaptureViewport(*m_options.capturePath);
