@@ -29,8 +29,6 @@ add_library(engine_render_core
     material_pipeline.h
     motion_history.cpp
     motion_history.h
-    ray_tracing_bvh.cpp
-    ray_tracing_bvh.h
     reference_path_tracer.cpp
     reference_path_tracer.h
     render_types.h
@@ -55,12 +53,8 @@ add_library(engine_render_core
 )
 miniengine_group_target_sources(engine_render_core)
 
-# The ray scene's hierarchy build walks millions of triangles (New Sponza has 3.7 million) on a worker
-# whenever content changes; unoptimised it takes half a minute. Optimised in every configuration
-# where the compiler allows mixing (MSVC's /RTC1 in Debug does not).
-if(NOT MSVC)
-    set_source_files_properties(ray_tracing_bvh.cpp PROPERTIES COMPILE_OPTIONS "-O2")
-endif()
+# The ray scene's hierarchy build, optimised in every configuration (see optimized/CMakeLists.txt).
+add_subdirectory(optimized)
 
 target_include_directories(engine_render_core
     PUBLIC
@@ -72,6 +66,7 @@ target_link_libraries(engine_render_core
         engine_core
         engine_scene
         engine_asset
+        engine_render_bvh
         SDL3::SDL3
         glm::glm
         EnTT::EnTT

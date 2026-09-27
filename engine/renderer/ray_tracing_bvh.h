@@ -55,6 +55,10 @@ inline constexpr uint32_t kMaxLeafTriangles = 4;
 // triangles; the traversal stacks hold kMaxBvhDepth + 1 entries.
 inline constexpr uint32_t kMaxBvhDepth = 36;
 MeshBvh BuildMeshBvh(std::span<const glm::vec3> positions, std::span<const uint32_t> indices);
+// count positions (three floats each) strideBytes apart from firstPosition, packed for BuildMeshBvh:
+// a mesh's vertices hold more than their position. Here, with the build, so it is optimised in a
+// Debug build too (optimized/CMakeLists.txt).
+std::vector<glm::vec3> GatherPositions(const float* firstPosition, size_t count, size_t strideBytes);
 
 // The same build over arbitrary boxes: what the top level uses. Returns the nodes and, in leaf order,
 // the index of each box; the caller reorders its instances by it.

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 
 namespace me
 {
@@ -53,9 +54,16 @@ std::vector<BvhNode> BuildOverPrimitives(
 {
     const uint32_t primitiveCount = static_cast<uint32_t>(primitiveBounds.size());
     order.resize(primitiveCount);
+    // The loops below run over every primitive at every level of the tree. They go through raw
+    // pointers rather than the vectors, so a Debug build's checked iterators and indices (MSVC's
+    // iterator debugging, which the optimised Debug flags of optimized/CMakeLists.txt leave on)
+    // do not multiply the build's time.
+    const Bounds* const primitiveBoundsData = primitiveBounds.data();
+    const glm::vec3* const centroidData = centroids.data();
+    uint32_t* const orderData = order.data();
     for (uint32_t index = 0; index < primitiveCount; ++index)
     {
-        order[index] = index;
+        orderData[index] = index;
     }
     std::vector<BvhNode> nodes;
     if (primitiveCount == 0)
@@ -81,8 +89,8 @@ std::vector<BvhNode> BuildOverPrimitives(
         Bounds centroidBounds;
         for (uint32_t k = first; k < first + count; ++k)
         {
-            bounds.Grow(primitiveBounds[order[k]]);
-            centroidBounds.Grow(centroids[order[k]]);
+            bounds.Grow(primitiveBoundsData[orderData[k]]);
+            centroidBounds.Grow(centroidData[orderData[k]]);
         }
         nodes[nodeIndex].boundsMin = bounds.min;
         nodes[nodeIndex].boundsMax = bounds.max;
@@ -102,16 +110,17 @@ std::vector<BvhNode> BuildOverPrimitives(
             {
                 continue;
             }
-            std::array<Bounds, kBinCount> binBounds{};
-            std::array<uint32_t, kBinCount> binCounts{};
+            Bounds binBounds[kBinCount]{};
+            uint32_t binCounts[kBinCount]{};
             const float scale = static_cast<float>(kBinCount) / centroidExtent[axis];
+            const float axisMin = centroidBounds.min[axis];
             for (uint32_t k = first; k < first + count; ++k)
             {
-                const uint32_t primitive = order[k];
+                const uint32_t primitive = orderData[k];
                 const uint32_t bin = std::min(
                     kBinCount - 1,
-                    static_cast<uint32_t>((centroids[primitive][axis] - centroidBounds.min[axis]) * scale));
-                binBounds[bin].Grow(primitiveBounds[primitive]);
+                    static_cast<uint32_t>((centroidData[primitive][axis] - axisMin) * scale));
+                binBounds[bin].Grow(primitiveBoundsData[primitive]);
                 ++binCounts[bin];
             }
             // Sweep from the left and the right: plane b splits bins [0, b] from [b + 1, end).
@@ -164,10 +173,10 @@ std::vector<BvhNode> BuildOverPrimitives(
             }
             middle = first + count / 2;
             std::nth_element(
-                order.begin() + first, order.begin() + middle, order.begin() + first + count,
+                orderData + first, orderData + middle, orderData + first + count,
                 [&](uint32_t a, uint32_t b)
                 {
-                    return centroids[a][axis] < centroids[b][axis];
+                    return centroidData[a][axis] < centroidData[b][axis];
                 });
         }
         else if (bestAxis >= 0 && (bestCost + bounds.HalfArea() < leafCost || count > maxLeafSize))
@@ -177,11 +186,10 @@ std::vector<BvhNode> BuildOverPrimitives(
             {
                 const uint32_t bin = std::min(
                     kBinCount - 1,
-                    static_cast<uint32_t>((centroids[primitive][bestAxis] - centroidBounds.min[bestAxis]) * scale));
+                    static_cast<uint32_t>((centroidData[primitive][bestAxis] - centroidBounds.min[bestAxis]) * scale));
                 return bin <= bestBin;
             };
-            middle = static_cast<uint32_t>(
-                std::partition(order.begin() + first, order.begin() + first + count, isLeft) - order.begin());
+            middle = static_cast<uint32_t>(std::partition(orderData + first, orderData + first + count, isLeft) - orderData);
         }
         else if (count > maxLeafSize)
         {
@@ -232,29 +240,49 @@ glm::vec3 SafeInverse(const glm::vec3& direction)
 
 MeshBvh BuildMeshBvh(std::span<const glm::vec3> positions, std::span<const uint32_t> indices)
 {
+    // Raw pointers in the per-triangle loops, as in BuildOverPrimitives.
+    const glm::vec3* const positionData = positions.data();
+    const uint32_t* const indexData = indices.data();
     const uint32_t triangleCount = static_cast<uint32_t>(indices.size() / 3);
     std::vector<Bounds> bounds(triangleCount);
     std::vector<glm::vec3> centroids(triangleCount);
+    Bounds* const boundsData = bounds.data();
+    glm::vec3* const centroidData = centroids.data();
     for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
     {
         for (uint32_t corner = 0; corner < 3; ++corner)
         {
-            bounds[triangle].Grow(positions[indices[3 * triangle + corner]]);
+            boundsData[triangle].Grow(positionData[indexData[3 * triangle + corner]]);
         }
-        centroids[triangle] = 0.5f * (bounds[triangle].min + bounds[triangle].max);
+        centroidData[triangle] = 0.5f * (boundsData[triangle].min + boundsData[triangle].max);
     }
 
     MeshBvh mesh;
     mesh.nodes = BuildOverPrimitives(bounds, centroids, mesh.sourceTriangles, kMaxLeafTriangles);
-    mesh.triangles.reserve(triangleCount);
-    for (uint32_t source : mesh.sourceTriangles)
+    mesh.triangles.resize(triangleCount);
+    BvhTriangle* const triangleData = mesh.triangles.data();
+    const uint32_t* const sourceData = mesh.sourceTriangles.data();
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
     {
-        const glm::vec3 v0 = positions[indices[3 * source]];
-        const glm::vec3 v1 = positions[indices[3 * source + 1]];
-        const glm::vec3 v2 = positions[indices[3 * source + 2]];
-        mesh.triangles.push_back(BvhTriangle{glm::vec4(v0, 0.0f), glm::vec4(v1 - v0, 0.0f), glm::vec4(v2 - v0, 0.0f)});
+        const uint32_t source = sourceData[triangle];
+        const glm::vec3 v0 = positionData[indexData[3 * source]];
+        const glm::vec3 v1 = positionData[indexData[3 * source + 1]];
+        const glm::vec3 v2 = positionData[indexData[3 * source + 2]];
+        triangleData[triangle] = BvhTriangle{glm::vec4(v0, 0.0f), glm::vec4(v1 - v0, 0.0f), glm::vec4(v2 - v0, 0.0f)};
     }
     return mesh;
+}
+
+std::vector<glm::vec3> GatherPositions(const float* firstPosition, size_t count, size_t strideBytes)
+{
+    std::vector<glm::vec3> positions(count);
+    glm::vec3* const out = positions.data();
+    const auto* bytes = reinterpret_cast<const unsigned char*>(firstPosition);
+    for (size_t index = 0; index < count; ++index)
+    {
+        std::memcpy(&out[index], bytes + index * strideBytes, sizeof(glm::vec3));
+    }
+    return positions;
 }
 
 BoxBvh BuildBoxBvh(std::span<const glm::vec3> boxMins, std::span<const glm::vec3> boxMaxs, uint32_t maxLeafSize)

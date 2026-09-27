@@ -196,15 +196,10 @@ void VulkanRayScene::SetContent(std::vector<RaySceneSubmesh> submeshes)
                         continue;
                     }
                     const std::shared_ptr<const MeshData>& mesh = distinct[index];
-                    std::vector<glm::vec3> positions;
-                    if (mesh)
-                    {
-                        positions.reserve(mesh->vertices.size());
-                        for (const Vertex& vertex : mesh->vertices)
-                        {
-                            positions.emplace_back(vertex.position[0], vertex.position[1], vertex.position[2]);
-                        }
-                    }
+                    const std::vector<glm::vec3> positions =
+                        mesh && !mesh->vertices.empty()
+                            ? GatherPositions(mesh->vertices.front().position, mesh->vertices.size(), sizeof(Vertex))
+                            : std::vector<glm::vec3>{};
                     bvhs[index] = std::make_shared<const MeshBvh>(mesh ? BuildMeshBvh(positions, mesh->indices) : MeshBvh{});
                     newTriangles += bvhs[index]->triangles.size();
                 }
