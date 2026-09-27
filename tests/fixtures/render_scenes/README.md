@@ -37,6 +37,7 @@ out/build/macos-debug/app/miniengine_app --scene assets/scenes/test/iridescence.
 | `ior_specular_coat.yaml` | IOR 1.33 / 1.5 / 2.4, specular colour and 0; coat normal map; coat, sheen and anisotropy together | G-buffer layers, IOR, specular |
 | `iridescence.yaml` | Thin films of 250, 400, 550 nm, an anodised metal, a control | Forward-shaded materials, iridescence |
 | `texture_transforms_unlit.yaml` | A checker scaled, rotated and offset; the second UV set; unlit; a Mask cutout's shadow; a rotated normal map | Texture transforms, second UV set, unlit |
+| `ddgi_track.yaml` | A generated outdoor track (`tools/render_scenes/make_ddgi_track.py`): road, 60 m tunnel, roofed grandstand, leaf-card trees, a car, afternoon sun | Cascaded DDGI |
 
 The two Sponza scenes need Khronos' New Sponza (`assets/NewSponza_Main_glTF_003/`), which is not in
 the repository either. Sponza is turned 90 degrees and lowered 1.7 m in front of the default camera,

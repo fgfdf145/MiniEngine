@@ -6,7 +6,8 @@
 // direction takes the rays' average weighted by the cosine (irradiance: radiance, and the share of
 // the lobe that escaped to the sky) or a sharp power of it (visibility: the distance and its square,
 // clamped to twice the spacing), then keeps a hysteresis share of what the texel held. A probe whose
-// record is for another coordinate (a scroll moved its slot) or that was never updated keeps nothing.
+// record is for another coordinate (a scroll moved its slot) or that was never updated keeps nothing
+// of its own; its irradiance starts halfway from the next coarser level's.
 // The border texels copy the octahedron's opposite edges, so bilinear lookups wrap correctly.
 //
 // The same rays relocate and classify the probe (Majercik et al. 2021): a probe with more than a
@@ -157,7 +158,19 @@ void main()
         vec4 value = total > 1e-6 ? sum / total : vec4(0.0);
         ivec3 texel = ivec3(layerOrigin.xy * (DDGI_IRRADIANCE_TEXELS + 2) + 1 + irradianceTexel, layerOrigin.z);
         vec4 previous = imageLoad(irradianceImage, texel);
-        sharedIrradiance[thread] = mix(value, previous, hysteresis);
+        float keep = hysteresis;
+        if (fresh && level + 1u < DdgiLevelCount())
+        {
+            // A probe with nothing of its own (it just scrolled in, or moved) starts halfway from what
+            // the next coarser level sends a surface facing this texel's direction there, so 64 rays do
+            // not decide it alone and a moving camera's new probes do not flicker.
+            float coverage;
+            vec3 position = vec3(coord) * DdgiLevelSpacing(level) + (sameCoordinate ? state.offset.xyz : vec3(0.0));
+            vec4 coarse = DdgiSampleLevel(level + 1u, position, direction, vec3(0.0), coverage);
+            previous = coarse;
+            keep = 0.5 * clamp(coverage, 0.0, 1.0);
+        }
+        sharedIrradiance[thread] = mix(value, previous, keep);
     }
     barrier();
 

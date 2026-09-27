@@ -1,0 +1,48 @@
+# A generated outdoor track (tools/render_scenes/make_ddgi_track.py) under the physical sky with an
+# afternoon sun from the left: a road running away from the camera through a 60 m concrete tunnel, a
+# grandstand with a roof on the left, crossed leaf cards (alpha-masked, double-sided) on the right and
+# a red car ahead. With DDGI the tunnel's inside and the stands under the roof lose the sky's light and
+# take the sunlit road's and grass's bounce; the trees' shade is partial. Cascaded DDGI (2026-09-27).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000401
+    tag: Track
+    model:
+      display_name: ddgi_track
+      source_path: models/ddgi_track/ddgi_track.gltf
+      source_uuid: 5b0d7c1e-3f6a-4d8e-9a41-2c7e8f0d6b13
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -1.5, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000402
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 10, 0]
+      rotation: [20, 0, 55]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
