@@ -104,6 +104,8 @@ struct ScenePassFrameContext
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
     // exposure histogram meters, unlike the flat background of EnvironmentMode::None.
     bool physicalSky = false;
+    // The geometry pass draws the atmosphere's ground plane (AtmosphereSettings::groundPlane).
+    bool groundPlane = false;
 
     std::span<const VulkanDrawItem> OpaqueDrawItems() const
     {

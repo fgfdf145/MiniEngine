@@ -70,7 +70,7 @@ struct EnvironmentUniformData
     glm::vec4 rayleighScattering{0.0f};                    // rgb per km, w scale height km
     glm::vec4 mieParameters{0.0f};                         // x scattering per km, y extinction per km, z scale height km, w g
     glm::vec4 ozoneAbsorption{0.0f};                       // rgb per km
-    glm::vec4 groundAlbedo{0.0f};                          // rgb
+    glm::vec4 groundAlbedo{0.0f};                          // rgb, w 1 when the ground plane is drawn
     glm::vec4 radii{0.0f};                                 // x bottom km, y top km, z aerial perspective distance scale
     glm::vec4 cameraPositionKm{0.0f};                      // xyz, see ToAtmosphereCameraPositionKm
     glm::vec4 hdriParameters{0.0f};                        // x intensity, y rotation in turns

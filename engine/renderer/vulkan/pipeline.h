@@ -46,6 +46,11 @@ struct FullscreenPipelineOptions
     bool depthTestAtFarPlane = false;
     // Adds the fragment's rgb to what the attachment holds (ONE, ONE) and leaves alpha alone.
     bool additiveBlend = false;
+    // Test with LESS and write the depth the fragment shader gives (gl_FragDepth), as a surface drawn
+    // among the scene's geometry does. Overrides depthTestAtFarPlane.
+    bool depthTestAndWrite = false;
+    // The render pass's color attachments, each written like the first.
+    uint32_t colorAttachmentCount = 1;
 };
 
 // The pipeline every full-screen pass uses: fullscreen.vert with no vertex input, no culling, no

@@ -2,6 +2,7 @@
 
 #include <engine/core/paths/engine_paths.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -154,9 +155,9 @@ VkPipeline CreateFullscreenPipeline(
 
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = options.depthTestAtFarPlane ? VK_TRUE : VK_FALSE;
-    depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthTestEnable = options.depthTestAtFarPlane || options.depthTestAndWrite ? VK_TRUE : VK_FALSE;
+    depthStencil.depthWriteEnable = options.depthTestAndWrite ? VK_TRUE : VK_FALSE;
+    depthStencil.depthCompareOp = options.depthTestAndWrite ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
     depthStencil.stencilTestEnable = VK_FALSE;
 
     // Every full-screen pass covers every pixel and writes all four channels: the tone mapping pass
@@ -177,10 +178,12 @@ VkPipeline CreateFullscreenPipeline(
         VK_COLOR_COMPONENT_B_BIT |
         VK_COLOR_COMPONENT_A_BIT;
 
+    const std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments(
+        std::max(options.colorAttachmentCount, 1u), colorBlendAttachment);
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size());
+    colorBlending.pAttachments = colorBlendAttachments.data();
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;

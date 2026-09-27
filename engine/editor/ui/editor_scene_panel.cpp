@@ -196,6 +196,7 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             ImGui::TextDisabled("Add a Directional light: it is the sun.");
         }
         ImGui::ColorEdit3("Ground albedo", &atmosphere.groundAlbedo.x);
+        ImGui::Checkbox("Ground plane", &atmosphere.groundPlane);
         ImGui::DragFloat("Rayleigh density", &atmosphere.rayleighDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::DragFloat("Mie density", &atmosphere.mieDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         DragFloatInRange("Mie anisotropy", &atmosphere.mieAnisotropy, 0.0f, 0.99f, "%.2f");

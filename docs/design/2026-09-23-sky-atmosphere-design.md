@@ -139,7 +139,40 @@ its source and captures nothing.
   frame; 0.10 ms on a frame that also rebuilds the transmittance and multiple-scattering LUTs.
 - **Known limits:** below the horizon the sky is nearly black, since the camera sits 0.5 m above an
   undrawn ground; interiors lit only by the fallback ambient look dark next to the physical sky
-  and haze until diffuse IBL (phase 3) lights them from the sky.
+  and haze until diffuse IBL (phase 3) lights them from the sky. (Fixed 2026-09-28, see Ground.)
+
+## Ground (2026-09-28)
+
+The sky-view LUT holds only the air's in-scattering, so below the horizon the background showed
+the few metres of air in front of the ground: black. Now:
+
+- **The sky draws the ground** (`GroundLuminance`, `atmosphere_sampling.glsl`), in `SampleSky` and
+  `SampleSkyForLighting` alike, so the background, the SH irradiance and the environment capture
+  agree. The ground point is where the view ray meets the planet; its light reaches the camera
+  through the transmittance between them, `T(ground -> space) / T(camera -> space)` along
+  `-direction`, from the transmittance LUT, while the LUT's own in-scattering hazes it toward the
+  horizon.
+- **Shaded as the lighting pass shades the ground plane** (`GroundSurfaceRadiance`): a dielectric of
+  roughness 0.9 with the default F0; the sun through Burley's diffuse under the Fresnel toward it
+  plus the GGX lobe; the sky's illuminance diffused by what the DFG term's specular share leaves,
+  and the SH sky around the mirror direction reflected by that share. At grazing angles the
+  specular parts and Burley's retroreflection are most of the ground's light, so a Lambertian
+  ground was 20% darker than the plane at the far plane, a visible band.
+- **The sky's illuminance on level ground** comes out of `atmosphere_irradiance.comp`, which cannot
+  read the buffer it writes: it sums the sky's cosine-weighted radiance over the upper hemisphere
+  alongside the SH, and the SH of the ground's view transmittance times its diffuse share, and adds
+  their product times albedo / pi after the reduction. The illuminance is stored in the w of the
+  first three coefficients (`GroundSkyIrradiance`). The SH leaves out the ground's sky reflection,
+  a few percent of its light away from grazing angles.
+- **Ground plane** (`AtmosphereSettings::groundPlane`, scene key `ground_plane`, off by default, the
+  "Ground plane" checkbox): an endless plane at world y = 0 in the geometry pass (`ground.frag`, a
+  full-screen triangle writing the depth where each pixel's view ray meets the plane, after the
+  opaque items and before the decals), so it takes the sun's shadows, AO, SSR, screen-space GI and
+  aerial perspective; and in the DDGI rays (`IntersectGroundPlane`), lit as any other hit, its
+  underside a single-sided back face. Past the far plane it is left to the sky's ground, which
+  matches it (measured: 82 vs 83 in 8-bit sRGB across the seam, noon, camera 1.6 m). The flag
+  travels in `groundAlbedo.w`, 1 only under `Atmosphere`. Not in the forward-only order, the CPU
+  reference path tracer, picking or the scene bounds.
 
 ## Components
 

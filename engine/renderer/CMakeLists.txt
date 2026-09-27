@@ -205,6 +205,7 @@ set(MINIENGINE_SHADER_SOURCES
     environment_prefilter.comp
     sky.vert
     sky.frag
+    ground.frag
     shadow.vert
     shadow_depth.vert
     shadow.frag
@@ -252,6 +253,7 @@ set(MINIENGINE_SHADER_INCLUDES
     cubemap_common.glsl
     ray_tracing_common.glsl
     ddgi_common.glsl
+    ground_plane.glsl
 )
 
 function(miniengine_add_shaders shader_target)

@@ -1,11 +1,16 @@
 #include "geometry_pass.h"
 
 #include "material_draw.h"
+#include "pipeline.h"
 
 namespace me
 {
 
-VulkanGeometryPass::VulkanGeometryPass(VkDevice device, const SceneRenderTargets& targets)
+VulkanGeometryPass::VulkanGeometryPass(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    const SceneRenderTargets& targets,
+    VkDescriptorSetLayout frameSetLayout)
     : m_device(device)
 {
     // A throw out of a constructor skips the destructor, so unwind whatever got created with the
@@ -14,6 +19,17 @@ VulkanGeometryPass::VulkanGeometryPass(VkDevice device, const SceneRenderTargets
     {
         CreateRenderPass(targets);
         CreateFramebuffers(targets);
+
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &frameSetLayout;
+        CheckVulkan(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_groundPipelineLayout), "Failed to create ground plane pipeline layout");
+        FullscreenPipelineOptions groundOptions{};
+        groundOptions.depthTestAndWrite = true;
+        groundOptions.colorAttachmentCount = kColorAttachmentCount;
+        m_groundPipeline = CreateFullscreenPipeline(
+            m_device, pipelineCache, m_renderPass, m_groundPipelineLayout, "ground.frag.spv", "ground plane", groundOptions);
     }
     catch (...)
     {
@@ -62,6 +78,15 @@ void VulkanGeometryPass::Record(
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
     RecordMaterialDrawItems(commandBuffer, *frame.geometryPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
+    if (frame.groundPlane)
+    {
+        // After the opaque items, so their depth rejects the ground's hidden pixels; before the
+        // decals, which may lie on it.
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipeline);
+        vkCmdBindDescriptorSets(
+            commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    }
     if (frame.decalPipelines != nullptr)
     {
         RecordMaterialDrawItems(commandBuffer, *frame.decalPipelines, frame.frameDescriptorSet, frame.decalDrawItems);
@@ -176,6 +201,16 @@ void VulkanGeometryPass::DestroyFramebuffers()
 
 void VulkanGeometryPass::DestroyHandles()
 {
+    if (m_groundPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_groundPipeline, nullptr);
+        m_groundPipeline = VK_NULL_HANDLE;
+    }
+    if (m_groundPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_groundPipelineLayout, nullptr);
+        m_groundPipelineLayout = VK_NULL_HANDLE;
+    }
     DestroyFramebuffers();
     if (m_renderPass != VK_NULL_HANDLE)
     {

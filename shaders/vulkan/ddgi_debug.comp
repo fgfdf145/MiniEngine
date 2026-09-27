@@ -18,6 +18,7 @@
 #include "scene_common.glsl"
 #include "ray_tracing_common.glsl"
 #include "ddgi_common.glsl"
+#include "ground_plane.glsl"
 #include "gbuffer_common.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -191,19 +192,39 @@ void main()
 
     vec3 color = vec3(0.25, 0.4, 0.7);
     RayHit hit;
-    if (TraceSceneRay(origin, direction, 0.0, 1e30, false, rayId, hit))
+    bool sceneHit = TraceSceneRay(origin, direction, 0.0, 1e30, false, rayId, hit);
+    float groundT;
+    bool groundFrontFace;
+    bool groundHit = IntersectGroundPlane(origin, direction, 0.0, sceneHit ? hit.t : 1e30, groundT, groundFrontFace);
+    if (sceneHit || groundHit)
     {
-        RayMaterial material = RayHitMaterial(hit);
-        vec3 normal = RayHitNormal(hit);
-        bool doubleSided = (floatBitsToUint(material.emissionFlags.w) & RAY_MATERIAL_DOUBLE_SIDED) != 0u;
-        if (!hit.frontFace && !doubleSided)
+        vec3 albedo;
+        vec3 normal;
+        bool frontFace;
+        float t;
+        if (groundHit)
+        {
+            albedo = ubo.groundAlbedo.rgb;
+            normal = vec3(0.0, 1.0, 0.0);
+            frontFace = groundFrontFace;
+            t = groundT;
+        }
+        else
+        {
+            RayMaterial material = RayHitMaterial(hit);
+            albedo = material.albedoCoverage.rgb;
+            normal = RayHitNormal(hit);
+            frontFace = hit.frontFace || (floatBitsToUint(material.emissionFlags.w) & RAY_MATERIAL_DOUBLE_SIDED) != 0u;
+            t = hit.t;
+        }
+        if (!frontFace)
         {
             color = vec3(0.8, 0.05, 0.05);
         }
         else
         {
             normal = dot(normal, direction) > 0.0 ? -normal : normal;
-            vec3 position = origin + direction * hit.t;
+            vec3 position = origin + direction * t;
             float lit = 0.0;
             if (ubo.lightCounts.x > 0u)
             {
@@ -215,7 +236,7 @@ void main()
                     lit = cosine;
                 }
             }
-            color = material.albedoCoverage.rgb * (0.2 + 0.8 * lit);
+            color = albedo * (0.2 + 0.8 * lit);
         }
     }
     imageStore(outputImage, pixel, vec4(color, 1.0));

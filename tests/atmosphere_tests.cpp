@@ -108,6 +108,14 @@ void BuildsUniformData()
         BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f), nullptr);
     Require(glm::vec3(dark.sunIlluminance) == glm::vec3(0.0f), "no sun, no illuminance");
 
+    Require(data.groundAlbedo.w == 0.0f, "no ground plane unless the settings ask for one");
+    SceneEnvironment withGround = environment;
+    withGround.atmosphere.groundPlane = true;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, withGround, p, sun, glm::vec3(0.0f), nullptr).groundAlbedo.w == 1.0f,
+            "the ground plane flag is carried in groundAlbedo.w");
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Hdri, withGround, p, sun, glm::vec3(0.0f), nullptr).groundAlbedo.w == 0.0f,
+            "the ground plane belongs to the atmosphere and is off under an HDRI");
+
     ShCoefficients sh{};
     sh[0] = glm::vec3(1.0f, 2.0f, 3.0f);
     sh[3] = glm::vec3(0.5f);

@@ -26,6 +26,7 @@ SceneEnvironment MakeEnvironment()
     SceneEnvironment environment{};
     environment.mode = EnvironmentMode::Hdri;
     environment.atmosphere.groundAlbedo = glm::vec3(0.25f, 0.5f, 0.125f);
+    environment.atmosphere.groundPlane = true;
     environment.atmosphere.rayleighDensityScale = 2.0f;
     environment.atmosphere.mieDensityScale = 0.5f;
     environment.atmosphere.mieAnisotropy = 0.75f;

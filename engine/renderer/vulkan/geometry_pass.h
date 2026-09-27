@@ -9,7 +9,8 @@ namespace me
 {
 
 // Writes the G-buffer: every Opaque and Mask draw item into GB0-GB3, the motion vectors and depth.
-// Blend items never enter it; the forward pass composites them over the lighting result.
+// Blend items never enter it; the forward pass composites them over the lighting result. The
+// atmosphere's ground plane follows the opaque items when the frame asks for it (ground.frag).
 //
 // Unlike the forward pass, every attachment including depth is stored, because later passes
 // sample them and the forward blend pass depth-tests against this depth. Framebuffers are
@@ -33,7 +34,11 @@ class VulkanGeometryPass : public IScenePass
     // The most MoltenVK offers on Apple GPUs; VulkanDevice refuses a device with fewer.
     static constexpr uint32_t kColorAttachmentCount = 8;
 
-    VulkanGeometryPass(VkDevice device, const SceneRenderTargets& targets);
+    VulkanGeometryPass(
+        VkDevice device,
+        VkPipelineCache pipelineCache,
+        const SceneRenderTargets& targets,
+        VkDescriptorSetLayout frameSetLayout);
     ~VulkanGeometryPass() override;
 
     VulkanGeometryPass(const VulkanGeometryPass&) = delete;
@@ -61,5 +66,8 @@ class VulkanGeometryPass : public IScenePass
     VkDevice m_device = VK_NULL_HANDLE;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> m_framebuffers;
+    // ground.frag: set 0 only.
+    VkPipelineLayout m_groundPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_groundPipeline = VK_NULL_HANDLE;
 };
 }

@@ -88,7 +88,9 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     data.rayleighScattering = glm::vec4(p.rayleighScattering, p.rayleighScaleHeightKm);
     data.mieParameters = glm::vec4(p.mieScattering, p.mieExtinction, p.mieScaleHeightKm, p.mieAnisotropy);
     data.ozoneAbsorption = glm::vec4(p.ozoneAbsorption, 0.0f);
-    data.groundAlbedo = glm::vec4(p.groundAlbedo, 0.0f);
+    data.groundAlbedo = glm::vec4(
+        p.groundAlbedo,
+        mode == EnvironmentMode::Atmosphere && environment.atmosphere.groundPlane ? 1.0f : 0.0f);
     data.radii = glm::vec4(p.bottomRadiusKm, p.topRadiusKm, p.aerialPerspectiveDistanceScale, 0.0f);
     data.cameraPositionKm = glm::vec4(ToAtmosphereCameraPositionKm(p, cameraPositionMeters), 0.0f);
     data.hdriParameters = glm::vec4(

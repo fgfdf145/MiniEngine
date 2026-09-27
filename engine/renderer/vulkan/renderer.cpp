@@ -1064,6 +1064,7 @@ void VulkanRenderer::DrawFrame()
     // The history this frame writes carries this frame's pre-exposure.
     m_taaHistoryPreExposure = preExposure;
     frame.physicalSky = environmentMode != EnvironmentMode::None;
+    frame.groundPlane = environmentMode == EnvironmentMode::Atmosphere && environment.atmosphere.groundPlane;
 
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
@@ -1575,7 +1576,8 @@ void VulkanRenderer::CreateScenePasses()
     m_decalPipelines.reset();
     m_gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *m_sceneTargets);
 
-    auto geometryPass = std::make_unique<VulkanGeometryPass>(m_device->GetHandle(), *m_sceneTargets);
+    auto geometryPass = std::make_unique<VulkanGeometryPass>(
+        m_device->GetHandle(), m_pipelineCache, *m_sceneTargets, m_frameSetLayout->GetHandle());
     auto forwardPass = std::make_unique<VulkanForwardPass>(
         m_device->GetHandle(),
         m_pipelineCache,

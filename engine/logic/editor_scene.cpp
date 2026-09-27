@@ -223,6 +223,7 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
     {
         AtmosphereSettings& atmosphere = environment.atmosphere;
         atmosphere.groundAlbedo = ReadVec3(atmosphereNode["ground_albedo"], atmosphere.groundAlbedo);
+        atmosphere.groundPlane = atmosphereNode["ground_plane"].as<bool>(atmosphere.groundPlane);
         atmosphere.rayleighDensityScale = atmosphereNode["rayleigh_density_scale"].as<float>(atmosphere.rayleighDensityScale);
         atmosphere.mieDensityScale = atmosphereNode["mie_density_scale"].as<float>(atmosphere.mieDensityScale);
         atmosphere.mieAnisotropy = atmosphereNode["mie_anisotropy"].as<float>(atmosphere.mieAnisotropy);
@@ -252,6 +253,7 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "atmosphere" << YAML::Value << YAML::BeginMap;
     const AtmosphereSettings& atmosphere = environment.atmosphere;
     EmitVec3(emitter, "ground_albedo", atmosphere.groundAlbedo);
+    emitter << YAML::Key << "ground_plane" << YAML::Value << atmosphere.groundPlane;
     emitter << YAML::Key << "rayleigh_density_scale" << YAML::Value << atmosphere.rayleighDensityScale;
     emitter << YAML::Key << "mie_density_scale" << YAML::Value << atmosphere.mieDensityScale;
     emitter << YAML::Key << "mie_anisotropy" << YAML::Value << atmosphere.mieAnisotropy;

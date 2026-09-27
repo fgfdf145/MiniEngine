@@ -27,6 +27,10 @@ inline constexpr float kDefaultSunIlluminanceLux = 120000.0f;
 struct AtmosphereSettings
 {
     glm::vec3 groundAlbedo{0.3f, 0.3f, 0.3f};
+    // Draws the ground as a surface: an endless plane at world y = 0 with the ground albedo, in the
+    // G-buffer and the DDGI ray scene, so it takes shadows, AO and bounce light. Off, the ground
+    // shows only as the sky's own lit ground below the horizon.
+    bool groundPlane = false;
     // Multipliers on the base Rayleigh scattering, Mie scattering and extinction, and ozone
     // absorption coefficients.
     float rayleighDensityScale = 1.0f;
