@@ -1,6 +1,7 @@
 #include "model_loader.h"
 
 #include "gltf_model_loader.h"
+#include "kn5_importer.h"
 #include "material_definition.h"
 
 #include <engine/core/log/log.h>
@@ -278,6 +279,11 @@ bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
     return extension == ".gltf" || extension == ".glb";
 }
 
+bool ModelLoader::IsImportableModelPath(const std::filesystem::path& path)
+{
+    return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path);
+}
+
 bool ModelLoader::IsImportAvailable()
 {
     return true;
@@ -295,6 +301,11 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::string extension = ToLowerCopy(modelPath.extension().string());
 
     std::filesystem::path dst;
+    if (Kn5Importer::IsKn5Path(modelPath))
+    {
+        // Converted rather than copied: the result is a glTF bundle, so it needs no unpacking.
+        return Kn5Importer::ConvertToGltf(modelPath, targetDirectory).gltfPath;
+    }
     if (extension == ".gltf")
     {
         dst = GltfModelLoader::CopyWithSortedReferences(modelPath, targetDirectory);
@@ -328,7 +339,9 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     if (!IsSupportedModelPath(modelPath))
     {
         throw std::runtime_error(
-            "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string());
+            Kn5Importer::IsKn5Path(modelPath)
+                ? "A .kn5 is loaded through an import, which converts it to glTF: " + modelPath.string()
+                : "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string());
     }
 
     LoadedModelData modelData = GltfModelLoader::LoadModel(modelPath.string(), progress);

@@ -37,7 +37,7 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         {
             const std::string dropped = std::move(m_droppedFiles.front());
             m_droppedFiles.pop_front();
-            if (IsSupportedModelAssetPath(dropped))
+            if (IsImportableModelAssetPath(dropped))
             {
                 RequestModelImport(dropped, result);
             }

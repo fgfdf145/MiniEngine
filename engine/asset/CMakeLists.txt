@@ -9,10 +9,16 @@
     asset_registry.h
     compressed_texture_cache.cpp
     compressed_texture_cache.h
+    dds_decoder.cpp
+    dds_decoder.h
     gltf_compression.cpp
     gltf_compression.h
     gltf_model_loader.cpp
     gltf_model_loader.h
+    kn5_importer.cpp
+    kn5_importer.h
+    kn5_reader.cpp
+    kn5_reader.h
     material_definition.cpp
     material_definition.h
     material_graph_runtime.cpp

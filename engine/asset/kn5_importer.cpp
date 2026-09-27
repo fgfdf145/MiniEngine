@@ -1,0 +1,1061 @@
+#include "kn5_importer.h"
+
+#include "dds_decoder.h"
+#include "kn5_reader.h"
+#include "texture_loader.h"
+
+#include <engine/core/log/log.h>
+
+#include <nlohmann/json.hpp>
+#include <stb_image.h>
+#include <stb_image_write.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <stdexcept>
+#include <system_error>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace me
+{
+
+namespace
+{
+using Json = nlohmann::json;
+
+constexpr int kFloat = 5126;
+constexpr int kUnsignedShort = 5123;
+constexpr int kArrayBuffer = 34962;
+constexpr int kElementArrayBuffer = 34963;
+// A texture blob smaller than this is a placeholder (or, encrypted, a decoy).
+constexpr size_t kStubTextureBytes = 128;
+
+constexpr std::array<float, 16> kIdentity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+std::string ToLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+                   {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return value;
+}
+
+bool EndsWith(const std::string& value, const std::string& suffix)
+{
+    return value.size() >= suffix.size() && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool IsFinite(const float* values, size_t count)
+{
+    for (size_t index = 0; index < count; ++index)
+    {
+        if (!std::isfinite(values[index]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+float Round(float value, int digits)
+{
+    const float scale = std::pow(10.0f, static_cast<float>(digits));
+    return std::round(value * scale) / scale;
+}
+
+std::vector<std::uint8_t> ReadFileBytes(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+    {
+        throw std::runtime_error("Cannot open '" + path.string() + "'");
+    }
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+void WriteFileBytes(const std::filesystem::path& path, const void* data, size_t size)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+    {
+        throw std::runtime_error("Cannot create '" + path.string() + "'");
+    }
+    file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    if (!file)
+    {
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    }
+}
+
+// A texture blob as RGBA8, rows top-down: DDS through the engine's decoder, anything else
+// (PNG, JPEG, TGA) through stb_image. nullopt, with a warning, when it cannot be decoded.
+std::optional<TextureData> DecodeTextureBlob(const std::vector<std::uint8_t>& blob, const std::string& name)
+{
+    try
+    {
+        if (DdsDecoder::IsDds(blob.data(), blob.size()))
+        {
+            return DdsDecoder::Decode(blob.data(), blob.size(), name);
+        }
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        stbi_uc* pixels = stbi_load_from_memory(
+            blob.data(), static_cast<int>(blob.size()), &width, &height, &channels, STBI_rgb_alpha);
+        if (pixels == nullptr)
+        {
+            throw std::runtime_error(std::string("unrecognised image data (") + stbi_failure_reason() + ")");
+        }
+        TextureData image;
+        image.width = width;
+        image.height = height;
+        image.channelCount = 4;
+        image.pixels.assign(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+        stbi_image_free(pixels);
+        return image;
+    }
+    catch (const std::exception& error)
+    {
+        LOG_WARN("kn5 texture '{}' cannot be decoded: {}", name, error.what());
+        return std::nullopt;
+    }
+}
+
+void AppendToVector(void* context, void* data, int size)
+{
+    auto* out = static_cast<std::vector<std::uint8_t>*>(context);
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    out->insert(out->end(), bytes, bytes + size);
+}
+
+// Written through a memory buffer and std::ofstream so a non-ASCII path works on Windows too.
+void WritePng(const std::filesystem::path& path, int width, int height, int channels, const std::uint8_t* pixels)
+{
+    std::vector<std::uint8_t> encoded;
+    if (stbi_write_png_to_func(AppendToVector, &encoded, width, height, channels, pixels, width * channels) == 0)
+    {
+        throw std::runtime_error("Cannot encode '" + path.string() + "' as PNG");
+    }
+    WriteFileBytes(path, encoded.data(), encoded.size());
+}
+
+// A file name the texture can be written under: the kn5 name's stem with anything a filesystem
+// or a URI might trip on replaced.
+std::string SafeStem(const std::string& textureName)
+{
+    std::string stem = std::filesystem::path(textureName).stem().string();
+    for (char& character : stem)
+    {
+        const unsigned char code = static_cast<unsigned char>(character);
+        if (!(std::isalnum(code) || character == '_' || character == '-' || character == '.'))
+        {
+            character = '_';
+        }
+    }
+    return stem.empty() ? std::string("texture") : stem;
+}
+
+// Assetto Corsa matches texture names ignoring case, so a kn5 can list "INT_DEcals.dds" and a
+// material ask for "INT_Decals.dds". Entries that differ only in case collapse into the one with
+// the largest blob (never the 1x1 placeholder), and every material slot is pointed at it.
+// Returns how many entries were folded away.
+size_t FoldTextureCase(Kn5Model& model)
+{
+    std::unordered_map<std::string, size_t> keep;
+    for (size_t index = 0; index < model.textures.size(); ++index)
+    {
+        const std::string key = ToLowerCopy(model.textures[index].name);
+        const auto found = keep.find(key);
+        if (found == keep.end() || model.textures[index].data.size() > model.textures[found->second].data.size())
+        {
+            keep[key] = index;
+        }
+    }
+    // Material slots are repointed even when nothing folded: one table entry can still differ in
+    // case from the name a material asks for.
+    const size_t folded = model.textures.size() - keep.size();
+    std::unordered_map<std::string, std::string> canonical;
+    std::vector<size_t> kept;
+    for (const auto& [key, index] : keep)
+    {
+        canonical[key] = model.textures[index].name;
+        kept.push_back(index);
+    }
+    std::sort(kept.begin(), kept.end());
+    std::vector<Kn5Texture> textures;
+    textures.reserve(kept.size());
+    for (size_t index : kept)
+    {
+        textures.push_back(std::move(model.textures[index]));
+    }
+    model.textures = std::move(textures);
+
+    for (Kn5Material& material : model.materials)
+    {
+        for (auto& [slot, name] : material.textures)
+        {
+            const auto found = canonical.find(ToLowerCopy(name));
+            if (found != canonical.end())
+            {
+                name = found->second;
+            }
+        }
+    }
+    return folded;
+}
+
+std::optional<std::filesystem::path> ResolveSkinDirectory(const std::filesystem::path& kn5Path, const std::string& wanted)
+{
+    if (ToLowerCopy(wanted) == "none")
+    {
+        return std::nullopt;
+    }
+    const std::vector<std::string> skins = Kn5Importer::ListSkins(kn5Path);
+    const std::filesystem::path root = kn5Path.parent_path() / "skins";
+    if (wanted.empty())
+    {
+        return skins.empty() ? std::nullopt : std::optional<std::filesystem::path>(root / skins.front());
+    }
+    for (const std::string& skin : skins)
+    {
+        if (ToLowerCopy(skin) == ToLowerCopy(wanted))
+        {
+            return root / skin;
+        }
+    }
+    std::string have;
+    for (const std::string& skin : skins)
+    {
+        have += (have.empty() ? "" : ", ") + skin;
+    }
+    throw std::runtime_error(
+        "No skin '" + wanted + "' in '" + root.string() + "'" + (have.empty() ? std::string(" (it has none)") : " - have: " + have));
+}
+
+// Overwrites kn5 texture blobs with the same-named files from the skin folder (ignoring case), as
+// the game does at load time. Not only the albedo: a livery also ships *_MAP.dds and plate or
+// badge sheets. Returns the names replaced.
+std::unordered_set<std::string> ApplySkin(Kn5Model& model, const std::filesystem::path& skinDirectory)
+{
+    std::unordered_map<std::string, std::filesystem::path> files;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(skinDirectory, ec), end; !ec && it != end; it.increment(ec))
+    {
+        std::error_code fileEc;
+        if (it->is_regular_file(fileEc))
+        {
+            files[ToLowerCopy(it->path().filename().string())] = it->path();
+        }
+    }
+
+    std::unordered_set<std::string> swapped;
+    for (Kn5Texture& texture : model.textures)
+    {
+        const auto found = files.find(ToLowerCopy(texture.name));
+        if (found == files.end())
+        {
+            continue;
+        }
+        try
+        {
+            texture.data = ReadFileBytes(found->second);
+            swapped.insert(texture.name);
+        }
+        catch (const std::exception& error)
+        {
+            LOG_WARN("Skin texture '{}' was not applied: {}", found->second.string(), error.what());
+        }
+    }
+    return swapped;
+}
+
+const Kn5Texture* FindTexture(const Kn5Model& model, const std::string& name)
+{
+    if (name.empty())
+    {
+        return nullptr;
+    }
+    for (const Kn5Texture& texture : model.textures)
+    {
+        if (texture.name == name)
+        {
+            return &texture;
+        }
+    }
+    return nullptr;
+}
+
+std::array<float, 3> Normalized(const std::array<float, 3>& value, const std::array<float, 3>& fallback)
+{
+    const float length = std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+    if (!std::isfinite(length) || length < 1e-8f)
+    {
+        return fallback;
+    }
+    return {value[0] / length, value[1] / length, value[2] / length};
+}
+
+// Any unit vector perpendicular to `normal`: a stand-in for a tangent the source lost.
+std::array<float, 3> Perpendicular(const std::array<float, 3>& normal)
+{
+    const std::array<float, 3> axis =
+        std::abs(normal[0]) < 0.9f ? std::array<float, 3>{1.0f, 0.0f, 0.0f} : std::array<float, 3>{0.0f, 1.0f, 0.0f};
+    const std::array<float, 3> cross{
+        axis[1] * normal[2] - axis[2] * normal[1],
+        axis[2] * normal[0] - axis[0] * normal[2],
+        axis[0] * normal[1] - axis[1] * normal[0]};
+    return Normalized(cross, {1.0f, 0.0f, 0.0f});
+}
+
+class GltfBuilder
+{
+  public:
+    GltfBuilder(const std::filesystem::path& textureDirectory, const Kn5ImportOptions& options)
+        : m_textureDirectory(textureDirectory), m_options(options)
+    {
+    }
+
+    Kn5ImportReport& Report()
+    {
+        return m_report;
+    }
+
+    void WriteTextures(const Kn5Model& model)
+    {
+        // Only what a material samples. A diffuse keeps its alpha only where the material reads
+        // it (blended or alpha-tested): elsewhere AC never samples it, and several cars carry a
+        // fully transparent one on opaque paint and interior maps.
+        std::unordered_set<std::string> used;
+        std::unordered_set<std::string> keepsAlpha;
+        for (const Kn5Material& material : model.materials)
+        {
+            for (const char* slot : {"txDiffuse", "txNormal"})
+            {
+                const std::string name = material.Texture(slot);
+                if (name.empty() || (std::string(slot) == "txNormal" && IsDentMap(name)))
+                {
+                    continue;
+                }
+                used.insert(name);
+                if (material.alphaBlend || material.alphaTested)
+                {
+                    keepsAlpha.insert(name);
+                }
+            }
+        }
+
+        for (const Kn5Texture& texture : model.textures)
+        {
+            if (!used.count(texture.name) || texture.data.size() < kStubTextureBytes)
+            {
+                continue;
+            }
+            std::optional<TextureData> image = DecodeTextureBlob(texture.data, texture.name);
+            if (!image.has_value())
+            {
+                continue;
+            }
+
+            bool alpha = keepsAlpha.count(texture.name) != 0;
+            if (alpha)
+            {
+                alpha = false;
+                for (size_t index = 3; index < image->pixels.size(); index += 4)
+                {
+                    if (image->pixels[index] != 255)
+                    {
+                        alpha = true;
+                        break;
+                    }
+                }
+            }
+            const std::string fileName = UniqueFileName(SafeStem(texture.name), ".png");
+            const int channels = alpha ? 4 : 3;
+            WritePng(m_textureDirectory / fileName, image->width, image->height, channels,
+                     alpha ? image->pixels.data() : StripAlpha(*image).data());
+            m_textureUris[texture.name] = "textures/" + fileName;
+        }
+    }
+
+    void AddMaterials(const Kn5Model& model)
+    {
+        for (const Kn5Material& material : model.materials)
+        {
+            m_materials.push_back(ConvertMaterial(model, material));
+        }
+        m_report.materials = m_materials.size();
+    }
+
+    // One kn5 node as one glTF node, children and all; nullopt when it is a dropped variant.
+    std::optional<size_t> Emit(const Kn5Node& node)
+    {
+        if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0))
+        {
+            ++m_report.droppedVariants;
+            return std::nullopt;
+        }
+
+        Json gltfNode = Json::object();
+        gltfNode["name"] = node.name;
+        if (node.type == Kn5NodeType::Dummy)
+        {
+            ++m_report.transforms;
+            if (node.matrix != kIdentity)
+            {
+                if (IsFinite(node.matrix.data(), node.matrix.size()))
+                {
+                    gltfNode["matrix"] = node.matrix;
+                }
+                else
+                {
+                    ++m_report.scrubbedMatrices;
+                }
+            }
+        }
+        else if (const std::optional<size_t> mesh = EmitMesh(node); mesh.has_value())
+        {
+            gltfNode["mesh"] = *mesh;
+        }
+
+        const size_t index = m_nodes.size();
+        m_nodes.push_back(std::move(gltfNode));
+        Json children = Json::array();
+        for (const Kn5Node& child : node.children)
+        {
+            if (const std::optional<size_t> childIndex = Emit(child); childIndex.has_value())
+            {
+                children.push_back(*childIndex);
+            }
+        }
+        if (!children.empty())
+        {
+            m_nodes[index]["children"] = std::move(children);
+        }
+        return index;
+    }
+
+    void SetLowResTwins(std::set<std::string> names)
+    {
+        m_lowRes = std::move(names);
+    }
+
+    size_t AddRoot(const std::string& name, const std::vector<size_t>& children)
+    {
+        // The half turn about Y that takes AC's axes (+X left, +Z forward) to glTF's (+X right,
+        // -Z forward). Its determinant is +1, so winding and normals stay as they are.
+        Json root = Json::object();
+        root["name"] = name;
+        root["matrix"] = {-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1};
+        if (!children.empty())
+        {
+            root["children"] = children;
+        }
+        m_nodes.push_back(std::move(root));
+        return m_nodes.size() - 1;
+    }
+
+    Json BuildDocument(size_t rootNode, const std::string& binaryUri) const
+    {
+        Json document = Json::object();
+        document["asset"] = {{"version", "2.0"}, {"generator", "MiniEngine kn5 importer (assetto-corsa-gltf rules)"}};
+        document["scene"] = 0;
+        document["scenes"] = Json::array({Json{{"nodes", Json::array({rootNode})}}});
+        document["nodes"] = m_nodes;
+        document["meshes"] = m_meshes;
+        document["materials"] = m_materials;
+        document["accessors"] = m_accessors;
+        document["bufferViews"] = m_bufferViews;
+        document["buffers"] = Json::array({Json{{"uri", binaryUri}, {"byteLength", m_binary.size()}}});
+        if (!m_extensionsUsed.empty())
+        {
+            document["extensionsUsed"] = std::vector<std::string>(m_extensionsUsed.begin(), m_extensionsUsed.end());
+        }
+        if (!m_images.empty())
+        {
+            document["images"] = m_images;
+            document["textures"] = m_textures;
+            // Linear, trilinear mipmaps, repeat.
+            document["samplers"] = Json::array({Json{{"magFilter", 9729}, {"minFilter", 9987}, {"wrapS", 10497}, {"wrapT", 10497}}});
+        }
+        return document;
+    }
+
+    const std::vector<std::uint8_t>& Binary() const
+    {
+        return m_binary;
+    }
+
+    size_t NodeCount() const
+    {
+        return m_nodes.size();
+    }
+
+    size_t ImageCount() const
+    {
+        return m_images.size();
+    }
+
+  private:
+    static bool IsDentMap(const std::string& textureName)
+    {
+        // On AC's damage shaders txNormal holds the dent map, blended in with accumulated damage:
+        // zero on an undamaged car. Bound as a normal map it caves every panel in.
+        return ToLowerCopy(textureName).find("damage") != std::string::npos;
+    }
+
+    static std::vector<std::uint8_t> StripAlpha(const TextureData& image)
+    {
+        std::vector<std::uint8_t> rgb;
+        rgb.reserve(image.pixels.size() / 4 * 3);
+        for (size_t index = 0; index < image.pixels.size(); index += 4)
+        {
+            rgb.push_back(image.pixels[index]);
+            rgb.push_back(image.pixels[index + 1]);
+            rgb.push_back(image.pixels[index + 2]);
+        }
+        return rgb;
+    }
+
+    std::string UniqueFileName(const std::string& stem, const std::string& extension)
+    {
+        std::string candidate = stem + extension;
+        for (int suffix = 1; m_fileNames.count(ToLowerCopy(candidate)) != 0 ||
+                             std::filesystem::exists(m_textureDirectory / candidate);
+             ++suffix)
+        {
+            candidate = stem + "_" + std::to_string(suffix) + extension;
+        }
+        m_fileNames.insert(ToLowerCopy(candidate));
+        return candidate;
+    }
+
+    std::optional<size_t> TextureIndexForUri(const std::string& uri)
+    {
+        if (uri.empty())
+        {
+            return std::nullopt;
+        }
+        const auto found = m_textureIndices.find(uri);
+        if (found != m_textureIndices.end())
+        {
+            return found->second;
+        }
+        m_images.push_back(Json{{"uri", uri}});
+        m_textures.push_back(Json{{"source", m_images.size() - 1}, {"sampler", 0}});
+        m_textureIndices[uri] = m_textures.size() - 1;
+        return m_textures.size() - 1;
+    }
+
+    std::optional<size_t> TextureIndexForKn5(const std::string& textureName)
+    {
+        const auto found = m_textureUris.find(textureName);
+        return found == m_textureUris.end() ? std::nullopt : TextureIndexForUri(found->second);
+    }
+
+    // txDetail as a base-colour factor when it is a flat colour. On Kunos road cars this is where
+    // the paint lives: the diffuse is a grey panel/AO template shared by every livery and the
+    // shader multiplies the one-colour detail map over it.
+    std::optional<std::array<float, 3>> DetailTint(const Kn5Model& model, const std::string& textureName)
+    {
+        const auto cached = m_tintCache.find(textureName);
+        if (cached != m_tintCache.end())
+        {
+            return cached->second;
+        }
+        std::optional<std::array<float, 3>> tint;
+        const Kn5Texture* texture = FindTexture(model, textureName);
+        if (texture != nullptr && texture->data.size() >= kStubTextureBytes)
+        {
+            if (const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name))
+            {
+                tint = Kn5Importer::FlatDetailTint(image->pixels, image->width, image->height);
+            }
+        }
+        m_tintCache[textureName] = tint;
+        return tint;
+    }
+
+    // txMaps as a metallic-roughness image. Its red channel is the per-pixel specular intensity,
+    // which scales the Blinn lobe the way the exponent does, so it folds into the same
+    // exponent-to-roughness conversion; at full intensity it reproduces the constant exactly.
+    // Metallic (blue) is 0: AC has no metallic workflow to map from.
+    std::optional<std::string> BakeRoughness(const Kn5Model& model, const std::string& textureName, float exponent)
+    {
+        const std::string key = textureName + "|" + std::to_string(static_cast<int>(std::lround(exponent * 100.0f)));
+        const auto cached = m_bakeCache.find(key);
+        if (cached != m_bakeCache.end())
+        {
+            return cached->second;
+        }
+        m_bakeCache[key] = std::nullopt;
+        const Kn5Texture* texture = FindTexture(model, textureName);
+        if (texture == nullptr || texture->data.size() < kStubTextureBytes)
+        {
+            return std::nullopt;
+        }
+        const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name);
+        if (!image.has_value())
+        {
+            return std::nullopt;
+        }
+
+        std::array<std::uint8_t, 256> lut{};
+        for (int value = 0; value < 256; ++value)
+        {
+            const float intensity = std::max(static_cast<float>(value) / 255.0f, 0.02f);
+            lut[value] = static_cast<std::uint8_t>(
+                std::lround(Kn5Importer::SpecularExponentToRoughness(exponent * intensity) * 255.0f));
+        }
+        std::vector<std::uint8_t> rgb(static_cast<size_t>(image->width) * static_cast<size_t>(image->height) * 3, 0);
+        for (size_t pixel = 0; pixel < rgb.size() / 3; ++pixel)
+        {
+            rgb[pixel * 3 + 1] = lut[image->pixels[pixel * 4]];
+        }
+        const std::string fileName = UniqueFileName(
+            SafeStem(textureName) + "_rough" + std::to_string(static_cast<int>(exponent)), ".png");
+        WritePng(m_textureDirectory / fileName, image->width, image->height, 3, rgb.data());
+        m_bakeCache[key] = "textures/" + fileName;
+        return m_bakeCache[key];
+    }
+
+    Json ConvertMaterial(const Kn5Model& model, const Kn5Material& material)
+    {
+        const float exponent = std::max(material.Property("ksSpecularEXP", 20.0f), 1.0f);
+        // ksSpecular is the intensity: 0 means no highlight at all in AC (grass, trees).
+        float specular = material.Property("ksSpecular", 1.0f);
+        // ksMultilayer (track surfaces) drives its sheen from tarmacSpecularMultiplier instead,
+        // where the author asked for a reflection at all (fresnelMaxLevel set).
+        if (ToLowerCopy(material.shader).find("multilayer") != std::string::npos &&
+            material.Property("fresnelMaxLevel", 0.0f) > 0.0f)
+        {
+            specular = std::max(specular, material.Property("tarmacSpecularMultiplier", specular));
+        }
+        const float effectiveExponent = exponent * std::max(specular, 0.02f);
+
+        const bool useDetail = material.Property("useDetail", 0.0f) > 0.0f;
+        const std::optional<std::array<float, 3>> tint =
+            useDetail ? DetailTint(model, material.Texture("txDetail")) : std::nullopt;
+
+        Json pbr = Json::object();
+        pbr["baseColorFactor"] = tint.has_value() ? Json::array({(*tint)[0], (*tint)[1], (*tint)[2], 1.0f})
+                                                  : Json::array({1.0f, 1.0f, 1.0f, 1.0f});
+        pbr["metallicFactor"] = 0.0f;
+        pbr["roughnessFactor"] = Round(Kn5Importer::SpecularExponentToRoughness(effectiveExponent), 4);
+        if (const std::optional<size_t> diffuse = TextureIndexForKn5(material.Texture("txDiffuse")))
+        {
+            pbr["baseColorTexture"] = {{"index", *diffuse}};
+        }
+        if (const std::optional<std::string> baked =
+                BakeRoughness(model, material.Texture("txMaps"), effectiveExponent))
+        {
+            // glTF multiplies factor and texture, so the per-pixel value takes over.
+            pbr["metallicRoughnessTexture"] = {{"index", *TextureIndexForUri(*baked)}};
+            pbr["roughnessFactor"] = 1.0f;
+        }
+
+        Json out = Json::object();
+        out["name"] = material.name;
+        out["pbrMetallicRoughness"] = std::move(pbr);
+        out["doubleSided"] = false;
+
+        // fresnelMaxLevel caps how much a surface reflects, which is what KHR_materials_specular's
+        // factor is. Uncapped, near-black trim and glass render as nothing but sky.
+        const float fresnelMax = material.Property("fresnelMaxLevel", 0.0f);
+        if (fresnelMax > 0.0f)
+        {
+            out["extensions"]["KHR_materials_specular"] = {{"specularFactor", Round(std::min(fresnelMax, 1.0f), 4)}};
+            m_extensionsUsed.insert("KHR_materials_specular");
+        }
+
+        // Car paint's second, much tighter lobe (sunSpecular / sunSpecularEXP) is the lacquer
+        // over the base coat. Only painted panels set it.
+        const float sunSpecular = material.Property("sunSpecular", 0.0f);
+        if (sunSpecular > 0.0f)
+        {
+            const float sunExponent = std::max(material.Property("sunSpecularEXP", 1500.0f), 1.0f);
+            const float clearcoatRoughness =
+                std::clamp(std::sqrt(2.0f / (sunExponent + 2.0f)), 0.02f, 1.0f);
+            out["extensions"]["KHR_materials_clearcoat"] = {
+                {"clearcoatFactor", Round(std::min(sunSpecular / 20.0f, 1.0f), 4)},
+                {"clearcoatRoughnessFactor", Round(clearcoatRoughness, 4)}};
+            m_extensionsUsed.insert("KHR_materials_clearcoat");
+        }
+
+        const std::string normalName = material.Texture("txNormal");
+        if (!IsDentMap(normalName))
+        {
+            if (const std::optional<size_t> normal = TextureIndexForKn5(normalName))
+            {
+                out["normalTexture"] = {{"index", *normal}};
+            }
+        }
+
+        if (material.alphaBlend)
+        {
+            out["alphaMode"] = "BLEND";
+        }
+        else if (material.alphaTested)
+        {
+            out["alphaMode"] = "MASK";
+            // ksAlphaRef is often 0 (or 0.01), and a MASK cutoff there passes every fragment.
+            const float reference = material.Property("ksAlphaRef", 0.0f);
+            out["alphaCutoff"] = reference >= 0.02f ? reference : 0.5f;
+        }
+
+        const float emissive = material.Property("ksEmissive", 0.0f);
+        if (emissive > 0.0f)
+        {
+            const float level = std::min(emissive, 1.0f);
+            out["emissiveFactor"] = {level, level, level};
+        }
+        return out;
+    }
+
+    size_t AppendView(const void* data, size_t size, int target)
+    {
+        while (m_binary.size() % 4 != 0)
+        {
+            m_binary.push_back(0);
+        }
+        const size_t offset = m_binary.size();
+        const auto* bytes = static_cast<const std::uint8_t*>(data);
+        m_binary.insert(m_binary.end(), bytes, bytes + size);
+        m_bufferViews.push_back(Json{{"buffer", 0}, {"byteOffset", offset}, {"byteLength", size}, {"target", target}});
+        return m_bufferViews.size() - 1;
+    }
+
+    size_t AppendFloats(const std::vector<float>& values, size_t components, bool bounds)
+    {
+        const size_t view = AppendView(values.data(), values.size() * sizeof(float), kArrayBuffer);
+        static const char* const kTypes[] = {"", "SCALAR", "VEC2", "VEC3", "VEC4"};
+        Json accessor{{"bufferView", view}, {"componentType", kFloat}, {"count", values.size() / components}, {"type", kTypes[components]}};
+        if (bounds)
+        {
+            std::vector<float> minimum(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(components));
+            std::vector<float> maximum = minimum;
+            for (size_t index = 0; index < values.size(); ++index)
+            {
+                minimum[index % components] = std::min(minimum[index % components], values[index]);
+                maximum[index % components] = std::max(maximum[index % components], values[index]);
+            }
+            accessor["min"] = minimum;
+            accessor["max"] = maximum;
+        }
+        m_accessors.push_back(std::move(accessor));
+        return m_accessors.size() - 1;
+    }
+
+    std::optional<size_t> EmitMesh(const Kn5Node& node)
+    {
+        const size_t vertexCount = node.vertices.size();
+        const size_t indexCount = node.indices.size() - node.indices.size() % 3;
+        bool indicesValid = indexCount > 0 && vertexCount > 0;
+        for (size_t index = 0; indicesValid && index < indexCount; ++index)
+        {
+            indicesValid = node.indices[index] < vertexCount;
+        }
+        if (!indicesValid)
+        {
+            if (indexCount > 0 && vertexCount > 0)
+            {
+                LOG_WARN("kn5 mesh '{}' indexes past its {} vertices; kept as an empty node", node.name, vertexCount);
+            }
+            ++m_report.emptyMeshes;
+            return std::nullopt;
+        }
+
+        std::vector<float> positions;
+        std::vector<float> normals;
+        std::vector<float> uvs;
+        std::vector<float> tangents;
+        positions.reserve(vertexCount * 3);
+        normals.reserve(vertexCount * 3);
+        uvs.reserve(vertexCount * 2);
+        tangents.reserve(vertexCount * 4);
+        for (const Kn5Vertex& vertex : node.vertices)
+        {
+            // Real files carry NaN (dash-light tangents, whole attributes): replace, and count.
+            std::array<float, 3> position = vertex.position;
+            if (!IsFinite(position.data(), 3))
+            {
+                position = {0.0f, 0.0f, 0.0f};
+                ++m_report.scrubbedAttributes;
+            }
+            if (!IsFinite(vertex.normal.data(), 3))
+            {
+                ++m_report.scrubbedAttributes;
+            }
+            const std::array<float, 3> normal = Normalized(vertex.normal, {0.0f, 1.0f, 0.0f});
+            std::array<float, 2> uv = vertex.uv;
+            if (!IsFinite(uv.data(), 2))
+            {
+                uv = {0.0f, 0.0f};
+                ++m_report.scrubbedAttributes;
+            }
+            if (m_options.flipUv)
+            {
+                uv[1] = -uv[1];
+            }
+            if (!IsFinite(vertex.tangent.data(), 3))
+            {
+                ++m_report.scrubbedAttributes;
+            }
+            const std::array<float, 3> tangent = Normalized(vertex.tangent, Perpendicular(normal));
+
+            positions.insert(positions.end(), position.begin(), position.end());
+            normals.insert(normals.end(), normal.begin(), normal.end());
+            uvs.insert(uvs.end(), uv.begin(), uv.end());
+            // kn5 tangents are vec3; the handedness it does not record is taken as +1.
+            tangents.insert(tangents.end(), {tangent[0], tangent[1], tangent[2], 1.0f});
+        }
+
+        Json attributes = Json::object();
+        attributes["POSITION"] = AppendFloats(positions, 3, true);
+        attributes["NORMAL"] = AppendFloats(normals, 3, false);
+        attributes["TEXCOORD_0"] = AppendFloats(uvs, 2, false);
+        attributes["TANGENT"] = AppendFloats(tangents, 4, false);
+
+        const size_t indexView = AppendView(node.indices.data(), indexCount * sizeof(std::uint16_t), kElementArrayBuffer);
+        m_accessors.push_back(Json{{"bufferView", indexView}, {"componentType", kUnsignedShort}, {"count", indexCount}, {"type", "SCALAR"}});
+
+        Json primitive{{"attributes", std::move(attributes)}, {"indices", m_accessors.size() - 1}};
+        if (node.materialIndex < m_materials.size())
+        {
+            primitive["material"] = node.materialIndex;
+        }
+        m_meshes.push_back(Json{{"name", node.name}, {"primitives", Json::array({std::move(primitive)})}});
+        ++m_report.meshes;
+        m_report.triangles += indexCount / 3;
+        return m_meshes.size() - 1;
+    }
+
+    std::filesystem::path m_textureDirectory;
+    Kn5ImportOptions m_options;
+    Kn5ImportReport m_report;
+    std::set<std::string> m_lowRes;
+    std::vector<std::uint8_t> m_binary;
+    Json m_nodes = Json::array();
+    Json m_meshes = Json::array();
+    Json m_materials = Json::array();
+    Json m_accessors = Json::array();
+    Json m_bufferViews = Json::array();
+    Json m_images = Json::array();
+    Json m_textures = Json::array();
+    std::set<std::string> m_extensionsUsed;
+    std::unordered_set<std::string> m_fileNames;
+    std::unordered_map<std::string, std::string> m_textureUris;
+    std::unordered_map<std::string, size_t> m_textureIndices;
+    std::unordered_map<std::string, std::optional<std::array<float, 3>>> m_tintCache;
+    std::unordered_map<std::string, std::optional<std::string>> m_bakeCache;
+};
+
+void CollectNodeNames(const Kn5Node& node, std::vector<std::string>& names)
+{
+    names.push_back(node.name);
+    for (const Kn5Node& child : node.children)
+    {
+        CollectNodeNames(child, names);
+    }
+}
+}
+
+namespace Kn5Importer
+{
+bool IsKn5Path(const std::filesystem::path& path)
+{
+    return ToLowerCopy(path.extension().string()) == ".kn5";
+}
+
+std::vector<std::string> ListSkins(const std::filesystem::path& kn5Path)
+{
+    std::vector<std::string> skins;
+    const std::filesystem::path root = kn5Path.parent_path() / "skins";
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
+    {
+        std::error_code dirEc;
+        if (it->is_directory(dirEc))
+        {
+            skins.push_back(it->path().filename().string());
+        }
+    }
+    std::sort(skins.begin(), skins.end());
+    return skins;
+}
+
+bool IsRuntimeVariant(const std::string& nodeName)
+{
+    const std::string lower = ToLowerCopy(nodeName);
+    return lower.find("blur") != std::string::npos || lower.find("damage") != std::string::npos;
+}
+
+std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames)
+{
+    std::unordered_set<std::string> present;
+    for (const std::string& name : nodeNames)
+    {
+        present.insert(ToLowerCopy(name));
+    }
+    std::set<std::string> twins;
+    for (const std::string& name : nodeNames)
+    {
+        const std::string lower = ToLowerCopy(name);
+        if (EndsWith(lower, "_lr") && present.count(lower.substr(0, lower.size() - 3) + "_hr") != 0)
+        {
+            twins.insert(name);
+        }
+    }
+    return twins;
+}
+
+float SpecularExponentToRoughness(float exponent)
+{
+    return std::clamp(std::sqrt(2.0f / (exponent + 2.0f)), 0.04f, 1.0f);
+}
+
+std::optional<std::array<float, 3>> FlatDetailTint(const std::vector<std::uint8_t>& rgba, int width, int height)
+{
+    const size_t texels = static_cast<size_t>(std::max(width, 0)) * static_cast<size_t>(std::max(height, 0));
+    if (texels == 0 || rgba.size() < texels * 4)
+    {
+        return std::nullopt;
+    }
+    // Extrema over every texel, not a downsample: averaging first would flatten leather grain and
+    // brushed metal to a constant too.
+    std::array<int, 3> low{255, 255, 255};
+    std::array<int, 3> high{0, 0, 0};
+    for (size_t texel = 0; texel < texels; ++texel)
+    {
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const int value = rgba[texel * 4 + static_cast<size_t>(channel)];
+            low[channel] = std::min(low[channel], value);
+            high[channel] = std::max(high[channel], value);
+        }
+    }
+    std::array<float, 3> linear{};
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        if (high[channel] - low[channel] > 6)
+        {
+            return std::nullopt;
+        }
+        // Doubled in gamma space, then linearised: the order is AC's, and on a mid-grey paint
+        // the two orders differ by a stop and a half.
+        const float middle = static_cast<float>(low[channel] + high[channel]) * 0.5f / 255.0f;
+        const float doubled = std::min(2.0f * middle, 1.0f);
+        linear[channel] = Round(
+            doubled <= 0.04045f ? doubled / 12.92f : std::pow((doubled + 0.055f) / 1.055f, 2.4f), 5);
+    }
+    return linear;
+}
+
+Kn5ImportReport ConvertToGltf(
+    const std::filesystem::path& kn5Path,
+    const std::filesystem::path& targetDirectory,
+    const Kn5ImportOptions& options)
+{
+    Kn5Model model = Kn5Reader::Load(kn5Path);
+    if (model.encrypted)
+    {
+        throw std::runtime_error(
+            "Refusing '" + kn5Path.filename().string() +
+            "': it carries the CSP kn5 encryption trailer. Its textures and several meshes are decoys in the plain "
+            "section, so the import would be wrong without looking it.");
+    }
+
+    const std::string name = kn5Path.stem().string();
+    const std::filesystem::path gltfPath = targetDirectory / (name + ".gltf");
+    const std::filesystem::path binaryPath = targetDirectory / "buffers" / (name + ".bin");
+    std::error_code existsEc;
+    if (std::filesystem::exists(gltfPath, existsEc) || std::filesystem::exists(binaryPath, existsEc))
+    {
+        throw std::runtime_error("'" + gltfPath.string() + "' already exists; an import does not overwrite it");
+    }
+
+    const std::filesystem::path textureDirectory = targetDirectory / "textures";
+    for (const std::filesystem::path& directory : {targetDirectory, textureDirectory, binaryPath.parent_path()})
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(directory, ec);
+        if (ec)
+        {
+            throw std::runtime_error("Cannot create '" + directory.string() + "': " + ec.message());
+        }
+    }
+
+    GltfBuilder builder(textureDirectory, options);
+    Kn5ImportReport& report = builder.Report();
+    report.foldedTextureNames = FoldTextureCase(model);
+
+    if (const std::optional<std::filesystem::path> skin = ResolveSkinDirectory(kn5Path, options.skin))
+    {
+        report.skin = skin->filename().string();
+        report.skinTextures = ApplySkin(model, *skin).size();
+    }
+
+    builder.WriteTextures(model);
+    builder.AddMaterials(model);
+
+    if (!options.keepVariants)
+    {
+        std::vector<std::string> names;
+        CollectNodeNames(model.root, names);
+        builder.SetLowResTwins(LowResTwins(names));
+    }
+    std::vector<size_t> roots;
+    if (const std::optional<size_t> root = builder.Emit(model.root); root.has_value())
+    {
+        roots.push_back(*root);
+    }
+    const size_t sceneRoot = builder.AddRoot(name, roots);
+
+    const std::string binaryUri = "buffers/" + name + ".bin";
+    const Json document = builder.BuildDocument(sceneRoot, binaryUri);
+    WriteFileBytes(binaryPath, builder.Binary().data(), builder.Binary().size());
+    const std::string text = document.dump();
+    WriteFileBytes(gltfPath, text.data(), text.size());
+
+    report.gltfPath = gltfPath;
+    report.nodes = builder.NodeCount();
+    report.images = builder.ImageCount();
+
+    LOG_INFO(
+        "kn5 '{}': {} nodes ({} transforms, {} meshes, {} empty, {} variants dropped), {} triangles, {} images, "
+        "{} materials",
+        kn5Path.filename().string(),
+        report.nodes,
+        report.transforms,
+        report.meshes,
+        report.emptyMeshes,
+        report.droppedVariants,
+        report.triangles,
+        report.images,
+        report.materials);
+    if (!report.skin.empty())
+    {
+        LOG_INFO("kn5 '{}': skin '{}' ({} textures)", kn5Path.filename().string(), report.skin, report.skinTextures);
+    }
+    if (report.foldedTextureNames > 0)
+    {
+        LOG_INFO("kn5 '{}': folded {} texture names that differed only in case", kn5Path.filename().string(), report.foldedTextureNames);
+    }
+    if (report.scrubbedAttributes > 0 || report.scrubbedMatrices > 0)
+    {
+        LOG_WARN(
+            "kn5 '{}': replaced {} non-finite vertex attributes and dropped {} non-finite node matrices",
+            kn5Path.filename().string(),
+            report.scrubbedAttributes,
+            report.scrubbedMatrices);
+    }
+    return report;
+}
+}
+}

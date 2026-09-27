@@ -17,7 +17,9 @@ namespace ModelImportService
 {
 // Imports a model into its own folder (named after the model) under the
 // destination directory. A .gltf's referenced companions are sorted into
-// buffers/ and textures/ subfolders and its URIs rewritten to match. `policy`
+// buffers/ and textures/ subfolders and its URIs rewritten to match; an
+// Assetto Corsa .kn5 is converted into a glTF bundle laid out the same way,
+// and the returned path is that glTF. `policy`
 // decides what happens when that folder already holds files; see
 // ModelImportTarget. Returns the imported model path. Blocking; prefer
 // StartAsyncImport from the UI thread.

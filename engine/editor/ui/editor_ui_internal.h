@@ -20,6 +20,8 @@ inline constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
 
 // --- editor_ui_shared.cpp -------------------------------------------------
 bool IsSupportedModelAssetPath(const std::filesystem::path& path);
+// A model an import accepts: the loadable formats plus ones it converts (.kn5).
+bool IsImportableModelAssetPath(const std::filesystem::path& path);
 std::filesystem::path NormalizeFilesystemPath(const std::filesystem::path& path);
 bool HasSecondaryMaterialLayer(const MaterialTextureBlendGraph& blendGraph);
 void DrawPrimaryMaterialTextureRows(const ModelImportedMaterialInfo& material);

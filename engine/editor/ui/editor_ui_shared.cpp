@@ -166,7 +166,7 @@ const char* FilePathPromptHint(FileDialogType type)
     switch (type)
     {
     case FileDialogType::OpenModel:
-        return "Model file to import (.gltf or .glb):";
+        return "Model file to import (.gltf, .glb or Assetto Corsa .kn5):";
     case FileDialogType::OpenTexture:
         return "Texture file (.png, .jpg, .hdr, .exr, ...):";
     case FileDialogType::OpenScene:
@@ -248,6 +248,11 @@ std::optional<std::string> PickFilePath(FileDialogType type, bool requested)
 bool IsSupportedModelAssetPath(const std::filesystem::path& path)
 {
     return ModelLoader::IsSupportedModelPath(path);
+}
+
+bool IsImportableModelAssetPath(const std::filesystem::path& path)
+{
+    return ModelLoader::IsImportableModelPath(path);
 }
 
 std::filesystem::path NormalizeFilesystemPath(const std::filesystem::path& path)

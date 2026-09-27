@@ -1047,6 +1047,34 @@ add_test(
 
 set_target_properties(miniengine_model_import_texture_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_kn5_import_tests
+    kn5_import_tests.cpp
+)
+miniengine_group_target_sources(miniengine_kn5_import_tests)
+
+target_link_libraries(miniengine_kn5_import_tests
+    PRIVATE
+        engine_asset
+)
+# stb_image reads back the PNGs the import writes; engine_asset compiles its implementation.
+target_include_directories(miniengine_kn5_import_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_kn5_import_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_kn5_import_tests>
+            $<TARGET_FILE_DIR:miniengine_kn5_import_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.kn5_import
+    COMMAND miniengine_kn5_import_tests
+)
+
+set_target_properties(miniengine_kn5_import_tests PROPERTIES FOLDER "Tests")
+
 # model_cache.cpp calls ApplyImportedMaterialInfo, whose translation unit pulls in
 # material_graph_runtime and yaml-cpp. Listing that chain by hand would be brittle, so this
 # target links engine_asset, like miniengine_model_import_texture_tests.

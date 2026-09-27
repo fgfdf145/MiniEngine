@@ -20,6 +20,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 - 统一场景：模型和灯光共享稳定的编辑器顺序；`ModelComponent`、`LightComponent`、变换、包围盒与 `SceneEntityIdComponent` 构成场景实体。场景采用 YAML v3，并保留旧 v1/v2 的加载兼容路径。
 - 资产工作流：资产浏览、复制、粘贴、重命名、删除与批量操作；资产树为可注册模型和纹理维护 UUID sidecar。
 - glTF 2.0：导入 `.gltf` 与 `.glb`、复制模型包与关联资源、三角化/法线/切线后处理、单位换算；每个已导入材质可保存 `.material.yaml` sidecar，并可编辑 PBR 材质图与材质贴图。
+- Assetto Corsa `.kn5`：导入时转换为 glTF 模型包（`engine/asset/kn5_importer.*`，移植自 [assetto-corsa-gltf](https://github.com/semiloker/assetto-corsa-gltf)，MIT）。保留完整节点层级并把 AC 坐标系（+X 左、+Z 前）转到 glTF；DDS 贴图在 CPU 上解码为 PNG；默认取车辆 `skins/` 下的第一个涂装；AC 的 Blinn-Phong 参数映射为金属度-粗糙度（高光指数与强度→粗糙度，`txMaps`→逐像素粗糙度图，纯色 `txDetail`→车漆底色，`fresnelMaxLevel`→`KHR_materials_specular`，`sunSpecular`→`KHR_materials_clearcoat`）；丢弃 `*_BLUR`、`*_DAMAGE` 与 `_HR`/`_LR` 低模孪生等运行时变体；拒绝带 CSP 加密尾标的文件。
 - 渲染：Cook-Torrance PBR（含多次散射能量补偿）、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient、Hemisphere，最多 1024 盏，局部灯按分簇查找）及灯光 gizmo；最亮的方向光投射 4 级级联阴影（CSM，每级 2048²，3×3 双线性 PCF），点光、聚光与面光从 4096² 阴影图集取阴影（每块 512²，共 64 块）。
 - 后台任务：模型和场景使用异步加载状态机，资产导入在后台执行；主线程在逐帧阶段泵送结果并刷新 UI 或 CPU Renderable。
 - 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性和主题等设置。
@@ -87,7 +88,7 @@ engine_platform -> engine_core
 
 - **Vulkan UV**：贴图加载不做垂直翻转；UV 原点为左上角，行 0 对应 `v0`。不要引入 OpenGL 风格的全局翻转或 `1 - v` 补偿。
 - **单位**：世界单位为米，常量在 `engine/scene/world_units.h`；导入和编辑器 UI 都以此为基准。
-- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。导入还会把模型文件内部的图片（`.glb` 负载、`data:` URI）解包成 `<bundle>/textures/` 下的真实文件；加载只读取，不写盘。因此贴图路径一律相对于模型文件所在目录——外部 URI 和嵌入图片没有例外。`--model` 指向 `assets/` 之外时会先自动导入，再加载导入后的副本。
+- **模型导入**：导入将模型复制到 `assets/models/<bundle>/`，并生成自身资源与 `.material.yaml` sidecar；不修改源模型文件，已有目标文件也不会被导入流程覆盖。导入还会把模型文件内部的图片（`.glb` 负载、`data:` URI）解包成 `<bundle>/textures/` 下的真实文件；加载只读取，不写盘。因此贴图路径一律相对于模型文件所在目录——外部 URI 和嵌入图片没有例外。`--model` 指向 `assets/` 之外时会先自动导入，再加载导入后的副本。`.kn5` 不能直接加载：导入把它转换为 `<bundle>/<名称>.gltf`、`buffers/<名称>.bin` 与 `textures/*.png`，此后按普通 glTF 处理（材质 sidecar、UUID 均适用）；`--model` 指向 `.kn5` 时同样先导入。
 - **资产 UUID**：可注册资产限于 `assets/` 根下的模型和纹理。sidecar 命名为 `<完整文件名>.miniengine_asset.yaml`，资产浏览和场景扫描会忽略该后缀。场景保存 `source_path` 与 `source_uuid`：加载时 UUID 优先，保存时路径优先；重复 UUID 通过 sidecar 的 `file` 与实际文件名仲裁，副本获得新 UUID。
 - **场景身份**：场景 YAML v3 写 `entity_uuid` 和 `selected_entity_uuid`。`entt::entity` 仅在 registry 生命周期内有效，不能持久化或作为跨加载引用；旧 v1/v2 可按旧模型索引加载后升级。
 - **场景写入边界**：`ISceneWorld::Registry()` 对外只读。实体生命周期、组件编辑、变换刷新和 Renderable 脏标记必须调用场景接口，以保持顺序、选择、UUID 索引和缓存同步。

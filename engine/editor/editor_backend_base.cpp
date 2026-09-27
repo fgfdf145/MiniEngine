@@ -7,6 +7,7 @@
 #include "services/scene_renderables.h"
 
 #include <engine/asset/asset_registry.h>
+#include <engine/asset/kn5_importer.h>
 #include <engine/asset/model_cache.h>
 #include <engine/asset/model_loader.h>
 #include <engine/core/log/log.h>
@@ -121,9 +122,10 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
             // Unpacking embedded textures happens at import, so a model that
             // was never imported has none. Import it first; the invariant is
             // that anything reaching the loader lives under the assets root.
-            if (!AssetRegistry::IsUnderAssetsRoot(path))
+            // A .kn5 is never loaded as it is: its import converts it to glTF.
+            if (!AssetRegistry::IsUnderAssetsRoot(path) || Kn5Importer::IsKn5Path(path))
             {
-                LOG_INFO("Model '{}' is outside the assets root; importing it first", path);
+                LOG_INFO("Model '{}' is not an imported glTF; importing it first", path);
                 path = ModelImportService::ImportModelIntoAssetDirectory(
                     path, (EnginePaths::AssetsRoot() / "models").string());
             }

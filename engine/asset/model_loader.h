@@ -172,15 +172,21 @@ class ModelLoader
 {
   public:
     static bool IsImportAvailable();
+    // Formats LoadModel reads: glTF 2.0 (.gltf, .glb).
     static bool IsSupportedModelPath(const std::filesystem::path& path);
+    // Formats an import accepts: the loadable ones, plus Assetto Corsa .kn5, which an import
+    // converts into a glTF bundle (see Kn5Importer).
+    static bool IsImportableModelPath(const std::filesystem::path& path);
     static const char* GetImporterName();
     static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
 
     // Copies a model into targetDirectory. For an ASCII .gltf the referenced
     // companion files are copied too, sorted into subfolders (buffers/,
     // textures/) with the glTF's URIs rewritten to match; .glb is copied
-    // as-is. Existing destination files are kept, never overwritten. Returns
-    // the copied model's path.
+    // as-is; a .kn5 is converted into "<name>.gltf" with its buffer and PNG
+    // textures laid out the same way, taking the car's default skin.
+    // Existing destination files are kept, never overwritten. Returns the
+    // path of the model the engine loads.
     static std::filesystem::path CopyModelWithSortedReferences(
         const std::filesystem::path& modelPath,
         const std::filesystem::path& targetDirectory);
