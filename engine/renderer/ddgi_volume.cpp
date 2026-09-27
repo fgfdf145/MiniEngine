@@ -168,6 +168,31 @@ uint32_t DdgiProbeScheduler::StaleCount(uint32_t level) const
     return stale;
 }
 
+std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> models)
+{
+    if (models.size() != m_previous.size())
+    {
+        m_previous.assign(models.begin(), models.end());
+        m_stillFrames.assign(models.size(), kDdgiMovingInstanceFrames);
+        m_skipped.assign(models.size(), 0u);
+        return m_skipped;
+    }
+    for (size_t index = 0; index < models.size(); ++index)
+    {
+        if (models[index] != m_previous[index])
+        {
+            m_previous[index] = models[index];
+            m_stillFrames[index] = 0;
+        }
+        else if (m_stillFrames[index] < kDdgiMovingInstanceFrames)
+        {
+            ++m_stillFrames[index];
+        }
+        m_skipped[index] = m_stillFrames[index] < kDdgiMovingInstanceFrames ? 1u : 0u;
+    }
+    return m_skipped;
+}
+
 glm::mat3 DdgiRayRotation(uint32_t frameIndex)
 {
     // A uniformly random unit quaternion (Shoemake's method).

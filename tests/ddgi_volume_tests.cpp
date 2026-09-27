@@ -5,6 +5,7 @@
 #include <iostream>
 #include <random>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -167,6 +168,40 @@ void RotationsAreRotations()
         previous = rotation;
     }
 }
+
+// An instance whose matrix changed is left out of the probe rays until it has stood still for
+// kDdgiMovingInstanceFrames frames; one that never moves is always traced.
+void MovingInstancesAreSkippedUntilTheySettle()
+{
+    DdgiMovingInstances moving;
+    std::vector<glm::mat4> models(3, glm::mat4(1.0f));
+    std::span<const uint8_t> skipped = moving.Update(models);
+    Require(skipped.size() == 3 && skipped[0] == 0 && skipped[1] == 0 && skipped[2] == 0, "new instances are traced");
+
+    models[1][3] = glm::vec4(0.1f, 0.0f, 0.0f, 1.0f);
+    skipped = moving.Update(models);
+    Require(skipped[0] == 0 && skipped[1] != 0 && skipped[2] == 0, "the one that moved is skipped");
+    for (uint32_t frame = 1; frame < kDdgiMovingInstanceFrames; ++frame)
+    {
+        skipped = moving.Update(models);
+        Require(skipped[1] != 0, "and stays skipped while it may still move");
+    }
+    skipped = moving.Update(models);
+    Require(skipped[1] == 0, "until it has stood still long enough");
+
+    // A car driving: a new matrix every frame keeps it out.
+    for (uint32_t frame = 0; frame < 3 * kDdgiMovingInstanceFrames; ++frame)
+    {
+        models[2][3] = glm::vec4(0.0f, 0.0f, -0.5f * static_cast<float>(frame + 1), 1.0f);
+        skipped = moving.Update(models);
+        Require(skipped[2] != 0 && skipped[0] == 0, "a moving instance is skipped every frame");
+    }
+
+    // New content (a different instance count) starts over with everything traced.
+    models.push_back(glm::mat4(2.0f));
+    skipped = moving.Update(models);
+    Require(skipped.size() == 4 && skipped[2] == 0 && skipped[3] == 0, "new content is traced");
+}
 }
 
 int main()
@@ -178,6 +213,7 @@ int main()
         SchedulerUpdatesStaleProbesFirst();
         RoundRobinFavoursFineLevels();
         RotationsAreRotations();
+        MovingInstancesAreSkippedUntilTheySettle();
     }
     catch (const std::exception& error)
     {

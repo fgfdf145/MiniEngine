@@ -89,6 +89,28 @@ class DdgiProbeScheduler
     std::vector<LevelState> m_levels;
 };
 
+// Frames an instance stays out of the probe rays after its matrix last changed.
+inline constexpr uint32_t kDdgiMovingInstanceFrames = 30;
+
+// Which ray scene instances the probe rays skip because they move (the DDGI design's moving
+// instances): probes blend over many frames, so a car traced where it passes would leave a dark
+// trail on the road behind it. An instance whose matrix changed in the last kDdgiMovingInstanceFrames
+// frames is skipped; once it stands still it is traced again. It still receives GI either way.
+class DdgiMovingInstances
+{
+  public:
+    // models: this frame's matrix per instance. A different count than last frame is new content,
+    // and every instance starts out still. The result, one flag per instance (non-zero: skip), stays
+    // valid until the next call.
+    std::span<const uint8_t> Update(std::span<const glm::mat4> models);
+
+  private:
+    std::vector<glm::mat4> m_previous;
+    // Frames since each instance's matrix last changed, saturating at kDdgiMovingInstanceFrames.
+    std::vector<uint32_t> m_stillFrames;
+    std::vector<uint8_t> m_skipped;
+};
+
 // A rotation for this frame's probe ray directions: the spherical Fibonacci set turned randomly, so
 // the directions cover the sphere over frames.
 glm::mat3 DdgiRayRotation(uint32_t frameIndex);

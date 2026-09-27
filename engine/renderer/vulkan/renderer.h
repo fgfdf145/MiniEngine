@@ -252,6 +252,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // their ray rotations.
     std::unique_ptr<VulkanDdgi> m_ddgi;
     DdgiProbeScheduler m_ddgiScheduler;
+    // The ray scene instances the probe rays skip while they move.
+    DdgiMovingInstances m_ddgiMovingInstances;
     glm::vec2 m_ddgiLayout{0.0f};
     uint32_t m_ddgiFrameIndex = 0;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;
