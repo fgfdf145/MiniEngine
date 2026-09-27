@@ -119,9 +119,10 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
     {
         const float spacing = frame.ddgiSpacings[level];
         const glm::ivec3 origin = frame.ddgiOrigins[level];
-        const glm::vec3 gridPoint = P / spacing - glm::vec3(origin);
-        const glm::vec3 toFace = glm::min(gridPoint, glm::vec3(kDdgiGridSize - 1) - gridPoint);
-        const float fade = std::clamp((std::min(std::min(toFace.x, toFace.y), toFace.z) - 0.5f) / 2.0f, 0.0f, 1.0f);
+        // DdgiIrradianceAlong's fade: by the distance to the camera.
+        const glm::vec3 fromCamera = glm::abs(P - frame.cameraPosition) / spacing;
+        const glm::vec3 toEdge = glm::vec3(kDdgiGridSize / 2 - 1) - 0.5f - fromCamera;
+        const float fade = std::clamp(std::min(std::min(toEdge.x, toEdge.y), toEdge.z), 0.0f, 1.0f);
         if (fade <= 0.0f)
         {
             LOG_INFO("EXPLAIN level {} spacing {} origin ({},{},{}): outside (fade 0)", level, spacing, origin.x, origin.y, origin.z);

@@ -38,7 +38,7 @@ DdgiLevel ComputeDdgiLevel(const glm::vec3& camera, float spacing)
     DdgiLevel level{};
     level.spacing = spacing;
     const glm::ivec3 cell(glm::floor(camera / spacing));
-    level.origin = cell - kDdgiGridSize / 2;
+    level.origin = cell - (kDdgiGridSize / 2 - 1);
     return level;
 }
 

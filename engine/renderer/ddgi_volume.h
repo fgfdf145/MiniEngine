@@ -15,8 +15,8 @@ namespace me
 // GPU updates this frame. shaders/vulkan/ddgi_common.glsl does the same arithmetic.
 
 // Probes per level along x, y (up) and z. Every level has as many; the spacing doubles per level.
-inline constexpr glm::ivec3 kDdgiGridSize{24, 8, 24};
-inline constexpr uint32_t kDdgiProbesPerLevel = 24u * 8u * 24u;
+inline constexpr glm::ivec3 kDdgiGridSize{24, 12, 24};
+inline constexpr uint32_t kDdgiProbesPerLevel = 24u * 12u * 24u;
 inline constexpr uint32_t kDdgiMaxLevels = 4;
 // Rays each updated probe traces per frame: one workgroup of the update pass reads them all.
 inline constexpr uint32_t kDdgiRaysPerProbe = 64;
@@ -32,8 +32,11 @@ struct DdgiLevel
     float spacing = 1.0f;
 };
 
-// The grid of this spacing centred on the camera: the camera's cell, minus half the grid. It moves
-// only when the camera crosses a cell boundary, and then by whole cells.
+// The grid of this spacing centred on the camera: its origin is the camera's cell minus one less than
+// half the grid, so points within half the grid minus one cell of the camera, on every side, lie
+// between probes whatever the camera's place in its cell (11 cells across, 3 up and down). It moves
+// only when the camera crosses a cell boundary, and then by whole cells; ddgi_common.glsl fades each
+// level by the distance to the camera, not to the grid's faces, so the moves do not show.
 DdgiLevel ComputeDdgiLevel(const glm::vec3& camera, float spacing);
 
 // The storage slot along each axis of the probe at world grid coordinate coord: coord mod the grid

@@ -395,13 +395,18 @@ int EditorApplication::Run()
                               renderer->HandleEvent(event);
                           });
         renderer->DrawFrame();
-        sharedState->camera.position += m_options.cameraVelocity;
 
         // Still loading: the scene file, its models, its textures or its ray scene.
         const bool loading = sharedState->asyncSceneLoad.IsActive() || sharedState->asyncLoad.IsActive() ||
                              !sharedState->pendingModelLoads.empty() || !sharedState->sceneUploadStatus.empty() ||
                              sharedState->rayScenePending;
-        if (m_options.maxFrames > 0 && !(m_options.waitForScene && loading))
+        const bool waiting = m_options.waitForScene && loading;
+        // The camera moves only on the frames that count, so it starts from where it was placed.
+        if (!waiting)
+        {
+            sharedState->camera.position += m_options.cameraVelocity;
+        }
+        if (m_options.maxFrames > 0 && !waiting)
         {
             ++renderedFrameCount;
             if (renderedFrameCount >= m_options.maxFrames)

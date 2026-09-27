@@ -36,7 +36,7 @@ std::vector<DdgiLevel> Levels(const glm::vec3& camera, uint32_t count)
 void LevelsCentreOnTheCamera()
 {
     const DdgiLevel level = ComputeDdgiLevel(glm::vec3(0.5f, 0.5f, 0.5f), 1.0f);
-    Require(level.origin == glm::ivec3(-12, -4, -12), "the camera's cell minus half the grid");
+    Require(level.origin == -(kDdgiGridSize / 2 - 1), "the camera's cell minus one less than half the grid");
 
     std::mt19937 rng(5u);
     std::uniform_real_distribution<float> place(-500.0f, 500.0f);
@@ -46,11 +46,13 @@ void LevelsCentreOnTheCamera()
         for (float spacing : {1.0f, 2.0f, 4.0f, 8.0f})
         {
             const DdgiLevel grid = ComputeDdgiLevel(camera, spacing);
+            // What ddgi_common.glsl's fade assumes: every point within half the grid minus one cell of
+            // the camera lies between the grid's first and last probes.
             const glm::vec3 low = glm::vec3(grid.origin) * spacing;
             const glm::vec3 high = glm::vec3(grid.origin + kDdgiGridSize - 1) * spacing;
-            const glm::vec3 margin = glm::vec3(kDdgiGridSize / 2 - 1) * spacing;
-            Require(glm::all(glm::greaterThanEqual(camera, low + margin)) && glm::all(glm::lessThanEqual(camera, high - margin + spacing)),
-                    "the camera stays in the grid's middle cells");
+            const glm::vec3 reach = glm::vec3(kDdgiGridSize / 2 - 1) * spacing;
+            Require(glm::all(glm::greaterThanEqual(camera - reach, low)) && glm::all(glm::lessThanEqual(camera + reach, high)),
+                    "the grid reaches half its size minus one cell around the camera");
         }
     }
 }

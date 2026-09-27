@@ -50,9 +50,12 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
 
 ## Probes
 
-- **Cascades**: 4 levels of 24 x 8 x 24 probes (x, y, z), spacing 1, 2, 4, 8 m: 24 to 192 m wide, 8 to
-  64 m tall. Each level's grid origin is the camera snapped to that level's spacing, minus half the
-  grid. Settings can change the base spacing and the level count.
+- **Cascades**: 4 levels of 24 x 12 x 24 probes (x, y, z), spacing 1, 2, 4, 8 m: 24 to 192 m wide, 12
+  to 96 m tall. Each level's grid origin is the camera's cell at that level's spacing minus one less
+  than half the grid, so it reaches 11 cells across and 5 up and down around the camera wherever the
+  camera is in its cell. (8 tall, first, reached 2 cells up: looking up at New Sponza's walls fell
+  to the 8 m level and the SH sky; against the reference the Cornell box went 1.16 -> 1.02 with 12.)
+  Settings can change the base spacing and the level count.
 - **Toroidal storage**: a probe at world grid coordinate g is stored at g mod the grid size, so a
   scroll moves nothing. A per-probe state buffer holds the coordinate each slot last held, the
   relocation offset and a state (invalid, active, inactive). Each frame `ddgi_scroll.comp` marks
@@ -60,7 +63,7 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
 - **Textures**, one 2D array layer per level, octahedral with a 1-texel border:
   irradiance 8 x 8 RGBA16F (rgb irradiance / pi, the ambient term's unit; a the cosine-weighted sky
   visibility, the share of rays that escape), visibility 16 x 16 RG16F (mean distance, mean squared
-  distance). Irradiance per level is 240 x 1920 texels, visibility 432 x 3456.
+  distance). Irradiance per level is 2880 x 240 texels, visibility 5184 x 432.
 - **Schedule**: the CPU picks at most 2048 probes a frame (settings), first every invalid probe of the
   finest levels, then round robin with level 0 twice as often as level 1, and so on. An invalid probe
   is not sampled until it is updated.
@@ -90,7 +93,9 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
 - **Sampling** (`ddgi_common.glsl`): the eight probes around the point, trilinear weights times a
   back-face term times the Chebyshev visibility test, with the surface point biased along the normal
   and the view vector (0.2 spacing). The finest level containing the point is used; in its outermost
-  cell it blends to the next. (Two cells, first, handed much of a 16 m room's ceiling to the 4 m and
+  cell it blends to the next, by the point's distance to the camera rather than to the grid's faces:
+  those move a whole cell when the grid scrolls, and with them the blend, which showed as the whole
+  image switching as the camera crossed a cell (13.7/255 on average across one, now as any 0.1 m). (Two cells, first, handed much of a 16 m room's ceiling to the 4 m and
   8 m levels, whose probes stand far below it or above the roof: 2.0x against the reference, 1.24x
   with one.) Outside every level, or with DDGI off, the SH sky as now.
 - **Diffuse**: `EvaluateSkyAmbient` and `EvaluateUniformAmbient` take the DDGI irradiance in place of

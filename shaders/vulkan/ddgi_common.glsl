@@ -7,8 +7,8 @@
 
 // kDdgiGridSize, kDdgiProbesPerLevel, kDdgiIrradianceTexels and kDdgiVisibilityTexels in
 // ddgi_volume.h.
-const ivec3 DDGI_GRID = ivec3(24, 8, 24);
-const uint DDGI_PROBES_PER_LEVEL = 24u * 8u * 24u;
+const ivec3 DDGI_GRID = ivec3(24, 12, 24);
+const uint DDGI_PROBES_PER_LEVEL = 24u * 12u * 24u;
 const int DDGI_IRRADIANCE_TEXELS = 8;
 const int DDGI_VISIBILITY_TEXELS = 16;
 
@@ -240,12 +240,14 @@ vec4 DdgiIrradianceAlong(vec3 P, vec3 N, vec3 V, vec3 D, out float weight)
     uint levelCount = DdgiLevelCount();
     for (uint level = 0u; level < levelCount && remaining > 1e-3; ++level)
     {
-        // Cells to the nearest face of the grid: 0 at the outer probes. The outer cell fades. The
-        // grid is only 8 probes tall, so a wider band handed much of a room's ceiling to levels four
-        // and eight times coarser, whose probes stand far below it or above the roof.
-        vec3 gridPosition = P / DdgiLevelSpacing(level) - vec3(DdgiLevelOrigin(level));
-        vec3 toFace = min(gridPosition, vec3(DDGI_GRID - 1) - gridPosition);
-        float fade = clamp(min(min(toFace.x, toFace.y), toFace.z) - 0.5, 0.0, 1.0);
+        // The level answers within half its grid minus one cell of the camera (ComputeDdgiLevel in
+        // ddgi_volume.cpp), less half a cell for the lookup's bias, fading over the outer cell. By the
+        // distance to the camera, not to the grid's faces: those jump a cell when the grid scrolls, and
+        // the whole image changed with them. One cell rather than two: the grid is only 8 probes tall,
+        // and a wider band handed much of a room's ceiling to levels four and eight times coarser.
+        vec3 fromCamera = abs(P - ubo.cameraWorldPosition.xyz) / DdgiLevelSpacing(level);
+        vec3 toEdge = vec3(DDGI_GRID / 2 - 1) - 0.5 - fromCamera;
+        float fade = clamp(min(min(toEdge.x, toEdge.y), toEdge.z), 0.0, 1.0);
         if (fade <= 0.0)
         {
             continue;
