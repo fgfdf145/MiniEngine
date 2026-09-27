@@ -55,16 +55,18 @@ uint OccludedSectors(float minT, float maxT)
 
 void main()
 {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(vec2(pixel), aoConstants.extent)))
+    // Half resolution: this invocation traces one pixel of its 2x2 block (HalfResSourcePixel).
+    ivec2 halfPixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(halfPixel, HalfResExtent())))
     {
         return;
     }
+    ivec2 pixel = HalfResSourcePixel(halfPixel);
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
     if (depth >= 1.0)
     {
-        imageStore(giRawImage, pixel, vec4(0.0));
+        imageStore(giRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -78,7 +80,7 @@ void main()
     pixelRadius = min(pixelRadius, aoConstants.maxPixelRadius);
     if (pixelRadius < 1.0)
     {
-        imageStore(giRawImage, pixel, vec4(0.0));
+        imageStore(giRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -178,5 +180,5 @@ void main()
     }
 
     vec3 result = weightSum > 0.0 ? indirect / weightSum : vec3(0.0);
-    imageStore(giRawImage, pixel, vec4(result * aoConstants.strength, 1.0));
+    imageStore(giRawImage, halfPixel, vec4(result * aoConstants.strength, 1.0));
 }

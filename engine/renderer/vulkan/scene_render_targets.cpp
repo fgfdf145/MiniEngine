@@ -95,6 +95,12 @@ VkExtent2D SceneRenderTargets::GetExtent() const
     return m_extent;
 }
 
+VkExtent2D SceneRenderTargets::GetTargetExtent(RenderTargetId target) const
+{
+    const uint32_t downscale = Describe(target).downscale;
+    return {(m_extent.width + downscale - 1) / downscale, (m_extent.height + downscale - 1) / downscale};
+}
+
 bool SceneRenderTargets::MatchesExtent(VkExtent2D extent) const
 {
     return m_extent.width == std::max(extent.width, 1u) &&
@@ -294,6 +300,9 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         description.bindToImGui = false;
     };
     describeAoTarget(RenderTargetId::AoRaw, "AO trace");
+    // The AO and GI traces run at half resolution, one pixel of each 2x2 block, and their resolves
+    // upsample (vbao_common.glsl's HalfResSourcePixel).
+    Describe(RenderTargetId::AoRaw).downscale = 2;
     describeAoTarget(RenderTargetId::SceneAo, "AO");
 
     // Screen-space reflections, written by compute: rgb radiance, a confidence. RGBA16F is in the
@@ -315,6 +324,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeSsrTarget(RenderTargetId::SceneReflections, "Reflections");
     // One-bounce indirect diffuse: rgb radiance, the same format and usage.
     describeSsrTarget(RenderTargetId::GiRaw, "GI trace");
+    Describe(RenderTargetId::GiRaw).downscale = 2;
     describeSsrTarget(RenderTargetId::SceneGi, "Indirect diffuse");
     // Read back by the DDGI reference comparison (--reference), which reads its irradiance view.
     Describe(RenderTargetId::SceneGi).usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -381,7 +391,11 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
         description.images.assign(copyCount, TargetImage{});
         for (TargetImage& image : description.images)
         {
-            CreateImage(description.format, description.usage, image);
+            CreateImage(
+                description.format,
+                description.usage,
+                GetTargetExtent(target),
+                image);
             image.view = CreateImageView(image.image, description.format, description.aspect);
             if ((description.aspect & VK_IMAGE_ASPECT_STENCIL_BIT) != 0)
             {
@@ -446,13 +460,13 @@ uint32_t SceneRenderTargets::FindMemoryType(uint32_t typeFilter, VkMemoryPropert
     throw std::runtime_error("Failed to find suitable viewport image memory type");
 }
 
-void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, TargetImage& target) const
+void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, TargetImage& target) const
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = m_extent.width;
-    imageInfo.extent.height = m_extent.height;
+    imageInfo.extent.width = extent.width;
+    imageInfo.extent.height = extent.height;
     imageInfo.extent.depth = 1;
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;

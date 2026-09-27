@@ -168,7 +168,7 @@ void VulkanGiTracePass::Record(
         m_descriptorSets.at(slot),
         &constants,
         sizeof(constants),
-        frame.extent);
+        targets.GetTargetExtent(RenderTargetId::GiRaw));
 }
 
 void VulkanGiTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)

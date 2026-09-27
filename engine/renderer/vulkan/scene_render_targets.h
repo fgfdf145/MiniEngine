@@ -55,6 +55,9 @@ class SceneRenderTargets
     VkImageView GetSampledView(RenderTargetId target, uint32_t index) const;
 
     VkExtent2D GetExtent() const;
+    // The size of one target's images: GetExtent, or a fraction of it for the half-resolution traces
+    // (AoRaw and GiRaw), rounded up.
+    VkExtent2D GetTargetExtent(RenderTargetId target) const;
     bool MatchesExtent(VkExtent2D extent) const;
 
     // Copy counts for the two indexing schemes. Transient covers SceneDepth and SceneHdr.
@@ -94,6 +97,8 @@ class SceneRenderTargets
         VkImageUsageFlags usage = 0;
         VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         bool bindToImGui = false;
+        // The images are the scene extent divided by this, rounded up.
+        uint32_t downscale = 1;
         std::vector<TargetImage> images;
     };
 
@@ -103,7 +108,7 @@ class SceneRenderTargets
     void CreateImages(uint32_t swapchainImageCount);
     void DestroyImages(std::array<TargetDescription, kRenderTargetCount>& targets) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
-    void CreateImage(VkFormat format, VkImageUsageFlags usage, TargetImage& target) const;
+    void CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, TargetImage& target) const;
     VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
     TargetDescription& Describe(RenderTargetId target);
     const TargetDescription& Describe(RenderTargetId target) const;

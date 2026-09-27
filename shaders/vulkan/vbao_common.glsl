@@ -42,4 +42,20 @@ vec3 ViewPositionFromDepth(vec2 uv, float depth)
     return vec3(ndc.x * -viewZ / ubo.proj[0][0], ndc.y * -viewZ / ubo.proj[1][1], viewZ);
 }
 
+// The half-resolution traces (vbao_trace.comp, gi_trace.comp) trace one full-resolution pixel of
+// each 2x2 block. With the temporal filter on the pixel cycles through the block over four frames,
+// so the history sees every pixel; without it the pattern holds still rather than shimmer. The
+// resolves call this too, to find where each half-resolution sample came from.
+ivec2 HalfResSourcePixel(ivec2 halfPixel)
+{
+    const ivec2 kOffsets[4] = ivec2[4](ivec2(0, 0), ivec2(1, 1), ivec2(1, 0), ivec2(0, 1));
+    uint index = (aoConstants.flags & AO_FLAG_TEMPORAL) != 0u ? aoConstants.frameIndex % 4u : 0u;
+    return min(halfPixel * 2 + kOffsets[index], ivec2(aoConstants.extent) - 1);
+}
+
+ivec2 HalfResExtent()
+{
+    return (ivec2(aoConstants.extent) + 1) / 2;
+}
+
 #endif

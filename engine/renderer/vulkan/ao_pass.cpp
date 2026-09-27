@@ -130,7 +130,7 @@ void VulkanAoTracePass::Record(
         m_descriptorSets.at(slot),
         &constants,
         sizeof(constants),
-        frame.extent);
+        targets.GetTargetExtent(RenderTargetId::AoRaw));
 }
 
 void VulkanAoTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)

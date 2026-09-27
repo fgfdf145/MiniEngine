@@ -67,32 +67,46 @@ void main()
     float distanceToCamera = -ViewZFromDepth(depth);
     vec3 normal = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).ba);
 
-    vec3 current = texelFetch(giRawTexture, pixel, 0).rgb;
-    if ((aoConstants.flags & AO_FLAG_SPATIAL) != 0u)
+    // The trace ran at half resolution (HalfResSourcePixel): upsample it with a depth- and
+    // normal-aware filter over the 3x3 half-resolution samples around this pixel, about the 5x5
+    // full-resolution neighbourhood the spatial filter covered at full resolution. Without the
+    // spatial filter only the samples within a pixel or so count.
+    ivec2 halfExtent = HalfResExtent();
+    ivec2 center = min(pixel / 2, halfExtent - 1);
+    bool spatial = (aoConstants.flags & AO_FLAG_SPATIAL) != 0u;
+    vec3 current = texelFetch(giRawTexture, center, 0).rgb;
+    vec3 sum = vec3(0.0);
+    float weightSum = 0.0;
+    for (int y = -1; y <= 1; ++y)
     {
-        vec3 sum = vec3(0.0);
-        float weightSum = 0.0;
-        for (int y = -2; y <= 2; ++y)
+        for (int x = -1; x <= 1; ++x)
         {
-            for (int x = -2; x <= 2; ++x)
+            ivec2 sampleCoord = clamp(center + ivec2(x, y), ivec2(0), halfExtent - 1);
+            ivec2 source = HalfResSourcePixel(sampleCoord);
+            // A tent over the full-resolution distance to where the sample was traced, so the
+            // weights change across each 2x2 block instead of repeating over it.
+            vec2 offset = abs(vec2(source - pixel));
+            vec2 tent = max(1.0 - offset / (spatial ? 3.5 : 1.5), 0.0);
+            float distanceWeight = tent.x * tent.y;
+            if (distanceWeight <= 0.0)
             {
-                ivec2 neighbor = clamp(pixel + ivec2(x, y), ivec2(0), extent - 1);
-                float neighborDepth = texelFetch(depthTexture, neighbor, 0).r;
-                if (neighborDepth >= 1.0)
-                {
-                    continue;
-                }
-                float neighborDistance = -ViewZFromDepth(neighborDepth);
-                float depthWeight = max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (SPATIAL_DEPTH_TOLERANCE * distanceToCamera));
-                vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, neighbor, 0).ba);
-                float normalWeight = pow(max(dot(normal, neighborNormal), 0.0), SPATIAL_NORMAL_POWER);
-                float weight = depthWeight * normalWeight;
-                sum += weight * texelFetch(giRawTexture, neighbor, 0).rgb;
-                weightSum += weight;
+                continue;
             }
+            float neighborDepth = texelFetch(depthTexture, source, 0).r;
+            if (neighborDepth >= 1.0)
+            {
+                continue;
+            }
+            float neighborDistance = -ViewZFromDepth(neighborDepth);
+            float depthWeight = max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (SPATIAL_DEPTH_TOLERANCE * distanceToCamera));
+            vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, source, 0).ba);
+            float normalWeight = pow(max(dot(normal, neighborNormal), 0.0), SPATIAL_NORMAL_POWER);
+            float weight = distanceWeight * depthWeight * normalWeight;
+            sum += weight * texelFetch(giRawTexture, sampleCoord, 0).rgb;
+            weightSum += weight;
         }
-        current = weightSum > 0.0 ? sum / weightSum : current;
     }
+    current = weightSum > 0.0 ? sum / weightSum : current;
 
     vec3 result = current;
     float sampleCount = 1.0;
