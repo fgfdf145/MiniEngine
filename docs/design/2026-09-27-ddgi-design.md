@@ -182,3 +182,57 @@ Recorded 2026-09-28, to do together with hardware ray tracing (and the DLSS work
 - **Check**: the dolly toward the alcove at the far end of the ground floor (camera `x,1.7,0,180,0`,
   x from 12 to -4, `--debug-view 15`, centre pixel). Converged, the wall reads 13 to 23 out to 20 m and
   49 at 24 m. With the fix, 24 m and beyond should match the near values.
+
+### What It Needs
+
+**Hardware ray tracing groundwork.** Most of the work. DDGI's probe traces, reflections and shadows can
+reuse it. Today the device enables only the swapchain extension.
+
+1. Device: `VK_KHR_acceleration_structure`, `VK_KHR_ray_query` and `VK_KHR_deferred_host_operations`,
+   plus `bufferDeviceAddress` (Vulkan 1.2). That moves `VulkanDevice`'s feature setup from
+   `VkPhysicalDeviceFeatures` to a `VkPhysicalDeviceFeatures2` chain. Without them, the path stays
+   off.
+2. Buffers: vertex and index buffers get device addresses and acceleration-structure build-input
+   usage. The position-only stream the shadow passes read (`VulkanBuffer::GetPositionHandle`) is the
+   build input.
+3. Bottom levels: one per mesh, built on the GPU when content uploads, then compacted. Uncompacted,
+   New Sponza's 10.8 million triangles may take several hundred MB; compaction should roughly halve
+   that, to be measured. This also retires the CPU hierarchy build (`ray_tracing_bvh.cpp`,
+   2.7 s in Release).
+4. Top level: rebuilt or refit each frame from the instances' matrices. It keeps the ray scene's rules:
+   Blend surfaces and moving instances are skipped (`kRayInstanceSkip`), through instance masks.
+5. Alpha: masked and covered surfaces (foliage, ivy) are non-opaque. The ray query's candidate loop
+   reads the ray material's coverage, as `ray_tracing_common.glsl` does.
+
+**The occlusion pass.**
+
+6. A compute pass after the geometry pass, at half resolution. Per pixel it finds the level the DDGI
+   lookup answers from, with the same fade as `DdgiIrradianceAlong`. Only where that is not the
+   finest level, it traces one or two cosine-distributed rays about the normal, up to that level's
+   spacing, and writes the share that escapes.
+7. Filtering: the half-resolution joint bilateral upsample and temporal accumulation the AO and
+   screen-space GI resolves already use (`vbao_common.glsl`'s `HalfResSourcePixel`).
+8. Shading: it scales only the probes' diffuse irradiance (`SceneDiffuseAmbient`). The rays start at
+   VBAO's radius (1.5 m), so the two do not occlude the same thing twice. Whether the specular
+   environment (`SceneSpecularEnvironment`) takes it too is decided by looking.
+
+**Switches, fallback and checks.**
+
+9. A Graphics Debug switch, saved in capture state files. Off, with no pass recorded, on a device
+   without ray queries. As far as known MoltenVK has none, so the Mac goes without; confirm against
+   the MoltenVK version in use first.
+10. Checks:
+    - the alcove dolly above;
+    - `--reference` on `cornell_x4` (1.15, 26% median error before);
+    - validation;
+    - the pass's GPU time, 1 to 2 ms the target.
+
+**Also gained.** DDGI's probe traces (`ddgi_trace.comp`, 3.3 ms in the Sponza capture on the software
+BVH) move to ray queries, likely under 1 ms. Rays can also fill in reflections that SSR misses.
+
+**Size.** The groundwork is about as large as DDGI's first step (BVH, ray scene, traversal). The pass
+is about as large as the half-resolution AO and GI change. Then switches, checks and tuning.
+
+**With DLSS.** DLSS is its own piece: NVIDIA Streamline or the NGX SDK, a new dependency. The motion
+vectors and TAA's jitter it needs already exist. It and this pass work only on NVIDIA GPUs, so plan
+them together.
