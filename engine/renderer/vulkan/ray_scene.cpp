@@ -360,6 +360,11 @@ bool VulkanRayScene::IsReady() const
     return m_ready;
 }
 
+bool VulkanRayScene::IsBuilding() const
+{
+    return m_pendingBuild.valid();
+}
+
 VkDescriptorSetLayout VulkanRayScene::GetSetLayout() const
 {
     return m_setLayout;

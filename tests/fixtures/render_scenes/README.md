@@ -32,6 +32,16 @@ miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 400 --camera 
 miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 200 --camera 0,0.2,150,-90,-5 --camera-velocity 0,0,-1 --debug-view 15 --capture moving.png
 ```
 
+The editor's Capture viewport writes, beside `captures/viewport_<time>.png`, a snapshot of the scene
+(`.scene.yaml`) and the rest of what the frame depends on (`.state.yaml`: camera, viewport size,
+every Graphics Debug setting). `--state FILE` replays it: it loads the snapshot, sets the rest, and
+counts `--frames` only once the scene, its textures and its ray scene have loaded (`--wait-for-scene`
+does that alone). Options after it override it:
+
+```bash
+miniengine_app --state captures/viewport_20260927_192026.state.yaml --frames 600 --capture replay.png
+```
+
 `--reference PREFIX` compares the DDGI probes with a CPU path tracer over the same ray scene, on every
 `--reference-stride`-th pixel with `--reference-samples` paths each, after the last frame, which must
 show view 15. It logs the bias and the relative error, writes the two images as PFM and side by side

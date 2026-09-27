@@ -172,6 +172,9 @@ struct RendererSharedState
     bool engineSettingsNeedsBootstrapSave = false;
     // Set when the editor UI changed a persisted setting that has not been written yet.
     bool engineSettingsDirty = false;
+    // Written by the render backend each frame: new content whose ray-traced scene (DDGI's) is still
+    // building. --wait-for-scene counts no frames until it is done.
+    bool rayScenePending = false;
     RenderExtent requestedViewportExtent{};
     // --viewport-size: the scene renders at this size whatever the viewport panel's size, so captures
     // do not depend on the editor's layout or the window manager. Unset, the panel decides.

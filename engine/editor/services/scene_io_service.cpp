@@ -196,7 +196,7 @@ bool PumpAsyncSceneLoad(RendererSharedState& state)
     return renderablesDirty;
 }
 
-void SaveScene(RendererSharedState& state, const std::string& path)
+void ExportSceneSnapshot(const RendererSharedState& state, const std::string& path)
 {
     SerializedSceneData sceneData = state.GetEditorWorld().CaptureSceneData();
     for (SerializedEntityData& entity : sceneData.entities)
@@ -207,8 +207,12 @@ void SaveScene(RendererSharedState& state, const std::string& path)
             entity.modelBaseColorTextureOverrideUuid,
             "texture override");
     }
-
     SaveEditorSceneDataToFile(sceneData, path);
+}
+
+void SaveScene(RendererSharedState& state, const std::string& path)
+{
+    ExportSceneSnapshot(state, path);
     state.GetEditorWorld().SetSceneFilePath(path);
     state.lastSceneIoError.clear();
     LOG_INFO("Saved scene successfully: {}", path);

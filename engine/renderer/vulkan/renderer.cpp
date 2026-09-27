@@ -711,6 +711,7 @@ void VulkanRenderer::DrawFrame()
         m_ddgiScheduler.Reset();
     }
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, m_ddgiMovingInstances.Update(models));
+    State().rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
 
     // DDGI: this frame's levels around the camera and the probes that update. Off in the Khronos
     // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.

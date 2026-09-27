@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -49,6 +50,13 @@ struct EditorApplicationOptions
     // --reference-explain COLUMN,ROW: logs that comparison point's probe lookup probe by probe.
     int referenceExplainColumn = -1;
     int referenceExplainRow = -1;
+    // --state FILE: an editor capture's state (CaptureStateService): its scene snapshot, camera,
+    // viewport size and Graphics Debug settings, applied before the other options, which override it.
+    // Implies --wait-for-scene.
+    std::optional<std::filesystem::path> statePath;
+    // --wait-for-scene: --frames counts only frames drawn once the scene has loaded, its textures are
+    // prepared and its ray scene is built, so a large scene is not captured half loaded.
+    bool waitForScene = false;
     EnginePaths::Overrides paths;
 };
 

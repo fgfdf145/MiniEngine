@@ -1433,3 +1433,31 @@ if(WIN32)
 endif()
 
 set_target_properties(miniengine_viewport_extent_tests PROPERTIES FOLDER "Tests")
+
+# CaptureStateService's state files: what an editor viewport capture records to be replayed with
+# --state. Lives in engine_editor; none of the renderer code runs.
+add_executable(miniengine_capture_state_tests
+    capture_state_tests.cpp
+)
+miniengine_group_target_sources(miniengine_capture_state_tests)
+
+target_link_libraries(miniengine_capture_state_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_capture_state_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_capture_state_tests>
+            $<TARGET_FILE_DIR:miniengine_capture_state_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.capture_state
+    COMMAND miniengine_capture_state_tests
+)
+
+set_target_properties(miniengine_capture_state_tests PROPERTIES FOLDER "Tests")

@@ -69,6 +69,8 @@ class VulkanRayScene
     void Record(VkCommandBuffer commandBuffer);
 
     bool IsReady() const;
+    // A build started by SetContent has not been installed yet.
+    bool IsBuilding() const;
     VkDescriptorSetLayout GetSetLayout() const;
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
     // Submeshes of the installed content, in the order SetContent gave them.

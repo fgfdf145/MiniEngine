@@ -1,5 +1,6 @@
 ﻿#include "editor_backend_base.h"
 
+#include "services/capture_state.h"
 #include "services/entity_edit_service.h"
 #include "services/model_import_service.h"
 #include "services/scene_io_service.h"
@@ -396,6 +397,21 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         {
             std::filesystem::create_directories(path.parent_path());
             CaptureViewport(path);
+            // Beside the image, what it takes to render it again: viewport_<...>.scene.yaml and
+            // viewport_<...>.state.yaml, replayed with miniengine_app --state.
+            std::filesystem::path scenePath = path;
+            scenePath.replace_extension(".scene.yaml");
+            std::filesystem::path statePath = path;
+            statePath.replace_extension(".state.yaml");
+            SceneIoService::ExportSceneSnapshot(State(), scenePath.string());
+            CaptureState captureState;
+            captureState.scenePath = scenePath.filename();
+            captureState.originalScenePath = EditorWorld().GetSceneFilePath();
+            captureState.viewportExtent = State().fixedViewportExtent.value_or(State().requestedViewportExtent);
+            captureState.camera = State().camera;
+            captureState.renderDebug = State().renderDebug;
+            CaptureStateService::Write(statePath, captureState);
+            LOG_INFO("Wrote the capture's scene and state to '{}'", statePath.string());
         }
         catch (const std::exception& error)
         {

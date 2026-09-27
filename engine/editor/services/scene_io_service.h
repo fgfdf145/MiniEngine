@@ -20,6 +20,10 @@ bool PumpAsyncSceneLoad(RendererSharedState& state);
 
 void SaveScene(RendererSharedState& state, const std::string& path);
 
+// Writes the scene as it is to path without making it the open scene's file: a snapshot, such as the
+// one a viewport capture keeps beside its image.
+void ExportSceneSnapshot(const RendererSharedState& state, const std::string& path);
+
 // File > New Scene: the startup scene's sun and atmosphere and nothing else, not yet saved
 // anywhere. Throws while a model or scene is loading.
 void NewScene(RendererSharedState& state);

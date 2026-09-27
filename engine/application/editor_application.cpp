@@ -3,6 +3,7 @@
 #include <engine/core/log/log.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/editor/services/capture_state.h>
 #include <engine/editor/services/scene_io_service.h>
 #include <engine/renderer/rhi/factory.h>
 #include <engine/platform/window/window.h>
@@ -176,6 +177,19 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--state")
+        {
+            options.statePath = std::filesystem::path(ReadRequiredArgument(i, argc, argv, argument));
+            options.waitForScene = true;
+            continue;
+        }
+
+        if (argument == "--wait-for-scene")
+        {
+            options.waitForScene = true;
+            continue;
+        }
+
         if (argument == "--no-ddgi")
         {
             options.ddgiDisabled = true;
@@ -292,7 +306,36 @@ int EditorApplication::Run()
     }
 
     auto sharedState = std::make_shared<RendererSharedState>();
-    sharedState->editorUi.EditRenderDebug().khronosReference = m_options.khronosReference;
+    std::optional<std::string> startupScenePath = m_options.startupScenePath;
+    std::optional<RenderExtent> viewportSize = m_options.viewportSize;
+    if (m_options.statePath.has_value())
+    {
+        const CaptureState state = CaptureStateService::Read(*m_options.statePath);
+        LOG_INFO("Replaying the capture state '{}'", m_options.statePath->string());
+        sharedState->editorUi.EditRenderDebug() = state.renderDebug;
+        Camera& camera = sharedState->camera;
+        camera.position = state.camera.position;
+        camera.yawDegrees = state.camera.yawDegrees;
+        camera.pitchDegrees = state.camera.pitchDegrees;
+        camera.fovDegrees = state.camera.fovDegrees;
+        camera.nearPlane = state.camera.nearPlane;
+        camera.farPlane = state.camera.farPlane;
+        camera.exposureEv100 = state.camera.exposureEv100;
+        camera.autoExposure = state.camera.autoExposure;
+        camera.autoWhiteBalance = state.camera.autoWhiteBalance;
+        if (!startupScenePath.has_value())
+        {
+            startupScenePath = state.scenePath.string();
+        }
+        if (!viewportSize.has_value() && state.viewportExtent.IsValid())
+        {
+            viewportSize = state.viewportExtent;
+        }
+    }
+    if (m_options.khronosReference)
+    {
+        sharedState->editorUi.EditRenderDebug().khronosReference = true;
+    }
     if (m_options.debugView.has_value())
     {
         sharedState->editorUi.EditRenderDebug().gbufferView = *m_options.debugView;
@@ -312,7 +355,7 @@ int EditorApplication::Run()
         sharedState->camera.yawDegrees = camera[3];
         sharedState->camera.pitchDegrees = camera[4];
     }
-    sharedState->fixedViewportExtent = m_options.viewportSize;
+    sharedState->fixedViewportExtent = viewportSize;
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
     Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);
@@ -321,11 +364,11 @@ int EditorApplication::Run()
         sharedState,
         m_options.renderBackend,
         m_options.startupModelPath);
-    if (m_options.startupScenePath.has_value())
+    if (startupScenePath.has_value())
     {
         // Loaded asynchronously and applied by the frame loop, exactly like a scene opened from the
         // editor, so it replaces the test scene a few frames in.
-        SceneIoService::StartAsyncSceneLoad(*sharedState, *m_options.startupScenePath);
+        SceneIoService::StartAsyncSceneLoad(*sharedState, *startupScenePath);
     }
     uint32_t renderedFrameCount = 0;
 
@@ -354,7 +397,11 @@ int EditorApplication::Run()
         renderer->DrawFrame();
         sharedState->camera.position += m_options.cameraVelocity;
 
-        if (m_options.maxFrames > 0)
+        // Still loading: the scene file, its models, its textures or its ray scene.
+        const bool loading = sharedState->asyncSceneLoad.IsActive() || sharedState->asyncLoad.IsActive() ||
+                             !sharedState->pendingModelLoads.empty() || !sharedState->sceneUploadStatus.empty() ||
+                             sharedState->rayScenePending;
+        if (m_options.maxFrames > 0 && !(m_options.waitForScene && loading))
         {
             ++renderedFrameCount;
             if (renderedFrameCount >= m_options.maxFrames)

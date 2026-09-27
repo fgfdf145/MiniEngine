@@ -12,6 +12,8 @@ add_library(engine_editor
     engine_settings.cpp
     engine_settings.h
     renderer_shared_state.h
+    services/capture_state.cpp
+    services/capture_state.h
     services/entity_edit_service.cpp
     services/entity_edit_service.h
     services/model_import_service.cpp
