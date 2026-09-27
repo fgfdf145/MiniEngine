@@ -205,6 +205,11 @@ struct MaterialPbrSurfaceSettings
     float scatterAnisotropy = 0.0f;
     // KHR_materials_unlit: the base colour alone, no lighting.
     bool unlit = false;
+    // A Blend material drawn as a deferred decal: blended into the G-buffer's albedo, metallic,
+    // roughness and emission of the surface under it, which is then lit once with it, instead of
+    // forward shaded on its own. Its normal map, coat and other layers are not drawn. On import it
+    // is on for Blend materials whose name contains "decal".
+    bool decal = false;
 };
 
 struct MaterialGraphNodePosition

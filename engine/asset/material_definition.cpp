@@ -252,6 +252,7 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.textureTransforms = source.textureTransforms;
     destination.textureSamplers = source.textureSamplers;
     destination.unlit = source.pbr.unlit;
+    destination.decal = source.pbr.decal;
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
     destination.shaderGraph = source.shaderGraph;
@@ -383,6 +384,7 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
     pbr["multiscatter_color"] = multiscatterColor;
     pbr["scatter_anisotropy"] = material.pbr.scatterAnisotropy;
     pbr["unlit"] = material.pbr.unlit;
+    pbr["decal"] = material.pbr.decal;
     node["pbr"] = pbr;
 
     // Only the transforms that do something, keyed by slot name.
@@ -614,6 +616,7 @@ bool LoadMaterialDefinition(
             }
             material.pbr.scatterAnisotropy = ClampScatterAnisotropy(pbrNode["scatter_anisotropy"].as<float>(material.pbr.scatterAnisotropy));
             material.pbr.unlit = pbrNode["unlit"].as<bool>(material.pbr.unlit);
+            material.pbr.decal = pbrNode["decal"].as<bool>(material.pbr.decal);
             const std::string storedMode = pbrNode["alpha_mode"].as<std::string>(ToString(material.pbr.alphaMode));
             if (const std::optional<MaterialAlphaMode> parsed = ParseMaterialAlphaMode(storedMode))
             {

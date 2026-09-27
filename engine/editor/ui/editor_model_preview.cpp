@@ -409,6 +409,7 @@ void HashPreviewPbrSurfaceSettings(size_t& seed, const MaterialPbrSurfaceSetting
         HashQuantizedFloat(seed, value);
     }
     HashCombine(seed, pbr.unlit);
+    HashCombine(seed, pbr.decal);
 }
 
 void HashPreviewBlendGraph(size_t& seed, const MaterialTextureBlendGraph& blendGraph)

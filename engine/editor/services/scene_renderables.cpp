@@ -293,6 +293,10 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         {
             renderSubmesh.material.shadingModel[0] |= kShadingFlagUnlit;
         }
+        // A decal lends the surface under it its albedo, metallic, roughness and emission. A material
+        // that needs the forward pass or no lighting cannot be one.
+        renderSubmesh.decal = material.decal && material.alphaMode == MaterialAlphaMode::Blend &&
+                              (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
         renderSubmesh.textureSamplers = material.textureSamplers;
         if (submesh.hasTexCoords && !AreIdentity(material.textureTransforms))
         {

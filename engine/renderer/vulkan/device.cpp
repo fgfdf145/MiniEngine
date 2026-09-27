@@ -98,6 +98,9 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
 
     VkPhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
+    // Deferred decals blend some G-buffer channels and mask the rest, one blend state per attachment.
+    m_supportsIndependentBlend = supportedFeatures.independentBlend == VK_TRUE;
+    deviceFeatures.independentBlend = supportedFeatures.independentBlend;
 
     // BC textures need the feature and, for each format material textures use, sampling with
     // linear filtering. Anything less and every texture stays RGBA8.
@@ -158,6 +161,11 @@ VkDevice VulkanDevice::GetHandle() const
 bool VulkanDevice::SupportsBlockCompression() const
 {
     return m_supportsBlockCompression;
+}
+
+bool VulkanDevice::SupportsIndependentBlend() const
+{
+    return m_supportsIndependentBlend;
 }
 
 VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const

@@ -27,6 +27,8 @@ struct VulkanDrawItem
     // Its material scatters (KHR_materials_volume_scatter, MaterialScatters): the scatter pre-pass
     // draws it as well.
     bool scatters = false;
+    // A Blend item drawn as a deferred decal by the geometry pass (CpuRenderSubmesh::decal).
+    bool decal = false;
 };
 
 struct VulkanFrameSyncObjects

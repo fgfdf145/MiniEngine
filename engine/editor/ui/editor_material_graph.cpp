@@ -888,6 +888,8 @@ bool DrawMaterialPbrControls(MaterialPbrSurfaceSettings& pbr)
     }
     // KHR_materials_unlit: the base colour alone, shown at the display's paper white.
     changed |= ImGui::Checkbox("Unlit", &pbr.unlit);
+    // Blend materials only: blended into the G-buffer under it rather than forward shaded.
+    changed |= ImGui::Checkbox("Deferred decal", &pbr.decal);
     return changed;
 }
 

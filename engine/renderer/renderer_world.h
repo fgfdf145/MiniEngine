@@ -61,6 +61,9 @@ struct CpuRenderSubmesh
     bool hasTexCoords = false;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    // A Blend material drawn as a deferred decal (MaterialPbrSurfaceSettings::decal); never a forward-
+    // shaded, unlit or transmissive one.
+    bool decal = false;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;

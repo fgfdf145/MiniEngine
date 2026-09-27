@@ -67,6 +67,7 @@ struct RenderSubmesh
     GpuTextureTransforms textureTransforms;
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    bool decal = false;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
@@ -379,6 +380,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
     std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;
     std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
+    // gbuffer.frag as a deferred decal, against the geometry pass.
+    std::unique_ptr<VulkanPipelineSet> m_decalPipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
     // GPU time per pass, and the CPU's time per frame outside the waits, for LogFrameTimings.

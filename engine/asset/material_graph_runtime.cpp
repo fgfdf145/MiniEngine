@@ -552,6 +552,7 @@ YAML::Node SerializeMaterialShaderGraph(const MaterialShaderGraph& graph)
         pbr["multiscatter_color"] = multiscatterColor;
         pbr["scatter_anisotropy"] = node.pbr.scatterAnisotropy;
         pbr["unlit"] = node.pbr.unlit;
+        pbr["decal"] = node.pbr.decal;
         nodeMap["pbr"] = pbr;
         nodesNode.push_back(nodeMap);
     }
@@ -695,6 +696,7 @@ bool DeserializeMaterialShaderGraph(
             ReadFloatSequence(pbrNode["multiscatter_color"], node.pbr.multiscatterColor, 3);
             node.pbr.scatterAnisotropy = ClampScatterAnisotropy(ReadFloatOrFallback(pbrNode["scatter_anisotropy"], node.pbr.scatterAnisotropy));
             node.pbr.unlit = pbrNode["unlit"] && pbrNode["unlit"].IsScalar() ? pbrNode["unlit"].as<bool>(node.pbr.unlit) : node.pbr.unlit;
+            node.pbr.decal = pbrNode["decal"] && pbrNode["decal"].IsScalar() ? pbrNode["decal"].as<bool>(node.pbr.decal) : node.pbr.decal;
             node.pbr.alphaMode = ParseMaterialAlphaMode(
                                      pbrNode["alpha_mode"].as<std::string>("opaque"))
                                      .value_or(MaterialAlphaMode::Opaque);

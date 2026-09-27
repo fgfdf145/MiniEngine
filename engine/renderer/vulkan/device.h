@@ -25,6 +25,9 @@ class VulkanDevice
     // Whether material textures can be uploaded as BC7 and BC5: the textureCompressionBC feature
     // is enabled and all three formats sample with linear filtering. Decided once, at creation.
     bool SupportsBlockCompression() const;
+    // Whether the independentBlend feature is enabled, which deferred decals need; without it they
+    // stay forward shaded Blend items.
+    bool SupportsIndependentBlend() const;
 
   private:
     bool IsSuitable(VkPhysicalDevice device) const;
@@ -39,5 +42,6 @@ class VulkanDevice
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_presentQueue = VK_NULL_HANDLE;
     bool m_supportsBlockCompression = false;
+    bool m_supportsIndependentBlend = false;
 };
 }

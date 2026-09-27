@@ -80,6 +80,7 @@ MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData&
     pbr.volumeScatter = material.volumeScatter;
     pbr.scatterAnisotropy = material.scatterAnisotropy;
     pbr.unlit = material.unlit;
+    pbr.decal = material.decal;
     return pbr;
 }
 
@@ -136,6 +137,7 @@ void ApplyPbrSettings(ModelMaterialData& material, const MaterialPbrSurfaceSetti
     material.volumeScatter = pbr.volumeScatter;
     material.scatterAnisotropy = pbr.scatterAnisotropy;
     material.unlit = pbr.unlit;
+    material.decal = pbr.decal;
 }
 
 struct MaterialDefinitionFile

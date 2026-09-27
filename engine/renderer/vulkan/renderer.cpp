@@ -517,6 +517,7 @@ VulkanRenderer::~VulkanRenderer()
     DestroyDescriptorResources();
     m_forwardPipelines.reset();
     m_geometryPipelines.reset();
+    m_decalPipelines.reset();
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
@@ -923,8 +924,24 @@ void VulkanRenderer::DrawFrame()
         preExposure,
         ddgiData);
     // Culled against the jittered projection, the one the GPU rasterises with.
-    const std::vector<VulkanDrawItem> drawItems =
+    std::vector<VulkanDrawItem> drawItems =
         BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view);
+    // The deferred decals leave the Blend tail for the geometry pass, in the same back to front
+    // order. The forward-only order has no G-buffer, and a device without independent blending no
+    // decal pipelines, so there they stay Blend items.
+    std::vector<VulkanDrawItem> decalDrawItems;
+    if (!State().renderDebug.forwardOnly && m_decalPipelines)
+    {
+        const auto decals = std::stable_partition(
+            drawItems.begin(),
+            drawItems.end(),
+            [](const VulkanDrawItem& item)
+            {
+                return !item.decal;
+            });
+        decalDrawItems.assign(decals, drawItems.end());
+        drawItems.erase(decals, drawItems.end());
+    }
 
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
@@ -990,6 +1007,8 @@ void VulkanRenderer::DrawFrame()
         drawItems.begin());
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
+    frame.decalDrawItems = decalDrawItems;
+    frame.decalPipelines = m_decalPipelines.get();
     std::vector<VulkanDrawItem> scatterDrawItems;
     for (const VulkanDrawItem& item : drawItems)
     {
@@ -1246,6 +1265,7 @@ void VulkanRenderer::DestroySwapchainResources()
     m_forwardPipelines.reset();
     m_scatterPipelines.reset();
     m_geometryPipelines.reset();
+    m_decalPipelines.reset();
     m_gbufferDescriptors.reset();
     if (m_sceneTargets)
     {
@@ -1552,6 +1572,7 @@ void VulkanRenderer::CreateScenePasses()
     m_forwardPipelines.reset();
     m_scatterPipelines.reset();
     m_geometryPipelines.reset();
+    m_decalPipelines.reset();
     m_gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *m_sceneTargets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(m_device->GetHandle(), *m_sceneTargets);
@@ -1578,6 +1599,20 @@ void VulkanRenderer::CreateScenePasses()
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         geometryConfig);
+    if (m_device->SupportsIndependentBlend())
+    {
+        MaterialPipelineSetConfig decalConfig = geometryConfig;
+        decalConfig.allowBlending = true;
+        decalConfig.depthLessOrEqual = true;
+        decalConfig.decal = true;
+        m_decalPipelines = std::make_unique<VulkanPipelineSet>(
+            m_device->GetHandle(),
+            m_pipelineCache,
+            geometryPass->GetRenderPass(),
+            m_frameSetLayout->GetHandle(),
+            m_materialSetLayout->GetHandle(),
+            decalConfig);
+    }
     // The default config is the forward shape: triangle.frag, one HDR attachment, RGB writes.
     m_forwardPipelines = std::make_unique<VulkanPipelineSet>(
         m_device->GetHandle(),
@@ -2003,6 +2038,7 @@ void VulkanRenderer::UploadSceneResources()
         renderSubmesh.textureTransforms = BuildGpuTextureTransforms(cpuRenderSubmesh.textureTransforms);
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
         renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
+        renderSubmesh.decal = cpuRenderSubmesh.decal;
         renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
         renderSubmesh.localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
         renderSubmesh.name = cpuRenderSubmesh.name;
@@ -2401,7 +2437,8 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
             static_cast<uint32_t>(submeshIndex),
             forwardShaded,
             transmissive,
-            MaterialScatters(renderSubmesh.material)});
+            MaterialScatters(renderSubmesh.material),
+            renderSubmesh.decal});
     }
 
     std::vector<VulkanDrawItem> ordered;

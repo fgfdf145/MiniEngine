@@ -83,6 +83,8 @@ struct ModelMaterialData
     // Each slot's glTF sampler; the metallic and roughness slots share the metallic-roughness one.
     MaterialTextureSamplers textureSamplers{};
     bool unlit = false;
+    // MaterialPbrSurfaceSettings::decal.
+    bool decal = false;
 };
 
 struct ModelSubmeshData

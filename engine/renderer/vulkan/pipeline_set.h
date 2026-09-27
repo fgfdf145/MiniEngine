@@ -41,6 +41,10 @@ struct MaterialPipelineSetConfig
     // triangle.frag's kScatterPrepass (constant 1): the scatter pre-pass's set, which writes the light
     // entering the surface and the draw slot instead of the shaded colour.
     bool scatterPrepass = false;
+    // gbuffer.frag's kDecal (constant 2), against the geometry pass: blended by the base colour's
+    // alpha into albedo (rgb), GB2's metallic and roughness and emission, every other channel
+    // masked, depth tested (LESS_OR_EQUAL) but not written.
+    bool decal = false;
 };
 
 class VulkanPipelineSet

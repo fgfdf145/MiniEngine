@@ -10,6 +10,9 @@
 #include "anisotropy_common.glsl"
 
 layout(constant_id = 0) const bool kAlphaMask = false;
+// A deferred decal (MaterialPipelineSetConfig::decal): the outputs carry the base colour's alpha,
+// which the pipeline blends albedo, metallic, roughness and emission by; it writes nothing else.
+layout(constant_id = 2) const bool kDecal = false;
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -147,6 +150,13 @@ void main()
     // Pre-exposed like the HDR target (see pre_exposure.glsl), so an emissive far brighter than
     // B10G11R11's 65000 still fits; the lighting pass divides it back into physical units.
     outEmissive = vec4(emissiveSample * material.emissiveFactor * ubo.exposure.x, 0.0);
+    if (kDecal)
+    {
+        // The blend factor; the alpha channels themselves are masked off (GB2's holds the flags).
+        outAlbedo.a = albedo.a;
+        outSurface.a = albedo.a;
+        outEmissive.a = albedo.a;
+    }
 
     // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is
     // the motion in UV units. A consumer finds the previous position at uv - velocity.

@@ -56,6 +56,11 @@ struct ScenePassFrameContext
     ForwardDrawFilter forwardFilter = ForwardDrawFilter::All;
     // gbuffer.frag against GB0-GB3.
     const VulkanPipelineSet* geometryPipelines = nullptr;
+    // The deferred decals (VulkanDrawItem::decal), back to front, which the geometry pass blends
+    // into the G-buffer after the opaque surfaces with decalPipelines. In the deferred order they are
+    // not among drawItems; the forward-only order has no G-buffer and keeps them there as Blend.
+    std::span<const VulkanDrawItem> decalDrawItems;
+    const VulkanPipelineSet* decalPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
     // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see
     // PreExposureFromEv100). Always positive.

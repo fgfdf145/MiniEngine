@@ -19,13 +19,15 @@ namespace
 // copied or moved before vkCreateGraphicsPipelines consumes it.
 struct PipelineVariantState
 {
-    // The fragment stage's specialization constants 0 (kAlphaMask) and 1 (kScatterPrepass), in order.
+    // The fragment stage's specialization constants 0 (kAlphaMask), 1 (kScatterPrepass) and 2
+    // (kDecal), in order.
     struct Constants
     {
         VkBool32 alphaMaskEnabled = VK_FALSE;
         VkBool32 scatterPrepass = VK_FALSE;
+        VkBool32 decal = VK_FALSE;
     } constants;
-    std::array<VkSpecializationMapEntry, 2> specializationEntries{};
+    std::array<VkSpecializationMapEntry, 3> specializationEntries{};
     VkSpecializationInfo specialization{};
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     VkPipelineRasterizationStateCreateInfo rasterizer{};
@@ -126,8 +128,10 @@ VulkanPipelineSet::VulkanPipelineSet(
 
                 variant.constants.alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
                 variant.constants.scatterPrepass = config.scatterPrepass ? VK_TRUE : VK_FALSE;
+                variant.constants.decal = config.decal ? VK_TRUE : VK_FALSE;
                 variant.specializationEntries[0] = {0, offsetof(PipelineVariantState::Constants, alphaMaskEnabled), sizeof(VkBool32)};
                 variant.specializationEntries[1] = {1, offsetof(PipelineVariantState::Constants, scatterPrepass), sizeof(VkBool32)};
+                variant.specializationEntries[2] = {2, offsetof(PipelineVariantState::Constants, decal), sizeof(VkBool32)};
                 variant.specialization.mapEntryCount = static_cast<uint32_t>(variant.specializationEntries.size());
                 variant.specialization.pMapEntries = variant.specializationEntries.data();
                 variant.specialization.dataSize = sizeof(variant.constants);
@@ -158,7 +162,7 @@ VulkanPipelineSet::VulkanPipelineSet(
 
                 variant.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
                 variant.depthStencil.depthTestEnable = VK_TRUE;
-                variant.depthStencil.depthWriteEnable = state.depthWriteEnabled ? VK_TRUE : VK_FALSE;
+                variant.depthStencil.depthWriteEnable = state.depthWriteEnabled && !config.decal ? VK_TRUE : VK_FALSE;
                 variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
                 variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
                 variant.depthStencil.stencilTestEnable = VK_FALSE;
@@ -186,6 +190,20 @@ VulkanPipelineSet::VulkanPipelineSet(
                     blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
                     blend.alphaBlendOp = VK_BLEND_OP_ADD;
                     blend.colorWriteMask = writeMask;
+                    if (config.decal)
+                    {
+                        // Geometry pass order (VulkanGeometryPass::kAttachments): albedo, normal,
+                        // surface, emissive, then the rest, which a decal leaves as the surface under
+                        // it wrote them.
+                        constexpr VkColorComponentFlags kRgb = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+                        constexpr std::array<VkColorComponentFlags, 4> kDecalMasks = {
+                            kRgb,
+                            0u,
+                            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT,
+                            kRgb};
+                        blend.colorWriteMask = attachment < kDecalMasks.size() ? kDecalMasks[attachment] : 0u;
+                        blend.blendEnable = blend.colorWriteMask != 0u ? VK_TRUE : VK_FALSE;
+                    }
                 }
 
                 variant.colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

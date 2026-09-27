@@ -46,6 +46,25 @@ namespace me
 
 namespace
 {
+// Whether a material's name marks it as a decal ("decal", any case, anywhere in it).
+bool NameSaysDecal(std::string_view name)
+{
+    constexpr std::string_view kDecal = "decal";
+    for (size_t start = 0; start + kDecal.size() <= name.size(); ++start)
+    {
+        bool match = true;
+        for (size_t index = 0; index < kDecal.size() && match; ++index)
+        {
+            match = std::tolower(static_cast<unsigned char>(name[start + index])) == kDecal[index];
+        }
+        if (match)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 constexpr int kGltfModePoints = 0;
 constexpr int kGltfModeLines = 1;
 constexpr int kGltfModeLineLoop = 2;
@@ -1067,6 +1086,9 @@ ModelMaterialData BuildMaterialData(
     const std::optional<MaterialAlphaMode> parsedAlphaMode =
         ParseMaterialAlphaMode(material.alphaMode);
     materialData.alphaMode = parsedAlphaMode.value_or(MaterialAlphaMode::Opaque);
+    // glTF has no decals, but models name them: a Blend material called a decal (Sponza's
+    // "dirt_decal") is drawn as one until the material says otherwise.
+    materialData.decal = materialData.alphaMode == MaterialAlphaMode::Blend && NameSaysDecal(materialData.name);
     materialData.alphaCutoff = materialData.alphaMode == MaterialAlphaMode::Mask
                                    ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff), 0.5f)
                                    : 0.5f;

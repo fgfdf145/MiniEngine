@@ -62,6 +62,10 @@ void VulkanGeometryPass::Record(
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
     RecordMaterialDrawItems(commandBuffer, *frame.geometryPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
+    if (frame.decalPipelines != nullptr)
+    {
+        RecordMaterialDrawItems(commandBuffer, *frame.decalPipelines, frame.frameDescriptorSet, frame.decalDrawItems);
+    }
     vkCmdEndRenderPass(commandBuffer);
 }
 
