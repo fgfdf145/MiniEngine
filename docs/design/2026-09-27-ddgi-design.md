@@ -159,3 +159,26 @@ at each pixel, and a probe overlay drawing each probe as a small sphere of its i
 4. Cascades and scrolling, the schedule; the track scene with a moving camera.
 5. Specular sky visibility; moving instances; foliage coverage; adaptive hysteresis.
 6. The path tracer and the comparisons.
+
+## Not Done: Occlusion Finer Than the Probes
+
+Recorded 2026-09-28, to do together with hardware ray tracing (and the DLSS work that brings it).
+
+- **Problem**: a space smaller than a level's spacing is lit as if open. Its probes stand outside it
+  and see into it through the opening, so an arcade's alcove or a doorway is 1.5 to 3 times too
+  bright once the camera is far enough away for a 2, 4 or 8 m level to take it. A 32 x 16 x 32 grid
+  (the finest level to 14.5 m across) and a 3-cell fade (5e17e1b) moved where this starts, from 11 m
+  to about 20 m in New Sponza. They did not remove it. VBAO's 1.5 m radius does not see occluders at
+  that scale, and screen-space GI only sees what is on screen.
+- **Idea**: per pixel, where the answer comes from a level coarser than the finest, trace a few short
+  rays (length about that level's spacing) through the ray scene around the normal. Scale the probes'
+  irradiance by the share that escapes, as an ambient occlusion matched to the probe spacing. The
+  finest level needs none. Half resolution, with a temporal and bilateral filter as the AO has, would
+  keep it to a ray or two a pixel.
+- **Cost**: with the software BVH in `ray_tracing_common.glsl`, about a million rays a frame at half
+  of 2167 x 1767 is estimated at over 10 ms (the probes' 260 000 rays take about 3 ms), too much.
+  With `VK_KHR_ray_query` on an RTX GPU it should be 1 to 2 ms. MoltenVK has no ray queries, so the
+  Mac keeps the software path and would go without it.
+- **Check**: the dolly toward the alcove at the far end of the ground floor (camera `x,1.7,0,180,0`,
+  x from 12 to -4, `--debug-view 15`, centre pixel). Converged, the wall reads 13 to 23 out to 20 m and
+  49 at 24 m. With the fix, 24 m and beyond should match the near values.
