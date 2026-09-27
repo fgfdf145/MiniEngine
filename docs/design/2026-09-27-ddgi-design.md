@@ -92,9 +92,16 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
   Ambient and Hemisphere lights and every bounce, so they are not added again. VBAO still multiplies,
   and `GiComposite` still adds the screen-space bounce: the AO removes the occluded share of the
   probe's average and the screen trace puts back the real radiance of those occluders.
-- **Specular, coat, sheen**: the environment along R becomes
-  `sky(R) * V(R) + E(R) / pi * (1 - V(R))`, where V is the probes' sky visibility: indoors the sky's
-  reflection is replaced by the surroundings' average radiance. SSR still wins where it is trusted.
+- **Specular, coat, sheen** (`SceneSpecularEnvironment`): the environment along R becomes
+  `sky(R) * V(R) + max(E(R) / pi - V(R) * S(R), 0)`, where V is the probes' sky visibility around R, E
+  their irradiance around R and S the sky's own irradiance / pi around R (the SH sky and the ambient
+  lights): E holds the sky's escaped share too, so it is taken out and only the surroundings' light
+  remains. Indoors the sky's reflection gives way to the walls'. The probes are chosen for the surface
+  (bias and back-face term along N) and read along R; choosing them along R let probes outside a
+  tunnel's roof light the reflection of its upper walls. SSR still wins where it is trusted.
+- **Coverage**: a probe inside geometry (inactive) still counts toward its level's coverage; only
+  stale probes lower it. Counting inactive probes out handed their share to the coarser levels and
+  the unoccluded SH sky, which lit walls with probes buried in them as if they stood in the open.
 - **Where**: every surface `ShadeSurface` shades, deferred and forward.
 
 ## Passes and Resources

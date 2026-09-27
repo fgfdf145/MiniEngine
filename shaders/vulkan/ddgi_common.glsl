@@ -131,10 +131,12 @@ vec3 DdgiProbePosition(uint level, ivec3 coord, DdgiProbeState state)
 // What one level's probes send to a surface at P facing N, seen from the direction V (toward the
 // viewer): rgb irradiance / pi, a sky visibility, blended over the eight probes around the point by
 // trilinear weight, a wrap term that favours probes in front of the surface, and the Chebyshev test
-// on the probe's distance moments that drops probes behind walls (Majercik et al. 2019). coverage is
-// the trilinear weight of the probes that could be used: 0 outside the grid or where every probe
-// around is stale.
-vec4 DdgiSampleLevel(uint level, vec3 P, vec3 N, vec3 V, out float coverage)
+// on the probe's distance moments that drops probes behind walls (Majercik et al. 2019), read along D:
+// N for the irradiance the surface receives, another direction for what arrives from there (a
+// specular lobe's). The probes are chosen for the surface either way. coverage is
+// the trilinear weight of the probes updated for where they are, inactive ones included: 0 outside
+// the grid or where no probe around can be used.
+vec4 DdgiSampleLevelAlong(uint level, vec3 P, vec3 N, vec3 V, vec3 D, out float coverage)
 {
     coverage = 0.0;
     float spacing = DdgiLevelSpacing(level);
@@ -158,13 +160,20 @@ vec4 DdgiSampleLevel(uint level, vec3 P, vec3 N, vec3 V, out float coverage)
         ivec3 coord = origin + base + offset;
         ivec3 slot = DdgiStorageSlot(coord);
         DdgiProbeState state = ddgiProbeStates[level * DDGI_PROBES_PER_LEVEL + DdgiSlotIndex(slot)];
-        if (state.coordAndFlags.xyz != coord || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0 ||
-            (state.coordAndFlags.w & DDGI_PROBE_INACTIVE) != 0)
+        if (state.coordAndFlags.xyz != coord || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0)
         {
             continue;
         }
         vec3 trilinear3 = mix(1.0 - alpha, alpha, vec3(offset));
         float trilinear = trilinear3.x * trilinear3.y * trilinear3.z;
+        // A probe inside geometry is known, not missing: the probes around it answer for its share.
+        // Counting it out of the coverage would hand that share to the coarser levels and the
+        // unoccluded sky, which light a wall that has probes buried in it as if it stood in the open.
+        coverage += trilinear;
+        if ((state.coordAndFlags.w & DDGI_PROBE_INACTIVE) != 0)
+        {
+            continue;
+        }
         vec3 probePosition = vec3(coord) * spacing + state.offset.xyz;
 
         vec3 toProbe = normalize(probePosition - P);
@@ -200,19 +209,30 @@ vec4 DdgiSampleLevel(uint level, vec3 P, vec3 N, vec3 V, out float coverage)
 
         vec4 irradiance = textureLod(
             ddgiIrradianceAtlas,
-            vec3(DdgiAtlasUv(slot, N, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)),
+            vec3(DdgiAtlasUv(slot, D, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)),
             0.0);
         sum += irradiance * weight;
         totalWeight += weight;
-        coverage += trilinear;
     }
-    return totalWeight > 0.0 ? sum / totalWeight : vec4(0.0);
+    if (totalWeight <= 0.0)
+    {
+        // Every probe around is inside geometry or stale: this level knows nothing here.
+        coverage = 0.0;
+        return vec4(0.0);
+    }
+    return sum / totalWeight;
 }
 
-// The volume's irradiance / pi (rgb) and sky visibility (a) at P, facing N, seen from V: the finest
+vec4 DdgiSampleLevel(uint level, vec3 P, vec3 N, vec3 V, out float coverage)
+{
+    return DdgiSampleLevelAlong(level, P, N, V, N, coverage);
+}
+
+// The volume's irradiance / pi (rgb) and sky visibility (a) around D at P, on a surface facing N, seen
+// from V (DdgiIrradiance: around N itself): the finest
 // level holding the point, fading into the next over its outermost cells. weight is how much of the
 // answer the volume gives, 1 inside it, 0 outside every level; the caller supplies the rest.
-vec4 DdgiIrradiance(vec3 P, vec3 N, vec3 V, out float weight)
+vec4 DdgiIrradianceAlong(vec3 P, vec3 N, vec3 V, vec3 D, out float weight)
 {
     vec4 result = vec4(0.0);
     float remaining = 1.0;
@@ -228,13 +248,18 @@ vec4 DdgiIrradiance(vec3 P, vec3 N, vec3 V, out float weight)
             continue;
         }
         float coverage;
-        vec4 value = DdgiSampleLevel(level, P, N, V, coverage);
+        vec4 value = DdgiSampleLevelAlong(level, P, N, V, D, coverage);
         float levelWeight = fade * clamp(coverage, 0.0, 1.0);
         result += value * levelWeight * remaining;
         remaining *= 1.0 - levelWeight;
     }
     weight = 1.0 - remaining;
     return result;
+}
+
+vec4 DdgiIrradiance(vec3 P, vec3 N, vec3 V, out float weight)
+{
+    return DdgiIrradianceAlong(P, N, V, N, weight);
 }
 
 #endif

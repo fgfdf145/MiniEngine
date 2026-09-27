@@ -805,6 +805,7 @@ vec3 SpecularAmbientRadiance(vec3 environment, vec4 reflection, float NdV, float
 
 // Defined after EvaluateSkyIrradiance, which it falls back on.
 vec3 SceneDiffuseAmbient(vec3 worldPosition, vec3 n, vec3 V);
+vec3 SceneSpecularEnvironment(vec3 worldPosition, vec3 N, vec3 R, vec3 V, vec3 environment);
 
 vec3 EvaluateUniformAmbient(
     vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V,
@@ -828,7 +829,8 @@ vec3 EvaluateUniformAmbient(
         specular.diffuseTransmissionFactor > 0.0 ? SceneDiffuseAmbient(worldPosition, -N, V) * ao : vec3(0.0),
         metallic, albedos.dielectric, specular);
     diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
-    return diffuse + specularAlbedo * SpecularAmbientRadiance(SceneAmbientAlong(R), reflection, NdV, ao, roughness, horizon);
+    vec3 environment = SceneSpecularEnvironment(worldPosition, N, R, V, SceneAmbientAlong(R));
+    return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, horizon);
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +982,34 @@ vec3 SceneDiffuseAmbient(vec3 worldPosition, vec3 n, vec3 V)
     return probes + (1.0 - weight) * fallback;
 }
 
+// What a specular lobe along R receives, given what the sky and the ambient lights send along it
+// (environment): inside the DDGI volume, only the share of it the probes see escape around R; the
+// rest comes from the surroundings, whose average radiance is what the probes gathered around R
+// minus what of it came from the sky. Under a roof or in a tunnel the sky's reflection gives way to
+// the walls' light. Where the screen-space reflection is trusted it replaces both, as before.
+vec3 SceneSpecularEnvironment(vec3 worldPosition, vec3 N, vec3 R, vec3 V, vec3 environment)
+{
+    if (DdgiLevelCount() == 0u)
+    {
+        return environment;
+    }
+    float weight;
+    vec4 probes = DdgiIrradianceAlong(worldPosition, N, V, R, weight);
+    if (weight <= 1e-4)
+    {
+        return environment;
+    }
+    probes /= weight;
+    float skyVisibility = clamp(probes.a, 0.0, 1.0);
+    // The probes' irradiance / pi around R is the sky's, times the share of rays that escaped, plus
+    // the surroundings', times the rest.
+    vec3 skyAround = EnvironmentMode() == ENVIRONMENT_NONE
+                         ? SceneAmbientAlong(R)
+                         : EvaluateSkyIrradiance(R) / ATMOSPHERE_PI + SceneLightsAmbientAlong(R);
+    vec3 surroundings = max(probes.rgb - skyVisibility * skyAround, vec3(0.0));
+    return mix(environment, environment * skyVisibility + surroundings, weight);
+}
+
 
 // The ambient term under a physical sky, split-sum (Karis 2013): the diffuse lobe sees the SH
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
@@ -995,7 +1025,9 @@ vec3 EvaluateSkyAmbient(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3
     // An anisotropic base reflects about the bent normal (AnisotropicBentNormal); the DFG weight
     // keeps the isotropic roughness.
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
-    vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R);
+    vec3 environment = SceneSpecularEnvironment(
+        worldPosition, N, R, V,
+        textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
     vec3 diffuse = diffuseAlbedo * SceneDiffuseAmbient(worldPosition, N, V) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
@@ -1037,34 +1069,36 @@ float SampleSheenAlbedo(float roughness, float NdV)
 // The sheen's share of the ambient term, as Filament shades it: the GGX-prefiltered sky along the
 // reflection at the sheen's roughness (the uniform ambient under None), times the sheen colour and
 // its albedo. The caller applies the occlusion.
-vec3 EvaluateSheenAmbient(vec3 N, vec3 V, SheenParams sheen)
+vec3 EvaluateSheenAmbient(vec3 worldPosition, vec3 N, vec3 V, SheenParams sheen)
 {
     float albedo = SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
     if (EnvironmentMode() == ENVIRONMENT_NONE)
     {
-        return sheen.color * albedo * SceneAmbientAlong(reflect(-V, N));
+        vec3 uniformR = reflect(-V, N);
+        return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, uniformR, V, SceneAmbientAlong(uniformR));
     }
     vec3 R = reflect(-V, N);
     vec3 sky = textureLod(prefilteredEnvironment, R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    return sheen.color * albedo * (sky + SceneLightsAmbientAlong(R));
+    return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, R, V, sky + SceneLightsAmbientAlong(R));
 }
 
 // The coat's share of the ambient term: its lobe's directional albedo (0.04 A + B) times what the
 // environment sends along the coat's reflection, the same split sum the base's specular uses. Under
 // the uniform ambient that is the ambient luminance itself, weighted by the table as the base is.
-vec3 EvaluateCoatAmbient(CoatParams coat, vec3 V)
+vec3 EvaluateCoatAmbient(vec3 worldPosition, CoatParams coat, vec3 V)
 {
     float NdV = max(dot(coat.normal, V), 0.0);
     if (EnvironmentMode() == ENVIRONMENT_NONE)
     {
         vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
-        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * SceneAmbientAlong(reflect(-V, coat.normal));
+        vec3 uniformR = reflect(-V, coat.normal);
+        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * SceneSpecularEnvironment(worldPosition, coat.normal, uniformR, V, SceneAmbientAlong(uniformR));
     }
     vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
     vec3 coatAlbedo = COAT_F0 * environmentBrdf.x + environmentBrdf.y;
     vec3 R = reflect(-V, coat.normal);
     vec3 sky = textureLod(prefilteredEnvironment, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    return coatAlbedo * (sky + SceneLightsAmbientAlong(R));
+    return coatAlbedo * SceneSpecularEnvironment(worldPosition, coat.normal, R, V, sky + SceneLightsAmbientAlong(R));
 }
 
 // Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
@@ -1222,7 +1256,7 @@ vec3 ShadeSurface(
         // not pass under the fibres' reflection, as in Filament.
         float sheenScaling = 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) *
                                        SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
-        color = (ambient + directAccum) * sheenScaling + sheenAccum + EvaluateSheenAmbient(N, V, sheen) * ao + emissive;
+        color = (ambient + directAccum) * sheenScaling + sheenAccum + EvaluateSheenAmbient(worldPosition, N, V, sheen) * ao + emissive;
     }
     else
     {
@@ -1231,7 +1265,7 @@ vec3 ShadeSurface(
     if (coat.factor > 0.0)
     {
         float coatFresnel = FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
-        vec3 coatAmbient = EvaluateCoatAmbient(coat, V) * ao;
+        vec3 coatAmbient = EvaluateCoatAmbient(worldPosition, coat, V) * ao;
         color = color * (1.0 - coat.factor * coatFresnel) + coat.factor * (coatAmbient + coatAccum);
     }
     return color;

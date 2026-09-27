@@ -11,6 +11,7 @@ y = 0; the scene lowers it 1.5 m under the camera.
 
 import base64
 import json
+import math
 import os
 import random
 import struct
@@ -44,6 +45,23 @@ class Mesh:
         self.quad((x1, y0, z0), (x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (0, 0, -1))
         self.quad((x1, y0, z1), (x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (1, 0, 0))
         self.quad((x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0), (-1, 0, 0))
+
+    def sphere(self, centre, radius, rings=24, segments=48):
+        cx, cy, cz = centre
+        base = len(self.positions)
+        for ring in range(rings + 1):
+            theta = math.pi * ring / rings
+            for segment in range(segments + 1):
+                phi = 2.0 * math.pi * segment / segments
+                n = (math.sin(theta) * math.cos(phi), math.cos(theta), -math.sin(theta) * math.sin(phi))
+                self.positions.append((cx + radius * n[0], cy + radius * n[1], cz + radius * n[2]))
+                self.normals.append(n)
+                self.uvs.append((segment / segments, ring / rings))
+        for ring in range(rings):
+            for segment in range(segments):
+                a = base + ring * (segments + 1) + segment
+                b = a + segments + 1
+                self.indices += [a, b, a + 1, a + 1, b, b + 1]
 
 
 def leaves_png(path):
@@ -118,6 +136,13 @@ def main():
     car.box((-2.3, 1.1, -23.5), (-0.9, 1.5, -21.2))
     meshes["car_paint"] = car
 
+    # Two chrome balls beside the road, one in the open and one in the middle of the tunnel: with
+    # DDGI the tunnel's reflects the concrete around it, not the sky.
+    chrome = Mesh()
+    chrome.sphere((4.0, 1.0, -40.0), 1.0)
+    chrome.sphere((4.0, 1.0, -110.0), 1.0)
+    meshes["chrome"] = chrome
+
     materials = {
         "grass": {"color": [0.10, 0.18, 0.05, 1.0], "roughness": 0.95},
         "asphalt": {"color": [0.07, 0.07, 0.07, 1.0], "roughness": 0.85},
@@ -126,6 +151,7 @@ def main():
         "bark": {"color": [0.12, 0.08, 0.05, 1.0], "roughness": 0.9},
         "leaves": {"color": [1.0, 1.0, 1.0, 1.0], "roughness": 0.8, "texture": True},
         "car_paint": {"color": [0.55, 0.03, 0.03, 1.0], "roughness": 0.3},
+        "chrome": {"color": [0.95, 0.93, 0.88, 1.0], "roughness": 0.15, "metallic": 1.0},
     }
 
     buffer = bytearray()
@@ -157,7 +183,7 @@ def main():
         spec = materials[name]
         material = {
             "name": name,
-            "pbrMetallicRoughness": {"baseColorFactor": spec["color"], "metallicFactor": 0.0, "roughnessFactor": spec["roughness"]},
+            "pbrMetallicRoughness": {"baseColorFactor": spec["color"], "metallicFactor": spec.get("metallic", 0.0), "roughnessFactor": spec["roughness"]},
         }
         if spec.get("texture"):
             material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0}
