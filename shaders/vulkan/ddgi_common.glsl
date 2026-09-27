@@ -183,9 +183,10 @@ vec4 DdgiSampleLevelAlong(uint level, vec3 P, vec3 N, vec3 V, vec3 D, out float 
         vec3 probeToPoint = biased - probePosition;
         float distance = length(probeToPoint);
         vec2 moments = textureLod(
-            ddgiVisibilityAtlas,
-            vec3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)),
-            0.0).rg;
+                           ddgiVisibilityAtlas,
+                           vec3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)),
+                           0.0)
+                           .rg;
         float chebyshev = 1.0;
         if (distance > moments.x)
         {

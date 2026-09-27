@@ -5,7 +5,11 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $repoRoot "tests/fixtures/render_scenes"
-$assetsDir = if ($env:MINIENGINE_ASSETS_DIR) { $env:MINIENGINE_ASSETS_DIR } else { Join-Path $repoRoot "assets" }
+$assetsDir = Join-Path $repoRoot "assets"
+if ($env:MINIENGINE_ASSETS_DIR)
+{
+    $assetsDir = $env:MINIENGINE_ASSETS_DIR
+}
 
 foreach ($pair in @(@("models", "models"), @("scenes", "scenes/test")))
 {

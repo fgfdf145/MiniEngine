@@ -36,7 +36,7 @@ constants;
 const uint ALPHA_OPAQUE = 0u;
 const uint ALPHA_MASK = 1u;
 
-shared vec4 sharedAlbedo[256];  // rgb covered albedo sum, a covered count
+shared vec4 sharedAlbedo[256];   // rgb covered albedo sum, a covered count
 shared vec4 sharedEmission[256]; // rgb emission sum, a coverage sum
 
 float LodForSize(sampler2D image, float texels)

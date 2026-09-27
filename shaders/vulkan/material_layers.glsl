@@ -7,19 +7,19 @@
 // as the flat normal, so the factors alone apply. Needs material_common.glsl, gbuffer_common.glsl,
 // normal_map.glsl, material_uv.glsl and anisotropy_common.glsl.
 
-layout(set = 1, binding = 13) uniform sampler2D clearcoatTexture;          // R
-layout(set = 1, binding = 14) uniform sampler2D clearcoatRoughnessTexture; // G
-layout(set = 1, binding = 15) uniform sampler2D sheenColorTexture;         // RGB, sRGB
-layout(set = 1, binding = 16) uniform sampler2D sheenRoughnessTexture;     // A
-layout(set = 1, binding = 17) uniform sampler2D anisotropyTexture;         // RG direction, B strength
-layout(set = 1, binding = 18) uniform sampler2D specularTexture;           // A
-layout(set = 1, binding = 19) uniform sampler2D specularColorTexture;      // RGB, sRGB
-layout(set = 1, binding = 20) uniform sampler2D clearcoatNormalTexture;    // tangent-space normal
-layout(set = 1, binding = 21) uniform sampler2D iridescenceTexture;        // R
-layout(set = 1, binding = 22) uniform sampler2D iridescenceThicknessTexture; // G
-layout(set = 1, binding = 23) uniform sampler2D transmissionTexture;         // R
-layout(set = 1, binding = 24) uniform sampler2D thicknessTexture;            // G
-layout(set = 1, binding = 25) uniform sampler2D diffuseTransmissionTexture;  // A
+layout(set = 1, binding = 13) uniform sampler2D clearcoatTexture;                // R
+layout(set = 1, binding = 14) uniform sampler2D clearcoatRoughnessTexture;       // G
+layout(set = 1, binding = 15) uniform sampler2D sheenColorTexture;               // RGB, sRGB
+layout(set = 1, binding = 16) uniform sampler2D sheenRoughnessTexture;           // A
+layout(set = 1, binding = 17) uniform sampler2D anisotropyTexture;               // RG direction, B strength
+layout(set = 1, binding = 18) uniform sampler2D specularTexture;                 // A
+layout(set = 1, binding = 19) uniform sampler2D specularColorTexture;            // RGB, sRGB
+layout(set = 1, binding = 20) uniform sampler2D clearcoatNormalTexture;          // tangent-space normal
+layout(set = 1, binding = 21) uniform sampler2D iridescenceTexture;              // R
+layout(set = 1, binding = 22) uniform sampler2D iridescenceThicknessTexture;     // G
+layout(set = 1, binding = 23) uniform sampler2D transmissionTexture;             // R
+layout(set = 1, binding = 24) uniform sampler2D thicknessTexture;                // G
+layout(set = 1, binding = 25) uniform sampler2D diffuseTransmissionTexture;      // A
 layout(set = 1, binding = 26) uniform sampler2D diffuseTransmissionColorTexture; // RGB, sRGB
 
 struct MaterialLayers

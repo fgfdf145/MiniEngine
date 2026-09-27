@@ -489,7 +489,6 @@ float SmoothDistanceAttenuation(float distance, float range)
 // Rectangular area light
 // ---------------------------------------------------------------------------
 
-
 // The specular BRDF value of a rectangular light for a surface with normal N and this roughness,
 // at the light's representative point, and the Fresnel term it used (the base's diffuse weight
 // needs it). The caller multiplies by the irradiance.
@@ -1009,7 +1008,6 @@ vec3 SceneSpecularEnvironment(vec3 worldPosition, vec3 N, vec3 R, vec3 V, vec3 e
     vec3 surroundings = max(probes.rgb - skyVisibility * skyAround, vec3(0.0));
     return mix(environment, environment * skyVisibility + surroundings, weight);
 }
-
 
 // The ambient term under a physical sky, split-sum (Karis 2013): the diffuse lobe sees the SH
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,

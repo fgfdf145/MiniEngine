@@ -339,7 +339,10 @@ int EditorApplication::Run()
     struct LiveResizeHandlerReset
     {
         Window& window;
-        ~LiveResizeHandlerReset() { window.SetLiveResizeHandler({}); }
+        ~LiveResizeHandlerReset()
+        {
+            window.SetLiveResizeHandler({});
+        }
     } liveResizeHandlerReset{window};
 
     while (!window.ShouldClose())

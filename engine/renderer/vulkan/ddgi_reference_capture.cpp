@@ -39,7 +39,8 @@ void WritePfm(const std::filesystem::path& path, const std::vector<glm::vec3>& p
     {
         throw std::runtime_error("Failed to write '" + path.string() + "'");
     }
-    file << "PF\n" << width << ' ' << height << "\n-1.0\n";
+    file << "PF\n"
+         << width << ' ' << height << "\n-1.0\n";
     for (uint32_t row = height; row-- > 0;)
     {
         file.write(reinterpret_cast<const char*>(&pixels[static_cast<size_t>(row) * width]), static_cast<std::streamsize>(width * sizeof(glm::vec3)));
@@ -240,7 +241,10 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
         probes.push_back(Probe{position, slot, glm::length(position - frame.cameraPosition)});
     }
     // The nearest ones: the rest cost time and tell the same story.
-    std::sort(probes.begin(), probes.end(), [](const Probe& a, const Probe& b) { return a.distance < b.distance; });
+    std::sort(probes.begin(), probes.end(), [](const Probe& a, const Probe& b)
+              {
+                  return a.distance < b.distance;
+              });
     probes.resize(std::min<size_t>(probes.size(), 300));
 
     // Per probe, the texels whose directions lie nearest the six axes: TexelDirection in
@@ -327,7 +331,10 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
                 << probe << ',' << reference << '\n';
         }
     }
-    const auto ratio = [&](size_t axis) { return storedSum[axis] / std::max(truthSum[axis], 1e-9); };
+    const auto ratio = [&](size_t axis)
+    {
+        return storedSum[axis] / std::max(truthSum[axis], 1e-9);
+    };
     LOG_INFO(
         "DDGI probes against the reference ({} nearest probes): probes / reference along +x {:.3f}, -x {:.3f}, +y {:.3f}, -y {:.3f}, "
         "+z {:.3f}, -z {:.3f}",
@@ -412,28 +419,28 @@ void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
     {
         try
         {
-        for (uint32_t row = nextRow++; row < height; row = nextRow++)
-        {
-            for (uint32_t column = 0; column < width; ++column)
+            for (uint32_t row = nextRow++; row < height; row = nextRow++)
             {
-                const uint32_t x = std::min(column * stride + stride / 2, request.extent.width - 1);
-                const uint32_t y = std::min(row * stride + stride / 2, request.extent.height - 1);
-                // The image's top row is ndc.y == -1, the projection's Y flip being inside it
-                // (deferred_lighting.frag); depth runs 0 to 1.
-                const glm::vec2 ndc = (glm::vec2(x, y) + 0.5f) / glm::vec2(request.extent.width, request.extent.height) * 2.0f - 1.0f;
-                const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
-                const glm::vec3 direction = glm::normalize(glm::vec3(far) / far.w - frame.cameraPosition);
-                const ReferenceSurface surface = ReferencePrimaryHit(scene, materials, frame.cameraPosition, direction);
-                const size_t index = static_cast<size_t>(row) * width + column;
-                probes[index] = glm::vec3(texels[static_cast<size_t>(y) * request.extent.width + x]) / frame.preExposure;
-                if (!surface.valid)
+                for (uint32_t column = 0; column < width; ++column)
                 {
-                    continue;
+                    const uint32_t x = std::min(column * stride + stride / 2, request.extent.width - 1);
+                    const uint32_t y = std::min(row * stride + stride / 2, request.extent.height - 1);
+                    // The image's top row is ndc.y == -1, the projection's Y flip being inside it
+                    // (deferred_lighting.frag); depth runs 0 to 1.
+                    const glm::vec2 ndc = (glm::vec2(x, y) + 0.5f) / glm::vec2(request.extent.width, request.extent.height) * 2.0f - 1.0f;
+                    const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
+                    const glm::vec3 direction = glm::normalize(glm::vec3(far) / far.w - frame.cameraPosition);
+                    const ReferenceSurface surface = ReferencePrimaryHit(scene, materials, frame.cameraPosition, direction);
+                    const size_t index = static_cast<size_t>(row) * width + column;
+                    probes[index] = glm::vec3(texels[static_cast<size_t>(y) * request.extent.width + x]) / frame.preExposure;
+                    if (!surface.valid)
+                    {
+                        continue;
+                    }
+                    valid[index] = 1u;
+                    truth[index] = ReferenceIndirectIrradiance(scene, materials, frame.lights, surface.position, surface.normal, settings, index + 1);
                 }
-                valid[index] = 1u;
-                truth[index] = ReferenceIndirectIrradiance(scene, materials, frame.lights, surface.position, surface.normal, settings, index + 1);
             }
-        }
         }
         catch (const std::exception& error)
         {
