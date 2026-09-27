@@ -6,6 +6,8 @@
 #include "material_definition.h"
 #include "model_cache.h"
 
+#include <engine/core/text/ascii.h>
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -23,18 +25,9 @@ namespace me
 
 namespace
 {
-std::string ToLower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
-                   {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return s;
-}
-
 bool IsModelExt(const std::filesystem::path& p)
 {
-    const std::string ext = ToLower(p.extension().string());
+    const std::string ext = ToLowerAscii(p.extension().string());
     return ext == ".gltf" || ext == ".glb";
 }
 
@@ -45,7 +38,7 @@ bool IsMaterialFile(const std::filesystem::path& p)
 
 bool IsSceneFile(const std::filesystem::path& p)
 {
-    const std::string ext = ToLower(p.extension().string());
+    const std::string ext = ToLowerAscii(p.extension().string());
     if (ext != ".yaml" && ext != ".yml")
     {
         return false;
@@ -56,7 +49,7 @@ bool IsSceneFile(const std::filesystem::path& p)
 
 bool IsTextureExt(const std::filesystem::path& p)
 {
-    const std::string ext = ToLower(p.extension().string());
+    const std::string ext = ToLowerAscii(p.extension().string());
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
            ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||
            ext == ".ktx2";

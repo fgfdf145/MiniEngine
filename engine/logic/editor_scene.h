@@ -21,7 +21,6 @@ class EditorScene final : public IEditorWorld
     entt::entity CreateLightEntity(const SerializedLightData& lightData) override;
     void DestroyEntity(entt::entity entity) override;
 
-    bool HasEntities() const override;
     bool HasSelection() const override;
     bool IsSelected(entt::entity entity) const override;
     entt::entity GetSelectedEntity() const override;
@@ -68,9 +67,6 @@ class EditorScene final : public IEditorWorld
 
     void ApplySceneData(const SerializedSceneData& sceneData) override;
     SerializedSceneData CaptureSceneData() const override;
-    void SaveSceneToFile(const std::string& path) const override;
-    std::string BuildSceneYamlPreview() const override;
-    const std::string& GetConfigPath() const override;
     const std::string& GetSceneFilePath() const override;
     const SceneEnvironment& GetEnvironment() const override;
     void SetEnvironment(const SceneEnvironment& environment) override;
@@ -89,7 +85,6 @@ class EditorScene final : public IEditorWorld
     TransformComponent m_defaultTransform;
     GizmoSettings m_gizmoSettings;
     SceneEnvironment m_environment;
-    std::string m_configPath;
     std::string m_sceneFilePath;
     std::unordered_map<std::string, entt::entity> m_entityByUuid;
     // Declared last: the registry is destroyed first, so its on_destroy

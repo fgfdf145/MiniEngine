@@ -5,6 +5,7 @@
 #include "texture_loader.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/text/ascii.h>
 
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
@@ -39,15 +40,6 @@ constexpr int kElementArrayBuffer = 34963;
 constexpr size_t kStubTextureBytes = 128;
 
 constexpr std::array<float, 16> kIdentity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-
-std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-                   {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return value;
-}
 
 bool EndsWith(const std::string& value, const std::string& suffix)
 {
@@ -173,7 +165,7 @@ size_t FoldTextureCase(Kn5Model& model)
     std::unordered_map<std::string, size_t> keep;
     for (size_t index = 0; index < model.textures.size(); ++index)
     {
-        const std::string key = ToLowerCopy(model.textures[index].name);
+        const std::string key = ToLowerAscii(model.textures[index].name);
         const auto found = keep.find(key);
         if (found == keep.end() || model.textures[index].data.size() > model.textures[found->second].data.size())
         {
@@ -203,7 +195,7 @@ size_t FoldTextureCase(Kn5Model& model)
     {
         for (auto& [slot, name] : material.textures)
         {
-            const auto found = canonical.find(ToLowerCopy(name));
+            const auto found = canonical.find(ToLowerAscii(name));
             if (found != canonical.end())
             {
                 name = found->second;
@@ -215,7 +207,7 @@ size_t FoldTextureCase(Kn5Model& model)
 
 std::optional<std::filesystem::path> ResolveSkinDirectory(const std::filesystem::path& kn5Path, const std::string& wanted)
 {
-    if (ToLowerCopy(wanted) == "none")
+    if (ToLowerAscii(wanted) == "none")
     {
         return std::nullopt;
     }
@@ -227,7 +219,7 @@ std::optional<std::filesystem::path> ResolveSkinDirectory(const std::filesystem:
     }
     for (const std::string& skin : skins)
     {
-        if (ToLowerCopy(skin) == ToLowerCopy(wanted))
+        if (ToLowerAscii(skin) == ToLowerAscii(wanted))
         {
             return root / skin;
         }
@@ -253,14 +245,14 @@ std::unordered_set<std::string> ApplySkin(Kn5Model& model, const std::filesystem
         std::error_code fileEc;
         if (it->is_regular_file(fileEc))
         {
-            files[ToLowerCopy(it->path().filename().string())] = it->path();
+            files[ToLowerAscii(it->path().filename().string())] = it->path();
         }
     }
 
     std::unordered_set<std::string> swapped;
     for (Kn5Texture& texture : model.textures)
     {
-        const auto found = files.find(ToLowerCopy(texture.name));
+        const auto found = files.find(ToLowerAscii(texture.name));
         if (found == files.end())
         {
             continue;
@@ -509,7 +501,7 @@ class GltfBuilder
     {
         // On AC's damage shaders txNormal holds the dent map, blended in with accumulated damage:
         // zero on an undamaged car. Bound as a normal map it caves every panel in.
-        return ToLowerCopy(textureName).find("damage") != std::string::npos;
+        return ToLowerAscii(textureName).find("damage") != std::string::npos;
     }
 
     static std::vector<std::uint8_t> StripAlpha(const TextureData& image)
@@ -528,13 +520,13 @@ class GltfBuilder
     std::string UniqueFileName(const std::string& stem, const std::string& extension)
     {
         std::string candidate = stem + extension;
-        for (int suffix = 1; m_fileNames.count(ToLowerCopy(candidate)) != 0 ||
+        for (int suffix = 1; m_fileNames.count(ToLowerAscii(candidate)) != 0 ||
                              std::filesystem::exists(m_textureDirectory / candidate);
              ++suffix)
         {
             candidate = stem + "_" + std::to_string(suffix) + extension;
         }
-        m_fileNames.insert(ToLowerCopy(candidate));
+        m_fileNames.insert(ToLowerAscii(candidate));
         return candidate;
     }
 
@@ -634,7 +626,7 @@ class GltfBuilder
         float specular = material.Property("ksSpecular", 1.0f);
         // ksMultilayer (track surfaces) drives its sheen from tarmacSpecularMultiplier instead,
         // where the author asked for a reflection at all (fresnelMaxLevel set).
-        if (ToLowerCopy(material.shader).find("multilayer") != std::string::npos &&
+        if (ToLowerAscii(material.shader).find("multilayer") != std::string::npos &&
             material.Property("fresnelMaxLevel", 0.0f) > 0.0f)
         {
             specular = std::max(specular, material.Property("tarmacSpecularMultiplier", specular));
@@ -934,7 +926,7 @@ namespace Kn5Importer
 {
 bool IsKn5Path(const std::filesystem::path& path)
 {
-    return ToLowerCopy(path.extension().string()) == ".kn5";
+    return ToLowerAscii(path.extension().string()) == ".kn5";
 }
 
 std::vector<std::string> ListSkins(const std::filesystem::path& kn5Path)
@@ -956,7 +948,7 @@ std::vector<std::string> ListSkins(const std::filesystem::path& kn5Path)
 
 bool IsRuntimeVariant(const std::string& nodeName)
 {
-    const std::string lower = ToLowerCopy(nodeName);
+    const std::string lower = ToLowerAscii(nodeName);
     return lower.find("blur") != std::string::npos || lower.find("damage") != std::string::npos;
 }
 
@@ -965,12 +957,12 @@ std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames)
     std::unordered_set<std::string> present;
     for (const std::string& name : nodeNames)
     {
-        present.insert(ToLowerCopy(name));
+        present.insert(ToLowerAscii(name));
     }
     std::set<std::string> twins;
     for (const std::string& name : nodeNames)
     {
-        const std::string lower = ToLowerCopy(name);
+        const std::string lower = ToLowerAscii(name);
         if (EndsWith(lower, "_lr") && present.count(lower.substr(0, lower.size() - 3) + "_hr") != 0)
         {
             twins.insert(name);
@@ -1030,7 +1022,7 @@ std::vector<size_t> RankPaintedMaterials(
         {
             continue;
         }
-        const std::string lower = ToLowerCopy(materialNames[index]);
+        const std::string lower = ToLowerAscii(materialNames[index]);
         // An interior copy of the paint (INT_OCC_Carpaint) is the same colour inside the panels.
         const int inside = lower.rfind("int", 0) == 0 ? 1 : 0;
         const int band = std::regex_search(lower, kNotBody) ? 2 : (std::regex_search(lower, kPaintHint) ? 0 : 1);
@@ -1131,14 +1123,14 @@ Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
                 std::error_code fileEc;
                 if (it->is_regular_file(fileEc))
                 {
-                    overrides[ToLowerCopy(it->path().filename().string())] = it->path();
+                    overrides[ToLowerAscii(it->path().filename().string())] = it->path();
                 }
             }
         }
         for (size_t materialIndex : paintOrder)
         {
             const std::string detail = model.materials[materialIndex].Texture("txDetail");
-            const auto own = overrides.find(ToLowerCopy(detail));
+            const auto own = overrides.find(ToLowerAscii(detail));
             std::optional<std::array<std::uint8_t, 3>> color;
             const bool fromSkin = own != overrides.end();
             if (fromSkin)

@@ -252,10 +252,10 @@ int main()
             {{-2.0f, -4.0f, -6.0f}},
             {{6.0f, 8.0f, 10.0f}}};
         Require(
-            glm::length(ComputeMeshBoundsCenter(boundsMesh) - glm::vec3(2.0f, 2.0f, 2.0f)) < 0.0001f,
+            glm::length(ComputeMeshBounds(boundsMesh).center - glm::vec3(2.0f, 2.0f, 2.0f)) < 0.0001f,
             "mesh bounds center mismatch");
         Require(
-            ComputeMeshBoundsCenter(MeshData{}) == glm::vec3(0.0f),
+            ComputeMeshBounds(MeshData{}).center == glm::vec3(0.0f),
             "empty mesh did not use local origin");
 
         ModelImportedMaterialInfo source{};

@@ -27,7 +27,6 @@ struct Command
 };
 
 bool IsCommandEnabled(const Command& command);
-bool IsCommandCheckable(const Command& command);
 bool IsCommandChecked(const Command& command);
 
 // The menu tree built from the commands' menuPath. It holds no ImGui state, so the same tree can
@@ -59,8 +58,7 @@ class CommandRegistry
     bool AddSeparator(std::string_view menuPath);
 
     const Command* Find(std::string_view id) const;
-    // Runs the command when it exists and is enabled; returns whether it ran.
-    bool Execute(std::string_view id) const;
+    // Runs the command when it is enabled; returns whether it ran.
     bool Execute(const Command& command) const;
 
     // Every command in registration order: what the command palette searches.

@@ -48,7 +48,6 @@ void InputState::HandleEvent(const SDL_Event& event)
         const size_t keyIndex = ToKeyIndex(key);
         if (event.key.repeat)
         {
-            m_keyRepeated[keyIndex] = true;
             LogKeyboardEvent(event.key.timestamp, key, "repeated");
             break;
         }
@@ -57,7 +56,6 @@ void InputState::HandleEvent(const SDL_Event& event)
         m_keyDown[keyIndex] = true;
         if (!wasDown)
         {
-            m_keyPressed[keyIndex] = true;
             LogKeyboardEvent(event.key.timestamp, key, "pressed");
         }
         break;
@@ -70,12 +68,7 @@ void InputState::HandleEvent(const SDL_Event& event)
             break;
         }
 
-        const size_t keyIndex = ToKeyIndex(key);
-        if (m_keyDown[keyIndex])
-        {
-            m_keyReleased[keyIndex] = true;
-        }
-        m_keyDown[keyIndex] = false;
+        m_keyDown[ToKeyIndex(key)] = false;
         LogKeyboardEvent(event.key.timestamp, key, "released");
         break;
     }
@@ -135,20 +128,6 @@ void InputState::EndFrame()
     m_mouseDeltaX = 0.0f;
     m_mouseDeltaY = 0.0f;
     m_mouseWheelDelta = 0.0f;
-
-    m_keyPressed.fill(false);
-    m_keyReleased.fill(false);
-    m_keyRepeated.fill(false);
-
-    for (GamepadState& gamepad : m_gamepads)
-    {
-        gamepad.connectedThisFrame = false;
-        gamepad.disconnectedThisFrame = false;
-        gamepad.buttonPressed.fill(false);
-        gamepad.buttonReleased.fill(false);
-        gamepad.axisDeltas.fill(0.0f);
-        gamepad.axisChanged.fill(false);
-    }
 }
 
 void InputState::SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled)
@@ -170,96 +149,11 @@ bool InputState::IsKeyDown(KeyCode key) const
     return IsValidKeyCode(key) ? m_keyDown[ToKeyIndex(key)] : false;
 }
 
-bool InputState::WasKeyPressed(KeyCode key) const
-{
-    return IsValidKeyCode(key) ? m_keyPressed[ToKeyIndex(key)] : false;
-}
-
-bool InputState::WasKeyReleased(KeyCode key) const
-{
-    return IsValidKeyCode(key) ? m_keyReleased[ToKeyIndex(key)] : false;
-}
-
-bool InputState::WasKeyRepeated(KeyCode key) const
-{
-    return IsValidKeyCode(key) ? m_keyRepeated[ToKeyIndex(key)] : false;
-}
-
-bool InputState::IsKeyDown(SDL_Scancode scancode) const
-{
-    return IsKeyDown(FromScancode(scancode));
-}
-
-bool InputState::WasKeyPressed(SDL_Scancode scancode) const
-{
-    return WasKeyPressed(FromScancode(scancode));
-}
-
-bool InputState::WasKeyReleased(SDL_Scancode scancode) const
-{
-    return WasKeyReleased(FromScancode(scancode));
-}
-
-bool InputState::WasKeyRepeated(SDL_Scancode scancode) const
-{
-    return WasKeyRepeated(FromScancode(scancode));
-}
-
-bool InputState::IsGamepadConnected(uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) ? m_gamepads[playerIndex].connected : false;
-}
-
-bool InputState::WasGamepadConnected(uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) ? m_gamepads[playerIndex].connectedThisFrame : false;
-}
-
-bool InputState::WasGamepadDisconnected(uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) ? m_gamepads[playerIndex].disconnectedThisFrame : false;
-}
-
-bool InputState::IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-               ? m_gamepads[playerIndex].buttonDown[ToGamepadButtonIndex(button)]
-               : false;
-}
-
-bool InputState::WasGamepadButtonPressed(GamepadButton button, uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-               ? m_gamepads[playerIndex].buttonPressed[ToGamepadButtonIndex(button)]
-               : false;
-}
-
-bool InputState::WasGamepadButtonReleased(GamepadButton button, uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadButton(button)
-               ? m_gamepads[playerIndex].buttonReleased[ToGamepadButtonIndex(button)]
-               : false;
-}
-
 float InputState::GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex) const
 {
     return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
                ? m_gamepads[playerIndex].axisValues[ToGamepadAxisIndex(axis)]
                : 0.0f;
-}
-
-float InputState::GetGamepadAxisDelta(GamepadAxis axis, uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
-               ? m_gamepads[playerIndex].axisDeltas[ToGamepadAxisIndex(axis)]
-               : 0.0f;
-}
-
-bool InputState::WasGamepadAxisChanged(GamepadAxis axis, uint32_t playerIndex) const
-{
-    return IsValidGamepadPlayerIndex(playerIndex) && IsValidGamepadAxis(axis)
-               ? m_gamepads[playerIndex].axisChanged[ToGamepadAxisIndex(axis)]
-               : false;
 }
 
 int InputState::GetFirstConnectedGamepadIndex() const
@@ -424,11 +318,6 @@ size_t InputState::ToKeyIndex(KeyCode key)
     return static_cast<size_t>(key.value);
 }
 
-size_t InputState::ToGamepadButtonIndex(GamepadButton button)
-{
-    return static_cast<size_t>(static_cast<int>(button));
-}
-
 size_t InputState::ToGamepadAxisIndex(GamepadAxis axis)
 {
     return static_cast<size_t>(static_cast<int>(axis));
@@ -442,12 +331,6 @@ bool InputState::IsValidKeyCode(KeyCode key) const
 bool InputState::IsValidGamepadPlayerIndex(uint32_t playerIndex) const
 {
     return playerIndex < kMaxGamepads;
-}
-
-bool InputState::IsValidGamepadButton(GamepadButton button) const
-{
-    const int buttonIndex = static_cast<int>(button);
-    return buttonIndex >= 0 && buttonIndex < static_cast<int>(kGamepadButtonCount);
 }
 
 bool InputState::IsValidGamepadAxis(GamepadAxis axis) const
@@ -485,29 +368,7 @@ void InputState::PollGamepads()
                 continue;
             }
 
-            gamepad.connected = false;
-            gamepad.disconnectedThisFrame = true;
-            gamepad.packetNumber = 0;
-
-            for (size_t buttonIndex = 0; buttonIndex < kGamepadButtonCount; ++buttonIndex)
-            {
-                if (gamepad.buttonDown[buttonIndex])
-                {
-                    gamepad.buttonReleased[buttonIndex] = true;
-                }
-            }
-            gamepad.buttonDown.fill(false);
-
-            for (size_t axisIndex = 0; axisIndex < kGamepadAxisCount; ++axisIndex)
-            {
-                const float previousValue = gamepad.axisValues[axisIndex];
-                if (std::abs(previousValue) > kGamepadAxisChangeEpsilon)
-                {
-                    gamepad.axisValues[axisIndex] = 0.0f;
-                    gamepad.axisDeltas[axisIndex] = -previousValue;
-                    gamepad.axisChanged[axisIndex] = true;
-                }
-            }
+            gamepad = GamepadState{};
 
             LogGamepadConnectionEvent(timestampNs, playerIndex, "disconnected");
             continue;
@@ -519,7 +380,6 @@ void InputState::PollGamepads()
         if (!wasConnected)
         {
             gamepad.connected = true;
-            gamepad.connectedThisFrame = true;
             gamepad.packetNumber = polledGamepad.packetNumber;
             gamepad.buttonDown = polledGamepad.buttonDown;
             gamepad.axisValues = updatedAxes;
@@ -546,31 +406,19 @@ void InputState::PollGamepads()
             }
 
             gamepad.buttonDown[buttonIndex] = isDown;
-            if (isDown)
-            {
-                gamepad.buttonPressed[buttonIndex] = true;
-                LogGamepadButtonEvent(timestampNs, playerIndex, button, "pressed");
-            }
-            else
-            {
-                gamepad.buttonReleased[buttonIndex] = true;
-                LogGamepadButtonEvent(timestampNs, playerIndex, button, "released");
-            }
+            LogGamepadButtonEvent(timestampNs, playerIndex, button, isDown ? "pressed" : "released");
         }
 
         for (size_t axisIndex = 0; axisIndex < kGamepadAxisCount; ++axisIndex)
         {
             const float previousValue = gamepad.axisValues[axisIndex];
             const float currentValue = updatedAxes[axisIndex];
-            const float delta = currentValue - previousValue;
-            if (std::abs(delta) <= kGamepadAxisChangeEpsilon)
+            if (std::abs(currentValue - previousValue) <= kGamepadAxisChangeEpsilon)
             {
                 continue;
             }
 
             gamepad.axisValues[axisIndex] = currentValue;
-            gamepad.axisDeltas[axisIndex] = delta;
-            gamepad.axisChanged[axisIndex] = true;
 
             if (ShouldLogAxisChange(previousValue, currentValue))
             {

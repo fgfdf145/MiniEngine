@@ -27,18 +27,10 @@ struct KeyCode
 
 namespace KeyCodes
 {
-inline constexpr KeyCode Unknown{SDL_SCANCODE_UNKNOWN};
 inline constexpr KeyCode W{SDL_SCANCODE_W};
 inline constexpr KeyCode A{SDL_SCANCODE_A};
 inline constexpr KeyCode S{SDL_SCANCODE_S};
 inline constexpr KeyCode D{SDL_SCANCODE_D};
-inline constexpr KeyCode Q{SDL_SCANCODE_Q};
-inline constexpr KeyCode E{SDL_SCANCODE_E};
-inline constexpr KeyCode Space{SDL_SCANCODE_SPACE};
-inline constexpr KeyCode LeftShift{SDL_SCANCODE_LSHIFT};
-inline constexpr KeyCode RightShift{SDL_SCANCODE_RSHIFT};
-inline constexpr KeyCode LeftControl{SDL_SCANCODE_LCTRL};
-inline constexpr KeyCode RightControl{SDL_SCANCODE_RCTRL};
 }
 
 enum class GamepadButton : int8_t
@@ -97,24 +89,8 @@ class InputState
     void SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled);
 
     bool IsKeyDown(KeyCode key) const;
-    bool WasKeyPressed(KeyCode key) const;
-    bool WasKeyReleased(KeyCode key) const;
-    bool WasKeyRepeated(KeyCode key) const;
 
-    bool IsKeyDown(SDL_Scancode scancode) const;
-    bool WasKeyPressed(SDL_Scancode scancode) const;
-    bool WasKeyReleased(SDL_Scancode scancode) const;
-    bool WasKeyRepeated(SDL_Scancode scancode) const;
-
-    bool IsGamepadConnected(uint32_t playerIndex = 0) const;
-    bool WasGamepadConnected(uint32_t playerIndex = 0) const;
-    bool WasGamepadDisconnected(uint32_t playerIndex = 0) const;
-    bool IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex = 0) const;
-    bool WasGamepadButtonPressed(GamepadButton button, uint32_t playerIndex = 0) const;
-    bool WasGamepadButtonReleased(GamepadButton button, uint32_t playerIndex = 0) const;
     float GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex = 0) const;
-    float GetGamepadAxisDelta(GamepadAxis axis, uint32_t playerIndex = 0) const;
-    bool WasGamepadAxisChanged(GamepadAxis axis, uint32_t playerIndex = 0) const;
     int GetFirstConnectedGamepadIndex() const;
 
     bool IsMouseLookActive() const;
@@ -135,24 +111,16 @@ class InputState
     struct GamepadState
     {
         bool connected = false;
-        bool connectedThisFrame = false;
-        bool disconnectedThisFrame = false;
         uint32_t packetNumber = 0;
         std::array<bool, kGamepadButtonCount> buttonDown{};
-        std::array<bool, kGamepadButtonCount> buttonPressed{};
-        std::array<bool, kGamepadButtonCount> buttonReleased{};
         std::array<float, kGamepadAxisCount> axisValues{};
-        std::array<float, kGamepadAxisCount> axisDeltas{};
-        std::array<bool, kGamepadAxisCount> axisChanged{};
     };
 
     static size_t ToKeyIndex(KeyCode key);
-    static size_t ToGamepadButtonIndex(GamepadButton button);
     static size_t ToGamepadAxisIndex(GamepadAxis axis);
 
     bool IsValidKeyCode(KeyCode key) const;
     bool IsValidGamepadPlayerIndex(uint32_t playerIndex) const;
-    bool IsValidGamepadButton(GamepadButton button) const;
     bool IsValidGamepadAxis(GamepadAxis axis) const;
     bool IsViewportInteractionPoint(float x, float y) const;
     void PollGamepads();
@@ -164,9 +132,6 @@ class InputState
     void LogGamepadAxisEvent(Uint64 timestampNs, uint32_t playerIndex, GamepadAxis axis, float value) const;
 
     std::array<bool, kKeyboardKeyCount> m_keyDown{};
-    std::array<bool, kKeyboardKeyCount> m_keyPressed{};
-    std::array<bool, kKeyboardKeyCount> m_keyReleased{};
-    std::array<bool, kKeyboardKeyCount> m_keyRepeated{};
     std::array<GamepadState, kMaxGamepads> m_gamepads{};
     float m_mouseDeltaX = 0.0f;
     float m_mouseDeltaY = 0.0f;

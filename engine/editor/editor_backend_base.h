@@ -36,9 +36,7 @@ class EditorRenderBackendBase : public IRenderBackend
     RendererSharedState& State();
     const RendererSharedState& State() const;
     IEditorWorld& EditorWorld();
-    const IEditorWorld& EditorWorld() const;
     RendererWorld& RenderWorld();
-    const RendererWorld& RenderWorld() const;
     Window& GetWindow() const;
 
     virtual void HandleBackendEvent(const SDL_Event& event) = 0;

@@ -149,11 +149,6 @@ SDL_Window* Window::GetSDLWindow() const
     return m_window;
 }
 
-RenderBackendType Window::GetBackendType() const
-{
-    return m_backendType;
-}
-
 void Window::CreateNativeWindow()
 {
     ClampWindowSizeToPrimaryDisplay(m_width, m_height);

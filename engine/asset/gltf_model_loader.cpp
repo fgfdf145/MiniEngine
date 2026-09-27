@@ -18,6 +18,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <engine/core/log/log.h>
+#include <engine/core/text/ascii.h>
 
 #include <nlohmann/json.hpp>
 
@@ -72,15 +73,6 @@ constexpr int kGltfModeLineStrip = 3;
 constexpr int kGltfModeTriangles = 4;
 constexpr int kGltfModeTriangleStrip = 5;
 constexpr int kGltfModeTriangleFan = 6;
-
-std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-                   {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return value;
-}
 
 std::string SanitizeFileName(std::string value)
 {
@@ -2058,7 +2050,7 @@ void CheckExtensions(const tinygltf::Model& model, const std::filesystem::path& 
 LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)
 {
     const std::filesystem::path modelPath = std::filesystem::path(path).lexically_normal();
-    const std::string extension = ToLowerCopy(modelPath.extension().string());
+    const std::string extension = ToLowerAscii(modelPath.extension().string());
 
     if (progress)
     {
@@ -2111,7 +2103,7 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
 
 void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelPath)
 {
-    const std::string extension = ToLowerCopy(modelPath.extension().string());
+    const std::string extension = ToLowerAscii(modelPath.extension().string());
 
     // The same image hook as a load, without progress: companion files are left undecoded. Only
     // embedded images are unpacked, and a companion stb cannot read (an .exr) must not fail the

@@ -47,7 +47,7 @@ void RoundTripsThroughYaml()
     world->SetEnvironment(environment);
 
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_test.yaml";
-    world->SaveSceneToFile(path.string());
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
     const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
     std::filesystem::remove(path);
     Require(loaded.environment == environment, "the environment did not survive the YAML round trip");
@@ -63,7 +63,7 @@ void MissingNodeLoadsAsNone()
     std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
     world->SetEnvironment(MakeEnvironment());
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_legacy.yaml";
-    world->SaveSceneToFile(path.string());
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
     std::string yaml;
     {
         std::ifstream in(path);
@@ -142,7 +142,7 @@ void ClearKeepsEnvironmentAndFile()
     world->SetEnvironment(hdri);
 
     world->Clear();
-    Require(!world->HasEntities(), "clearing removes every entity");
+    Require(world->GetSceneOrder().empty(), "clearing removes every entity");
     Require(!world->HasSelection(), "and the selection");
     Require(world->GetEnvironment() == hdri, "clearing keeps the environment");
     Require(world->GetSceneFilePath() == "scenes/test.yaml", "clearing keeps the scene file");

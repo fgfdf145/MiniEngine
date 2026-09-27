@@ -4,7 +4,6 @@ add_library(engine_logic
     editor_world.h
     gizmo_settings.cpp
     gizmo_settings.h
-    logic_layer.h
     world_bounds.cpp
     world_bounds.h
 )

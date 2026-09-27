@@ -16,9 +16,4 @@ enum class FileDialogType
 
 bool SupportsNativeFileDialogs();
 std::optional<std::string> ShowFileDialog(FileDialogType type);
-
-std::optional<std::string> OpenModelFileDialog();
-std::optional<std::string> OpenTextureFileDialog();
-std::optional<std::string> OpenSceneFileDialog();
-std::optional<std::string> SaveSceneFileDialog();
 }

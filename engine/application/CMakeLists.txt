@@ -1,5 +1,4 @@
 add_library(engine_application
-    application.h
     editor_application.cpp
     editor_application.h
 )

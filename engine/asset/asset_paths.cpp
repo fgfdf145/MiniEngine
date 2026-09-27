@@ -1,5 +1,7 @@
 #include "asset_paths.h"
 
+#include <engine/core/text/ascii.h>
+
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -25,10 +27,7 @@ std::string Key(const std::filesystem::path& path)
         key.pop_back();
     }
 #ifdef _WIN32
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c)
-                   {
-                       return static_cast<char>(std::tolower(c));
-                   });
+    key = ToLowerAscii(key);
 #endif
     return key;
 }

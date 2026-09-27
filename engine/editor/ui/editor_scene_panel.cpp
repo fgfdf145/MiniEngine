@@ -262,7 +262,7 @@ void DrawGizmoControls(GizmoSettings& gizmo)
     ImGui::DragFloat3("Scale Snap", glm::value_ptr(gizmo.scaleSnap), 0.01f, 0.01f, WorldUnits::kUiScaleSnapMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 }
 
-void DrawLightComponentEditor(LightComponent& light, float uiScale)
+void DrawLightComponentEditor(LightComponent& light)
 {
     // Type selector
     const char* currentTypeLabel = GetLightTypeLabel(light.type);
@@ -494,7 +494,7 @@ void EditorUiController::DrawScenePanel(
                 LightComponent& light = scene.EditLightComponent(selectedEntity);
                 if (ImGui::CollapsingHeader("LightComponent", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    DrawLightComponentEditor(light, m_effectiveUiScale);
+                    DrawLightComponentEditor(light);
                 }
 
                 // Directional lights use the combined move/rotate gizmo.

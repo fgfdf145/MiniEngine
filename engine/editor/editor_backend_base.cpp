@@ -623,17 +623,7 @@ IEditorWorld& EditorRenderBackendBase::EditorWorld()
     return State().GetEditorWorld();
 }
 
-const IEditorWorld& EditorRenderBackendBase::EditorWorld() const
-{
-    return State().GetEditorWorld();
-}
-
 RendererWorld& EditorRenderBackendBase::RenderWorld()
-{
-    return State().rendererWorld;
-}
-
-const RendererWorld& EditorRenderBackendBase::RenderWorld() const
 {
     return State().rendererWorld;
 }

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "application.h"
-
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/render_backend_type.h>
 #include <engine/renderer/render_types.h>
@@ -60,14 +58,14 @@ struct EditorApplicationOptions
     EnginePaths::Overrides paths;
 };
 
-class EditorApplication final : public IApplication
+class EditorApplication final
 {
   public:
     static EditorApplicationOptions ParseArgs(int argc, char** argv);
     static void PrintDependencyLinkStatus();
 
     explicit EditorApplication(EditorApplicationOptions options);
-    int Run() override;
+    int Run();
 
   private:
     EditorApplicationOptions m_options;

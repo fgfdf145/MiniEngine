@@ -5,6 +5,7 @@
 #include "material_definition.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/text/ascii.h>
 
 #include <algorithm>
 #include <cctype>
@@ -19,15 +20,6 @@ namespace me
 
 namespace
 {
-std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-                   {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return value;
-}
-
 MaterialPbrSurfaceSettings BuildPbrSettingsFromMaterial(const ModelMaterialData& material)
 {
     MaterialPbrSurfaceSettings pbr{};
@@ -275,18 +267,13 @@ bool ComputeKhronosViewerExtents(const LoadedModelData& model, const glm::mat4& 
 
 bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
 {
-    const std::string extension = ToLowerCopy(path.extension().string());
+    const std::string extension = ToLowerAscii(path.extension().string());
     return extension == ".gltf" || extension == ".glb";
 }
 
 bool ModelLoader::IsImportableModelPath(const std::filesystem::path& path)
 {
     return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path);
-}
-
-bool ModelLoader::IsImportAvailable()
-{
-    return true;
 }
 
 const char* ModelLoader::GetImporterName()
@@ -299,7 +286,7 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::filesystem::path& targetDirectory,
     const Kn5ImportOptions& kn5Options)
 {
-    const std::string extension = ToLowerCopy(modelPath.extension().string());
+    const std::string extension = ToLowerAscii(modelPath.extension().string());
 
     std::filesystem::path dst;
     if (Kn5Importer::IsKn5Path(modelPath))

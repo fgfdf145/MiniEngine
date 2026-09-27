@@ -8,6 +8,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -21,6 +22,13 @@ void Require(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
+}
+
+// Runs the command with this id when it exists and is enabled; returns whether it ran.
+bool Run(const CommandRegistry& registry, std::string_view id)
+{
+    const Command* command = registry.Find(id);
+    return command != nullptr && registry.Execute(*command);
 }
 
 const CommandMenuNode* FindMenu(const CommandMenuNode& parent, const std::string& label)
@@ -119,14 +127,14 @@ void TestExecute()
             return enabled;
         }});
 
-    Require(!registry.Execute("test.run") && runs == 0, "a disabled command does not run");
+    Require(!Run(registry, "test.run") && runs == 0, "a disabled command does not run");
     enabled = true;
-    Require(registry.Execute("test.run") && runs == 1, "an enabled command runs");
-    Require(!registry.Execute("missing"), "an unknown id does not run");
+    Require(Run(registry, "test.run") && runs == 1, "an enabled command runs");
+    Require(!Run(registry, "missing"), "an unknown id does not run");
 
     const Command& command = *registry.Find("test.run");
-    Require(IsCommandCheckable(command) && IsCommandChecked(command), "isChecked makes a command checkable");
-    Require(!IsCommandCheckable(Command{.id = "plain"}) && IsCommandEnabled(Command{.id = "plain"}), "commands are enabled and not checkable by default");
+    Require(IsCommandChecked(command), "isChecked reports the command's state");
+    Require(!IsCommandChecked(Command{.id = "plain"}) && IsCommandEnabled(Command{.id = "plain"}), "commands are enabled and unchecked by default");
 }
 
 void TestFormatShortcut()
@@ -220,10 +228,10 @@ void TestEditorCommands()
     }
 
     // Radio groups hold one choice.
-    registry.Execute("render.pipeline.hybrid");
+    Run(registry, "render.pipeline.hybrid");
     Require(IsCommandChecked(*registry.Find("render.pipeline.hybrid")), "the chosen pipeline is checked");
     Require(!IsCommandChecked(*registry.Find("render.pipeline.rasterization")), "the other pipelines are not");
-    registry.Execute("render.pipeline.path_tracing");
+    Run(registry, "render.pipeline.path_tracing");
     Require(IsCommandChecked(*registry.Find("render.ray_tracing")), "path tracing shows ray tracing on");
     Require(!IsCommandEnabled(*registry.Find("render.ray_tracing")), "and it cannot be turned off there");
 
@@ -232,31 +240,31 @@ void TestEditorCommands()
 
     // Play controls.
     Require(!IsCommandEnabled(*registry.Find("scene.step")), "step needs a paused simulation");
-    registry.Execute("scene.play");
-    registry.Execute("scene.pause");
+    Run(registry, "scene.play");
+    Run(registry, "scene.pause");
     Require(IsCommandChecked(*registry.Find("scene.pause")) && IsCommandEnabled(*registry.Find("scene.step")), "paused: pause is on and step runs");
 
     // The scene commands reach the functions they were given; the others do nothing.
-    registry.Execute("file.open_scene");
-    registry.Execute("file.save_scene");
+    Run(registry, "file.open_scene");
+    Run(registry, "file.save_scene");
     Require(opens == 1 && saves == 1, "open and save reach the controller");
-    Require(registry.Execute("file.save_scene_as"), "a command with no function still runs, as a no-op");
+    Require(Run(registry, "file.save_scene_as"), "a command with no function still runs, as a no-op");
     Require(!IsCommandEnabled(*registry.Find("edit.delete")), "delete needs a selection");
     hasSelection = true;
-    Require(registry.Execute("edit.delete") && deletes == 1, "delete runs with a selection");
-    registry.Execute("scene.create_light.spot");
-    registry.Execute("scene.create_light.area");
+    Require(Run(registry, "edit.delete") && deletes == 1, "delete runs with a selection");
+    Run(registry, "scene.create_light.spot");
+    Run(registry, "scene.create_light.area");
     Require(createdLights == std::vector<LightType>{LightType::Spot, LightType::Area}, "each create light command names its type");
 
     // The Window menu is the panels it was given.
     const CommandMenuNode* windowMenu = FindMenu(root, "Window");
     Require(windowMenu->children[0].label == "Scene" && windowMenu->children[1].label == "Theme", "the Window menu lists the panels in order");
-    registry.Execute("window.scene");
-    registry.Execute("window.theme");
+    Run(registry, "window.scene");
+    Run(registry, "window.theme");
     Require(sceneVisible && !themeVisible, "panel commands toggle their panels");
-    registry.Execute("window.show_all");
+    Run(registry, "window.show_all");
     Require(sceneVisible && themeVisible, "show all opens every panel");
-    registry.Execute("window.reset_layout");
+    Run(registry, "window.reset_layout");
     Require(resets == 1, "reset layout reaches the controller");
 
     // The toolbar only names registered commands.

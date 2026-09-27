@@ -88,20 +88,6 @@ void Store(const std::string& path, std::shared_ptr<LoadedModelData> data)
     s_modelCache[key] = CacheEntry{std::move(data), bytes, ++s_accessCounter};
 }
 
-void UpdateMaterial(const std::string& path, uint32_t materialIndex, const ModelImportedMaterialInfo& material)
-{
-    const std::string key = NormalizeKey(path);
-    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
-    const auto it = s_modelCache.find(key);
-    if (it == s_modelCache.end() || !it->second.data || materialIndex >= it->second.data->materials.size())
-    {
-        return;
-    }
-    // Editing a material is not evidence the model is being rendered, so this
-    // deliberately does not bump lastAccess.
-    ApplyImportedMaterialInfo(material, it->second.data->materials[materialIndex]);
-}
-
 void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMaterialInfo>& materials)
 {
     const std::string key = NormalizeKey(path);

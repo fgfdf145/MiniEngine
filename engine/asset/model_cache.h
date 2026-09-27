@@ -30,10 +30,8 @@ std::shared_ptr<const LoadedModelData> Get(const std::string& path);
 
 void Store(const std::string& path, std::shared_ptr<LoadedModelData> data);
 
-// Apply an edited material back into the cached model. No-ops when the path is
-// not cached or the index is out of range, matching the guards the call sites
-// used to carry themselves.
-void UpdateMaterial(const std::string& path, uint32_t materialIndex, const ModelImportedMaterialInfo& material);
+// Apply edited materials back into the cached model. No-ops when the path is
+// not cached; materials past the model's count are ignored.
 void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMaterialInfo>& materials);
 
 // Removes the cached entry for `path`. If `path` is a directory, every cached

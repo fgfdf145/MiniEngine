@@ -172,7 +172,6 @@ using ModelLoadProgressCallback = std::function<void(float)>;
 class ModelLoader
 {
   public:
-    static bool IsImportAvailable();
     // Formats LoadModel reads: glTF 2.0 (.gltf, .glb).
     static bool IsSupportedModelPath(const std::filesystem::path& path);
     // Formats an import accepts: the loadable ones, plus Assetto Corsa .kn5, which an import

@@ -330,7 +330,6 @@ void DrawViewportSelectionOverlay(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    const std::vector<ProjectedEntityCenter>& projectedCenters,
     float uiScale)
 {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -944,7 +943,7 @@ void EditorUiController::DrawViewportPanel(
         std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
         AppendLightProjectedCenters(scene, matrices, viewportRect, m_effectiveUiScale, projectedCenters);
         HandleViewportSelection(scene, projectedCenters, viewportRect, m_effectiveUiScale);
-        DrawViewportSelectionOverlay(scene, matrices, viewportRect, projectedCenters, m_effectiveUiScale);
+        DrawViewportSelectionOverlay(scene, matrices, viewportRect, m_effectiveUiScale);
         const float textMargin = kOverlayTextMarginPixels * m_effectiveUiScale;
         ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
         ImGui::BeginGroup();

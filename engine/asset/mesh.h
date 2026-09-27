@@ -41,7 +41,6 @@ struct MeshBounds
 };
 
 // Walks every vertex, so prefer the values a loader already cached
-// (ModelSubmeshData::boundsCenter and boundsRadius) over calling these on model geometry.
+// (ModelSubmeshData::boundsCenter and boundsRadius) over calling this on model geometry.
 MeshBounds ComputeMeshBounds(const MeshData& mesh);
-glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh);
 }

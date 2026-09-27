@@ -48,16 +48,13 @@ void UpdateEntryPoints()
 
     ModelImportedMaterialInfo info;
     info.name = "edited";
-    ModelCache::UpdateMaterial(path, 0, info);
+    // More materials than the model has: the extra ones are ignored, not a crash.
+    ModelCache::UpdateMaterials(path, {info, info});
 
     std::shared_ptr<const LoadedModelData> observed = ModelCache::Get(path);
-    Require(observed != nullptr, "cached model vanished after UpdateMaterial");
-    Require(observed->materials.size() == 1, "UpdateMaterial changed the material count");
-    Require(observed->materials[0].name == "edited", "UpdateMaterial did not reach the cached model");
-
-    // Out-of-range index and absent path are both no-ops, not crashes.
-    ModelCache::UpdateMaterial(path, 99, info);
-    ModelCache::UpdateMaterial("C:/fake/not-cached.glb", 0, info);
+    Require(observed != nullptr, "cached model vanished after UpdateMaterials");
+    Require(observed->materials.size() == 1, "UpdateMaterials changed the material count");
+    Require(observed->materials[0].name == "edited", "UpdateMaterials did not reach the cached model");
 
     std::vector<ModelImportedMaterialInfo> batch;
     ModelImportedMaterialInfo second;

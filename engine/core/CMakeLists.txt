@@ -10,6 +10,7 @@ add_library(engine_core
     paths/engine_paths.cpp
     paths/engine_paths.h
     render_backend_type.h
+    text/ascii.h
     uuid/uuid.cpp
     uuid/uuid.h
     version/engine_version.cpp

@@ -4,6 +4,7 @@
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/uuid/uuid.h>
+#include <engine/core/text/ascii.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -36,15 +37,6 @@ RegistryState& State()
     return state;
 }
 
-std::string ToLowerCopy(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
-                   {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return s;
-}
-
 // Absolute, lexically normal, generic separators; lowercased on Windows where
 // the filesystem is case-insensitive.
 std::string NormalizeKey(const std::filesystem::path& p)
@@ -57,7 +49,7 @@ std::string NormalizeKey(const std::filesystem::path& p)
     }
     std::string key = absolute.lexically_normal().generic_string();
 #ifdef _WIN32
-    key = ToLowerCopy(key);
+    key = ToLowerAscii(key);
 #endif
     return key;
 }
@@ -73,27 +65,12 @@ std::string DisplayPath(const std::filesystem::path& p)
     return absolute.lexically_normal().string();
 }
 
-bool HasRegistrableExtension(const std::filesystem::path& p)
-{
-    const std::string ext = ToLowerCopy(p.extension().string());
-    // Models and textures: the asset types other files reference today.
-    return ext == ".gltf" || ext == ".glb" ||
-           ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||
-           ext == ".ktx2";
-}
-
 bool IsUnderRootLocked(const std::string& normalizedKey)
 {
     const std::string rootKey = NormalizeKey(State().root);
     return normalizedKey.size() > rootKey.size() + 1 &&
            normalizedKey.compare(0, rootKey.size(), rootKey) == 0 &&
            normalizedKey[rootKey.size()] == '/';
-}
-
-std::filesystem::path SidecarPathForInternal(const std::filesystem::path& assetPath)
-{
-    return assetPath.parent_path() / (assetPath.filename().string() + kSidecarSuffix);
 }
 
 struct SidecarData
@@ -163,7 +140,7 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
         return it->second;
     }
 
-    const std::filesystem::path sidecarPath = SidecarPathForInternal(file);
+    const std::filesystem::path sidecarPath = AssetRegistry::SidecarPathFor(file);
     std::error_code ec;
     SidecarData sidecar;
     if (std::filesystem::exists(sidecarPath, ec))
@@ -185,7 +162,7 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
                 // break the tie with the file name recorded inside each
                 // sidecar: a mismatch marks the file that was copied.
                 const std::filesystem::path ownerPath(owner->second);
-                const SidecarData ownerSidecar = ReadSidecar(SidecarPathForInternal(ownerPath));
+                const SidecarData ownerSidecar = ReadSidecar(AssetRegistry::SidecarPathFor(ownerPath));
                 const bool claimerLooksOriginal = sidecar.fileName == file.filename().string();
                 const bool ownerLooksOriginal = ownerSidecar.fileName == ownerPath.filename().string();
 
@@ -195,7 +172,7 @@ std::string RegisterFileLocked(const std::filesystem::path& file)
                     // fresh identity and this file keeps the uuid.
                     const std::string ownerDisplay = owner->second;
                     const std::string ownerNewUuid = Uuid::GenerateV4();
-                    WriteSidecar(SidecarPathForInternal(ownerPath), ownerNewUuid, ownerPath);
+                    WriteSidecar(AssetRegistry::SidecarPathFor(ownerPath), ownerNewUuid, ownerPath);
                     state.uuidToPath.erase(uuid);
                     state.pathToUuid[NormalizeKey(ownerPath)] = ownerNewUuid;
                     state.uuidToPath[ownerNewUuid] = ownerDisplay;
@@ -277,7 +254,7 @@ void ScanLocked()
             continue;
         }
 
-        if (HasRegistrableExtension(path))
+        if (AssetRegistry::IsRegistrableAsset(path))
         {
             RegisterFileLocked(path);
         }
@@ -335,7 +312,7 @@ std::string GetOrCreateUuid(const std::filesystem::path& assetPath)
     std::lock_guard lock(State().mutex);
     EnsureInitializedLocked();
 
-    if (!HasRegistrableExtension(assetPath) || !IsUnderRootLocked(NormalizeKey(assetPath)))
+    if (!AssetRegistry::IsRegistrableAsset(assetPath) || !IsUnderRootLocked(NormalizeKey(assetPath)))
     {
         return {};
     }
@@ -404,7 +381,7 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
         {
             result.resolved = true;
             const std::string key = NormalizeKey(storedPath);
-            result.uuid = (HasRegistrableExtension(storedPath) && IsUnderRootLocked(key))
+            result.uuid = (AssetRegistry::IsRegistrableAsset(storedPath) && IsUnderRootLocked(key))
                               ? RegisterFileLocked(storedPath)
                               : std::string{};
             return result;
@@ -414,14 +391,14 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
     // 3) Last resort: a unique filename match anywhere in the asset tree.
     if (!storedPath.empty())
     {
-        const std::string fileName = ToLowerCopy(std::filesystem::path(storedPath).filename().string());
+        const std::string fileName = ToLowerAscii(std::filesystem::path(storedPath).filename().string());
         std::string matchedUuid;
         size_t matchCount = 0;
         for (const auto& [key, candidateUuid] : state.pathToUuid)
         {
             const size_t slash = key.rfind('/');
             const std::string candidateName =
-                ToLowerCopy(slash == std::string::npos ? key : key.substr(slash + 1));
+                ToLowerAscii(slash == std::string::npos ? key : key.substr(slash + 1));
             if (candidateName == fileName)
             {
                 matchedUuid = candidateUuid;
@@ -462,8 +439,8 @@ void OnAssetRenamed(const std::filesystem::path& oldPath, const std::filesystem:
         return;
     }
 
-    const std::filesystem::path oldSidecar = SidecarPathForInternal(oldPath);
-    const std::filesystem::path newSidecar = SidecarPathForInternal(newPath);
+    const std::filesystem::path oldSidecar = AssetRegistry::SidecarPathFor(oldPath);
+    const std::filesystem::path newSidecar = AssetRegistry::SidecarPathFor(newPath);
     std::error_code sidecarEc;
     if (std::filesystem::exists(oldSidecar, sidecarEc))
     {
@@ -477,13 +454,13 @@ void OnAssetRenamed(const std::filesystem::path& oldPath, const std::filesystem:
     }
 
     EraseEntryLocked(NormalizeKey(oldPath));
-    if (HasRegistrableExtension(newPath) && IsUnderRootLocked(NormalizeKey(newPath)))
+    if (AssetRegistry::IsRegistrableAsset(newPath) && IsUnderRootLocked(NormalizeKey(newPath)))
     {
         const std::string uuid = RegisterFileLocked(newPath);
         if (!uuid.empty())
         {
             // Refresh the informational file name inside the sidecar.
-            WriteSidecar(SidecarPathForInternal(newPath), uuid, newPath);
+            WriteSidecar(AssetRegistry::SidecarPathFor(newPath), uuid, newPath);
         }
     }
 }
@@ -514,7 +491,7 @@ void OnAssetRemoved(const std::filesystem::path& path)
     }
 
     // File delete: the uuid sidecar next to it is now an orphan.
-    const std::filesystem::path sidecar = SidecarPathForInternal(path);
+    const std::filesystem::path sidecar = AssetRegistry::SidecarPathFor(path);
     std::error_code ec;
     if (std::filesystem::exists(sidecar, ec))
     {
@@ -531,12 +508,17 @@ bool IsUnderAssetsRoot(const std::filesystem::path& path)
 
 bool IsRegistrableAsset(const std::filesystem::path& path)
 {
-    return HasRegistrableExtension(path);
+    const std::string ext = ToLowerAscii(path.extension().string());
+    // Models and textures: the asset types other files reference today.
+    return ext == ".gltf" || ext == ".glb" ||
+           ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+           ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||
+           ext == ".ktx2";
 }
 
 std::filesystem::path SidecarPathFor(const std::filesystem::path& assetPath)
 {
-    return SidecarPathForInternal(assetPath);
+    return assetPath.parent_path() / (assetPath.filename().string() + kSidecarSuffix);
 }
 }
 }

@@ -6,7 +6,6 @@
 #include <yaml-cpp/yaml.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
-#define GLM_FORCE_RADIANS
 #include <glm/common.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -450,8 +449,6 @@ EditorScene::EditorScene()
 
 void EditorScene::LoadConfig(const std::string& path)
 {
-    m_configPath = path;
-
     if (!std::filesystem::exists(path))
     {
         return;
@@ -580,11 +577,6 @@ void EditorScene::OnEntityDestroyed(entt::registry&, entt::entity entity)
         m_selectedEntity = entt::null;
         EnsureSelection();
     }
-}
-
-bool EditorScene::HasEntities() const
-{
-    return !m_sceneOrder.empty();
 }
 
 bool EditorScene::HasSelection() const
@@ -842,21 +834,6 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
         }
     }
     EnsureSelection();
-}
-
-void EditorScene::SaveSceneToFile(const std::string& path) const
-{
-    SaveEditorSceneDataToFile(CaptureSceneData(), path);
-}
-
-std::string EditorScene::BuildSceneYamlPreview() const
-{
-    return EmitSceneYaml(CaptureSceneData());
-}
-
-const std::string& EditorScene::GetConfigPath() const
-{
-    return m_configPath;
 }
 
 const std::string& EditorScene::GetSceneFilePath() const

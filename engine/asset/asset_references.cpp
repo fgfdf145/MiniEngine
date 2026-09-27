@@ -1,5 +1,7 @@
 #include "asset_references.h"
 
+#include <engine/core/text/ascii.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -20,18 +22,9 @@ constexpr std::string_view kSidecarSuffix = ".miniengine_asset.yaml";
 // A document over this size is skipped rather than read into memory.
 constexpr std::uintmax_t kMaxScanFileBytes = 64ull * 1024 * 1024;
 
-std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
-                   {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return value;
-}
-
 bool IsScannableDocument(const std::filesystem::path& path)
 {
-    const std::string extension = ToLowerCopy(path.extension().string());
+    const std::string extension = ToLowerAscii(path.extension().string());
     if (extension != ".gltf" && extension != ".yaml" && extension != ".yml")
     {
         return false;

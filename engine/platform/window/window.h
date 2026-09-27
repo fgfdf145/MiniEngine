@@ -29,7 +29,6 @@ class Window
     void SetLiveResizeHandler(std::function<void()> handler);
 
     SDL_Window* GetSDLWindow() const;
-    RenderBackendType GetBackendType() const;
 
   private:
     void CreateNativeWindow();

@@ -59,11 +59,6 @@ bool IsCommandEnabled(const Command& command)
     return !command.isEnabled || command.isEnabled();
 }
 
-bool IsCommandCheckable(const Command& command)
-{
-    return static_cast<bool>(command.isChecked);
-}
-
 bool IsCommandChecked(const Command& command)
 {
     return command.isChecked && command.isChecked();
@@ -127,12 +122,6 @@ const Command* CommandRegistry::Find(std::string_view id) const
 {
     const auto found = m_indexById.find(std::string(id));
     return found == m_indexById.end() ? nullptr : &m_commands[found->second];
-}
-
-bool CommandRegistry::Execute(std::string_view id) const
-{
-    const Command* command = Find(id);
-    return command != nullptr && Execute(*command);
 }
 
 bool CommandRegistry::Execute(const Command& command) const

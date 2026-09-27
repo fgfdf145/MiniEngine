@@ -24,11 +24,6 @@ MeshBounds ComputeMeshBounds(const MeshData& mesh)
     return MeshBounds{(minimum + maximum) * 0.5f, glm::length(maximum - minimum) * 0.5f};
 }
 
-glm::vec3 ComputeMeshBoundsCenter(const MeshData& mesh)
-{
-    return ComputeMeshBounds(mesh).center;
-}
-
 MeshData CreateDefaultCubeMesh()
 {
     constexpr float h = WorldUnits::kHalfDefaultCubeSizeMeters;

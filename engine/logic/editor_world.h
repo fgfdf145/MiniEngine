@@ -1,6 +1,5 @@
 #pragma once
 
-#include <engine/logic/logic_layer.h>
 #include <engine/logic/gizmo_settings.h>
 #include <engine/scene/scene_components.h>
 #include <engine/scene/scene_environment.h>
@@ -62,7 +61,7 @@ struct SerializedSceneData
     int selectedEntityIndex = 0;
 };
 
-class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
+class IEditorWorld : public ISceneWorld
 {
   public:
     ~IEditorWorld() override = default;
@@ -81,7 +80,6 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
     // are kept in sync by the implementation regardless of entity kind.
     virtual void DestroyEntity(entt::entity entity) = 0;
 
-    virtual bool HasEntities() const = 0;
     virtual bool HasSelection() const = 0;
     virtual bool IsSelected(entt::entity entity) const = 0;
     virtual entt::entity GetSelectedEntity() const = 0;
@@ -107,19 +105,12 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
 
     virtual void ApplySceneData(const SerializedSceneData& sceneData) = 0;
     virtual SerializedSceneData CaptureSceneData() const = 0;
-    virtual void SaveSceneToFile(const std::string& path) const = 0;
-    virtual std::string BuildSceneYamlPreview() const = 0;
-    virtual const std::string& GetConfigPath() const = 0;
     virtual const std::string& GetSceneFilePath() const = 0;
     // The scene's sky. Saved with the scene; a scene file without it loads as EnvironmentMode::None.
     virtual const SceneEnvironment& GetEnvironment() const = 0;
     virtual void SetEnvironment(const SceneEnvironment& environment) = 0;
 
     // Convenience accessors; callers must hold a valid selection (HasSelection()).
-    TagComponent& EditSelectedTag()
-    {
-        return EditTag(GetSelectedEntity());
-    }
     const TagComponent& GetSelectedTag() const
     {
         return GetTag(GetSelectedEntity());
@@ -127,14 +118,6 @@ class IEditorWorld : public IEditorLogicLayer, public ISceneWorld
     TransformComponent& EditSelectedTransform()
     {
         return EditTransform(GetSelectedEntity());
-    }
-    const TransformComponent& GetSelectedTransform() const
-    {
-        return GetTransform(GetSelectedEntity());
-    }
-    ModelComponent& EditSelectedModel()
-    {
-        return EditModel(GetSelectedEntity());
     }
     const ModelComponent& GetSelectedModel() const
     {
