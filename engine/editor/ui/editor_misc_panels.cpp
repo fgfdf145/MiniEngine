@@ -195,7 +195,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "Screen-space reflections",
             "G-buffer: coat and anisotropy",
             "G-buffer: sheen",
-            "Indirect diffuse (one bounce)",
+            "Screen-space GI",
             "DDGI: ray-traced scene",
             "DDGI: irradiance",
             "DDGI: probes"};
@@ -227,7 +227,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         }
 
         // One bounce of the lit image onto its neighbours, through the same bitmask as the AO.
-        ImGui::SeparatorText("Indirect diffuse (one bounce)");
+        ImGui::SeparatorText("Screen-space GI");
         GiSettings& gi = m_renderDebug.gi;
         ImGui::Checkbox("Enabled##gi", &gi.enabled);
         ImGui::BeginDisabled(!gi.enabled);

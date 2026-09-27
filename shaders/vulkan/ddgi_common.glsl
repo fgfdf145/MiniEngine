@@ -243,7 +243,7 @@ vec4 DdgiIrradianceAlong(vec3 P, vec3 N, vec3 V, vec3 D, out float weight)
         // The level answers within half its grid minus one cell of the camera (ComputeDdgiLevel in
         // ddgi_volume.cpp), less half a cell for the lookup's bias, fading over the outer cell. By the
         // distance to the camera, not to the grid's faces: those jump a cell when the grid scrolls, and
-        // the whole image changed with them. One cell rather than two: the grid is only 8 probes tall,
+        // the whole image changed with them. One cell rather than two: the grid is only 12 probes tall,
         // and a wider band handed much of a room's ceiling to levels four and eight times coarser.
         vec3 fromCamera = abs(P - ubo.cameraWorldPosition.xyz) / DdgiLevelSpacing(level);
         vec3 toEdge = vec3(DDGI_GRID / 2 - 1) - 0.5 - fromCamera;
