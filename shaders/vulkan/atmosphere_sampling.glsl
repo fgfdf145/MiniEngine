@@ -51,6 +51,15 @@ vec3 SunDisk(vec3 direction, vec3 up, float viewHeight)
     return ubo.sunIlluminance.rgb / solidAngle * transmittance * limbDarkening;
 }
 
+// The ground below the horizon, which the sky-view LUT leaves out: a Lambertian plane at the
+// camera's feet with the ground albedo, lit by the sun transmitted to it.
+vec3 GroundLuminance(vec3 up)
+{
+    float cosSunZenith = dot(up, ubo.sunDirectionAndMode.xyz);
+    vec3 transmittance = SampleTransmittance(atmosphereTransmittanceLut, BottomRadius() + PLANET_RADIUS_OFFSET_KM, cosSunZenith);
+    return ubo.groundAlbedo.rgb / ATMOSPHERE_PI * ubo.sunIlluminance.rgb * transmittance * max(cosSunZenith, 0.0);
+}
+
 // Sky luminance in cd/m^2 seen from the camera along a world direction.
 vec3 SampleSky(vec3 direction)
 {
@@ -74,10 +83,7 @@ vec3 SampleSky(vec3 direction)
     bool intersectGround = RaySphereIntersectNearest(camera, direction, vec3(0.0), BottomRadius()) >= 0.0;
     vec2 uv = SkyViewLutParamsToUv(intersectGround, viewZenithCos, lightViewCos, viewHeight);
     vec3 luminance = textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
-    if (!intersectGround)
-    {
-        luminance += SunDisk(direction, up, viewHeight);
-    }
+    luminance += intersectGround ? GroundLuminance(up) : SunDisk(direction, up, viewHeight);
     return luminance;
 }
 
@@ -116,8 +122,8 @@ vec3 ApplyAerialPerspective(vec3 color, vec3 worldPosition)
     return color * transmittance + aerialPerspective.rgb * weight;
 }
 
-// Radiance that lights surfaces: the sky without the sun's disk (the sun is a light of its own),
-// and below the horizon the ground lit by the transmitted sun, which the sky-view LUT leaves out.
+// Radiance that lights surfaces: the sky as SampleSky shows it, without the sun's disk (the sun
+// is a light of its own).
 vec3 SampleSkyForLighting(vec3 direction)
 {
     vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
@@ -140,9 +146,7 @@ vec3 SampleSkyForLighting(vec3 direction)
     vec3 luminance = textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
     if (intersectGround)
     {
-        float cosSunZenith = dot(up, sunDirection);
-        vec3 transmittance = SampleTransmittance(atmosphereTransmittanceLut, BottomRadius() + PLANET_RADIUS_OFFSET_KM, cosSunZenith);
-        luminance += ubo.groundAlbedo.rgb / ATMOSPHERE_PI * ubo.sunIlluminance.rgb * transmittance * max(cosSunZenith, 0.0);
+        luminance += GroundLuminance(up);
     }
     return luminance;
 }
