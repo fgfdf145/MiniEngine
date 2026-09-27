@@ -193,6 +193,29 @@ std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> 
     return m_skipped;
 }
 
+float DdgiAdaptiveHysteresis::Update(std::span<const glm::vec4> lighting, float seconds, float hysteresis)
+{
+    bool changed = m_hasPrevious && lighting.size() != m_previous.size();
+    for (size_t index = 0; m_hasPrevious && !changed && index < lighting.size(); ++index)
+    {
+        const glm::vec4 difference = glm::abs(lighting[index] - m_previous[index]);
+        const glm::vec4 scale = glm::max(glm::max(glm::abs(lighting[index]), glm::abs(m_previous[index])), glm::vec4(1.0f));
+        changed = glm::any(glm::greaterThan(difference, scale * 1e-3f));
+    }
+    m_previous.assign(lighting.begin(), lighting.end());
+    m_hasPrevious = true;
+
+    if (changed)
+    {
+        m_fastSecondsLeft = kDdgiFastSeconds;
+    }
+    else
+    {
+        m_fastSecondsLeft = std::max(m_fastSecondsLeft - std::max(seconds, 0.0f), 0.0f);
+    }
+    return m_fastSecondsLeft > 0.0f ? std::min(hysteresis, kDdgiFastHysteresis) : hysteresis;
+}
+
 glm::mat3 DdgiRayRotation(uint32_t frameIndex)
 {
     // A uniformly random unit quaternion (Shoemake's method).

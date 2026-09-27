@@ -202,6 +202,38 @@ void MovingInstancesAreSkippedUntilTheySettle()
     skipped = moving.Update(models);
     Require(skipped.size() == 4 && skipped[2] == 0 && skipped[3] == 0, "new content is traced");
 }
+
+// The probes keep their settled hysteresis while the lighting holds, and drop to the fast one for a
+// second after it changes, the sun's direction or colour or the sky.
+void HysteresisDropsWhenTheLightingChanges()
+{
+    DdgiAdaptiveHysteresis adaptive;
+    std::vector<glm::vec4> lighting = {glm::vec4(0.3f, -0.9f, 0.2f, 0.0f), glm::vec4(1.0f, 0.95f, 0.9f, 120000.0f)};
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "the first frame has nothing to compare with");
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "steady lighting keeps the setting");
+
+    lighting[0].x += 0.01f;
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == kDdgiFastHysteresis, "a turning sun speeds the probes up");
+    float elapsed = 0.0f;
+    while (elapsed + 0.1f < kDdgiFastSeconds)
+    {
+        Require(adaptive.Update(lighting, 0.1f, 0.97f) == kDdgiFastHysteresis, "for a second after the change");
+        elapsed += 0.1f;
+    }
+    Require(adaptive.Update(lighting, 0.2f, 0.97f) == 0.97f, "then settles again");
+
+    // Tiny drift (the sun's transmittance as the camera climbs a little) is not a change.
+    lighting[1].w *= 1.0f + 1e-5f;
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "drift within the tolerance");
+
+    // The setting wins when it is already faster.
+    lighting[1].y = 0.5f;
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.5f) == 0.5f, "never slower than the setting");
+
+    // A light added or removed changes the lighting too.
+    lighting.push_back(glm::vec4(1.0f));
+    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == kDdgiFastHysteresis, "a new light");
+}
 }
 
 int main()
@@ -214,6 +246,7 @@ int main()
         RoundRobinFavoursFineLevels();
         RotationsAreRotations();
         MovingInstancesAreSkippedUntilTheySettle();
+        HysteresisDropsWhenTheLightingChanges();
     }
     catch (const std::exception& error)
     {

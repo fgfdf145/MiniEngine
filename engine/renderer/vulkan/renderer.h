@@ -39,6 +39,7 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 
+#include <chrono>
 #include <memory>
 #include <future>
 #include <optional>
@@ -254,6 +255,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     DdgiProbeScheduler m_ddgiScheduler;
     // The ray scene instances the probe rays skip while they move.
     DdgiMovingInstances m_ddgiMovingInstances;
+    // Faster blending after the lighting changes, timed from the previous frame.
+    DdgiAdaptiveHysteresis m_ddgiHysteresis;
+    std::optional<std::chrono::steady_clock::time_point> m_ddgiLastFrameTime;
     glm::vec2 m_ddgiLayout{0.0f};
     uint32_t m_ddgiFrameIndex = 0;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;

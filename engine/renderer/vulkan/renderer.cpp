@@ -745,6 +745,24 @@ void VulkanRenderer::DrawFrame()
     }
     m_ddgi->SetSchedule(m_commandContext->GetCurrentFrame(), ddgiSchedule);
 
+    // The lighting the probes hold, so they blend faster for a second after it changes: every
+    // directional light as it reaches the scene, and the sky's mode, ambient and HDRI.
+    std::vector<glm::vec4> ddgiLighting;
+    for (size_t index = 0; index < selectedLights.size(); ++index)
+    {
+        if (sceneLights.candidates[lightSelection.selected[index]].type == LightType::Directional)
+        {
+            ddgiLighting.push_back(selectedLights[index].directionAndType);
+            ddgiLighting.push_back(selectedLights[index].colorAndIntensity);
+        }
+    }
+    ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
+    ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
+    const auto now = std::chrono::steady_clock::now();
+    const float ddgiSeconds = m_ddgiLastFrameTime ? std::chrono::duration<float>(now - *m_ddgiLastFrameTime).count() : 0.0f;
+    m_ddgiLastFrameTime = now;
+    const float ddgiHysteresis = m_ddgiHysteresis.Update(ddgiLighting, ddgiSeconds, std::clamp(ddgiSettings.hysteresis, 0.0f, 0.999f));
+
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
     // the motion vectors. The forward-only order has no motion vectors, so it never jitters.
@@ -996,7 +1014,7 @@ void VulkanRenderer::DrawFrame()
                                                   m_rayScene->GetSet(frame.frameSlot),
                                                   frame.frameSlot,
                                                   m_ddgiFrameIndex++,
-                                                  std::clamp(ddgiSettings.hysteresis, 0.0f, 0.999f));
+                                                  ddgiHysteresis);
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 

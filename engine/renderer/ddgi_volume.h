@@ -111,6 +111,28 @@ class DdgiMovingInstances
     std::vector<uint8_t> m_skipped;
 };
 
+// The hysteresis the probes blend with for kDdgiFastSeconds after the lighting changes.
+inline constexpr float kDdgiFastHysteresis = 0.85f;
+inline constexpr float kDdgiFastSeconds = 1.0f;
+
+// Speeds the probes up when the lighting they hold goes stale (the DDGI design's adaptive
+// hysteresis): at 0.97 a moved sun takes a hundred frames to show in the bounce light. The lighting is
+// whatever values the caller says describe it (the directional lights' directions and colours, the
+// sky's mode and ambient); a change in any of them beyond a relative 1e-3, or in their count, starts
+// kDdgiFastSeconds of kDdgiFastHysteresis.
+class DdgiAdaptiveHysteresis
+{
+  public:
+    // The hysteresis for this frame: the setting, or kDdgiFastHysteresis while the lighting changed
+    // recently, whichever keeps less. seconds is the time since the previous call.
+    float Update(std::span<const glm::vec4> lighting, float seconds, float hysteresis);
+
+  private:
+    std::vector<glm::vec4> m_previous;
+    bool m_hasPrevious = false;
+    float m_fastSecondsLeft = 0.0f;
+};
+
 // A rotation for this frame's probe ray directions: the spherical Fibonacci set turned randomly, so
 // the directions cover the sphere over frames.
 glm::mat3 DdgiRayRotation(uint32_t frameIndex);
