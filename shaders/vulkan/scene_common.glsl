@@ -76,6 +76,11 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     // luminance seen along a unit direction d is ambientLuminance.rgb + (row_r . d, row_g . d,
     // row_b . d) (see SceneAmbientAlong). xyz used. Appended last.
     vec4 ambientGradient[3];
+    // The DDGI volume (DdgiUniformData): x level count (0 off), y strength, z normal bias, w view
+    // bias (times the spacing); each level's spacing; each level's grid origin (xyz). Appended last.
+    vec4 ddgiParams;
+    vec4 ddgiSpacing;
+    vec4 ddgiOrigins[4];
 }
 ubo;
 

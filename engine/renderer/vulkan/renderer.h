@@ -23,6 +23,7 @@
 #include "gi_pass.h"
 #include "ddgi_debug_pass.h"
 #include "ray_scene.h"
+#include "ddgi.h"
 #include "scene_render_targets.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
@@ -246,6 +247,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanEnvironmentProbe> m_environmentProbe;
     // The scene as compute shaders trace it (DDGI).
     std::unique_ptr<VulkanRayScene> m_rayScene;
+    // The DDGI probes, the CPU's schedule of their updates, the level layout their data belongs to
+    // (count and base spacing: another one invalidates every probe) and the frame index that seeds
+    // their ray rotations.
+    std::unique_ptr<VulkanDdgi> m_ddgi;
+    DdgiProbeScheduler m_ddgiScheduler;
+    glm::vec2 m_ddgiLayout{0.0f};
+    uint32_t m_ddgiFrameIndex = 0;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;
     // The area lights' LTC tables (ltc_table.h), one mip each, RGBA32F.
     std::unique_ptr<VulkanTexture> m_ltcInverseMatrices;

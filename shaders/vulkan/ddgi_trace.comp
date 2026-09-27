@@ -1,0 +1,200 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// The DDGI probe rays: one workgroup per scheduled probe, one invocation per ray. Each ray leaves the
+// probe along a spherical Fibonacci direction turned by this frame's rotation and returns the
+// radiance it brings back and how far it went (VulkanDdgi's ray buffer):
+// - a miss: the sky along the ray (the prefiltered cube at a low mip under a physical sky, plus the
+//   Ambient and Hemisphere lights; the ambient under None), distance DDGI_MISS_DISTANCE;
+// - a back face of a single-sided surface: black, the distance negated and shortened to a fifth (the
+//   probe may be inside it; the visibility moments then keep the probe from lighting past it);
+// - a front face: its emission, plus its albedo over pi times the direct light (directional lights
+//   through a traced shadow ray; point and spot lights unshadowed), plus its albedo times the probes'
+//   own irradiance there: every bounce, one per frame.
+
+#include "scene_common.glsl"
+#include "atmosphere_sampling.glsl"
+#include "spherical_harmonics.glsl"
+#include "ray_tracing_common.glsl"
+#include "ddgi_common.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 10, std430) readonly buffer SceneLightBuffer
+{
+    SceneLightData lights[];
+}
+sceneLights;
+
+layout(std430, set = 2, binding = 0) readonly buffer DdgiSchedule
+{
+    uint scheduledProbes[];
+};
+layout(std430, set = 2, binding = 1) writeonly buffer DdgiRays
+{
+    vec4 rays[];
+};
+
+// Must match DdgiTraceConstants in engine/renderer/vulkan/ddgi.cpp.
+layout(push_constant) uniform DdgiTraceConstants
+{
+    vec4 rotation[3]; // this frame's ray rotation, columns, xyz used
+    uint scheduledCount;
+    uint frameIndex;
+}
+constants;
+
+const float PI = 3.14159265359;
+const float DDGI_MISS_DISTANCE = 1e27;
+// The prefiltered cube's mip for a missed ray: roughness 0.2, blurred enough that 64 rays per frame
+// do not sample single bright texels.
+const float MISS_MIP = 1.0;
+// Radiance a hit or a miss may return, cd/m^2: a lamp's bulb seen by one ray must not flash the
+// probe.
+const float MAX_RAY_RADIANCE = 2e5;
+
+// The index-th of count points of the spherical Fibonacci set (Keinert et al. 2015).
+vec3 SphericalFibonacci(float index, float count)
+{
+    const float goldenRatio = 1.61803398875;
+    float phi = 2.0 * PI * fract(index * (goldenRatio - 1.0));
+    float cosTheta = 1.0 - (2.0 * index + 1.0) / count;
+    float sinTheta = sqrt(clamp(1.0 - cosTheta * cosTheta, 0.0, 1.0));
+    return vec3(cos(phi) * sinTheta, cosTheta, sin(phi) * sinTheta);
+}
+
+vec3 SkyRadiance(vec3 direction)
+{
+    if (EnvironmentMode() == ENVIRONMENT_NONE)
+    {
+        return SceneAmbientAlong(direction);
+    }
+    return textureLod(prefilteredEnvironment, direction, MISS_MIP).rgb + SceneLightsAmbientAlong(direction);
+}
+
+// pbr_common.glsl's RangeWindow and SmoothDistanceAttenuation, which cannot be included in compute.
+float LightRangeWindow(float distance, float range)
+{
+    float ratio = distance / max(range, 0.001);
+    float ratio4 = ratio * ratio * ratio * ratio;
+    float num = clamp(1.0 - ratio4, 0.0, 1.0);
+    return num * num;
+}
+
+// The illuminance a local light puts on a surface facing N at P (point and spot; area lights are
+// left out), unshadowed.
+vec3 LocalLightIrradiance(SceneLightData light, vec3 P, vec3 N)
+{
+    int type = int(light.directionAndType.w);
+    vec3 toLight = light.positionAndRange.xyz - P;
+    float distance = length(toLight);
+    if (distance >= light.positionAndRange.w || (type != LIGHT_POINT && type != LIGHT_SPOT))
+    {
+        return vec3(0.0);
+    }
+    vec3 L = toLight / max(distance, 1e-4);
+    float cosine = dot(N, L);
+    if (cosine <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    float attenuation = LightRangeWindow(distance, light.positionAndRange.w) / max(distance * distance, 1e-4);
+    float intensity = light.colorAndIntensity.w / (4.0 * PI);
+    if (type == LIGHT_SPOT)
+    {
+        float cosAngle = dot(-L, normalize(light.directionAndType.xyz));
+        float innerCos = light.spotAndArea.x;
+        float outerCos = light.spotAndArea.y;
+        float spot = clamp((cosAngle - outerCos) / max(innerCos - outerCos, 1e-4), 0.0, 1.0);
+        intensity = light.colorAndIntensity.w / max(2.0 * PI * (1.0 - outerCos), 1e-4) * spot * spot;
+    }
+    return light.colorAndIntensity.rgb * intensity * attenuation * cosine;
+}
+
+// The sky's irradiance / pi where the volume does not reach: the SH sky and the ambient lights.
+vec3 FallbackIrradiance(vec3 N)
+{
+    if (EnvironmentMode() == ENVIRONMENT_NONE)
+    {
+        return SceneAmbientAlong(N);
+    }
+    float basis[9];
+    EvaluateShBasis(N, basis);
+    bool hdri = EnvironmentMode() == ENVIRONMENT_HDRI;
+    vec3 irradiance = vec3(0.0);
+    for (int i = 0; i < 9; ++i)
+    {
+        vec3 coefficient = hdri ? ubo.hdriIrradianceSh[i].rgb : skyIrradiance.coefficients[i].rgb;
+        irradiance += coefficient * (SH_COSINE_LOBE[i] * basis[i]);
+    }
+    return max(irradiance, vec3(0.0)) / PI + SceneLightsAmbientAlong(N);
+}
+
+void main()
+{
+    uint probe = gl_WorkGroupID.x;
+    uint rayIndex = gl_LocalInvocationID.x;
+    if (probe >= constants.scheduledCount)
+    {
+        return;
+    }
+    uint packed = scheduledProbes[probe];
+    uint level = packed >> 24;
+    ivec3 slot = DdgiSlotFromIndex(packed & 0xffffffu);
+    ivec3 coord = DdgiSlotCoordinate(slot, DdgiLevelOrigin(level));
+    DdgiProbeState state = ddgiProbeStates[level * DDGI_PROBES_PER_LEVEL + DdgiSlotIndex(slot)];
+    vec3 origin = DdgiProbePosition(level, coord, state);
+
+    mat3 rotation = mat3(constants.rotation[0].xyz, constants.rotation[1].xyz, constants.rotation[2].xyz);
+    vec3 direction = normalize(rotation * SphericalFibonacci(float(rayIndex), 64.0));
+    uint rayId = (constants.frameIndex * 4096u + probe) * 64u + rayIndex;
+
+    vec4 result;
+    RayHit hit;
+    if (!TraceSceneRay(origin, direction, 0.0, 1e30, false, rayId, hit))
+    {
+        result = vec4(min(SkyRadiance(direction), vec3(MAX_RAY_RADIANCE)), DDGI_MISS_DISTANCE);
+    }
+    else
+    {
+        RayMaterial material = RayHitMaterial(hit);
+        bool doubleSided = (floatBitsToUint(material.emissionFlags.w) & RAY_MATERIAL_DOUBLE_SIDED) != 0u;
+        if (!hit.frontFace && !doubleSided)
+        {
+            result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
+        }
+        else
+        {
+            vec3 N = RayHitNormal(hit);
+            N = dot(N, direction) > 0.0 ? -N : N;
+            vec3 P = origin + direction * hit.t;
+            vec3 shadowOrigin = OffsetRayOrigin(P, N);
+
+            vec3 irradiance = vec3(0.0);
+            for (uint index = 0u; index < ubo.lightCounts.x; ++index)
+            {
+                SceneLightData light = sceneLights.lights[index];
+                vec3 L = -normalize(light.directionAndType.xyz);
+                float cosine = dot(N, L);
+                RayHit shadowHit;
+                if (cosine > 0.0 && !TraceSceneRay(shadowOrigin, L, 0.0, 1e30, true, rayId ^ 0x9e3779b9u, shadowHit))
+                {
+                    irradiance += light.colorAndIntensity.rgb * light.colorAndIntensity.w * cosine;
+                }
+            }
+            for (uint index = ubo.lightCounts.x; index < ubo.lightCounts.y; ++index)
+            {
+                irradiance += LocalLightIrradiance(sceneLights.lights[index], P, N);
+            }
+
+            float volumeWeight;
+            vec3 bounce = DdgiIrradiance(P, N, -direction, volumeWeight).rgb;
+            bounce += (1.0 - volumeWeight) * FallbackIrradiance(N);
+
+            vec3 albedo = material.albedoCoverage.rgb;
+            vec3 radiance = material.emissionFlags.rgb + albedo * (irradiance / PI + bounce);
+            result = vec4(min(radiance, vec3(MAX_RAY_RADIANCE)), hit.t);
+        }
+    }
+    rays[probe * 64u + rayIndex] = result;
+}

@@ -60,7 +60,10 @@ enum class GBufferDebugView : uint32_t
     // One primary ray per pixel through the DDGI ray scene: the ray materials' albedo lit by the
     // first directional light through traced shadow rays (ddgi_debug.comp). Red: a single-sided back
     // face.
-    RayTraced = 14
+    RayTraced = 14,
+    // What the DDGI probes send each pixel's surface (irradiance / pi, pre-exposed), tone mapped, before
+    // the albedo; black outside the volume.
+    DdgiIrradiance = 15
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the
@@ -124,6 +127,24 @@ struct SsrSettings
     float maxDistance = 30.0f;
 };
 
+// Cascaded DDGI (docs/design/2026-09-27-ddgi-design.md): probes around the camera that trace the
+// ray scene every frame and light every surface's diffuse ambient with what they see. Not persisted.
+// The renderer clamps every value again before the GPU sees it.
+struct DdgiSettings
+{
+    bool enabled = true;
+    // Levels of kDdgiGridSize probes, the spacing doubling per level.
+    int levels = 4;
+    // Level 0's probe spacing, metres.
+    float baseSpacing = 1.0f;
+    int probesPerFrame = 2048;
+    // The share of a probe's previous value each update keeps.
+    float hysteresis = 0.97f;
+    // How far a lookup moves off the surface, along the normal and toward the viewer, in spacings.
+    float normalBias = 0.1f;
+    float viewBias = 0.2f;
+};
+
 struct RenderDebugSettings
 {
     GBufferDebugView gbufferView = GBufferDebugView::Off;
@@ -150,6 +171,7 @@ struct RenderDebugSettings
     float hdrPeakNits = 1000.0f;
     AoSettings ao;
     GiSettings gi;
+    DdgiSettings ddgi;
     // The Khronos reference view: renders as the Khronos glTF Sample Viewer does by default, to
     // compare against it (docs/design/2026-09-26-khronos-reference-comparison-design.md).
     // PBR Neutral tone mapping, an HDRI texel of 1 exposed to 1, no auto white balance, no

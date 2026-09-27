@@ -21,7 +21,7 @@ struct DdgiDebugConstants
 
 bool IsDdgiDebugView(GBufferDebugView view)
 {
-    return view == GBufferDebugView::RayTraced;
+    return view == GBufferDebugView::RayTraced || view == GBufferDebugView::DdgiIrradiance;
 }
 }
 
@@ -36,11 +36,15 @@ VulkanDdgiDebugPass::VulkanDdgiDebugPass(
 {
     try
     {
-        static constexpr std::array<VkDescriptorType, 1> kTypes = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        static constexpr std::array<VkDescriptorType, 3> kTypes = {
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, m_rayScene.GetSetLayout(), m_setLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "ddgi_debug.comp.spv", sizeof(DdgiDebugConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 1, 1);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -62,8 +66,10 @@ ScenePassId VulkanDdgiDebugPass::Id() const
 
 RenderPassIo VulkanDdgiDebugPass::Io() const
 {
+    static constexpr std::array<RenderTargetId, 2> kReads = {RenderTargetId::SceneDepth, RenderTargetId::GBufferNormal};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneGi};
     RenderPassIo io{};
+    io.reads = kReads;
     io.writes = kWrites;
     return io;
 }
@@ -108,8 +114,13 @@ void VulkanDdgiDebugPass::CreateDescriptorSets(const SceneRenderTargets& targets
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         const VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
-        const VkWriteDescriptorSet write = ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo);
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        const VkDescriptorImageInfo depthInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+        const VkDescriptorImageInfo normalInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+        const std::array<VkWriteDescriptorSet, 3> writes = {
+            ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo),
+            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
+            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo)};
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 }
 
@@ -135,6 +146,11 @@ void VulkanDdgiDebugPass::DestroyHandles()
     {
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
+    }
+    if (m_sampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(m_device, m_sampler, nullptr);
+        m_sampler = VK_NULL_HANDLE;
     }
 }
 }

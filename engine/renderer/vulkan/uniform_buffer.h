@@ -49,6 +49,11 @@ struct EnvironmentDescriptorBindings
     // SHADER_READ_ONLY_OPTIMAL. They follow the scene's extent: SetScatterImages repoints them.
     TextureDescriptorBinding scatterLight;
     TextureDescriptorBinding scatterDepth;
+    // Bindings 21 to 23: the DDGI probes' irradiance and visibility atlases, in GENERAL, and their
+    // states (VulkanDdgi).
+    TextureDescriptorBinding ddgiIrradiance;
+    TextureDescriptorBinding ddgiVisibility;
+    VkBuffer ddgiProbeStates = VK_NULL_HANDLE;
 };
 
 struct MaterialTextureBinding
@@ -151,6 +156,20 @@ struct ShadowUniformData
 
 static_assert(kShadowCascadeCount == 4, "ShadowUniformData packs one cascade per vec4 component");
 
+// The DDGI volume as shading reads it (ddgi_common.glsl), appended to CameraUniformData.
+struct DdgiUniformData
+{
+    // x = level count (0: DDGI off), y = strength, z = normal bias, w = view bias (both times the
+    // level's spacing).
+    glm::vec4 params{0.0f};
+    // Component l: level l's probe spacing in metres.
+    glm::vec4 spacing{0.0f};
+    // Level l's grid origin (world grid coordinate of its minimum corner probe) in xyz, as floats.
+    glm::vec4 origins[4]{};
+};
+
+static_assert(sizeof(DdgiUniformData) == 6 * 16, "DdgiUniformData must stay six vec4");
+
 struct alignas(16) CameraUniformData
 {
     glm::mat4 view{1.0f};
@@ -185,6 +204,8 @@ struct alignas(16) CameraUniformData
     // The Hemisphere lights' direction-dependent half, one row per colour channel (see
     // SceneLightSelection::ambientGradient); xyz used. Appended last.
     glm::vec4 ambientGradient[3]{};
+    // Appended last.
+    DdgiUniformData ddgi;
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -196,8 +217,12 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16 + 6 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
+static_assert(
+    offsetof(CameraUniformData, ddgi) ==
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16,
+    "ddgi must follow ambientGradient with no padding");
 static_assert(
     offsetof(CameraUniformData, ambientGradient) ==
         kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16,
@@ -320,7 +345,8 @@ class VulkanUniformBuffer
         const EnvironmentUniformData& environment,
         const glm::mat4& viewProjNoJitter,
         bool specularAntiAliasing,
-        float preExposure);
+        float preExposure,
+        const DdgiUniformData& ddgi);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

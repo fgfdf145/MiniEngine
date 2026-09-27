@@ -12,6 +12,8 @@ add_library(engine_render_core
     glare.h
     camera.cpp
     camera.h
+    ddgi_volume.cpp
+    ddgi_volume.h
     environment_brdf.cpp
     environment_brdf.h
     exposure.cpp
@@ -98,6 +100,8 @@ add_library(engine_renderer
     vulkan/command.h
     vulkan/compute_pass_util.cpp
     vulkan/compute_pass_util.h
+    vulkan/ddgi.cpp
+    vulkan/ddgi.h
     vulkan/ddgi_debug_pass.cpp
     vulkan/ddgi_debug_pass.h
     vulkan/common.h
@@ -207,6 +211,8 @@ set(MINIENGINE_SHADER_SOURCES
     transmission_copy.comp
     ray_material_average.comp
     ddgi_debug.comp
+    ddgi_trace.comp
+    ddgi_update.comp
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
@@ -241,6 +247,7 @@ set(MINIENGINE_SHADER_INCLUDES
     spherical_harmonics.glsl
     cubemap_common.glsl
     ray_tracing_common.glsl
+    ddgi_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)

@@ -417,6 +417,32 @@ endif()
 
 set_target_properties(miniengine_ray_tracing_bvh_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_ddgi_volume_tests
+    ddgi_volume_tests.cpp
+)
+miniengine_group_target_sources(miniengine_ddgi_volume_tests)
+
+target_link_libraries(miniengine_ddgi_volume_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.ddgi_volume
+    COMMAND miniengine_ddgi_volume_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_ddgi_volume_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_ddgi_volume_tests>
+            $<TARGET_FILE_DIR:miniengine_ddgi_volume_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_ddgi_volume_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_local_shadows_tests
     local_shadows_tests.cpp
 )

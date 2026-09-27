@@ -234,7 +234,8 @@ void VulkanUniformBuffer::Update(
     const EnvironmentUniformData& environment,
     const glm::mat4& viewProjNoJitter,
     bool specularAntiAliasing,
-    float preExposure)
+    float preExposure,
+    const DdgiUniformData& ddgi)
 {
     // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
     // robustness feature is enabled to catch it, so a mismatch is refused here instead.
@@ -302,6 +303,7 @@ void VulkanUniformBuffer::Update(
     data.viewProjNoJitter = viewProjNoJitter;
     data.specularAntiAliasing = glm::vec4(specularAntiAliasing ? 1.0f : 0.0f, kSpecularAAVariance, kSpecularAAThreshold, 0.0f);
     data.exposure = glm::vec4(preExposure, 1.0f / preExposure, 0.0f, 0.0f);
+    data.ddgi = ddgi;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
     std::memcpy(m_mappedMotionBuffers[imageIndex], prevModels.data(), prevModels.size_bytes());
@@ -310,7 +312,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 21> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 24> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -399,6 +401,15 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    // The DDGI probes: irradiance (21) and visibility (22) atlases and their states (23), read by
+    // ShadeSurface and by the probe rays themselves (their infinite bounce).
+    for (uint32_t binding : {21u, 22u, 23u})
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = binding == 23u ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -593,8 +604,8 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // set 1. That is why neither its name nor its failure message belongs to either half.
     const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 13},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 7}}};
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 15},
+                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -653,7 +664,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 21> frameWrites{};
+        std::array<VkWriteDescriptorSet, 24> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -779,6 +790,26 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             frameWrites[binding].descriptorCount = 1;
             frameWrites[binding].pImageInfo = binding == 19u ? &scatterLightInfo : &scatterDepthInfo;
+        }
+        const VkDescriptorImageInfo ddgiIrradianceInfo{m_environment.ddgiIrradiance.sampler, m_environment.ddgiIrradiance.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo ddgiVisibilityInfo{m_environment.ddgiVisibility.sampler, m_environment.ddgiVisibility.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorBufferInfo ddgiStateInfo{m_environment.ddgiProbeStates, 0, VK_WHOLE_SIZE};
+        for (uint32_t binding : {21u, 22u, 23u})
+        {
+            frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            frameWrites[binding].dstSet = m_frameDescriptorSets[i];
+            frameWrites[binding].dstBinding = binding;
+            frameWrites[binding].descriptorCount = 1;
+            if (binding == 23u)
+            {
+                frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                frameWrites[binding].pBufferInfo = &ddgiStateInfo;
+            }
+            else
+            {
+                frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                frameWrites[binding].pImageInfo = binding == 21u ? &ddgiIrradianceInfo : &ddgiVisibilityInfo;
+            }
         }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);

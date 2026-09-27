@@ -1,0 +1,183 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Blends one scheduled probe's rays (ddgi_trace.comp) into its atlas tiles: one workgroup per probe,
+// one invocation per visibility texel, the first 64 also one per irradiance texel. Each texel's
+// direction takes the rays' average weighted by the cosine (irradiance: radiance, and the share of
+// the lobe that escaped to the sky) or a sharp power of it (visibility: the distance and its square,
+// clamped to twice the spacing), then keeps a hysteresis share of what the texel held. A probe whose
+// record is for another coordinate (a scroll moved its slot) or that was never updated keeps nothing.
+// The border texels copy the octahedron's opposite edges, so bilinear lookups wrap correctly.
+
+#include "scene_common.glsl"
+#include "ddgi_common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 2, binding = 0) readonly buffer DdgiSchedule
+{
+    uint scheduledProbes[];
+};
+layout(std430, set = 2, binding = 1) readonly buffer DdgiRays
+{
+    vec4 rays[];
+};
+layout(set = 2, binding = 2, rgba16f) uniform image2DArray irradianceImage;
+layout(set = 2, binding = 3, rgba16f) uniform image2DArray visibilityImage;
+layout(std430, set = 2, binding = 4) buffer DdgiProbeStatesOut
+{
+    DdgiProbeState probeStatesOut[];
+};
+
+// Must match DdgiUpdateConstants in engine/renderer/vulkan/ddgi.cpp.
+layout(push_constant) uniform DdgiUpdateConstants
+{
+    vec4 rotation[3];
+    uint scheduledCount;
+    float hysteresis;
+}
+constants;
+
+const float PI = 3.14159265359;
+const float DDGI_MISS_DISTANCE = 1e27;
+// The visibility lobe's power: sharp, so a texel's distance is the one straight along it.
+const float VISIBILITY_SHARPNESS = 50.0;
+
+shared vec4 sharedRays[64];
+shared vec3 sharedDirections[64];
+shared vec4 sharedIrradiance[64];
+shared vec2 sharedVisibility[256];
+
+vec3 SphericalFibonacci(float index, float count)
+{
+    const float goldenRatio = 1.61803398875;
+    float phi = 2.0 * PI * fract(index * (goldenRatio - 1.0));
+    float cosTheta = 1.0 - (2.0 * index + 1.0) / count;
+    float sinTheta = sqrt(clamp(1.0 - cosTheta * cosTheta, 0.0, 1.0));
+    return vec3(cos(phi) * sinTheta, cosTheta, sin(phi) * sinTheta);
+}
+
+vec3 TexelDirection(ivec2 texel, int texels)
+{
+    return DdgiOctDecode(((vec2(texel) + 0.5) / float(texels)) * 2.0 - 1.0);
+}
+
+// The interior texel a border texel of a (texels + 2)-wide tile copies: the opposite edge, mirrored.
+ivec2 BorderSource(ivec2 texel, int texels)
+{
+    int last = texels + 1;
+    bool left = texel.x == 0;
+    bool right = texel.x == last;
+    bool top = texel.y == 0;
+    bool bottom = texel.y == last;
+    if ((left || right) && (top || bottom))
+    {
+        return ivec2(left ? texels : 1, top ? texels : 1);
+    }
+    if (top || bottom)
+    {
+        return ivec2(last - texel.x, top ? 1 : texels);
+    }
+    return ivec2(left ? 1 : texels, last - texel.y);
+}
+
+void main()
+{
+    uint probe = gl_WorkGroupID.x;
+    if (probe >= constants.scheduledCount)
+    {
+        return;
+    }
+    uint thread = gl_LocalInvocationIndex;
+    uint packed = scheduledProbes[probe];
+    uint level = packed >> 24;
+    ivec3 slot = DdgiSlotFromIndex(packed & 0xffffffu);
+    ivec3 coord = DdgiSlotCoordinate(slot, DdgiLevelOrigin(level));
+    uint stateIndex = level * DDGI_PROBES_PER_LEVEL + DdgiSlotIndex(slot);
+    DdgiProbeState state = probeStatesOut[stateIndex];
+    bool fresh = state.coordAndFlags.xyz != coord || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0;
+    float hysteresis = fresh ? 0.0 : constants.hysteresis;
+    float maxDistance = 2.0 * DdgiLevelSpacing(level);
+
+    if (thread < 64u)
+    {
+        mat3 rotation = mat3(constants.rotation[0].xyz, constants.rotation[1].xyz, constants.rotation[2].xyz);
+        sharedRays[thread] = rays[probe * 64u + thread];
+        sharedDirections[thread] = normalize(rotation * SphericalFibonacci(float(thread), 64.0));
+    }
+    barrier();
+
+    ivec3 layerOrigin = ivec3(DdgiTile(slot), int(level));
+    // Visibility: every invocation, one texel of the 16 x 16 interior.
+    ivec2 visibilityTexel = ivec2(gl_LocalInvocationID.xy);
+    {
+        vec3 direction = TexelDirection(visibilityTexel, DDGI_VISIBILITY_TEXELS);
+        vec2 moments = vec2(0.0);
+        float total = 0.0;
+        for (int ray = 0; ray < 64; ++ray)
+        {
+            float weight = pow(max(dot(direction, sharedDirections[ray]), 0.0), VISIBILITY_SHARPNESS);
+            float distance = min(abs(sharedRays[ray].w), maxDistance);
+            moments += weight * vec2(distance, distance * distance);
+            total += weight;
+        }
+        moments = total > 1e-6 ? moments / total : vec2(maxDistance, maxDistance * maxDistance);
+        ivec3 texel = ivec3(layerOrigin.xy * (DDGI_VISIBILITY_TEXELS + 2) + 1 + visibilityTexel, layerOrigin.z);
+        vec2 previous = imageLoad(visibilityImage, texel).rg;
+        sharedVisibility[thread] = mix(moments, previous, hysteresis);
+    }
+    // Irradiance: the first 64 invocations, one texel of the 8 x 8 interior.
+    if (thread < 64u)
+    {
+        ivec2 irradianceTexel = ivec2(int(thread) % DDGI_IRRADIANCE_TEXELS, int(thread) / DDGI_IRRADIANCE_TEXELS);
+        vec3 direction = TexelDirection(irradianceTexel, DDGI_IRRADIANCE_TEXELS);
+        vec4 sum = vec4(0.0);
+        float total = 0.0;
+        for (int ray = 0; ray < 64; ++ray)
+        {
+            vec4 rayData = sharedRays[ray];
+            // Back faces bring no light and do not count: they are what classification looks at.
+            if (rayData.w < 0.0)
+            {
+                continue;
+            }
+            float weight = max(dot(direction, sharedDirections[ray]), 0.0);
+            sum += weight * vec4(rayData.rgb, rayData.w >= DDGI_MISS_DISTANCE ? 1.0 : 0.0);
+            total += weight;
+        }
+        vec4 value = total > 1e-6 ? sum / total : vec4(0.0);
+        ivec3 texel = ivec3(layerOrigin.xy * (DDGI_IRRADIANCE_TEXELS + 2) + 1 + irradianceTexel, layerOrigin.z);
+        vec4 previous = imageLoad(irradianceImage, texel);
+        sharedIrradiance[thread] = mix(value, previous, hysteresis);
+    }
+    barrier();
+
+    // Write the interiors and borders from shared memory: 18 x 18 visibility texels, 10 x 10
+    // irradiance texels, spread over the 256 invocations.
+    const int visibilityTile = DDGI_VISIBILITY_TEXELS + 2;
+    for (int index = int(thread); index < visibilityTile * visibilityTile; index += 256)
+    {
+        ivec2 tileTexel = ivec2(index % visibilityTile, index / visibilityTile);
+        bool border = tileTexel.x == 0 || tileTexel.y == 0 || tileTexel.x == visibilityTile - 1 || tileTexel.y == visibilityTile - 1;
+        ivec2 source = (border ? BorderSource(tileTexel, DDGI_VISIBILITY_TEXELS) : tileTexel) - 1;
+        vec2 value = sharedVisibility[source.y * DDGI_VISIBILITY_TEXELS + source.x];
+        imageStore(visibilityImage, ivec3(layerOrigin.xy * visibilityTile + tileTexel, layerOrigin.z), vec4(value, 0.0, 0.0));
+    }
+    const int irradianceTile = DDGI_IRRADIANCE_TEXELS + 2;
+    if (int(thread) < irradianceTile * irradianceTile)
+    {
+        ivec2 tileTexel = ivec2(int(thread) % irradianceTile, int(thread) / irradianceTile);
+        bool border = tileTexel.x == 0 || tileTexel.y == 0 || tileTexel.x == irradianceTile - 1 || tileTexel.y == irradianceTile - 1;
+        ivec2 source = (border ? BorderSource(tileTexel, DDGI_IRRADIANCE_TEXELS) : tileTexel) - 1;
+        vec4 value = sharedIrradiance[source.y * DDGI_IRRADIANCE_TEXELS + source.x];
+        imageStore(irradianceImage, ivec3(layerOrigin.xy * irradianceTile + tileTexel, layerOrigin.z), value);
+    }
+
+    if (thread == 0u)
+    {
+        DdgiProbeState updated;
+        updated.coordAndFlags = ivec4(coord, DDGI_PROBE_UPDATED);
+        updated.offset = fresh ? vec4(0.0) : state.offset;
+        probeStatesOut[stateIndex] = updated;
+    }
+}

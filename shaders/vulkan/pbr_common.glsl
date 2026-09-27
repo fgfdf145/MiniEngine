@@ -14,6 +14,8 @@
 #include "atmosphere_sampling.glsl"
 #include "spherical_harmonics.glsl"
 #include "cubemap_common.glsl"
+// The DDGI probes' irradiance for the diffuse ambient (SceneDiffuseAmbient).
+#include "ddgi_common.glsl"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -801,8 +803,11 @@ vec3 SpecularAmbientRadiance(vec3 environment, vec4 reflection, float NdV, float
     return mix(environment * (SpecularOcclusion(NdV, ao, roughness) * horizon), reflection.rgb, reflection.a);
 }
 
+// Defined after EvaluateSkyIrradiance, which it falls back on.
+vec3 SceneDiffuseAmbient(vec3 worldPosition, vec3 n, vec3 V);
+
 vec3 EvaluateUniformAmbient(
-    vec3 N, vec3 geoNormal, vec3 V,
+    vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V,
     vec3 albedo, float metallic, float roughness,
     SpecularParams specular,
     float ao,
@@ -818,7 +823,10 @@ vec3 EvaluateUniformAmbient(
     vec3 diffuseAlbedo = albedo * (1.0 - metallic) * (vec3(1.0) - albedos.dielectric);
     vec3 R = reflect(-V, N);
     float horizon = HorizonSpecularOcclusion(R, geoNormal);
-    vec3 diffuse = MixDiffuseTransmittedAmbient(diffuseAlbedo * SceneAmbientAlong(N) * ao, SceneAmbientAlong(-N) * ao, metallic, albedos.dielectric, specular);
+    vec3 diffuse = MixDiffuseTransmittedAmbient(
+        diffuseAlbedo * SceneDiffuseAmbient(worldPosition, N, V) * ao,
+        specular.diffuseTransmissionFactor > 0.0 ? SceneDiffuseAmbient(worldPosition, -N, V) * ao : vec3(0.0),
+        metallic, albedos.dielectric, specular);
     diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(SceneAmbientAlong(R), reflection, NdV, ao, roughness, horizon);
 }
@@ -954,12 +962,30 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
     return max(irradiance, vec3(0.0));
 }
 
+// The light the diffuse ambient term receives at worldPosition from around n, as irradiance / pi (the
+// ambient luminance's unit): the DDGI probes where they reach, which hold the sky, the Ambient and
+// Hemisphere lights and every bounce off the scene; the sky's SH and the ambient lights where they do
+// not, blended over the volume's outer cells. V points toward the viewer (the probes' view bias).
+vec3 SceneDiffuseAmbient(vec3 worldPosition, vec3 n, vec3 V)
+{
+    vec3 fallback = EnvironmentMode() == ENVIRONMENT_NONE
+                        ? SceneAmbientAlong(n)
+                        : EvaluateSkyIrradiance(n) / ATMOSPHERE_PI + SceneLightsAmbientAlong(n);
+    if (DdgiLevelCount() == 0u)
+    {
+        return fallback;
+    }
+    float weight;
+    vec3 probes = DdgiIrradiance(worldPosition, n, V, weight).rgb;
+    return probes + (1.0 - weight) * fallback;
+}
+
 
 // The ambient term under a physical sky, split-sum (Karis 2013): the diffuse lobe sees the SH
 // irradiance for N, the specular lobe the GGX-prefiltered sky along R at the surface's roughness,
 // weighted by the DFG table's F0 A + B. The scene's Ambient and Hemisphere lights, but not the
 // fallback, add theirs (SceneLightsAmbientAlong).
-vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, SpecularParams specular, float ao, vec4 reflection)
+vec3 EvaluateSkyAmbient(vec3 worldPosition, vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metallic, float roughness, AnisotropyParams anisotropy, SpecularParams specular, float ao, vec4 reflection)
 {
     float NdV = max(dot(N, V), 0.0);
     vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
@@ -970,10 +996,10 @@ vec3 EvaluateSkyAmbient(vec3 N, vec3 geoNormal, vec3 V, vec3 albedo, float metal
     // keeps the isotropic roughness.
     vec3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
     vec3 environment = textureLod(prefilteredEnvironment, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R);
-    vec3 diffuse = diffuseAlbedo * (EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(N)) * ao;
+    vec3 diffuse = diffuseAlbedo * SceneDiffuseAmbient(worldPosition, N, V) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
-        diffuse = MixDiffuseTransmittedAmbient(diffuse, (EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(-N)) * ao, metallic, albedos.dielectric, specular);
+        diffuse = MixDiffuseTransmittedAmbient(diffuse, SceneDiffuseAmbient(worldPosition, -N, V) * ao, metallic, albedos.dielectric, specular);
     }
     diffuse = MixTransmittedAmbient(diffuse, metallic, albedos.dielectric, specular);
     return diffuse + specularAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, roughness, HorizonSpecularOcclusion(R, geoNormal));
@@ -1083,8 +1109,8 @@ vec3 ShadeSurface(
     // The AO darkens the diffuse lobe directly and the specular one through SpecularOcclusion; a
     // screen-space reflection (reflection.a > 0) replaces the occluded environment where it is trusted.
     vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
-                       ? EvaluateUniformAmbient(N, geoNormal, V, albedo, metallic, roughness, specular, ao, reflection)
-                       : EvaluateSkyAmbient(N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, reflection);
+                       ? EvaluateUniformAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, specular, ao, reflection)
+                       : EvaluateSkyAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, reflection);
 
     // One factor for every direct light: it depends only on the surface and the view. It comes
     // from the DFG table, which integrates the same height-correlated lobe the direct lights draw,
@@ -1246,16 +1272,8 @@ vec3 ScatterEnteringLight(
                           SpecularEnergyCompensation(specular.dielectricF0, environmentBrdf);
     vec3 front;
     vec3 back;
-    if (EnvironmentMode() == ENVIRONMENT_NONE)
-    {
-        front = SceneAmbientAlong(N);
-        back = SceneAmbientAlong(-N);
-    }
-    else
-    {
-        front = EvaluateSkyIrradiance(N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(N);
-        back = EvaluateSkyIrradiance(-N) / ATMOSPHERE_PI + SceneLightsAmbientAlong(-N);
-    }
+    front = SceneDiffuseAmbient(worldPosition, N, V);
+    back = SceneDiffuseAmbient(worldPosition, -N, V);
     vec3 light = (vec3(1.0) - specularAlbedo) * color * singleScatter * (front + back * backAttenuation * (1.0 - singleScatter));
 
     int shadowLightIndex = int(ubo.shadowParams.x);

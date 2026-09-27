@@ -1,0 +1,183 @@
+#include "ddgi_volume.h"
+
+#include <glm/gtc/quaternion.hpp>
+
+#include <algorithm>
+#include <cmath>
+
+namespace me
+{
+
+namespace
+{
+int FloorMod(int value, int size)
+{
+    const int remainder = value % size;
+    return remainder < 0 ? remainder + size : remainder;
+}
+
+// A 32-bit integer hash (Wellons' lowbias32), for the per-frame rotation.
+uint32_t Hash(uint32_t value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+float UnitFloat(uint32_t value)
+{
+    return static_cast<float>(value >> 8) * (1.0f / 16777216.0f);
+}
+}
+
+DdgiLevel ComputeDdgiLevel(const glm::vec3& camera, float spacing)
+{
+    DdgiLevel level{};
+    level.spacing = spacing;
+    const glm::ivec3 cell(glm::floor(camera / spacing));
+    level.origin = cell - kDdgiGridSize / 2;
+    return level;
+}
+
+glm::ivec3 DdgiStorageSlot(const glm::ivec3& coord)
+{
+    return glm::ivec3(FloorMod(coord.x, kDdgiGridSize.x), FloorMod(coord.y, kDdgiGridSize.y), FloorMod(coord.z, kDdgiGridSize.z));
+}
+
+glm::ivec3 DdgiSlotCoordinate(const glm::ivec3& slot, const glm::ivec3& origin)
+{
+    return origin + DdgiStorageSlot(slot - origin);
+}
+
+uint32_t DdgiSlotIndex(const glm::ivec3& slot)
+{
+    return static_cast<uint32_t>(slot.x + kDdgiGridSize.x * (slot.z + kDdgiGridSize.z * slot.y));
+}
+
+glm::ivec3 DdgiSlotFromIndex(uint32_t index)
+{
+    const int value = static_cast<int>(index);
+    const int x = value % kDdgiGridSize.x;
+    const int z = (value / kDdgiGridSize.x) % kDdgiGridSize.z;
+    const int y = value / (kDdgiGridSize.x * kDdgiGridSize.z);
+    return glm::ivec3(x, y, z);
+}
+
+std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> levels, uint32_t budget)
+{
+    const size_t levelCount = std::min<size_t>(levels.size(), kDdgiMaxLevels);
+    bool restart = levelCount != m_levels.size();
+    for (size_t level = 0; level < levelCount && !restart; ++level)
+    {
+        restart = m_levels[level].spacing != levels[level].spacing;
+    }
+    if (restart)
+    {
+        m_levels.assign(levelCount, LevelState{});
+        for (size_t level = 0; level < levelCount; ++level)
+        {
+            m_levels[level].spacing = levels[level].spacing;
+            m_levels[level].held.assign(kDdgiProbesPerLevel, glm::ivec3(0));
+            m_levels[level].valid.assign(kDdgiProbesPerLevel, 0u);
+        }
+    }
+
+    for (size_t level = 0; level < levelCount; ++level)
+    {
+        m_levels[level].origin = levels[level].origin;
+    }
+
+    std::vector<uint32_t> scheduled;
+    scheduled.reserve(budget);
+    // Marks what this frame updates, so round robin does not pick it twice.
+    std::vector<std::vector<uint8_t>> taken(levelCount, std::vector<uint8_t>(kDdgiProbesPerLevel, 0u));
+    const auto take = [&](uint32_t level, uint32_t index, const glm::ivec3& coord)
+    {
+        scheduled.push_back(PackDdgiProbe(level, index));
+        taken[level][index] = 1u;
+        m_levels[level].held[index] = coord;
+        m_levels[level].valid[index] = 1u;
+    };
+
+    // Stale probes first, finest level first.
+    for (uint32_t level = 0; level < levelCount && scheduled.size() < budget; ++level)
+    {
+        LevelState& state = m_levels[level];
+        for (uint32_t index = 0; index < kDdgiProbesPerLevel && scheduled.size() < budget; ++index)
+        {
+            const glm::ivec3 coord = DdgiSlotCoordinate(DdgiSlotFromIndex(index), levels[level].origin);
+            if (state.valid[index] == 0u || state.held[index] != coord)
+            {
+                take(level, index, coord);
+            }
+        }
+    }
+
+    // The rest round robin: level l weighs 2^(count - 1 - l).
+    const uint32_t remaining = budget - static_cast<uint32_t>(scheduled.size());
+    float weightSum = 0.0f;
+    for (size_t level = 0; level < levelCount; ++level)
+    {
+        weightSum += std::ldexp(1.0f, static_cast<int>(levelCount - 1 - level));
+    }
+    for (uint32_t level = 0; level < levelCount && remaining > 0; ++level)
+    {
+        LevelState& state = m_levels[level];
+        state.credit += static_cast<float>(remaining) * std::ldexp(1.0f, static_cast<int>(levelCount - 1 - level)) / weightSum;
+        uint32_t share = static_cast<uint32_t>(state.credit);
+        state.credit -= static_cast<float>(share);
+        share = std::min(share, kDdgiProbesPerLevel);
+        for (uint32_t visited = 0; visited < kDdgiProbesPerLevel && share > 0 && scheduled.size() < budget; ++visited)
+        {
+            const uint32_t index = state.cursor;
+            state.cursor = (state.cursor + 1) % kDdgiProbesPerLevel;
+            if (taken[level][index] != 0u)
+            {
+                continue;
+            }
+            take(level, index, DdgiSlotCoordinate(DdgiSlotFromIndex(index), levels[level].origin));
+            --share;
+        }
+    }
+    return scheduled;
+}
+
+void DdgiProbeScheduler::Reset()
+{
+    m_levels.clear();
+}
+
+uint32_t DdgiProbeScheduler::StaleCount(uint32_t level) const
+{
+    if (level >= m_levels.size())
+    {
+        return kDdgiProbesPerLevel;
+    }
+    const LevelState& state = m_levels[level];
+    uint32_t stale = 0;
+    for (uint32_t index = 0; index < kDdgiProbesPerLevel; ++index)
+    {
+        if (state.valid[index] == 0u || state.held[index] != DdgiSlotCoordinate(DdgiSlotFromIndex(index), state.origin))
+        {
+            ++stale;
+        }
+    }
+    return stale;
+}
+
+glm::mat3 DdgiRayRotation(uint32_t frameIndex)
+{
+    // A uniformly random unit quaternion (Shoemake's method).
+    const float u1 = UnitFloat(Hash(frameIndex * 3u + 1u));
+    const float u2 = UnitFloat(Hash(frameIndex * 3u + 2u));
+    const float u3 = UnitFloat(Hash(frameIndex * 3u + 3u));
+    constexpr float kTwoPi = 6.28318530718f;
+    const float a = std::sqrt(1.0f - u1);
+    const float b = std::sqrt(u1);
+    const glm::quat rotation(a * std::cos(kTwoPi * u2), a * std::sin(kTwoPi * u2), b * std::sin(kTwoPi * u3), b * std::cos(kTwoPi * u3));
+    return glm::mat3_cast(glm::normalize(rotation));
+}
+}

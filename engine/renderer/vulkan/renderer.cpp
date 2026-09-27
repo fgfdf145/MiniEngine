@@ -706,8 +706,44 @@ void VulkanRenderer::DrawFrame()
     {
         m_commandContext->WaitForAllFrames();
         m_rayScene->InstallBuild();
+        // The probes hold the old content's light.
+        m_ddgi->Invalidate();
+        m_ddgiScheduler.Reset();
     }
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, {});
+
+    // DDGI: this frame's levels around the camera and the probes that update. Off in the Khronos
+    // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.
+    DdgiUniformData ddgiData{};
+    std::vector<uint32_t> ddgiSchedule;
+    const DdgiSettings ddgiSettings = State().renderDebug.ddgi;
+    if (ddgiSettings.enabled && !State().renderDebug.khronosReference && m_rayScene->IsReady())
+    {
+        const uint32_t levelCount = static_cast<uint32_t>(std::clamp(ddgiSettings.levels, 1, static_cast<int>(kDdgiMaxLevels)));
+        const float baseSpacing = std::clamp(ddgiSettings.baseSpacing, 0.25f, 8.0f);
+        const glm::vec2 layout(static_cast<float>(levelCount), baseSpacing);
+        if (layout != m_ddgiLayout)
+        {
+            m_ddgi->Invalidate();
+            m_ddgiScheduler.Reset();
+            m_ddgiLayout = layout;
+        }
+        std::array<DdgiLevel, kDdgiMaxLevels> levels{};
+        for (uint32_t level = 0; level < levelCount; ++level)
+        {
+            levels[level] = ComputeDdgiLevel(State().camera.position, std::ldexp(baseSpacing, static_cast<int>(level)));
+            ddgiData.spacing[level] = levels[level].spacing;
+            ddgiData.origins[level] = glm::vec4(glm::vec3(levels[level].origin), 0.0f);
+        }
+        const uint32_t budget = static_cast<uint32_t>(std::clamp(ddgiSettings.probesPerFrame, 64, static_cast<int>(VulkanDdgi::kMaxProbesPerFrame)));
+        ddgiSchedule = m_ddgiScheduler.Schedule(std::span<const DdgiLevel>(levels.data(), levelCount), budget);
+        ddgiData.params = glm::vec4(
+            static_cast<float>(levelCount),
+            0.0f,
+            std::clamp(ddgiSettings.normalBias, 0.0f, 1.0f),
+            std::clamp(ddgiSettings.viewBias, 0.0f, 1.0f));
+    }
+    m_ddgi->SetSchedule(m_commandContext->GetCurrentFrame(), ddgiSchedule);
 
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
@@ -810,7 +846,8 @@ void VulkanRenderer::DrawFrame()
         viewProjection,
         // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
         State().renderDebug.specularAntiAliasing && !State().renderDebug.khronosReference,
-        preExposure);
+        preExposure,
+        ddgiData);
     const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() || !localShadowTiles.empty() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
@@ -951,6 +988,15 @@ void VulkanRenderer::DrawFrame()
                                               // The ray materials, when content changed, and the barrier that
                                               // makes the ray scene visible to every trace after it.
                                               m_rayScene->Record(commandBuffer);
+                                              // The probes trace the ray scene and must be current before
+                                              // any surface samples them.
+                                              m_ddgi->Record(
+                                                  commandBuffer,
+                                                  frame.frameDescriptorSet,
+                                                  m_rayScene->GetSet(frame.frameSlot),
+                                                  frame.frameSlot,
+                                                  m_ddgiFrameIndex++,
+                                                  std::clamp(ddgiSettings.hysteresis, 0.0f, 0.999f));
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -1128,6 +1174,13 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    m_ddgi = std::make_unique<VulkanDdgi>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        m_frameSetLayout->GetHandle(),
+        m_rayScene->GetSetLayout(),
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -1204,6 +1257,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_ltcInverseMatrices.reset();
     m_ltcAmplitudes.reset();
     m_environmentProbe.reset();
+    m_ddgi.reset();
     m_rayScene.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
@@ -1233,6 +1287,9 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.transmission = m_transmissionImage->GetSampledBinding();
     bindings.scatterLight = m_scatterPass->GetLightBinding();
     bindings.scatterDepth = m_scatterPass->GetDepthBinding();
+    bindings.ddgiIrradiance = m_ddgi->GetIrradianceBinding();
+    bindings.ddgiVisibility = m_ddgi->GetVisibilityBinding();
+    bindings.ddgiProbeStates = m_ddgi->GetProbeStateBuffer();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
     return bindings;

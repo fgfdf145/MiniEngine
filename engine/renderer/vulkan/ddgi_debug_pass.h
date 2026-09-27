@@ -40,6 +40,7 @@ class VulkanDdgiDebugPass : public IScenePass
 
     VkDevice m_device = VK_NULL_HANDLE;
     const VulkanRayScene& m_rayScene;
+    VkSampler m_sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

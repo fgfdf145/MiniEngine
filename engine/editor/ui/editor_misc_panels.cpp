@@ -181,7 +181,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 15> kGBufferViewNames = {
+        static constexpr std::array<const char*, 16> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -196,7 +196,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: coat and anisotropy",
             "G-buffer: sheen",
             "Indirect diffuse (one bounce)",
-            "DDGI: ray-traced scene"};
+            "DDGI: ray-traced scene",
+            "DDGI: irradiance"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
@@ -242,6 +243,25 @@ void EditorUiController::DrawGraphicsDebugPanel()
             gi = GiSettings{};
         }
         ImGui::EndDisabled();
+
+        // Probes around the camera that trace the scene: the diffuse ambient's light, off screen and
+        // bounced any number of times. Forward-shaded surfaces use them too, so the forward-only
+        // order keeps them.
+        ImGui::SeparatorText("DDGI");
+        DdgiSettings& ddgi = m_renderDebug.ddgi;
+        ImGui::Checkbox("Enabled##ddgi", &ddgi.enabled);
+        ImGui::BeginDisabled(!ddgi.enabled);
+        DragIntInRange("Levels##ddgi", &ddgi.levels, 1, 4);
+        DragFloatInRange("Spacing (m)##ddgi", &ddgi.baseSpacing, 0.25f, 8.0f, "%.2f");
+        DragIntInRange("Probes per frame##ddgi", &ddgi.probesPerFrame, 64, 4096);
+        DragFloatInRange("Hysteresis##ddgi", &ddgi.hysteresis, 0.0f, 0.999f, "%.3f");
+        DragFloatInRange("Normal bias##ddgi", &ddgi.normalBias, 0.0f, 1.0f, "%.2f");
+        DragFloatInRange("View bias##ddgi", &ddgi.viewBias, 0.0f, 1.0f, "%.2f");
+        ImGui::EndDisabled();
+        if (ImGui::SmallButton("Reset##ddgi"))
+        {
+            ddgi = DdgiSettings{};
+        }
     }
     ImGui::End();
 }
