@@ -199,7 +199,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                 State(),
                 uiFrame.actions.importedModelRequest->sourcePath,
                 uiFrame.actions.importedModelRequest->destinationDirectory,
-                uiFrame.actions.importedModelRequest->policy);
+                uiFrame.actions.importedModelRequest->policy,
+                uiFrame.actions.importedModelRequest->kn5Options);
         }
         catch (const std::exception& error)
         {

@@ -20,6 +20,7 @@
 
 #include <array>
 #include <deque>
+#include <future>
 #include <optional>
 #include <string>
 #include <vector>
@@ -54,6 +55,8 @@ struct EditorUiActions
         std::string sourcePath;
         std::string destinationDirectory;
         ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists;
+        // What the Assetto Corsa import dialog chose; unused for other formats.
+        Kn5ImportOptions kn5Options;
     };
 
     struct LightCreate
@@ -182,8 +185,14 @@ class EditorUiController
         EditorUiFrameResult& result);
     void DrawAssetBrowserPanel(EditorUiFrameResult& result);
     void DrawImportConflictModal(EditorUiFrameResult& result);
+    // Asks for an Assetto Corsa model's livery and conversion options before importing it.
+    void DrawKn5ImportModal(EditorUiFrameResult& result);
     // Imports a model into the folder being browsed, asking first when its target folder is taken.
-    void RequestModelImport(const std::string& sourcePath, EditorUiFrameResult& result);
+    // A .kn5 first asks for its livery and options unless `kn5Options` already holds them.
+    void RequestModelImport(
+        const std::string& sourcePath,
+        EditorUiFrameResult& result,
+        std::optional<Kn5ImportOptions> kn5Options = std::nullopt);
 
     SDL_Window* m_window = nullptr;
     float m_uiScale = 1.0f;
@@ -234,9 +243,27 @@ class EditorUiController
         std::string destinationDirectory;
         std::string existingFolderName;
         std::string keepBothFolderName;
+        Kn5ImportOptions kn5Options;
     };
     std::optional<PendingImportConflict> m_pendingImportConflict;
     bool m_openImportConflictModal = false;
+    // A .kn5 import waiting for its livery and options. The model is surveyed on a background
+    // thread: a track's kn5 runs to hundreds of megabytes.
+    struct PendingKn5Import
+    {
+        std::string sourcePath;
+        std::string destinationDirectory;
+        std::future<Kn5ModelSummary> survey;
+        std::optional<Kn5ModelSummary> summary;
+        std::string error;
+        size_t selectedSkin = 0;
+        Kn5ImportOptions options;
+    };
+    std::optional<PendingKn5Import> m_pendingKn5Import;
+    bool m_openKn5ImportModal = false;
+    // Surveys of dialogs cancelled before they finished, kept until done so cancelling never
+    // waits on one.
+    std::vector<std::future<Kn5ModelSummary>> m_abandonedKn5Surveys;
     std::deque<std::string> m_droppedFiles; // queued by QueueDroppedFile, drained by the asset browser
     bool m_showCameraWindow = true;
     RenderDebugSettings m_renderDebug;

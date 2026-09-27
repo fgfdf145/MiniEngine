@@ -1,5 +1,6 @@
 #pragma once
 
+#include "kn5_importer.h"
 #include "mesh.h"
 
 #include <engine/scene/material_graph.h>
@@ -184,11 +185,13 @@ class ModelLoader
     // companion files are copied too, sorted into subfolders (buffers/,
     // textures/) with the glTF's URIs rewritten to match; .glb is copied
     // as-is; a .kn5 is converted into "<name>.gltf" with its buffer and PNG
-    // textures laid out the same way, taking the car's default skin.
+    // textures laid out the same way, as `kn5Options` asks (the car's default
+    // skin unless it names another).
     // Existing destination files are kept, never overwritten. Returns the
     // path of the model the engine loads.
     static std::filesystem::path CopyModelWithSortedReferences(
         const std::filesystem::path& modelPath,
-        const std::filesystem::path& targetDirectory);
+        const std::filesystem::path& targetDirectory,
+        const Kn5ImportOptions& kn5Options = {});
 };
 }

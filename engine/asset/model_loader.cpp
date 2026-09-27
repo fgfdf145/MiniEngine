@@ -296,7 +296,8 @@ const char* ModelLoader::GetImporterName()
 
 std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::filesystem::path& modelPath,
-    const std::filesystem::path& targetDirectory)
+    const std::filesystem::path& targetDirectory,
+    const Kn5ImportOptions& kn5Options)
 {
     const std::string extension = ToLowerCopy(modelPath.extension().string());
 
@@ -304,7 +305,7 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     if (Kn5Importer::IsKn5Path(modelPath))
     {
         // Converted rather than copied: the result is a glTF bundle, so it needs no unpacking.
-        return Kn5Importer::ConvertToGltf(modelPath, targetDirectory).gltfPath;
+        return Kn5Importer::ConvertToGltf(modelPath, targetDirectory, kn5Options).gltfPath;
     }
     if (extension == ".gltf")
     {

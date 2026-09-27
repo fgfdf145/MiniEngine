@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <engine/asset/kn5_importer.h>
 #include <engine/asset/model_import_target.h>
 #include <engine/scene/scene_components.h>
 
@@ -19,14 +20,16 @@ namespace ModelImportService
 // destination directory. A .gltf's referenced companions are sorted into
 // buffers/ and textures/ subfolders and its URIs rewritten to match; an
 // Assetto Corsa .kn5 is converted into a glTF bundle laid out the same way,
-// and the returned path is that glTF. `policy`
+// and the returned path is that glTF, converted as `kn5Options` asks (ignored
+// for other formats). `policy`
 // decides what happens when that folder already holds files; see
 // ModelImportTarget. Returns the imported model path. Blocking; prefer
 // StartAsyncImport from the UI thread.
 std::string ImportModelIntoAssetDirectory(
     const std::string& sourcePath,
     const std::string& destinationDirectory,
-    ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists);
+    ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists,
+    const Kn5ImportOptions& kn5Options = {});
 
 // Runs ImportModelIntoAssetDirectory on a background thread via
 // state.asyncImport. Throws if another import is still in flight.
@@ -34,7 +37,8 @@ void StartAsyncImport(
     RendererSharedState& state,
     const std::string& sourcePath,
     const std::string& destinationDirectory,
-    ImportConflictPolicy policy);
+    ImportConflictPolicy policy,
+    const Kn5ImportOptions& kn5Options = {});
 
 // Polls the in-flight import once per frame. On completion, reports the
 // outcome (state.lastModelLoadError on failure) and refreshes the asset

@@ -15,8 +15,10 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
+#include <regex>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_map>
@@ -864,6 +866,68 @@ void CollectNodeNames(const Kn5Node& node, std::vector<std::string>& names)
         CollectNodeNames(child, names);
     }
 }
+
+// The colour a texture is everywhere, as each channel's middle in [0, 1]: nullopt when any channel
+// spans more than 6 levels. Extrema over every texel, not a downsample: averaging first would
+// flatten leather grain and brushed metal to a constant too.
+std::optional<std::array<float, 3>> FlatColorMiddle(const std::vector<std::uint8_t>& rgba, int width, int height)
+{
+    const size_t texels = static_cast<size_t>(std::max(width, 0)) * static_cast<size_t>(std::max(height, 0));
+    if (texels == 0 || rgba.size() < texels * 4)
+    {
+        return std::nullopt;
+    }
+    std::array<int, 3> low{255, 255, 255};
+    std::array<int, 3> high{0, 0, 0};
+    for (size_t texel = 0; texel < texels; ++texel)
+    {
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            const int value = rgba[texel * 4 + static_cast<size_t>(channel)];
+            low[channel] = std::min(low[channel], value);
+            high[channel] = std::max(high[channel], value);
+        }
+    }
+    std::array<float, 3> middle{};
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        if (high[channel] - low[channel] > 6)
+        {
+            return std::nullopt;
+        }
+        middle[channel] = static_cast<float>(low[channel] + high[channel]) * 0.5f / 255.0f;
+    }
+    return middle;
+}
+
+// Meshes, triangles (in total and per material) and the subtrees a default import drops.
+void SurveyNodes(
+    const Kn5Node& node,
+    const std::set<std::string>& lowRes,
+    bool insideDropped,
+    Kn5ModelSummary& summary,
+    std::vector<size_t>& materialTriangles)
+{
+    bool dropped = insideDropped;
+    if (!insideDropped && (Kn5Importer::IsRuntimeVariant(node.name) || lowRes.count(node.name) != 0))
+    {
+        ++summary.runtimeVariants;
+        dropped = true;
+    }
+    if (node.HasGeometry())
+    {
+        ++summary.meshes;
+        summary.triangles += node.triangleCount;
+        if (node.materialIndex < materialTriangles.size())
+        {
+            materialTriangles[node.materialIndex] += node.triangleCount;
+        }
+    }
+    for (const Kn5Node& child : node.children)
+    {
+        SurveyNodes(child, lowRes, dropped, summary, materialTriangles);
+    }
+}
 }
 
 namespace Kn5Importer
@@ -922,39 +986,196 @@ float SpecularExponentToRoughness(float exponent)
 
 std::optional<std::array<float, 3>> FlatDetailTint(const std::vector<std::uint8_t>& rgba, int width, int height)
 {
-    const size_t texels = static_cast<size_t>(std::max(width, 0)) * static_cast<size_t>(std::max(height, 0));
-    if (texels == 0 || rgba.size() < texels * 4)
+    const std::optional<std::array<float, 3>> middle = FlatColorMiddle(rgba, width, height);
+    if (!middle.has_value())
     {
         return std::nullopt;
     }
-    // Extrema over every texel, not a downsample: averaging first would flatten leather grain and
-    // brushed metal to a constant too.
-    std::array<int, 3> low{255, 255, 255};
-    std::array<int, 3> high{0, 0, 0};
-    for (size_t texel = 0; texel < texels; ++texel)
-    {
-        for (int channel = 0; channel < 3; ++channel)
-        {
-            const int value = rgba[texel * 4 + static_cast<size_t>(channel)];
-            low[channel] = std::min(low[channel], value);
-            high[channel] = std::max(high[channel], value);
-        }
-    }
     std::array<float, 3> linear{};
-    for (int channel = 0; channel < 3; ++channel)
+    for (size_t channel = 0; channel < 3; ++channel)
     {
-        if (high[channel] - low[channel] > 6)
-        {
-            return std::nullopt;
-        }
         // Doubled in gamma space, then linearised: the order is AC's, and on a mid-grey paint
         // the two orders differ by a stop and a half.
-        const float middle = static_cast<float>(low[channel] + high[channel]) * 0.5f / 255.0f;
-        const float doubled = std::min(2.0f * middle, 1.0f);
+        const float doubled = std::min(2.0f * (*middle)[channel], 1.0f);
         linear[channel] = Round(
             doubled <= 0.04045f ? doubled / 12.92f : std::pow((doubled + 0.055f) / 1.055f, 2.4f), 5);
     }
     return linear;
+}
+
+std::vector<size_t> RankPaintedMaterials(
+    const std::vector<std::string>& materialNames,
+    const std::vector<bool>& painted,
+    const std::vector<size_t>& triangles)
+{
+    // What a car is painted beside, which is the half that matters: a rim is a painted material
+    // on most Kunos cars and can carry more triangles than the bodywork.
+    static const std::regex kNotBody(
+        "rim|wheel|tyre|tire|brake|calip|disc|glass|window|light|lamp|badge|logo|plate|mirror|seat|"
+        "interior|cockpit|dash|carpet|leather|belt|driver|steer|engine|exhaust|grill|plastic|chrome|"
+        "rubber|shadow");
+    static const std::regex kPaintHint("car[_ ]?paint|(^|[^a-z])body([^a-z]|$)|chassis");
+
+    struct Ranked
+    {
+        size_t index;
+        int band;
+        int inside;
+        size_t triangles;
+    };
+    std::vector<Ranked> ranked;
+    for (size_t index = 0; index < materialNames.size() && index < painted.size(); ++index)
+    {
+        if (!painted[index])
+        {
+            continue;
+        }
+        const std::string lower = ToLowerCopy(materialNames[index]);
+        // An interior copy of the paint (INT_OCC_Carpaint) is the same colour inside the panels.
+        const int inside = lower.rfind("int", 0) == 0 ? 1 : 0;
+        const int band = std::regex_search(lower, kNotBody) ? 2 : (std::regex_search(lower, kPaintHint) ? 0 : 1);
+        ranked.push_back({index, band, inside, index < triangles.size() ? triangles[index] : 0});
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b)
+                     {
+                         if (a.band != b.band)
+                         {
+                             return a.band < b.band;
+                         }
+                         if (a.inside != b.inside)
+                         {
+                             return a.inside < b.inside;
+                         }
+                         return a.triangles > b.triangles;
+                     });
+    std::vector<size_t> order;
+    order.reserve(ranked.size());
+    for (const Ranked& entry : ranked)
+    {
+        order.push_back(entry.index);
+    }
+    return order;
+}
+
+Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
+{
+    Kn5Model model = Kn5Reader::Load(kn5Path, false);
+    FoldTextureCase(model);
+
+    Kn5ModelSummary summary;
+    summary.encrypted = model.encrypted;
+    summary.materials = model.materials.size();
+    summary.textures = model.textures.size();
+    std::vector<std::string> names;
+    CollectNodeNames(model.root, names);
+    std::vector<size_t> materialTriangles(model.materials.size(), 0);
+    SurveyNodes(model.root, LowResTwins(names), false, summary, materialTriangles);
+    if (summary.encrypted)
+    {
+        // Its textures are decoys: no colour read from them would be the real one.
+        return summary;
+    }
+
+    std::vector<std::string> materialNames;
+    std::vector<bool> painted;
+    for (const Kn5Material& material : model.materials)
+    {
+        materialNames.push_back(material.name);
+        painted.push_back(!material.Texture("txDetail").empty() && material.Property("useDetail", 0.0f) > 0.0f);
+    }
+    const std::vector<size_t> paintOrder = RankPaintedMaterials(materialNames, painted, materialTriangles);
+
+    // Keyed by the file the colour comes from: several materials (and every livery that does not
+    // ship the texture) share one detail map, so each is decoded once.
+    std::unordered_map<std::string, std::optional<std::array<std::uint8_t, 3>>> colors;
+    const auto colorOf = [&](const std::string& key, const std::function<std::vector<std::uint8_t>()>& read)
+    {
+        const auto cached = colors.find(key);
+        if (cached != colors.end())
+        {
+            return cached->second;
+        }
+        std::optional<std::array<std::uint8_t, 3>> color;
+        const std::vector<std::uint8_t> blob = read();
+        if (blob.size() >= kStubTextureBytes)
+        {
+            if (const std::optional<TextureData> image = DecodeTextureBlob(blob, key))
+            {
+                if (const std::optional<std::array<float, 3>> middle =
+                        FlatColorMiddle(image->pixels, image->width, image->height))
+                {
+                    color = std::array<std::uint8_t, 3>{
+                        static_cast<std::uint8_t>(std::lround((*middle)[0] * 255.0f)),
+                        static_cast<std::uint8_t>(std::lround((*middle)[1] * 255.0f)),
+                        static_cast<std::uint8_t>(std::lround((*middle)[2] * 255.0f))};
+                }
+            }
+        }
+        colors[key] = color;
+        return color;
+    };
+
+    std::vector<std::string> skinNames = ListSkins(kn5Path);
+    skinNames.push_back(std::string());
+    for (const std::string& skinName : skinNames)
+    {
+        Kn5SkinSummary skin;
+        skin.name = skinName;
+        std::unordered_map<std::string, std::filesystem::path> overrides;
+        if (!skinName.empty())
+        {
+            std::error_code ec;
+            for (std::filesystem::directory_iterator it(kn5Path.parent_path() / "skins" / skinName, ec), end;
+                 !ec && it != end; it.increment(ec))
+            {
+                std::error_code fileEc;
+                if (it->is_regular_file(fileEc))
+                {
+                    overrides[ToLowerCopy(it->path().filename().string())] = it->path();
+                }
+            }
+        }
+        for (size_t materialIndex : paintOrder)
+        {
+            const std::string detail = model.materials[materialIndex].Texture("txDetail");
+            const auto own = overrides.find(ToLowerCopy(detail));
+            std::optional<std::array<std::uint8_t, 3>> color;
+            const bool fromSkin = own != overrides.end();
+            if (fromSkin)
+            {
+                const std::filesystem::path file = own->second;
+                color = colorOf(file.string(), [&]()
+                                {
+                                    try
+                                    {
+                                        return ReadFileBytes(file);
+                                    }
+                                    catch (const std::exception&)
+                                    {
+                                        return std::vector<std::uint8_t>();
+                                    }
+                                });
+            }
+            else
+            {
+                color = colorOf("kn5:" + detail, [&]()
+                                {
+                                    const Kn5Texture* texture = FindTexture(model, detail);
+                                    return texture != nullptr ? texture->data : std::vector<std::uint8_t>();
+                                });
+            }
+            if (color.has_value())
+            {
+                // The first flat colour in body-first order is the car's colour.
+                skin.paint = color;
+                skin.paintMaterial = model.materials[materialIndex].name;
+                skin.paintFromSkin = fromSkin;
+                break;
+            }
+        }
+        summary.skins.push_back(std::move(skin));
+    }
+    return summary;
 }
 
 Kn5ImportReport ConvertToGltf(

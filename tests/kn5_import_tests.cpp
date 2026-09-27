@@ -744,6 +744,56 @@ void ImportGoesThroughTheModelLoader()
                       ModelLoader::LoadModel(kn5.string());
                   },
                   "loading a kn5 without importing it");
+
+    // The import dialog's choices reach the converter.
+    Kn5ImportOptions embedded;
+    embedded.skin = "none";
+    const std::filesystem::path other = scope.Path() / "models" / "embedded";
+    std::filesystem::create_directories(other);
+    const std::filesystem::path withOptions = ModelLoader::CopyModelWithSortedReferences(kn5, other, embedded);
+    RequireNear(ModelLoader::LoadModel(withOptions.string()).materials[0].baseColor[0], 1.0f, 1e-6f,
+                "the chosen skin is the one converted");
+}
+
+void InspectOffersLiveriesAndOptions()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    const Kn5ModelSummary summary = Kn5Importer::Inspect(kn5);
+    Require(!summary.encrypted, "a plain kn5 is not encrypted");
+    Require(summary.meshes == 8 && summary.triangles == 8, "every mesh in the file is counted");
+    Require(summary.materials == 4 && summary.textures == 7, "material and texture counts");
+    Require(summary.runtimeVariants == 3, "the dropped subtrees are counted");
+    Require(summary.skins.size() == 3, "two skins and the embedded textures");
+    Require(summary.skins[0].name == "00_soul_red" && summary.skins[1].name == "01_arctic_white" &&
+                summary.skins[2].name.empty(),
+            "skins in the game's order, the embedded textures last");
+
+    const Kn5SkinSummary& red = summary.skins[0];
+    Require(red.paint.has_value() && *red.paint == std::array<std::uint8_t, 3>{126, 1, 0}, "the livery's paint colour");
+    Require(red.paintFromSkin && red.paintMaterial == "EXT_Carpaint", "the paint comes from the livery's texture");
+    const Kn5SkinSummary& embedded = summary.skins[2];
+    Require(embedded.paint.has_value() && *embedded.paint == std::array<std::uint8_t, 3>{148, 148, 148},
+            "the embedded paint is the kn5's template");
+    Require(!embedded.paintFromSkin, "the embedded paint comes from the kn5");
+
+    std::vector<std::uint8_t> encrypted = BuildCarKn5(6);
+    const std::string marker = Kn5Reader::kEncryptionMarker;
+    encrypted.insert(encrypted.end(), marker.begin(), marker.end());
+    const std::filesystem::path encryptedPath = scope.Path() / "enc" / "car.kn5";
+    WriteFile(encryptedPath, encrypted);
+    const Kn5ModelSummary refused = Kn5Importer::Inspect(encryptedPath);
+    Require(refused.encrypted && refused.skins.empty(), "an encrypted kn5 is reported, with no decoy colours");
+}
+
+void PaintRankingPrefersTheBodywork()
+{
+    // The rims carry the most triangles, which is why size alone picked them on the MX-5.
+    const std::vector<size_t> order = Kn5Importer::RankPaintedMaterials(
+        {"RIM", "EXT_Carpaint", "INT_OCC_Carpaint", "Decal", "Glass"},
+        {true, true, true, true, false},
+        {33024, 23554, 5000, 100, 0});
+    Require(order == std::vector<size_t>{1, 2, 3, 0}, "body first, interior copy next, unknown, then the rim");
 }
 }
 
@@ -761,6 +811,8 @@ int main()
         SkinChoiceChangesThePaint();
         RefusesEncryptedAndExistingTargets();
         ImportGoesThroughTheModelLoader();
+        InspectOffersLiveriesAndOptions();
+        PaintRankingPrefersTheBodywork();
 
         std::cout << "kn5 import tests passed\n";
         return 0;

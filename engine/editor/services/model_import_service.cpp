@@ -59,7 +59,8 @@ namespace ModelImportService
 std::string ImportModelIntoAssetDirectory(
     const std::string& sourcePath,
     const std::string& destinationDirectory,
-    ImportConflictPolicy policy)
+    ImportConflictPolicy policy,
+    const Kn5ImportOptions& kn5Options)
 {
     const std::filesystem::path src = std::filesystem::path(sourcePath);
     if (!std::filesystem::exists(src))
@@ -101,7 +102,7 @@ std::string ImportModelIntoAssetDirectory(
     std::filesystem::path dst;
     try
     {
-        dst = ModelLoader::CopyModelWithSortedReferences(src, copyFolder);
+        dst = ModelLoader::CopyModelWithSortedReferences(src, copyFolder, kn5Options);
     }
     catch (...)
     {
@@ -146,7 +147,8 @@ void StartAsyncImport(
     RendererSharedState& state,
     const std::string& sourcePath,
     const std::string& destinationDirectory,
-    ImportConflictPolicy policy)
+    ImportConflictPolicy policy,
+    const Kn5ImportOptions& kn5Options)
 {
     if (state.asyncImport.IsLoading())
     {
@@ -155,10 +157,10 @@ void StartAsyncImport(
 
     state.asyncImport.sourcePath = sourcePath;
     state.asyncImport.destinationDirectory = destinationDirectory;
-    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory, policy]()
+    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory, policy, kn5Options]()
                                           {
                                               return ImportModelIntoAssetDirectory(
-                                                  sourcePath, destinationDirectory, policy);
+                                                  sourcePath, destinationDirectory, policy, kn5Options);
                                           });
 
     LOG_INFO("Started async import: {} -> {}", sourcePath, destinationDirectory);

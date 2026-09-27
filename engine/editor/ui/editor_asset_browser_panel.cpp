@@ -7,6 +7,8 @@
 #include <engine/core/paths/engine_paths.h>
 #include <imgui.h>
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 
 namespace me
@@ -32,7 +34,7 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         // Files dropped onto the window go into the folder being browsed, one per frame: a frame
         // carries one import or copy request, and a model whose folder is taken waits for the
         // conflict modal to be answered.
-        if (!m_droppedFiles.empty() && !m_pendingImportConflict.has_value() &&
+        if (!m_droppedFiles.empty() && !m_pendingImportConflict.has_value() && !m_pendingKn5Import.has_value() &&
             !result.actions.importedModelRequest.has_value() && !assetResult.pasteRequest.has_value())
         {
             const std::string dropped = std::move(m_droppedFiles.front());
@@ -88,6 +90,7 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
             }
             result.actions.renamedAssets.push_back(renamed);
         }
+        DrawKn5ImportModal(result);
         DrawImportConflictModal(result);
     }
     ImGui::End();
@@ -100,9 +103,27 @@ void EditorUiController::QueueDroppedFile(std::string path)
     m_showAssetManagerWindow = true;
 }
 
-void EditorUiController::RequestModelImport(const std::string& sourcePath, EditorUiFrameResult& result)
+void EditorUiController::RequestModelImport(
+    const std::string& sourcePath,
+    EditorUiFrameResult& result,
+    std::optional<Kn5ImportOptions> kn5Options)
 {
     const std::string destination = m_assetManager->GetCurrentDirectory().string();
+    if (Kn5Importer::IsKn5Path(sourcePath) && !kn5Options.has_value())
+    {
+        // The livery lives beside the model, not in it, so there is a choice to make first.
+        PendingKn5Import pending;
+        pending.sourcePath = sourcePath;
+        pending.destinationDirectory = destination;
+        pending.survey = std::async(std::launch::async, [sourcePath]()
+                                    {
+                                        return Kn5Importer::Inspect(sourcePath);
+                                    });
+        m_pendingKn5Import = std::move(pending);
+        m_openKn5ImportModal = true;
+        return;
+    }
+
     const std::filesystem::path modelFolder =
         ModelImportTarget::DefaultFolder(std::filesystem::path(sourcePath), destination);
     if (ModelImportTarget::IsOccupied(modelFolder))
@@ -113,7 +134,8 @@ void EditorUiController::RequestModelImport(const std::string& sourcePath, Edito
             sourcePath,
             destination,
             modelFolder.filename().string(),
-            ModelImportTarget::NextFreeFolder(modelFolder).filename().string()};
+            ModelImportTarget::NextFreeFolder(modelFolder).filename().string(),
+            kn5Options.value_or(Kn5ImportOptions{})};
         m_openImportConflictModal = true;
     }
     else
@@ -122,7 +144,9 @@ void EditorUiController::RequestModelImport(const std::string& sourcePath, Edito
         // RequestAssetBrowserRefresh() once the files are on disk.
         result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
             sourcePath,
-            destination};
+            destination,
+            ImportConflictPolicy::FailIfExists,
+            kn5Options.value_or(Kn5ImportOptions{})};
     }
 }
 
@@ -158,7 +182,8 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
                 result.actions.importedModelRequest = EditorUiActions::ImportedModelRequest{
                     conflict.sourcePath,
                     conflict.destinationDirectory,
-                    policy};
+                    policy,
+                    conflict.kn5Options};
             };
 
             const std::string keepBothLabel = "Import as '" + conflict.keepBothFolderName + "'";
@@ -197,5 +222,218 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
         // Dismissed without an explicit choice (e.g. Escape): treat as cancel.
         m_pendingImportConflict.reset();
     }
+}
+
+void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
+{
+    constexpr const char* kTitle = "Import Assetto Corsa Model";
+    const ImVec4 kWarningColor(1.00f, 0.55f, 0.35f, 1.0f);
+
+    // Surveys of cancelled dialogs are let go once they finish.
+    m_abandonedKn5Surveys.erase(
+        std::remove_if(m_abandonedKn5Surveys.begin(), m_abandonedKn5Surveys.end(), [](const std::future<Kn5ModelSummary>& survey)
+                       {
+                           return survey.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+                       }),
+        m_abandonedKn5Surveys.end());
+
+    if (m_openKn5ImportModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openKn5ImportModal = false;
+    }
+
+    const auto cancel = [&]()
+    {
+        if (m_pendingKn5Import.has_value() && m_pendingKn5Import->survey.valid())
+        {
+            m_abandonedKn5Surveys.push_back(std::move(m_pendingKn5Import->survey));
+        }
+        m_pendingKn5Import.reset();
+    };
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (m_pendingKn5Import.has_value() && !m_openKn5ImportModal)
+        {
+            // Dismissed without an explicit choice (e.g. Escape): treat as cancel.
+            cancel();
+        }
+        return;
+    }
+    if (!m_pendingKn5Import.has_value())
+    {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
+    PendingKn5Import& pending = *m_pendingKn5Import;
+    if (pending.survey.valid() && pending.survey.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        try
+        {
+            pending.summary = pending.survey.get();
+        }
+        catch (const std::exception& error)
+        {
+            pending.error = error.what();
+        }
+    }
+
+    const std::filesystem::path source(pending.sourcePath);
+    ImGui::Text("%s", source.filename().string().c_str());
+    ImGui::TextDisabled(
+        "Converted to glTF into '%s'.",
+        ModelImportTarget::DefaultFolder(source, pending.destinationDirectory).filename().string().c_str());
+
+    bool canImport = false;
+    if (!pending.error.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextColored(kWarningColor, "This file cannot be read: %s", pending.error.c_str());
+    }
+    else if (!pending.summary.has_value())
+    {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Reading the model...");
+    }
+    else if (pending.summary->encrypted)
+    {
+        ImGui::Spacing();
+        ImGui::TextColored(kWarningColor, "This file carries the Custom Shaders Patch encryption trailer.");
+        ImGui::TextDisabled("Its textures and several meshes are decoys, so it cannot be imported.");
+    }
+    else
+    {
+        const Kn5ModelSummary& summary = *pending.summary;
+        canImport = true;
+
+        ImGui::SeparatorText("Model");
+        ImGui::TextDisabled(
+            "%zu meshes, %zu triangles, %zu materials, %zu textures",
+            summary.meshes,
+            summary.triangles,
+            summary.materials,
+            summary.textures);
+
+        ImGui::SeparatorText("Livery");
+        // The last entry is the kn5's own textures; any before it are the skins/ folders.
+        const bool hasSkins = summary.skins.size() > 1;
+        pending.selectedSkin = std::min(pending.selectedSkin, summary.skins.size() - 1);
+        if (!hasSkins)
+        {
+            ImGui::TextDisabled("No skins folder beside this model: its embedded textures are used.");
+        }
+        else
+        {
+            const float rowHeight = ImGui::GetFrameHeightWithSpacing();
+            const float listHeight = rowHeight * static_cast<float>(std::min<size_t>(summary.skins.size(), 8)) +
+                                     ImGui::GetStyle().WindowPadding.y * 2.0f;
+            if (ImGui::BeginChild("Liveries", ImVec2(420.0f * m_effectiveUiScale, listHeight), true))
+            {
+                const float swatchSize = ImGui::GetFrameHeight();
+                for (size_t index = 0; index < summary.skins.size(); ++index)
+                {
+                    const Kn5SkinSummary& skin = summary.skins[index];
+                    ImGui::PushID(static_cast<int>(index));
+                    if (skin.paint.has_value())
+                    {
+                        const ImVec4 paint(
+                            (*skin.paint)[0] / 255.0f,
+                            (*skin.paint)[1] / 255.0f,
+                            (*skin.paint)[2] / 255.0f,
+                            1.0f);
+                        ImGui::ColorButton(
+                            "##paint",
+                            paint,
+                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                            ImVec2(swatchSize, swatchSize));
+                    }
+                    else
+                    {
+                        ImGui::Dummy(ImVec2(swatchSize, swatchSize));
+                    }
+                    ImGui::SameLine();
+
+                    std::string label = skin.name.empty() ? std::string("Embedded textures (kn5)") : skin.name;
+                    if (index == 0)
+                    {
+                        label += "  (default)";
+                    }
+                    ImGui::AlignTextToFramePadding();
+                    if (ImGui::Selectable(label.c_str(), pending.selectedSkin == index, ImGuiSelectableFlags_None, ImVec2(0.0f, swatchSize)))
+                    {
+                        pending.selectedSkin = index;
+                    }
+                    if (skin.paint.has_value())
+                    {
+                        ImGui::SetItemTooltip(
+                            "Paint #%02X%02X%02X from material '%s' (%s)",
+                            (*skin.paint)[0],
+                            (*skin.paint)[1],
+                            (*skin.paint)[2],
+                            skin.paintMaterial.c_str(),
+                            skin.paintFromSkin ? "this livery" : "the kn5");
+                    }
+                    else
+                    {
+                        ImGui::SetItemTooltip("The paint is a pattern, not one colour.");
+                    }
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+
+            const Kn5SkinSummary& chosen = summary.skins[pending.selectedSkin];
+            if (!chosen.name.empty() && chosen.paint.has_value() && !chosen.paintFromSkin)
+            {
+                // Otherwise "I changed the livery and the body did not change" looks like a bug.
+                ImGui::TextDisabled("This livery does not ship the paint texture: the body keeps the kn5's colour.");
+            }
+            else if (chosen.name.empty())
+            {
+                ImGui::TextDisabled("The kn5's own textures are the export-time template, usually grey primer.");
+            }
+        }
+
+        ImGui::SeparatorText("Options");
+        ImGui::Checkbox("Keep runtime variants", &pending.options.keepVariants);
+        ImGui::TextDisabled(
+            "%zu *_BLUR, *_DAMAGE and low-res LOD meshes. Kept, they overlap what they replace.",
+            summary.runtimeVariants);
+        ImGui::Checkbox("Flip V texture coordinate", &pending.options.flipUv);
+        ImGui::TextDisabled("Only for mods whose textures arrive upside down.");
+    }
+
+    ImGui::Separator();
+    ImGui::BeginDisabled(!canImport);
+    const bool importClicked = ImGui::Button("Import", ImVec2(120.0f * m_effectiveUiScale, 0.0f));
+    ImGui::EndDisabled();
+    if (canImport)
+    {
+        ImGui::SetItemDefaultFocus();
+    }
+    ImGui::SameLine();
+    const bool cancelled = ImGui::Button("Cancel", ImVec2(120.0f * m_effectiveUiScale, 0.0f));
+
+    if (importClicked && canImport)
+    {
+        const Kn5SkinSummary& chosen = pending.summary->skins[pending.selectedSkin];
+        Kn5ImportOptions options = pending.options;
+        options.skin = chosen.name.empty() ? std::string("none") : chosen.name;
+        const std::string sourcePath = pending.sourcePath;
+        m_pendingKn5Import.reset();
+        ImGui::CloseCurrentPopup();
+        // May still ask about a taken folder, with these options carried along.
+        RequestModelImport(sourcePath, result, options);
+    }
+    else if (cancelled)
+    {
+        cancel();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 }

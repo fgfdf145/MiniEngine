@@ -57,9 +57,43 @@ struct Kn5ImportReport
     size_t scrubbedMatrices = 0;
 };
 
+// One livery as an import dialog offers it.
+struct Kn5SkinSummary
+{
+    // The folder name under skins/; empty for the textures embedded in the kn5.
+    std::string name;
+    // The bodywork's paint as 8-bit sRGB: the flat txDetail colour of the most body-like painted
+    // material, from this livery where it ships the texture, else from the kn5. nullopt when the
+    // car has no painted material or its paint is a pattern rather than a colour.
+    std::optional<std::array<std::uint8_t, 3>> paint;
+    // The material the paint was read from.
+    std::string paintMaterial;
+    // The livery ships its own copy of the paint texture (otherwise every livery shows the kn5's).
+    bool paintFromSkin = false;
+};
+
+// What an import dialog shows before converting: read without the vertex and index data.
+struct Kn5ModelSummary
+{
+    bool encrypted = false;
+    size_t meshes = 0;
+    size_t triangles = 0;
+    size_t materials = 0;
+    size_t textures = 0;
+    // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins).
+    size_t runtimeVariants = 0;
+    // The skins/ folders in the order the game offers them (the first is the default), then the
+    // embedded textures (an empty name) last.
+    std::vector<Kn5SkinSummary> skins;
+};
+
 namespace Kn5Importer
 {
 bool IsKn5Path(const std::filesystem::path& path);
+
+// Reads what an import dialog needs to offer the liveries and options. Throws
+// std::runtime_error for a corrupt or unreadable kn5; an encrypted one is reported, not thrown.
+Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path);
 
 // The liveries next to a car: the folder names under "<kn5 folder>/skins", in the order the
 // game offers them. Empty for a track or a car without skins.
@@ -86,6 +120,15 @@ std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames);
 // A Blinn-Phong exponent (already scaled by the specular intensity) as GGX roughness,
 // sqrt(2 / (n + 2)), clamped to [0.04, 1].
 float SpecularExponentToRoughness(float exponent);
+
+// The painted materials (a txDetail slot the shader samples, useDetail > 0), most body-like first:
+// a name that says paint, body or chassis, then an unrecognised one, then one that says rim,
+// glass, interior and the like; interior copies after exterior ones; more triangles first within
+// that. Returns material indices. Triangle count alone picks the rims on many cars.
+std::vector<size_t> RankPaintedMaterials(
+    const std::vector<std::string>& materialNames,
+    const std::vector<bool>& painted,
+    const std::vector<size_t>& triangles);
 
 // A texture that is one colour everywhere (every channel within 6 levels), as AC's txDetail
 // paints it: the colour doubled (a detail map is neutral at mid-grey) in gamma space, then made

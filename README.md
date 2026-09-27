@@ -20,7 +20,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 - 统一场景：模型和灯光共享稳定的编辑器顺序；`ModelComponent`、`LightComponent`、变换、包围盒与 `SceneEntityIdComponent` 构成场景实体。场景采用 YAML v3，并保留旧 v1/v2 的加载兼容路径。
 - 资产工作流：资产浏览、复制、粘贴、重命名、删除与批量操作；资产树为可注册模型和纹理维护 UUID sidecar。
 - glTF 2.0：导入 `.gltf` 与 `.glb`、复制模型包与关联资源、三角化/法线/切线后处理、单位换算；每个已导入材质可保存 `.material.yaml` sidecar，并可编辑 PBR 材质图与材质贴图。
-- Assetto Corsa `.kn5`：导入时转换为 glTF 模型包（`engine/asset/kn5_importer.*`，移植自 [assetto-corsa-gltf](https://github.com/semiloker/assetto-corsa-gltf)，MIT）。保留完整节点层级并把 AC 坐标系（+X 左、+Z 前）转到 glTF；DDS 贴图在 CPU 上解码为 PNG；默认取车辆 `skins/` 下的第一个涂装；AC 的 Blinn-Phong 参数映射为金属度-粗糙度（高光指数与强度→粗糙度，`txMaps`→逐像素粗糙度图，纯色 `txDetail`→车漆底色，`fresnelMaxLevel`→`KHR_materials_specular`，`sunSpecular`→`KHR_materials_clearcoat`）；丢弃 `*_BLUR`、`*_DAMAGE` 与 `_HR`/`_LR` 低模孪生等运行时变体；拒绝带 CSP 加密尾标的文件。
+- Assetto Corsa `.kn5`：导入时转换为 glTF 模型包（`engine/asset/kn5_importer.*`，移植自 [assetto-corsa-gltf](https://github.com/semiloker/assetto-corsa-gltf)，MIT）。保留完整节点层级并把 AC 坐标系（+X 左、+Z 前）转到 glTF；DDS 贴图在 CPU 上解码为 PNG；编辑器导入 `.kn5`（菜单、资产浏览器、拖放）时先弹出 “Import Assetto Corsa Model” 对话框：后台读取模型后列出 `skins/` 下的涂装（带车身漆色色块，首个为默认）与 kn5 内嵌贴图，可选择保留运行时变体、翻转 V，加密文件在此直接提示而不可导入；`--model` 无对话框，取第一个涂装；AC 的 Blinn-Phong 参数映射为金属度-粗糙度（高光指数与强度→粗糙度，`txMaps`→逐像素粗糙度图，纯色 `txDetail`→车漆底色，`fresnelMaxLevel`→`KHR_materials_specular`，`sunSpecular`→`KHR_materials_clearcoat`）；丢弃 `*_BLUR`、`*_DAMAGE` 与 `_HR`/`_LR` 低模孪生等运行时变体；拒绝带 CSP 加密尾标的文件。
 - 渲染：Cook-Torrance PBR（含多次散射能量补偿）、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient、Hemisphere，最多 1024 盏，局部灯按分簇查找）及灯光 gizmo；最亮的方向光投射 4 级级联阴影（CSM，每级 2048²，3×3 双线性 PCF），点光、聚光与面光从 4096² 阴影图集取阴影（每块 512²，共 64 块）。
 - 后台任务：模型和场景使用异步加载状态机，资产导入在后台执行；主线程在逐帧阶段泵送结果并刷新 UI 或 CPU Renderable。
 - 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性和主题等设置。
