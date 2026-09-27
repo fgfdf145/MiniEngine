@@ -7,8 +7,10 @@
 
 // kDdgiGridSize, kDdgiProbesPerLevel, kDdgiIrradianceTexels and kDdgiVisibilityTexels in
 // ddgi_volume.h.
-const ivec3 DDGI_GRID = ivec3(24, 12, 24);
-const uint DDGI_PROBES_PER_LEVEL = 24u * 12u * 24u;
+const ivec3 DDGI_GRID = ivec3(32, 16, 32);
+const uint DDGI_PROBES_PER_LEVEL = 32u * 16u * 32u;
+// kDdgiFadeCellsHorizontal and kDdgiFadeCellsVertical.
+const vec3 DDGI_FADE_CELLS = vec3(3.0, 2.0, 3.0);
 const int DDGI_IRRADIANCE_TEXELS = 8;
 const int DDGI_VISIBILITY_TEXELS = 16;
 
@@ -20,6 +22,9 @@ const int DDGI_PROBE_INACTIVE = 2;
 // Relocated by more than a twentieth of the spacing at its last update: its tiles describe the old
 // position, so the next update keeps none of them.
 const int DDGI_PROBE_MOVED = 4;
+// Bits 8 to 15: how many updates the probe has had since it was last fresh (saturating at 255).
+const int DDGI_PROBE_UPDATE_COUNT_SHIFT = 8;
+const int DDGI_PROBE_UPDATE_COUNT_MAX = 255;
 
 // One probe's record: the world grid coordinate whose data it holds and flags, its relocation offset
 // in metres (xyz) and its smoothed back-face evidence (w, ddgi_update.comp). A probe is sampled only where the coordinate matches the one its slot should
@@ -241,12 +246,14 @@ vec4 DdgiIrradianceAlong(vec3 P, vec3 N, vec3 V, vec3 D, out float weight)
     for (uint level = 0u; level < levelCount && remaining > 1e-3; ++level)
     {
         // The level answers within half its grid minus one cell of the camera (ComputeDdgiLevel in
-        // ddgi_volume.cpp), less half a cell for the lookup's bias, fading over the outer cell. By the
-        // distance to the camera, not to the grid's faces: those jump a cell when the grid scrolls, and
-        // the whole image changed with them. One cell rather than two: the grid is only 12 probes tall,
-        // and a wider band handed much of a room's ceiling to levels four and eight times coarser.
+        // ddgi_volume.cpp), less half a cell for the lookup's bias, fading over its outer cells
+        // (DDGI_FADE_CELLS): three across, so the light a surface gets changes gradually as the camera
+        // walks toward it, two up and down, where the grid is shallower and a wider band handed much
+        // of a room's ceiling to levels four and eight times coarser. By the distance to the camera,
+        // not to the grid's faces: those jump a cell when the grid scrolls, and the whole image
+        // changed with them.
         vec3 fromCamera = abs(P - ubo.cameraWorldPosition.xyz) / DdgiLevelSpacing(level);
-        vec3 toEdge = vec3(DDGI_GRID / 2 - 1) - 0.5 - fromCamera;
+        vec3 toEdge = (vec3(DDGI_GRID / 2 - 1) - 0.5 - fromCamera) / DDGI_FADE_CELLS;
         float fade = clamp(min(min(toEdge.x, toEdge.y), toEdge.z), 0.0, 1.0);
         if (fade <= 0.0)
         {

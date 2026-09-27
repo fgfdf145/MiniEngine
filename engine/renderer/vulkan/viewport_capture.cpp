@@ -40,7 +40,13 @@ bool IsBgra(VkFormat format)
 // The HDR output's LDR target: display-linear, 1.0 being UI white (see hdr_output.glsl).
 bool IsHalfFloat(VkFormat format)
 {
-    return format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    return format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R16G16_SFLOAT;
+}
+
+// Channels of a half-float format IsHalfFloat accepts.
+uint32_t HalfFloatChannels(VkFormat format)
+{
+    return format == VK_FORMAT_R16G16_SFLOAT ? 2u : 4u;
 }
 
 uint8_t EncodeSrgb(float linear)
@@ -84,10 +90,10 @@ std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
 {
     if (!IsBgra(request.format) && !IsRgba(request.format) && !IsHalfFloat(request.format))
     {
-        throw std::runtime_error("Viewport capture supports only 8-bit RGBA and BGRA and half-float RGBA images");
+        throw std::runtime_error("Viewport capture supports only 8-bit RGBA and BGRA and half-float RGBA and RG images");
     }
 
-    const VkDeviceSize texelBytes = IsHalfFloat(request.format) ? 8 : 4;
+    const VkDeviceSize texelBytes = IsHalfFloat(request.format) ? 2 * HalfFloatChannels(request.format) : 4;
     const VkDeviceSize byteCount = static_cast<VkDeviceSize>(request.extent.width) * request.extent.height * texelBytes;
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -193,11 +199,13 @@ std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request)
         throw std::runtime_error("Reading back floats needs a half-float RGBA image");
     }
     const std::vector<uint8_t> bytes = ReadImageBytes(request);
-    std::vector<glm::vec4> texels(bytes.size() / 8);
+    // A two-channel image reads back with zero in b and a.
+    const uint32_t channels = HalfFloatChannels(request.format);
+    std::vector<glm::vec4> texels(bytes.size() / (2 * channels));
     for (size_t texel = 0; texel < texels.size(); ++texel)
     {
-        uint16_t halves[4];
-        std::memcpy(halves, bytes.data() + texel * 8, sizeof(halves));
+        uint16_t halves[4] = {};
+        std::memcpy(halves, bytes.data() + texel * 2 * channels, 2 * channels);
         texels[texel] = glm::vec4(
             glm::unpackHalf1x16(halves[0]),
             glm::unpackHalf1x16(halves[1]),

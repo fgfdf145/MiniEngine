@@ -15,8 +15,17 @@ namespace me
 // GPU updates this frame. shaders/vulkan/ddgi_common.glsl does the same arithmetic.
 
 // Probes per level along x, y (up) and z. Every level has as many; the spacing doubles per level.
-inline constexpr glm::ivec3 kDdgiGridSize{24, 12, 24};
-inline constexpr uint32_t kDdgiProbesPerLevel = 24u * 12u * 24u;
+// 32 across puts the finest level's reach at 14.5 cells from the camera: a room or an arcade smaller
+// than the next level's spacing stays dark out to there (24 across reached 10.5, and coarser probes
+// standing outside lit an arcade's back wall from 11 m on). 16 up reaches 6.5 cells above and below.
+inline constexpr glm::ivec3 kDdgiGridSize{32, 16, 32};
+inline constexpr uint32_t kDdgiProbesPerLevel = 32u * 16u * 32u;
+// Cells over which a level fades into the next, horizontally and vertically, measured from the
+// camera (ddgi_common.glsl's DdgiIrradianceAlong): wide enough that walking toward or away from a
+// surface changes its light gradually rather than at a line, narrower up and down, where the grid
+// is half as deep and a wide band handed a room's ceiling to the coarse levels.
+inline constexpr float kDdgiFadeCellsHorizontal = 3.0f;
+inline constexpr float kDdgiFadeCellsVertical = 2.0f;
 inline constexpr uint32_t kDdgiMaxLevels = 4;
 // Rays each updated probe traces per frame: one workgroup of the update pass reads them all.
 inline constexpr uint32_t kDdgiRaysPerProbe = 64;
@@ -34,7 +43,7 @@ struct DdgiLevel
 
 // The grid of this spacing centred on the camera: its origin is the camera's cell minus one less than
 // half the grid, so points within half the grid minus one cell of the camera, on every side, lie
-// between probes whatever the camera's place in its cell (11 cells across, 3 up and down). It moves
+// between probes whatever the camera's place in its cell (15 cells across, 7 up and down). It moves
 // only when the camera crosses a cell boundary, and then by whole cells; ddgi_common.glsl fades each
 // level by the distance to the camera, not to the grid's faces, so the moves do not show.
 DdgiLevel ComputeDdgiLevel(const glm::vec3& camera, float spacing);

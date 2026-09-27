@@ -106,7 +106,7 @@ void SchedulerUpdatesStaleProbesFirst()
     while (scheduler.StaleCount(0) + scheduler.StaleCount(1) + scheduler.StaleCount(2) + scheduler.StaleCount(3) > 0)
     {
         scheduler.Schedule(levels, 2048);
-        Require(++frames < 20, "the whole volume fills in");
+        Require(++frames < static_cast<int>(4 * kDdgiProbesPerLevel / 2048 + 2), "the whole volume fills in");
     }
     Require(frames == (4 * kDdgiProbesPerLevel + 2047) / 2048, "at the budget's pace");
 
@@ -138,16 +138,17 @@ void ConvergedLevelsRefreshLess()
     }
     Require(!scheduler.Settled(0), "without a hysteresis nothing settles");
 
-    // At 0.97 a probe needs log(0.01) / log(0.97), about 151 updates. Level 0 gets 8/15 of the budget:
-    // one update per probe every 6.3 frames, so it settles after about 960 frames, and level 3,
-    // with 1/15, long after.
+    // At 0.97 a probe needs log(0.01) / log(0.97), about 151 updates. Level 0 gets 8/15 of the budget,
+    // so it settles after about 151 * probes / (2048 * 8 / 15) frames, and level 3, with 1/15, long
+    // after.
+    const int expected = static_cast<int>(151.2 * kDdgiProbesPerLevel / (2048.0 * 8.0 / 15.0));
     int frames = 0;
     while (!scheduler.Settled(0))
     {
         scheduler.Schedule(levels, 2048, 0.97f);
-        Require(++frames < 1100, "the finest level settles");
+        Require(++frames < expected * 115 / 100, "the finest level settles");
     }
-    Require(frames > 850, "but not before its probes had their updates");
+    Require(frames > expected * 85 / 100, "but not before its probes had their updates");
     Require(!scheduler.Settled(3), "the coarsest level, updated least, has not settled yet");
 
     std::array<uint32_t, 4> counts{};
@@ -160,7 +161,7 @@ void ConvergedLevelsRefreshLess()
     scheduler.Unsettle();
     Require(!scheduler.Settled(0), "Unsettle starts every level over");
 
-    for (int frame = 0; frame < 1100; ++frame)
+    for (int frame = 0; frame < expected * 115 / 100; ++frame)
     {
         scheduler.Schedule(levels, 2048, 0.97f);
     }
@@ -189,7 +190,8 @@ void RoundRobinFavoursFineLevels()
 {
     DdgiProbeScheduler scheduler;
     const std::vector<DdgiLevel> levels = Levels(glm::vec3(0.0f), 4);
-    for (int frame = 0; frame < 20; ++frame)
+    // Long enough to fill every level, so nothing is stale.
+    for (int frame = 0; frame < static_cast<int>(4 * kDdgiProbesPerLevel / 2048 + 2); ++frame)
     {
         scheduler.Schedule(levels, 2048);
     }

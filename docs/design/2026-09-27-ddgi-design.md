@@ -50,10 +50,12 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
 
 ## Probes
 
-- **Cascades**: 4 levels of 24 x 12 x 24 probes (x, y, z), spacing 1, 2, 4, 8 m: 24 to 192 m wide, 12
-  to 96 m tall. Each level's grid origin is the camera's cell at that level's spacing minus one less
-  than half the grid, so it reaches 11 cells across and 5 up and down around the camera wherever the
-  camera is in its cell. (8 tall, first, reached 2 cells up: looking up at New Sponza's walls fell
+- **Cascades**: 4 levels of 32 x 16 x 32 probes (x, y, z), spacing 1, 2, 4, 8 m: 32 to 256 m wide, 16
+  to 128 m tall. Each level's grid origin is the camera's cell at that level's spacing minus one less
+  than half the grid, so it reaches 15 cells across and 7 up and down around the camera wherever the
+  camera is in its cell. (24 x 12 x 24, 2026-09-28, let an arcade's back wall fall to the 2 and 4 m
+  levels from 11 m away; their probes stand outside it and lit it 1.5 to 3 times too bright. The
+  visibility atlas became RG16F to pay for part of the 2.4 times as many probes: 94 to 137 MB.) (8 tall, first, reached 2 cells up: looking up at New Sponza's walls fell
   to the 8 m level and the SH sky; against the reference the Cornell box went 1.16 -> 1.02 with 12.)
   Settings can change the base spacing and the level count.
 - **Toroidal storage**: a probe at world grid coordinate g is stored at g mod the grid size, so a

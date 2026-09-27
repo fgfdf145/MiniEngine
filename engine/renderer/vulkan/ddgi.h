@@ -71,7 +71,7 @@ class VulkanDdgi
         void* mapped = nullptr;
     };
 
-    Image CreateAtlas(uint32_t texelsPerProbe);
+    Image CreateAtlas(uint32_t texelsPerProbe, VkFormat format);
     Buffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible);
     void DestroyHandles();
 

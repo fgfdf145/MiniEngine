@@ -79,8 +79,8 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
         request.extent = {static_cast<uint32_t>(irrSize.x), static_cast<uint32_t>(irrSize.y)};
         irr[level] = ReadImageHalfFloats(request);
         request.image = m_ddgi->GetVisibilityImage();
+        request.format = VK_FORMAT_R16G16_SFLOAT;
         request.extent = {static_cast<uint32_t>(visSize.x), static_cast<uint32_t>(visSize.y)};
-        // RG16F: read as RGBA16F would be wrong; the visibility atlas is RGBA16F too (kAtlasFormat).
         vis[level] = ReadImageHalfFloats(request);
     }
     const auto bilinear = [](const std::vector<glm::vec4>& image, glm::ivec2 size, glm::vec2 uv)
@@ -121,7 +121,8 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
         const glm::ivec3 origin = frame.ddgiOrigins[level];
         // DdgiIrradianceAlong's fade: by the distance to the camera.
         const glm::vec3 fromCamera = glm::abs(P - frame.cameraPosition) / spacing;
-        const glm::vec3 toEdge = glm::vec3(kDdgiGridSize / 2 - 1) - 0.5f - fromCamera;
+        const glm::vec3 toEdge = (glm::vec3(kDdgiGridSize / 2 - 1) - 0.5f - fromCamera) /
+                                 glm::vec3(kDdgiFadeCellsHorizontal, kDdgiFadeCellsVertical, kDdgiFadeCellsHorizontal);
         const float fade = std::clamp(std::min(std::min(toEdge.x, toEdge.y), toEdge.z), 0.0f, 1.0f);
         if (fade <= 0.0f)
         {

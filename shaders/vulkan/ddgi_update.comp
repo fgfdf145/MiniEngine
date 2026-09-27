@@ -32,7 +32,7 @@ layout(std430, set = 2, binding = 1) readonly buffer DdgiRays
     vec4 rays[];
 };
 layout(set = 2, binding = 2, rgba16f) uniform image2DArray irradianceImage;
-layout(set = 2, binding = 3, rgba16f) uniform image2DArray visibilityImage;
+layout(set = 2, binding = 3, rg16f) uniform image2DArray visibilityImage;
 layout(std430, set = 2, binding = 4) buffer DdgiProbeStatesOut
 {
     DdgiProbeState probeStatesOut[];
@@ -106,7 +106,12 @@ void main()
     DdgiProbeState state = probeStatesOut[stateIndex];
     bool sameCoordinate = state.coordAndFlags.xyz == coord;
     bool fresh = !sameCoordinate || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0 || (state.coordAndFlags.w & DDGI_PROBE_MOVED) != 0;
-    float hysteresis = fresh ? 0.0 : constants.hysteresis;
+    // A young probe averages its updates (the n-th keeps n / (n + 1) of what it held) until that is
+    // more than the hysteresis: what it started from, half the coarser level's light, washes out as
+    // 1 / (n + 1) instead of 3% an update. The coarser level leaks light into rooms smaller than its
+    // spacing, and at 0.97 alone a probe that scrolled in stayed that bright for hundreds of updates.
+    int updateCount = fresh ? 0 : (state.coordAndFlags.w >> DDGI_PROBE_UPDATE_COUNT_SHIFT) & DDGI_PROBE_UPDATE_COUNT_MAX;
+    float hysteresis = fresh ? 0.0 : min(constants.hysteresis, float(updateCount) / float(updateCount + 1));
     float maxDistance = 2.0 * DdgiLevelSpacing(level);
 
     if (thread < 64u)
@@ -261,7 +266,7 @@ void main()
         float backfaceEvidence = inside || closestBack < spacing ? 1.0 : 0.0;
         float previousEvidence = sameCoordinate ? state.offset.w : backfaceEvidence;
         float evidence = max(backfaceEvidence, 0.9 * previousEvidence);
-        int flags = DDGI_PROBE_UPDATED;
+        int flags = DDGI_PROBE_UPDATED | (min(updateCount + 1, DDGI_PROBE_UPDATE_COUNT_MAX) << DDGI_PROBE_UPDATE_COUNT_SHIFT);
         if (evidence > 0.05)
         {
             flags |= DDGI_PROBE_INACTIVE;

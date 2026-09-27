@@ -11,7 +11,10 @@ namespace me
 
 namespace
 {
-constexpr VkFormat kAtlasFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+// Irradiance: rgb and the sky visibility. Visibility: the distance's two moments, all it holds, so
+// half the memory of the irradiance's format per texel.
+constexpr VkFormat kIrradianceFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat kVisibilityFormat = VK_FORMAT_R16G16_SFLOAT;
 
 // Must match DdgiTraceConstants in shaders/vulkan/ddgi_trace.comp and DdgiUpdateConstants in
 // ddgi_update.comp, which share the first 48 bytes and the count.
@@ -52,8 +55,8 @@ VulkanDdgi::VulkanDdgi(
 {
     try
     {
-        m_irradiance = CreateAtlas(kDdgiIrradianceTexels);
-        m_visibility = CreateAtlas(kDdgiVisibilityTexels);
+        m_irradiance = CreateAtlas(kDdgiIrradianceTexels, kIrradianceFormat);
+        m_visibility = CreateAtlas(kDdgiVisibilityTexels, kVisibilityFormat);
         m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
         m_states = CreateBuffer(
             sizeof(glm::ivec4) * 2 * kDdgiProbesPerLevel * kDdgiMaxLevels,
@@ -258,7 +261,7 @@ VkImage VulkanDdgi::GetVisibilityImage() const
     return m_visibility.image;
 }
 
-VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe)
+VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe, VkFormat format)
 {
     Image atlas{};
     const uint32_t tile = texelsPerProbe + 2;
@@ -268,7 +271,7 @@ VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe)
     imageInfo.extent = {tile * static_cast<uint32_t>(kDdgiGridSize.x * kDdgiGridSize.y), tile * static_cast<uint32_t>(kDdgiGridSize.z), 1};
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = kDdgiMaxLevels;
-    imageInfo.format = kAtlasFormat;
+    imageInfo.format = format;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     // Transfer source for the DDGI reference comparison, which reads the probes back.
@@ -293,7 +296,7 @@ VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe)
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = target.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    viewInfo.format = kAtlasFormat;
+    viewInfo.format = format;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, kDdgiMaxLevels};
     CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &target.view), "Failed to create a DDGI atlas view");
     return target;
