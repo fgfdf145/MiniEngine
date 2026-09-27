@@ -155,7 +155,7 @@ void VulkanShadowPass::Record(
                     &constants);
 
                 const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.vertexBuffer, &offset);
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, item.alphaMask ? &item.vertexBuffer : &item.positionBuffer, &offset);
                 vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(commandBuffer, item.indexCount, 1, 0, 0, 0);
             }
@@ -321,6 +321,7 @@ void VulkanShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
     const VulkanShaderModule vertexShader(m_device, shaderDir / "shadow.vert.spv");
     const VulkanShaderModule fragmentShader(m_device, shaderDir / "shadow.frag.spv");
+    const VulkanShaderModule depthVertexShader(m_device, shaderDir / "shadow_depth.vert.spv");
 
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -347,6 +348,16 @@ void VulkanShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     vertexInput.pVertexBindingDescriptions = &bindingDescription;
     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
     vertexInput.pVertexAttributeDescriptions = attributes.data();
+
+    // Opaque casters read positions alone, from their own tightly packed stream.
+    const VkVertexInputBindingDescription positionBinding = GetPositionBindingDescription();
+    const VkVertexInputAttributeDescription positionAttribute = GetPositionAttributeDescription();
+    VkPipelineVertexInputStateCreateInfo depthVertexInput{};
+    depthVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    depthVertexInput.vertexBindingDescriptionCount = 1;
+    depthVertexInput.pVertexBindingDescriptions = &positionBinding;
+    depthVertexInput.vertexAttributeDescriptionCount = 1;
+    depthVertexInput.pVertexAttributeDescriptions = &positionAttribute;
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -418,7 +429,11 @@ void VulkanShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
         pipelineInfo.renderPass = m_renderPass;
         pipelineInfo.subpass = 0;
     }
+    VkPipelineShaderStageCreateInfo depthStage = stages[0];
+    depthStage.module = depthVertexShader.GetHandle();
     pipelineInfos[0].stageCount = 1;
+    pipelineInfos[0].pStages = &depthStage;
+    pipelineInfos[0].pVertexInputState = &depthVertexInput;
     pipelineInfos[1].stageCount = 2;
 
     std::array<VkPipeline, 2> pipelines{};

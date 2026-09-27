@@ -211,6 +211,7 @@ set(MINIENGINE_SHADER_SOURCES
     sky.vert
     sky.frag
     shadow.vert
+    shadow_depth.vert
     shadow.frag
     imgui_hdr10.frag
     ssr_trace.comp

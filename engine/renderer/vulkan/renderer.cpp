@@ -2381,6 +2381,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
 
         ShadowDrawItem item{};
         item.vertexBuffer = renderSubmesh.buffer->GetVertexHandle();
+        item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
         item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
         item.indexCount = renderSubmesh.buffer->GetIndexCount();
         item.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);

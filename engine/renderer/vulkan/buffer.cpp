@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <cstring>
+#include <iterator>
+#include <vector>
 
 namespace me
 {
@@ -54,6 +56,25 @@ std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions(
     return attributeDescriptions;
 }
 
+VkVertexInputBindingDescription GetPositionBindingDescription()
+{
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(float) * 3;
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    return bindingDescription;
+}
+
+VkVertexInputAttributeDescription GetPositionAttributeDescription()
+{
+    VkVertexInputAttributeDescription attributeDescription{};
+    attributeDescription.binding = 0;
+    attributeDescription.location = 0;
+    attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescription.offset = 0;
+    return attributeDescription;
+}
+
 VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
@@ -71,6 +92,7 @@ VulkanBuffer::VulkanBuffer(
         VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
         UploadVertices(defaultMesh, uploadBatch);
         UploadIndices(defaultMesh, uploadBatch);
+        UploadPositions(defaultMesh, uploadBatch);
         uploadBatch.Flush();
     }
     catch (...)
@@ -98,6 +120,7 @@ VulkanBuffer::VulkanBuffer(
     {
         UploadVertices(meshData, uploadBatch);
         UploadIndices(meshData, uploadBatch);
+        UploadPositions(meshData, uploadBatch);
     }
     catch (...)
     {
@@ -113,6 +136,16 @@ VulkanBuffer::~VulkanBuffer()
 
 void VulkanBuffer::DestroyHandles()
 {
+    if (m_positionBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_positionBuffer, nullptr);
+        m_positionBuffer = VK_NULL_HANDLE;
+    }
+    if (m_positionMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_positionMemory, nullptr);
+        m_positionMemory = VK_NULL_HANDLE;
+    }
     if (m_indexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
@@ -143,6 +176,11 @@ VkBuffer VulkanBuffer::GetVertexHandle() const
 VkBuffer VulkanBuffer::GetIndexHandle() const
 {
     return m_indexBuffer;
+}
+
+VkBuffer VulkanBuffer::GetPositionHandle() const
+{
+    return m_positionBuffer;
 }
 
 uint32_t VulkanBuffer::GetVertexCount() const
@@ -213,14 +251,18 @@ uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
     throw std::runtime_error("Failed to find suitable vertex buffer memory type");
 }
 
-void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
+void VulkanBuffer::UploadDeviceLocal(
+    const void* source,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VulkanUploadBatch& uploadBatch,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory)
 {
-    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size());
-
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
     CreateBuffer(
-        bufferSize,
+        size,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
@@ -228,50 +270,53 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
     uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
     void* data = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map staging buffer memory");
-    std::memcpy(data, meshData.vertices.data(), static_cast<size_t>(bufferSize));
+    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, size, 0, &data), "Failed to map staging buffer memory");
+    std::memcpy(data, source, static_cast<size_t>(size));
     vkUnmapMemory(m_device, stagingMemory);
 
-    CreateBuffer(
-        bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        m_vertexBuffer,
-        m_vertexMemory);
+    CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, memory);
 
     VkBufferCopy copyRegion{};
-    copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_vertexBuffer, 1, &copyRegion);
+    copyRegion.size = size;
+    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer, 1, &copyRegion);
+}
+
+void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
+{
+    UploadDeviceLocal(
+        meshData.vertices.data(),
+        static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        uploadBatch,
+        m_vertexBuffer,
+        m_vertexMemory);
 }
 
 void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
 {
-    const VkDeviceSize bufferSize = static_cast<VkDeviceSize>(sizeof(uint32_t) * meshData.indices.size());
-
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    CreateBuffer(
-        bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        stagingBuffer,
-        stagingMemory);
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-
-    void* data = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, bufferSize, 0, &data), "Failed to map index staging buffer memory");
-    std::memcpy(data, meshData.indices.data(), static_cast<size_t>(bufferSize));
-    vkUnmapMemory(m_device, stagingMemory);
-
-    CreateBuffer(
-        bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    UploadDeviceLocal(
+        meshData.indices.data(),
+        static_cast<VkDeviceSize>(sizeof(uint32_t) * meshData.indices.size()),
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        uploadBatch,
         m_indexBuffer,
         m_indexMemory);
+}
 
-    VkBufferCopy copyRegion{};
-    copyRegion.size = bufferSize;
-    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, m_indexBuffer, 1, &copyRegion);
+void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
+{
+    std::vector<float> positions;
+    positions.reserve(meshData.vertices.size() * 3);
+    for (const Vertex& vertex : meshData.vertices)
+    {
+        positions.insert(positions.end(), std::begin(vertex.position), std::end(vertex.position));
+    }
+    UploadDeviceLocal(
+        positions.data(),
+        static_cast<VkDeviceSize>(sizeof(float) * positions.size()),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        uploadBatch,
+        m_positionBuffer,
+        m_positionMemory);
 }
 }

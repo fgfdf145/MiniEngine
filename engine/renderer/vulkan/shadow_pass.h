@@ -17,6 +17,8 @@ namespace me
 struct ShadowDrawItem
 {
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    // The position-only stream, which opaque casters draw from.
+    VkBuffer positionBuffer = VK_NULL_HANDLE;
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     uint32_t indexCount = 0;
     glm::mat4 model{1.0f};
