@@ -894,6 +894,13 @@ void VulkanRenderer::DrawFrame()
     m_referenceFrame.uniformSky = environmentMode == EnvironmentMode::None &&
                                   lightSelection.ambientGradient == std::array<glm::vec3, 3>{};
     m_referenceFrame.ddgiEnabled = ddgiData.params.x > 0.0f;
+    m_referenceFrame.ddgiLevels = static_cast<uint32_t>(ddgiData.params.x);
+    m_referenceFrame.ddgiBias = glm::vec2(ddgiData.params.z, ddgiData.params.w);
+    for (uint32_t level = 0; level < kDdgiMaxLevels; ++level)
+    {
+        m_referenceFrame.ddgiOrigins[level] = glm::ivec3(ddgiData.origins[level]);
+        m_referenceFrame.ddgiSpacings[level] = ddgiData.spacing[level];
+    }
     frame.extent = m_sceneTargets->GetExtent();
     frame.drawItems = drawItems;
     frame.blendDrawItemBegin = static_cast<size_t>(

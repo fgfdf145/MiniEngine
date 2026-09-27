@@ -53,6 +53,7 @@ namespace me
 {
 
 class Window;
+struct ImageCaptureRequest;
 
 struct RenderSubmesh
 {
@@ -133,7 +134,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void DrawFrame() override;
     void CaptureViewport(const std::filesystem::path& path) override;
     // In ddgi_reference_capture.cpp.
-    void CaptureDdgiReference(const std::filesystem::path& prefix, uint32_t samples, uint32_t stride) override;
+    void CaptureDdgiReference(const DdgiReferenceRequest& reference) override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -300,8 +301,17 @@ class VulkanRenderer : public EditorRenderBackendBase
         glm::vec3 skyRadiance{0.0f};
         bool uniformSky = false;
         bool ddgiEnabled = false;
+        // The DDGI levels' grids and the lookup's normal and view bias, in spacings.
+        uint32_t ddgiLevels = 0;
+        std::array<glm::ivec3, kDdgiMaxLevels> ddgiOrigins{};
+        std::array<float, kDdgiMaxLevels> ddgiSpacings{};
+        glm::vec2 ddgiBias{0.0f};
     };
     ReferenceFrame m_referenceFrame;
+    // The finest level's nearest probes against the reference along six axes, in
+    // ddgi_reference_capture.cpp. device names the device and queue to read back with.
+    void CompareDdgiProbes(const std::filesystem::path& prefix, const ImageCaptureRequest& device, uint32_t samples);
+    void ExplainDdgiLookup(const ImageCaptureRequest& device, glm::vec3 P, glm::vec3 N, glm::vec3 V);
     // Material textures' samplers, shared by every descriptor that asks for the same settings.
     std::unique_ptr<VulkanSamplerCache> m_samplerCache;
     // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).

@@ -34,13 +34,21 @@ class IRenderBackend
     }
     // Compares the DDGI probes' irradiance on every stride-th pixel's surface (Graphics Debug view 15,
     // which the last frame must have shown) with a CPU path tracer's over the same ray scene, and
-    // writes prefix_ddgi.pfm, prefix_reference.pfm and prefix_compare.png. For verification runs
-    // (--reference).
-    virtual void CaptureDdgiReference(const std::filesystem::path& prefix, uint32_t samples, uint32_t stride)
+    // writes prefix_ddgi.pfm, prefix_reference.pfm, prefix_compare.png and prefix_probes.csv. For
+    // verification runs (--reference).
+    struct DdgiReferenceRequest
     {
-        (void)prefix;
-        (void)samples;
-        (void)stride;
+        std::filesystem::path prefix;
+        uint32_t samples = 256;
+        uint32_t stride = 8;
+        // A point of the comparison grid (column, row) whose probe lookup is logged probe by probe;
+        // negative for none.
+        int explainColumn = -1;
+        int explainRow = -1;
+    };
+    virtual void CaptureDdgiReference(const DdgiReferenceRequest& request)
+    {
+        (void)request;
         throw std::runtime_error("This render backend cannot compare DDGI with a reference");
     }
 };

@@ -182,9 +182,23 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--ddgi-spacing")
+        {
+            options.ddgiSpacing = ParseFloatList<1>(ReadRequiredArgument(i, argc, argv, argument), argument)[0];
+            continue;
+        }
+
         if (argument == "--reference")
         {
             options.referencePrefix = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--reference-explain")
+        {
+            const std::array<float, 2> point = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            options.referenceExplainColumn = static_cast<int>(point[0]);
+            options.referenceExplainRow = static_cast<int>(point[1]);
             continue;
         }
 
@@ -287,6 +301,10 @@ int EditorApplication::Run()
     {
         sharedState->editorUi.EditRenderDebug().ddgi.enabled = false;
     }
+    if (m_options.ddgiSpacing.has_value())
+    {
+        sharedState->editorUi.EditRenderDebug().ddgi.baseSpacing = *m_options.ddgiSpacing;
+    }
     if (m_options.camera.has_value())
     {
         const std::array<float, 5>& camera = *m_options.camera;
@@ -349,7 +367,13 @@ int EditorApplication::Run()
     }
     if (m_options.referencePrefix.has_value())
     {
-        renderer->CaptureDdgiReference(*m_options.referencePrefix, m_options.referenceSamples, m_options.referenceStride);
+        IRenderBackend::DdgiReferenceRequest reference;
+        reference.prefix = *m_options.referencePrefix;
+        reference.samples = m_options.referenceSamples;
+        reference.stride = m_options.referenceStride;
+        reference.explainColumn = m_options.referenceExplainColumn;
+        reference.explainRow = m_options.referenceExplainRow;
+        renderer->CaptureDdgiReference(reference);
     }
 
     return 0;

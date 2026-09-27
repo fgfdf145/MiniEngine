@@ -239,10 +239,12 @@ vec4 DdgiIrradianceAlong(vec3 P, vec3 N, vec3 V, vec3 D, out float weight)
     uint levelCount = DdgiLevelCount();
     for (uint level = 0u; level < levelCount && remaining > 1e-3; ++level)
     {
-        // Cells to the nearest face of the grid: 0 at the outer probes. The outer two cells fade.
+        // Cells to the nearest face of the grid: 0 at the outer probes. The outer cell fades. The
+        // grid is only 8 probes tall, so a wider band handed much of a room's ceiling to levels four
+        // and eight times coarser, whose probes stand far below it or above the roof.
         vec3 gridPosition = P / DdgiLevelSpacing(level) - vec3(DdgiLevelOrigin(level));
         vec3 toFace = min(gridPosition, vec3(DDGI_GRID - 1) - gridPosition);
-        float fade = clamp((min(min(toFace.x, toFace.y), toFace.z) - 0.5) / 2.0, 0.0, 1.0);
+        float fade = clamp(min(min(toFace.x, toFace.y), toFace.z) - 0.5, 0.0, 1.0);
         if (fade <= 0.0)
         {
             continue;

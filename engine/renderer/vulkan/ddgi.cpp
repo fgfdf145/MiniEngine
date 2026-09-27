@@ -57,7 +57,7 @@ VulkanDdgi::VulkanDdgi(
         m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
         m_states = CreateBuffer(
             sizeof(glm::ivec4) * 2 * kDdgiProbesPerLevel * kDdgiMaxLevels,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             false);
         m_rays = CreateBuffer(sizeof(glm::vec4) * kDdgiRaysPerProbe * kMaxProbesPerFrame, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         for (uint32_t slot = 0; slot < m_frameCount; ++slot)
@@ -248,6 +248,16 @@ VkBuffer VulkanDdgi::GetProbeStateBuffer() const
     return m_states.buffer;
 }
 
+VkImage VulkanDdgi::GetIrradianceImage() const
+{
+    return m_irradiance.image;
+}
+
+VkImage VulkanDdgi::GetVisibilityImage() const
+{
+    return m_visibility.image;
+}
+
 VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe)
 {
     Image atlas{};
@@ -261,7 +271,8 @@ VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe)
     imageInfo.format = kAtlasFormat;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // Transfer source for the DDGI reference comparison, which reads the probes back.
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &atlas.image), "Failed to create a DDGI atlas");

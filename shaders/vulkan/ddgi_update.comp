@@ -11,7 +11,7 @@
 // The border texels copy the octahedron's opposite edges, so bilinear lookups wrap correctly.
 //
 // The same rays relocate and classify the probe (Majercik et al. 2021): a probe with more than a
-// quarter of its rays on back faces is inside geometry and moves through the nearest one; a probe
+// quarter of its rays on back faces is inside geometry and moves toward the open space it sees; a probe
 // closer to a surface than a fifth of the spacing moves away from it; the offset stays within 0.45
 // spacing of the grid point. A probe is inactive where it sees a back face within one spacing: it is
 // inside something, or on the wrong side of a single-sided surface (under a floor or a terrain, where
@@ -239,8 +239,14 @@ void main()
         bool inside = backfaces * 4 > 64;
         if (inside)
         {
-            // Through the nearest back face, a little past it.
-            offset += closestBackDirection * (closestBack + 0.5 * minFrontDistance);
+            // Toward the open space it sees, not through the nearest back face: a probe on a wall's
+            // plane is as near the wall's far side, and crossing it put the probe outside a room,
+            // where the sunlit roof above lit the ceiling below. One buried deep sees no front face
+            // and stays, inactive, for the probes around it to answer for.
+            if (farthestFront > 0.0)
+            {
+                offset += farthestFrontDirection * min(farthestFront, spacing);
+            }
         }
         else if (closestFront < minFrontDistance)
         {

@@ -143,6 +143,36 @@ void SunlitFloorDoesNotLightItself()
         Require(result == glm::vec3(0.0f), "a floor under a black sky gets no indirect light: " + std::to_string(result.x));
     }
 }
+
+// A white square on a black floor under a vertical sun, seen from straight above its centre: the
+// irradiance / pi facing down is the square's radiance times the view factor from a point to a
+// parallel square, four corner rectangles of Howell's catalogue case B-3.
+void LitSquareMatchesTheViewFactor()
+{
+    const float half = 0.6f;
+    const float height = 2.0f;
+    std::vector<glm::vec3> positions = {{-half, 0, half}, {half, 0, half}, {half, 0, -half}, {-half, 0, -half}};
+    std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    RayScene scene;
+    AppendMesh(scene, BuildMeshBvh(positions, indices));
+    const std::vector<glm::vec3> ground = {{-50, -0.001f, 50}, {50, -0.001f, 50}, {50, -0.001f, -50}, {-50, -0.001f, -50}};
+    AppendMesh(scene, BuildMeshBvh(ground, indices));
+    const std::array<RayInstanceInput, 2> inputs = {RayInstanceInput{0, glm::mat4(1.0f), 0, 0}, RayInstanceInput{1, glm::mat4(1.0f), 1, 0}};
+    BuildTopLevel(scene, inputs);
+    ReferenceMaterial white;
+    white.albedo = glm::vec3(0.5f);
+    const std::array<ReferenceMaterial, 2> materials = {white, ReferenceMaterial{}};
+    const std::array<ReferenceLight, 1> sun = {ReferenceLight{glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1000.0f)}};
+    ReferenceSettings settings;
+    settings.samples = 1u << 18;
+    const glm::vec3 result = ReferenceIndirectIrradiance(scene, materials, sun, glm::vec3(0.0f, height, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f), settings, 5);
+
+    const float x = half / height;
+    const float corner = (x / std::sqrt(1.0f + x * x) * std::atan(x / std::sqrt(1.0f + x * x)) * 2.0f) / (2.0f * 3.14159265f);
+    const float expected = 0.5f * 1000.0f / 3.14159265f * 4.0f * corner;
+    Require(std::abs(result.x / expected - 1.0f) < 0.02f,
+            "the lit square's view factor: " + std::to_string(result.x) + " against " + std::to_string(expected));
+}
 }
 
 int main()
@@ -153,6 +183,7 @@ int main()
         OpenFloorSeesOnlySky();
         WallFootSeesTheLitFloor();
         SunlitFloorDoesNotLightItself();
+        LitSquareMatchesTheViewFactor();
     }
     catch (const std::exception& error)
     {

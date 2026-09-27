@@ -39,11 +39,16 @@ struct EditorApplicationOptions
     // the DDGI probes off.
     std::optional<GBufferDebugView> debugView;
     bool ddgiDisabled = false;
+    // --ddgi-spacing METRES: the finest DDGI level's probe spacing (DdgiSettings::baseSpacing).
+    std::optional<float> ddgiSpacing;
     // --reference PREFIX: after the last frame, compares the DDGI irradiance (with --debug-view 15)
     // against a CPU path tracer on every --reference-stride-th pixel, --reference-samples paths each.
     std::optional<std::string> referencePrefix;
     uint32_t referenceSamples = 256;
     uint32_t referenceStride = 8;
+    // --reference-explain COLUMN,ROW: logs that comparison point's probe lookup probe by probe.
+    int referenceExplainColumn = -1;
+    int referenceExplainRow = -1;
     EnginePaths::Overrides paths;
 };
 

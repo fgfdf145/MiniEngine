@@ -78,15 +78,21 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
   its position and uses hysteresis 0.5 once, so a scroll does not fade in from black. When the sun's
   direction or colour, or the sky, changes between frames, hysteresis drops to 0.85 for a second.
 - **Relocation and classification** (in the update): a probe moves inside its cell (at most 0.45
-  spacing) away from the nearest back face; with more than 25% back-face hits it is inactive, but
-  stays scheduled so a moved object can revive it.
+  spacing) away from the nearest front face it is too close to; with more than 25% back-face hits it
+  is inside geometry and moves toward the farthest front face it sees, not through the nearest back
+  face (Majercik et al. 2021 cross it): a probe on a wall's plane is as near the wall's far side, and
+  crossing put probes outside the Cornell box, where the sunlit roof lit the ceiling below (step 6
+  measured the box 2.1x too bright, 1.2x after). A probe seeing back faces within a spacing is
+  inactive, but stays scheduled so a moved object can revive it.
 
 ## Shading
 
 - **Sampling** (`ddgi_common.glsl`): the eight probes around the point, trilinear weights times a
   back-face term times the Chebyshev visibility test, with the surface point biased along the normal
   and the view vector (0.2 spacing). The finest level containing the point is used; in its outermost
-  2 cells it blends to the next. Outside every level, or with DDGI off, the SH sky as now.
+  cell it blends to the next. (Two cells, first, handed much of a 16 m room's ceiling to the 4 m and
+  8 m levels, whose probes stand far below it or above the roof: 2.0x against the reference, 1.24x
+  with one.) Outside every level, or with DDGI off, the SH sky as now.
 - **Diffuse**: `EvaluateSkyAmbient` and `EvaluateUniformAmbient` take the DDGI irradiance in place of
   the SH sky and ambient lights, for N and, for diffuse transmission, -N. It holds the sky, the
   Ambient and Hemisphere lights and every bounce, so they are not added again. VBAO still multiplies,
@@ -128,8 +134,15 @@ at each pixel, and a probe overlay drawing each probe as a small sphere of its i
 - Scenes (in `tests/fixtures/render_scenes`): `bounce_box.yaml` (the magnitude against the
   one-bounce result); a Cornell box (colour bleeding); `ddgi_track.yaml`, a generated outdoor track:
   a 400 m road and grass, a tunnel, a grandstand with a roof, tree cards and a car that moves.
-- `tools/path_trace`: a CPU path tracer over the same BVH and ray materials, the ground truth for the
-  Cornell box and the tunnel, compared pixel by pixel.
+- The reference (`engine/renderer/reference_path_tracer.h`, `--reference` in the app rather than a
+  separate `tools/path_trace`, so it traces exactly the ray scene and ray materials the probes do): a
+  CPU path tracer, checked against a furnace and a view factor, that computes each compared point's
+  indirect irradiance / pi, and each nearby probe's along six axes, next to the probes' own. With the
+  relocation and fade changes above (2026-09-27, 2048 paths a point), probes / reference by
+  luminance and the median relative error: `bounce_box` 1.10, 7%; `cornell_box` 1.18, 21%; the box
+  four times larger, camera low 1.11, 12%, camera high 1.25, 28%. What remains is the probes'
+  resolution: a surface facing a bright patch is lit from probes nearer the patch than it is, and a
+  0.3 m ball between 1 m probes is not resolved at all.
 
 ## Steps
 

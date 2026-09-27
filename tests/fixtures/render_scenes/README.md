@@ -32,6 +32,18 @@ miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 400 --camera 
 miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 200 --camera 0,0.2,150,-90,-5 --camera-velocity 0,0,-1 --debug-view 15 --capture moving.png
 ```
 
+`--reference PREFIX` compares the DDGI probes with a CPU path tracer over the same ray scene, on every
+`--reference-stride`-th pixel with `--reference-samples` paths each, after the last frame, which must
+show view 15. It logs the bias and the relative error, writes the two images as PFM and side by side
+with their ratio (`PREFIX_compare.png`: red where the probes are brighter), and compares the nearest
+probes themselves along six axes (`PREFIX_probes.csv`). `--reference-explain COLUMN,ROW` logs one
+point's lookup probe by probe. The path tracer's sky is one radiance, so the comparison scenes light
+with the sun alone (`environment: none`, a zero Ambient light):
+
+```bash
+miniengine_app --scene assets/scenes/test/cornell_box.yaml --frames 600 --camera 0,0,-4,-90,0 --debug-view 15 --reference cornell --reference-samples 2048
+```
+
 | Scene | What it shows | Feature |
 | --- | --- | --- |
 | `sponza_local_shadows.yaml` | Sponza with a point, a spot and an area light casting shadows | Local-light shadows |
@@ -47,6 +59,7 @@ miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 200 --camera 
 | `ior_specular_coat.yaml` | IOR 1.33 / 1.5 / 2.4, specular colour and 0; coat normal map; coat, sheen and anisotropy together | G-buffer layers, IOR, specular |
 | `iridescence.yaml` | Thin films of 250, 400, 550 nm, an anodised metal, a control | Forward-shaded materials, iridescence |
 | `texture_transforms_unlit.yaml` | A checker scaled, rotated and offset; the second UV set; unlit; a Mask cutout's shadow; a rotated normal map | Texture transforms, second UV set, unlit |
+| `cornell_box.yaml` | A Cornell box (`tools/render_scenes/make_cornell_box.py`) lit only by the sun through a hole in its ceiling: the red and green walls' colour on the white ones | Cascaded DDGI, against the reference path tracer |
 | `ddgi_track.yaml` | A generated outdoor track (`tools/render_scenes/make_ddgi_track.py`): road, 60 m tunnel, roofed grandstand, leaf-card trees, a car, afternoon sun | Cascaded DDGI |
 
 The two Sponza scenes need Khronos' New Sponza (`assets/NewSponza_Main_glTF_003/`), which is not in

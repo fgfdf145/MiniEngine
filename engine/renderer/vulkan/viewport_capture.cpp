@@ -55,7 +55,7 @@ bool IsRgba(VkFormat format)
     return format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_R8G8B8A8_UNORM;
 }
 
-void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout from, VkImageLayout to)
+void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, uint32_t layer, VkImageLayout from, VkImageLayout to)
 {
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -64,7 +64,7 @@ void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, VkImageLayo
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
     barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     vkCmdPipelineBarrier(
@@ -111,12 +111,12 @@ std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
 
         VulkanUploadBatch batch(request.device, request.queueFamily, request.queue);
         const VkCommandBuffer commandBuffer = batch.GetCommandBuffer();
-        TransitionForCopy(commandBuffer, request.image, request.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        TransitionForCopy(commandBuffer, request.image, request.layer, request.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, request.layer, 1};
         region.imageExtent = {request.extent.width, request.extent.height, 1};
         vkCmdCopyImageToBuffer(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
-        TransitionForCopy(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.layout);
+        TransitionForCopy(commandBuffer, request.image, request.layer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.layout);
         batch.Flush();
 
         std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
@@ -138,6 +138,52 @@ std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
         throw;
     }
 }
+}
+
+std::vector<uint8_t> ReadBufferBytes(const ImageCaptureRequest& request, VkBuffer source, VkDeviceSize byteCount)
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = byteCount;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    CheckVulkan(vkCreateBuffer(request.device, &bufferInfo, nullptr, &buffer), "Failed to create the readback buffer");
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    try
+    {
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(request.device, buffer, &requirements);
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = requirements.size;
+        allocateInfo.memoryTypeIndex = FindHostVisibleMemoryType(request.physicalDevice, requirements.memoryTypeBits);
+        CheckVulkan(vkAllocateMemory(request.device, &allocateInfo, nullptr, &memory), "Failed to allocate the readback buffer");
+        CheckVulkan(vkBindBufferMemory(request.device, buffer, memory, 0), "Failed to bind the readback buffer");
+
+        VulkanUploadBatch batch(request.device, request.queueFamily, request.queue);
+        const VkBufferCopy region{0, 0, byteCount};
+        vkCmdCopyBuffer(batch.GetCommandBuffer(), source, buffer, 1, &region);
+        batch.Flush();
+
+        std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
+        void* mapped = nullptr;
+        CheckVulkan(vkMapMemory(request.device, memory, 0, byteCount, 0, &mapped), "Failed to map the readback buffer");
+        std::memcpy(bytes.data(), mapped, bytes.size());
+        vkUnmapMemory(request.device, memory);
+        vkDestroyBuffer(request.device, buffer, nullptr);
+        vkFreeMemory(request.device, memory, nullptr);
+        return bytes;
+    }
+    catch (...)
+    {
+        vkDestroyBuffer(request.device, buffer, nullptr);
+        if (memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(request.device, memory, nullptr);
+        }
+        throw;
+    }
 }
 
 std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request)
