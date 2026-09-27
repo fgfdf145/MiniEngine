@@ -700,6 +700,15 @@ void VulkanRenderer::DrawFrame()
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
     const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
 
+    // The ray scene: a finished hierarchy build replaces the buffers every frame slot's set names,
+    // then this frame's instances go into this slot's.
+    if (m_rayScene->HasFinishedBuild())
+    {
+        m_commandContext->WaitForAllFrames();
+        m_rayScene->InstallBuild();
+    }
+    m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, {});
+
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
     // the motion vectors. The forward-only order has no motion vectors, so it never jitters.
@@ -939,6 +948,9 @@ void VulkanRenderer::DrawFrame()
                                                   frame.frameDescriptorSet,
                                                   environmentMode != EnvironmentMode::None,
                                                   environmentData);
+                                              // The ray materials, when content changed, and the barrier that
+                                              // makes the ray scene visible to every trace after it.
+                                              m_rayScene->Record(commandBuffer);
 
                                               RecordScenePasses(commandBuffer, frame, passOrder);
 
@@ -1110,6 +1122,12 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle());
+    // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight.
+    m_rayScene = std::make_unique<VulkanRayScene>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -1186,6 +1204,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_ltcInverseMatrices.reset();
     m_ltcAmplitudes.reset();
     m_environmentProbe.reset();
+    m_rayScene.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
@@ -1414,6 +1433,12 @@ void VulkanRenderer::CreateScenePasses()
         m_frameSetLayout->GetHandle(),
         m_gbufferDescriptors->GetEmptySetLayout(),
         m_gbufferDescriptors->GetSetLayout()));
+    m_scenePasses.push_back(std::make_unique<VulkanDdgiDebugPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        *m_rayScene));
     m_scenePasses.push_back(std::move(scatterPass));
     m_scenePasses.push_back(std::move(forwardPass));
     m_scenePasses.push_back(std::make_unique<VulkanTransmissionCopyPass>(
@@ -1752,6 +1777,7 @@ void VulkanRenderer::UploadSceneResources()
     {
         RenderSubmesh renderSubmesh{};
         renderSubmesh.entity = cpuRenderSubmesh.entity;
+        renderSubmesh.mesh = cpuRenderSubmesh.mesh;
         renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(),
             *cpuRenderSubmesh.mesh, uploadBatch);
@@ -2043,9 +2069,24 @@ void VulkanRenderer::ApplyRenderContent(
     }
 
     std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
+    std::vector<RaySceneSubmesh> raySubmeshes;
 
     if (m_swapchain && m_renderPass && !m_scenePasses.empty() && !newTextures.empty() && !newMaterialTextureSlots.empty())
     {
+        const std::vector<MaterialTextureBinding> materialBindings =
+            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots, *m_samplerCache);
+        raySubmeshes.reserve(newRenderSubmeshes.size());
+        for (const RenderSubmesh& renderSubmesh : newRenderSubmeshes)
+        {
+            const MaterialTextureBinding& binding = materialBindings.at(renderSubmesh.materialBindingIndex);
+            raySubmeshes.push_back(RaySceneSubmesh{
+                renderSubmesh.mesh,
+                renderSubmesh.material,
+                renderSubmesh.alphaMode,
+                renderSubmesh.doubleSided,
+                binding.baseColor,
+                binding.emissive});
+        }
         // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
         // against the renderer's fixed frame and material set layouts and the forward pass's
         // render pass, none of which a content reload touches, so they are left alone.
@@ -2055,7 +2096,7 @@ void VulkanRenderer::ApplyRenderContent(
             static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
             m_frameSetLayout->GetHandle(),
             m_materialSetLayout->GetHandle(),
-            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots, *m_samplerCache),
+            materialBindings,
             m_shadowPass->GetSampledBinding(),
             m_localShadowPass->GetSampledBinding(),
             BuildEnvironmentBindings(),
@@ -2067,6 +2108,8 @@ void VulkanRenderer::ApplyRenderContent(
         // be executing the previous frame (overlapping CPU and GPU work).
         m_commandContext->WaitForAllFrames();
         m_uniformBuffer = std::move(newUniformBuffer);
+        // After the wait: it rewrites descriptor sets the frames in flight bound.
+        m_rayScene->SetContent(std::move(raySubmeshes));
     }
 
     // Commit. Reused textures move across from the live list; whatever is left behind in it is no

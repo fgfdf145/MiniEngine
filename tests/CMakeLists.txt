@@ -391,6 +391,32 @@ endif()
 
 set_target_properties(miniengine_light_clusters_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_ray_tracing_bvh_tests
+    ray_tracing_bvh_tests.cpp
+)
+miniengine_group_target_sources(miniengine_ray_tracing_bvh_tests)
+
+target_link_libraries(miniengine_ray_tracing_bvh_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.ray_tracing_bvh
+    COMMAND miniengine_ray_tracing_bvh_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_ray_tracing_bvh_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_ray_tracing_bvh_tests>
+            $<TARGET_FILE_DIR:miniengine_ray_tracing_bvh_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_ray_tracing_bvh_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_local_shadows_tests
     local_shadows_tests.cpp
 )

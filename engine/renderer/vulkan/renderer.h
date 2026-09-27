@@ -21,6 +21,8 @@
 #include "pipeline_set.h"
 #include "render_pass.h"
 #include "gi_pass.h"
+#include "ddgi_debug_pass.h"
+#include "ray_scene.h"
 #include "scene_render_targets.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
@@ -53,6 +55,8 @@ class Window;
 struct RenderSubmesh
 {
     entt::entity entity = entt::null;
+    // The CPU geometry, shared with the model cache: the ray scene builds its hierarchy from it.
+    std::shared_ptr<const MeshData> mesh;
     std::unique_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
     GpuMaterialData material;
@@ -240,6 +244,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanAtmosphere> m_atmosphere;
     // The sky prefiltered for the specular lobe, and the DFG table it is weighted by.
     std::unique_ptr<VulkanEnvironmentProbe> m_environmentProbe;
+    // The scene as compute shaders trace it (DDGI).
+    std::unique_ptr<VulkanRayScene> m_rayScene;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;
     // The area lights' LTC tables (ltc_table.h), one mip each, RGBA32F.
     std::unique_ptr<VulkanTexture> m_ltcInverseMatrices;

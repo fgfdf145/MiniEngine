@@ -23,6 +23,8 @@ enum class ScenePassId
     GiTrace,
     GiResolve,
     GiComposite,
+    // The DDGI debug views (ddgi_debug_pass.h), written over SceneGi once the composite has used it.
+    DdgiDebug,
     // The scatter pre-pass of KHR_materials_volume_scatter (VulkanScatterPass), ahead of the forward
     // pass that samples it.
     Scatter,

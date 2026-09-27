@@ -336,18 +336,20 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    // The atmosphere's radiance SH, read by the shading of every surface.
+    // The atmosphere's radiance SH, read by the shading of every surface. Compute too, here and for
+    // the sky cube, the lights and the local shadows: the DDGI probe rays shade what they hit
+    // (ddgi_trace.comp).
     bindings[7].binding = 7;
     bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[7].descriptorCount = 1;
-    bindings[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // The prefiltered sky (8) and the DFG table (9), for the specular lobe under a physical sky.
     for (uint32_t binding = 8; binding <= 9; ++binding)
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
     // The scene lights (10) and the cluster grid that indexes them (11), read by ShadeSurface.
     for (uint32_t binding = 10; binding <= 11; ++binding)
@@ -355,7 +357,7 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
     // Every draw's material, read by the material fragment shaders at their draw slot.
     bindings[12].binding = 12;
@@ -366,11 +368,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[13].binding = 13;
     bindings[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[13].descriptorCount = 1;
-    bindings[13].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[13].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     bindings[14].binding = 14;
     bindings[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[14].descriptorCount = 1;
-    bindings[14].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[14].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // The area lights' LTC tables.
     for (uint32_t binding = 15; binding <= 16; ++binding)
     {

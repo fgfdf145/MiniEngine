@@ -36,6 +36,19 @@ void CreateComputePipeline(
     VkPipelineLayout& pipelineLayout,
     VkPipeline& pipeline);
 
+// The same over any set layouts, in set order; no push constant range when pushConstantSize is 0.
+void CreateComputePipeline(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    std::span<const VkDescriptorSetLayout> setLayouts,
+    const char* shaderName,
+    uint32_t pushConstantSize,
+    VkPipelineLayout& pipelineLayout,
+    VkPipeline& pipeline);
+
+// A compute pipeline for a shader file under EnginePaths::ShaderRoot(), with an existing layout.
+VkPipeline CreateComputeShaderPipeline(VkDevice device, VkPipelineCache pipelineCache, VkPipelineLayout pipelineLayout, const char* shaderName);
+
 // Binds both sets, pushes the constants and covers extent with 8 x 8 workgroups.
 void DispatchCompute(
     VkCommandBuffer commandBuffer,

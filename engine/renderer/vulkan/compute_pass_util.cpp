@@ -73,22 +73,37 @@ void CreateComputePipeline(
     VkPipelineLayout& pipelineLayout,
     VkPipeline& pipeline)
 {
-    const VulkanShaderModule computeShader(device, EnginePaths::ShaderRoot() / shaderName);
+    const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, passSetLayout};
+    CreateComputePipeline(device, pipelineCache, setLayouts, shaderName, pushConstantSize, pipelineLayout, pipeline);
+}
 
+void CreateComputePipeline(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    std::span<const VkDescriptorSetLayout> setLayouts,
+    const char* shaderName,
+    uint32_t pushConstantSize,
+    VkPipelineLayout& pipelineLayout,
+    VkPipeline& pipeline)
+{
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = pushConstantSize;
 
-    const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, passSetLayout};
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
     pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pushConstantRangeCount = pushConstantSize > 0 ? 1u : 0u;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
     CheckVulkan(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "Failed to create a compute pipeline layout");
+    pipeline = CreateComputeShaderPipeline(device, pipelineCache, pipelineLayout, shaderName);
+}
 
+VkPipeline CreateComputeShaderPipeline(VkDevice device, VkPipelineCache pipelineCache, VkPipelineLayout pipelineLayout, const char* shaderName)
+{
+    const VulkanShaderModule computeShader(device, EnginePaths::ShaderRoot() / shaderName);
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -96,9 +111,11 @@ void CreateComputePipeline(
     pipelineInfo.stage.module = computeShader.GetHandle();
     pipelineInfo.stage.pName = "main";
     pipelineInfo.layout = pipelineLayout;
+    VkPipeline pipeline = VK_NULL_HANDLE;
     CheckVulkan(
         vkCreateComputePipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline),
         "Failed to create a compute pipeline");
+    return pipeline;
 }
 
 void DispatchCompute(

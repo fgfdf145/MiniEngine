@@ -19,8 +19,9 @@ namespace
 // a frame without them. TAA is in both orders, so both meter and tone map its output;
 // the forward-only order has no motion vectors, and there the pass only copies the image through.
 // The three GI passes follow lighting, whose image is the light they bounce, and come before the
-// forward pass, whose surfaces they do not light; like AO they are in the deferred order only.
-constexpr std::array<ScenePassId, 17> kDeferredOrder = {
+// forward pass, whose surfaces they do not light; like AO they are in the deferred order only. The
+// DDGI debug views follow the composite, whose input they overwrite for the tone mapping pass to show.
+constexpr std::array<ScenePassId, 18> kDeferredOrder = {
     ScenePassId::Geometry,
     ScenePassId::AoTrace,
     ScenePassId::AoResolve,
@@ -30,6 +31,7 @@ constexpr std::array<ScenePassId, 17> kDeferredOrder = {
     ScenePassId::GiTrace,
     ScenePassId::GiResolve,
     ScenePassId::GiComposite,
+    ScenePassId::DdgiDebug,
     ScenePassId::Scatter,
     ScenePassId::Forward,
     ScenePassId::TransmissionCopy,

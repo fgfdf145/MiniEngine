@@ -1,0 +1,146 @@
+#pragma once
+
+#include "common.h"
+#include "uniform_buffer.h"
+
+#include <engine/asset/mesh.h>
+#include <engine/renderer/material.h>
+#include <engine/renderer/ray_tracing_bvh.h>
+
+#include <array>
+#include <cstdint>
+#include <future>
+#include <memory>
+#include <span>
+#include <unordered_map>
+#include <vector>
+
+namespace me
+{
+
+// What the ray scene needs of one render submesh when content changes.
+struct RaySceneSubmesh
+{
+    std::shared_ptr<const MeshData> mesh;
+    GpuMaterialData material;
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    bool doubleSided = false;
+    // The material's base colour and emissive textures (the defaults when it has none), which the
+    // ray material averages.
+    TextureDescriptorBinding baseColor;
+    TextureDescriptorBinding emissive;
+};
+
+// The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.glsl): the meshes'
+// hierarchies (ray_tracing_bvh.h), built on a worker thread when content changes; each submesh's ray
+// material, averaged from its textures on the GPU; and the instances and top level, rebuilt on the CPU
+// every frame from the submeshes' model matrices. Device lifetime. Its descriptor set layout (the ray
+// set) is what every tracing pass binds as set 1:
+//   0 mesh nodes, 1 mesh triangles, 2 instances, 3 top-level nodes, 4 ray materials,
+// all storage buffers. Nothing is traceable until the first build installs (IsReady).
+class VulkanRayScene
+{
+  public:
+    VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount);
+    ~VulkanRayScene();
+
+    VulkanRayScene(const VulkanRayScene&) = delete;
+    VulkanRayScene& operator=(const VulkanRayScene&) = delete;
+
+    // New content: starts building the hierarchies of meshes not built before (on a worker) and
+    // queues the material averaging. The textures must stay alive until the next SetContent; the
+    // renderer keeps them for as long as the content is live. The caller has waited for every frame
+    // in flight (the material descriptors are rewritten).
+    void SetContent(std::vector<RaySceneSubmesh> submeshes);
+
+    // Whether a finished build waits to be installed; the caller then waits for every frame in
+    // flight and calls InstallBuild, which replaces the buffers the descriptor sets name.
+    bool HasFinishedBuild() const;
+    void InstallBuild();
+
+    // This frame's instances: models is parallel to the submeshes of the installed content, skipped
+    // flags every instance probe rays leave out (kRayInstanceSkip). Writes the frame slot's
+    // instance and top-level buffers.
+    void UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> skipped);
+
+    // Averages the ray materials when content changed; afterwards makes every buffer visible to
+    // compute. Record before any pass that traces.
+    void Record(VkCommandBuffer commandBuffer);
+
+    bool IsReady() const;
+    VkDescriptorSetLayout GetSetLayout() const;
+    VkDescriptorSet GetSet(uint32_t frameSlot) const;
+    // Submeshes of the installed content, in the order SetContent gave them.
+    size_t GetSubmeshCount() const;
+
+  private:
+    struct Buffer
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        void* mapped = nullptr;
+        VkDeviceSize size = 0;
+    };
+
+    // A built hierarchy and the mesh it was built from: an address alone could be a new mesh
+    // allocated where a freed one was.
+    struct BuiltMesh
+    {
+        std::weak_ptr<const MeshData> mesh;
+        std::shared_ptr<const MeshBvh> bvh;
+    };
+    using BuiltMeshes = std::unordered_map<const MeshData*, BuiltMesh>;
+
+    // The worker's result: every mesh concatenated, and each submesh's mesh index.
+    struct Build
+    {
+        RayScene scene;
+        std::vector<uint32_t> submeshMeshes;
+        // Per submesh, 1 for a Blend material, which rays pass through.
+        std::vector<uint8_t> blend;
+        BuiltMeshes built;
+    };
+
+    Buffer CreateBuffer(VkDeviceSize size) const;
+    void DestroyBuffer(Buffer& buffer) const;
+    void WriteSets();
+    void CreateMaterialPipeline(VkPipelineCache pipelineCache);
+    void DestroyHandles();
+
+    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    VkDevice m_device = VK_NULL_HANDLE;
+    uint32_t m_frameCount = 0;
+
+    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_sets;
+
+    // Static per build.
+    Buffer m_meshNodes;
+    Buffer m_meshTriangles;
+    // Written by the material averaging, per content.
+    Buffer m_materials;
+    // Per frame slot, sized for the installed content.
+    std::vector<Buffer> m_instances;
+    std::vector<Buffer> m_topNodes;
+
+    // The material averaging: one set per submesh, one dispatch each.
+    VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_materialPool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_materialSets;
+    VkPipelineLayout m_materialPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_materialPipeline = VK_NULL_HANDLE;
+    bool m_materialsDirty = false;
+
+    std::vector<RaySceneSubmesh> m_submeshes;
+    // Hierarchies already built, by mesh, kept while any content uses them.
+    BuiltMeshes m_built;
+    std::future<Build> m_pendingBuild;
+    // The installed build's mesh ranges and each submesh's mesh; the per-frame top level starts from
+    // them.
+    RayScene m_scene;
+    std::vector<uint32_t> m_submeshMeshes;
+    std::vector<uint8_t> m_installedBlend;
+    bool m_ready = false;
+};
+}

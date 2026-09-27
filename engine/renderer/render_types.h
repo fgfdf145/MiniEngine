@@ -56,7 +56,11 @@ enum class GBufferDebugView : uint32_t
     // GB7 as stored: the sheen's colour.
     Sheen = 12,
     // The resolved one-bounce indirect diffuse light (SceneGi), tone mapped, before the albedo.
-    IndirectDiffuse = 13
+    IndirectDiffuse = 13,
+    // One primary ray per pixel through the DDGI ray scene: the ray materials' albedo lit by the
+    // first directional light through traced shadow rays (ddgi_debug.comp). Red: a single-sided back
+    // face.
+    RayTraced = 14
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the

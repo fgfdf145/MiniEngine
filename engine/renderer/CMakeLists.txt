@@ -27,6 +27,8 @@ add_library(engine_render_core
     material_pipeline.h
     motion_history.cpp
     motion_history.h
+    ray_tracing_bvh.cpp
+    ray_tracing_bvh.h
     render_types.h
     renderer_world.cpp
     renderer_world.h
@@ -46,6 +48,13 @@ add_library(engine_render_core
     white_balance.h
 )
 miniengine_group_target_sources(engine_render_core)
+
+# The ray scene's hierarchy build walks millions of triangles (New Sponza has 3.7 million) on a worker
+# whenever content changes; unoptimised it takes half a minute. Optimised in every configuration
+# where the compiler allows mixing (MSVC's /RTC1 in Debug does not).
+if(NOT MSVC)
+    set_source_files_properties(ray_tracing_bvh.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 
 target_include_directories(engine_render_core
     PUBLIC
@@ -89,6 +98,8 @@ add_library(engine_renderer
     vulkan/command.h
     vulkan/compute_pass_util.cpp
     vulkan/compute_pass_util.h
+    vulkan/ddgi_debug_pass.cpp
+    vulkan/ddgi_debug_pass.h
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
@@ -116,6 +127,8 @@ add_library(engine_renderer
     vulkan/pipeline.h
     vulkan/pipeline_set.cpp
     vulkan/pipeline_set.h
+    vulkan/ray_scene.cpp
+    vulkan/ray_scene.h
     vulkan/render_pass.cpp
     vulkan/render_pass.h
     vulkan/render_target_layout.cpp
@@ -192,6 +205,8 @@ set(MINIENGINE_SHADER_SOURCES
     ssr_trace.comp
     ssr_resolve.comp
     transmission_copy.comp
+    ray_material_average.comp
+    ddgi_debug.comp
 )
 
 # Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
@@ -225,6 +240,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_sampling.glsl
     spherical_harmonics.glsl
     cubemap_common.glsl
+    ray_tracing_common.glsl
 )
 
 function(miniengine_add_shaders shader_target)
