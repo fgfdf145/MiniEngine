@@ -14,10 +14,15 @@ const int DDGI_VISIBILITY_TEXELS = 16;
 
 // DdgiProbeState flags (w of coordAndFlags).
 const int DDGI_PROBE_UPDATED = 1;
+// Inside geometry (too many of its rays hit back faces): not sampled, still traced, so an object that
+// moves away revives it.
 const int DDGI_PROBE_INACTIVE = 2;
+// Relocated by more than a twentieth of the spacing at its last update: its tiles describe the old
+// position, so the next update keeps none of them.
+const int DDGI_PROBE_MOVED = 4;
 
-// One probe's record: the world grid coordinate whose data it holds and flags, and its relocation
-// offset in metres. A probe is sampled only where the coordinate matches the one its slot should
+// One probe's record: the world grid coordinate whose data it holds and flags, its relocation offset
+// in metres (xyz) and its smoothed back-face evidence (w, ddgi_update.comp). A probe is sampled only where the coordinate matches the one its slot should
 // hold now: after a scroll, a slot keeps the old place's data until it is updated.
 struct DdgiProbeState
 {
@@ -175,7 +180,10 @@ vec4 DdgiSampleLevel(uint level, vec3 P, vec3 N, vec3 V, out float coverage)
         float chebyshev = 1.0;
         if (distance > moments.x)
         {
-            float variance = abs(moments.x * moments.x - moments.y);
+            // Capped: near a building's edge a probe's lobe mixes rays stopped by a floor with rays that
+            // slipped past it, and the spread would let the probe light the rooms above through the floor.
+            float maxDeviation = 0.05 * spacing;
+            float variance = min(abs(moments.x * moments.x - moments.y), maxDeviation * maxDeviation);
             float excess = distance - moments.x;
             chebyshev = variance / (variance + excess * excess);
             chebyshev = chebyshev * chebyshev * chebyshev;

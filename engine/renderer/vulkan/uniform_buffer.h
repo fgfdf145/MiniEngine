@@ -159,8 +159,8 @@ static_assert(kShadowCascadeCount == 4, "ShadowUniformData packs one cascade per
 // The DDGI volume as shading reads it (ddgi_common.glsl), appended to CameraUniformData.
 struct DdgiUniformData
 {
-    // x = level count (0: DDGI off), y = strength, z = normal bias, w = view bias (both times the
-    // level's spacing).
+    // x = level count (0: DDGI off), y = the level debug view 16 draws, z = normal bias, w = view bias
+    // (both times the level's spacing).
     glm::vec4 params{0.0f};
     // Component l: level l's probe spacing in metres.
     glm::vec4 spacing{0.0f};

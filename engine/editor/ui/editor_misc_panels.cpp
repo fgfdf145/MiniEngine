@@ -181,7 +181,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 16> kGBufferViewNames = {
+        static constexpr std::array<const char*, 17> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -197,7 +197,8 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "G-buffer: sheen",
             "Indirect diffuse (one bounce)",
             "DDGI: ray-traced scene",
-            "DDGI: irradiance"};
+            "DDGI: irradiance",
+            "DDGI: probes"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",
@@ -257,6 +258,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         DragFloatInRange("Hysteresis##ddgi", &ddgi.hysteresis, 0.0f, 0.999f, "%.3f");
         DragFloatInRange("Normal bias##ddgi", &ddgi.normalBias, 0.0f, 1.0f, "%.2f");
         DragFloatInRange("View bias##ddgi", &ddgi.viewBias, 0.0f, 1.0f, "%.2f");
+        DragIntInRange("Probe view level##ddgi", &ddgi.probeViewLevel, 0, 3);
         ImGui::EndDisabled();
         if (ImGui::SmallButton("Reset##ddgi"))
         {

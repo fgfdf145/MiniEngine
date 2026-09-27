@@ -21,7 +21,7 @@ struct DdgiDebugConstants
 
 bool IsDdgiDebugView(GBufferDebugView view)
 {
-    return view == GBufferDebugView::RayTraced || view == GBufferDebugView::DdgiIrradiance;
+    return view == GBufferDebugView::RayTraced || view == GBufferDebugView::DdgiIrradiance || view == GBufferDebugView::DdgiProbes;
 }
 }
 
@@ -37,14 +37,15 @@ VulkanDdgiDebugPass::VulkanDdgiDebugPass(
     try
     {
         m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
-        static constexpr std::array<VkDescriptorType, 3> kTypes = {
+        static constexpr std::array<VkDescriptorType, 4> kTypes = {
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, m_rayScene.GetSetLayout(), m_setLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "ddgi_debug.comp.spv", sizeof(DdgiDebugConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 3, 1);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -66,7 +67,7 @@ ScenePassId VulkanDdgiDebugPass::Id() const
 
 RenderPassIo VulkanDdgiDebugPass::Io() const
 {
-    static constexpr std::array<RenderTargetId, 2> kReads = {RenderTargetId::SceneDepth, RenderTargetId::GBufferNormal};
+    static constexpr std::array<RenderTargetId, 3> kReads = {RenderTargetId::SceneDepth, RenderTargetId::GBufferNormal, RenderTargetId::SceneHdr};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneGi};
     RenderPassIo io{};
     io.reads = kReads;
@@ -116,10 +117,12 @@ void VulkanDdgiDebugPass::CreateDescriptorSets(const SceneRenderTargets& targets
         const VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo depthInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
         const VkDescriptorImageInfo normalInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const std::array<VkWriteDescriptorSet, 3> writes = {
+        const VkDescriptorImageInfo hdrInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
+        const std::array<VkWriteDescriptorSet, 4> writes = {
             ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo),
             ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo)};
+            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
+            ImageWrite(m_descriptorSets[slot], 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &hdrInfo)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 }

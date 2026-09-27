@@ -63,7 +63,10 @@ enum class GBufferDebugView : uint32_t
     RayTraced = 14,
     // What the DDGI probes send each pixel's surface (irradiance / pi, pre-exposed), tone mapped, before
     // the albedo; black outside the volume.
-    DdgiIrradiance = 15
+    DdgiIrradiance = 15,
+    // The image with every DDGI probe drawn as a small sphere of its irradiance: red inactive, blue not
+    // yet updated for where it is.
+    DdgiProbes = 16
 };
 
 // Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the
@@ -143,6 +146,8 @@ struct DdgiSettings
     // How far a lookup moves off the surface, along the normal and toward the viewer, in spacings.
     float normalBias = 0.1f;
     float viewBias = 0.2f;
+    // The level the probe debug view draws.
+    int probeViewLevel = 0;
 };
 
 struct RenderDebugSettings

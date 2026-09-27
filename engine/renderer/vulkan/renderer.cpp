@@ -739,7 +739,7 @@ void VulkanRenderer::DrawFrame()
         ddgiSchedule = m_ddgiScheduler.Schedule(std::span<const DdgiLevel>(levels.data(), levelCount), budget);
         ddgiData.params = glm::vec4(
             static_cast<float>(levelCount),
-            0.0f,
+            static_cast<float>(std::clamp(ddgiSettings.probeViewLevel, 0, static_cast<int>(levelCount) - 1)),
             std::clamp(ddgiSettings.normalBias, 0.0f, 1.0f),
             std::clamp(ddgiSettings.viewBias, 0.0f, 1.0f));
     }

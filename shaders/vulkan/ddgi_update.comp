@@ -8,6 +8,14 @@
 // clamped to twice the spacing), then keeps a hysteresis share of what the texel held. A probe whose
 // record is for another coordinate (a scroll moved its slot) or that was never updated keeps nothing.
 // The border texels copy the octahedron's opposite edges, so bilinear lookups wrap correctly.
+//
+// The same rays relocate and classify the probe (Majercik et al. 2021): a probe with more than a
+// quarter of its rays on back faces is inside geometry and moves through the nearest one; a probe
+// closer to a surface than a fifth of the spacing moves away from it; the offset stays within 0.45
+// spacing of the grid point. A probe is inactive where it sees a back face within one spacing: it is
+// inside something, or on the wrong side of a single-sided surface (under a floor or a terrain, where
+// it would see the sky past the building's edge and light the rooms above). That evidence is smoothed
+// over updates (offset.w), so the rotating rays do not flip the probe on and off.
 
 #include "scene_common.glsl"
 #include "ddgi_common.glsl"
@@ -95,7 +103,8 @@ void main()
     ivec3 coord = DdgiSlotCoordinate(slot, DdgiLevelOrigin(level));
     uint stateIndex = level * DDGI_PROBES_PER_LEVEL + DdgiSlotIndex(slot);
     DdgiProbeState state = probeStatesOut[stateIndex];
-    bool fresh = state.coordAndFlags.xyz != coord || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0;
+    bool sameCoordinate = state.coordAndFlags.xyz == coord;
+    bool fresh = !sameCoordinate || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0 || (state.coordAndFlags.w & DDGI_PROBE_MOVED) != 0;
     float hysteresis = fresh ? 0.0 : constants.hysteresis;
     float maxDistance = 2.0 * DdgiLevelSpacing(level);
 
@@ -175,9 +184,76 @@ void main()
 
     if (thread == 0u)
     {
+        float spacing = DdgiLevelSpacing(level);
+        float minFrontDistance = 0.2 * spacing;
+        int backfaces = 0;
+        float closestBack = 1e30;
+        vec3 closestBackDirection = vec3(0.0);
+        float closestFront = 1e30;
+        vec3 closestFrontDirection = vec3(0.0);
+        float farthestFront = 0.0;
+        vec3 farthestFrontDirection = vec3(0.0);
+        for (int ray = 0; ray < 64; ++ray)
+        {
+            float stored = sharedRays[ray].w;
+            if (stored < 0.0)
+            {
+                // The trace stores a fifth of a back face's distance, negated.
+                ++backfaces;
+                float distance = -5.0 * stored;
+                if (distance < closestBack)
+                {
+                    closestBack = distance;
+                    closestBackDirection = sharedDirections[ray];
+                }
+                continue;
+            }
+            float distance = min(stored, 1e4);
+            if (distance < closestFront)
+            {
+                closestFront = distance;
+                closestFrontDirection = sharedDirections[ray];
+            }
+            if (distance > farthestFront)
+            {
+                farthestFront = distance;
+                farthestFrontDirection = sharedDirections[ray];
+            }
+        }
+
+        vec3 previousOffset = sameCoordinate ? state.offset.xyz : vec3(0.0);
+        vec3 offset = previousOffset;
+        bool inside = backfaces * 4 > 64;
+        if (inside)
+        {
+            // Through the nearest back face, a little past it.
+            offset += closestBackDirection * (closestBack + 0.5 * minFrontDistance);
+        }
+        else if (closestFront < minFrontDistance)
+        {
+            // Away from the surface, unless the open side is the same way.
+            if (dot(closestFrontDirection, farthestFrontDirection) <= 0.0)
+            {
+                offset += farthestFrontDirection * min(farthestFront, minFrontDistance);
+            }
+        }
+        offset = clamp(offset, vec3(-0.45 * spacing), vec3(0.45 * spacing));
+
+        float backfaceEvidence = inside || closestBack < spacing ? 1.0 : 0.0;
+        float previousEvidence = sameCoordinate ? state.offset.w : backfaceEvidence;
+        float evidence = max(backfaceEvidence, 0.9 * previousEvidence);
+        int flags = DDGI_PROBE_UPDATED;
+        if (evidence > 0.05)
+        {
+            flags |= DDGI_PROBE_INACTIVE;
+        }
+        if (length(offset - previousOffset) > 0.05 * spacing)
+        {
+            flags |= DDGI_PROBE_MOVED;
+        }
         DdgiProbeState updated;
-        updated.coordAndFlags = ivec4(coord, DDGI_PROBE_UPDATED);
-        updated.offset = fresh ? vec4(0.0) : state.offset;
+        updated.coordAndFlags = ivec4(coord, flags);
+        updated.offset = vec4(offset, evidence);
         probeStatesOut[stateIndex] = updated;
     }
 }
