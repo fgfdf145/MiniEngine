@@ -316,6 +316,8 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     // One-bounce indirect diffuse: rgb radiance, the same format and usage.
     describeSsrTarget(RenderTargetId::GiRaw, "GI trace");
     describeSsrTarget(RenderTargetId::SceneGi, "Indirect diffuse");
+    // Read back by the DDGI reference comparison (--reference), which reads its irradiance view.
+    Describe(RenderTargetId::SceneGi).usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
     static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};

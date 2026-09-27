@@ -79,9 +79,8 @@ void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, VkImageLayo
         1,
         &barrier);
 }
-}
 
-void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path)
+std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
 {
     if (!IsBgra(request.format) && !IsRgba(request.format) && !IsHalfFloat(request.format))
     {
@@ -120,45 +119,14 @@ void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem
         TransitionForCopy(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.layout);
         batch.Flush();
 
-        std::vector<uint8_t> pixels(static_cast<size_t>(request.extent.width) * request.extent.height * 4);
+        std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
         void* mapped = nullptr;
         CheckVulkan(vkMapMemory(request.device, memory, 0, byteCount, 0, &mapped), "Failed to map the capture buffer");
-        if (IsHalfFloat(request.format))
-        {
-            // An SDR PNG of an HDR frame: clipped at UI white, sRGB-encoded.
-            const auto* halves = static_cast<const uint16_t*>(mapped);
-            for (size_t texel = 0; texel < pixels.size(); ++texel)
-            {
-                pixels[texel] = EncodeSrgb(glm::unpackHalf1x16(halves[texel]));
-            }
-        }
-        else
-        {
-            std::memcpy(pixels.data(), mapped, pixels.size());
-        }
+        std::memcpy(bytes.data(), mapped, bytes.size());
         vkUnmapMemory(request.device, memory);
-        if (IsBgra(request.format))
-        {
-            for (size_t texel = 0; texel < pixels.size(); texel += 4)
-            {
-                std::swap(pixels[texel], pixels[texel + 2]);
-            }
-        }
-        for (size_t texel = 3; texel < pixels.size(); texel += 4)
-        {
-            pixels[texel] = 255;
-        }
-
-        if (stbi_write_png(
-                path.string().c_str(),
-                static_cast<int>(request.extent.width),
-                static_cast<int>(request.extent.height),
-                4,
-                pixels.data(),
-                static_cast<int>(request.extent.width) * 4) == 0)
-        {
-            throw std::runtime_error("Failed to write '" + path.string() + "'");
-        }
+        vkDestroyBuffer(request.device, buffer, nullptr);
+        vkFreeMemory(request.device, memory, nullptr);
+        return bytes;
     }
     catch (...)
     {
@@ -169,7 +137,69 @@ void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem
         }
         throw;
     }
-    vkDestroyBuffer(request.device, buffer, nullptr);
-    vkFreeMemory(request.device, memory, nullptr);
+}
+}
+
+std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request)
+{
+    if (!IsHalfFloat(request.format))
+    {
+        throw std::runtime_error("Reading back floats needs a half-float RGBA image");
+    }
+    const std::vector<uint8_t> bytes = ReadImageBytes(request);
+    std::vector<glm::vec4> texels(bytes.size() / 8);
+    for (size_t texel = 0; texel < texels.size(); ++texel)
+    {
+        uint16_t halves[4];
+        std::memcpy(halves, bytes.data() + texel * 8, sizeof(halves));
+        texels[texel] = glm::vec4(
+            glm::unpackHalf1x16(halves[0]),
+            glm::unpackHalf1x16(halves[1]),
+            glm::unpackHalf1x16(halves[2]),
+            glm::unpackHalf1x16(halves[3]));
+    }
+    return texels;
+}
+
+void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path)
+{
+    const std::vector<uint8_t> bytes = ReadImageBytes(request);
+    std::vector<uint8_t> pixels(static_cast<size_t>(request.extent.width) * request.extent.height * 4);
+    if (IsHalfFloat(request.format))
+    {
+        // An SDR PNG of an HDR frame: clipped at UI white, sRGB-encoded.
+        for (size_t texel = 0; texel < pixels.size(); ++texel)
+        {
+            uint16_t half = 0;
+            std::memcpy(&half, bytes.data() + texel * 2, sizeof(half));
+            pixels[texel] = EncodeSrgb(glm::unpackHalf1x16(half));
+        }
+    }
+    else
+    {
+        std::memcpy(pixels.data(), bytes.data(), pixels.size());
+    }
+    if (IsBgra(request.format))
+    {
+        for (size_t texel = 0; texel < pixels.size(); texel += 4)
+        {
+            std::swap(pixels[texel], pixels[texel + 2]);
+        }
+    }
+    for (size_t texel = 3; texel < pixels.size(); texel += 4)
+    {
+        pixels[texel] = 255;
+    }
+
+    if (stbi_write_png(
+            path.string().c_str(),
+            static_cast<int>(request.extent.width),
+            static_cast<int>(request.extent.height),
+            4,
+            pixels.data(),
+            static_cast<int>(request.extent.width) * 4) == 0)
+    {
+        throw std::runtime_error("Failed to write '" + path.string() + "'");
+    }
 }
 }

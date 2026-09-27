@@ -89,6 +89,67 @@ def leaves_png(path):
         file.write(chunk(b"IEND", b""))
 
 
+def write_gltf(out_dir, name, meshes, materials, images, generator):
+    """Writes out_dir/name.gltf: one node, mesh and material per entry of meshes (name to Mesh), each
+    material from materials[name] (color, roughness, optional metallic, and texture, an index into
+    images, which makes it an alpha-masked double-sided card), the buffer embedded."""
+    buffer = bytearray()
+    accessors = []
+    buffer_views = []
+
+    def add_view(data, target):
+        while len(buffer) % 4:
+            buffer.append(0)
+        buffer_views.append({"buffer": 0, "byteOffset": len(buffer), "byteLength": len(data), "target": target})
+        buffer.extend(data)
+        return len(buffer_views) - 1
+
+    gltf_meshes = []
+    gltf_materials = []
+    nodes = []
+    for mesh_name, mesh in meshes.items():
+        positions = b"".join(struct.pack("<3f", *p) for p in mesh.positions)
+        normals = b"".join(struct.pack("<3f", *n) for n in mesh.normals)
+        uvs = b"".join(struct.pack("<2f", *u) for u in mesh.uvs)
+        indices = b"".join(struct.pack("<I", i) for i in mesh.indices)
+        lo = [min(p[axis] for p in mesh.positions) for axis in range(3)]
+        hi = [max(p[axis] for p in mesh.positions) for axis in range(3)]
+        accessors.append({"bufferView": add_view(positions, 34962), "componentType": 5126, "count": len(mesh.positions), "type": "VEC3", "min": lo, "max": hi})
+        accessors.append({"bufferView": add_view(normals, 34962), "componentType": 5126, "count": len(mesh.normals), "type": "VEC3"})
+        accessors.append({"bufferView": add_view(uvs, 34962), "componentType": 5126, "count": len(mesh.uvs), "type": "VEC2"})
+        accessors.append({"bufferView": add_view(indices, 34963), "componentType": 5125, "count": len(mesh.indices), "type": "SCALAR"})
+        base = len(accessors) - 4
+        spec = materials[mesh_name]
+        material = {
+            "name": mesh_name,
+            "pbrMetallicRoughness": {"baseColorFactor": spec["color"], "metallicFactor": spec.get("metallic", 0.0), "roughnessFactor": spec["roughness"]},
+        }
+        if "texture" in spec:
+            material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": spec["texture"]}
+            material["alphaMode"] = "MASK"
+            material["alphaCutoff"] = 0.5
+            material["doubleSided"] = True
+        gltf_materials.append(material)
+        gltf_meshes.append({"name": mesh_name, "primitives": [{"attributes": {"POSITION": base, "NORMAL": base + 1, "TEXCOORD_0": base + 2}, "indices": base + 3, "material": len(gltf_materials) - 1}]})
+        nodes.append({"mesh": len(gltf_meshes) - 1, "name": mesh_name})
+
+    gltf = {
+        "asset": {"version": "2.0", "generator": generator},
+        "scene": 0,
+        "scenes": [{"nodes": list(range(len(nodes)))}],
+        "nodes": nodes,
+        "meshes": gltf_meshes,
+        "materials": gltf_materials,
+        "textures": [{"source": index} for index in range(len(images))],
+        "images": [{"uri": uri} for uri in images],
+        "accessors": accessors,
+        "bufferViews": buffer_views,
+        "buffers": [{"byteLength": len(buffer), "uri": "data:application/octet-stream;base64," + base64.b64encode(bytes(buffer)).decode()}],
+    }
+    with open(os.path.join(out_dir, name + ".gltf"), "w") as file:
+        json.dump(gltf, file)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     meshes = {}
@@ -149,67 +210,13 @@ def main():
         "concrete": {"color": [0.45, 0.44, 0.42, 1.0], "roughness": 0.9},
         "roof": {"color": [0.35, 0.36, 0.40, 1.0], "roughness": 0.6},
         "bark": {"color": [0.12, 0.08, 0.05, 1.0], "roughness": 0.9},
-        "leaves": {"color": [1.0, 1.0, 1.0, 1.0], "roughness": 0.8, "texture": True},
+        "leaves": {"color": [1.0, 1.0, 1.0, 1.0], "roughness": 0.8, "texture": 0},
         "car_paint": {"color": [0.55, 0.03, 0.03, 1.0], "roughness": 0.3},
         "chrome": {"color": [0.95, 0.93, 0.88, 1.0], "roughness": 0.15, "metallic": 1.0},
     }
 
-    buffer = bytearray()
-    accessors = []
-    buffer_views = []
-
-    def add_view(data, target):
-        while len(buffer) % 4:
-            buffer.append(0)
-        buffer_views.append({"buffer": 0, "byteOffset": len(buffer), "byteLength": len(data), "target": target})
-        buffer.extend(data)
-        return len(buffer_views) - 1
-
-    gltf_meshes = []
-    gltf_materials = []
-    nodes = []
-    for name, mesh in meshes.items():
-        positions = b"".join(struct.pack("<3f", *p) for p in mesh.positions)
-        normals = b"".join(struct.pack("<3f", *n) for n in mesh.normals)
-        uvs = b"".join(struct.pack("<2f", *u) for u in mesh.uvs)
-        indices = b"".join(struct.pack("<I", i) for i in mesh.indices)
-        lo = [min(p[axis] for p in mesh.positions) for axis in range(3)]
-        hi = [max(p[axis] for p in mesh.positions) for axis in range(3)]
-        accessors.append({"bufferView": add_view(positions, 34962), "componentType": 5126, "count": len(mesh.positions), "type": "VEC3", "min": lo, "max": hi})
-        accessors.append({"bufferView": add_view(normals, 34962), "componentType": 5126, "count": len(mesh.normals), "type": "VEC3"})
-        accessors.append({"bufferView": add_view(uvs, 34962), "componentType": 5126, "count": len(mesh.uvs), "type": "VEC2"})
-        accessors.append({"bufferView": add_view(indices, 34963), "componentType": 5125, "count": len(mesh.indices), "type": "SCALAR"})
-        base = len(accessors) - 4
-        spec = materials[name]
-        material = {
-            "name": name,
-            "pbrMetallicRoughness": {"baseColorFactor": spec["color"], "metallicFactor": spec.get("metallic", 0.0), "roughnessFactor": spec["roughness"]},
-        }
-        if spec.get("texture"):
-            material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0}
-            material["alphaMode"] = "MASK"
-            material["alphaCutoff"] = 0.5
-            material["doubleSided"] = True
-        gltf_materials.append(material)
-        gltf_meshes.append({"name": name, "primitives": [{"attributes": {"POSITION": base, "NORMAL": base + 1, "TEXCOORD_0": base + 2}, "indices": base + 3, "material": len(gltf_materials) - 1}]})
-        nodes.append({"mesh": len(gltf_meshes) - 1, "name": name})
-
     leaves_png(os.path.join(OUT_DIR, "leaves.png"))
-    gltf = {
-        "asset": {"version": "2.0", "generator": "tools/render_scenes/make_ddgi_track.py"},
-        "scene": 0,
-        "scenes": [{"nodes": list(range(len(nodes)))}],
-        "nodes": nodes,
-        "meshes": gltf_meshes,
-        "materials": gltf_materials,
-        "textures": [{"source": 0}],
-        "images": [{"uri": "leaves.png"}],
-        "accessors": accessors,
-        "bufferViews": buffer_views,
-        "buffers": [{"byteLength": len(buffer), "uri": "data:application/octet-stream;base64," + base64.b64encode(bytes(buffer)).decode()}],
-    }
-    with open(os.path.join(OUT_DIR, "ddgi_track.gltf"), "w") as file:
-        json.dump(gltf, file)
+    write_gltf(OUT_DIR, "ddgi_track", meshes, materials, ["leaves.png"], "tools/render_scenes/make_ddgi_track.py")
     print("wrote", os.path.normpath(OUT_DIR))
 
 

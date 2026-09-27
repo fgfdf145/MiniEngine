@@ -2,7 +2,10 @@
 
 #include "common.h"
 
+#include <glm/glm.hpp>
+
 #include <filesystem>
+#include <vector>
 
 namespace me
 {
@@ -26,4 +29,7 @@ struct ImageCaptureRequest
 // GPU is idle and the image was created with VK_IMAGE_USAGE_TRANSFER_SRC_BIT. Throws
 // std::runtime_error on failure.
 void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path);
+
+// Copies a half-float RGBA image to host memory, row by row from the top. Same requirements.
+std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request);
 }

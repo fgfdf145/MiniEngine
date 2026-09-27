@@ -3,6 +3,7 @@
 #include <engine/core/render_backend_type.h>
 #include <SDL3/SDL_events.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 
@@ -30,6 +31,17 @@ class IRenderBackend
     {
         (void)path;
         throw std::runtime_error("This render backend cannot capture the viewport");
+    }
+    // Compares the DDGI probes' irradiance on every stride-th pixel's surface (Graphics Debug view 15,
+    // which the last frame must have shown) with a CPU path tracer's over the same ray scene, and
+    // writes prefix_ddgi.pfm, prefix_reference.pfm and prefix_compare.png. For verification runs
+    // (--reference).
+    virtual void CaptureDdgiReference(const std::filesystem::path& prefix, uint32_t samples, uint32_t stride)
+    {
+        (void)prefix;
+        (void)samples;
+        (void)stride;
+        throw std::runtime_error("This render backend cannot compare DDGI with a reference");
     }
 };
 }

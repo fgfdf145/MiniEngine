@@ -132,6 +132,8 @@ class VulkanRenderer : public EditorRenderBackendBase
 
     void DrawFrame() override;
     void CaptureViewport(const std::filesystem::path& path) override;
+    // In ddgi_reference_capture.cpp.
+    void CaptureDdgiReference(const std::filesystem::path& prefix, uint32_t samples, uint32_t stride) override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -284,6 +286,22 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::string m_failedEnvironmentMapPath;
     // The swapchain image the last submitted frame drew into, for CaptureViewport.
     std::optional<uint32_t> m_lastRecordedImageIndex;
+    // What the last drawn frame showed, for CaptureDdgiReference: its unjittered view-projection and
+    // camera, pre-exposure, frame slot and debug view, the directional lights as they reached the
+    // scene, and its sky, which the reference supports only when uniform.
+    struct ReferenceFrame
+    {
+        glm::mat4 viewProjection{1.0f};
+        glm::vec3 cameraPosition{0.0f};
+        float preExposure = 1.0f;
+        uint32_t frameSlot = 0;
+        GBufferDebugView view = GBufferDebugView::Off;
+        std::vector<ReferenceLight> lights;
+        glm::vec3 skyRadiance{0.0f};
+        bool uniformSky = false;
+        bool ddgiEnabled = false;
+    };
+    ReferenceFrame m_referenceFrame;
     // Material textures' samplers, shared by every descriptor that asks for the same settings.
     std::unique_ptr<VulkanSamplerCache> m_samplerCache;
     // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).

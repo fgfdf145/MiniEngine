@@ -39,6 +39,11 @@ struct EditorApplicationOptions
     // the DDGI probes off.
     std::optional<GBufferDebugView> debugView;
     bool ddgiDisabled = false;
+    // --reference PREFIX: after the last frame, compares the DDGI irradiance (with --debug-view 15)
+    // against a CPU path tracer on every --reference-stride-th pixel, --reference-samples paths each.
+    std::optional<std::string> referencePrefix;
+    uint32_t referenceSamples = 256;
+    uint32_t referenceStride = 8;
     EnginePaths::Overrides paths;
 };
 

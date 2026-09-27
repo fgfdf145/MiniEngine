@@ -6,6 +6,7 @@
 #include <engine/asset/mesh.h>
 #include <engine/renderer/material.h>
 #include <engine/renderer/ray_tracing_bvh.h>
+#include <engine/renderer/reference_path_tracer.h>
 
 #include <array>
 #include <cstdint>
@@ -72,6 +73,12 @@ class VulkanRayScene
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
     // Submeshes of the installed content, in the order SetContent gave them.
     size_t GetSubmeshCount() const;
+
+    // The installed hierarchies with the last UpdateInstances' instances and top level, and the ray
+    // materials the GPU averaged, for the CPU reference path tracer. Both read the GPU's host-visible
+    // buffers and need it idle.
+    RayScene CopyCpuScene() const;
+    std::vector<ReferenceMaterial> ReadMaterials() const;
 
   private:
     struct Buffer
@@ -141,6 +148,9 @@ class VulkanRayScene
     RayScene m_scene;
     std::vector<uint32_t> m_submeshMeshes;
     std::vector<uint8_t> m_installedBlend;
+    // How many mesh nodes and triangles the installed build's buffers hold.
+    size_t m_meshNodeCount = 0;
+    size_t m_meshTriangleCount = 0;
     bool m_ready = false;
 };
 }

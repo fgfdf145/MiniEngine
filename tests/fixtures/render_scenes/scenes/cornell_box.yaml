@@ -1,0 +1,63 @@
+# A Cornell box (tools/render_scenes/make_cornell_box.py) lit only by the sun through a square hole in
+# its ceiling: no sky, no ambient light (a zero Ambient light turns the fallback off). Everything but the
+# sunlit patch on the floor is lit by bounces, and the white walls and blocks take the red and green
+# walls' colour. With --debug-view 15 and --reference, the DDGI probes' irradiance is compared with the
+# CPU path tracer's. Cascaded DDGI (2026-09-27).
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000501
+    tag: CornellBox
+    model:
+      display_name: cornell_box
+      source_path: models/cornell_box/cornell_box.gltf
+      source_uuid: 8c4e2a71-6d3b-4f19-b0a5-3e7c9d1f2a64
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -2, -2]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000502
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 100000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 6, -4]
+      rotation: [-15, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000503
+    tag: No ambient
+    light_type: ambient
+    color: [1, 1, 1]
+    intensity: 0
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

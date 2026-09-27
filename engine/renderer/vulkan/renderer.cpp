@@ -873,6 +873,27 @@ void VulkanRenderer::DrawFrame()
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
     frame.frameSlot = m_commandContext->GetCurrentFrame();
+
+    m_referenceFrame.viewProjection = viewProjection;
+    m_referenceFrame.cameraPosition = State().camera.position;
+    m_referenceFrame.preExposure = preExposure;
+    m_referenceFrame.frameSlot = frame.frameSlot;
+    m_referenceFrame.view = State().renderDebug.forwardOnly ? GBufferDebugView::Off : State().renderDebug.gbufferView;
+    m_referenceFrame.lights.clear();
+    for (size_t index = 0; index < selectedLights.size(); ++index)
+    {
+        if (sceneLights.candidates[lightSelection.selected[index]].type == LightType::Directional)
+        {
+            const GpuLightData& light = selectedLights[index];
+            m_referenceFrame.lights.push_back(ReferenceLight{
+                -glm::normalize(glm::vec3(light.directionAndType)),
+                glm::vec3(light.colorAndIntensity) * light.colorAndIntensity.w});
+        }
+    }
+    m_referenceFrame.skyRadiance = lightSelection.ambientLuminance;
+    m_referenceFrame.uniformSky = environmentMode == EnvironmentMode::None &&
+                                  lightSelection.ambientGradient == std::array<glm::vec3, 3>{};
+    m_referenceFrame.ddgiEnabled = ddgiData.params.x > 0.0f;
     frame.extent = m_sceneTargets->GetExtent();
     frame.drawItems = drawItems;
     frame.blendDrawItemBegin = static_cast<size_t>(

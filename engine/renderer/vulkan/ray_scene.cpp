@@ -260,7 +260,10 @@ void VulkanRayScene::InstallBuild()
         std::memcpy(m_meshNodes.mapped, m_scene.meshNodes.data(), sizeof(BvhNode) * m_scene.meshNodes.size());
         std::memcpy(m_meshTriangles.mapped, m_scene.meshTriangles.data(), sizeof(BvhTriangle) * m_scene.meshTriangles.size());
     }
-    // The CPU keeps the ranges only: the top level reads nothing else of the meshes.
+    // The CPU keeps the ranges only: the top level reads nothing else of the meshes. The GPU's copies
+    // stay host-visible, so CopyCpuScene can read them back.
+    m_meshNodeCount = m_scene.meshNodes.size();
+    m_meshTriangleCount = m_scene.meshTriangles.size();
     m_scene.meshNodes.clear();
     m_scene.meshNodes.shrink_to_fit();
     m_scene.meshTriangles.clear();
@@ -370,6 +373,42 @@ VkDescriptorSet VulkanRayScene::GetSet(uint32_t frameSlot) const
 size_t VulkanRayScene::GetSubmeshCount() const
 {
     return m_submeshMeshes.size();
+}
+
+RayScene VulkanRayScene::CopyCpuScene() const
+{
+    RayScene scene = m_scene;
+    if (m_ready && m_meshNodeCount > 0)
+    {
+        const auto* nodes = static_cast<const BvhNode*>(m_meshNodes.mapped);
+        const auto* triangles = static_cast<const BvhTriangle*>(m_meshTriangles.mapped);
+        scene.meshNodes.assign(nodes, nodes + m_meshNodeCount);
+        scene.meshTriangles.assign(triangles, triangles + m_meshTriangleCount);
+    }
+    return scene;
+}
+
+std::vector<ReferenceMaterial> VulkanRayScene::ReadMaterials() const
+{
+    std::vector<ReferenceMaterial> materials;
+    if (!m_ready || m_materials.mapped == nullptr)
+    {
+        return materials;
+    }
+    const auto* values = static_cast<const glm::vec4*>(m_materials.mapped);
+    materials.resize(m_submeshMeshes.size());
+    for (size_t index = 0; index < materials.size(); ++index)
+    {
+        const glm::vec4 albedoCoverage = values[index * 2];
+        const glm::vec4 emissionFlags = values[index * 2 + 1];
+        uint32_t flags = 0;
+        std::memcpy(&flags, &emissionFlags.w, sizeof(flags));
+        materials[index].albedo = glm::vec3(albedoCoverage);
+        materials[index].coverage = albedoCoverage.w;
+        materials[index].emission = glm::vec3(emissionFlags);
+        materials[index].doubleSided = (flags & kRayMaterialDoubleSided) != 0u;
+    }
+    return materials;
 }
 
 VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size) const

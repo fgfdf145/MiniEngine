@@ -182,6 +182,24 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--reference")
+        {
+            options.referencePrefix = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--reference-samples" || argument == "--reference-stride")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            uint32_t number = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), number).ptr != value.data() + value.size() || number == 0)
+            {
+                throw std::runtime_error(std::string(argument) + " requires a positive integer");
+            }
+            (argument == "--reference-samples" ? options.referenceSamples : options.referenceStride) = number;
+            continue;
+        }
+
         if (argument == "--backend")
         {
             options.renderBackend = ParseRenderBackend(ReadRequiredArgument(i, argc, argv, argument));
@@ -328,6 +346,10 @@ int EditorApplication::Run()
     if (m_options.capturePath.has_value())
     {
         renderer->CaptureViewport(*m_options.capturePath);
+    }
+    if (m_options.referencePrefix.has_value())
+    {
+        renderer->CaptureDdgiReference(*m_options.referencePrefix, m_options.referenceSamples, m_options.referenceStride);
     }
 
     return 0;

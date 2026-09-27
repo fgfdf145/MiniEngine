@@ -31,6 +31,8 @@ add_library(engine_render_core
     motion_history.h
     ray_tracing_bvh.cpp
     ray_tracing_bvh.h
+    reference_path_tracer.cpp
+    reference_path_tracer.h
     render_types.h
     renderer_world.cpp
     renderer_world.h
@@ -104,6 +106,7 @@ add_library(engine_renderer
     vulkan/ddgi.h
     vulkan/ddgi_debug_pass.cpp
     vulkan/ddgi_debug_pass.h
+    vulkan/ddgi_reference_capture.cpp
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
