@@ -65,6 +65,26 @@ RenderExtent ParseViewportSize(std::string_view value)
     return RenderExtent{width, height};
 }
 
+// Exactly count comma-separated numbers, for example "0,1.5,-20" for three.
+template <size_t count>
+std::array<float, count> ParseFloatList(std::string_view value, std::string_view optionName)
+{
+    std::array<float, count> numbers{};
+    const char* cursor = value.data();
+    const char* const end = value.data() + value.size();
+    for (size_t index = 0; index < count; ++index)
+    {
+        const auto [parsedEnd, errorCode] = std::from_chars(cursor, end, numbers[index]);
+        const bool last = index + 1 == count;
+        if (errorCode != std::errc{} || (last ? parsedEnd != end : parsedEnd == end || *parsedEnd != ','))
+        {
+            throw std::runtime_error(std::string(optionName) + " requires " + std::to_string(count) + " comma-separated numbers");
+        }
+        cursor = parsedEnd + 1;
+    }
+    return numbers;
+}
+
 RenderBackendType ParseRenderBackend(std::string_view value)
 {
     RenderBackendType backendType = GetPreferredRenderBackendType();
@@ -126,6 +146,39 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--khronos-reference")
         {
             options.khronosReference = true;
+            continue;
+        }
+
+        if (argument == "--camera")
+        {
+            options.camera = ParseFloatList<5>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
+        if (argument == "--camera-velocity")
+        {
+            const std::array<float, 3> velocity = ParseFloatList<3>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            options.cameraVelocity = glm::vec3(velocity[0], velocity[1], velocity[2]);
+            continue;
+        }
+
+        if (argument == "--debug-view")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            uint32_t view = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), view).ptr != value.data() + value.size() ||
+                view > static_cast<uint32_t>(GBufferDebugView::DdgiProbes))
+            {
+                throw std::runtime_error("--debug-view requires a view number from 0 to " +
+                                         std::to_string(static_cast<uint32_t>(GBufferDebugView::DdgiProbes)));
+            }
+            options.debugView = static_cast<GBufferDebugView>(view);
+            continue;
+        }
+
+        if (argument == "--no-ddgi")
+        {
+            options.ddgiDisabled = true;
             continue;
         }
 
@@ -208,6 +261,21 @@ int EditorApplication::Run()
 
     auto sharedState = std::make_shared<RendererSharedState>();
     sharedState->editorUi.EditRenderDebug().khronosReference = m_options.khronosReference;
+    if (m_options.debugView.has_value())
+    {
+        sharedState->editorUi.EditRenderDebug().gbufferView = *m_options.debugView;
+    }
+    if (m_options.ddgiDisabled)
+    {
+        sharedState->editorUi.EditRenderDebug().ddgi.enabled = false;
+    }
+    if (m_options.camera.has_value())
+    {
+        const std::array<float, 5>& camera = *m_options.camera;
+        sharedState->camera.position = glm::vec3(camera[0], camera[1], camera[2]);
+        sharedState->camera.yawDegrees = camera[3];
+        sharedState->camera.pitchDegrees = camera[4];
+    }
     sharedState->fixedViewportExtent = m_options.viewportSize;
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
@@ -245,6 +313,7 @@ int EditorApplication::Run()
                               renderer->HandleEvent(event);
                           });
         renderer->DrawFrame();
+        sharedState->camera.position += m_options.cameraVelocity;
 
         if (m_options.maxFrames > 0)
         {

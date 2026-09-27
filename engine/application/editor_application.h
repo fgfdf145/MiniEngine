@@ -6,6 +6,9 @@
 #include <engine/core/render_backend_type.h>
 #include <engine/renderer/render_types.h>
 
+#include <glm/glm.hpp>
+
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -27,6 +30,15 @@ struct EditorApplicationOptions
     bool khronosReference = false;
     // --viewport-size WxH: renders the scene at a fixed size, independent of the editor's layout.
     std::optional<RenderExtent> viewportSize;
+    // For captures that need a view the scene file does not hold. --camera x,y,z,yaw,pitch places the
+    // camera (metres, degrees); --camera-velocity x,y,z then moves it this far every frame, so a
+    // capture of a moving camera does not depend on frame times.
+    std::optional<std::array<float, 5>> camera;
+    glm::vec3 cameraVelocity{0.0f};
+    // --debug-view N starts with Graphics Debug's G-buffer view N (GBufferDebugView); --no-ddgi with
+    // the DDGI probes off.
+    std::optional<GBufferDebugView> debugView;
+    bool ddgiDisabled = false;
     EnginePaths::Overrides paths;
 };
 

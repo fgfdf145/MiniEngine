@@ -22,6 +22,16 @@ Existing files are never overwritten. Then, for example:
 out/build/macos-debug/app/miniengine_app --scene assets/scenes/test/iridescence.yaml --frames 1500 --capture iridescence.png
 ```
 
+A capture can also place the camera (`--camera x,y,z,yaw,pitch`, metres and degrees), move it a fixed
+distance every frame (`--camera-velocity x,y,z`), start in a Graphics Debug view (`--debug-view N`,
+`GBufferDebugView`'s numbers) or with the DDGI probes off (`--no-ddgi`). For example, inside the track's
+tunnel, then the probes' irradiance after driving 200 m at 1 m per frame:
+
+```bash
+miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 400 --camera 0,0.2,-100,-90,0 --capture tunnel.png
+miniengine_app --scene assets/scenes/test/ddgi_track.yaml --frames 200 --camera 0,0.2,150,-90,-5 --camera-velocity 0,0,-1 --debug-view 15 --capture moving.png
+```
+
 | Scene | What it shows | Feature |
 | --- | --- | --- |
 | `sponza_local_shadows.yaml` | Sponza with a point, a spot and an area light casting shadows | Local-light shadows |
