@@ -186,8 +186,12 @@ class VulkanRenderer : public EditorRenderBackendBase
         std::vector<std::string> newTextureCacheKeys,
         std::vector<MaterialTextureSlots> newMaterialTextureSlots,
         std::vector<RenderSubmesh> newRenderSubmeshes);
-    // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh.
-    std::vector<VulkanDrawItem> BuildDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
+    // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh. Submeshes
+    // whose bounding sphere is outside the frustum of viewProjection get no draw item.
+    std::vector<VulkanDrawItem> BuildDrawItems(
+        uint32_t imageIndex,
+        std::span<const glm::mat4> models,
+        const glm::mat4& viewProjection) const;
     std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,

@@ -3,6 +3,7 @@
 #include "../imgui/imgui_impl_vulkan.h"
 #include "viewport_capture.h"
 
+#include <engine/renderer/view_frustum.h>
 #include <engine/renderer/environment_brdf.h>
 #include <engine/renderer/ltc_table.h>
 #include <engine/editor/renderer_shared_state.h>
@@ -870,7 +871,9 @@ void VulkanRenderer::DrawFrame()
         State().renderDebug.specularAntiAliasing && !State().renderDebug.khronosReference,
         preExposure,
         ddgiData);
-    const std::vector<VulkanDrawItem> drawItems = BuildDrawItems(imageIndex, models);
+    // Culled against the jittered projection, the one the GPU rasterises with.
+    const std::vector<VulkanDrawItem> drawItems =
+        BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view);
     const std::vector<ShadowDrawItem> shadowDrawItems =
         shadowCascades.has_value() || !localShadowTiles.empty() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
 
@@ -2301,18 +2304,31 @@ void VulkanRenderer::ApplyRenderContent(
     m_autoExposureState.meteredSeconds = 0.0f;
 }
 
-std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
+std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
+    uint32_t imageIndex,
+    std::span<const glm::mat4> models,
+    const glm::mat4& viewProjection) const
 {
     std::vector<VulkanDrawItem> unsorted;
     std::vector<MaterialDrawSortKey> sortKeys;
     unsorted.reserve(m_renderSubmeshes.size());
     sortKeys.reserve(m_renderSubmeshes.size());
+    const ViewFrustum frustum(viewProjection);
 
     for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
         const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
+        const glm::mat4& model = models[submeshIndex];
+        const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+        const float worldRadius =
+            renderSubmesh.localBoundsRadius *
+            std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2]))});
+        if (!frustum.IntersectsSphere(worldCenter, worldRadius))
+        {
+            continue;
+        }
         ObjectPushConstants drawConstants{};
-        drawConstants.model = models[submeshIndex];
+        drawConstants.model = model;
         const MaterialPipelineKey pipelineKey{
             renderSubmesh.alphaMode,
             renderSubmesh.doubleSided};

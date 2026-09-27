@@ -235,6 +235,32 @@ endif()
 
 set_target_properties(miniengine_shadow_cascades_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_view_frustum_tests
+    view_frustum_tests.cpp
+)
+miniengine_group_target_sources(miniengine_view_frustum_tests)
+
+target_link_libraries(miniengine_view_frustum_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.view_frustum
+    COMMAND miniengine_view_frustum_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_view_frustum_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_view_frustum_tests>
+            $<TARGET_FILE_DIR:miniengine_view_frustum_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_view_frustum_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_motion_history_tests
     motion_history_tests.cpp
 )
