@@ -8,6 +8,7 @@
 #include <engine/renderer/shadow_cascades.h>
 
 #include <array>
+#include <optional>
 #include <span>
 
 namespace me
@@ -76,13 +77,20 @@ class VulkanShadowPass
     // The array view and comparison sampler the material pass binds.
     TextureDescriptorBinding GetSampledBinding() const;
 
-    // Renders every caster into every cascade. With no cascades it only clears the layers, which
-    // still has to happen every frame: the material pass binds the map whether or not a light
-    // casts shadows, and the clear is what puts each layer in the layout that binding declares.
+    // Decides, before Record, which cascades this frame redraws (ShadowCascadeCache) and returns
+    // what the map holds afterwards, which the shader must sample with. With no cascades (no light
+    // casts shadows) it returns nothing and Record clears the layers once, the first such frame:
+    // the material pass binds the map whether or not a light casts shadows, and the clear is what
+    // puts each layer in the layout that binding declares. Layers keep that layout, and their
+    // depth, across the frames that skip them.
+    std::optional<ShadowCascadePlan> Plan(const ShadowCascades* cascades, uint64_t casterKey);
+
+    // Renders the casters into the cascades Plan chose, with the plan it returned (null with no
+    // cascades).
     void Record(
         VkCommandBuffer commandBuffer,
         std::span<const ShadowDrawItem> drawItems,
-        const ShadowCascades* cascades,
+        const ShadowCascadePlan* plan,
         VulkanGpuTimer* timer = nullptr) const;
 
   private:
@@ -106,5 +114,10 @@ class VulkanShadowPass
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_opaquePipeline = VK_NULL_HANDLE;
     VkPipeline m_maskPipeline = VK_NULL_HANDLE;
+    ShadowCascadeCache m_cache;
+    // Which layers this frame's Record renders or clears, and whether they were last cleared for a
+    // frame without a shadow light.
+    std::array<bool, kShadowCascadeCount> m_frameRedraw{};
+    bool m_cleared = false;
 };
 }

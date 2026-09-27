@@ -120,4 +120,57 @@ bool ShadowCascadeIntersectsSphere(const glm::mat4& viewProjection, const glm::v
            clip.z >= -rz &&
            clip.z <= 1.0f + rz;
 }
+
+ShadowCascadePlan ShadowCascadeCache::Plan(const ShadowCascades& wanted, uint64_t casterKey)
+{
+    ++m_frame;
+    if (casterKey != m_casterKey)
+    {
+        Invalidate();
+        m_casterKey = casterKey;
+    }
+
+    ShadowCascadePlan plan{};
+    // A far cascade that has never been drawn cannot wait; one that changed may.
+    int staggered = -1;
+    for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
+    {
+        const bool changed = !m_valid[cascade] || m_held[cascade].viewProjection != wanted[cascade].viewProjection;
+        if (!changed)
+        {
+            continue;
+        }
+        if (cascade < kShadowCascadeCacheFirstStaggered || !m_valid[cascade])
+        {
+            plan.redraw[cascade] = true;
+        }
+        else if (staggered < 0 || m_drawnFrame[cascade] < m_drawnFrame[static_cast<uint32_t>(staggered)])
+        {
+            staggered = static_cast<int>(cascade);
+        }
+    }
+    if (staggered >= 0)
+    {
+        plan.redraw[static_cast<uint32_t>(staggered)] = true;
+    }
+
+    for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
+    {
+        if (plan.redraw[cascade])
+        {
+            m_held[cascade] = wanted[cascade];
+            m_valid[cascade] = true;
+            m_drawnFrame[cascade] = m_frame;
+        }
+        plan.held[cascade] = m_held[cascade];
+        // Where each cascade ends is the camera's, not the map's: it picks the cascade per pixel.
+        plan.held[cascade].splitFar = wanted[cascade].splitFar;
+    }
+    return plan;
+}
+
+void ShadowCascadeCache::Invalidate()
+{
+    m_valid = {};
+}
 }

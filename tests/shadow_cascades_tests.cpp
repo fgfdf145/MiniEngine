@@ -150,6 +150,67 @@ void CullingKeepsCastersInsideAndDropsOnesFarAway()
     Require(ShadowCascadeIntersectsSphere(first.viewProjection, sideways, 600.0f), "a sphere large enough to reach the cascade must be kept");
 }
 
+ShadowCascades MakeCascades(float offset)
+{
+    ShadowCascades cascades{};
+    for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
+    {
+        cascades[cascade].viewProjection = glm::translate(glm::mat4(1.0f), glm::vec3(offset, static_cast<float>(cascade), 0.0f));
+        cascades[cascade].splitFar = 10.0f * static_cast<float>(cascade + 1) + offset;
+    }
+    return cascades;
+}
+
+int RedrawCount(const ShadowCascadePlan& plan)
+{
+    int count = 0;
+    for (bool redraw : plan.redraw)
+    {
+        count += redraw ? 1 : 0;
+    }
+    return count;
+}
+
+void CacheRedrawsOnlyWhatChanged()
+{
+    ShadowCascadeCache cache;
+    const ShadowCascades first = MakeCascades(0.0f);
+    Require(RedrawCount(cache.Plan(first, 1)) == 4, "the first frame draws every cascade");
+    Require(RedrawCount(cache.Plan(first, 1)) == 0, "an unchanged frame draws none");
+    Require(RedrawCount(cache.Plan(first, 2)) == 4, "new casters redraw every cascade");
+
+    ShadowCascades nearMoved = first;
+    nearMoved[0].viewProjection = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f));
+    const ShadowCascadePlan plan = cache.Plan(nearMoved, 2);
+    Require(plan.redraw[0] && RedrawCount(plan) == 1, "a moved near cascade redraws alone");
+    Require(plan.held[0].viewProjection == nearMoved[0].viewProjection, "the redrawn cascade holds the new matrix");
+}
+
+void CacheStaggersTheFarCascades()
+{
+    ShadowCascadeCache cache;
+    cache.Plan(MakeCascades(0.0f), 1);
+    const ShadowCascades moved = MakeCascades(1.0f);
+    const ShadowCascadePlan first = cache.Plan(moved, 1);
+    Require(first.redraw[0] && first.redraw[1], "the near cascades redraw at once");
+    Require(first.redraw[2] != first.redraw[3], "only one far cascade redraws a frame");
+    const uint32_t waiting = first.redraw[2] ? 3 : 2;
+    Require(first.held[waiting].viewProjection == MakeCascades(0.0f)[waiting].viewProjection, "the waiting cascade keeps its old matrix");
+    Require(first.held[waiting].splitFar == moved[waiting].splitFar, "every split follows the camera");
+
+    const ShadowCascadePlan second = cache.Plan(moved, 1);
+    Require(second.redraw[waiting] && RedrawCount(second) == 1, "the waiting far cascade redraws next");
+    Require(RedrawCount(cache.Plan(moved, 1)) == 0, "then nothing is left to draw");
+}
+
+void CacheInvalidationRedrawsEverything()
+{
+    ShadowCascadeCache cache;
+    cache.Plan(MakeCascades(0.0f), 1);
+    cache.Invalidate();
+    Require(RedrawCount(cache.Plan(MakeCascades(0.0f), 1)) == 4, "an invalidated cache redraws every cascade at once");
+}
+
 void StraightDownLightIsHandled()
 {
     const ShadowCameraInput camera = MakeCamera(glm::vec3(0.0f, 2.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
@@ -169,6 +230,9 @@ int main()
         CameraMotionMovesTheMapInWholeTexels();
         CullingKeepsCastersInsideAndDropsOnesFarAway();
         StraightDownLightIsHandled();
+        CacheRedrawsOnlyWhatChanged();
+        CacheStaggersTheFarCascades();
+        CacheInvalidationRedrawsEverything();
     }
     catch (const std::exception& error)
     {

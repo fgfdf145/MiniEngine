@@ -88,10 +88,25 @@ TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
     return TextureDescriptorBinding{m_arrayView, m_sampler};
 }
 
+std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* cascades, uint64_t casterKey)
+{
+    if (cascades == nullptr)
+    {
+        m_cache.Invalidate();
+        m_frameRedraw.fill(!m_cleared);
+        m_cleared = true;
+        return std::nullopt;
+    }
+    m_cleared = false;
+    const ShadowCascadePlan plan = m_cache.Plan(*cascades, casterKey);
+    m_frameRedraw = plan.redraw;
+    return plan;
+}
+
 void VulkanShadowPass::Record(
     VkCommandBuffer commandBuffer,
     std::span<const ShadowDrawItem> drawItems,
-    const ShadowCascades* cascades,
+    const ShadowCascadePlan* plan,
     VulkanGpuTimer* timer) const
 {
     static constexpr std::array<const char*, kShadowCascadeCount> kCascadeNames = {
@@ -101,6 +116,15 @@ void VulkanShadowPass::Record(
 
     for (uint32_t cascadeIndex = 0; cascadeIndex < kShadowCascadeCount; ++cascadeIndex)
     {
+        if (!m_frameRedraw[cascadeIndex])
+        {
+            if (timer != nullptr)
+            {
+                timer->Mark(commandBuffer, kCascadeNames[cascadeIndex]);
+            }
+            continue;
+        }
+
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = m_renderPass;
@@ -110,9 +134,9 @@ void VulkanShadowPass::Record(
         renderPassInfo.pClearValues = &clearValue;
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        if (cascades != nullptr)
+        if (plan != nullptr)
         {
-            const glm::mat4& lightViewProjection = (*cascades)[cascadeIndex].viewProjection;
+            const glm::mat4& lightViewProjection = plan->held[cascadeIndex].viewProjection;
             VkPipeline boundPipeline = VK_NULL_HANDLE;
             for (const ShadowDrawItem& item : drawItems)
             {

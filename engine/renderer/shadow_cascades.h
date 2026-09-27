@@ -69,4 +69,38 @@ ShadowCascades BuildShadowCascades(
 // viewProjection maps onto x, y in [-1, 1] and depth in [0, 1]. Conservative: a sphere near a
 // corner may pass without touching the box, but one that touches it never fails.
 bool ShadowCascadeIntersectsSphere(const glm::mat4& viewProjection, const glm::vec3& center, float radius);
+
+// Which cascades of the shadow map to redraw, so a still camera and a still scene draw none.
+// Cascades are snapped to whole texels, so a cascade whose matrix is unchanged would render the same
+// depth again unless the casters changed. The near cascades redraw whenever they change. The far
+// ones (kShadowCascadeCacheFirstStaggered onwards) cover so much of the scene that redrawing each on
+// every step costs most of the pass, so of those that changed only the one held longest redraws
+// each frame; the others keep their map and the matrix it was drawn with, which the shader then
+// samples with, so a stale cascade is a frame or so behind rather than wrong.
+inline constexpr uint32_t kShadowCascadeCacheFirstStaggered = 2;
+
+struct ShadowCascadePlan
+{
+    // The cascades as the map holds them once this frame's redraws are done: what the shader reads.
+    ShadowCascades held{};
+    std::array<bool, kShadowCascadeCount> redraw{};
+};
+
+class ShadowCascadeCache
+{
+  public:
+    // wanted: this frame's cascades. casterKey: anything that changes when the casters do (their
+    // meshes, transforms or alpha test); a new key redraws every cascade.
+    ShadowCascadePlan Plan(const ShadowCascades& wanted, uint64_t casterKey);
+    // The map's contents are gone (recreated, or cleared for a frame without a shadow light).
+    void Invalidate();
+
+  private:
+    ShadowCascades m_held{};
+    std::array<bool, kShadowCascadeCount> m_valid{};
+    // The frame each cascade was last redrawn on, to pick the stalest far cascade.
+    std::array<uint64_t, kShadowCascadeCount> m_drawnFrame{};
+    uint64_t m_casterKey = 0;
+    uint64_t m_frame = 0;
+};
 }

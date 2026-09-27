@@ -273,6 +273,37 @@ constexpr const char* kOutOfMemoryReport =
 
 // Logs a frame long enough to have stalled the editor. Texture work belongs on the preparation
 // queue; this is where a regression back onto the frame loop shows up.
+// A key that changes whenever the shadow casters do: which meshes, where, and how they alpha test.
+// FNV-1a over the fields that reach the shadow map. Not the material descriptor set, which is one
+// per swapchain image and would change the key every frame.
+uint64_t HashShadowCasters(std::span<const ShadowDrawItem> items)
+{
+    uint64_t hash = 14695981039346656037ull;
+    const auto mix = [&hash](const void* data, size_t size)
+    {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t index = 0; index < size; ++index)
+        {
+            hash = (hash ^ bytes[index]) * 1099511628211ull;
+        }
+    };
+    for (const ShadowDrawItem& item : items)
+    {
+        mix(&item.positionBuffer, sizeof(item.positionBuffer));
+        mix(&item.vertexBuffer, sizeof(item.vertexBuffer));
+        mix(&item.indexBuffer, sizeof(item.indexBuffer));
+        mix(&item.indexCount, sizeof(item.indexCount));
+        mix(&item.model, sizeof(item.model));
+        mix(&item.alphaMask, sizeof(item.alphaMask));
+        if (item.alphaMask)
+        {
+            mix(&item.material, sizeof(item.material));
+            mix(item.baseColorTransform, sizeof(item.baseColorTransform));
+        }
+    }
+    return hash;
+}
+
 class FrameStallReporter
 {
   public:
@@ -607,17 +638,26 @@ void VulkanRenderer::DrawFrame()
             glm::vec3(selectedLights[shadowLightIndex].directionAndType),
             shadowSettings);
 
-        for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
-        {
-            shadowData.cascadeViewProjection[cascade] = (*shadowCascades)[cascade].viewProjection;
-            shadowData.cascadeSplits[cascade] = (*shadowCascades)[cascade].splitFar;
-            shadowData.cascadeTexelSizes[cascade] = (*shadowCascades)[cascade].texelWorldSize;
-        }
         shadowData.params = glm::vec4(
             static_cast<float>(shadowLightIndex),
             1.0f / static_cast<float>(m_shadowPass->GetResolution()),
             0.0f,
             0.0f);
+    }
+    // The casters, built here because which cascades the map keeps depends on them. The shader
+    // samples the cascades as the map holds them, which for one Plan left waiting is its previous
+    // matrix.
+    const std::vector<ShadowDrawItem> shadowDrawItems = BuildShadowDrawItems(imageIndex);
+    const std::optional<ShadowCascadePlan> shadowPlan =
+        m_shadowPass->Plan(shadowCascades.has_value() ? &*shadowCascades : nullptr, HashShadowCasters(shadowDrawItems));
+    if (shadowPlan.has_value())
+    {
+        for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
+        {
+            shadowData.cascadeViewProjection[cascade] = shadowPlan->held[cascade].viewProjection;
+            shadowData.cascadeSplits[cascade] = shadowPlan->held[cascade].splitFar;
+            shadowData.cascadeTexelSizes[cascade] = shadowPlan->held[cascade].texelWorldSize;
+        }
     }
 
     const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
@@ -874,8 +914,6 @@ void VulkanRenderer::DrawFrame()
     // Culled against the jittered projection, the one the GPU rasterises with.
     const std::vector<VulkanDrawItem> drawItems =
         BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view);
-    const std::vector<ShadowDrawItem> shadowDrawItems =
-        shadowCascades.has_value() || !localShadowTiles.empty() ? BuildShadowDrawItems(imageIndex) : std::vector<ShadowDrawItem>{};
 
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
@@ -1021,7 +1059,7 @@ void VulkanRenderer::DrawFrame()
                                               m_shadowPass->Record(
                                                   commandBuffer,
                                                   shadowDrawItems,
-                                                  shadowCascades.has_value() ? &*shadowCascades : nullptr,
+                                                  shadowPlan.has_value() ? &*shadowPlan : nullptr,
                                                   m_gpuTimer.get());
                                               // The same, for the local lights' atlas.
                                               m_localShadowPass->Record(commandBuffer, shadowDrawItems, localShadowTiles);
