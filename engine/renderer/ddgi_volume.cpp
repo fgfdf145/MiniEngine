@@ -3,6 +3,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace me
@@ -66,7 +67,7 @@ glm::ivec3 DdgiSlotFromIndex(uint32_t index)
     return glm::ivec3(x, y, z);
 }
 
-std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> levels, uint32_t budget)
+std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> levels, uint32_t budget, float hysteresis)
 {
     const size_t levelCount = std::min<size_t>(levels.size(), kDdgiMaxLevels);
     bool restart = levelCount != m_levels.size();
@@ -92,11 +93,13 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
 
     std::vector<uint32_t> scheduled;
     scheduled.reserve(budget);
+    std::array<uint32_t, kDdgiMaxLevels> updated{};
     // Marks what this frame updates, so round robin does not pick it twice.
     std::vector<std::vector<uint8_t>> taken(levelCount, std::vector<uint8_t>(kDdgiProbesPerLevel, 0u));
     const auto take = [&](uint32_t level, uint32_t index, const glm::ivec3& coord)
     {
         scheduled.push_back(PackDdgiProbe(level, index));
+        ++updated[level];
         taken[level][index] = 1u;
         m_levels[level].held[index] = coord;
         m_levels[level].valid[index] = 1u;
@@ -112,6 +115,8 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
             if (state.valid[index] == 0u || state.held[index] != coord)
             {
                 take(level, index, coord);
+                // New probes in the level: it starts converging over.
+                state.residual = 1.0f;
             }
         }
     }
@@ -126,7 +131,8 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
     for (uint32_t level = 0; level < levelCount && remaining > 0; ++level)
     {
         LevelState& state = m_levels[level];
-        state.credit += static_cast<float>(remaining) * std::ldexp(1.0f, static_cast<int>(levelCount - 1 - level)) / weightSum;
+        const float settledScale = state.residual < kDdgiSettledResidual ? 1.0f / kDdgiSettledShareDivisor : 1.0f;
+        state.credit += static_cast<float>(remaining) * std::ldexp(1.0f, static_cast<int>(levelCount - 1 - level)) / weightSum * settledScale;
         uint32_t share = static_cast<uint32_t>(state.credit);
         state.credit -= static_cast<float>(share);
         share = std::min(share, kDdgiProbesPerLevel);
@@ -142,7 +148,26 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
             --share;
         }
     }
+
+    for (uint32_t level = 0; level < levelCount; ++level)
+    {
+        const float updatesPerProbe = static_cast<float>(updated[level]) / static_cast<float>(kDdgiProbesPerLevel);
+        m_levels[level].residual *= std::pow(std::clamp(hysteresis, 0.0f, 1.0f), updatesPerProbe);
+    }
     return scheduled;
+}
+
+void DdgiProbeScheduler::Unsettle()
+{
+    for (LevelState& state : m_levels)
+    {
+        state.residual = 1.0f;
+    }
+}
+
+bool DdgiProbeScheduler::Settled(uint32_t level) const
+{
+    return level < m_levels.size() && m_levels[level].residual < kDdgiSettledResidual;
 }
 
 void DdgiProbeScheduler::Reset()
@@ -204,6 +229,7 @@ float DdgiAdaptiveHysteresis::Update(std::span<const glm::vec4> lighting, float 
     }
     m_previous.assign(lighting.begin(), lighting.end());
     m_hasPrevious = true;
+    m_changed = changed;
 
     if (changed)
     {
@@ -214,6 +240,11 @@ float DdgiAdaptiveHysteresis::Update(std::span<const glm::vec4> lighting, float 
         m_fastSecondsLeft = std::max(m_fastSecondsLeft - std::max(seconds, 0.0f), 0.0f);
     }
     return m_fastSecondsLeft > 0.0f ? std::min(hysteresis, kDdgiFastHysteresis) : hysteresis;
+}
+
+bool DdgiAdaptiveHysteresis::Changed() const
+{
+    return m_changed;
 }
 
 glm::mat3 DdgiRayRotation(uint32_t frameIndex)

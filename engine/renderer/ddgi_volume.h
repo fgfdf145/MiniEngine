@@ -62,15 +62,25 @@ inline uint32_t PackDdgiProbe(uint32_t level, uint32_t slotIndex)
 // a slot whose coordinate changed with a scroll, or that was never updated, is stale. Stale probes of
 // the finest levels come first; the rest of the budget goes round robin, each level twice as often as
 // the next coarser one.
+//
+// A level whose probes have converged refreshes at 1 / kDdgiSettledShareDivisor of its round robin
+// share. It has converged once the updates since it last changed have left less than
+// kDdgiSettledResidual of whatever it held before: each update keeps the hysteresis' share of the old
+// value, so n updates per probe leave hysteresis^n. A scroll, Unsettle or Reset starts it over.
 class DdgiProbeScheduler
 {
   public:
     // levels: this frame's grids, finest first (at most kDdgiMaxLevels). A change in the level count or
-    // a spacing starts over with every probe stale.
-    std::vector<uint32_t> Schedule(std::span<const DdgiLevel> levels, uint32_t budget);
+    // a spacing starts over with every probe stale. hysteresis: what this frame's updates blend with;
+    // 1 (the default) never settles.
+    std::vector<uint32_t> Schedule(std::span<const DdgiLevel> levels, uint32_t budget, float hysteresis = 1.0f);
 
     // Every probe stale again, as after new content.
     void Reset();
+    // Every level unconverged again, for lighting that changed or instances that move.
+    void Unsettle();
+    // Whether a level refreshes at the settled rate (for tests and the editor).
+    bool Settled(uint32_t level) const;
 
     // How many probes of this level hold stale data for the grids of the last Schedule (for tests and
     // the editor).
@@ -88,9 +98,14 @@ class DdgiProbeScheduler
         uint32_t cursor = 0;
         // Fractional share of the round-robin budget carried to the next frame.
         float credit = 0.0f;
+        // What remains, per probe on average, of the level's content before its last change.
+        float residual = 1.0f;
     };
     std::vector<LevelState> m_levels;
 };
+
+inline constexpr float kDdgiSettledResidual = 0.01f;
+inline constexpr float kDdgiSettledShareDivisor = 4.0f;
 
 // Frames an instance stays out of the probe rays after its matrix last changed.
 inline constexpr uint32_t kDdgiMovingInstanceFrames = 30;
@@ -129,10 +144,13 @@ class DdgiAdaptiveHysteresis
     // The hysteresis for this frame: the setting, or kDdgiFastHysteresis while the lighting changed
     // recently, whichever keeps less. seconds is the time since the previous call.
     float Update(std::span<const glm::vec4> lighting, float seconds, float hysteresis);
+    // Whether the last Update saw the lighting change.
+    bool Changed() const;
 
   private:
     std::vector<glm::vec4> m_previous;
     bool m_hasPrevious = false;
+    bool m_changed = false;
     float m_fastSecondsLeft = 0.0f;
 };
 

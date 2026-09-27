@@ -754,8 +754,27 @@ void VulkanRenderer::DrawFrame()
         m_ddgi->Invalidate();
         m_ddgiScheduler.Reset();
     }
-    m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, m_ddgiMovingInstances.Update(models));
+    const std::span<const uint8_t> ddgiMoving = m_ddgiMovingInstances.Update(models);
+    m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, ddgiMoving);
     State().rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
+
+    // The lighting the probes hold, so they blend faster for a second after it changes: every
+    // directional light as it reaches the scene, and the sky's mode, ambient and HDRI.
+    std::vector<glm::vec4> ddgiLighting;
+    for (size_t index = 0; index < selectedLights.size(); ++index)
+    {
+        if (sceneLights.candidates[lightSelection.selected[index]].type == LightType::Directional)
+        {
+            ddgiLighting.push_back(selectedLights[index].directionAndType);
+            ddgiLighting.push_back(selectedLights[index].colorAndIntensity);
+        }
+    }
+    ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
+    ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
+    const auto now = std::chrono::steady_clock::now();
+    const float ddgiSeconds = m_ddgiLastFrameTime ? std::chrono::duration<float>(now - *m_ddgiLastFrameTime).count() : 0.0f;
+    m_ddgiLastFrameTime = now;
+    const float ddgiHysteresis = m_ddgiHysteresis.Update(ddgiLighting, ddgiSeconds, std::clamp(State().renderDebug.ddgi.hysteresis, 0.0f, 0.999f));
 
     // DDGI: this frame's levels around the camera and the probes that update. Off in the Khronos
     // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.
@@ -781,7 +800,17 @@ void VulkanRenderer::DrawFrame()
             ddgiData.origins[level] = glm::vec4(glm::vec3(levels[level].origin), 0.0f);
         }
         const uint32_t budget = static_cast<uint32_t>(std::clamp(ddgiSettings.probesPerFrame, 64, static_cast<int>(VulkanDdgi::kMaxProbesPerFrame)));
-        ddgiSchedule = m_ddgiScheduler.Schedule(std::span<const DdgiLevel>(levels.data(), levelCount), budget);
+        // Levels whose probes have converged refresh less (DdgiProbeScheduler); lighting that
+        // changed, or instances that move, start them converging over.
+        if (m_ddgiHysteresis.Changed() ||
+            std::any_of(ddgiMoving.begin(), ddgiMoving.end(), [](uint8_t moving)
+                        {
+                            return moving != 0u;
+                        }))
+        {
+            m_ddgiScheduler.Unsettle();
+        }
+        ddgiSchedule = m_ddgiScheduler.Schedule(std::span<const DdgiLevel>(levels.data(), levelCount), budget, ddgiHysteresis);
         ddgiData.params = glm::vec4(
             static_cast<float>(levelCount),
             static_cast<float>(std::clamp(ddgiSettings.probeViewLevel, 0, static_cast<int>(levelCount) - 1)),
@@ -789,24 +818,6 @@ void VulkanRenderer::DrawFrame()
             std::clamp(ddgiSettings.viewBias, 0.0f, 1.0f));
     }
     m_ddgi->SetSchedule(m_commandContext->GetCurrentFrame(), ddgiSchedule);
-
-    // The lighting the probes hold, so they blend faster for a second after it changes: every
-    // directional light as it reaches the scene, and the sky's mode, ambient and HDRI.
-    std::vector<glm::vec4> ddgiLighting;
-    for (size_t index = 0; index < selectedLights.size(); ++index)
-    {
-        if (sceneLights.candidates[lightSelection.selected[index]].type == LightType::Directional)
-        {
-            ddgiLighting.push_back(selectedLights[index].directionAndType);
-            ddgiLighting.push_back(selectedLights[index].colorAndIntensity);
-        }
-    }
-    ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
-    ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
-    const auto now = std::chrono::steady_clock::now();
-    const float ddgiSeconds = m_ddgiLastFrameTime ? std::chrono::duration<float>(now - *m_ddgiLastFrameTime).count() : 0.0f;
-    m_ddgiLastFrameTime = now;
-    const float ddgiHysteresis = m_ddgiHysteresis.Update(ddgiLighting, ddgiSeconds, std::clamp(ddgiSettings.hysteresis, 0.0f, 0.999f));
 
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for

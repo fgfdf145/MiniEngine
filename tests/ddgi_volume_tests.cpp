@@ -125,6 +125,65 @@ void SchedulerUpdatesStaleProbesFirst()
     Require(scheduler.StaleCount(0) == 0, "and is then no longer stale");
 }
 
+// A level that has converged refreshes a quarter as often; a scroll or Unsettle brings it back.
+void ConvergedLevelsRefreshLess()
+{
+    DdgiProbeScheduler scheduler;
+    const glm::vec3 camera(0.0f);
+    std::vector<DdgiLevel> levels = Levels(camera, 4);
+    // Never settles at the default hysteresis of 1.
+    for (int frame = 0; frame < 400; ++frame)
+    {
+        scheduler.Schedule(levels, 2048);
+    }
+    Require(!scheduler.Settled(0), "without a hysteresis nothing settles");
+
+    // At 0.97 a probe needs log(0.01) / log(0.97), about 151 updates. Level 0 gets 8/15 of the budget:
+    // one update per probe every 6.3 frames, so it settles after about 960 frames, and level 3,
+    // with 1/15, long after.
+    int frames = 0;
+    while (!scheduler.Settled(0))
+    {
+        scheduler.Schedule(levels, 2048, 0.97f);
+        Require(++frames < 1100, "the finest level settles");
+    }
+    Require(frames > 850, "but not before its probes had their updates");
+    Require(!scheduler.Settled(3), "the coarsest level, updated least, has not settled yet");
+
+    std::array<uint32_t, 4> counts{};
+    for (uint32_t packed : scheduler.Schedule(levels, 2048, 0.97f))
+    {
+        ++counts[packed >> 24];
+    }
+    Require(counts[0] < 300 && counts[1] > 500, "a settled level gets a quarter of its share");
+
+    scheduler.Unsettle();
+    Require(!scheduler.Settled(0), "Unsettle starts every level over");
+
+    for (int frame = 0; frame < 1100; ++frame)
+    {
+        scheduler.Schedule(levels, 2048, 0.97f);
+    }
+    Require(scheduler.Settled(0), "settled again");
+    levels = Levels(camera + glm::vec3(1.0f, 0.0f, 0.0f), 4);
+    scheduler.Schedule(levels, 2048, 0.97f);
+    Require(!scheduler.Settled(0), "a scroll brings new probes, which start the level over");
+}
+
+void HysteresisReportsChanges()
+{
+    DdgiAdaptiveHysteresis adaptive;
+    std::vector<glm::vec4> lighting = {glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)};
+    adaptive.Update(lighting, 0.1f, 0.97f);
+    adaptive.Update(lighting, 0.1f, 0.97f);
+    Require(!adaptive.Changed(), "still lighting is no change");
+    lighting[0].x = 0.5f;
+    adaptive.Update(lighting, 0.1f, 0.97f);
+    Require(adaptive.Changed(), "a turned light is");
+    adaptive.Update(lighting, 0.1f, 0.97f);
+    Require(!adaptive.Changed(), "for the frame it turned only");
+}
+
 // With nothing stale, each level is updated twice as often as the next coarser one.
 void RoundRobinFavoursFineLevels()
 {
@@ -249,6 +308,8 @@ int main()
         RotationsAreRotations();
         MovingInstancesAreSkippedUntilTheySettle();
         HysteresisDropsWhenTheLightingChanges();
+        ConvergedLevelsRefreshLess();
+        HysteresisReportsChanges();
     }
     catch (const std::exception& error)
     {
