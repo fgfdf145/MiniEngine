@@ -225,6 +225,7 @@ set(MINIENGINE_SHADER_INCLUDES
     gt7_tonemap.glsl
     hdr_output.glsl
     ssr_common.glsl
+    ssr_half_res.glsl
     local_shadow_common.glsl
     anisotropy_common.glsl
     brdf_common.glsl

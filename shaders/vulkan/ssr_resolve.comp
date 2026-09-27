@@ -10,6 +10,7 @@
 
 #include "scene_common.glsl"
 #include "gbuffer_common.glsl"
+#include "ssr_half_res.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -30,7 +31,9 @@ layout(push_constant) uniform SsrResolveConstants
     // The history holds last frame's pre-exposed values; this brings them to this frame's.
     float historyScale;
     uint flags;
-    vec2 unused;
+    // The trace's frame index, which says which pixel of each 2x2 block it traced.
+    uint frameIndex;
+    float unused;
 }
 resolve;
 
@@ -40,8 +43,15 @@ const uint SSR_FLAG_HISTORY_VALID = 2u;
 const float CURRENT_WEIGHT = 0.125;
 const float DEPTH_TOLERANCE = 0.05;
 const float NORMAL_POWER = 16.0;
-// Roughness at which the spatial footprint reaches its full 5x5.
+// Roughness at which the spatial footprint reaches its full width.
 const float FULL_FOOTPRINT_ROUGHNESS = 0.3;
+// The footprint's tent over the full-resolution distance to where a half-resolution sample was
+// traced: a mirror interpolates the samples within a pixel or so, a rough lobe averages a 3.5-pixel
+// radius, about the 5x5 of the full-resolution trace.
+const float MIRROR_TENT_RADIUS = 1.5;
+const float ROUGH_TENT_RADIUS = 3.5;
+// How many standard deviations of the neighbourhood the history may stray from its mean.
+const float CLIP_DEVIATIONS = 1.5;
 
 float ViewZFromDepth(float depth)
 {
@@ -73,43 +83,55 @@ void main()
     float distanceToCamera = -ViewZFromDepth(depth);
     vec3 N = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).rg);
     float roughness = clamp(texelFetch(surfaceTexture, pixel, 0).g, 0.04, 1.0);
-    int radius = int(round(2.0 * clamp(roughness / FULL_FOOTPRINT_ROUGHNESS, 0.0, 1.0)));
+    float tentRadius = mix(MIRROR_TENT_RADIUS, ROUGH_TENT_RADIUS, clamp(roughness / FULL_FOOTPRINT_ROUGHNESS, 0.0, 1.0));
 
-    // Spatial, premultiplied by confidence; the 3x3 bounds for clipping the history come along.
+    // The trace ran at half resolution (ssr_half_res.glsl): gather the 3x3 half-resolution samples
+    // around this pixel, weighted by the depth and normal of the pixel each was traced at and by a
+    // tent over the distance to it, premultiplied by confidence. All nine bound the history's
+    // clipping through their mean and spread (variance clipping): the min and max of the few that
+    // lie close are too narrow a box at one sample per block, and pulled the history down.
+    ivec2 halfExtent = SsrHalfResExtent(extent);
+    ivec2 center = min(pixel / 2, halfExtent - 1);
     vec4 sum = vec4(0.0);
     float weightSum = 0.0;
-    vec4 neighbourhoodMin = vec4(65504.0);
-    vec4 neighbourhoodMax = vec4(0.0);
-    for (int y = -2; y <= 2; ++y)
+    vec4 moment1 = vec4(0.0);
+    vec4 moment2 = vec4(0.0);
+    for (int y = -1; y <= 1; ++y)
     {
-        for (int x = -2; x <= 2; ++x)
+        for (int x = -1; x <= 1; ++x)
         {
-            ivec2 neighbor = clamp(pixel + ivec2(x, y), ivec2(0), extent - 1);
-            vec4 raw = texelFetch(ssrRawTexture, neighbor, 0);
+            ivec2 sampleCoord = clamp(center + ivec2(x, y), ivec2(0), halfExtent - 1);
+            ivec2 source = SsrHalfResSourcePixel(sampleCoord, resolve.frameIndex, extent);
+            vec2 offset = abs(vec2(source - pixel));
+            vec4 raw = texelFetch(ssrRawTexture, sampleCoord, 0);
             vec4 premultiplied = vec4(raw.rgb * raw.a, raw.a);
-            if (abs(x) <= 1 && abs(y) <= 1)
-            {
-                neighbourhoodMin = min(neighbourhoodMin, premultiplied);
-                neighbourhoodMax = max(neighbourhoodMax, premultiplied);
-            }
-            if (abs(x) > radius || abs(y) > radius)
+            moment1 += premultiplied;
+            moment2 += premultiplied * premultiplied;
+            vec2 tent = max(1.0 - offset / tentRadius, 0.0);
+            float distanceWeight = tent.x * tent.y;
+            if (distanceWeight <= 0.0)
             {
                 continue;
             }
-            float neighborDepth = texelFetch(depthTexture, neighbor, 0).r;
+            float neighborDepth = texelFetch(depthTexture, source, 0).r;
             if (neighborDepth >= 1.0)
             {
                 continue;
             }
             float neighborDistance = -ViewZFromDepth(neighborDepth);
-            vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, neighbor, 0).rg);
-            float weight = max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (DEPTH_TOLERANCE * distanceToCamera)) *
+            vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, source, 0).rg);
+            float weight = distanceWeight *
+                           max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (DEPTH_TOLERANCE * distanceToCamera)) *
                            pow(max(dot(N, neighborNormal), 0.0), NORMAL_POWER);
             sum += weight * premultiplied;
             weightSum += weight;
         }
     }
     vec4 current = weightSum > 0.0 ? sum / weightSum : vec4(0.0);
+    vec4 mean = moment1 / 9.0;
+    vec4 deviation = sqrt(max(moment2 / 9.0 - mean * mean, vec4(0.0)));
+    vec4 neighbourhoodMin = max(mean - CLIP_DEVIATIONS * deviation, vec4(0.0));
+    vec4 neighbourhoodMax = mean + CLIP_DEVIATIONS * deviation;
 
     vec4 result = current;
     if ((resolve.flags & SSR_FLAG_HISTORY_VALID) != 0u)

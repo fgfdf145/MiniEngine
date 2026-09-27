@@ -321,6 +321,8 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         description.bindToImGui = false;
     };
     describeSsrTarget(RenderTargetId::SsrRaw, "SSR trace");
+    // The reflection trace runs at half resolution too (ssr_half_res.glsl).
+    Describe(RenderTargetId::SsrRaw).downscale = 2;
     describeSsrTarget(RenderTargetId::SceneReflections, "Reflections");
     // One-bounce indirect diffuse: rgb radiance, the same format and usage.
     describeSsrTarget(RenderTargetId::GiRaw, "GI trace");

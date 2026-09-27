@@ -31,7 +31,9 @@ struct SsrResolvePushConstants
     glm::vec2 invExtent{0.0f};
     float historyScale = 1.0f;
     uint32_t flags = 0;
-    glm::vec2 unused{0.0f};
+    // The trace's, for which pixel of each 2x2 block it traced (ssr_half_res.glsl).
+    uint32_t frameIndex = 0;
+    float unused = 0.0f;
 };
 static_assert(sizeof(SsrResolvePushConstants) == 32, "SsrResolvePushConstants must match ssr_resolve.comp");
 
@@ -192,7 +194,7 @@ void VulkanSsrTracePass::Record(
         m_descriptorSets.at(slot * 2 + frame.taaHistory.readIndex),
         &constants,
         sizeof(constants),
-        frame.extent);
+        targets.GetTargetExtent(RenderTargetId::SsrRaw));
 }
 
 void VulkanSsrTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
@@ -309,6 +311,7 @@ void VulkanSsrResolvePass::Record(
     // The resolve's history was written last frame, at last frame's pre-exposure, like TAA's.
     constants.historyScale = frame.taaHistoryScale;
     constants.flags = (SsrTraces(frame) ? kFlagTraced : 0u) | (frame.ssrHistory.valid ? kFlagHistoryValid : 0u);
+    constants.frameIndex = frame.frameIndex;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneReflections, frame.imageIndex, frame.frameSlot);
     DispatchCompute(

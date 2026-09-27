@@ -12,6 +12,7 @@
 #include "scene_common.glsl"
 #include "gbuffer_common.glsl"
 #include "ssr_common.glsl"
+#include "ssr_half_res.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -54,11 +55,14 @@ float InterleavedGradientNoise(vec2 pixel)
 
 void main()
 {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(vec2(pixel), ssr.extent)))
+    // Half resolution: this invocation traces one pixel of its 2x2 block (ssr_half_res.glsl) and
+    // writes its result at the block's place.
+    ivec2 halfPixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(halfPixel, SsrHalfResExtent(ivec2(ssr.extent)))))
     {
         return;
     }
+    ivec2 pixel = SsrHalfResSourcePixel(halfPixel, ssr.frameIndex, ivec2(ssr.extent));
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
     vec4 surface = texelFetch(surfaceTexture, pixel, 0);
@@ -66,7 +70,7 @@ void main()
     float roughnessFade = SsrRoughnessFade(roughness, ssr.maxRoughness);
     if (depth >= 1.0 || roughnessFade <= 0.0)
     {
-        imageStore(ssrRawImage, pixel, vec4(0.0));
+        imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -83,7 +87,7 @@ void main()
     vec3 R = reflect(-V, H);
     if (dot(R, N) <= 0.0)
     {
-        imageStore(ssrRawImage, pixel, vec4(0.0));
+        imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -137,7 +141,7 @@ void main()
 
     if (hitT < 0.0)
     {
-        imageStore(ssrRawImage, pixel, vec4(0.0));
+        imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -167,7 +171,7 @@ void main()
     vec3 hitNormal = DecodeNormalOctahedral(texelFetch(normalTexture, hitPixel, 0).rg);
     if (hitDepth >= 1.0 || dot(hitNormal, R) > 0.0)
     {
-        imageStore(ssrRawImage, pixel, vec4(0.0));
+        imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -177,7 +181,7 @@ void main()
     vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
     if (previousClip.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) || any(greaterThan(previousUv, vec2(1.0))))
     {
-        imageStore(ssrRawImage, pixel, vec4(0.0));
+        imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
     }
 
@@ -188,5 +192,5 @@ void main()
     }
     float confidence = roughnessFade * SsrEdgeFade(hitUv) * SsrEdgeFade(previousUv) *
                        (1.0 - smoothstep(LENGTH_FADE_START, 1.0, high));
-    imageStore(ssrRawImage, pixel, vec4(min(radiance, vec3(65504.0)), confidence));
+    imageStore(ssrRawImage, halfPixel, vec4(min(radiance, vec3(65504.0)), confidence));
 }
