@@ -92,10 +92,11 @@ add_test(
 )
 
 if(WIN32)
+    # Jolt links statically, so the runtime DLL list can be empty; copy_if_different
+    # fails when handed only a destination, so skip the copy in that case.
+    set(_vehicle_tests_dlls $<TARGET_RUNTIME_DLLS:miniengine_vehicle_physics_tests>)
     add_custom_command(TARGET miniengine_vehicle_physics_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:miniengine_vehicle_physics_tests>
-            $<TARGET_FILE_DIR:miniengine_vehicle_physics_tests>
+        COMMAND "$<$<BOOL:${_vehicle_tests_dlls}>:${CMAKE_COMMAND};-E;copy_if_different;${_vehicle_tests_dlls};$<TARGET_FILE_DIR:miniengine_vehicle_physics_tests>>"
         COMMAND_EXPAND_LISTS
     )
 endif()
