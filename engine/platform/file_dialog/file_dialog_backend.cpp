@@ -99,7 +99,7 @@ void SDLCALL OnSdlDialogFinished(void* userdata, const char* const* filelist, in
 std::optional<std::string> ShowSdlFileDialog(FileDialogType type)
 {
     static constexpr SDL_DialogFileFilter kModelFilters[] = {
-        {"Model Files", "gltf;glb;kn5"},
+        {"Model Files", "gltf;glb;kn5;ini"},
         {"All Files", "*"},
     };
     static constexpr SDL_DialogFileFilter kTextureFilters[] = {
@@ -181,7 +181,7 @@ std::optional<std::string> ShowFileDialog(FileDialogType type)
     {
     case FileDialogType::OpenModel:
         dialog.lpstrFilter =
-            L"Model Files (glTF, Assetto Corsa kn5)\0*.gltf;*.glb;*.kn5\0"
+            L"Model Files (glTF, Assetto Corsa kn5 and track layouts)\0*.gltf;*.glb;*.kn5;models*.ini\0"
             L"All Files\0*.*\0";
         dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         dialog.lpstrDefExt = L"gltf";

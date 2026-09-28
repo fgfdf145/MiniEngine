@@ -74,12 +74,11 @@ bool Exists(const std::filesystem::path& path)
 
 void DefaultFolderIsNamedAfterTheModel()
 {
-    const std::filesystem::path source = "C:/downloads/scene.gltf";
     Require(
-        ModelImportTarget::DefaultFolder(source, "C:/assets/models") == std::filesystem::path("C:/assets/models/scene"),
+        ModelImportTarget::DefaultFolder("scene", "C:/assets/models") == std::filesystem::path("C:/assets/models/scene"),
         "import did not get its own folder named after the model");
     Require(
-        ModelImportTarget::DefaultFolder(source, "C:/assets/scene") == std::filesystem::path("C:/assets/scene"),
+        ModelImportTarget::DefaultFolder("scene", "C:/assets/scene") == std::filesystem::path("C:/assets/scene"),
         "importing into a folder carrying the model's name nested another level");
 }
 

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
-#include <iterator>
 #include <stdexcept>
 #include <string_view>
 
@@ -29,11 +28,13 @@ constexpr int kMaxNodeDepth = 512;
 // type, name length, child count, active: the least a node can occupy.
 constexpr size_t kMinNodeBytes = 13;
 
+// Reads a kn5 from a stream, checking every read against the stream's size, so a corrupt count
+// fails with a message instead of an allocation the size of the count.
 class ByteReader
 {
   public:
-    ByteReader(const std::vector<std::uint8_t>& bytes, const std::string& source)
-        : m_bytes(bytes), m_source(source)
+    ByteReader(std::istream& stream, size_t size, const std::string& source)
+        : m_stream(stream), m_size(size), m_source(source)
     {
     }
 
@@ -44,7 +45,7 @@ class ByteReader
 
     size_t Remaining() const
     {
-        return m_bytes.size() - m_offset;
+        return m_size - m_offset;
     }
 
     void Require(size_t count) const
@@ -60,21 +61,31 @@ class ByteReader
     void Skip(size_t count)
     {
         Require(count);
+        m_stream.seekg(static_cast<std::streamoff>(count), std::ios::cur);
+        m_offset += count;
+    }
+
+    void Read(void* out, size_t count)
+    {
+        Require(count);
+        if (count > 0 && !m_stream.read(static_cast<char*>(out), static_cast<std::streamsize>(count)))
+        {
+            throw std::runtime_error("Cannot read '" + m_source + "' at offset " + std::to_string(m_offset));
+        }
         m_offset += count;
     }
 
     std::uint8_t U8()
     {
-        Require(1);
-        return m_bytes[m_offset++];
+        std::uint8_t value = 0;
+        Read(&value, 1);
+        return value;
     }
 
     std::uint32_t U32()
     {
-        Require(4);
         std::uint32_t value = 0;
-        std::memcpy(&value, m_bytes.data() + m_offset, 4);
-        m_offset += 4;
+        Read(&value, 4);
         return value;
     }
 
@@ -85,36 +96,17 @@ class ByteReader
 
     float F32()
     {
-        Require(4);
         float value = 0.0f;
-        std::memcpy(&value, m_bytes.data() + m_offset, 4);
-        m_offset += 4;
+        Read(&value, 4);
         return value;
-    }
-
-    template <size_t N>
-    void Floats(float* out)
-    {
-        Require(4 * N);
-        std::memcpy(out, m_bytes.data() + m_offset, 4 * N);
-        m_offset += 4 * N;
     }
 
     std::string String()
     {
         const std::uint32_t length = U32();
         Require(length);
-        std::string value(reinterpret_cast<const char*>(m_bytes.data() + m_offset), length);
-        m_offset += length;
-        return value;
-    }
-
-    std::vector<std::uint8_t> Bytes(size_t count)
-    {
-        Require(count);
-        std::vector<std::uint8_t> value(m_bytes.begin() + static_cast<std::ptrdiff_t>(m_offset),
-                                        m_bytes.begin() + static_cast<std::ptrdiff_t>(m_offset + count));
-        m_offset += count;
+        std::string value(length, '\0');
+        Read(value.data(), length);
         return value;
     }
 
@@ -137,9 +129,40 @@ class ByteReader
     }
 
   private:
-    const std::vector<std::uint8_t>& m_bytes;
+    std::istream& m_stream;
+    size_t m_size = 0;
     const std::string& m_source;
     size_t m_offset = 0;
+};
+
+// A stream over bytes already in memory, without copying them.
+class MemoryBuffer : public std::streambuf
+{
+  public:
+    explicit MemoryBuffer(const std::vector<std::uint8_t>& bytes)
+    {
+        char* begin = const_cast<char*>(reinterpret_cast<const char*>(bytes.data()));
+        setg(begin, begin, begin + bytes.size());
+    }
+
+  protected:
+    pos_type seekoff(off_type offset, std::ios_base::seekdir direction, std::ios_base::openmode) override
+    {
+        char* target = direction == std::ios_base::beg   ? eback() + offset
+                       : direction == std::ios_base::cur ? gptr() + offset
+                                                         : egptr() + offset;
+        if (target < eback() || target > egptr())
+        {
+            return pos_type(off_type(-1));
+        }
+        setg(eback(), target, egptr());
+        return pos_type(target - eback());
+    }
+
+    pos_type seekpos(pos_type position, std::ios_base::openmode mode) override
+    {
+        return seekoff(off_type(position), std::ios_base::beg, mode);
+    }
 };
 
 Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
@@ -158,7 +181,7 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
     if (type == static_cast<std::int32_t>(Kn5NodeType::Dummy))
     {
         node.type = Kn5NodeType::Dummy;
-        reader.Floats<16>(node.matrix.data());
+        reader.Read(node.matrix.data(), 16 * 4);
     }
     else if (type == static_cast<std::int32_t>(Kn5NodeType::Mesh) ||
              type == static_cast<std::int32_t>(Kn5NodeType::Skinned))
@@ -184,10 +207,10 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
             node.vertices.resize(node.vertexCount);
             for (Kn5Vertex& vertex : node.vertices)
             {
-                reader.Floats<3>(vertex.position.data());
-                reader.Floats<3>(vertex.normal.data());
-                reader.Floats<2>(vertex.uv.data());
-                reader.Floats<3>(vertex.tangent.data());
+                reader.Read(vertex.position.data(), 3 * 4);
+                reader.Read(vertex.normal.data(), 3 * 4);
+                reader.Read(vertex.uv.data(), 2 * 4);
+                reader.Read(vertex.tangent.data(), 3 * 4);
                 if (skinned)
                 {
                     reader.Skip(8 * 4);
@@ -203,12 +226,8 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
         node.triangleCount = indexCount / 3;
         if (readGeometry)
         {
-            const std::vector<std::uint8_t> raw = reader.Bytes(static_cast<size_t>(indexCount) * 2);
             node.indices.resize(indexCount);
-            if (!raw.empty())
-            {
-                std::memcpy(node.indices.data(), raw.data(), raw.size());
-            }
+            reader.Read(node.indices.data(), static_cast<size_t>(indexCount) * 2);
         }
         else
         {
@@ -240,24 +259,17 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
     }
     return node;
 }
-}
 
-namespace Kn5Reader
+Kn5Model ReadModel(std::istream& stream, size_t size, const std::string& source, Kn5ReadScope scope)
 {
-Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source, bool readGeometry)
-{
-    Kn5Model model;
-    const std::string_view marker(kEncryptionMarker);
-    model.encrypted =
-        std::search(bytes.begin(), bytes.end(), marker.begin(), marker.end()) != bytes.end();
-
-    ByteReader reader(bytes, source);
-    reader.Require(6);
-    if (std::memcmp(bytes.data(), "sc6969", 6) != 0)
+    ByteReader reader(stream, size, source);
+    char magic[6] = {};
+    reader.Read(magic, sizeof(magic));
+    if (std::memcmp(magic, "sc6969", sizeof(magic)) != 0)
     {
         throw std::runtime_error("'" + source + "' is not a kn5 file");
     }
-    reader.Skip(6);
+    Kn5Model model;
     model.version = reader.U32();
     if (model.version > 5)
     {
@@ -271,8 +283,17 @@ Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source
         Kn5Texture texture;
         texture.active = reader.U32() != 0;
         texture.name = reader.String();
-        const std::uint32_t size = reader.U32();
-        texture.data = reader.Bytes(size);
+        texture.size = reader.U32();
+        if (scope == Kn5ReadScope::Tables)
+        {
+            reader.Skip(texture.size);
+        }
+        else
+        {
+            reader.Require(texture.size);
+            texture.data.resize(texture.size);
+            reader.Read(texture.data.data(), texture.size);
+        }
         model.textures.push_back(std::move(texture));
     }
 
@@ -304,23 +325,66 @@ Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source
         model.materials.push_back(std::move(material));
     }
 
-    model.root = ReadNode(reader, readGeometry, 0);
+    if (scope == Kn5ReadScope::NoGeometry || scope == Kn5ReadScope::Everything)
+    {
+        model.root = ReadNode(reader, scope == Kn5ReadScope::Everything, 0);
+    }
     return model;
 }
+}
 
-Kn5Model Load(const std::filesystem::path& path, bool readGeometry)
+namespace Kn5Reader
+{
+Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source, Kn5ReadScope scope)
+{
+    MemoryBuffer buffer(bytes);
+    std::istream stream(&buffer);
+    return ReadModel(stream, bytes.size(), source, scope);
+}
+
+Kn5Model Load(const std::filesystem::path& path, Kn5ReadScope scope)
+{
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file)
+    {
+        throw std::runtime_error("Cannot open '" + path.string() + "'");
+    }
+    const std::streamoff size = file.tellg();
+    file.seekg(0);
+    return ReadModel(file, static_cast<size_t>(std::max<std::streamoff>(size, 0)), path.string(), scope);
+}
+
+bool IsEncrypted(const std::vector<std::uint8_t>& bytes)
+{
+    const std::string_view marker(kEncryptionMarker);
+    return std::search(bytes.begin(), bytes.end(), marker.begin(), marker.end()) != bytes.end();
+}
+
+bool IsEncrypted(const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::binary);
     if (!file)
     {
         throw std::runtime_error("Cannot open '" + path.string() + "'");
     }
-    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad())
+    // In chunks, each overlapping the last by the marker's length less one, so a marker across
+    // a chunk boundary is still found.
+    const std::string_view marker(kEncryptionMarker);
+    std::vector<char> chunk(1 << 20);
+    size_t carried = 0;
+    while (file)
     {
-        throw std::runtime_error("Cannot read '" + path.string() + "'");
+        file.read(chunk.data() + carried, static_cast<std::streamsize>(chunk.size() - carried));
+        const size_t filled = carried + static_cast<size_t>(file.gcount());
+        if (std::search(chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(filled), marker.begin(), marker.end()) !=
+            chunk.begin() + static_cast<std::ptrdiff_t>(filled))
+        {
+            return true;
+        }
+        carried = std::min(filled, marker.size() - 1);
+        std::memmove(chunk.data(), chunk.data() + filled - carried, carried);
     }
-    return Parse(bytes, path.string(), readGeometry);
+    return false;
 }
 }
 }

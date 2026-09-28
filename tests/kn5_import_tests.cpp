@@ -536,7 +536,7 @@ void ReaderParsesTheContainer()
         const Kn5Model model = Kn5Reader::Parse(bytes, "fixture");
         Require(model.version == static_cast<std::uint32_t>(version), "version");
         Require(model.textures.size() == 7 && model.materials.size() == 4, "texture and material tables");
-        Require(!model.encrypted, "a plain kn5 is not encrypted");
+        Require(!Kn5Reader::IsEncrypted(bytes), "a plain kn5 is not encrypted");
         Require(model.materials[1].alphaTested && model.materials[2].alphaBlend, "alpha flags");
         RequireNear(model.materials[0].Property("sunSpecularEXP", 0.0f), 1500.0f, 0.0f, "material property");
         Require(model.root.name == "ROOT" && model.root.children.size() == 8, "root and its children");
@@ -548,10 +548,16 @@ void ReaderParsesTheContainer()
         RequireNear(model.root.children[2].matrix[12], 0.7f, 0.0f, "dummy matrix");
     }
 
-    const Kn5Model counted = Kn5Reader::Parse(BuildCarKn5(6), "fixture", false);
+    const Kn5Model counted = Kn5Reader::Parse(BuildCarKn5(6), "fixture", Kn5ReadScope::NoGeometry);
     Require(counted.root.children[0].vertices.empty() && counted.root.children[0].vertexCount == 3 &&
                 counted.root.children[0].triangleCount == 1,
             "a geometry-less read keeps the counts");
+    const Kn5Model tables = Kn5Reader::Parse(BuildCarKn5(6), "fixture", Kn5ReadScope::Tables);
+    Require(tables.textures.size() == 7 && tables.textures[0].data.empty() && tables.textures[0].size > 128,
+            "a tables read keeps names and sizes, not data");
+    Require(tables.materials.size() == 4 && tables.root.children.empty(), "a tables read stops after the materials");
+    const Kn5Model textures = Kn5Reader::Parse(BuildCarKn5(6), "fixture", Kn5ReadScope::Textures);
+    Require(textures.textures[0].data.size() == textures.textures[0].size, "a textures read keeps the data");
 
     std::vector<std::uint8_t> truncated = BuildCarKn5(6);
     truncated.resize(truncated.size() - 10);
@@ -713,7 +719,13 @@ void RefusesEncryptedAndExistingTargets()
     encrypted.insert(encrypted.end(), marker.begin(), marker.end());
     const std::filesystem::path encryptedPath = scope.Path() / "enc" / "car.kn5";
     WriteFile(encryptedPath, encrypted);
-    Require(Kn5Reader::Load(encryptedPath).encrypted, "the CSP trailer is detected");
+    Require(Kn5Reader::IsEncrypted(encryptedPath), "the CSP trailer is detected");
+    // Across the scanner's 1 MiB chunks.
+    std::vector<std::uint8_t> straddling((1u << 20) - 10, 0);
+    straddling.insert(straddling.end(), marker.begin(), marker.end());
+    WriteFile(scope.Path() / "enc" / "straddling.kn5", straddling);
+    Require(Kn5Reader::IsEncrypted(scope.Path() / "enc" / "straddling.kn5"), "a trailer across a chunk boundary is found");
+    Require(!Kn5Reader::IsEncrypted(scope.Path() / "ks_fixture" / "fixture_lod_a.kn5"), "a plain file is not encrypted");
     RequireThrows([&]
                   {
                       Kn5Importer::ConvertToGltf(encryptedPath, scope.Path() / "enc_out");
@@ -797,6 +809,131 @@ void PaintRankingPrefersTheBodywork()
 }
 }
 
+// A one-mesh kn5 whose material reads `diffuse`, and which carries the textures in `textures`.
+std::vector<std::uint8_t> BuildTrackKn5(
+    const std::string& meshName,
+    const std::string& materialName,
+    const std::string& diffuse,
+    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>>& textures)
+{
+    ByteWriter writer;
+    writer.Raw("sc6969", 6);
+    writer.U32(5);
+    writer.U32(static_cast<std::uint32_t>(textures.size()));
+    for (const auto& [name, data] : textures)
+    {
+        writer.U32(1);
+        writer.String(name);
+        writer.Blob(data);
+    }
+    writer.U32(1);
+    WriteMaterial(writer, {materialName, "ksPerPixel", false, false, {{"ksSpecular", 0.0f}}, {{"txDiffuse", diffuse}}});
+    WriteDummy(writer, meshName + "_ROOT", 1, kIdentity);
+    WriteMesh(writer, meshName, 0, 1.0f);
+    return writer.Bytes();
+}
+
+// A track folder: the main kn5, a second one in a subfolder, and a layout placing both. The trees'
+// material reads a texture only the main kn5 carries, as track add-on files do.
+std::filesystem::path WriteTrackFolder(const std::filesystem::path& root)
+{
+    const std::filesystem::path track = root / "ks_fixture_track";
+    WriteFile(track / "ks_fixture_track.kn5",
+              BuildTrackKn5("1ROAD", "asphalt", "asphalt.dds", {{"asphalt.dds", DdsFlat(4, {60, 60, 60, 255})}, {"leaf.dds", DdsFlat(4, {20, 90, 20, 255})}}));
+    WriteFile(track / "extra" / "trees.kn5", BuildTrackKn5("TREE", "trees", "leaf.dds", {}));
+    const std::string layout =
+        "; the east layout\n"
+        "[MODEL_0]\n"
+        "FILE=ks_fixture_track.kn5\n"
+        "\n"
+        "[MODEL_1]\n"
+        "FILE=extra/trees.kn5\n"
+        "POSITION=10, 0, 5\n"
+        "ROTATION=0,90,0\n"
+        "[SOMETHING_ELSE]\n"
+        "FILE=ignored.kn5\n";
+    WriteFile(track / "models_east.ini", std::vector<std::uint8_t>(layout.begin(), layout.end()));
+    return track;
+}
+
+void ReadsTrackLayouts()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path track = WriteTrackFolder(scope.Path());
+    const std::filesystem::path layoutPath = track / "models_east.ini";
+
+    Require(Kn5Importer::IsLayoutPath(layoutPath) && Kn5Importer::IsLayoutPath("C:/t/MODELS.INI"), "models*.ini is a layout");
+    Require(!Kn5Importer::IsLayoutPath(track / "surfaces.ini"), "another ini is not a layout");
+    Require(ModelLoader::IsImportableModelPath(layoutPath), "a layout is importable");
+    Require(ModelLoader::ImportName(layoutPath) == "ks_fixture_track_east", "a layout is named after its track");
+    Require(ModelLoader::ImportName(track / "models.ini") == "ks_fixture_track", "the default layout takes the track's name");
+
+    const std::vector<Kn5LayoutModel> models = Kn5Importer::ReadLayout(layoutPath);
+    Require(models.size() == 2, "every [MODEL_n] with a FILE, and nothing else");
+    Require(models[1].file.filename() == "trees.kn5" && models[1].position == std::array<float, 3>{10.0f, 0.0f, 5.0f},
+            "FILE is relative to the ini; POSITION is read");
+    Require(models[1].rotationDegrees == std::array<float, 3>{0.0f, 90.0f, 0.0f} && models[0].position == std::array<float, 3>{},
+            "ROTATION is read; a missing POSITION is zero");
+
+    const std::vector<std::filesystem::path> layouts = Kn5Importer::FindLayouts(track / "ks_fixture_track.kn5");
+    Require(layouts.size() == 1 && layouts[0].filename() == "models_east.ini", "the layouts placing a kn5 are found");
+    Require(Kn5Importer::FindLayouts(track / "extra" / "trees.kn5").empty(), "only layouts in the kn5's own folder are offered");
+
+    const std::string broken = "[MODEL_0]\nFILE=missing.kn5\nPOSITION=a,b,c\n";
+    WriteFile(track / "models_broken.ini", std::vector<std::uint8_t>(broken.begin(), broken.end()));
+    RequireThrows([&]
+                  {
+                      Kn5Importer::ReadLayout(track / "models_broken.ini");
+                  },
+                  "a layout naming a missing kn5");
+    WriteFile(track / "models_empty.ini", {});
+    RequireThrows([&]
+                  {
+                      Kn5Importer::ReadLayout(track / "models_empty.ini");
+                  },
+                  "a layout placing nothing");
+    Require(Kn5Importer::FindLayouts(track / "ks_fixture_track.kn5").size() == 1, "broken layouts are not offered");
+
+    // Rows of Rz * Ry * Rx, stored column-major; 90 degrees about Y takes +X to -Z.
+    const std::array<float, 16> matrix = Kn5Importer::LayoutModelMatrix({10.0f, 0.0f, 5.0f}, {0.0f, 90.0f, 0.0f});
+    RequireNear(matrix[2], -1.0f, 1e-6f, "the rotated X axis points down -Z");
+    RequireNear(matrix[12], 10.0f, 0.0f, "the translation is the last column");
+}
+
+void ImportsAWholeTrackLayout()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path track = WriteTrackFolder(scope.Path());
+    const std::filesystem::path layoutPath = track / "models_east.ini";
+
+    const Kn5ModelSummary summary = Kn5Importer::Inspect(layoutPath);
+    Require(summary.models == 2 && summary.meshes == 2 && summary.materials == 2, "a layout is surveyed across its models");
+    Require(summary.skins.size() == 1 && summary.skins[0].name.empty(), "a track offers only its own textures");
+    const Kn5ModelSummary main = Kn5Importer::Inspect(track / "ks_fixture_track.kn5");
+    Require(main.models == 1 && main.layouts.size() == 1 && main.layouts[0].models == 2, "a kn5 offers the layouts placing it");
+
+    const std::filesystem::path bundle = scope.Path() / "models" / "ks_fixture_track_east";
+    std::filesystem::create_directories(bundle);
+    const std::filesystem::path imported = ModelLoader::CopyModelWithSortedReferences(layoutPath, bundle);
+    Require(imported == bundle / "ks_fixture_track_east.gltf", "a layout imports as one glTF named after it");
+
+    const LoadedModelData model = ModelLoader::LoadModel(imported.string());
+    Require(model.submeshes.size() == 2, "both models of the layout load");
+    const ModelSubmeshData& road = FindSubmesh(model, "1ROAD");
+    const ModelSubmeshData& tree = FindSubmesh(model, "TREE");
+    // Each mesh keeps the material of its own kn5, though both files index theirs from 0.
+    Require(model.materials[road.materialIndex].name == "asphalt", "the main model's material");
+    Require(model.materials[tree.materialIndex].name == "trees", "the second model's material, offset past the first's");
+    // The trees' texture lives in the main kn5 only.
+    Require(!model.materials[tree.materialIndex].baseColorTexturePath.empty(), "a texture another model of the layout carries resolves");
+
+    // Unplaced: (1, 0, 0) under the axis root only. Placed: rotated to (0, 0, -1), moved by
+    // (10, 0, 5) to (10, 0, 4), then the axis root's half turn.
+    RequireNear(road.mesh.vertices[0].position[0], -1.0f, 1e-5f, "the unplaced model sits at the origin");
+    RequireNear(tree.mesh.vertices[0].position[0], -10.0f, 1e-4f, "placed x");
+    RequireNear(tree.mesh.vertices[0].position[2], -4.0f, 1e-4f, "placed z");
+}
+
 int main()
 {
     try
@@ -813,6 +950,8 @@ int main()
         ImportGoesThroughTheModelLoader();
         InspectOffersLiveriesAndOptions();
         PaintRankingPrefersTheBodywork();
+        ReadsTrackLayouts();
+        ImportsAWholeTrackLayout();
 
         std::cout << "kn5 import tests passed\n";
         return 0;

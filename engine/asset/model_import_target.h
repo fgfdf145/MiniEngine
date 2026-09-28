@@ -17,10 +17,10 @@ enum class ImportConflictPolicy
 // destination is handled. Independent of the model format.
 namespace ModelImportTarget
 {
-// The folder an import of `source` into `destinationDirectory` lands in:
-// "<destination>/<stem>", or the destination itself when it already carries
-// the model's name.
-std::filesystem::path DefaultFolder(const std::filesystem::path& source, const std::filesystem::path& destinationDirectory);
+// The folder an import named `modelName` (ModelLoader::ImportName) lands in
+// under `destinationDirectory`: "<destination>/<modelName>", or the
+// destination itself when it already carries the name.
+std::filesystem::path DefaultFolder(const std::string& modelName, const std::filesystem::path& destinationDirectory);
 
 // True when the folder exists and holds any entry.
 bool IsOccupied(const std::filesystem::path& folder);

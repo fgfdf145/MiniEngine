@@ -26,8 +26,10 @@ struct Kn5Texture
 {
     std::string name;
     bool active = true;
+    // The file's size as stored, read even when the data is skipped.
+    size_t size = 0;
     // The file as stored: DDS almost always, occasionally PNG or JPEG. A stub (under 128 bytes)
-    // is a placeholder, and on an encrypted model a decoy.
+    // is a placeholder, and on an encrypted model a decoy. Empty when the read skipped it.
     std::vector<std::uint8_t> data;
 };
 
@@ -82,10 +84,21 @@ struct Kn5Model
     std::uint32_t version = 0;
     std::vector<Kn5Texture> textures;
     std::vector<Kn5Material> materials;
+    // A default (childless dummy) node when the read skipped the tree.
     Kn5Node root;
-    // The Custom Shaders Patch encryption trailer is present: textures and several meshes in the
-    // plain section are decoys (1x1 images, 6 cm cubes).
-    bool encrypted = false;
+};
+
+// How much of a kn5 a read takes in; what it leaves out is seeked past, not read. A track's kn5
+// runs to hundreds of megabytes, mostly texture data.
+enum class Kn5ReadScope
+{
+    // The texture table (names and sizes) and the materials.
+    Tables,
+    // The texture table with the texture data, and the materials.
+    Textures,
+    // Everything but vertex and index data; their counts are kept.
+    NoGeometry,
+    Everything,
 };
 
 namespace Kn5Reader
@@ -93,12 +106,17 @@ namespace Kn5Reader
 // The trailer a CSP-encrypted file carries.
 inline constexpr const char* kEncryptionMarker = "__AC_SHADERS_PATCH_KN5ENC_v1__";
 
-// Parses a kn5 held in memory. With `readGeometry` false the vertex and index blocks are skipped
-// (counts are still set). Throws std::runtime_error, naming `source`, for anything that is not a
-// well-formed kn5.
-Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source, bool readGeometry = true);
+// Parses a kn5 held in memory. Throws std::runtime_error, naming `source`, for anything that is
+// not a well-formed kn5.
+Kn5Model Parse(const std::vector<std::uint8_t>& bytes, const std::string& source, Kn5ReadScope scope = Kn5ReadScope::Everything);
 
-// Reads and parses a file. Throws std::runtime_error when it cannot be read or parsed.
-Kn5Model Load(const std::filesystem::path& path, bool readGeometry = true);
+// Reads a file, streaming it. Throws std::runtime_error when it cannot be read or parsed.
+Kn5Model Load(const std::filesystem::path& path, Kn5ReadScope scope = Kn5ReadScope::Everything);
+
+// Whether the Custom Shaders Patch encryption trailer is present: then the textures and several
+// meshes in the plain section are decoys (1x1 images, 6 cm cubes). A separate scan of the whole
+// file, so a read that does not need it does not pay for it.
+bool IsEncrypted(const std::vector<std::uint8_t>& bytes);
+bool IsEncrypted(const std::filesystem::path& path);
 }
 }

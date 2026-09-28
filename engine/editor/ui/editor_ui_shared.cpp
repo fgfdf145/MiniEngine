@@ -166,7 +166,7 @@ const char* FilePathPromptHint(FileDialogType type)
     switch (type)
     {
     case FileDialogType::OpenModel:
-        return "Model file to import (.gltf, .glb or Assetto Corsa .kn5):";
+        return "Model file to import (.gltf, .glb, Assetto Corsa .kn5 or a track's models*.ini):";
     case FileDialogType::OpenTexture:
         return "Texture file (.png, .jpg, .hdr, .exr, ...):";
     case FileDialogType::OpenScene:

@@ -109,9 +109,10 @@ void EditorUiController::RequestModelImport(
     std::optional<Kn5ImportOptions> kn5Options)
 {
     const std::string destination = m_assetManager->GetCurrentDirectory().string();
-    if (Kn5Importer::IsKn5Path(sourcePath) && !kn5Options.has_value())
+    if ((Kn5Importer::IsKn5Path(sourcePath) || Kn5Importer::IsLayoutPath(sourcePath)) && !kn5Options.has_value())
     {
-        // The livery lives beside the model, not in it, so there is a choice to make first.
+        // The livery, or the track layout, lives beside the model, not in it: there is a choice
+        // to make first.
         PendingKn5Import pending;
         pending.sourcePath = sourcePath;
         pending.destinationDirectory = destination;
@@ -125,7 +126,7 @@ void EditorUiController::RequestModelImport(
     }
 
     const std::filesystem::path modelFolder =
-        ModelImportTarget::DefaultFolder(std::filesystem::path(sourcePath), destination);
+        ModelImportTarget::DefaultFolder(ModelLoader::ImportName(sourcePath), destination);
     if (ModelImportTarget::IsOccupied(modelFolder))
     {
         // Same-named models are common (every Sketchfab download is
@@ -282,11 +283,16 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
         }
     }
 
-    const std::filesystem::path source(pending.sourcePath);
-    ImGui::Text("%s", source.filename().string().c_str());
+    // What the import converts: the picked file, or one of the track layouts that place it.
+    const bool layoutChosen = pending.summary.has_value() && pending.selectedLayout > 0 &&
+                              pending.selectedLayout <= pending.summary->layouts.size();
+    const std::filesystem::path source =
+        layoutChosen ? pending.summary->layouts[pending.selectedLayout - 1].path : std::filesystem::path(pending.sourcePath);
+    const bool importsLayout = Kn5Importer::IsLayoutPath(source);
+    ImGui::Text("%s", std::filesystem::path(pending.sourcePath).filename().string().c_str());
     ImGui::TextDisabled(
         "Converted to glTF into '%s'.",
-        ModelImportTarget::DefaultFolder(source, pending.destinationDirectory).filename().string().c_str());
+        ModelImportTarget::DefaultFolder(ModelLoader::ImportName(source), pending.destinationDirectory).filename().string().c_str());
 
     bool canImport = false;
     if (!pending.error.empty())
@@ -311,6 +317,10 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
         canImport = true;
 
         ImGui::SeparatorText("Model");
+        if (summary.models > 1)
+        {
+            ImGui::TextDisabled("A track layout of %zu models.", summary.models);
+        }
         ImGui::TextDisabled(
             "%zu meshes, %zu triangles, %zu materials, %zu textures",
             summary.meshes,
@@ -318,16 +328,42 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
             summary.materials,
             summary.textures);
 
-        ImGui::SeparatorText("Livery");
+        if (!summary.layouts.empty())
+        {
+            // A track: the game draws the layout, of which this file is often only the main part.
+            ImGui::SeparatorText("Track Layout");
+            if (ImGui::RadioButton("This file only", pending.selectedLayout == 0))
+            {
+                pending.selectedLayout = 0;
+            }
+            for (size_t index = 0; index < summary.layouts.size(); ++index)
+            {
+                const Kn5ModelSummary::Layout& layout = summary.layouts[index];
+                const std::string label =
+                    layout.path.filename().string() + " (" + std::to_string(layout.models) + " models)##layout" + std::to_string(index);
+                if (ImGui::RadioButton(label.c_str(), pending.selectedLayout == index + 1))
+                {
+                    pending.selectedLayout = index + 1;
+                }
+            }
+            ImGui::TextDisabled("A layout places every model the game draws for it; the counts above are this file's.");
+        }
+
         // The last entry is the kn5's own textures; any before it are the skins/ folders.
         const bool hasSkins = summary.skins.size() > 1;
         pending.selectedSkin = std::min(pending.selectedSkin, summary.skins.size() - 1);
-        if (!hasSkins)
+        if (importsLayout)
         {
+            // Tracks have no liveries.
+        }
+        else if (!hasSkins)
+        {
+            ImGui::SeparatorText("Livery");
             ImGui::TextDisabled("No skins folder beside this model: its embedded textures are used.");
         }
         else
         {
+            ImGui::SeparatorText("Livery");
             const float rowHeight = ImGui::GetFrameHeightWithSpacing();
             const float listHeight = rowHeight * static_cast<float>(std::min<size_t>(summary.skins.size(), 8)) +
                                      ImGui::GetStyle().WindowPadding.y * 2.0f;
@@ -423,7 +459,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
         const Kn5SkinSummary& chosen = pending.summary->skins[pending.selectedSkin];
         Kn5ImportOptions options = pending.options;
         options.skin = chosen.name.empty() ? std::string("none") : chosen.name;
-        const std::string sourcePath = pending.sourcePath;
+        const std::string sourcePath = source.string();
         m_pendingKn5Import.reset();
         ImGui::CloseCurrentPopup();
         // May still ask about a taken folder, with these options carried along.

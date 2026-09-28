@@ -73,10 +73,9 @@ void ClearKeepingSidecars(const std::filesystem::path& folder)
 
 namespace ModelImportTarget
 {
-std::filesystem::path DefaultFolder(const std::filesystem::path& source, const std::filesystem::path& destinationDirectory)
+std::filesystem::path DefaultFolder(const std::string& modelName, const std::filesystem::path& destinationDirectory)
 {
-    return destinationDirectory.filename() == source.stem() ? destinationDirectory
-                                                            : destinationDirectory / source.stem();
+    return destinationDirectory.filename() == modelName ? destinationDirectory : destinationDirectory / modelName;
 }
 
 bool IsOccupied(const std::filesystem::path& folder)

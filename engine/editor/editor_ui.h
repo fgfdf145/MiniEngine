@@ -247,7 +247,7 @@ class EditorUiController
     };
     std::optional<PendingImportConflict> m_pendingImportConflict;
     bool m_openImportConflictModal = false;
-    // A .kn5 import waiting for its livery and options. The model is surveyed on a background
+    // A .kn5 or track layout import waiting for its livery, layout and options. The model is surveyed on a background
     // thread: a track's kn5 runs to hundreds of megabytes.
     struct PendingKn5Import
     {
@@ -257,6 +257,8 @@ class EditorUiController
         std::optional<Kn5ModelSummary> summary;
         std::string error;
         size_t selectedSkin = 0;
+        // 0: the picked file; n: summary->layouts[n - 1].
+        size_t selectedLayout = 0;
         Kn5ImportOptions options;
     };
     std::optional<PendingKn5Import> m_pendingKn5Import;

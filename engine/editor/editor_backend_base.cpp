@@ -122,8 +122,9 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
             // Unpacking embedded textures happens at import, so a model that
             // was never imported has none. Import it first; the invariant is
             // that anything reaching the loader lives under the assets root.
-            // A .kn5 is never loaded as it is: its import converts it to glTF.
-            if (!AssetRegistry::IsUnderAssetsRoot(path) || Kn5Importer::IsKn5Path(path))
+            // Assetto Corsa files are never loaded as they are: their import converts them.
+            if (!AssetRegistry::IsUnderAssetsRoot(path) || Kn5Importer::IsKn5Path(path) ||
+                Kn5Importer::IsLayoutPath(path))
             {
                 LOG_INFO("Model '{}' is not an imported glTF; importing it first", path);
                 path = ModelImportService::ImportModelIntoAssetDirectory(

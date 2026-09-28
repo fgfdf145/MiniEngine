@@ -273,7 +273,12 @@ bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
 
 bool ModelLoader::IsImportableModelPath(const std::filesystem::path& path)
 {
-    return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path);
+    return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path) || Kn5Importer::IsLayoutPath(path);
+}
+
+std::string ModelLoader::ImportName(const std::filesystem::path& path)
+{
+    return Kn5Importer::ImportName(path);
 }
 
 const char* ModelLoader::GetImporterName()
@@ -289,7 +294,7 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::string extension = ToLowerAscii(modelPath.extension().string());
 
     std::filesystem::path dst;
-    if (Kn5Importer::IsKn5Path(modelPath))
+    if (Kn5Importer::IsKn5Path(modelPath) || Kn5Importer::IsLayoutPath(modelPath))
     {
         // Converted rather than copied: the result is a glTF bundle, so it needs no unpacking.
         return Kn5Importer::ConvertToGltf(modelPath, targetDirectory, kn5Options).gltfPath;
@@ -327,8 +332,8 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     if (!IsSupportedModelPath(modelPath))
     {
         throw std::runtime_error(
-            Kn5Importer::IsKn5Path(modelPath)
-                ? "A .kn5 is loaded through an import, which converts it to glTF: " + modelPath.string()
+            Kn5Importer::IsKn5Path(modelPath) || Kn5Importer::IsLayoutPath(modelPath)
+                ? "Assetto Corsa models are loaded through an import, which converts them to glTF: " + modelPath.string()
                 : "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string());
     }
 

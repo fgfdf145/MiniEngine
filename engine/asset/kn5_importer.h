@@ -25,12 +25,14 @@ namespace me
 //    colour, fresnelMaxLevel KHR_materials_specular and car paint's sun lobe
 //    KHR_materials_clearcoat;
 //  - runtime variants (*_BLUR, *_DAMAGE, the low-res half of an in-file LOD pair) dropped;
-//  - CSP-encrypted files refused: their plain section is decoys.
+//  - CSP-encrypted files refused: their plain section is decoys;
+//  - a track's layout: models.ini / models_<layout>.ini place several kn5 in one scene, and the
+//    import converts them all, each at its POSITION and ROTATION.
 struct Kn5ImportOptions
 {
     // A folder under the car's skins/, matched ignoring case. Empty takes the first one, which is
     // what the game picks; "none" keeps the textures embedded in the kn5 (the export-time
-    // template, usually grey primer).
+    // template, usually grey primer). Ignored for a track layout: tracks have no skins.
     std::string skin;
     // Keep *_BLUR, *_DAMAGE and low-res LOD twins instead of dropping them.
     bool keepVariants = false;
@@ -41,6 +43,8 @@ struct Kn5ImportOptions
 struct Kn5ImportReport
 {
     std::filesystem::path gltfPath;
+    // The kn5 files converted: one, or every model of a layout.
+    size_t models = 0;
     // The skin folder the textures came from; empty when the kn5's own were kept.
     std::string skin;
     size_t skinTextures = 0;
@@ -82,28 +86,63 @@ struct Kn5ModelSummary
     size_t textures = 0;
     // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins).
     size_t runtimeVariants = 0;
+    // The kn5 files read: one, or every model of a layout. The counts above are their sums.
+    size_t models = 0;
     // The skins/ folders in the order the game offers them (the first is the default), then the
-    // embedded textures (an empty name) last.
+    // embedded textures (an empty name) last. Only the embedded entry for a track layout.
     std::vector<Kn5SkinSummary> skins;
+    // For a kn5: the track layouts beside it that place it, as an import dialog offers them.
+    struct Layout
+    {
+        std::filesystem::path path;
+        size_t models = 0;
+    };
+    std::vector<Layout> layouts;
+};
+
+// One model of a track layout: a kn5 and where the game places it.
+struct Kn5LayoutModel
+{
+    std::filesystem::path file;
+    // In AC's frame, metres.
+    std::array<float, 3> position{};
+    // Degrees about X, Y and Z, applied X first.
+    std::array<float, 3> rotationDegrees{};
 };
 
 namespace Kn5Importer
 {
 bool IsKn5Path(const std::filesystem::path& path);
+// A track layout: "models.ini" or "models_<layout>.ini", ignoring case.
+bool IsLayoutPath(const std::filesystem::path& path);
 
-// Reads what an import dialog needs to offer the liveries and options. Throws
-// std::runtime_error for a corrupt or unreadable kn5; an encrypted one is reported, not thrown.
-Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path);
+// The name an import gives its bundle: the kn5's stem, or for a layout the track folder's name,
+// with "_<layout>" for models_<layout>.ini.
+std::string ImportName(const std::filesystem::path& source);
+
+// The models a layout places, in file order. Each [MODEL_n] section with a FILE counts; FILE is
+// relative to the ini, POSITION and ROTATION default to zero (and to zero when malformed).
+// Throws std::runtime_error when the ini cannot be read, places nothing, or names a missing file.
+std::vector<Kn5LayoutModel> ReadLayout(const std::filesystem::path& layoutPath);
+
+// The layouts in a kn5's folder that place it, sorted by file name.
+std::vector<std::filesystem::path> FindLayouts(const std::filesystem::path& kn5Path);
+
+// Reads what an import dialog needs to offer the liveries and options, from a kn5 or a layout
+// (summed over its models). Throws std::runtime_error for a corrupt or unreadable file; an
+// encrypted one is reported, not thrown.
+Kn5ModelSummary Inspect(const std::filesystem::path& source);
 
 // The liveries next to a car: the folder names under "<kn5 folder>/skins", in the order the
 // game offers them. Empty for a track or a car without skins.
 std::vector<std::string> ListSkins(const std::filesystem::path& kn5Path);
 
-// Converts `kn5Path` into targetDirectory (created if missing) and returns what was written.
-// Throws std::runtime_error for an encrypted, corrupt or unreadable kn5, an unknown skin, or a
+// Converts a kn5, or every model of a layout, into targetDirectory (created if missing) as one
+// glTF named ImportName(source), and returns what was written. Throws std::runtime_error for an
+// encrypted, corrupt or unreadable kn5, an unknown skin, a layout that ReadLayout rejects, or a
 // destination glTF that already exists (an import never overwrites).
 Kn5ImportReport ConvertToGltf(
-    const std::filesystem::path& kn5Path,
+    const std::filesystem::path& source,
     const std::filesystem::path& targetDirectory,
     const Kn5ImportOptions& options = {});
 
@@ -116,6 +155,10 @@ bool IsRuntimeVariant(const std::string& nodeName);
 // The twin test matters: "_LR" means left-rear far more often (WHEEL_LR, SUSP_LR), and those have
 // no "_HR" twin.
 std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames);
+
+// A layout model's placement as a column-major matrix in AC's frame: rotation Z * Y * X, then the
+// translation.
+std::array<float, 16> LayoutModelMatrix(const std::array<float, 3>& position, const std::array<float, 3>& rotationDegrees);
 
 // A Blinn-Phong exponent (already scaled by the specular intensity) as GGX roughness,
 // sqrt(2 / (n + 2)), clamped to [0.04, 1].

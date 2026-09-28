@@ -20,6 +20,7 @@
 #include <iterator>
 #include <map>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_map>
@@ -321,13 +322,14 @@ class GltfBuilder
         return m_report;
     }
 
-    void WriteTextures(const Kn5Model& model)
+    // Records which textures a model's materials sample. Called for every model of the import
+    // before any texture is written: a track's add-on kn5 samples textures its main kn5 carries.
+    // Names are matched ignoring case, as the game does across all the models it loads.
+    void CollectTextureUse(const Kn5Model& model)
     {
-        // Only what a material samples. A diffuse keeps its alpha only where the material reads
-        // it (blended or alpha-tested): elsewhere AC never samples it, and several cars carry a
-        // fully transparent one on opaque paint and interior maps.
-        std::unordered_set<std::string> used;
-        std::unordered_set<std::string> keepsAlpha;
+        // A diffuse keeps its alpha only where the material reads it (blended or alpha-tested):
+        // elsewhere AC never samples it, and several cars carry a fully transparent one on opaque
+        // paint and interior maps.
         for (const Kn5Material& material : model.materials)
         {
             for (const char* slot : {"txDiffuse", "txNormal"})
@@ -337,17 +339,23 @@ class GltfBuilder
                 {
                     continue;
                 }
-                used.insert(name);
+                m_usedTextures.insert(ToLowerAscii(name));
                 if (material.alphaBlend || material.alphaTested)
                 {
-                    keepsAlpha.insert(name);
+                    m_alphaTextures.insert(ToLowerAscii(name));
                 }
             }
         }
+    }
 
+    // Writes the sampled textures this model carries and no earlier model already wrote: the game
+    // keeps one texture per name.
+    void WriteTextures(const Kn5Model& model)
+    {
         for (const Kn5Texture& texture : model.textures)
         {
-            if (!used.count(texture.name) || texture.data.size() < kStubTextureBytes)
+            const std::string key = ToLowerAscii(texture.name);
+            if (!m_usedTextures.count(key) || texture.data.size() < kStubTextureBytes || m_textureUris.count(key) != 0)
             {
                 continue;
             }
@@ -357,7 +365,7 @@ class GltfBuilder
                 continue;
             }
 
-            bool alpha = keepsAlpha.count(texture.name) != 0;
+            bool alpha = m_alphaTextures.count(key) != 0;
             if (alpha)
             {
                 alpha = false;
@@ -374,12 +382,15 @@ class GltfBuilder
             const int channels = alpha ? 4 : 3;
             WritePng(m_textureDirectory / fileName, image->width, image->height, channels,
                      alpha ? image->pixels.data() : StripAlpha(*image).data());
-            m_textureUris[texture.name] = "textures/" + fileName;
+            m_textureUris[key] = "textures/" + fileName;
         }
     }
 
+    // Appends the model's materials; its meshes, emitted next, index them from here on.
     void AddMaterials(const Kn5Model& model)
     {
+        m_materialBase = m_materials.size();
+        m_materialCount = model.materials.size();
         for (const Kn5Material& material : model.materials)
         {
             m_materials.push_back(ConvertMaterial(model, material));
@@ -438,6 +449,13 @@ class GltfBuilder
     void SetLowResTwins(std::set<std::string> names)
     {
         m_lowRes = std::move(names);
+    }
+
+    // A layout model's placement, as a parent of its root node.
+    size_t AddPlacement(const std::string& name, const std::array<float, 16>& matrix, size_t child)
+    {
+        m_nodes.push_back(Json{{"name", name}, {"matrix", matrix}, {"children", Json::array({child})}});
+        return m_nodes.size() - 1;
     }
 
     size_t AddRoot(const std::string& name, const std::vector<size_t>& children)
@@ -549,7 +567,7 @@ class GltfBuilder
 
     std::optional<size_t> TextureIndexForKn5(const std::string& textureName)
     {
-        const auto found = m_textureUris.find(textureName);
+        const auto found = m_textureUris.find(ToLowerAscii(textureName));
         return found == m_textureUris.end() ? std::nullopt : TextureIndexForUri(found->second);
     }
 
@@ -820,9 +838,10 @@ class GltfBuilder
         m_accessors.push_back(Json{{"bufferView", indexView}, {"componentType", kUnsignedShort}, {"count", indexCount}, {"type", "SCALAR"}});
 
         Json primitive{{"attributes", std::move(attributes)}, {"indices", m_accessors.size() - 1}};
-        if (node.materialIndex < m_materials.size())
+        // A mesh's material index is relative to its own kn5.
+        if (node.materialIndex < m_materialCount)
         {
-            primitive["material"] = node.materialIndex;
+            primitive["material"] = m_materialBase + node.materialIndex;
         }
         m_meshes.push_back(Json{{"name", node.name}, {"primitives", Json::array({std::move(primitive)})}});
         ++m_report.meshes;
@@ -834,6 +853,8 @@ class GltfBuilder
     Kn5ImportOptions m_options;
     Kn5ImportReport m_report;
     std::set<std::string> m_lowRes;
+    size_t m_materialBase = 0;
+    size_t m_materialCount = 0;
     std::vector<std::uint8_t> m_binary;
     Json m_nodes = Json::array();
     Json m_meshes = Json::array();
@@ -844,6 +865,9 @@ class GltfBuilder
     Json m_textures = Json::array();
     std::set<std::string> m_extensionsUsed;
     std::unordered_set<std::string> m_fileNames;
+    // Keyed by lower-case texture name.
+    std::unordered_set<std::string> m_usedTextures;
+    std::unordered_set<std::string> m_alphaTextures;
     std::unordered_map<std::string, std::string> m_textureUris;
     std::unordered_map<std::string, size_t> m_textureIndices;
     std::unordered_map<std::string, std::optional<std::array<float, 3>>> m_tintCache;
@@ -1049,25 +1073,111 @@ std::vector<size_t> RankPaintedMaterials(
     return order;
 }
 
-Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
-{
-    Kn5Model model = Kn5Reader::Load(kn5Path, false);
-    FoldTextureCase(model);
+}
 
-    Kn5ModelSummary summary;
-    summary.encrypted = model.encrypted;
-    summary.materials = model.materials.size();
-    summary.textures = model.textures.size();
+namespace
+{
+// AC's ini: [SECTION] then KEY=VALUE, keys upper-cased. Hand-rolled because the files have
+// duplicate keys, empty values and '%' in values.
+std::vector<std::pair<std::string, std::map<std::string, std::string>>> ReadAcIni(const std::filesystem::path& path)
+{
+    std::ifstream file(path);
+    if (!file)
+    {
+        throw std::runtime_error("Cannot open '" + path.string() + "'");
+    }
+    const auto trim = [](std::string text)
+    {
+        const size_t first = text.find_first_not_of(" \t\r");
+        const size_t last = text.find_last_not_of(" \t\r");
+        return first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+    };
+    std::vector<std::pair<std::string, std::map<std::string, std::string>>> sections;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        line = trim(line);
+        if (line.empty() || line[0] == ';' || line.rfind("//", 0) == 0)
+        {
+            continue;
+        }
+        if (line[0] == '[')
+        {
+            const size_t close = line.find(']');
+            sections.emplace_back(line.substr(1, close == std::string::npos ? std::string::npos : close - 1), std::map<std::string, std::string>{});
+            continue;
+        }
+        const size_t equals = line.find('=');
+        if (!sections.empty() && equals != std::string::npos)
+        {
+            std::string key = trim(line.substr(0, equals));
+            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character)
+                           {
+                               return static_cast<char>(std::toupper(character));
+                           });
+            sections.back().second[key] = trim(line.substr(equals + 1));
+        }
+    }
+    return sections;
+}
+
+// "x, y, z" as three floats; zero for a missing or malformed value, as the game reads it.
+std::array<float, 3> ParseTriple(const std::map<std::string, std::string>& values, const std::string& key)
+{
+    const auto found = values.find(key);
+    if (found == values.end())
+    {
+        return {0.0f, 0.0f, 0.0f};
+    }
+    std::array<float, 3> triple{0.0f, 0.0f, 0.0f};
+    std::stringstream stream(found->second);
+    std::string part;
+    for (size_t index = 0; index < 3 && std::getline(stream, part, ','); ++index)
+    {
+        try
+        {
+            size_t used = 0;
+            triple[index] = std::stof(part, &used);
+            if (part.find_first_not_of(" \t", used) != std::string::npos || !std::isfinite(triple[index]))
+            {
+                return {0.0f, 0.0f, 0.0f};
+            }
+        }
+        catch (const std::exception&)
+        {
+            return {0.0f, 0.0f, 0.0f};
+        }
+    }
+    return triple;
+}
+
+// The models an import converts: the kn5 itself, or a layout's.
+std::vector<Kn5LayoutModel> ImportSources(const std::filesystem::path& source)
+{
+    if (Kn5Importer::IsLayoutPath(source))
+    {
+        return Kn5Importer::ReadLayout(source);
+    }
+    return {Kn5LayoutModel{source, {}, {}}};
+}
+
+// Counts one kn5's meshes, materials, textures and droppable variants into `summary`. Returns the
+// triangles per material, for ranking its paint.
+std::vector<size_t> SurveyModel(const Kn5Model& model, Kn5ModelSummary& summary)
+{
+    summary.materials += model.materials.size();
+    summary.textures += model.textures.size();
+    ++summary.models;
     std::vector<std::string> names;
     CollectNodeNames(model.root, names);
     std::vector<size_t> materialTriangles(model.materials.size(), 0);
-    SurveyNodes(model.root, LowResTwins(names), false, summary, materialTriangles);
-    if (summary.encrypted)
-    {
-        // Its textures are decoys: no colour read from them would be the real one.
-        return summary;
-    }
+    SurveyNodes(model.root, Kn5Importer::LowResTwins(names), false, summary, materialTriangles);
+    return materialTriangles;
+}
 
+// Each livery beside a car, with the colour it paints the bodywork, then the embedded textures.
+void SurveySkins(const std::filesystem::path& kn5Path, const Kn5Model& model, const std::vector<size_t>& materialTriangles, Kn5ModelSummary& summary)
+{
     std::vector<std::string> materialNames;
     std::vector<bool> painted;
     for (const Kn5Material& material : model.materials)
@@ -1075,7 +1185,7 @@ Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
         materialNames.push_back(material.name);
         painted.push_back(!material.Texture("txDetail").empty() && material.Property("useDetail", 0.0f) > 0.0f);
     }
-    const std::vector<size_t> paintOrder = RankPaintedMaterials(materialNames, painted, materialTriangles);
+    const std::vector<size_t> paintOrder = Kn5Importer::RankPaintedMaterials(materialNames, painted, materialTriangles);
 
     // Keyed by the file the colour comes from: several materials (and every livery that does not
     // ship the texture) share one detail map, so each is decoded once.
@@ -1107,7 +1217,7 @@ Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
         return color;
     };
 
-    std::vector<std::string> skinNames = ListSkins(kn5Path);
+    std::vector<std::string> skinNames = Kn5Importer::ListSkins(kn5Path);
     skinNames.push_back(std::string());
     for (const std::string& skinName : skinNames)
     {
@@ -1167,24 +1277,176 @@ Kn5ModelSummary Inspect(const std::filesystem::path& kn5Path)
         }
         summary.skins.push_back(std::move(skin));
     }
+}
+}
+
+namespace Kn5Importer
+{
+bool IsLayoutPath(const std::filesystem::path& path)
+{
+    const std::string name = ToLowerAscii(path.filename().string());
+    return name == "models.ini" || (name.rfind("models_", 0) == 0 && EndsWith(name, ".ini"));
+}
+
+std::string ImportName(const std::filesystem::path& source)
+{
+    if (!IsLayoutPath(source))
+    {
+        return source.stem().string();
+    }
+    const std::string track = source.parent_path().filename().string();
+    const std::string stem = source.stem().string();
+    // "models_endurance.ini" -> "<track>_endurance"; plain "models.ini" -> "<track>".
+    return stem.size() > 7 ? track + "_" + stem.substr(7) : track;
+}
+
+std::vector<Kn5LayoutModel> ReadLayout(const std::filesystem::path& layoutPath)
+{
+    std::vector<Kn5LayoutModel> models;
+    std::vector<std::string> missing;
+    for (const auto& [section, values] : ReadAcIni(layoutPath))
+    {
+        const auto file = values.find("FILE");
+        if (ToLowerAscii(section).rfind("model", 0) != 0 || file == values.end() || file->second.empty())
+        {
+            continue;
+        }
+        Kn5LayoutModel model;
+        model.file = layoutPath.parent_path() / std::filesystem::path(file->second).make_preferred();
+        model.position = ParseTriple(values, "POSITION");
+        model.rotationDegrees = ParseTriple(values, "ROTATION");
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(model.file, ec))
+        {
+            missing.push_back(file->second);
+        }
+        models.push_back(std::move(model));
+    }
+    if (models.empty())
+    {
+        throw std::runtime_error("'" + layoutPath.string() + "' places no models (no [MODEL_n] section with a FILE)");
+    }
+    if (!missing.empty())
+    {
+        std::string list;
+        for (const std::string& name : missing)
+        {
+            list += (list.empty() ? "" : ", ") + name;
+        }
+        throw std::runtime_error("'" + layoutPath.filename().string() + "' names models that are not there: " + list);
+    }
+    return models;
+}
+
+std::vector<std::filesystem::path> FindLayouts(const std::filesystem::path& kn5Path)
+{
+    std::vector<std::filesystem::path> layouts;
+    std::error_code ec;
+    const std::filesystem::path wanted = std::filesystem::absolute(kn5Path, ec).lexically_normal();
+    for (std::filesystem::directory_iterator it(kn5Path.parent_path(), ec), end; !ec && it != end; it.increment(ec))
+    {
+        std::error_code fileEc;
+        if (!it->is_regular_file(fileEc) || !IsLayoutPath(it->path()))
+        {
+            continue;
+        }
+        try
+        {
+            for (const Kn5LayoutModel& model : ReadLayout(it->path()))
+            {
+                std::error_code absoluteEc;
+                const std::filesystem::path placed = std::filesystem::absolute(model.file, absoluteEc).lexically_normal();
+                // The game resolves FILE ignoring case.
+                if (ToLowerAscii(placed.generic_string()) == ToLowerAscii(wanted.generic_string()))
+                {
+                    layouts.push_back(it->path());
+                    break;
+                }
+            }
+        }
+        catch (const std::exception&)
+        {
+            // A broken layout is not offered; importing it directly reports why.
+        }
+    }
+    std::sort(layouts.begin(), layouts.end());
+    return layouts;
+}
+
+std::array<float, 16> LayoutModelMatrix(const std::array<float, 3>& position, const std::array<float, 3>& rotationDegrees)
+{
+    constexpr float kRadiansPerDegree = 3.14159265358979323846f / 180.0f;
+    const float cx = std::cos(rotationDegrees[0] * kRadiansPerDegree);
+    const float sx = std::sin(rotationDegrees[0] * kRadiansPerDegree);
+    const float cy = std::cos(rotationDegrees[1] * kRadiansPerDegree);
+    const float sy = std::sin(rotationDegrees[1] * kRadiansPerDegree);
+    const float cz = std::cos(rotationDegrees[2] * kRadiansPerDegree);
+    const float sz = std::sin(rotationDegrees[2] * kRadiansPerDegree);
+    // Rows of Rz * Ry * Rx.
+    const float m[3][3] = {
+        {cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx},
+        {sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx},
+        {-sy, cy * sx, cy * cx}};
+    return {m[0][0], m[1][0], m[2][0], 0.0f,
+            m[0][1], m[1][1], m[2][1], 0.0f,
+            m[0][2], m[1][2], m[2][2], 0.0f,
+            position[0], position[1], position[2], 1.0f};
+}
+
+Kn5ModelSummary Inspect(const std::filesystem::path& source)
+{
+    Kn5ModelSummary summary;
+    if (IsLayoutPath(source))
+    {
+        for (const Kn5LayoutModel& layoutModel : ReadLayout(source))
+        {
+            summary.encrypted = summary.encrypted || Kn5Reader::IsEncrypted(layoutModel.file);
+            Kn5Model model = Kn5Reader::Load(layoutModel.file, Kn5ReadScope::NoGeometry);
+            FoldTextureCase(model);
+            SurveyModel(model, summary);
+        }
+        // Tracks have no liveries: only their own textures.
+        summary.skins.push_back(Kn5SkinSummary{});
+        return summary;
+    }
+
+    summary.encrypted = Kn5Reader::IsEncrypted(source);
+    Kn5Model model = Kn5Reader::Load(source, Kn5ReadScope::NoGeometry);
+    FoldTextureCase(model);
+    const std::vector<size_t> materialTriangles = SurveyModel(model, summary);
+    for (const std::filesystem::path& layout : FindLayouts(source))
+    {
+        summary.layouts.push_back({layout, ReadLayout(layout).size()});
+    }
+    if (summary.encrypted)
+    {
+        // Its textures are decoys: no colour read from them would be the real one.
+        return summary;
+    }
+    SurveySkins(source, model, materialTriangles, summary);
     return summary;
 }
 
 Kn5ImportReport ConvertToGltf(
-    const std::filesystem::path& kn5Path,
+    const std::filesystem::path& source,
     const std::filesystem::path& targetDirectory,
     const Kn5ImportOptions& options)
 {
-    Kn5Model model = Kn5Reader::Load(kn5Path);
-    if (model.encrypted)
+    const std::vector<Kn5LayoutModel> sources = ImportSources(source);
+    const bool layout = IsLayoutPath(source);
+    // Refused before anything is written.
+    for (const Kn5LayoutModel& placed : sources)
     {
-        throw std::runtime_error(
-            "Refusing '" + kn5Path.filename().string() +
-            "': it carries the CSP kn5 encryption trailer. Its textures and several meshes are decoys in the plain "
-            "section, so the import would be wrong without looking it.");
+        if (Kn5Reader::IsEncrypted(placed.file))
+        {
+            throw std::runtime_error(
+                "Refusing '" + placed.file.filename().string() +
+                "': it carries the CSP kn5 encryption trailer. Its textures and several meshes are decoys in the plain "
+                "section, so the import would be wrong without looking it.");
+        }
     }
 
-    const std::string name = kn5Path.stem().string();
+    const std::string name = ImportName(source);
     const std::filesystem::path gltfPath = targetDirectory / (name + ".gltf");
     const std::filesystem::path binaryPath = targetDirectory / "buffers" / (name + ".bin");
     std::error_code existsEc;
@@ -1206,26 +1468,60 @@ Kn5ImportReport ConvertToGltf(
 
     GltfBuilder builder(textureDirectory, options);
     Kn5ImportReport& report = builder.Report();
-    report.foldedTextureNames = FoldTextureCase(model);
+    // Tracks have no liveries; a car's skin replaces textures in every pass that reads them.
+    const std::optional<std::filesystem::path> skin =
+        layout ? std::nullopt : ResolveSkinDirectory(sources.front().file, options.skin);
 
-    if (const std::optional<std::filesystem::path> skin = ResolveSkinDirectory(kn5Path, options.skin))
+    // Three passes, one model at a time, each reading only what it needs: a track's kn5 run to
+    // hundreds of megabytes. First which textures the whole import samples, then those textures
+    // from whichever model carries each, then materials and geometry.
+    for (const Kn5LayoutModel& placed : sources)
     {
-        report.skin = skin->filename().string();
-        report.skinTextures = ApplySkin(model, *skin).size();
+        Kn5Model tables = Kn5Reader::Load(placed.file, Kn5ReadScope::Tables);
+        FoldTextureCase(tables);
+        builder.CollectTextureUse(tables);
+    }
+    for (const Kn5LayoutModel& placed : sources)
+    {
+        Kn5Model textures = Kn5Reader::Load(placed.file, Kn5ReadScope::Textures);
+        FoldTextureCase(textures);
+        if (skin.has_value())
+        {
+            ApplySkin(textures, *skin);
+        }
+        builder.WriteTextures(textures);
     }
 
-    builder.WriteTextures(model);
-    builder.AddMaterials(model);
-
-    if (!options.keepVariants)
-    {
-        std::vector<std::string> names;
-        CollectNodeNames(model.root, names);
-        builder.SetLowResTwins(LowResTwins(names));
-    }
     std::vector<size_t> roots;
-    if (const std::optional<size_t> root = builder.Emit(model.root); root.has_value())
+    for (const Kn5LayoutModel& placed : sources)
     {
+        Kn5Model model = Kn5Reader::Load(placed.file);
+        report.foldedTextureNames += FoldTextureCase(model);
+        ++report.models;
+        if (skin.has_value())
+        {
+            report.skin = skin->filename().string();
+            report.skinTextures = ApplySkin(model, *skin).size();
+        }
+
+        builder.AddMaterials(model);
+        std::vector<std::string> names;
+        if (!options.keepVariants)
+        {
+            CollectNodeNames(model.root, names);
+        }
+        builder.SetLowResTwins(LowResTwins(names));
+
+        std::optional<size_t> root = builder.Emit(model.root);
+        if (!root.has_value())
+        {
+            continue;
+        }
+        if (placed.position != std::array<float, 3>{} || placed.rotationDegrees != std::array<float, 3>{})
+        {
+            // Under the axis root, so the placement is written in AC's frame like everything else.
+            root = builder.AddPlacement(placed.file.filename().string(), LayoutModelMatrix(placed.position, placed.rotationDegrees), *root);
+        }
         roots.push_back(*root);
     }
     const size_t sceneRoot = builder.AddRoot(name, roots);
@@ -1240,10 +1536,12 @@ Kn5ImportReport ConvertToGltf(
     report.nodes = builder.NodeCount();
     report.images = builder.ImageCount();
 
+    const std::string sourceName = source.filename().string();
     LOG_INFO(
-        "kn5 '{}': {} nodes ({} transforms, {} meshes, {} empty, {} variants dropped), {} triangles, {} images, "
-        "{} materials",
-        kn5Path.filename().string(),
+        "kn5 '{}': {} model(s), {} nodes ({} transforms, {} meshes, {} empty, {} variants dropped), {} triangles, "
+        "{} images, {} materials",
+        sourceName,
+        report.models,
         report.nodes,
         report.transforms,
         report.meshes,
@@ -1254,17 +1552,17 @@ Kn5ImportReport ConvertToGltf(
         report.materials);
     if (!report.skin.empty())
     {
-        LOG_INFO("kn5 '{}': skin '{}' ({} textures)", kn5Path.filename().string(), report.skin, report.skinTextures);
+        LOG_INFO("kn5 '{}': skin '{}' ({} textures)", sourceName, report.skin, report.skinTextures);
     }
     if (report.foldedTextureNames > 0)
     {
-        LOG_INFO("kn5 '{}': folded {} texture names that differed only in case", kn5Path.filename().string(), report.foldedTextureNames);
+        LOG_INFO("kn5 '{}': folded {} texture names that differed only in case", sourceName, report.foldedTextureNames);
     }
     if (report.scrubbedAttributes > 0 || report.scrubbedMatrices > 0)
     {
         LOG_WARN(
             "kn5 '{}': replaced {} non-finite vertex attributes and dropped {} non-finite node matrices",
-            kn5Path.filename().string(),
+            sourceName,
             report.scrubbedAttributes,
             report.scrubbedMatrices);
     }

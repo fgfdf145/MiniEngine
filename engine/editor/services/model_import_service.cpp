@@ -72,7 +72,7 @@ std::string ImportModelIntoAssetDirectory(
     // companion files are sorted into subfolders (buffers/, textures/) with
     // the glTF's URIs rewritten to match.
     std::filesystem::path modelFolder =
-        ModelImportTarget::DefaultFolder(src, std::filesystem::path(destinationDirectory));
+        ModelImportTarget::DefaultFolder(ModelLoader::ImportName(src), std::filesystem::path(destinationDirectory));
     const bool occupied = ModelImportTarget::IsOccupied(modelFolder);
     if (occupied && policy == ImportConflictPolicy::FailIfExists)
     {
