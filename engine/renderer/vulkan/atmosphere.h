@@ -79,6 +79,10 @@ class VulkanAtmosphere
         kCloudDetail,
         kCloudNoiseCount
     };
+    // The images the first Record moves out of UNDEFINED: the LUTs, the noise and the shadow map.
+    static constexpr size_t kNoiseImagesBegin = kLutCount;
+    static constexpr size_t kShadowImageIndex = kNoiseImagesBegin + static_cast<size_t>(kCloudNoiseCount);
+    static constexpr size_t kInitialImageCount = kShadowImageIndex + 1;
 
     struct LutImage
     {

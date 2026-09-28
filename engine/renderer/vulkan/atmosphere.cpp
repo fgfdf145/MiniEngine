@@ -137,7 +137,7 @@ void VulkanAtmosphere::Record(
 {
     if (!m_imagesInitialized)
     {
-        std::array<VkImageMemoryBarrier, kLutCount + kCloudNoiseCount + 1> barriers{};
+        std::array<VkImageMemoryBarrier, kInitialImageCount> barriers{};
         for (size_t index = 0; index < barriers.size(); ++index)
         {
             VkImageMemoryBarrier& barrier = barriers[index];
@@ -146,9 +146,9 @@ void VulkanAtmosphere::Record(
             barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = index < kLutCount                      ? m_images[index].image
-                            : index < kLutCount + kCloudNoiseCount ? m_cloudNoise[index - kLutCount].image
-                                                                   : m_cloudShadow.image;
+            barrier.image = index < kNoiseImagesBegin   ? m_images[index].image
+                            : index < kShadowImageIndex ? m_cloudNoise[index - kNoiseImagesBegin].image
+                                                        : m_cloudShadow.image;
             barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             barrier.srcAccessMask = 0;
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
