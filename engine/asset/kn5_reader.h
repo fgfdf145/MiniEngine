@@ -68,6 +68,8 @@ struct Kn5Node
     std::vector<Kn5Vertex> vertices;
     std::vector<std::uint16_t> indices;
     std::uint32_t materialIndex = 0;
+    // False for a mesh the game collides with but never draws, such as a track's physics surfaces.
+    bool renderable = true;
     // Counts, set even when the geometry itself was skipped.
     std::uint32_t vertexCount = 0;
     std::uint32_t triangleCount = 0;

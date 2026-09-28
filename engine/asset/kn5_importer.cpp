@@ -398,9 +398,19 @@ class GltfBuilder
         m_report.materials = m_materials.size();
     }
 
-    // One kn5 node as one glTF node, children and all; nullopt when it is a dropped variant.
+    // One kn5 node as one glTF node, children and all; nullopt when it is a dropped variant or a
+    // childless mesh the game never draws.
     std::optional<size_t> Emit(const Kn5Node& node)
     {
+        const bool hidden = node.HasGeometry() && !node.renderable;
+        if (hidden)
+        {
+            ++m_report.hiddenMeshes;
+            if (node.children.empty())
+            {
+                return std::nullopt;
+            }
+        }
         if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0))
         {
             ++m_report.droppedVariants;
@@ -423,6 +433,10 @@ class GltfBuilder
                     ++m_report.scrubbedMatrices;
                 }
             }
+        }
+        else if (hidden)
+        {
+            // Kept only as the parent of its children.
         }
         else if (const std::optional<size_t> mesh = EmitMesh(node); mesh.has_value())
         {
@@ -930,7 +944,11 @@ void SurveyNodes(
         ++summary.runtimeVariants;
         dropped = true;
     }
-    if (node.HasGeometry())
+    if (node.HasGeometry() && !node.renderable)
+    {
+        ++summary.hiddenMeshes;
+    }
+    else if (node.HasGeometry())
     {
         ++summary.meshes;
         summary.triangles += node.triangleCount;
@@ -1538,7 +1556,7 @@ Kn5ImportReport ConvertToGltf(
 
     const std::string sourceName = source.filename().string();
     LOG_INFO(
-        "kn5 '{}': {} model(s), {} nodes ({} transforms, {} meshes, {} empty, {} variants dropped), {} triangles, "
+        "kn5 '{}': {} model(s), {} nodes ({} transforms, {} meshes, {} empty, {} variants dropped, {} never rendered), {} triangles, "
         "{} images, {} materials",
         sourceName,
         report.models,
@@ -1547,6 +1565,7 @@ Kn5ImportReport ConvertToGltf(
         report.meshes,
         report.emptyMeshes,
         report.droppedVariants,
+        report.hiddenMeshes,
         report.triangles,
         report.images,
         report.materials);

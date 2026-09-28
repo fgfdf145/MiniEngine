@@ -347,7 +347,7 @@ void WriteDummy(ByteWriter& writer, const std::string& name, std::uint32_t child
 
 // One triangle: (x, 0, 0), (0, 1, 0), (0, 0, 1), offset by `x` so each mesh is recognisable.
 void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t material, float x, bool skinned = false,
-               std::uint32_t children = 0)
+               std::uint32_t children = 0, bool renderable = true)
 {
     BeginNode(writer, skinned ? 3 : 2, name, children);
     writer.U8(1); // castShadows
@@ -401,7 +401,7 @@ void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t materi
         writer.F32(0.0f);
         writer.F32(0.0f);
         writer.F32(1.0f);
-        writer.U8(1);
+        writer.U8(renderable ? 1 : 0);
     }
 }
 
@@ -814,7 +814,8 @@ std::vector<std::uint8_t> BuildTrackKn5(
     const std::string& meshName,
     const std::string& materialName,
     const std::string& diffuse,
-    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>>& textures)
+    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>>& textures,
+    bool withCollisionMesh = false)
 {
     ByteWriter writer;
     writer.Raw("sc6969", 6);
@@ -828,8 +829,13 @@ std::vector<std::uint8_t> BuildTrackKn5(
     }
     writer.U32(1);
     WriteMaterial(writer, {materialName, "ksPerPixel", false, false, {{"ksSpecular", 0.0f}}, {{"txDiffuse", diffuse}}});
-    WriteDummy(writer, meshName + "_ROOT", 1, kIdentity);
+    WriteDummy(writer, meshName + "_ROOT", withCollisionMesh ? 2 : 1, kIdentity);
     WriteMesh(writer, meshName, 0, 1.0f);
+    if (withCollisionMesh)
+    {
+        // A physics-only surface, as tracks ship them: the game collides with it but never draws it.
+        WriteMesh(writer, meshName + "_PHYSICS", 0, 7.0f, false, 0, false);
+    }
     return writer.Bytes();
 }
 
@@ -839,7 +845,7 @@ std::filesystem::path WriteTrackFolder(const std::filesystem::path& root)
 {
     const std::filesystem::path track = root / "ks_fixture_track";
     WriteFile(track / "ks_fixture_track.kn5",
-              BuildTrackKn5("1ROAD", "asphalt", "asphalt.dds", {{"asphalt.dds", DdsFlat(4, {60, 60, 60, 255})}, {"leaf.dds", DdsFlat(4, {20, 90, 20, 255})}}));
+              BuildTrackKn5("1ROAD", "asphalt", "asphalt.dds", {{"asphalt.dds", DdsFlat(4, {60, 60, 60, 255})}, {"leaf.dds", DdsFlat(4, {20, 90, 20, 255})}}, true));
     WriteFile(track / "extra" / "trees.kn5", BuildTrackKn5("TREE", "trees", "leaf.dds", {}));
     const std::string layout =
         "; the east layout\n"
@@ -908,6 +914,7 @@ void ImportsAWholeTrackLayout()
 
     const Kn5ModelSummary summary = Kn5Importer::Inspect(layoutPath);
     Require(summary.models == 2 && summary.meshes == 2 && summary.materials == 2, "a layout is surveyed across its models");
+    Require(summary.hiddenMeshes == 1, "the collision-only mesh is counted apart from the drawn ones");
     Require(summary.skins.size() == 1 && summary.skins[0].name.empty(), "a track offers only its own textures");
     const Kn5ModelSummary main = Kn5Importer::Inspect(track / "ks_fixture_track.kn5");
     Require(main.models == 1 && main.layouts.size() == 1 && main.layouts[0].models == 2, "a kn5 offers the layouts placing it");
@@ -918,7 +925,8 @@ void ImportsAWholeTrackLayout()
     Require(imported == bundle / "ks_fixture_track_east.gltf", "a layout imports as one glTF named after it");
 
     const LoadedModelData model = ModelLoader::LoadModel(imported.string());
-    Require(model.submeshes.size() == 2, "both models of the layout load");
+    Require(model.submeshes.size() == 2, "both models of the layout load, without the collision-only mesh");
+    Require(!HasSubmesh(model, "1ROAD_PHYSICS"), "a mesh the game never renders is not imported");
     const ModelSubmeshData& road = FindSubmesh(model, "1ROAD");
     const ModelSubmeshData& tree = FindSubmesh(model, "TREE");
     // Each mesh keeps the material of its own kn5, though both files index theirs from 0.

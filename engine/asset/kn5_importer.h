@@ -53,6 +53,8 @@ struct Kn5ImportReport
     size_t meshes = 0;
     size_t emptyMeshes = 0;
     size_t droppedVariants = 0;
+    // Meshes the game never draws (isRenderable off), which are not imported.
+    size_t hiddenMeshes = 0;
     size_t triangles = 0;
     size_t images = 0;
     size_t materials = 0;
@@ -86,6 +88,9 @@ struct Kn5ModelSummary
     size_t textures = 0;
     // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins).
     size_t runtimeVariants = 0;
+    // Meshes the game never draws, such as a track's physics surfaces: never imported, and not
+    // among the meshes and triangles above.
+    size_t hiddenMeshes = 0;
     // The kn5 files read: one, or every model of a layout. The counts above are their sums.
     size_t models = 0;
     // The skins/ folders in the order the game offers them (the first is the default), then the

@@ -242,7 +242,7 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
         if (node.type == Kn5NodeType::Mesh)
         {
             reader.Skip(4 * 4); // bounding sphere centre and radius
-            reader.Skip(1);     // isRenderable
+            node.renderable = reader.U8() != 0;
         }
     }
     else

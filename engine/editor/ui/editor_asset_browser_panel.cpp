@@ -426,6 +426,10 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
             summary.triangles,
             summary.materials,
             summary.textures);
+        if (summary.hiddenMeshes > 0)
+        {
+            ImGui::TextDisabled("%zu meshes the game never draws (physics surfaces) are left out.", summary.hiddenMeshes);
+        }
 
         if (!summary.layouts.empty())
         {
