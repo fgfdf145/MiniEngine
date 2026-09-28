@@ -2,6 +2,7 @@
 
 #include "editor_ui.h"
 #include "engine_settings.h"
+#include "services/vehicle_drive_service.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
@@ -163,6 +164,8 @@ struct RendererSharedState
     // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
     // the frame. Not persisted: a debug view left on should not survive a restart.
     RenderDebugSettings renderDebug;
+    // Play mode: the model being driven as a car, if any (VehicleDriveService).
+    VehicleDriveState vehicleDrive;
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.

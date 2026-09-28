@@ -91,6 +91,7 @@ class InputState
     bool IsKeyDown(KeyCode key) const;
 
     float GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex = 0) const;
+    bool IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex = 0) const;
     int GetFirstConnectedGamepadIndex() const;
 
     bool IsMouseLookActive() const;

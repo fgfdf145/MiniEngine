@@ -14,6 +14,7 @@
       ]
     },
     "imguizmo",
+    "joltphysics",
     {
       "name": "ktx",
       "platform": "!(windows & x86)"

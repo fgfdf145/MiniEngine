@@ -5,6 +5,7 @@
 #include "services/model_import_service.h"
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
+#include "services/vehicle_drive_service.h"
 
 #include <engine/asset/asset_registry.h>
 #include <engine/asset/kn5_importer.h>
@@ -97,7 +98,14 @@ bool EditorRenderBackendBase::TickSharedFrame()
     State().frameDeltaSeconds = deltaTime;
 
     State().input.Update();
-    UpdateCameraFromInput(State().camera, State().input, deltaTime, WantsKeyboardCapture());
+    // While a car is driven the keyboard and gamepad are its controls: the camera only looks around
+    // with the mouse, and not even that while it chases the car.
+    const bool keyboardCaptured = WantsKeyboardCapture();
+    const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
+    if (!driving || !State().vehicleDrive.camera.follow)
+    {
+        UpdateCameraFromInput(State().camera, State().input, deltaTime, keyboardCaptured || driving);
+    }
     State().input.EndFrame();
 
     return HasDrawableArea();
@@ -194,6 +202,32 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     const EditorUiActions& actions = uiFrame.actions;
     std::string& modelError = State().lastModelLoadError;
     std::string& sceneError = State().lastSceneIoError;
+
+    State().vehicleDrive.camera = uiFrame.vehicleCamera;
+    if (actions.stopVehicleDrive)
+    {
+        VehicleDriveService::Stop(State());
+    }
+    if (actions.startVehicleDrive)
+    {
+        RunUiAction(State().vehicleDrive.lastError, "start driving", [&]
+                    {
+                        const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
+                        VehicleDriveService::Start(State(), selected, uiFrame.vehicleTuning);
+                    });
+    }
+    if (actions.pauseVehicleDrive.has_value())
+    {
+        VehicleDriveService::SetPaused(State(), *actions.pauseVehicleDrive);
+    }
+    if (actions.stepVehicleDrive)
+    {
+        VehicleDriveService::Step(State());
+    }
+    if (actions.resetVehicle)
+    {
+        VehicleDriveService::Reset(State());
+    }
 
     RunUiAction(modelError, "update viewport model preview", [&]
                 {
@@ -319,7 +353,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         RunUiAction(sceneError, fmt::format("save scene '{}'", *savePath), [&]
                     {
-                        SceneIoService::SaveScene(State(), *savePath);
+                        VehicleDriveService::RunWithVehicleAtStart(State(), [&]
+                                                                   {
+                                                                       SceneIoService::SaveScene(State(), *savePath);
+                                                                   });
                     });
     }
     for (const AssetManagerResult::RenamedAsset& renamed : actions.renamedAssets)
@@ -449,6 +486,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     const std::string selectedModelPath =
         selectionIsModel ? EditorWorld().GetSelectedModel().sourcePath : std::string{};
 
+    State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

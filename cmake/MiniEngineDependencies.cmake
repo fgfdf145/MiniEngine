@@ -130,6 +130,9 @@ find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
+# Vehicle physics (engine_physics): the static Jolt::Jolt, whose exported compile definitions keep
+# its headers configured as the library was built.
+find_package(Jolt CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(unofficial-bc7enc-rdo CONFIG REQUIRED)
 find_package(tinyexr CONFIG REQUIRED)

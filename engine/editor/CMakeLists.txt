@@ -22,6 +22,8 @@ add_library(engine_editor
     services/scene_io_service.h
     services/scene_renderables.cpp
     services/scene_renderables.h
+    services/vehicle_drive_service.cpp
+    services/vehicle_drive_service.h
     ui/editor_asset_browser_panel.cpp
     ui/editor_dockspace.cpp
     ui/editor_material_graph.cpp
@@ -36,6 +38,7 @@ add_library(engine_editor
     ui/editor_theme_panel.cpp
     ui/editor_ui_internal.h
     ui/editor_ui_shared.cpp
+    ui/editor_vehicle_panel.cpp
     ui/editor_viewport_panel.cpp
 )
 miniengine_group_target_sources(engine_editor)
@@ -68,6 +71,7 @@ target_link_libraries(engine_editor
     PUBLIC
         engine_render_core
         engine_logic
+        engine_physics
         engine_asset
         engine_platform
         engine_scene

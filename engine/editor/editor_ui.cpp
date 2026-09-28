@@ -32,6 +32,7 @@ void EditorUiController::RegisterCommands()
         {"graphics_debug", "Graphics Debug", ICON_FA_BUG, &m_showGraphicsDebugWindow},
         {"assets", "Assets", ICON_FA_FOLDER_TREE, &m_showAssetManagerWindow},
         {"input_monitor", "Input Monitor", ICON_FA_KEYBOARD, &m_showInputMonitorWindow},
+        {"vehicle", "Vehicle", ICON_FA_CAR, &m_showVehicleWindow},
         {"theme", "Theme", ICON_FA_PALETTE, &m_showThemeWindow},
     };
 
@@ -96,6 +97,10 @@ void EditorUiController::RegisterCommands()
     scene.captureViewport = [this]
     {
         m_commandActions.captureViewport = true;
+    };
+    scene.stepSimulation = [this]
+    {
+        m_commandActions.stepVehicleDrive = true;
     };
     RegisterEditorCommands(m_commands, m_commandState, window, scene);
     m_toolbarLayout = BuildEditorToolbarLayout();
@@ -210,6 +215,11 @@ EditorUiFrameResult EditorUiController::Draw(
         DrawInputMonitorPanel();
     }
 
+    if (m_showVehicleWindow)
+    {
+        DrawVehiclePanel(scene, result);
+    }
+
     if (m_showSceneWindow)
     {
         DrawScenePanel(scene, lastLoadError, lastSceneIoError, sceneUploadStatus, result);
@@ -237,6 +247,8 @@ EditorUiFrameResult EditorUiController::Draw(
         previousShowGraphicsDebugWindow != m_showGraphicsDebugWindow;
 
     result.renderDebug = m_renderDebug;
+    result.vehicleTuning = m_vehicleTuning;
+    result.vehicleCamera = m_vehicleCamera;
     return result;
 }
 
@@ -260,6 +272,10 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
         break;
     }
     m_commandState.antiAliasing = m_renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
+    // Play is driving a car: whatever the commands asked last frame, this is what happened.
+    m_commandState.playState = !m_vehicleStatus.active ? PlayState::Stopped
+                               : m_vehicleStatus.paused ? PlayState::Paused
+                                                        : PlayState::Playing;
 }
 
 void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene)
@@ -301,6 +317,23 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
     if (m_commandState.antiAliasing != before.antiAliasing)
     {
         m_renderDebug.taa = m_commandState.antiAliasing == AntiAliasingMode::Taa;
+    }
+    if (m_commandState.playState != before.playState)
+    {
+        if (before.playState == PlayState::Stopped)
+        {
+            // Play drives the selected model; the Vehicle panel shows how, or why it could not.
+            m_commandActions.startVehicleDrive = true;
+            m_showVehicleWindow = true;
+        }
+        else if (m_commandState.playState == PlayState::Stopped)
+        {
+            m_commandActions.stopVehicleDrive = true;
+        }
+        else
+        {
+            m_commandActions.pauseVehicleDrive = m_commandState.playState == PlayState::Paused;
+        }
     }
 }
 

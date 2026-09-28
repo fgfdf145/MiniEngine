@@ -60,8 +60,9 @@ enum class AntiAliasingMode
 };
 
 // What the checkable commands read and write. The editor UI copies the transform tool, the debug
-// view and anti-aliasing to and from the scene and the renderer each frame; each other field that
-// nothing reads yet has a TODO where it should reach the renderer or the scene.
+// view, anti-aliasing and the play state to and from the scene, the renderer and the driven car each
+// frame; each other field that nothing reads yet has a TODO where it should reach the renderer or the
+// scene.
 struct EditorCommandState
 {
     TransformTool transformTool = TransformTool::Move;
@@ -110,6 +111,7 @@ struct EditorSceneCommands
     std::function<void()> createEntity;
     std::function<void(LightType)> createLight;
     std::function<void()> captureViewport;
+    std::function<void()> stepSimulation; // Step: one fixed physics step while paused
 };
 
 // Registers every command of the main menu (File, Edit, Scene, View, Render, Tools, Window, Help)

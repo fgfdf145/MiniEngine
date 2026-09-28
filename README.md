@@ -1,6 +1,6 @@
 # MiniEngine
 
-MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnTT 的 3D 场景编辑器原型。编辑器工作流已经形成闭环；脚本、物理、动画、音频与 Play 模式等完整运行时闭环尚未形成。
+MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnTT 的 3D 场景编辑器原型。编辑器工作流已经形成闭环；Play 模式目前只有基于 Jolt Physics 的车辆驾驶，脚本、动画、音频等完整运行时闭环尚未形成。
 
 本文件面向 AI 助手和长期维护者。当前源码、各模块 `CMakeLists.txt`、`CMakePresets.json` 与 `vcpkg.json` 是架构事实的优先来源；[docs/PROJECT_SUMMARY.md](docs/PROJECT_SUMMARY.md) 仅是历史阶段性分析材料，不能替代当前源码。
 
@@ -10,7 +10,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 
 - 语言标准：C++20。
 - 构建体系：CMake + vcpkg manifest；根目录 [MiniEngine.slnx](MiniEngine.slnx) 是 Visual Studio 的 CMake 包装入口。
-- 当前依赖：SDL3、Vulkan、Dear ImGui、ImGuizmo、EnTT、yaml-cpp、tinygltf、GLM、spdlog、stb 和 shaderc。
+- 当前依赖：SDL3、Vulkan、Dear ImGui、ImGuizmo、EnTT、yaml-cpp、tinygltf、GLM、spdlog、stb、shaderc 和 Jolt Physics（vcpkg `joltphysics`）。
 
 ## 2. 已实现功能
 
@@ -36,14 +36,15 @@ miniengine_app
   -> engine_application
 engine_application -> engine_core / engine_platform / engine_renderer
 engine_renderer -> engine_render_core / engine_editor / engine_logic (private)
-engine_editor -> engine_render_core / engine_logic / engine_asset / engine_scene / engine_platform / engine_core
+engine_editor -> engine_render_core / engine_logic / engine_physics / engine_asset / engine_scene / engine_platform / engine_core
 engine_render_core -> engine_core / engine_scene / engine_asset
 engine_logic -> engine_core / engine_scene
 engine_asset -> engine_core / engine_scene
 engine_platform -> engine_core
+engine_physics -> glm（Jolt::Jolt 为 private）
 ```
 
-`engine_scene` 保持场景数据和只读查询接口；`engine_logic` 实现 `IEditorWorld` 的实体生命周期、选择和 YAML 序列化；`engine_asset` 负责模型、贴图、缓存与资产注册；`engine_editor` 负责面板与编辑器请求；`engine_renderer` 提供 RHI 工厂和 Vulkan 实现；`engine_application` 管理窗口、参数解析与主循环。
+`engine_scene` 保持场景数据和只读查询接口；`engine_logic` 实现 `IEditorWorld` 的实体生命周期、选择和 YAML 序列化；`engine_asset` 负责模型、贴图、缓存与资产注册；`engine_editor` 负责面板与编辑器请求；`engine_physics` 把 Jolt Physics 封装在 `physics_world.cpp` 内（公开头文件只用 glm），提供静态碰撞网格与轮式车辆；`engine_renderer` 提供 RHI 工厂和 Vulkan 实现；`engine_application` 管理窗口、参数解析与主循环。
 
 ### 启动与逐帧链路
 
@@ -70,6 +71,7 @@ engine_platform -> engine_core
 | `engine/core/` | 日志、输入、共享 UUID 与后端类型。 |
 | `engine/platform/` | SDL 窗口、文件对话框、界面缩放。 |
 | `engine/scene/` | 组件、场景只读接口、材质图和世界单位。 |
+| `engine/physics/` | Jolt Physics 封装：`PhysicsWorld`（固定步长 60 Hz、插值读回）、`VehicleSettings` 与按包围盒拟合车辆。 |
 | `engine/logic/` | `IEditorWorld`、实体/选择管理、场景 YAML 序列化。 |
 | `engine/asset/` | glTF/贴图加载、模型缓存、资产 UUID 注册表。 |
 | `engine/editor/` | 编辑器后端基类、UI 面板和编辑服务。 |
@@ -192,8 +194,9 @@ ctest --test-dir .\out\build\vs2026-x64 -C Debug --output-on-failure
 - 半球光（Hemisphere 灯，2026-09-27）：天空色（灯光颜色）在灯的上轴（变换旋转后的 +Y）之上，地面色（`ground_color`，随场景 YAML 保存，默认 [0.3, 0.25, 0.2]）在其下，强度为 cd/m²。与 Ambient 灯一样在 CPU 上折叠（`SelectSceneLights`），不占灯位、并关闭兜底环境光：每盏半球光对法线 n 的辐照度恰为 π(S(1+n·u)/2 + G(1−n·u)/2)，对 n 线性，所以任意多盏半球光与 Ambient 灯精确合成为一个常量 `ambientLuminance` 加每个颜色通道一个梯度向量（相机块末尾的 `ambientGradient[3]`），着色器以 `SceneAmbientAlong(d)` 读取：漫反射取法线方向，镜面、清漆与光泽取反射方向（即余弦模糊后的辐亮度，对粗糙波瓣精确，对镜面缺少硬地平线），漫透射取 −N。None 模式下替代均匀环境光，Atmosphere/HDRI 模式下与天空相加。验收场景 `smooth_spheres_hemisphere.yaml`。
 - 一次反弹间接漫反射（屏幕空间，2026-09-27；Graphics Debug 的 “Screen-space GI”，默认开，Khronos 参考视图与前向对比顺序中关闭）：可见性位掩码论文（Therrien 等 2023）中间接光照的那一半，AO 已用其另一半。延迟顺序在 Lighting 之后插入三个 pass：`GiTrace` 沿 AO 同样的切片与 32 扇区位掩码行进，每个深度采样新覆盖的扇区获得该采样在本帧已光照 HDR 图像中的辐亮度（只取正面朝向接收点的采样，单样本截断到 64 帧缓冲单位防萤火虫；同一侧相邻且在空间上连续的采样之间的角度一并覆盖，否则地面只被零星的厚度片覆盖一小部分），扇区按余弦加权，所以总和即辐照度/π，与环境光同单位；`GiResolve` 做深度与法线感知的 5×5 空间滤波和 32 帧时域累积（历史 RGBA32F，alpha 打包距离与样本数，沿用 AO 的去遮挡判断）；`GiComposite` 以 ONE + ONE 混合把 SceneGi 乘漫反射反照率（电介质份额减去电介质镜面反照率）、材质 AO、光泽与清漆层透过率和大气透过率加到 HDR 目标上。光源是 Lighting 输出的本帧图像（直射、天空与环境光、自发光，尚无间接漫反射），所以正好一次反弹、无反馈、无一帧延迟。前向着色、透射、Blend 与无光照表面不接收；屏幕外的光与镜面反弹不在其中。调试视图 13 显示 SceneGi。验收场景 `bounce_box.yaml`（阳光地面、背光白墙：墙根亮度约为地面辐亮度的 0.2，与墙前 0.7 m 阴影带下的解析值一致）与 `sponza_sun_bounce.yaml`。设计见 [docs/design/2026-09-27-hemisphere-bounce-ibl-design.md](docs/design/2026-09-27-hemisphere-bounce-ibl-design.md)。
 - 体积散射（`KHR_materials_volume_scatter`，草案；完整 BRDF 计划第 5 阶段 SSS 中有 Khronos 标准的那一半）：按 Khronos Sample Viewer 的做法实现为屏幕空间 Burley 扩散（Blender 的实现）。导入 `multiscatterColor` 与 `scatterAnisotropy`（只在同时有 `KHR_materials_volume` 时生效；唯一的示例模型 ScatteringSkull 把颜色写成 `multiscatterColorFactor`，即后继提案 `KHR_materials_scatter` 的名字，缺少草案名时读它）；有漫透射（系数大于 0）才会散射，数据存在材质第 15 个 vec4，并以 `volumeScale.w` 标记。新的 `VulkanScatterPass` 在 forward pass 之前，用 forward 管线的着色器（特化常量 `kScatterPrepass`）只画散射材质，写进它自己的 RGBA16F 颜色和 D32 深度（随场景尺寸重建，经 set 0 的 19、20 号绑定采样）：颜色是进入表面的漫射光（正面按单次散射反照率，背面穿过体积、未被吸收的部分再散射，乘漫透射系数、菲涅耳与 sheen 缩放；与 viewer 不同，带阴影），alpha 是 draw 槽位。forward pass 把漫透射的背面光乘以（1 - 单次散射反照率），再加上扩散项：以“衰减距离 × multiscatterColor”的最大通道为半径，在屏幕上取 55 个 Burley 样本（黄金角、逆 CDF 牛顿迭代，与 viewer 的 `computeScatterSamples` 数值一致，由 C++ 测试核对），只取同一 draw 的样本，按两点间的 Burley 剖面除以 pdf 加权平均，再乘透射颜色和 viewer 的权重。与 viewer 有一处有意的差别：采样圆在像素上是圆的（viewer 两个轴都按宽度的纹素缩放）。`scatterAnisotropy` 只保存、不参与着色（viewer 也不用）。材质面板、sidecar（`volume_scatter`、`multiscatter_color`、`scatter_anisotropy`）照其他扩展。对比：viewer 只认草案名，原版 ScatteringSkull 在 viewer 里不散射（漆黑），所以另外对比一份把键名改成草案名的副本 ScatteringSkullDraftKey，平均差 2.4；原版的 28.9 属预期差异。设计见 [docs/design/2026-09-26-volume-scatter-gpu-instancing-design.md](docs/design/2026-09-26-volume-scatter-gpu-instancing-design.md)。
-- 主菜单、工具栏与快捷键由 `CommandRegistry` 生成（`engine/editor/editor_commands.cpp`）。已接到现有功能的命令：File 的新建场景（先弹确认框；清掉全部实体，只留启动场景的太阳与大气，场景不再关联文件，gizmo 设置保留）、打开/保存/另存场景（与 Scene 面板同一套文件对话框，保存在已有路径时直接写回）、导入模型（导入到资产浏览器当前目录，并打开该面板以便处理重名）、退出（与关闭窗口相同）；Edit 的删除（有选中实体时可用，灯光与模型都可删）；Scene 的新建空实体与四种灯光、清空场景（先弹确认框；删除全部实体，环境与场景文件路径保留）；模型或场景加载中时两者都会拒绝并在 Scene 面板报错；工具栏的 Move（组合平移旋转 gizmo）与 Scale；View 的 Lit/Albedo/Normal（G-buffer 调试视图）；Render 的 TAA 开关；Tools 的视口截图（F12，写入 `captures/viewport_<日期>_<时间>.png`，只含场景不含 UI）。菜单状态每帧从场景与 Graphics Debug 同步，所以面板里的改动也会反映在菜单上。其余命令（撤销重做、剪贴板、Play、Rotate 单独 gizmo、其它调试视图、线框、管线/光追、色调映射、重载着色器、命令面板、帮助等）仍是空操作，等对应功能实现后再接。
-- 脚本、动画、物理、音频、Play 模式和完整运行时分层未实现。
+- 主菜单、工具栏与快捷键由 `CommandRegistry` 生成（`engine/editor/editor_commands.cpp`）。已接到现有功能的命令：File 的新建场景（先弹确认框；清掉全部实体，只留启动场景的太阳与大气，场景不再关联文件，gizmo 设置保留）、打开/保存/另存场景（与 Scene 面板同一套文件对话框，保存在已有路径时直接写回）、导入模型（导入到资产浏览器当前目录，并打开该面板以便处理重名）、退出（与关闭窗口相同）；Edit 的删除（有选中实体时可用，灯光与模型都可删）；Scene 的新建空实体与四种灯光、清空场景（先弹确认框；删除全部实体，环境与场景文件路径保留）；模型或场景加载中时两者都会拒绝并在 Scene 面板报错；工具栏的 Move（组合平移旋转 gizmo）与 Scale；View 的 Lit/Albedo/Normal（G-buffer 调试视图）；Render 的 TAA 开关；Scene 的 Play/Pause/Step（驾驶选中的模型，见下文车辆物理）；Tools 的视口截图（F12，写入 `captures/viewport_<日期>_<时间>.png`，只含场景不含 UI）。菜单状态每帧从场景与 Graphics Debug 同步，所以面板里的改动也会反映在菜单上。其余命令（撤销重做、剪贴板、Rotate 单独 gizmo、其它调试视图、线框、管线/光追、色调映射、重载着色器、命令面板、帮助等）仍是空操作，等对应功能实现后再接。
+- 车辆物理（Jolt Physics 5.5，`engine/physics/`；编辑器的 Vehicle 面板与 Play/Pause/Step 命令，服务在 `engine/editor/services/vehicle_drive_service.*`）：选中模型按 F5（或 Vehicle 面板的 “Drive Selected Model”）即把它当作车来开。车辆空间是模型自身空间，+Y 向上、+Z 向前（glTF 的车头方向，AC 导入后亦然），`FitVehicleSettingsToBounds` 按模型包围盒乘实体缩放放置四个车轮、底盘碰撞盒与低重心，并按弹簧静挠度 g/ω² 计算悬挂安装高度，使轮胎静止时正好落在包围盒底面；质量、扭矩、转速、驱动方式（后驱/前驱/四驱）、转向角、刹车、弹簧频率与阻尼、防倾杆与限滑差速器可在面板调节，下次开始驾驶时生效。控制器为 Jolt 的 `WheeledVehicleController`（自动变速箱），车轮用圆柱体扫掠检测。场景中其它所有已加载模型的不透明与 alpha test 子网格按世界空间三角形生成静态 `MeshShape`（每个子网格一个刚体；Blend 与贴花不参与），并在最低几何之下铺一块 10 km 地面。物理以 1/60 s 固定步长推进、每帧最多 5 步，位姿在最近两步之间插值后写回实体变换。按键：W/S 或 ↑/↓ 油门、先刹车再倒车，A/D 或 ←/→ 转向（键盘转向会缓入），空格手刹，Backspace 复位；手柄 RT/LT、左摇杆、A 手刹、Back 复位；追尾相机可关。停止时车辆与相机回到开始前的位置；驾驶中保存场景记录的是车的初始变换。限制：车轮不单独转动（模型是一个整体渲染），赛道里被导入丢掉的不可见碰撞网格（AC 的隐藏墙等）不存在，碰撞网格在开始驾驶时于主线程一次性构建，大赛道会卡顿一下。测试见 `tests/vehicle_physics_tests.cpp`。
+- 脚本、动画、音频和完整运行时分层未实现；Play 模式只驱动车辆。
 
 ## 8. 路线图
 

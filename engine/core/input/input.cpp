@@ -156,6 +156,13 @@ float InputState::GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex) const
                : 0.0f;
 }
 
+bool InputState::IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex) const
+{
+    const int buttonIndex = static_cast<int>(button);
+    return IsValidGamepadPlayerIndex(playerIndex) && buttonIndex >= 0 && buttonIndex < static_cast<int>(kGamepadButtonCount) &&
+           m_gamepads[playerIndex].buttonDown[static_cast<size_t>(buttonIndex)];
+}
+
 int InputState::GetFirstConnectedGamepadIndex() const
 {
     for (uint32_t playerIndex = 0; playerIndex < kMaxGamepads; ++playerIndex)

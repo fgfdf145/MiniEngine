@@ -3,6 +3,7 @@
 #include "command_registry.h"
 #include "editor_commands.h"
 #include "engine_settings.h"
+#include "services/vehicle_drive_service.h"
 
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/model_import_target.h>
@@ -22,6 +23,7 @@
 #include <future>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -87,6 +89,13 @@ struct EditorUiActions
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
+    // Play mode (VehicleDriveService): drive the selected model as a car, and stop, pause, step or
+    // reset it.
+    bool startVehicleDrive = false;
+    bool stopVehicleDrive = false;
+    std::optional<bool> pauseVehicleDrive;
+    bool stepVehicleDrive = false;
+    bool resetVehicle = false;
 };
 
 struct EditorUiFrameResult
@@ -97,6 +106,9 @@ struct EditorUiFrameResult
     bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
     RenderDebugSettings renderDebug;
+    // The Vehicle panel's tuning, which the next drive starts with, and its chase camera.
+    VehicleSettings vehicleTuning;
+    VehicleCameraSettings vehicleCamera;
 };
 
 class EditorUiController
@@ -145,6 +157,12 @@ class EditorUiController
     // into the folder the asset browser shows, and the browser is opened to show it.
     void QueueDroppedFile(std::string path);
 
+    // Whether a car is being driven, for the play controls and the Vehicle panel. Set before Draw.
+    void SetVehicleDriveStatus(VehicleDriveStatus status)
+    {
+        m_vehicleStatus = std::move(status);
+    }
+
   private:
     void RegisterCommands();
     // The command state the scene and the renderer decide (transform tool, debug view,
@@ -168,6 +186,7 @@ class EditorUiController
     void DrawCameraPanel(Camera& camera);
     void DrawGraphicsDebugPanel();
     void DrawInputMonitorPanel();
+    void DrawVehiclePanel(const IEditorWorld& scene, EditorUiFrameResult& result);
     void DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result);
     // The model processor's graph section for one material: toolbar, selection and canvas.
     // Each returns whether the graph changed.
@@ -312,6 +331,10 @@ class EditorUiController
     bool m_showThemeWindow = true;
     bool m_showViewportWindow = true;
     bool m_showGraphicsDebugWindow = false;
+    bool m_showVehicleWindow = false;
+    VehicleDriveStatus m_vehicleStatus;
+    VehicleSettings m_vehicleTuning;
+    VehicleCameraSettings m_vehicleCamera;
     bool m_inputMonitorAutoScroll = true;
     std::vector<std::string> m_inputMonitorMessages;
     uint64_t m_inputMonitorMessagesRevision = 0;

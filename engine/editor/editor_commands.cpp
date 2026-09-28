@@ -122,7 +122,9 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
     Add(registry, "scene.create_light.area", "Create Area Light", "Scene/Create Light/Area", "", 0, createLight(LightType::Area));
     registry.AddSeparator("Scene");
 
-    // Play controls. Play stops again while playing; Step advances one frame while paused.
+    // Play controls: Play drives the selected model as a car and stops again while playing; Step
+    // advances the paused simulation by one physics step. The editor UI turns playState changes into
+    // VehicleDriveService actions and reads the state back from it each frame.
     const auto isPlaying = [&state]
     {
         return state.playState != PlayState::Stopped;
@@ -131,7 +133,6 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
         registry, "scene.play", "Play", "Scene/Play", ICON_FA_PLAY, ImGuiKey_F5,
         [&state]
         {
-            // TODO: start or stop the simulation.
             state.playState = state.playState == PlayState::Stopped ? PlayState::Playing : PlayState::Stopped;
         },
         isPlaying);
@@ -139,7 +140,6 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
         registry, "scene.pause", "Pause", "Scene/Pause", ICON_FA_PAUSE, ImGuiKey_F6,
         [&state]
         {
-            // TODO: pause or resume the simulation.
             state.playState = state.playState == PlayState::Paused ? PlayState::Playing : PlayState::Paused;
         },
         [&state]
@@ -149,7 +149,7 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
         isPlaying);
     Add(
         registry, "scene.step", "Step", "Scene/Step", ICON_FA_FORWARD_STEP, ImGuiKey_F10,
-        Todo, // TODO: advance the paused simulation by one frame.
+        OrTodo(scene.stepSimulation),
         {},
         [&state]
         {
