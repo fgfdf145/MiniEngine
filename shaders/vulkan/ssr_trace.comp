@@ -68,7 +68,7 @@ void main()
     vec4 surface = texelFetch(surfaceTexture, pixel, 0);
     float roughness = clamp(surface.g, 0.04, 1.0);
     float roughnessFade = SsrRoughnessFade(roughness, ssr.maxRoughness);
-    if (depth >= 1.0 || roughnessFade <= 0.0)
+    if (IsFarDepth(depth) || roughnessFade <= 0.0)
     {
         imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;
@@ -95,8 +95,8 @@ void main()
     vec3 viewStart = (ubo.view * vec4(worldPosition + N * 0.01, 1.0)).xyz;
     vec3 viewDirection = normalize(mat3(ubo.view) * R);
     float rayLength = ssr.maxDistance;
-    // The near plane sits where depth is 0: view z = -proj[3][2] / proj[2][2] (negative).
-    float nearZ = ViewZFromDepth(0.0);
+    // The near plane sits at DEPTH_NEAR (negative view z).
+    float nearZ = ViewZFromDepth(DEPTH_NEAR);
     if (viewStart.z + viewDirection.z * rayLength > nearZ)
     {
         rayLength = (nearZ * 1.01 - viewStart.z) / viewDirection.z;
@@ -126,7 +126,7 @@ void main()
         }
         float rayZ = mix(qStart, qEnd, t) / mix(kStart, kEnd, t);
         float sceneDepth = textureLod(depthTexture, sampleUv, 0.0).r;
-        if (sceneDepth < 1.0)
+        if (!IsFarDepth(sceneDepth))
         {
             float sceneZ = ViewZFromDepth(sceneDepth);
             float behind = sceneZ - rayZ;
@@ -169,7 +169,7 @@ void main()
 
     // A surface facing away from the ray shows its back, which the screen never rendered.
     vec3 hitNormal = DecodeNormalOctahedral(texelFetch(normalTexture, hitPixel, 0).rg);
-    if (hitDepth >= 1.0 || dot(hitNormal, R) > 0.0)
+    if (IsFarDepth(hitDepth) || dot(hitNormal, R) > 0.0)
     {
         imageStore(ssrRawImage, halfPixel, vec4(0.0));
         return;

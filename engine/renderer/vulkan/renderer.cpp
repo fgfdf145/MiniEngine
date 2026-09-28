@@ -649,6 +649,7 @@ void VulkanRenderer::DrawFrame()
         shadowCamera.farPlane = State().camera.farPlane;
         ShadowCascadeSettings shadowSettings{};
         shadowSettings.resolution = m_shadowPass->GetResolution();
+        shadowSettings.maxDistance = std::clamp(State().renderDebug.shadowDistance, 10.0f, 5000.0f);
         shadowCascades = BuildShadowCascades(
             shadowCamera,
             glm::vec3(selectedLights[shadowLightIndex].directionAndType),

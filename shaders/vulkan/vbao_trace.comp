@@ -49,7 +49,7 @@ void main()
     ivec2 pixel = HalfResSourcePixel(halfPixel);
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         imageStore(aoRawImage, halfPixel, vec4(1.0));
         return;
@@ -111,7 +111,7 @@ void main()
                 }
 
                 float sampleDepth = texelFetch(depthTexture, ivec2(samplePixel), 0).r;
-                if (sampleDepth >= 1.0)
+                if (IsFarDepth(sampleDepth))
                 {
                     continue;
                 }

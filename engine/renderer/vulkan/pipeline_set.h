@@ -35,15 +35,17 @@ struct MaterialPipelineSetConfig
     // variants so GetMaterialPipelineIndex needs no second mapping; turning blending off keeps
     // those unused variants from declaring blend state against G-buffer attachments.
     bool allowBlending = true;
-    // LESS for the geometry pass. The forward pass uses LESS_OR_EQUAL: the forward-shaded opaque
-    // draws land on depth the geometry pass already wrote for them, from the same vertex shader.
+    // Named for conventional depth; the scene's is reverse-Z, so false is GREATER and true
+    // GREATER_OR_EQUAL (reverse_depth.h). Strict for the geometry pass; the forward pass takes equal
+    // too: its forward-shaded opaque draws land on depth the geometry pass already wrote for them,
+    // from the same vertex shader.
     bool depthLessOrEqual = true;
     // triangle.frag's kScatterPrepass (constant 1): the scatter pre-pass's set, which writes the light
     // entering the surface and the draw slot instead of the shaded colour.
     bool scatterPrepass = false;
     // gbuffer.frag's kDecal (constant 2), against the geometry pass: blended by the base colour's
     // alpha into albedo (rgb), GB2's metallic and roughness and emission, every other channel
-    // masked, depth tested (LESS_OR_EQUAL) but not written.
+    // masked, depth tested (nearer or equal) but not written.
     bool decal = false;
 };
 

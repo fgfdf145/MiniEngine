@@ -3,6 +3,7 @@
 #include "command.h"
 #include "material_draw.h"
 #include "pipeline.h"
+#include "reverse_depth.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/material.h>
@@ -91,7 +92,7 @@ void VulkanForwardPass::Record(
     clearValues[0].color.float32[1] = background.g;
     clearValues[0].color.float32[2] = background.b;
     clearValues[0].color.float32[3] = 1.0f;
-    clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[1].depthStencil = {kReverseDepthFar, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

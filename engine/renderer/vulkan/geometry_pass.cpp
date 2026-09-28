@@ -2,6 +2,7 @@
 
 #include "material_draw.h"
 #include "pipeline.h"
+#include "reverse_depth.h"
 
 namespace me
 {
@@ -60,10 +61,11 @@ void VulkanGeometryPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // The lighting pass identifies background pixels by depth == 1.0, never by these color clears,
-    // so zero serves; it also makes unwritten G-buffer pixels read as black in the debug views.
+    // The lighting pass identifies background pixels by the far plane's depth (reverse-Z: 0), never
+    // by these color clears, so zero serves; it also makes unwritten G-buffer pixels read as black
+    // in the debug views.
     std::array<VkClearValue, kAttachments.size()> clearValues{};
-    clearValues[kColorAttachmentCount].depthStencil = {1.0f, 0};
+    clearValues[kColorAttachmentCount].depthStencil = {kReverseDepthFar, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

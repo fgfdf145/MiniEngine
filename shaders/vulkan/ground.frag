@@ -25,7 +25,7 @@ layout(location = 7) out vec4 outSheen;
 void main()
 {
     vec3 camera = ubo.cameraWorldPosition.xyz;
-    vec4 farPoint = ubo.invViewProj * vec4(fragTexCoord * 2.0 - 1.0, 1.0, 1.0);
+    vec4 farPoint = ubo.invViewProj * vec4(fragTexCoord * 2.0 - 1.0, DEPTH_FAR, 1.0);
     vec3 direction = normalize(farPoint.xyz / farPoint.w - camera);
     float t;
     bool frontFace;
@@ -36,7 +36,7 @@ void main()
     vec4 position = vec4(camera + t * direction, 1.0);
     vec4 clip = ubo.proj * ubo.view * position;
     float depth = clip.z / clip.w;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         discard;
     }

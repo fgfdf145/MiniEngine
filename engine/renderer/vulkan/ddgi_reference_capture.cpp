@@ -2,6 +2,7 @@
 // docs/design/2026-09-27-ddgi-design.md. Kept apart from renderer.cpp, which is long enough.
 
 #include "renderer.h"
+#include "reverse_depth.h"
 #include "viewport_capture.h"
 
 #include <engine/core/log/log.h>
@@ -428,9 +429,9 @@ void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
                     const uint32_t x = std::min(column * stride + stride / 2, request.extent.width - 1);
                     const uint32_t y = std::min(row * stride + stride / 2, request.extent.height - 1);
                     // The image's top row is ndc.y == -1, the projection's Y flip being inside it
-                    // (deferred_lighting.frag); depth runs 0 to 1.
+                    // (deferred_lighting.frag); depth runs from the far plane at 0 to the near one at 1.
                     const glm::vec2 ndc = (glm::vec2(x, y) + 0.5f) / glm::vec2(request.extent.width, request.extent.height) * 2.0f - 1.0f;
-                    const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
+                    const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, kReverseDepthFar, 1.0f);
                     const glm::vec3 direction = glm::normalize(glm::vec3(far) / far.w - frame.cameraPosition);
                     const ReferenceSurface surface = ReferencePrimaryHit(scene, materials, frame.cameraPosition, direction);
                     const size_t index = static_cast<size_t>(row) * width + column;
@@ -552,7 +553,7 @@ void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
             const uint32_t x = std::min(static_cast<uint32_t>(column) * stride + stride / 2, request.extent.width - 1);
             const uint32_t y = std::min(static_cast<uint32_t>(row) * stride + stride / 2, request.extent.height - 1);
             const glm::vec2 ndc = (glm::vec2(x, y) + 0.5f) / glm::vec2(request.extent.width, request.extent.height) * 2.0f - 1.0f;
-            const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
+            const glm::vec4 far = inverseViewProjection * glm::vec4(ndc, kReverseDepthFar, 1.0f);
             const glm::vec3 direction = glm::normalize(glm::vec3(far) / far.w - frame.cameraPosition);
             const ReferenceSurface surface = ReferencePrimaryHit(scene, materials, frame.cameraPosition, direction);
             LOG_INFO("EXPLAIN grid ({},{}): GPU probes {:.1f}, reference {:.1f}", column, row, glm::dot(probes[index], kLuma), glm::dot(truth[index], kLuma));

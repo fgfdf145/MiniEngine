@@ -379,7 +379,8 @@ void RefreshViewportMatrices(
     const bool invertRenderYAxis = UsesInvertedRenderYAxis(currentBackendType);
     matrices.view = camera.GetViewMatrix();
     matrices.projection = camera.GetProjectionMatrix(viewportExtent, false, useZeroToOneDepth);
-    matrices.renderProjection = camera.GetProjectionMatrix(viewportExtent, invertRenderYAxis, useZeroToOneDepth);
+    matrices.renderProjection = camera.GetProjectionMatrix(
+        viewportExtent, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(currentBackendType));
     matrices.model =
         scene.HasSelection() ? scene.GetModelMatrix(scene.GetSelectedEntity()) : glm::mat4(1.0f);
 }

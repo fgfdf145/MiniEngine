@@ -41,12 +41,13 @@ VkRenderPass CreateFullscreenRenderPass(
 struct FullscreenPipelineOptions
 {
     const char* vertexShaderName = "fullscreen.vert.spv";
-    // Test against the pass's depth attachment with LESS_OR_EQUAL, writing nothing: with sky.vert,
-    // which places the triangle at depth 1, that draws only where no geometry did.
+    // Test against the pass's depth attachment with nearer-or-equal (reverse-Z: GREATER_OR_EQUAL),
+    // writing nothing: with sky.vert, which places the triangle on the far plane (depth 0), that
+    // draws only where no geometry did.
     bool depthTestAtFarPlane = false;
     // Adds the fragment's rgb to what the attachment holds (ONE, ONE) and leaves alpha alone.
     bool additiveBlend = false;
-    // Test with LESS and write the depth the fragment shader gives (gl_FragDepth), as a surface drawn
+    // Test with nearer (reverse-Z: GREATER) and write the depth the fragment shader gives (gl_FragDepth), as a surface drawn
     // among the scene's geometry does. Overrides depthTestAtFarPlane.
     bool depthTestAndWrite = false;
     // The render pass's color attachments, each written like the first.

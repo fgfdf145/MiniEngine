@@ -25,7 +25,9 @@ constexpr glm::vec3 kMinimumScale3(kMinimumScale, kMinimumScale, kMinimumScale);
 
 constexpr glm::vec3 kDefaultCameraPositionMeters(0.0f, 0.0f, 4.0f);
 constexpr float kDefaultCameraNearPlaneMeters = 0.1f;
-constexpr float kDefaultCameraFarPlaneMeters = 100.0f;
+// The scene's depth is reverse-Z (engine/renderer/vulkan/reverse_depth.h), so a far plane
+// kilometres out costs no depth precision; a race track fits inside the default.
+constexpr float kDefaultCameraFarPlaneMeters = 2000.0f;
 constexpr float kDefaultCameraMoveSpeedMetersPerSecond = 4.0f;
 constexpr float kMinimumFramedRadiusMeters = 0.5f;
 
@@ -41,7 +43,7 @@ constexpr float kUiCameraFovMaxDegrees = 90.0f;
 constexpr float kUiCameraNearMinMeters = 0.01f;
 constexpr float kUiCameraNearMaxMeters = 10.0f;
 constexpr float kUiCameraFarMinMeters = 1.0f;
-constexpr float kUiCameraFarMaxMeters = 1000.0f;
+constexpr float kUiCameraFarMaxMeters = 50000.0f;
 
 constexpr float kUiTransformTranslationRangeMeters = 1000.0f;
 constexpr float kUiTransformScaleMax = 1000.0f;

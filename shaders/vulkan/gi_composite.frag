@@ -23,7 +23,7 @@ void main()
 {
     outColor = vec4(0.0);
     float depth = texture(gbufferDepth, fragTexCoord).r;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         return;
     }

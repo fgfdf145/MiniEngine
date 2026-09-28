@@ -40,7 +40,7 @@ void main()
     }
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         imageStore(historyImage, pixel, vec4(1.0, 0.0, 0.0, 0.0));
         imageStore(aoImage, pixel, vec4(1.0));
@@ -74,7 +74,7 @@ void main()
                 continue;
             }
             float neighborDepth = texelFetch(depthTexture, source, 0).r;
-            if (neighborDepth >= 1.0)
+            if (IsFarDepth(neighborDepth))
             {
                 continue;
             }

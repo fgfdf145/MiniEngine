@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "pipeline.h"
+#include "reverse_depth.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
@@ -163,7 +164,7 @@ VulkanPipelineSet::VulkanPipelineSet(
                 variant.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
                 variant.depthStencil.depthTestEnable = VK_TRUE;
                 variant.depthStencil.depthWriteEnable = state.depthWriteEnabled && !config.decal ? VK_TRUE : VK_FALSE;
-                variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
+                variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? kReverseDepthNearerOrEqual : kReverseDepthNearer;
                 variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
                 variant.depthStencil.stencilTestEnable = VK_FALSE;
 

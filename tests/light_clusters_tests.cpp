@@ -189,7 +189,7 @@ void CapacityIsHonoured()
     std::vector<LightClusterSphere> spheres;
     for (uint32_t i = 0; i < 20; ++i)
     {
-        spheres.push_back(LightClusterSphere{glm::vec3(0.0f), 1000.0f, i});
+        spheres.push_back(LightClusterSphere{glm::vec3(0.0f), 1.0e5f, i});
     }
     const LightClusterGrid grid = BuildLightClusters(clusterCamera, spheres, 1000u);
     Require(grid.indices.size() == 1000u, "the index list stops at the capacity, got " + std::to_string(grid.indices.size()));

@@ -1,5 +1,7 @@
 #include "pipeline.h"
 
+#include "reverse_depth.h"
+
 #include <engine/core/paths/engine_paths.h>
 
 #include <algorithm>
@@ -157,7 +159,7 @@ VkPipeline CreateFullscreenPipeline(
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = options.depthTestAtFarPlane || options.depthTestAndWrite ? VK_TRUE : VK_FALSE;
     depthStencil.depthWriteEnable = options.depthTestAndWrite ? VK_TRUE : VK_FALSE;
-    depthStencil.depthCompareOp = options.depthTestAndWrite ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthCompareOp = options.depthTestAndWrite ? kReverseDepthNearer : kReverseDepthNearerOrEqual;
     depthStencil.stencilTestEnable = VK_FALSE;
 
     // Every full-screen pass covers every pixel and writes all four channels: the tone mapping pass

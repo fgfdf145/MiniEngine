@@ -133,6 +133,7 @@ add_library(engine_renderer
     vulkan/pipeline.h
     vulkan/pipeline_set.cpp
     vulkan/pipeline_set.h
+    vulkan/reverse_depth.h
     vulkan/ray_scene.cpp
     vulkan/ray_scene.h
     vulkan/render_pass.cpp
@@ -239,6 +240,7 @@ set(MINIENGINE_SHADER_INCLUDES
     detail_layers.glsl
     material_uv.glsl
     pre_exposure.glsl
+    reverse_depth.glsl
     scene_common.glsl
     pbr_common.glsl
     material_common.glsl

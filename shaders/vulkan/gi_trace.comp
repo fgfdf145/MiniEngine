@@ -64,7 +64,7 @@ void main()
     ivec2 pixel = HalfResSourcePixel(halfPixel);
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         imageStore(giRawImage, halfPixel, vec4(0.0));
         return;
@@ -125,7 +125,7 @@ void main()
 
                 ivec2 sampleCoord = ivec2(samplePixel);
                 float sampleDepth = texelFetch(depthTexture, sampleCoord, 0).r;
-                if (sampleDepth >= 1.0)
+                if (IsFarDepth(sampleDepth))
                 {
                     previousT = -1.0;
                     continue;

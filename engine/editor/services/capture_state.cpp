@@ -40,6 +40,7 @@ void VisitRenderDebug(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "forward_only", settings.forwardOnly);
     visit("", "clustered_lighting", settings.clusteredLighting);
     visit("", "local_light_shadows", settings.localLightShadows);
+    visit("", "shadow_distance", settings.shadowDistance);
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);
     visit("", "hdr_output", settings.hdrOutput);

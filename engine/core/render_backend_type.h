@@ -37,6 +37,14 @@ inline bool UsesZeroToOneDepth(RenderBackendType backendType)
     }
 }
 
+// The render projection is reverse-Z (near plane at depth 1, far plane at 0; see
+// engine/renderer/reverse_depth.h). The editor's own projection, which ImGuizmo and picking use,
+// stays conventional.
+inline bool UsesReverseRenderDepth(RenderBackendType backendType)
+{
+    return backendType == RenderBackendType::Vulkan;
+}
+
 inline bool UsesInvertedRenderYAxis(RenderBackendType backendType)
 {
     return backendType == RenderBackendType::Vulkan;

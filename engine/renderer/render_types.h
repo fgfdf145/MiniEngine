@@ -162,6 +162,9 @@ struct RenderDebugSettings
     // Shadow maps for point, spot and area lights (the local shadow atlas). Off, no local light
     // casts a shadow, as before they existed.
     bool localLightShadows = true;
+    // How far from the camera the sun's cascaded shadows reach, in metres (ShadowCascadeSettings::
+    // maxDistance). The same four cascades cover it, so a longer reach gives coarser shadows.
+    float shadowDistance = 80.0f;
     // Temporal anti-aliasing: jittered projection plus the TAA resolve. Off, the frame is neither
     // jittered nor resolved, and renders exactly as it did before TAA existed.
     bool taa = true;

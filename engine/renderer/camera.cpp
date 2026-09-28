@@ -20,12 +20,22 @@ glm::mat4 Camera::GetViewMatrix() const
     return glm::lookAt(position, position + GetForward(), worldUp);
 }
 
-glm::mat4 Camera::GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth) const
+glm::mat4 Camera::GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth, bool reverseDepth) const
 {
     const float aspect = extent.height == 0 ? 1.0f : static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    glm::mat4 projection = useZeroToOneDepth
-                               ? glm::perspectiveRH_ZO(glm::radians(fovDegrees), aspect, nearPlane, farPlane)
-                               : glm::perspectiveRH_NO(glm::radians(fovDegrees), aspect, nearPlane, farPlane);
+    glm::mat4 projection{1.0f};
+    if (useZeroToOneDepth && reverseDepth)
+    {
+        // Swapping the planes is all reverse-Z takes: depth = near * (far - d) / (d * (far - near))
+        // for view distance d, 1 at the near plane and 0 at the far one.
+        projection = glm::perspectiveRH_ZO(glm::radians(fovDegrees), aspect, farPlane, nearPlane);
+    }
+    else
+    {
+        projection = useZeroToOneDepth
+                         ? glm::perspectiveRH_ZO(glm::radians(fovDegrees), aspect, nearPlane, farPlane)
+                         : glm::perspectiveRH_NO(glm::radians(fovDegrees), aspect, nearPlane, farPlane);
+    }
     if (invertYAxis)
     {
         projection[1][1] *= -1.0f;

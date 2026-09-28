@@ -28,7 +28,7 @@ layout(set = 0, binding = 9) uniform sampler2D environmentBrdfLut;
 // fullscreen.vert emits it), from the camera toward the far plane.
 vec3 ViewDirectionFromTexCoord(vec2 texCoord)
 {
-    vec4 farPoint = ubo.invViewProj * vec4(texCoord * 2.0 - 1.0, 1.0, 1.0);
+    vec4 farPoint = ubo.invViewProj * vec4(texCoord * 2.0 - 1.0, DEPTH_FAR, 1.0);
     return normalize(farPoint.xyz / farPoint.w - ubo.cameraWorldPosition.xyz);
 }
 

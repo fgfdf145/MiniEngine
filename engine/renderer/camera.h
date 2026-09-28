@@ -23,7 +23,9 @@ class Camera
 {
   public:
     glm::mat4 GetViewMatrix() const;
-    glm::mat4 GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth) const;
+    // reverseDepth maps the near plane to depth 1 and the far plane to 0 (zero-to-one depth only):
+    // float depth then keeps its precision out to a far plane kilometres away.
+    glm::mat4 GetProjectionMatrix(RenderExtent extent, bool invertYAxis, bool useZeroToOneDepth, bool reverseDepth = false) const;
     glm::vec3 GetForward() const;
     glm::vec3 GetRight() const;
     void SetFromViewMatrix(const glm::mat4& viewMatrix);

@@ -70,7 +70,7 @@ void main()
     // Nothing traced (SSR off, or no history to take colour from): the lighting pass sees zero
     // confidence and uses the environment. History is left alone; the renderer invalidates it.
     float depth = texelFetch(depthTexture, pixel, 0).r;
-    if ((resolve.flags & SSR_FLAG_TRACED) == 0u || depth >= 1.0)
+    if ((resolve.flags & SSR_FLAG_TRACED) == 0u || IsFarDepth(depth))
     {
         imageStore(reflectionsImage, pixel, vec4(0.0));
         if ((resolve.flags & SSR_FLAG_TRACED) != 0u)
@@ -114,7 +114,7 @@ void main()
                 continue;
             }
             float neighborDepth = texelFetch(depthTexture, source, 0).r;
-            if (neighborDepth >= 1.0)
+            if (IsFarDepth(neighborDepth))
             {
                 continue;
             }

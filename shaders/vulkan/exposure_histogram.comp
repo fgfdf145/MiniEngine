@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "exposure_histogram.glsl"
+#include "reverse_depth.glsl"
 
 // One invocation per pixel, and one per bin: the workgroup has exactly
 // kExposureHistogramBinCount invocations, so each clears and flushes one shared bin.
@@ -54,7 +55,7 @@ void main()
         // radiance, so metering it would feed the exposure back into itself. A physical sky is
         // radiance like any surface and is metered.
         float depth = texelFetch(depthTexture, pixel, 0).r;
-        if (depth < 1.0 || constants.meterBackground != 0u)
+        if (!IsFarDepth(depth) || constants.meterBackground != 0u)
         {
             vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0)) * constants.invPreExposure;
             float luminance = ExposureLuminance(radiance);

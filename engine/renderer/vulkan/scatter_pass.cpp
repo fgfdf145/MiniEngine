@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "material_draw.h"
+#include "reverse_depth.h"
 
 #include <array>
 
@@ -74,7 +75,7 @@ void VulkanScatterPass::Record(
     std::array<VkClearValue, 2> clearValues{};
     // Alpha 0 is no draw: the gather skips it as another surface's.
     clearValues[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    clearValues[1].depthStencil = {1.0f, 0};
+    clearValues[1].depthStencil = {kReverseDepthFar, 0};
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

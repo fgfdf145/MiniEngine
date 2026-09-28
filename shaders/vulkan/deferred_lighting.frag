@@ -37,7 +37,7 @@ layout(location = 0) out vec4 outColor;
 void main()
 {
     float depth = texture(gbufferDepth, fragTexCoord).r;
-    if (depth >= 1.0)
+    if (IsFarDepth(depth))
     {
         outColor = vec4(lightingData.backgroundRadiance.rgb, 1.0);
         return;
@@ -61,7 +61,7 @@ void main()
 
     // fragTexCoord has its origin at the top left, and the image's top row is ndc.y == -1 (see
     // fullscreen.vert). The projection's Y flip is inside invViewProj, so no flip belongs here.
-    // Depth is 0..1 because the projection is perspectiveRH_ZO.
+    // Depth is 0..1 (reverse-Z, reverse_depth.glsl); invViewProj undoes it whichever way it runs.
     vec4 world = ubo.invViewProj * vec4(fragTexCoord * 2.0 - 1.0, depth, 1.0);
     vec3 worldPosition = world.xyz / world.w;
 

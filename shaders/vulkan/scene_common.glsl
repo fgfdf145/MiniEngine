@@ -5,6 +5,8 @@
 #ifndef SCENE_COMMON_GLSL
 #define SCENE_COMMON_GLSL
 
+#include "reverse_depth.glsl"
+
 // Light type constants: must match the C++ LightType enum.
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1

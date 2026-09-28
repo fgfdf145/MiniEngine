@@ -436,7 +436,7 @@ void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
     State().viewportMatrices.view = State().camera.GetViewMatrix();
     State().viewportMatrices.projection = State().camera.GetProjectionMatrix(extent, false, useZeroToOneDepth);
     State().viewportMatrices.renderProjection =
-        State().camera.GetProjectionMatrix(extent, invertRenderYAxis, useZeroToOneDepth);
+        State().camera.GetProjectionMatrix(extent, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(m_backendType));
     State().viewportMatrices.model =
         EditorWorld().HasSelection() ? EditorWorld().GetModelMatrix(EditorWorld().GetSelectedEntity()) : glm::mat4(1.0f);
 }

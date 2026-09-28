@@ -131,7 +131,7 @@ void main()
 
     vec3 moment1 = vec3(0.0);
     vec3 moment2 = vec3(0.0);
-    float closestDepth = 1.0;
+    float closestDepth = DEPTH_FAR;
     ivec2 closestPixel = pixel;
     for (int y = -1; y <= 1; ++y)
     {
@@ -141,9 +141,9 @@ void main()
             vec3 color = RgbToYCoCg(LoadCurrent(neighbor));
             moment1 += color;
             moment2 += color * color;
-            // Zero-to-one depth with the near plane at 0: the smallest depth is the nearest surface.
+            // Reverse-Z, the near plane at 1: the greatest depth is the nearest surface.
             float depth = texelFetch(depthTexture, neighbor, 0).r;
-            if (depth < closestDepth)
+            if (depth > closestDepth)
             {
                 closestDepth = depth;
                 closestPixel = neighbor;
@@ -157,11 +157,11 @@ void main()
 
     vec2 uv = (vec2(pixel) + 0.5) * taa.invExtent;
     vec2 velocity;
-    if (closestDepth >= 1.0)
+    if (IsFarDepth(closestDepth))
     {
         // Nothing but background around this pixel, and background writes no motion vector: it
         // moves with the camera alone, so reproject its far-plane point.
-        vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+        vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, DEPTH_FAR, 1.0);
         vec4 previousClip = ubo.prevViewProj * vec4(world.xyz / world.w, 1.0);
         velocity = uv - (previousClip.xy / previousClip.w * 0.5 + 0.5);
     }
