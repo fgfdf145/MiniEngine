@@ -29,6 +29,7 @@ class EditorRenderBackendBase : public IRenderBackend
     bool TickSharedFrame();
     bool ProcessPendingOperations();
     void ApplyUiActions(const EditorUiFrameResult& uiFrame);
+    void CaptureViewportWithState();
     void UpdateViewportMatrices(RenderExtent extent);
     EditorUiFrameResult DrawEditorUi(ImTextureID viewportTextureId, RenderExtent viewportExtent);
     bool HasDrawableArea() const;

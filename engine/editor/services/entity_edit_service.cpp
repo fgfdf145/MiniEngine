@@ -40,6 +40,42 @@ void FrameEntityModel(RendererSharedState& state, entt::entity entity)
         state.camera.FrameBounds(minBounds, maxBounds);
     }
 }
+// Applies `edit` to the selected model entity and rebuilds its renderables; restores the model when
+// that fails. `purpose` finishes the error for a missing selection ("... available to <purpose>").
+// Returns the entity's name.
+template <typename Edit>
+const std::string& EditSelectedModel(RendererSharedState& state, const char* purpose, Edit&& edit)
+{
+    IEditorWorld& world = state.GetEditorWorld();
+    if (!world.HasSelection() || world.HasLightComponent(world.GetSelectedEntity()))
+    {
+        throw std::runtime_error(std::string("No selected model entity available to ") + purpose);
+    }
+
+    const entt::entity selectedEntity = world.GetSelectedEntity();
+    ModelComponent& model = world.EditModel(selectedEntity);
+    const ModelComponent previousModel = model;
+    if (model.sourcePath.empty())
+    {
+        throw std::runtime_error("The selected entity does not reference an imported model");
+    }
+
+    edit(model);
+    try
+    {
+        world.MarkModelRenderableDirty(selectedEntity);
+        RefreshDirtySceneRenderables(state);
+    }
+    catch (...)
+    {
+        model = previousModel;
+        world.ClearModelRenderableDirty(selectedEntity);
+        throw;
+    }
+
+    state.lastModelLoadError.clear();
+    return world.GetTag(selectedEntity).name;
+}
 }
 
 namespace EntityEditService
@@ -376,149 +412,40 @@ void DeleteSelectedLightEntity(RendererSharedState& state)
 
 void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::string& path)
 {
-    if (!state.GetEditorWorld().HasSelection() ||
-        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to receive the texture");
-    }
-
-    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
-    const ModelComponent previousModel = model;
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.baseColorTextureOverridePath = path;
-    model.baseColorTextureOverrideUuid = AssetRegistry::GetOrCreateUuid(path);
-
-    try
-    {
-        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
-        RefreshDirtySceneRenderables(state);
-    }
-    catch (...)
-    {
-        model = previousModel;
-        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
-        throw;
-    }
-
-    state.lastModelLoadError.clear();
-    LOG_INFO(
-        "Applied selected texture override to '{}': {}",
-        state.GetEditorWorld().GetTag(selectedEntity).name,
-        path);
+    const std::string& name = EditSelectedModel(state, "receive the texture", [&](ModelComponent& model)
+                                                {
+                                                    model.baseColorTextureOverridePath = path;
+                                                    model.baseColorTextureOverrideUuid = AssetRegistry::GetOrCreateUuid(path);
+                                                });
+    LOG_INFO("Applied selected texture override to '{}': {}", name, path);
 }
 
 void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::string& variant)
 {
-    if (!state.GetEditorWorld().HasSelection() ||
-        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to change its material variant");
-    }
-
-    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
-    const ModelComponent previousModel = model;
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.materialVariant = variant;
-
-    try
-    {
-        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
-        RefreshDirtySceneRenderables(state);
-    }
-    catch (...)
-    {
-        model = previousModel;
-        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
-        throw;
-    }
-
-    state.lastModelLoadError.clear();
-    LOG_INFO(
-        "Material variant of '{}': {}",
-        state.GetEditorWorld().GetTag(selectedEntity).name,
-        variant.empty() ? std::string("default") : variant);
+    const std::string& name = EditSelectedModel(state, "change its material variant", [&](ModelComponent& model)
+                                                {
+                                                    model.materialVariant = variant;
+                                                });
+    LOG_INFO("Material variant of '{}': {}", name, variant.empty() ? std::string("default") : variant);
 }
 
 void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelLights)
 {
-    if (!state.GetEditorWorld().HasSelection() ||
-        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to toggle its model lights");
-    }
-
-    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
-    const ModelComponent previousModel = model;
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.useModelLights = useModelLights;
-
-    try
-    {
-        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
-        RefreshDirtySceneRenderables(state);
-    }
-    catch (...)
-    {
-        model = previousModel;
-        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
-        throw;
-    }
-
-    state.lastModelLoadError.clear();
-    LOG_INFO(
-        "Model lights of '{}': {}",
-        state.GetEditorWorld().GetTag(selectedEntity).name,
-        useModelLights ? "on" : "off");
+    const std::string& name = EditSelectedModel(state, "toggle its model lights", [&](ModelComponent& model)
+                                                {
+                                                    model.useModelLights = useModelLights;
+                                                });
+    LOG_INFO("Model lights of '{}': {}", name, useModelLights ? "on" : "off");
 }
 
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 {
-    if (!state.GetEditorWorld().HasSelection() ||
-        state.GetEditorWorld().HasLightComponent(state.GetEditorWorld().GetSelectedEntity()))
-    {
-        throw std::runtime_error("No selected model entity available to clear the texture override");
-    }
-
-    entt::entity selectedEntity = state.GetEditorWorld().GetSelectedEntity();
-    ModelComponent& model = state.GetEditorWorld().EditModel(selectedEntity);
-    const ModelComponent previousModel = model;
-    if (model.sourcePath.empty())
-    {
-        throw std::runtime_error("The selected entity does not reference an imported model");
-    }
-
-    model.baseColorTextureOverridePath.clear();
-    model.baseColorTextureOverrideUuid.clear();
-
-    try
-    {
-        state.GetEditorWorld().MarkModelRenderableDirty(selectedEntity);
-        RefreshDirtySceneRenderables(state);
-    }
-    catch (...)
-    {
-        model = previousModel;
-        state.GetEditorWorld().ClearModelRenderableDirty(selectedEntity);
-        throw;
-    }
-
-    state.lastModelLoadError.clear();
-    LOG_INFO("Cleared selected texture override for '{}'", state.GetEditorWorld().GetTag(selectedEntity).name);
+    const std::string& name = EditSelectedModel(state, "clear the texture override", [](ModelComponent& model)
+                                                {
+                                                    model.baseColorTextureOverridePath.clear();
+                                                    model.baseColorTextureOverrideUuid.clear();
+                                                });
+    LOG_INFO("Cleared selected texture override for '{}'", name);
 }
 
 bool PumpAsyncModelLoad(RendererSharedState& state)

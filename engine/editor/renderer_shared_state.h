@@ -30,9 +30,40 @@ struct ViewportDragPreviewState
     std::string modelPath;
 };
 
+// A background task's future and what callers ask of it.
+template <typename Result>
+struct AsyncTask
+{
+    // Valid while the task runs, and after it finished until its result is consumed.
+    std::future<Result> future;
+
+    bool IsActive() const
+    {
+        return future.valid();
+    }
+    bool IsLoading() const
+    {
+        return future.valid() &&
+               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
+    }
+};
+
+// A background task that reports how far it got.
+template <typename Result>
+struct AsyncTaskWithProgress : AsyncTask<Result>
+{
+    // Overall fraction in [0, 1], written by the task's thread.
+    std::shared_ptr<std::atomic<float>> progress;
+
+    float Progress() const
+    {
+        return progress ? progress->load() : 0.0f;
+    }
+};
+
 // State for a single in-flight async model parse.
 // Main thread writes fields before starting; background thread reads them.
-struct AsyncModelLoad
+struct AsyncModelLoad : AsyncTaskWithProgress<void>
 {
     // Path being loaded (set before thread starts, read-only in thread).
     std::string path;
@@ -46,73 +77,23 @@ struct AsyncModelLoad
     std::string previousSourcePath;
     std::string previousSourceUuid;
     std::string previousDisplayName;
-
-    // The async task. Valid while a load is in flight or completed but not yet consumed.
-    std::future<void> future;
-
-    // Overall load fraction in [0, 1], written by the loading thread.
-    std::shared_ptr<std::atomic<float>> progress;
-
-    bool IsActive() const
-    {
-        return future.valid();
-    }
-    bool IsLoading() const
-    {
-        return future.valid() &&
-               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
-    }
-    float Progress() const
-    {
-        return progress ? progress->load() : 0.0f;
-    }
 };
 
 // State for a single in-flight async scene load.
 // The background thread parses the scene file and pre-warms the model cache
 // for every referenced model; the main thread applies the parsed data once ready.
-struct AsyncSceneLoad
+struct AsyncSceneLoad : AsyncTaskWithProgress<SerializedSceneData>
 {
     std::string path;
-    std::future<SerializedSceneData> future;
-
-    // Overall load fraction in [0, 1], written by the loading thread.
-    std::shared_ptr<std::atomic<float>> progress;
-
-    bool IsActive() const
-    {
-        return future.valid();
-    }
-    bool IsLoading() const
-    {
-        return future.valid() &&
-               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
-    }
-    float Progress() const
-    {
-        return progress ? progress->load() : 0.0f;
-    }
 };
 
 // State for a single in-flight asset import: the file copies run on a
 // background thread so large models don't stall the UI frame.
-struct AsyncAssetImport
+// The future resolves to the imported model path, or throws.
+struct AsyncAssetImport : AsyncTask<std::string>
 {
     std::string sourcePath;
     std::string destinationDirectory;
-
-    // Resolves to the imported model path; throws on failure.
-    std::future<std::string> future;
-
-    bool IsActive() const
-    {
-        return future.valid();
-    }
-    bool IsLoading() const
-    {
-        return future.valid() &&
-               future.wait_for(std::chrono::seconds(0)) == std::future_status::timeout;
-    }
 };
 
 // A model load queued from the UI. Loads are started one at a time as the

@@ -531,11 +531,6 @@ void EditorUiController::DrawScenePanel(
                         ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", bounds.maxBounds.x, bounds.maxBounds.y, bounds.maxBounds.z);
                     }
 
-                    if (!model.sourcePath.empty())
-                    {
-                        ImGui::TextWrapped("Asset management is disabled while it is being rebuilt.");
-                    }
-
                     if (!metadata.materialVariants.empty())
                     {
                         const char* preview = model.materialVariant.empty() ? "Default" : model.materialVariant.c_str();

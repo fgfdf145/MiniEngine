@@ -26,6 +26,25 @@
 namespace me
 {
 
+namespace
+{
+// Runs one action the UI asked for. A failure goes to `error`, where the UI shows it, and to the
+// log as "Failed to <what>: <reason>"; the frame's other actions still run.
+template <typename Action>
+void RunUiAction(std::string& error, const std::string& what, Action&& action)
+{
+    try
+    {
+        action();
+    }
+    catch (const std::exception& exception)
+    {
+        error = exception.what();
+        LOG_ERROR("Failed to {}: {}", what, exception.what());
+    }
+}
+}
+
 EditorRenderBackendBase::EditorRenderBackendBase(
     Window& window,
     std::shared_ptr<RendererSharedState> sharedState,
@@ -172,301 +191,196 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         uiFrame.viewportInteractionRect,
         uiFrame.viewportAllowsMouseInteraction);
 
-    try
-    {
-        if (uiFrame.actions.hoveredViewportModel.has_value())
-        {
-            EntityEditService::UpdateViewportModelPreview(
-                State(),
-                uiFrame.actions.hoveredViewportModel->modelPath,
-                uiFrame.actions.hoveredViewportModel->worldPosition);
-        }
-        else
-        {
-            EntityEditService::ClearViewportModelPreview(State());
-        }
-    }
-    catch (const std::exception& error)
-    {
-        State().lastModelLoadError = error.what();
-        LOG_ERROR("Failed to update viewport model preview: {}", error.what());
-    }
+    const EditorUiActions& actions = uiFrame.actions;
+    std::string& modelError = State().lastModelLoadError;
+    std::string& sceneError = State().lastSceneIoError;
 
-    if (uiFrame.actions.importedModelRequest.has_value())
+    RunUiAction(modelError, "update viewport model preview", [&]
+                {
+                    if (actions.hoveredViewportModel.has_value())
+                    {
+                        EntityEditService::UpdateViewportModelPreview(
+                            State(), actions.hoveredViewportModel->modelPath, actions.hoveredViewportModel->worldPosition);
+                    }
+                    else
+                    {
+                        EntityEditService::ClearViewportModelPreview(State());
+                    }
+                });
+    if (const auto& request = actions.importedModelRequest)
     {
-        try
-        {
-            ModelImportService::StartAsyncImport(
-                State(),
-                uiFrame.actions.importedModelRequest->sourcePath,
-                uiFrame.actions.importedModelRequest->destinationDirectory,
-                uiFrame.actions.importedModelRequest->policy,
-                uiFrame.actions.importedModelRequest->kn5Options);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to start import of '{}' into '{}': {}",
-                uiFrame.actions.importedModelRequest->sourcePath,
-                uiFrame.actions.importedModelRequest->destinationDirectory,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("start import of '{}' into '{}'", request->sourcePath, request->destinationDirectory), [&]
+                    {
+                        ModelImportService::StartAsyncImport(
+                            State(), request->sourcePath, request->destinationDirectory, request->policy, request->kn5Options);
+                    });
     }
-    if (uiFrame.actions.selectedModelPath.has_value())
+    if (actions.selectedModelPath.has_value())
     {
-        State().pendingModelLoads.push_back({*uiFrame.actions.selectedModelPath, false});
+        State().pendingModelLoads.push_back({*actions.selectedModelPath, false});
     }
-    for (const std::string& path : uiFrame.actions.batchLoadModelPaths)
+    for (const std::string& path : actions.batchLoadModelPaths)
     {
         State().pendingModelLoads.push_back({path, true});
     }
-    if (uiFrame.actions.createSceneEntity)
+    if (actions.createSceneEntity)
     {
-        try
-        {
-            EntityEditService::CreateSceneEntity(State());
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to create scene entity: {}", error.what());
-        }
+        RunUiAction(modelError, "create scene entity", [&]
+                    {
+                        EntityEditService::CreateSceneEntity(State());
+                    });
     }
-    if (uiFrame.actions.createLightEntity.has_value())
+    if (const auto& light = actions.createLightEntity)
     {
-        try
-        {
-            EntityEditService::CreateSceneLightEntity(
-                State(),
-                uiFrame.actions.createLightEntity->name,
-                uiFrame.actions.createLightEntity->type);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to create light entity: {}", error.what());
-        }
+        RunUiAction(modelError, "create light entity", [&]
+                    {
+                        EntityEditService::CreateSceneLightEntity(State(), light->name, light->type);
+                    });
     }
-    if (uiFrame.actions.deleteSelectedSceneEntity)
+    if (actions.deleteSelectedSceneEntity)
     {
-        try
-        {
-            if (EditorWorld().HasSelection() &&
-                EditorWorld().HasLightComponent(EditorWorld().GetSelectedEntity()))
-            {
-                EntityEditService::DeleteSelectedLightEntity(State());
-            }
-            else
-            {
-                EntityEditService::DeleteSelectedSceneEntity(State());
-            }
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to delete selected entity: {}", error.what());
-        }
+        RunUiAction(modelError, "delete selected entity", [&]
+                    {
+                        if (EditorWorld().HasSelection() && EditorWorld().HasLightComponent(EditorWorld().GetSelectedEntity()))
+                        {
+                            EntityEditService::DeleteSelectedLightEntity(State());
+                        }
+                        else
+                        {
+                            EntityEditService::DeleteSelectedSceneEntity(State());
+                        }
+                    });
     }
-    if (uiFrame.actions.droppedViewportModel.has_value())
+    if (const auto& dropped = actions.droppedViewportModel)
     {
-        try
-        {
-            EntityEditService::CommitViewportModelPreview(
-                State(),
-                uiFrame.actions.droppedViewportModel->modelPath,
-                uiFrame.actions.droppedViewportModel->worldPosition);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to place dropped model '{}' into scene: {}",
-                uiFrame.actions.droppedViewportModel->modelPath,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("place dropped model '{}' into scene", dropped->modelPath), [&]
+                    {
+                        EntityEditService::CommitViewportModelPreview(State(), dropped->modelPath, dropped->worldPosition);
+                    });
     }
-    if (uiFrame.actions.updatedImportedModelMaterials.has_value())
+    if (const auto& update = actions.updatedImportedModelMaterials)
     {
-        try
-        {
-            ModelImportService::UpdateImportedModelMaterialDefinitions(
-                State(),
-                uiFrame.actions.updatedImportedModelMaterials->modelPath,
-                uiFrame.actions.updatedImportedModelMaterials->materials);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to update imported model materials '{}': {}",
-                uiFrame.actions.updatedImportedModelMaterials->modelPath,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("update imported model materials '{}'", update->modelPath), [&]
+                    {
+                        ModelImportService::UpdateImportedModelMaterialDefinitions(State(), update->modelPath, update->materials);
+                    });
     }
-    if (uiFrame.actions.selectedBaseColorTexturePath.has_value())
+    if (const auto& texture = actions.selectedBaseColorTexturePath)
     {
-        try
-        {
-            EntityEditService::ApplySelectedModelBaseColorTexture(
-                State(),
-                *uiFrame.actions.selectedBaseColorTexturePath);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to apply base color texture '{}' to selected model: {}",
-                *uiFrame.actions.selectedBaseColorTexturePath,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("apply base color texture '{}' to selected model", *texture), [&]
+                    {
+                        EntityEditService::ApplySelectedModelBaseColorTexture(State(), *texture);
+                    });
     }
-    if (uiFrame.actions.selectedMaterialVariant.has_value())
+    if (const auto& variant = actions.selectedMaterialVariant)
     {
-        try
-        {
-            EntityEditService::ApplySelectedModelMaterialVariant(State(), *uiFrame.actions.selectedMaterialVariant);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to apply material variant '{}' to selected model: {}",
-                *uiFrame.actions.selectedMaterialVariant,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("apply material variant '{}' to selected model", *variant), [&]
+                    {
+                        EntityEditService::ApplySelectedModelMaterialVariant(State(), *variant);
+                    });
     }
-    if (uiFrame.actions.selectedUseModelLights.has_value())
+    if (const auto& useModelLights = actions.selectedUseModelLights)
     {
-        try
-        {
-            EntityEditService::ApplySelectedModelUseModelLights(State(), *uiFrame.actions.selectedUseModelLights);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to toggle the selected model's lights: {}", error.what());
-        }
+        RunUiAction(modelError, "toggle the selected model's lights", [&]
+                    {
+                        EntityEditService::ApplySelectedModelUseModelLights(State(), *useModelLights);
+                    });
     }
-    if (uiFrame.actions.clearSelectedBaseColorTexture)
+    if (actions.clearSelectedBaseColorTexture)
     {
-        try
-        {
-            EntityEditService::ClearSelectedModelBaseColorTexture(State());
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to clear selected model texture override: {}", error.what());
-        }
+        RunUiAction(modelError, "clear selected model texture override", [&]
+                    {
+                        EntityEditService::ClearSelectedModelBaseColorTexture(State());
+                    });
     }
-    if (uiFrame.actions.selectedSceneLoadPath.has_value())
+    if (actions.selectedSceneLoadPath.has_value())
     {
-        State().pendingScenePath = *uiFrame.actions.selectedSceneLoadPath;
+        State().pendingScenePath = *actions.selectedSceneLoadPath;
     }
-    if (uiFrame.actions.newScene || uiFrame.actions.clearScene)
+    if (actions.newScene || actions.clearScene)
     {
-        try
-        {
-            if (uiFrame.actions.newScene)
-            {
-                SceneIoService::NewScene(State());
-            }
-            else
-            {
-                SceneIoService::ClearScene(State());
-            }
-        }
-        catch (const std::exception& error)
-        {
-            State().lastSceneIoError = error.what();
-            LOG_ERROR("Failed to reset the scene: {}", error.what());
-        }
+        RunUiAction(sceneError, "reset the scene", [&]
+                    {
+                        if (actions.newScene)
+                        {
+                            SceneIoService::NewScene(State());
+                        }
+                        else
+                        {
+                            SceneIoService::ClearScene(State());
+                        }
+                    });
     }
-    if (uiFrame.actions.captureViewport)
+    if (actions.captureViewport)
     {
-        // The frame on screen, before this one records: viewport_<local date>_<time>.png.
-        SDL_DateTime now{};
-        SDL_Time ticks = 0;
-        if (!SDL_GetCurrentTime(&ticks) || !SDL_TimeToDateTime(ticks, &now, true))
-        {
-            now = SDL_DateTime{};
-        }
-        char name[64];
-        std::snprintf(
-            name, sizeof(name), "viewport_%04d%02d%02d_%02d%02d%02d.png",
-            now.year, now.month, now.day, now.hour, now.minute, now.second);
-        const std::filesystem::path path = EnginePaths::ProjectRoot() / "captures" / name;
-        try
-        {
-            std::filesystem::create_directories(path.parent_path());
-            CaptureViewport(path);
-            // Beside the image, what it takes to render it again: viewport_<...>.scene.yaml and
-            // viewport_<...>.state.yaml, replayed with miniengine_app --state.
-            std::filesystem::path scenePath = path;
-            scenePath.replace_extension(".scene.yaml");
-            std::filesystem::path statePath = path;
-            statePath.replace_extension(".state.yaml");
-            SceneIoService::ExportSceneSnapshot(State(), scenePath.string());
-            CaptureState captureState;
-            captureState.scenePath = scenePath.filename();
-            captureState.originalScenePath = EditorWorld().GetSceneFilePath();
-            captureState.viewportExtent = State().fixedViewportExtent.value_or(State().requestedViewportExtent);
-            captureState.camera = State().camera;
-            captureState.renderDebug = State().renderDebug;
-            CaptureStateService::Write(statePath, captureState);
-            LOG_INFO("Wrote the capture's scene and state to '{}'", statePath.string());
-        }
-        catch (const std::exception& error)
-        {
-            LOG_ERROR("Failed to capture the viewport to '{}': {}", path.string(), error.what());
-        }
+        CaptureViewportWithState();
     }
-    if (uiFrame.actions.selectedSceneSavePath.has_value())
+    if (const auto& savePath = actions.selectedSceneSavePath)
     {
-        try
-        {
-            SceneIoService::SaveScene(State(), *uiFrame.actions.selectedSceneSavePath);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastSceneIoError = error.what();
-            LOG_ERROR("Failed to save scene '{}': {}", *uiFrame.actions.selectedSceneSavePath, error.what());
-        }
+        RunUiAction(sceneError, fmt::format("save scene '{}'", *savePath), [&]
+                    {
+                        SceneIoService::SaveScene(State(), *savePath);
+                    });
     }
-    for (const AssetManagerResult::RenamedAsset& renamed : uiFrame.actions.renamedAssets)
+    for (const AssetManagerResult::RenamedAsset& renamed : actions.renamedAssets)
     {
         ModelImportService::OnAssetRenamed(State(), renamed.oldPath, renamed.newPath);
     }
-    for (const std::string& deletePath : uiFrame.actions.deleteAssetPaths)
+    for (const std::string& deletePath : actions.deleteAssetPaths)
     {
-        try
-        {
-            ModelImportService::DeleteAssetPath(deletePath);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR("Failed to delete asset '{}': {}", deletePath, error.what());
-        }
+        RunUiAction(modelError, fmt::format("delete asset '{}'", deletePath), [&]
+                    {
+                        ModelImportService::DeleteAssetPath(deletePath);
+                    });
     }
-    if (uiFrame.actions.pastedAsset.has_value())
+    if (const auto& paste = actions.pastedAsset)
     {
-        try
-        {
-            ModelImportService::PasteAsset(
-                uiFrame.actions.pastedAsset->sourcePath,
-                uiFrame.actions.pastedAsset->destinationDirectory);
-        }
-        catch (const std::exception& error)
-        {
-            State().lastModelLoadError = error.what();
-            LOG_ERROR(
-                "Failed to paste asset '{}' into '{}': {}",
-                uiFrame.actions.pastedAsset->sourcePath,
-                uiFrame.actions.pastedAsset->destinationDirectory,
-                error.what());
-        }
+        RunUiAction(modelError, fmt::format("paste asset '{}' into '{}'", paste->sourcePath, paste->destinationDirectory), [&]
+                    {
+                        ModelImportService::PasteAsset(paste->sourcePath, paste->destinationDirectory);
+                    });
+    }
+}
+
+// The viewport as it is on screen, before this frame records, to
+// captures/viewport_<local date>_<time>.png, with what it takes to render it again beside it:
+// viewport_<...>.scene.yaml and viewport_<...>.state.yaml, replayed with miniengine_app --state.
+void EditorRenderBackendBase::CaptureViewportWithState()
+{
+    SDL_DateTime now{};
+    SDL_Time ticks = 0;
+    if (!SDL_GetCurrentTime(&ticks) || !SDL_TimeToDateTime(ticks, &now, true))
+    {
+        now = SDL_DateTime{};
+    }
+    char name[64];
+    std::snprintf(
+        name, sizeof(name), "viewport_%04d%02d%02d_%02d%02d%02d.png",
+        now.year, now.month, now.day, now.hour, now.minute, now.second);
+    const std::filesystem::path path = EnginePaths::ProjectRoot() / "captures" / name;
+    try
+    {
+        std::filesystem::create_directories(path.parent_path());
+        CaptureViewport(path);
+        // Beside the image, what it takes to render it again: viewport_<...>.scene.yaml and
+        // viewport_<...>.state.yaml, replayed with miniengine_app --state.
+        std::filesystem::path scenePath = path;
+        scenePath.replace_extension(".scene.yaml");
+        std::filesystem::path statePath = path;
+        statePath.replace_extension(".state.yaml");
+        SceneIoService::ExportSceneSnapshot(State(), scenePath.string());
+        CaptureState captureState;
+        captureState.scenePath = scenePath.filename();
+        captureState.originalScenePath = EditorWorld().GetSceneFilePath();
+        captureState.viewportExtent = State().fixedViewportExtent.value_or(State().requestedViewportExtent);
+        captureState.camera = State().camera;
+        captureState.renderDebug = State().renderDebug;
+        CaptureStateService::Write(statePath, captureState);
+        LOG_INFO("Wrote the capture's scene and state to '{}'", statePath.string());
+    }
+    catch (const std::exception& error)
+    {
+        LOG_ERROR("Failed to capture the viewport to '{}': {}", path.string(), error.what());
     }
 }
 

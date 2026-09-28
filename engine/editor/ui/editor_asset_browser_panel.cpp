@@ -96,6 +96,105 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
     ImGui::End();
 }
 
+namespace
+{
+// The track layouts a kn5 belongs to, as radio buttons after "This file only" (0).
+void DrawKn5LayoutChoice(const Kn5ModelSummary& summary, size_t& selectedLayout)
+{
+    // A track: the game draws the layout, of which this file is often only the main part.
+    ImGui::SeparatorText("Track Layout");
+    if (ImGui::RadioButton("This file only", selectedLayout == 0))
+    {
+        selectedLayout = 0;
+    }
+    for (size_t index = 0; index < summary.layouts.size(); ++index)
+    {
+        const Kn5ModelSummary::Layout& layout = summary.layouts[index];
+        const std::string label =
+            layout.path.filename().string() + " (" + std::to_string(layout.models) + " models)##layout" + std::to_string(index);
+        if (ImGui::RadioButton(label.c_str(), selectedLayout == index + 1))
+        {
+            selectedLayout = index + 1;
+        }
+    }
+    ImGui::TextDisabled("A layout places every model the game draws for it; the counts above are this file's.");
+}
+
+// The liveries beside a car, each with its bodywork's paint swatch, then the kn5's own textures;
+// with a note when the chosen one cannot change the body's colour.
+void DrawKn5LiveryList(const Kn5ModelSummary& summary, size_t& selectedSkin, float uiScale)
+{
+    const float rowHeight = ImGui::GetFrameHeightWithSpacing();
+    const float listHeight = rowHeight * static_cast<float>(std::min<size_t>(summary.skins.size(), 8)) +
+                             ImGui::GetStyle().WindowPadding.y * 2.0f;
+    if (ImGui::BeginChild("Liveries", ImVec2(420.0f * uiScale, listHeight), true))
+    {
+        const float swatchSize = ImGui::GetFrameHeight();
+        for (size_t index = 0; index < summary.skins.size(); ++index)
+        {
+            const Kn5SkinSummary& skin = summary.skins[index];
+            ImGui::PushID(static_cast<int>(index));
+            if (skin.paint.has_value())
+            {
+                const ImVec4 paint(
+                    (*skin.paint)[0] / 255.0f,
+                    (*skin.paint)[1] / 255.0f,
+                    (*skin.paint)[2] / 255.0f,
+                    1.0f);
+                ImGui::ColorButton(
+                    "##paint",
+                    paint,
+                    ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                    ImVec2(swatchSize, swatchSize));
+            }
+            else
+            {
+                ImGui::Dummy(ImVec2(swatchSize, swatchSize));
+            }
+            ImGui::SameLine();
+
+            std::string label = skin.name.empty() ? std::string("Embedded textures (kn5)") : skin.name;
+            if (index == 0)
+            {
+                label += "  (default)";
+            }
+            ImGui::AlignTextToFramePadding();
+            if (ImGui::Selectable(label.c_str(), selectedSkin == index, ImGuiSelectableFlags_None, ImVec2(0.0f, swatchSize)))
+            {
+                selectedSkin = index;
+            }
+            if (skin.paint.has_value())
+            {
+                ImGui::SetItemTooltip(
+                    "Paint #%02X%02X%02X from material '%s' (%s)",
+                    (*skin.paint)[0],
+                    (*skin.paint)[1],
+                    (*skin.paint)[2],
+                    skin.paintMaterial.c_str(),
+                    skin.paintFromSkin ? "this livery" : "the kn5");
+            }
+            else
+            {
+                ImGui::SetItemTooltip("The paint is a pattern, not one colour.");
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    const Kn5SkinSummary& chosen = summary.skins[selectedSkin];
+    if (!chosen.name.empty() && chosen.paint.has_value() && !chosen.paintFromSkin)
+    {
+        // Otherwise "I changed the livery and the body did not change" looks like a bug.
+        ImGui::TextDisabled("This livery does not ship the paint texture: the body keeps the kn5's colour.");
+    }
+    else if (chosen.name.empty())
+    {
+        ImGui::TextDisabled("The kn5's own textures are the export-time template, usually grey primer.");
+    }
+}
+}
+
 void EditorUiController::QueueDroppedFile(std::string path)
 {
     m_droppedFiles.push_back(std::move(path));
@@ -330,23 +429,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
 
         if (!summary.layouts.empty())
         {
-            // A track: the game draws the layout, of which this file is often only the main part.
-            ImGui::SeparatorText("Track Layout");
-            if (ImGui::RadioButton("This file only", pending.selectedLayout == 0))
-            {
-                pending.selectedLayout = 0;
-            }
-            for (size_t index = 0; index < summary.layouts.size(); ++index)
-            {
-                const Kn5ModelSummary::Layout& layout = summary.layouts[index];
-                const std::string label =
-                    layout.path.filename().string() + " (" + std::to_string(layout.models) + " models)##layout" + std::to_string(index);
-                if (ImGui::RadioButton(label.c_str(), pending.selectedLayout == index + 1))
-                {
-                    pending.selectedLayout = index + 1;
-                }
-            }
-            ImGui::TextDisabled("A layout places every model the game draws for it; the counts above are this file's.");
+            DrawKn5LayoutChoice(summary, pending.selectedLayout);
         }
 
         // The last entry is the kn5's own textures; any before it are the skins/ folders.
@@ -364,74 +447,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
         else
         {
             ImGui::SeparatorText("Livery");
-            const float rowHeight = ImGui::GetFrameHeightWithSpacing();
-            const float listHeight = rowHeight * static_cast<float>(std::min<size_t>(summary.skins.size(), 8)) +
-                                     ImGui::GetStyle().WindowPadding.y * 2.0f;
-            if (ImGui::BeginChild("Liveries", ImVec2(420.0f * m_effectiveUiScale, listHeight), true))
-            {
-                const float swatchSize = ImGui::GetFrameHeight();
-                for (size_t index = 0; index < summary.skins.size(); ++index)
-                {
-                    const Kn5SkinSummary& skin = summary.skins[index];
-                    ImGui::PushID(static_cast<int>(index));
-                    if (skin.paint.has_value())
-                    {
-                        const ImVec4 paint(
-                            (*skin.paint)[0] / 255.0f,
-                            (*skin.paint)[1] / 255.0f,
-                            (*skin.paint)[2] / 255.0f,
-                            1.0f);
-                        ImGui::ColorButton(
-                            "##paint",
-                            paint,
-                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
-                            ImVec2(swatchSize, swatchSize));
-                    }
-                    else
-                    {
-                        ImGui::Dummy(ImVec2(swatchSize, swatchSize));
-                    }
-                    ImGui::SameLine();
-
-                    std::string label = skin.name.empty() ? std::string("Embedded textures (kn5)") : skin.name;
-                    if (index == 0)
-                    {
-                        label += "  (default)";
-                    }
-                    ImGui::AlignTextToFramePadding();
-                    if (ImGui::Selectable(label.c_str(), pending.selectedSkin == index, ImGuiSelectableFlags_None, ImVec2(0.0f, swatchSize)))
-                    {
-                        pending.selectedSkin = index;
-                    }
-                    if (skin.paint.has_value())
-                    {
-                        ImGui::SetItemTooltip(
-                            "Paint #%02X%02X%02X from material '%s' (%s)",
-                            (*skin.paint)[0],
-                            (*skin.paint)[1],
-                            (*skin.paint)[2],
-                            skin.paintMaterial.c_str(),
-                            skin.paintFromSkin ? "this livery" : "the kn5");
-                    }
-                    else
-                    {
-                        ImGui::SetItemTooltip("The paint is a pattern, not one colour.");
-                    }
-                    ImGui::PopID();
-                }
-            }
-            ImGui::EndChild();
-
-            const Kn5SkinSummary& chosen = summary.skins[pending.selectedSkin];
-            if (!chosen.name.empty() && chosen.paint.has_value() && !chosen.paintFromSkin)
-            {
-                // Otherwise "I changed the livery and the body did not change" looks like a bug.
-                ImGui::TextDisabled("This livery does not ship the paint texture: the body keeps the kn5's colour.");
-            }
-            else if (chosen.name.empty())
-            {
-                ImGui::TextDisabled("The kn5's own textures are the export-time template, usually grey primer.");
-            }
+            DrawKn5LiveryList(summary, pending.selectedSkin, m_effectiveUiScale);
         }
 
         ImGui::SeparatorText("Options");

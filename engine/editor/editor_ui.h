@@ -4,15 +4,14 @@
 #include "editor_commands.h"
 #include "engine_settings.h"
 
-#include <engine/renderer/camera.h>
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/model_import_target.h>
-#include <engine/logic/gizmo_settings.h>
 #include <engine/asset/model_loader.h>
-#include <optional>
-
-#include <engine/scene/scene_components.h>
+#include <engine/logic/gizmo_settings.h>
+#include <engine/renderer/camera.h>
 #include <engine/renderer/rhi/backend.h>
+#include <engine/scene/scene_components.h>
+
 #include <entt/entt.hpp>
 
 #include <SDL3/SDL.h>
@@ -170,6 +169,15 @@ class EditorUiController
     void DrawGraphicsDebugPanel();
     void DrawInputMonitorPanel();
     void DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result);
+    // The model processor's graph section for one material: toolbar, selection and canvas.
+    // Each returns whether the graph changed.
+    bool DrawMaterialGraphEditor(ModelImportedMaterialInfo& material, size_t materialIndex);
+    bool DrawMaterialGraphCanvas(ModelImportedMaterialInfo& material, size_t materialIndex);
+    bool DrawMaterialGraphAddNodePopup(
+        ModelImportedMaterialInfo& material,
+        bool canPasteClipboardNode,
+        std::optional<MaterialGraphNodePosition>& pendingPasteNodePosition);
+    void UpdateMaterialGraphView(const ImVec2& canvasOrigin, bool canvasBackgroundHovered);
     void DrawScenePanel(
         IEditorWorld& scene,
         const std::string& lastLoadError,
@@ -202,6 +210,10 @@ class EditorUiController
     bool m_hasCapturedBaseStyle = false;
     bool m_hasCapturedDefaultThemeColors = false;
     bool m_hasAppliedEngineSettings = false;
+    GizmoDragSnapState m_gizmoDragSnapState;
+
+    // The model processor: one imported model's materials, edited as graphs and previewed.
+    bool m_showModelProcessorWindow = false;
     std::string m_modelProcessorModelPath;
     std::string m_modelProcessorDisplayName;
     std::string m_modelProcessorStatusMessage;
@@ -209,31 +221,56 @@ class EditorUiController
     std::vector<ModelImportedMaterialInfo> m_modelProcessorMaterials;
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_modelProcessorSelectedUvSubmeshIndex = 0;
-    uint32_t m_materialGraphSelectedNodeId = 0;
-    uint32_t m_materialGraphSelectedLinkId = 0;
-    uint32_t m_materialGraphResizeNodeId = 0;
-    float m_modelPreviewYaw = 0.55f;
-    float m_modelPreviewPitch = 0.35f;
-    float m_modelPreviewDistance = 3.0f;
-    GizmoDragSnapState m_gizmoDragSnapState;
-    MaterialGraphNodePosition m_materialGraphContextSpawnPosition{};
-    MaterialGraphNodePosition m_materialGraphViewOrigin{};
-    MaterialGraphNodePosition m_materialGraphResizeStartPosition{};
-    float m_materialGraphZoom = 1.0f;
-    ImVec2 m_materialGraphResizeStartMouse{0.0f, 0.0f};
-    ImVec2 m_materialGraphResizeStartSize{0.0f, 0.0f};
-    std::optional<MaterialShaderNode> m_materialGraphClipboardNode;
-    bool m_modelPreviewAutoFramePending = false;
-    bool m_materialGraphLinkDragActive = false;
-    bool m_materialGraphNodeResizeActive = false;
-    bool m_materialGraphPanningActive = false;
-    std::string m_materialGraphLinkDragFromSlot;
-    bool m_openMaterialGraphAddNodePopup = false;
-    bool m_showModelProcessorWindow = false;
     bool m_modelProcessorDirty = false;
     double m_modelProcessorLastExistsCheckTime = -1.0e9;
-    uint32_t m_materialGraphLinkDragFromNodeId = 0;
-    uint8_t m_materialGraphResizeEdges = 0;
+    // Its preview camera, orbiting the model.
+    struct ModelPreviewCamera
+    {
+        float yaw = 0.55f;
+        float pitch = 0.35f;
+        float distance = 3.0f;
+        bool autoFramePending = false;
+    };
+    ModelPreviewCamera m_modelPreview;
+    // Its material graph canvas: selection, drags and view. Reset whenever a model is opened or
+    // closed, by assigning a default one.
+    struct MaterialGraphCanvas
+    {
+        uint32_t selectedNodeId = 0;
+        uint32_t selectedLinkId = 0;
+        MaterialGraphNodePosition viewOrigin{};
+        float zoom = 1.0f;
+        bool panningActive = false;
+        // Where a node added from the context menu goes.
+        MaterialGraphNodePosition contextSpawnPosition{};
+        bool openAddNodePopup = false;
+        bool linkDragActive = false;
+        uint32_t linkDragFromNodeId = 0;
+        std::string linkDragFromSlot;
+        bool nodeResizeActive = false;
+        uint32_t resizeNodeId = 0;
+        uint8_t resizeEdges = 0;
+        MaterialGraphNodePosition resizeStartPosition{};
+        ImVec2 resizeStartMouse{0.0f, 0.0f};
+        ImVec2 resizeStartSize{0.0f, 0.0f};
+
+        void CancelLinkDrag()
+        {
+            linkDragActive = false;
+            linkDragFromNodeId = 0;
+            linkDragFromSlot.clear();
+        }
+        void CancelResize()
+        {
+            nodeResizeActive = false;
+            resizeNodeId = 0;
+            resizeEdges = 0;
+        }
+    };
+    MaterialGraphCanvas m_materialGraph;
+    // A copied node. Kept across models, so it can be pasted into another one.
+    std::optional<MaterialShaderNode> m_materialGraphClipboardNode;
+
     std::optional<AssetManager> m_assetManager;
     // An import whose model folder already holds files, waiting for the user
     // to choose keep-both, overwrite or cancel.

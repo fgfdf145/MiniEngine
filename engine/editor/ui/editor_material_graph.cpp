@@ -139,23 +139,7 @@ const char* GetMaterialGraphNodeTypeLabel(MaterialShaderNodeType type)
 
 const char* GetDefaultMaterialGraphNodeName(MaterialShaderNodeType type)
 {
-    switch (type)
-    {
-    case MaterialShaderNodeType::Texture:
-        return "Texture";
-    case MaterialShaderNodeType::Scalar:
-        return "Scalar";
-    case MaterialShaderNodeType::Color:
-        return "Color";
-    case MaterialShaderNodeType::Surface:
-        return "Surface";
-    case MaterialShaderNodeType::Blend:
-        return "Blend";
-    case MaterialShaderNodeType::Output:
-        return "Material Output";
-    default:
-        return "Node";
-    }
+    return type == MaterialShaderNodeType::Output ? "Material Output" : GetMaterialGraphNodeTypeLabel(type);
 }
 
 ImVec4 GetMaterialGraphHeaderColor(MaterialShaderNodeType type)
