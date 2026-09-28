@@ -834,6 +834,32 @@ endif()
 
 set_target_properties(miniengine_height_fog_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_volumetric_clouds_tests
+    volumetric_clouds_tests.cpp
+)
+miniengine_group_target_sources(miniengine_volumetric_clouds_tests)
+
+target_link_libraries(miniengine_volumetric_clouds_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.volumetric_clouds
+    COMMAND miniengine_volumetric_clouds_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_volumetric_clouds_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_volumetric_clouds_tests>
+            $<TARGET_FILE_DIR:miniengine_volumetric_clouds_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_volumetric_clouds_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gltf_material_extensions_tests
     gltf_material_extensions_tests.cpp
 )

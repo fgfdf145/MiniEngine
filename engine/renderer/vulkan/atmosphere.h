@@ -52,6 +52,9 @@ class VulkanAtmosphere
     TextureDescriptorBinding GetTransmittanceBinding() const;
     TextureDescriptorBinding GetSkyViewBinding() const;
     TextureDescriptorBinding GetAerialPerspectiveBinding() const;
+    // The volumetric clouds' noise (cloud_noise.comp), built on the first Record; REPEAT sampler.
+    TextureDescriptorBinding GetCloudShapeNoiseBinding() const;
+    TextureDescriptorBinding GetCloudDetailNoiseBinding() const;
     VkBuffer GetIrradianceBuffer() const;
 
   private:
@@ -63,9 +66,16 @@ class VulkanAtmosphere
         kAerialPerspective,
         kLutCount
     };
-    // The pipelines are the four LUTs' plus the sky's SH projection.
+    // The pipelines are the four LUTs', the sky's SH projection and the clouds' noise.
     static constexpr size_t kIrradiancePipeline = kLutCount;
-    static constexpr size_t kPipelineCount = kLutCount + 1;
+    static constexpr size_t kCloudNoisePipeline = kLutCount + 1;
+    static constexpr size_t kPipelineCount = kLutCount + 2;
+    enum CloudNoise : size_t
+    {
+        kCloudShape,
+        kCloudDetail,
+        kCloudNoiseCount
+    };
 
     struct LutImage
     {
@@ -89,6 +99,10 @@ class VulkanAtmosphere
     VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     std::array<LutImage, kLutCount> m_images{};
+    // RGBA8 volumes, written once and then only sampled; GENERAL like the LUTs.
+    std::array<LutImage, kCloudNoiseCount> m_cloudNoise{};
+    VkSampler m_cloudSampler = VK_NULL_HANDLE;
+    bool m_cloudNoiseBuilt = false;
     std::array<VkPipeline, kPipelineCount> m_pipelines{};
     // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0
     // binding 7. Shared by the frames in flight like the LUTs.

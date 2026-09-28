@@ -45,6 +45,21 @@ SceneEnvironment MakeEnvironment()
     environment.heightFog.maxOpacity = 0.75f;
     environment.heightFog.albedo = glm::vec3(0.5f, 0.75f, 1.0f);
     environment.heightFog.anisotropy = 0.25f;
+    environment.clouds.enabled = true;
+    environment.clouds.coverage = 0.625f;
+    environment.clouds.baseAltitude = 1250.0f;
+    environment.clouds.thickness = 1750.0f;
+    environment.clouds.density = 0.03125f;
+    environment.clouds.shapeScale = 5000.0f;
+    environment.clouds.detailScale = 750.0f;
+    environment.clouds.weatherScale = 30000.0f;
+    environment.clouds.detailErosion = 0.5f;
+    environment.clouds.forwardAnisotropy = 0.75f;
+    environment.clouds.backAnisotropy = -0.25f;
+    environment.clouds.backWeight = 0.125f;
+    environment.clouds.albedo = 0.875f;
+    environment.clouds.ambientScale = 1.5f;
+    environment.clouds.hazeDistance = 20000.0f;
     return environment;
 }
 
@@ -119,6 +134,34 @@ void MissingFogNodeLoadsAsOff()
     Require(!loaded.environment.heightFog.enabled, "and the default is off");
 }
 
+// A scene saved before the clouds existed: an environment node without clouds reads as clouds off.
+void MissingCloudsNodeLoadsAsOff()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->SetEnvironment(MakeEnvironment());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_noclouds.yaml";
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
+    std::string yaml;
+    {
+        std::ifstream in(path);
+        yaml.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const size_t begin = yaml.find("\n  clouds:");
+    const size_t end = yaml.find("\neditor:");
+    Require(begin != std::string::npos && end != std::string::npos && begin < end,
+            "the saved scene has a clouds node at the end of the environment node");
+    yaml.erase(begin, end - begin);
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << yaml;
+    }
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::filesystem::remove(path);
+    Require(loaded.environment.heightFog == MakeEnvironment().heightFog, "the fog before it still loads");
+    Require(loaded.environment.clouds == CloudSettings{}, "a scene without clouds must load with the clouds off");
+    Require(!loaded.environment.clouds.enabled, "and the default is off");
+}
+
 void StartupSceneHasAtmosphereAndSun()
 {
     std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
@@ -165,6 +208,7 @@ void NewSceneKeepsOnlySunAndSky()
     Require(CountLights(*world, LightType::Directional) == 1, "a new scene has the startup sun");
     Require(world->GetEnvironment().mode == EnvironmentMode::Atmosphere, "a new scene uses the atmosphere");
     Require(world->GetEnvironment().heightFog.enabled, "a new scene has height fog");
+    Require(world->GetEnvironment().clouds.enabled, "a new scene has clouds");
     Require(!world->HasSelection(), "nothing is selected in a new scene");
     Require(world->GetGizmoSettings().operation == ImGuizmo::SCALE, "a new scene keeps the gizmo settings");
 }
@@ -193,6 +237,7 @@ int main()
         RoundTripsThroughYaml();
         MissingNodeLoadsAsNone();
         MissingFogNodeLoadsAsOff();
+        MissingCloudsNodeLoadsAsOff();
         StartupSceneHasAtmosphereAndSun();
         NewSceneKeepsOnlySunAndSky();
         ClearKeepsEnvironmentAndFile();

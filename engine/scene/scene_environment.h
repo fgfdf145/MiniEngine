@@ -90,12 +90,51 @@ struct HeightFogSettings
     bool operator==(const HeightFogSettings&) const = default;
 };
 
+// Volumetric clouds (engine/renderer/volumetric_clouds.h): a layer of cumulus in a shell around the
+// planet, ray marched through tiling Perlin-Worley noise and lit by the atmosphere's sun and sky.
+// Drawn in the Atmosphere mode only, on the sky and in the environment probe.
+struct CloudSettings
+{
+    // Off for scenes saved before the clouds existed; EditorScene::AddDefaultSunAndSky turns it on.
+    bool enabled = false;
+    // Share of the sky the layer covers, [0, 1]: 0 clear, 1 overcast.
+    float coverage = 0.45f;
+    // Altitude of the layer's base above the ground, metres.
+    float baseAltitude = 1500.0f;
+    // From the base to the tallest tops, metres.
+    float thickness = 2500.0f;
+    // Extinction per metre where the noise is fully dense. Measured cumulus reaches 0.02 to 0.1;
+    // denser than 0.02 the sun no longer reaches past the outer tens of metres and the lit faces
+    // turn grey.
+    float density = 0.02f;
+    // Metres over which the base shape, the detail and the coverage noise repeat.
+    float shapeScale = 7000.0f;
+    float detailScale = 900.0f;
+    float weatherScale = 40000.0f;
+    // How deeply the detail noise erodes the base shape's edges, [0, 1].
+    float detailErosion = 0.35f;
+    // Dual-lobe Henyey-Greenstein: the forward lobe gives the silver lining toward the sun, the
+    // backward one the lit faces away from it; backWeight blends them.
+    float forwardAnisotropy = 0.8f;
+    float backAnisotropy = -0.3f;
+    float backWeight = 0.3f;
+    // Single-scattering albedo: scattering over extinction.
+    float albedo = 0.98f;
+    // Multiplies the sky light the clouds pick up.
+    float ambientScale = 1.0f;
+    // Metres over which distant clouds fade into the sky behind them.
+    float hazeDistance = 25000.0f;
+
+    bool operator==(const CloudSettings&) const = default;
+};
+
 struct SceneEnvironment
 {
     EnvironmentMode mode = EnvironmentMode::None;
     AtmosphereSettings atmosphere;
     HdriSettings hdri;
     HeightFogSettings heightFog;
+    CloudSettings clouds;
 
     bool operator==(const SceneEnvironment&) const = default;
 };

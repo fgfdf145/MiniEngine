@@ -188,6 +188,51 @@ void PacksHeightFog()
     Require(clamped.heightFogColor == glm::vec4(0.0f, 1.0f, 0.5f, 1.0f), "albedo and max opacity are clamped");
     Require(clamped.heightFogParams.x == 0.95f, "anisotropy is clamped");
 }
+
+void PacksClouds()
+{
+    SceneEnvironment environment{};
+    environment.mode = EnvironmentMode::Atmosphere;
+    const AtmosphereParameters p = BuildAtmosphereParameters(environment.atmosphere);
+    CloudSettings& clouds = environment.clouds;
+    clouds.enabled = true;
+    clouds.coverage = 0.5f;
+    clouds.baseAltitude = 2000.0f;
+    clouds.thickness = 1000.0f;
+    clouds.density = 0.05f;
+    clouds.shapeScale = 4000.0f;
+    clouds.detailScale = 500.0f;
+    clouds.weatherScale = 20000.0f;
+    clouds.detailErosion = 0.25f;
+    clouds.forwardAnisotropy = 0.75f;
+    clouds.backAnisotropy = -0.25f;
+    clouds.backWeight = 0.5f;
+    clouds.albedo = 0.875f;
+    clouds.ambientScale = 2.0f;
+    clouds.hazeDistance = 50000.0f;
+
+    const EnvironmentUniformData data =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f), nullptr);
+    Require(glm::length(data.cloudLayer - glm::vec4(2.0f, 1.0f, 0.5f, 50.0f)) < 1e-4f, "the layer is packed in km, extinction per km");
+    Require(data.cloudScales == glm::vec4(0.25f, 2.0f, 0.05f, 0.25f), "the tile sizes become frequencies per km");
+    Require(data.cloudPhase == glm::vec4(0.75f, -0.25f, 0.5f, 0.875f), "the lobes and albedo are packed");
+    Require(glm::length(data.cloudParams - glm::vec4(2.0f, 50.0f, 0.0f, 0.0f)) < 1e-4f,
+            "ambient and haze are packed; the frame index is the renderer's");
+
+    SceneEnvironment off = environment;
+    off.clouds.enabled = false;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, off, p, std::nullopt, glm::vec3(0.0f), nullptr).cloudLayer.w == 0.0f,
+            "disabled clouds upload no extinction");
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Hdri, environment, p, std::nullopt, glm::vec3(0.0f), nullptr).cloudLayer.w == 0.0f,
+            "the clouds are off outside the Atmosphere mode");
+
+    SceneEnvironment wild = environment;
+    wild.clouds.coverage = 3.0f;
+    wild.clouds.density = 10.0f;
+    const EnvironmentUniformData clamped =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, wild, p, std::nullopt, glm::vec3(0.0f), nullptr);
+    Require(clamped.cloudLayer.z == 1.0f && clamped.cloudLayer.w == 500.0f, "coverage and density are clamped");
+}
 }
 
 int main()
@@ -199,6 +244,7 @@ int main()
         EdgeCases();
         BuildsUniformData();
         PacksHeightFog();
+        PacksClouds();
     }
     catch (const std::exception& error)
     {

@@ -226,6 +226,29 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             DragFloatInRange("Anisotropy", &fog.anisotropy, 0.0f, 0.95f, "%.2f");
             ImGui::PopID();
         }
+
+        if (ImGui::CollapsingHeader("Clouds"))
+        {
+            CloudSettings& clouds = environment.clouds;
+            ImGui::PushID("Clouds");
+            ImGui::Checkbox("Enabled", &clouds.enabled);
+            constexpr ImGuiSliderFlags kLog = ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp;
+            DragFloatInRange("Coverage", &clouds.coverage, 0.0f, 1.0f, "%.2f");
+            ImGui::DragFloat("Base altitude (m)", &clouds.baseAltitude, 10.0f, 100.0f, 10000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::DragFloat("Thickness (m)", &clouds.thickness, 10.0f, 100.0f, 10000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::DragFloat("Density (/m)", &clouds.density, 0.001f, 0.001f, 0.5f, "%.4f", kLog);
+            ImGui::DragFloat("Shape scale (m)", &clouds.shapeScale, 10.0f, 500.0f, 100000.0f, "%.0f", kLog);
+            ImGui::DragFloat("Detail scale (m)", &clouds.detailScale, 1.0f, 50.0f, 10000.0f, "%.0f", kLog);
+            ImGui::DragFloat("Coverage scale (m)", &clouds.weatherScale, 10.0f, 1000.0f, 500000.0f, "%.0f", kLog);
+            DragFloatInRange("Detail erosion", &clouds.detailErosion, 0.0f, 1.0f, "%.2f");
+            DragFloatInRange("Forward anisotropy", &clouds.forwardAnisotropy, 0.0f, 0.95f, "%.2f");
+            DragFloatInRange("Back anisotropy", &clouds.backAnisotropy, -0.95f, 0.0f, "%.2f");
+            DragFloatInRange("Back weight", &clouds.backWeight, 0.0f, 1.0f, "%.2f");
+            DragFloatInRange("Albedo", &clouds.albedo, 0.0f, 1.0f, "%.3f");
+            DragFloatInRange("Ambient scale", &clouds.ambientScale, 0.0f, 4.0f, "%.2f");
+            ImGui::DragFloat("Haze distance (m)", &clouds.hazeDistance, 100.0f, 1000.0f, 1000000.0f, "%.0f", kLog);
+            ImGui::PopID();
+        }
     }
     else if (environment.mode == EnvironmentMode::Hdri)
     {

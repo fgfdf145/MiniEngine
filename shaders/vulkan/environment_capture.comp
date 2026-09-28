@@ -3,9 +3,11 @@
 
 #include "scene_common.glsl"
 #include "atmosphere_sampling.glsl"
+#include "volumetric_clouds.glsl"
 #include "cubemap_common.glsl"
 
-// The sky's radiance into mip 0 of the radiance cube: 2 x 2 samples per texel, no sun disk.
+// The sky's radiance into mip 0 of the radiance cube: 2 x 2 samples per texel, no sun disk, with
+// the volumetric clouds in front of it.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 1, binding = 0, rgba16f) uniform writeonly image2DArray radianceOut;
@@ -28,5 +30,13 @@ void main()
             sum += hdri ? SampleEnvironmentMap(direction) : SampleSkyForLighting(direction);
         }
     }
-    imageStore(radianceOut, ivec3(id), vec4(min(sum * 0.25, vec3(65504.0)), 1.0));
+    vec3 radiance = sum * 0.25;
+    if (!hdri)
+    {
+        // The clouds too, so reflections show them: one march through the texel's centre, with
+        // fewer steps than the sky's, as the capture is blurred and all of it runs at once.
+        vec3 center = CubeFaceDirection(id.z, (vec2(id.xy) + 0.5) / RADIANCE_CUBE_SIZE);
+        radiance = ApplyClouds(radiance, radiance, center, 0.5, 12, 32);
+    }
+    imageStore(radianceOut, ivec3(id), vec4(min(radiance, vec3(65504.0)), 1.0));
 }

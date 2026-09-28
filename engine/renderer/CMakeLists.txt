@@ -12,6 +12,8 @@ add_library(engine_render_core
     glare.h
     height_fog.cpp
     height_fog.h
+    volumetric_clouds.cpp
+    volumetric_clouds.h
     camera.cpp
     camera.h
     ddgi_volume.cpp
@@ -204,6 +206,7 @@ set(MINIENGINE_SHADER_SOURCES
     atmosphere_skyview.comp
     atmosphere_aerial_perspective.comp
     atmosphere_irradiance.comp
+    cloud_noise.comp
     environment_capture.comp
     environment_prefilter.comp
     sky.vert
@@ -255,6 +258,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_integrate.glsl
     atmosphere_sampling.glsl
     height_fog.glsl
+    volumetric_clouds.glsl
     spherical_harmonics.glsl
     cubemap_common.glsl
     ray_tracing_common.glsl
