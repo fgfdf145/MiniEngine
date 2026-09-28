@@ -149,7 +149,9 @@ vec4 ShadeRayHit(vec3 origin, vec3 direction, float t, vec3 N, vec3 albedo, vec3
         RayHit shadowHit;
         if (cosine > 0.0 && !TraceSceneRay(shadowOrigin, L, 0.0, 1e30, true, rayId ^ 0x9e3779b9u, shadowHit))
         {
-            irradiance += light.colorAndIntensity.rgb * light.colorAndIntensity.w * cosine;
+            // The shadow caster is the sun, which the clouds shade too.
+            float clouds = int(index) == int(ubo.shadowParams.x) ? CloudShadow(P) : 1.0;
+            irradiance += light.colorAndIntensity.rgb * light.colorAndIntensity.w * cosine * clouds;
         }
     }
     for (uint index = ubo.lightCounts.x; index < ubo.lightCounts.y; ++index)

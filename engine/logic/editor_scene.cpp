@@ -257,6 +257,28 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         fog.albedo = ReadVec3(fogNode["albedo"], fog.albedo);
         fog.anisotropy = fogNode["anisotropy"].as<float>(fog.anisotropy);
     }
+
+    // Scenes saved before the clouds existed have no node and read as clouds off.
+    const YAML::Node cloudNode = node["clouds"];
+    if (cloudNode && cloudNode.IsMap())
+    {
+        CloudSettings& clouds = environment.clouds;
+        clouds.enabled = cloudNode["enabled"].as<bool>(clouds.enabled);
+        clouds.coverage = cloudNode["coverage"].as<float>(clouds.coverage);
+        clouds.baseAltitude = cloudNode["base_altitude"].as<float>(clouds.baseAltitude);
+        clouds.thickness = cloudNode["thickness"].as<float>(clouds.thickness);
+        clouds.density = cloudNode["density"].as<float>(clouds.density);
+        clouds.shapeScale = cloudNode["shape_scale"].as<float>(clouds.shapeScale);
+        clouds.detailScale = cloudNode["detail_scale"].as<float>(clouds.detailScale);
+        clouds.weatherScale = cloudNode["weather_scale"].as<float>(clouds.weatherScale);
+        clouds.detailErosion = cloudNode["detail_erosion"].as<float>(clouds.detailErosion);
+        clouds.forwardAnisotropy = cloudNode["forward_anisotropy"].as<float>(clouds.forwardAnisotropy);
+        clouds.backAnisotropy = cloudNode["back_anisotropy"].as<float>(clouds.backAnisotropy);
+        clouds.backWeight = cloudNode["back_weight"].as<float>(clouds.backWeight);
+        clouds.albedo = cloudNode["albedo"].as<float>(clouds.albedo);
+        clouds.ambientScale = cloudNode["ambient_scale"].as<float>(clouds.ambientScale);
+        clouds.hazeDistance = cloudNode["haze_distance"].as<float>(clouds.hazeDistance);
+    }
     return environment;
 }
 
@@ -291,6 +313,24 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "max_opacity" << YAML::Value << fog.maxOpacity;
     EmitVec3(emitter, "albedo", fog.albedo);
     emitter << YAML::Key << "anisotropy" << YAML::Value << fog.anisotropy;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "clouds" << YAML::Value << YAML::BeginMap;
+    const CloudSettings& clouds = environment.clouds;
+    emitter << YAML::Key << "enabled" << YAML::Value << clouds.enabled;
+    emitter << YAML::Key << "coverage" << YAML::Value << clouds.coverage;
+    emitter << YAML::Key << "base_altitude" << YAML::Value << clouds.baseAltitude;
+    emitter << YAML::Key << "thickness" << YAML::Value << clouds.thickness;
+    emitter << YAML::Key << "density" << YAML::Value << clouds.density;
+    emitter << YAML::Key << "shape_scale" << YAML::Value << clouds.shapeScale;
+    emitter << YAML::Key << "detail_scale" << YAML::Value << clouds.detailScale;
+    emitter << YAML::Key << "weather_scale" << YAML::Value << clouds.weatherScale;
+    emitter << YAML::Key << "detail_erosion" << YAML::Value << clouds.detailErosion;
+    emitter << YAML::Key << "forward_anisotropy" << YAML::Value << clouds.forwardAnisotropy;
+    emitter << YAML::Key << "back_anisotropy" << YAML::Value << clouds.backAnisotropy;
+    emitter << YAML::Key << "back_weight" << YAML::Value << clouds.backWeight;
+    emitter << YAML::Key << "albedo" << YAML::Value << clouds.albedo;
+    emitter << YAML::Key << "ambient_scale" << YAML::Value << clouds.ambientScale;
+    emitter << YAML::Key << "haze_distance" << YAML::Value << clouds.hazeDistance;
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
 }
@@ -543,8 +583,9 @@ void EditorScene::AddDefaultSunAndSky()
 
     m_environment = SceneEnvironment{};
     m_environment.mode = EnvironmentMode::Atmosphere;
-    // New scenes have fog; scene files saved without it keep reading as fog off.
+    // New scenes have fog and clouds; scene files saved without them keep reading as off.
     m_environment.heightFog.enabled = true;
+    m_environment.clouds.enabled = true;
 }
 
 void EditorScene::Clear()

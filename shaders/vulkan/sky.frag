@@ -3,6 +3,7 @@
 
 #include "scene_common.glsl"
 #include "atmosphere_sampling.glsl"
+#include "volumetric_clouds.glsl"
 #include "cubemap_common.glsl"
 
 // Must match the push constant VulkanForwardPass::RecordSky pushes.
@@ -36,6 +37,9 @@ void main()
     }
     if (mode == ENVIRONMENT_ATMOSPHERE)
     {
+        // The clouds hide the sky and the sun behind them and fade into the sky's own haze. TAA
+        // averages the per-pixel jitter of the march.
+        luminance = ApplyClouds(luminance, SampleSkyForLighting(direction), direction, CloudJitter(gl_FragCoord.xy), 32, 96);
         // Here and not in SampleSky, which also feeds the probe and the sky SH the fog is lit by.
         luminance = ApplyHeightFogToSky(luminance, direction);
     }

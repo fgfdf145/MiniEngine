@@ -732,13 +732,16 @@ void VulkanRenderer::DrawFrame()
             m_whiteBalanceReferences.skyIlluminanceRgb = lightSelection.ambientLuminance * glm::pi<float>();
         }
     }
-    const EnvironmentUniformData environmentData = BuildEnvironmentUniformData(
+    EnvironmentUniformData environmentData = BuildEnvironmentUniformData(
         environmentMode,
         environment,
         atmosphereParameters,
         sun,
         State().camera.position,
         environmentMode == EnvironmentMode::Hdri ? &m_environmentMapSh : nullptr);
+    // The clouds' march jitter steps with the TAA sequence, which averages it; without TAA the
+    // index stands still and so does the noise.
+    environmentData.cloudParams.w = static_cast<float>(m_taaFrameIndex % 64u);
 
     if (environmentMode == EnvironmentMode::Hdri)
     {
@@ -1476,6 +1479,9 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.transmittance = m_atmosphere->GetTransmittanceBinding();
     bindings.skyView = m_atmosphere->GetSkyViewBinding();
     bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
+    bindings.cloudShapeNoise = m_atmosphere->GetCloudShapeNoiseBinding();
+    bindings.cloudDetailNoise = m_atmosphere->GetCloudDetailNoiseBinding();
+    bindings.cloudShadow = m_atmosphere->GetCloudShadowBinding();
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
     bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};

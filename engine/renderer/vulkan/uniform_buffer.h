@@ -54,6 +54,12 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding ddgiIrradiance;
     TextureDescriptorBinding ddgiVisibility;
     VkBuffer ddgiProbeStates = VK_NULL_HANDLE;
+    // Bindings 24 and 25: the volumetric clouds' shape and detail noise (VulkanAtmosphere), in
+    // GENERAL.
+    TextureDescriptorBinding cloudShapeNoise;
+    TextureDescriptorBinding cloudDetailNoise;
+    // Binding 26: the clouds' shadow map (VulkanAtmosphere), in GENERAL.
+    TextureDescriptorBinding cloudShadow;
 };
 
 struct MaterialTextureBinding

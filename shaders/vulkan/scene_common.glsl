@@ -69,6 +69,10 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 heightFogDensity;           // x density per m (0 off), y falloff per m, z fog height m, w start distance m
     vec4 heightFogColor;             // rgb albedo, w max opacity
     vec4 heightFogParams;            // x Henyey-Greenstein g, yzw sun illuminance at the camera times albedo
+    vec4 cloudLayer;                 // x base altitude km, y thickness km, z coverage, w extinction per km (0 off)
+    vec4 cloudScales;                // noise frequencies per km: x shape, y detail, z coverage; w detail erosion
+    vec4 cloudPhase;                 // x forward g, y back g, z back weight, w single-scattering albedo
+    vec4 cloudParams;                // x ambient scale, y haze distance km, w frame index
 
     // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
     mat4 viewProjNoJitter;
