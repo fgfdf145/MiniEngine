@@ -220,27 +220,27 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16 + 6 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16 + 16 + 3 * 16 + 6 * 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
     offsetof(CameraUniformData, ddgi) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16 + 3 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16 + 16 + 3 * 16,
     "ddgi must follow ambientGradient with no padding");
 static_assert(
     offsetof(CameraUniformData, ambientGradient) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16 + 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16 + 16,
     "ambientGradient must follow exposure with no padding");
 static_assert(
     offsetof(CameraUniformData, exposure) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64 + 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16,
     "exposure must follow specularAntiAliasing with no padding");
 static_assert(
     offsetof(CameraUniformData, specularAntiAliasing) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16 + 64,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64,
     "specularAntiAliasing must follow viewProjNoJitter with no padding");
 static_assert(
     offsetof(CameraUniformData, viewProjNoJitter) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + 18 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16,
     "viewProjNoJitter must follow the environment block with no padding");
 static_assert(
     offsetof(CameraUniformData, shadow) == kCameraBlockHeaderBytes,

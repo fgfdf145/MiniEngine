@@ -34,6 +34,11 @@ void main()
     {
         luminance = textureLod(prefilteredEnvironment, direction, skyData.backgroundRadiance.w * (PREFILTER_MIP_COUNT - 1.0)).rgb;
     }
+    if (mode == ENVIRONMENT_ATMOSPHERE)
+    {
+        // Here and not in SampleSky, which also feeds the probe and the sky SH the fog is lit by.
+        luminance = ApplyHeightFogToSky(luminance, direction);
+    }
     // Pre-exposed (see pre_exposure.glsl). The sun disk alone is ~1e9 cd/m^2, which now fits in half
     // float at daylight exposure; the clamp stays for HDRI texels and low EVs, since the target must
     // never hold infinity.

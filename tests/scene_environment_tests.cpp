@@ -37,6 +37,14 @@ SceneEnvironment MakeEnvironment()
     environment.hdri.uuid = "33333333-3333-4333-8333-333333333333";
     environment.hdri.intensity = 1500.0f;
     environment.hdri.rotationDegrees = -90.0f;
+    environment.heightFog.enabled = true;
+    environment.heightFog.density = 0.0078125f;
+    environment.heightFog.heightFalloff = 0.0625f;
+    environment.heightFog.fogHeight = -12.5f;
+    environment.heightFog.startDistance = 40.0f;
+    environment.heightFog.maxOpacity = 0.75f;
+    environment.heightFog.albedo = glm::vec3(0.5f, 0.75f, 1.0f);
+    environment.heightFog.anisotropy = 0.25f;
     return environment;
 }
 
@@ -81,6 +89,34 @@ void MissingNodeLoadsAsNone()
     const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
     std::filesystem::remove(path);
     Require(loaded.environment.mode == EnvironmentMode::None, "a scene without an environment node must load as None");
+}
+
+// A scene saved before the fog existed: an environment node without height_fog reads as fog off.
+void MissingFogNodeLoadsAsOff()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->SetEnvironment(MakeEnvironment());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_nofog.yaml";
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
+    std::string yaml;
+    {
+        std::ifstream in(path);
+        yaml.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const size_t begin = yaml.find("\n  height_fog:");
+    const size_t end = yaml.find("\neditor:");
+    Require(begin != std::string::npos && end != std::string::npos && begin < end,
+            "the saved scene has a height_fog node at the end of the environment node");
+    yaml.erase(begin, end - begin);
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << yaml;
+    }
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::filesystem::remove(path);
+    Require(loaded.environment.mode == EnvironmentMode::Hdri, "the rest of the environment still loads");
+    Require(loaded.environment.heightFog == HeightFogSettings{}, "a scene without height_fog must load with the fog off");
+    Require(!loaded.environment.heightFog.enabled, "and the default is off");
 }
 
 void StartupSceneHasAtmosphereAndSun()
@@ -128,6 +164,7 @@ void NewSceneKeepsOnlySunAndSky()
     Require(world->Registry().view<const ModelComponent>().size() == 0u, "a new scene has no models");
     Require(CountLights(*world, LightType::Directional) == 1, "a new scene has the startup sun");
     Require(world->GetEnvironment().mode == EnvironmentMode::Atmosphere, "a new scene uses the atmosphere");
+    Require(world->GetEnvironment().heightFog.enabled, "a new scene has height fog");
     Require(!world->HasSelection(), "nothing is selected in a new scene");
     Require(world->GetGizmoSettings().operation == ImGuizmo::SCALE, "a new scene keeps the gizmo settings");
 }
@@ -155,6 +192,7 @@ int main()
     {
         RoundTripsThroughYaml();
         MissingNodeLoadsAsNone();
+        MissingFogNodeLoadsAsOff();
         StartupSceneHasAtmosphereAndSun();
         NewSceneKeepsOnlySunAndSky();
         ClearKeepsEnvironmentAndFile();

@@ -24,6 +24,8 @@ skyIrradiance;
 layout(set = 0, binding = 8) uniform samplerCube prefilteredEnvironment;
 layout(set = 0, binding = 9) uniform sampler2D environmentBrdfLut;
 
+#include "height_fog.glsl"
+
 // The world direction through a full-screen texture coordinate (origin top left, as
 // fullscreen.vert emits it), from the camera toward the far plane.
 vec3 ViewDirectionFromTexCoord(vec2 texCoord)
@@ -201,7 +203,8 @@ vec3 SampleEnvironmentMap(vec3 direction)
 // Hazes a surface's radiance by the atmosphere between it and the camera: color * T + L, from the
 // aerial perspective volume at the surface's screen position and view distance (times the
 // scene's distance scale). The first half slice fades in from nothing, so surfaces right at the
-// camera are untouched. Off unless the environment is the atmosphere.
+// camera are untouched. The height fog goes on top, as in Unreal; both are of the form
+// color * T + L, which gi_composite.frag relies on. Off unless the environment is the atmosphere.
 vec3 ApplyAerialPerspective(vec3 color, vec3 worldPosition)
 {
     if (EnvironmentMode() != ENVIRONMENT_ATMOSPHERE)
@@ -221,7 +224,7 @@ vec3 ApplyAerialPerspective(vec3 color, vec3 worldPosition)
     float w = sqrt(slice / AERIAL_PERSPECTIVE_SLICE_COUNT);
     vec4 aerialPerspective = textureLod(atmosphereAerialPerspective, vec3(uv, w), 0.0);
     float transmittance = 1.0 - weight * (1.0 - aerialPerspective.a);
-    return color * transmittance + aerialPerspective.rgb * weight;
+    return ApplyHeightFog(color * transmittance + aerialPerspective.rgb * weight, worldPosition);
 }
 
 // Radiance that lights surfaces: the sky as SampleSky shows it, without the sun's disk (the sun

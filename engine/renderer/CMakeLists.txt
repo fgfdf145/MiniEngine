@@ -10,6 +10,8 @@ add_library(engine_render_core
     bloom_chain.h
     glare.cpp
     glare.h
+    height_fog.cpp
+    height_fog.h
     camera.cpp
     camera.h
     ddgi_volume.cpp
@@ -252,6 +254,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_common.glsl
     atmosphere_integrate.glsl
     atmosphere_sampling.glsl
+    height_fog.glsl
     spherical_harmonics.glsl
     cubemap_common.glsl
     ray_tracing_common.glsl

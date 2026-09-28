@@ -210,6 +210,22 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             "%.1f",
             ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
         DragFloatInRange("Sun disk (deg)", &atmosphere.sunAngularDiameterDegrees, 0.1f, 5.0f, "%.3f");
+
+        if (ImGui::CollapsingHeader("Height fog"))
+        {
+            HeightFogSettings& fog = environment.heightFog;
+            ImGui::PushID("HeightFog");
+            ImGui::Checkbox("Enabled", &fog.enabled);
+            constexpr ImGuiSliderFlags kLog = ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp;
+            ImGui::DragFloat("Density (/m)", &fog.density, 0.0001f, 0.0f, 0.1f, "%.5f", kLog);
+            ImGui::DragFloat("Height falloff (/m)", &fog.heightFalloff, 0.0005f, 1e-4f, 1.0f, "%.4f", kLog);
+            ImGui::DragFloat("Fog height (m)", &fog.fogHeight, 0.5f, -10000.0f, 10000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::DragFloat("Start distance (m)", &fog.startDistance, 1.0f, 0.0f, 100000.0f, "%.0f", kLog);
+            DragFloatInRange("Max opacity", &fog.maxOpacity, 0.0f, 1.0f, "%.2f");
+            ImGui::ColorEdit3("Albedo", &fog.albedo.x);
+            DragFloatInRange("Anisotropy", &fog.anisotropy, 0.0f, 0.95f, "%.2f");
+            ImGui::PopID();
+        }
     }
     else if (environment.mode == EnvironmentMode::Hdri)
     {

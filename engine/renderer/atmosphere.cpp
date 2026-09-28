@@ -1,5 +1,7 @@
 #include "atmosphere.h"
 
+#include "height_fog.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -107,6 +109,19 @@ EnvironmentUniformData BuildEnvironmentUniformData(
             data.hdriIrradianceSh[index] = glm::vec4(rotated[index] * intensity, 0.0f);
         }
     }
+    const HeightFogSettings fog = ClampHeightFogSettings(environment.heightFog);
+    const bool fogOn = fog.enabled && mode == EnvironmentMode::Atmosphere;
+    data.heightFogDensity = glm::vec4(fogOn ? fog.density : 0.0f, fog.heightFalloff, fog.fogHeight, fog.startDistance);
+    data.heightFogColor = glm::vec4(fog.albedo, fog.maxOpacity);
+    glm::vec3 fogSun(0.0f);
+    if (fogOn && sun.has_value())
+    {
+        const glm::vec3 cameraKm = ToAtmosphereCameraPositionKm(p, cameraPositionMeters);
+        const float altitudeKm = glm::length(cameraKm) - p.bottomRadiusKm;
+        const float cosSunZenith = glm::dot(directionToSun, glm::normalize(cameraKm));
+        fogSun = sun->illuminance * ComputeTransmittanceToSpace(p, altitudeKm, cosSunZenith) * fog.albedo;
+    }
+    data.heightFogParams = glm::vec4(fog.anisotropy, fogSun);
     return data;
 }
 }

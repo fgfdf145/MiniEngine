@@ -44,10 +44,13 @@ uint32_t GroupCount(uint32_t size)
 // What decides the captured sky: the uniform block, with the camera reduced to what the capture
 // sees of it. The HDRI ignores the camera; the atmosphere's sky-view depends on the altitude only
 // (the planet is round, but a kilometre's walk turns it by a hundredth of a degree), kept to the
-// metre.
+// metre. The height fog is left out: the capture is never fogged.
 EnvironmentUniformData CaptureKey(const EnvironmentUniformData& environment)
 {
     EnvironmentUniformData key = environment;
+    key.heightFogDensity = glm::vec4(0.0f);
+    key.heightFogColor = glm::vec4(0.0f);
+    key.heightFogParams = glm::vec4(0.0f);
     const bool hdri = static_cast<EnvironmentMode>(static_cast<uint32_t>(environment.sunDirectionAndMode.w)) == EnvironmentMode::Hdri;
     const float altitudeMeters = hdri ? 0.0f : std::round(glm::length(glm::vec3(environment.cameraPositionKm)) * 1000.0f);
     key.cameraPositionKm = glm::vec4(0.0f, altitudeMeters, 0.0f, 0.0f);

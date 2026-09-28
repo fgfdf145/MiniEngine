@@ -66,6 +66,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 atmosphereCameraPositionKm; // xyz camera relative to the planet centre
     vec4 hdriParameters;             // x intensity, y rotation in turns
     vec4 hdriIrradianceSh[9];        // the HDRI's radiance SH, rotated and scaled; xyz used
+    vec4 heightFogDensity;           // x density per m (0 off), y falloff per m, z fog height m, w start distance m
+    vec4 heightFogColor;             // rgb albedo, w max opacity
+    vec4 heightFogParams;            // x Henyey-Greenstein g, yzw sun illuminance at the camera times albedo
 
     // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
     mat4 viewProjNoJitter;

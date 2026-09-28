@@ -132,6 +132,62 @@ void BuildsUniformData()
                 "the HDRI SH is rotated and scaled by the intensity");
     }
 }
+
+void PacksHeightFog()
+{
+    SceneEnvironment environment{};
+    environment.mode = EnvironmentMode::Atmosphere;
+    const AtmosphereParameters p = BuildAtmosphereParameters(environment.atmosphere);
+    HeightFogSettings& fog = environment.heightFog;
+    fog.enabled = true;
+    fog.density = 0.004f;
+    fog.heightFalloff = 0.05f;
+    fog.fogHeight = 3.0f;
+    fog.startDistance = 20.0f;
+    fog.maxOpacity = 0.8f;
+    fog.albedo = glm::vec3(0.9f, 0.8f, 0.7f);
+    fog.anisotropy = 0.5f;
+
+    const EnvironmentUniformData data =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f), nullptr);
+    Require(data.heightFogDensity == glm::vec4(0.004f, 0.05f, 3.0f, 20.0f), "density, falloff, height and start are packed");
+    Require(data.heightFogColor == glm::vec4(0.9f, 0.8f, 0.7f, 0.8f), "albedo and max opacity are packed");
+    Require(data.heightFogParams.x == 0.5f, "anisotropy is packed");
+    Require(glm::vec3(data.heightFogParams.y, data.heightFogParams.z, data.heightFogParams.w) == glm::vec3(0.0f), "no sun, no sun glow");
+
+    AtmosphereSun sun{};
+    sun.directionToSun = glm::vec3(0.0f, 1.0f, 0.0f);
+    sun.illuminance = glm::vec3(100000.0f);
+    const EnvironmentUniformData lit =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f), nullptr);
+    const glm::vec3 expectedSun = sun.illuminance * ComputeTransmittanceToSpace(p, 0.0005f, 1.0f) * fog.albedo;
+    Require(glm::length(glm::vec3(lit.heightFogParams.y, lit.heightFogParams.z, lit.heightFogParams.w) - expectedSun) < 1.0f,
+            "the sun at the camera is carried, dimmed by the air and tinted");
+    sun.directionToSun = glm::normalize(glm::vec3(1.0f, -0.2f, 0.0f));
+    const EnvironmentUniformData set =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, sun, glm::vec3(0.0f), nullptr);
+    Require(set.heightFogParams.y == 0.0f && set.heightFogParams.w == 0.0f, "a set sun adds no glow");
+
+    SceneEnvironment off = environment;
+    off.heightFog.enabled = false;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, off, p, std::nullopt, glm::vec3(0.0f), nullptr).heightFogDensity.x == 0.0f,
+            "a disabled fog uploads density 0");
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Hdri, environment, p, std::nullopt, glm::vec3(0.0f), nullptr).heightFogDensity.x == 0.0f,
+            "the fog is off outside the Atmosphere mode");
+
+    SceneEnvironment wild = environment;
+    wild.heightFog.density = 5.0f;
+    wild.heightFog.heightFalloff = 0.0f;
+    wild.heightFog.startDistance = -10.0f;
+    wild.heightFog.maxOpacity = 2.0f;
+    wild.heightFog.albedo = glm::vec3(-1.0f, 2.0f, 0.5f);
+    wild.heightFog.anisotropy = 1.0f;
+    const EnvironmentUniformData clamped =
+        BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, wild, p, std::nullopt, glm::vec3(0.0f), nullptr);
+    Require(clamped.heightFogDensity == glm::vec4(1.0f, 1e-5f, 3.0f, 0.0f), "density, falloff and start are clamped");
+    Require(clamped.heightFogColor == glm::vec4(0.0f, 1.0f, 0.5f, 1.0f), "albedo and max opacity are clamped");
+    Require(clamped.heightFogParams.x == 0.95f, "anisotropy is clamped");
+}
 }
 
 int main()
@@ -142,6 +198,7 @@ int main()
         LowSunIsDimmerAndRedder();
         EdgeCases();
         BuildsUniformData();
+        PacksHeightFog();
     }
     catch (const std::exception& error)
     {

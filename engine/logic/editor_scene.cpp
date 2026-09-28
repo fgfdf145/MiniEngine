@@ -242,6 +242,21 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         hdri.intensity = hdriNode["intensity"].as<float>(hdri.intensity);
         hdri.rotationDegrees = hdriNode["rotation_degrees"].as<float>(hdri.rotationDegrees);
     }
+
+    // Scenes saved before the fog existed have no node and read as fog off.
+    const YAML::Node fogNode = node["height_fog"];
+    if (fogNode && fogNode.IsMap())
+    {
+        HeightFogSettings& fog = environment.heightFog;
+        fog.enabled = fogNode["enabled"].as<bool>(fog.enabled);
+        fog.density = fogNode["density"].as<float>(fog.density);
+        fog.heightFalloff = fogNode["height_falloff"].as<float>(fog.heightFalloff);
+        fog.fogHeight = fogNode["fog_height"].as<float>(fog.fogHeight);
+        fog.startDistance = fogNode["start_distance"].as<float>(fog.startDistance);
+        fog.maxOpacity = fogNode["max_opacity"].as<float>(fog.maxOpacity);
+        fog.albedo = ReadVec3(fogNode["albedo"], fog.albedo);
+        fog.anisotropy = fogNode["anisotropy"].as<float>(fog.anisotropy);
+    }
     return environment;
 }
 
@@ -265,6 +280,17 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "uuid" << YAML::Value << environment.hdri.uuid;
     emitter << YAML::Key << "intensity" << YAML::Value << environment.hdri.intensity;
     emitter << YAML::Key << "rotation_degrees" << YAML::Value << environment.hdri.rotationDegrees;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "height_fog" << YAML::Value << YAML::BeginMap;
+    const HeightFogSettings& fog = environment.heightFog;
+    emitter << YAML::Key << "enabled" << YAML::Value << fog.enabled;
+    emitter << YAML::Key << "density" << YAML::Value << fog.density;
+    emitter << YAML::Key << "height_falloff" << YAML::Value << fog.heightFalloff;
+    emitter << YAML::Key << "fog_height" << YAML::Value << fog.fogHeight;
+    emitter << YAML::Key << "start_distance" << YAML::Value << fog.startDistance;
+    emitter << YAML::Key << "max_opacity" << YAML::Value << fog.maxOpacity;
+    EmitVec3(emitter, "albedo", fog.albedo);
+    emitter << YAML::Key << "anisotropy" << YAML::Value << fog.anisotropy;
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
 }
@@ -517,6 +543,8 @@ void EditorScene::AddDefaultSunAndSky()
 
     m_environment = SceneEnvironment{};
     m_environment.mode = EnvironmentMode::Atmosphere;
+    // New scenes have fog; scene files saved without it keep reading as fog off.
+    m_environment.heightFog.enabled = true;
 }
 
 void EditorScene::Clear()

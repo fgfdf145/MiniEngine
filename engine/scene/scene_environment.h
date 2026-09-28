@@ -64,11 +64,38 @@ struct HdriSettings
     bool operator==(const HdriSettings&) const = default;
 };
 
+// Unreal's Exponential Height Fog: a grey medium whose extinction falls off exponentially with
+// world height, lit by the atmosphere's own light (engine/renderer/height_fog.h). Drawn in the
+// Atmosphere mode only; a member of SceneEnvironment so other modes can take it later.
+struct HeightFogSettings
+{
+    // Off for scenes saved before the fog existed; EditorScene::AddDefaultSunAndSky turns it on.
+    bool enabled = false;
+    // Extinction per metre at fogHeight. Tuned on the Spa grid view: the horizon band is gone and
+    // the pit building 100 to 300 m out keeps its contrast.
+    float density = 0.001f;
+    // Per metre: 1 / falloff is the scale height.
+    float heightFalloff = 0.02f;
+    // World y of the reference height, metres.
+    float fogHeight = 0.0f;
+    // Metres from the camera before the fog begins.
+    float startDistance = 0.0f;
+    float maxOpacity = 1.0f;
+    // Tint of the in-scattered light.
+    glm::vec3 albedo{1.0f, 1.0f, 1.0f};
+    // Henyey-Greenstein g of the glow toward the sun. 0.6 lit the haze so brightly looking toward
+    // the sun that it washed out the sky well above the horizon.
+    float anisotropy = 0.3f;
+
+    bool operator==(const HeightFogSettings&) const = default;
+};
+
 struct SceneEnvironment
 {
     EnvironmentMode mode = EnvironmentMode::None;
     AtmosphereSettings atmosphere;
     HdriSettings hdri;
+    HeightFogSettings heightFog;
 
     bool operator==(const SceneEnvironment&) const = default;
 };

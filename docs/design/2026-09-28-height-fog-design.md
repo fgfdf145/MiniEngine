@@ -227,3 +227,26 @@ Accept when:
 - Fog in SSR, DDGI rays and the environment probe. Reflections show the unfogged sky.
 - Fog in the white balance references. The frame colour measurement sees the fogged image
   anyway, and the light references stay the physical lights.
+
+## Amendments (implementation, 2026-09-28)
+
+- **Chosen defaults**: density 0.001 per m, falloff 0.02 per m, fog height 0, start 0, max opacity
+  1, albedo white, anisotropy 0.3. Tuned against the Spa grid view: at density 0.002 the pit
+  building already greyed; at g 0.6 the haze toward the sun (HG peak ~2 / sr against the sky's
+  ~1 / 4 pi average) washed out the sky 20 degrees above the horizon.
+- **Optical depth factored at the denser end**: tau = density * exp(max(a0, a1)) * L * f(|k L|),
+  with a0, a1 the height exponents at the segment's ends and f(x) = (1 - exp(-x)) / x. The form
+  above, factored at the start, underflows for a camera kilometres above the fog looking down (the
+  start density is exp(-100) and the ground fog vanishes) and overflows exp(-k L) for long falling
+  rays. The exponent clamp of 80 now applies to max(a0, a1).
+- **Series switch at |k L| < 1e-2** with 1 - x / 2 + x^2 / 6, instead of 1e-4 with 1 - x / 2: the
+  quotient loses ~1e-3 of its float precision at 1e-4, and the series' error at 1e-2 is 4e-8.
+- **Sun at the camera on the CPU**: `heightFogParams.yzw` carries albedo * sun illuminance *
+  `ComputeTransmittanceToSpace` at the camera (zero once the sun is below the ground sphere),
+  built in `BuildEnvironmentUniformData`. Per pixel, the ray-sphere test and the transmittance LUT
+  lookup cost the lighting pass +0.23 ms at 2913 x 1091 (eight alternating runs, medians 2.66 vs
+  2.43 ms). With the term on the CPU the medians are 2.414 ms (on) vs 2.433 ms (off), inside
+  the run-to-run noise of about 0.3 ms. The sky average still comes from the SH buffer on the GPU.
+- Looking toward the sun, auto exposure rises about 0.8 EV with the fog on: the haze in front of
+  the backlit buildings is brighter than the planet ground it replaces. That is the camera
+  responding, not a fog error.

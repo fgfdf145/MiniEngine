@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <optional>
 
 namespace me
@@ -76,8 +77,16 @@ struct EnvironmentUniformData
     glm::vec4 hdriParameters{0.0f};                        // x intensity, y rotation in turns
     // The HDRI's radiance SH, rotated and scaled by its intensity; xyz used.
     glm::vec4 hdriIrradianceSh[9]{};
+    // Exponential height fog (height_fog.h), clamped: x density per m (0 when off or outside the
+    // Atmosphere mode), y falloff per m, z fog height m, w start distance m.
+    glm::vec4 heightFogDensity{0.0f};
+    glm::vec4 heightFogColor{0.0f}; // rgb albedo, w max opacity
+    // x Henyey-Greenstein g; yzw the sun's illuminance at the camera (through the atmosphere, zero
+    // once it has set) times the albedo, per frame on the CPU rather than per pixel.
+    glm::vec4 heightFogParams{0.0f};
 };
-static_assert(sizeof(EnvironmentUniformData) == 18 * 16, "EnvironmentUniformData must stay eighteen vec4s");
+inline constexpr size_t kEnvironmentUniformVec4Count = 21;
+static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-one vec4s");
 
 // mode is the mode the frame renders with, which differs from environment.mode while an HDRI is
 // still loading. hdriSh is the loaded HDRI's unrotated radiance SH, or null. With no sun the illuminance is zero and the sky is black.
