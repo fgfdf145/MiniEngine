@@ -7,6 +7,7 @@
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstddef>
 #include <functional>
@@ -50,8 +51,11 @@ struct VehicleDriveSession
     entt::entity entity = entt::null;
     std::string name;
     TransformComponent startTransform;
+    // The vehicle body's pose (vehicle space, +Z forward), not the model's.
     PhysicsPose startPose;
     glm::vec3 scale{1.0f};
+    // Turns vehicle space into the model's own: the entity's rotation is the body's times this.
+    glm::quat vehicleToModel{1.0f, 0.0f, 0.0f, 0.0f};
     Camera cameraBeforeDriving;
     std::unique_ptr<PhysicsWorld> physics;
     VehicleId vehicle = 0;

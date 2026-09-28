@@ -73,6 +73,12 @@ glm::mat4 ComposeMatrix(const PhysicsPose& pose, const glm::vec3& scale)
     return glm::translate(glm::mat4(1.0f), pose.position) * glm::mat4_cast(pose.rotation) * glm::scale(glm::mat4(1.0f), scale);
 }
 
+// Vehicle space is +Z forward; a model facing -Z is half a turn about Y from it (its own inverse).
+glm::quat VehicleToModelRotation(VehicleModelFront front)
+{
+    return front == VehicleModelFront::NegativeZ ? glm::quat(0.0f, 0.0f, 1.0f, 0.0f) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+}
+
 void RestoreCamera(Camera& camera, const Camera& saved)
 {
     // Only where it was and where it looked: exposure and the lens stay as the user left them.
@@ -100,13 +106,19 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->name = world.GetTag(entity).name;
     session->startTransform = world.GetTransform(entity);
     session->startPose = DecomposePose(world.GetModelMatrix(entity), session->scale);
+    session->vehicleToModel = VehicleToModelRotation(tuning.modelFront);
+    session->startPose.rotation = glm::normalize(session->startPose.rotation * glm::conjugate(session->vehicleToModel));
     session->cameraBeforeDriving = state.camera;
 
-    // The car is fitted to its model's bounds in its own space, scaled as the entity is.
+    // The car is fitted to its model's bounds, scaled as the entity is, turned into vehicle space
+    // (an axis-aligned turn, so two corners are enough).
     const ModelBoundsComponent& bounds = world.GetModelBounds(entity);
     const glm::vec3 localMin = bounds.hasBounds ? bounds.minBounds : WorldUnits::kDefaultCubeMinBoundsMeters;
     const glm::vec3 localMax = bounds.hasBounds ? bounds.maxBounds : WorldUnits::kDefaultCubeMaxBoundsMeters;
-    const VehicleSettings settings = FitVehicleSettingsToBounds(localMin * session->scale, localMax * session->scale, tuning);
+    const glm::quat modelToVehicle = glm::conjugate(session->vehicleToModel);
+    const glm::vec3 cornerA = modelToVehicle * (localMin * session->scale);
+    const glm::vec3 cornerB = modelToVehicle * (localMax * session->scale);
+    const VehicleSettings settings = FitVehicleSettingsToBounds(glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), tuning);
 
     glm::vec3 carWorldMin = session->startPose.position;
     glm::vec3 carWorldMax = session->startPose.position;
@@ -222,7 +234,9 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     session->stepRequested = false;
 
     const PhysicsPose pose = session->physics->GetVehiclePose(session->vehicle);
-    world.ApplyTransformMatrix(session->entity, ComposeMatrix(pose, session->scale));
+    PhysicsPose modelPose = pose;
+    modelPose.rotation = pose.rotation * session->vehicleToModel;
+    world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));
     if (state.vehicleDrive.camera.follow)
     {
         UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds);

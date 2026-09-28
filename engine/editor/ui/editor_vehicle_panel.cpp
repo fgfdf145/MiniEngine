@@ -42,6 +42,13 @@ void DrawTelemetry(const VehicleDriveStatus& status)
 // The fields a user tunes; the geometry is fitted to the model when driving starts.
 void DrawTuning(VehicleSettings& tuning)
 {
+    int front = static_cast<int>(tuning.modelFront);
+    static constexpr const char* kFrontLabels[] = {"-Z (Assetto Corsa import)", "+Z (glTF convention)"};
+    if (ImGui::Combo("Model Front", &front, kFrontLabels, IM_ARRAYSIZE(kFrontLabels)))
+    {
+        tuning.modelFront = static_cast<VehicleModelFront>(front);
+    }
+
     DragFloatInRange("Mass (kg)", &tuning.massKg, 200.0f, 5000.0f, "%.0f", 5.0f);
     DragFloatInRange("Engine Torque (Nm)", &tuning.maxEngineTorque, 50.0f, 2000.0f, "%.0f", 5.0f);
     DragFloatInRange("Max RPM", &tuning.maxRpm, 3000.0f, 12000.0f, "%.0f", 25.0f);
@@ -110,7 +117,9 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         }
         else
         {
-            ImGui::TextDisabled("Every other model becomes the track. The car faces +Z.");
+            ImGui::TextDisabled(
+                "Every other model becomes the track. The car's front is %s (Tuning > Model Front).",
+                m_vehicleTuning.modelFront == VehicleModelFront::NegativeZ ? "-Z" : "+Z");
         }
     }
     if (!status.lastError.empty())

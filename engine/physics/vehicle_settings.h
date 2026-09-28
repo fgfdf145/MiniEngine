@@ -7,8 +7,18 @@
 namespace me
 {
 
-// Vehicle space is the model's own: +Y up and +Z forward (glTF's "front of the asset", which the
-// Assetto Corsa import keeps), so +X is the car's left. Lengths are metres, after the entity's scale.
+// Vehicle space: +Y up and +Z forward, so +X is the car's left. Lengths are metres, after the
+// entity's scale. A model whose front faces -Z (VehicleSettings::modelFront) is turned half a turn
+// about Y into it by whoever places the car.
+
+// Which way the car's model faces in its own space.
+enum class VehicleModelFront : uint32_t
+{
+    // Assetto Corsa cars as the kn5 import writes them (+X right).
+    NegativeZ = 0,
+    // glTF's "front of the asset" (+X left).
+    PositiveZ = 1
+};
 
 enum class VehicleDrive : uint32_t
 {
@@ -20,6 +30,7 @@ enum class VehicleDrive : uint32_t
 struct VehicleSettings
 {
     float massKg = 1400.0f;
+    VehicleModelFront modelFront = VehicleModelFront::NegativeZ;
 
     // The collision box, in vehicle space. It starts above the wheels' lowest point, so the chassis
     // only touches the ground when the suspension bottoms out.
