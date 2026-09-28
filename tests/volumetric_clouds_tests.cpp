@@ -174,6 +174,37 @@ void ShellFromInsideAndAbove()
 }
 }
 
+void ShadowMapProjection()
+{
+    const float texel = kCloudShadowExtentMeters / static_cast<float>(kCloudShadowMapSize);
+    const glm::vec3 camera(100.0f, 30.0f, -40.0f);
+    const glm::vec2 center = CloudShadowMapCenter(camera);
+    Require(Near(center.x, std::floor(100.0f / texel) * texel, 1e-3f) && Near(center.y, std::floor(-40.0f / texel) * texel, 1e-3f),
+            "the map follows the camera in whole texels");
+    Require(CloudShadowMapCenter(camera + glm::vec3(0.0f, 500.0f, 0.0f)) == center, "height never moves the map");
+
+    const glm::vec3 overhead(0.0f, 1.0f, 0.0f);
+    const glm::vec2 ground = CloudShadowUv(glm::vec3(center.x, 0.0f, center.y), overhead, camera);
+    Require(Near(ground.x, 0.5f, 1e-6f) && Near(ground.y, 0.5f, 1e-6f), "the ground under the centre is the map's centre");
+    const glm::vec2 roof = CloudShadowUv(glm::vec3(center.x, 50.0f, center.y), overhead, camera);
+    Require(roof == ground, "with the sun overhead, height does not move the lookup");
+
+    // The sun 45 degrees up toward +x: a point 100 m up looks at the ground 100 m toward -x of the
+    // point below it, where the same ray to the sun starts.
+    const glm::vec3 slanted = glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f));
+    const glm::vec2 raised = CloudShadowUv(glm::vec3(center.x, 100.0f, center.y), slanted, camera);
+    Require(Near(raised.x, 0.5f - 100.0f / kCloudShadowExtentMeters, 1e-5f) && Near(raised.y, 0.5f, 1e-6f),
+            "a raised point looks up the map along the sun's ray");
+
+    const glm::vec2 setting = CloudShadowUv(glm::vec3(center.x, 10.0f, center.y), glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f)), camera);
+    Require(std::isfinite(setting.x) && Near(setting.x, 0.5f - 10.0f / kCloudShadowMinSunHeight / kCloudShadowExtentMeters, 1e-4f),
+            "a sun at the horizon is held at the minimum height");
+
+    Require(CloudShadowEdgeWeight(glm::vec2(0.5f)) == 1.0f, "full shadow inside");
+    Require(CloudShadowEdgeWeight(glm::vec2(0.0f, 0.5f)) == 0.0f && CloudShadowEdgeWeight(glm::vec2(1.2f, 0.5f)) == 0.0f, "none at and past the edge");
+    Require(Near(CloudShadowEdgeWeight(glm::vec2(0.5f, kCloudShadowEdgeFade * 0.5f)), 0.5f, 1e-5f), "fading over the outer tenth");
+}
+
 int main()
 {
     try
@@ -186,6 +217,7 @@ int main()
         SunScatteringOctaves();
         ShellFromTheGround();
         ShellFromInsideAndAbove();
+        ShadowMapProjection();
     }
     catch (const std::exception& error)
     {

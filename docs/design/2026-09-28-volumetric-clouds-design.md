@@ -167,8 +167,7 @@ viewport's 2913 x 1091: the march is full resolution in every sky pixel.
 - **Cost.** A full-resolution march in the sky pass is the simplest correct first step. If it costs
   more than ~1.5 ms, march at quarter resolution in a compute pass with temporal reprojection
   (Schneider's 1 / 16 per frame) and upsample in the sky pass.
-- **Cloud shadows.** The sun light and the ground ignore the clouds; a top-down transmittance map
-  over the camera would dim both, and the sun behind a cloud would dim the scene.
+- **Cloud shadows.** Done in 2026-09-28-cloud-shadows-design.md.
 - **Wind.** The layer is static; an offset per second in the uniforms would move it, at the cost of
   recapturing the probe.
 - **Clouds in the sky SH and DDGI.** The ambient light is the clear sky's.

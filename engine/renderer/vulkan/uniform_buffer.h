@@ -58,6 +58,8 @@ struct EnvironmentDescriptorBindings
     // GENERAL.
     TextureDescriptorBinding cloudShapeNoise;
     TextureDescriptorBinding cloudDetailNoise;
+    // Binding 26: the clouds' shadow map (VulkanAtmosphere), in GENERAL.
+    TextureDescriptorBinding cloudShadow;
 };
 
 struct MaterialTextureBinding

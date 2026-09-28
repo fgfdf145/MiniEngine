@@ -674,7 +674,8 @@ float SampleShadowCascade(int cascade, vec3 worldPos, vec3 geoNormal)
     return lit / 9.0;
 }
 
-// The fraction of the shadow casting light that reaches this point: 1 lit, 0 in shadow.
+// The fraction of the shadow casting light that reaches this point: 1 lit, 0 in shadow. The
+// clouds' shadow (cloud_shadow.glsl) multiplies the cascades' and reaches beyond them.
 float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
 {
     float viewDepth = -(ubo.view * vec4(worldPos, 1.0)).z;
@@ -687,8 +688,9 @@ float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
             break;
         }
     }
+    float clouds = CloudShadow(worldPos);
     if (cascade < 0)
-        return 1.0;
+        return clouds;
 
     float lit = SampleShadowCascade(cascade, worldPos, geoNormal);
 
@@ -703,7 +705,7 @@ float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
                             : 1.0;
         lit = mix(lit, nextLit, blend);
     }
-    return lit;
+    return lit * clouds;
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,8 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
+
 namespace me
 {
 
@@ -24,6 +26,17 @@ inline constexpr float kCloudOctaveAnisotropy = 0.5f;
 inline constexpr float kCloudEdgeWidth = 0.2f;
 // The weather map's share of the field; the base shape has the rest.
 inline constexpr float kCloudWeatherShare = 0.55f;
+
+// The cloud shadow map (shaders/vulkan/cloud_shadow.glsl): the clouds' transmittance toward the sun
+// per point of the ground, over a square centred on the camera. 31 m texels: the sun's disk seen
+// from 1.5 km already blurs a shadow edge over 14 m.
+inline constexpr uint32_t kCloudShadowMapSize = 512;
+inline constexpr float kCloudShadowExtentMeters = 16000.0f;
+// The sun's height (direction y) the projection to the ground never goes below, so a sun at the
+// horizon does not throw every lookup off the map.
+inline constexpr float kCloudShadowMinSunHeight = 0.05f;
+// The map's outer share over which the shadow fades to none.
+inline constexpr float kCloudShadowEdgeFade = 0.1f;
 
 // The settings held to the ranges the editor offers, as BuildEnvironmentUniformData uploads them.
 CloudSettings ClampCloudSettings(const CloudSettings& settings);
@@ -62,6 +75,16 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
 // [0, maxDistance]: x the entry, y the exit. y <= x when the ray never enters the shell in range.
 // A ray that crosses the inner sphere downward and back (a camera above the layer looking through
 // it at a slant) keeps only the first span.
+// The map's centre in world x, z: the camera snapped to whole texels.
+glm::vec2 CloudShadowMapCenter(const glm::vec3& cameraPosition);
+
+// Where the ray from worldPosition toward the sun (directionToSun, unit) crosses world y = 0, as
+// the map's uv around the camera.
+glm::vec2 CloudShadowUv(const glm::vec3& worldPosition, const glm::vec3& directionToSun, const glm::vec3& cameraPosition);
+
+// How much of the map's shadow applies at uv: 1 inside, falling to 0 over the outer edge fade.
+float CloudShadowEdgeWeight(const glm::vec2& uv);
+
 glm::vec2 CloudShellInterval(
     const glm::vec3& origin,
     const glm::vec3& direction,

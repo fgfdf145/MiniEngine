@@ -109,6 +109,26 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
     return scattering;
 }
 
+glm::vec2 CloudShadowMapCenter(const glm::vec3& cameraPosition)
+{
+    const float texel = kCloudShadowExtentMeters / static_cast<float>(kCloudShadowMapSize);
+    return glm::floor(glm::vec2(cameraPosition.x, cameraPosition.z) / texel) * texel;
+}
+
+glm::vec2 CloudShadowUv(const glm::vec3& worldPosition, const glm::vec3& directionToSun, const glm::vec3& cameraPosition)
+{
+    const float height = std::max(directionToSun.y, kCloudShadowMinSunHeight);
+    const glm::vec2 ground =
+        glm::vec2(worldPosition.x, worldPosition.z) - glm::vec2(directionToSun.x, directionToSun.z) * (worldPosition.y / height);
+    return (ground - CloudShadowMapCenter(cameraPosition)) / kCloudShadowExtentMeters + 0.5f;
+}
+
+float CloudShadowEdgeWeight(const glm::vec2& uv)
+{
+    const glm::vec2 edge = glm::min(uv, 1.0f - uv);
+    return Saturate(std::min(edge.x, edge.y) / kCloudShadowEdgeFade);
+}
+
 glm::vec2 CloudShellInterval(
     const glm::vec3& origin,
     const glm::vec3& direction,

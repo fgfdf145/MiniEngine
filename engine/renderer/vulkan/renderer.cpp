@@ -1481,6 +1481,7 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.aerialPerspective = m_atmosphere->GetAerialPerspectiveBinding();
     bindings.cloudShapeNoise = m_atmosphere->GetCloudShapeNoiseBinding();
     bindings.cloudDetailNoise = m_atmosphere->GetCloudDetailNoiseBinding();
+    bindings.cloudShadow = m_atmosphere->GetCloudShadowBinding();
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
     bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};

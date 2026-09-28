@@ -25,6 +25,7 @@ layout(set = 0, binding = 8) uniform samplerCube prefilteredEnvironment;
 layout(set = 0, binding = 9) uniform sampler2D environmentBrdfLut;
 
 #include "height_fog.glsl"
+#include "cloud_shadow.glsl"
 
 // The world direction through a full-screen texture coordinate (origin top left, as
 // fullscreen.vert emits it), from the camera toward the far plane.
