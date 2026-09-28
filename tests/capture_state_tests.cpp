@@ -43,6 +43,7 @@ void StateRoundTrips()
     written.camera.autoExposure.enabled = false;
     written.camera.autoExposure.compensationEv = -0.5f;
     written.camera.autoWhiteBalance.degree = 0.25f;
+    written.camera.autoWhiteBalance.targetKelvin = 5200.0f;
     written.renderDebug.gbufferView = GBufferDebugView::DdgiIrradiance;
     written.renderDebug.taa = false;
     written.renderDebug.renderScale = 0.5f;
@@ -64,6 +65,7 @@ void StateRoundTrips()
     Require(read.camera.exposureEv100 == 11.5f, "exposure");
     Require(!read.camera.autoExposure.enabled && read.camera.autoExposure.compensationEv == -0.5f, "auto exposure");
     Require(read.camera.autoWhiteBalance.degree == 0.25f, "auto white balance");
+    Require(read.camera.autoWhiteBalance.targetKelvin == 5200.0f, "white balance target");
     Require(read.renderDebug.gbufferView == GBufferDebugView::DdgiIrradiance, "debug view");
     Require(!read.renderDebug.taa && read.renderDebug.renderScale == 0.5f, "top-level switches");
     Require(read.renderDebug.ssr.maxDistance == 12.0f && read.renderDebug.ao.stepCount == 5 && !read.renderDebug.gi.enabled, "groups");

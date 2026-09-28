@@ -509,6 +509,7 @@ void EditorScene::AddDefaultSunAndSky()
     SerializedLightData sun{};
     sun.tagName = "Sun";
     sun.lightType = LightType::Directional;
+    sun.color = kDefaultSunColor;
     sun.intensity = kDefaultSunIlluminanceLux;
     sun.transform.translation = glm::vec3(0.0f, 4.0f, 0.0f);
     sun.transform.rotationDegrees = glm::vec3(55.0f, 0.0f, 0.0f);

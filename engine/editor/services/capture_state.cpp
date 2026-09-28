@@ -98,6 +98,7 @@ void VisitExposure(Camera& camera, Visitor&& visit)
     visit("auto_white_balance", "enabled", camera.autoWhiteBalance.enabled);
     visit("auto_white_balance", "degree", camera.autoWhiteBalance.degree);
     visit("auto_white_balance", "adapt_per_second", camera.autoWhiteBalance.adaptPerSecond);
+    visit("auto_white_balance", "target_kelvin", camera.autoWhiteBalance.targetKelvin);
 }
 
 // Emits one map per group, the ungrouped fields at the top level of the current map.

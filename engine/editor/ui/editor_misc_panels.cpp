@@ -92,6 +92,8 @@ void EditorUiController::DrawCameraPanel(Camera& camera)
         ImGui::Checkbox("Auto White Balance", &camera.autoWhiteBalance.enabled);
         ImGui::BeginDisabled(!camera.autoWhiteBalance.enabled);
         DragFloatInRange("Adaptation Degree", &camera.autoWhiteBalance.degree, 0.0f, 1.0f, "%.2f");
+        DragFloatInRange("Target White (K)", &camera.autoWhiteBalance.targetKelvin, kMinWhiteBalanceTargetKelvin,
+                         kMaxWhiteBalanceTargetKelvin, "%.0f");
         ImGui::Text("Adapted white %.0f K", camera.adaptedWhiteKelvin);
         ImGui::EndDisabled();
 

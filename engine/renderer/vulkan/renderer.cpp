@@ -2658,7 +2658,7 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance()
                            ? AdaptWhitePointXy(*m_adaptedWhiteXy, target, State().frameDeltaSeconds, settings.adaptPerSecond)
                            : target;
     camera.adaptedWhiteKelvin = CorrelatedColorTemperature(*m_adaptedWhiteXy);
-    return WhiteBalanceMatrix(*m_adaptedWhiteXy, settings.degree);
+    return WhiteBalanceMatrix(*m_adaptedWhiteXy, settings.degree, DaylightXy(settings.targetKelvin));
 }
 
 void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)

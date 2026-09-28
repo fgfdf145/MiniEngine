@@ -80,6 +80,17 @@ glm::vec2 PlanckianXy(float kelvin)
     return glm::vec2(x, y);
 }
 
+glm::vec2 DaylightXy(float kelvin)
+{
+    const float t = std::clamp(kelvin, 4000.0f, 25000.0f);
+    const float t1 = 1.0e3f / t;
+    const float t2 = t1 * t1;
+    const float t3 = t2 * t1;
+    const float x = t <= 7000.0f ? -4.6070f * t3 + 2.9678f * t2 + 0.09911f * t1 + 0.244063f
+                                 : -2.0064f * t3 + 1.9018f * t2 + 0.24748f * t1 + 0.237040f;
+    return glm::vec2(x, -3.0f * x * x + 2.870f * x - 0.275f);
+}
+
 glm::vec2 LimitWhitePoint(const glm::vec2& xy)
 {
     const float kelvin = CorrelatedColorTemperature(xy);
@@ -140,11 +151,11 @@ glm::vec2 AdaptWhitePointXy(const glm::vec2& current, const glm::vec2& target, f
     return current + (target - current) * blend;
 }
 
-glm::mat3 WhiteBalanceMatrix(const glm::vec2& whiteXy, float degree)
+glm::mat3 WhiteBalanceMatrix(const glm::vec2& whiteXy, float degree, const glm::vec2& targetXy)
 {
     const float d = std::clamp(degree, 0.0f, 1.0f);
     const glm::vec3 sourceCone = kBradford * XyToXyz(whiteXy);
-    const glm::vec3 targetCone = kBradford * XyToXyz(kD65WhiteXy);
+    const glm::vec3 targetCone = kBradford * XyToXyz(targetXy);
     const glm::vec3 scale = d * (targetCone / sourceCone) + (1.0f - d);
     const glm::mat3 adapt = kBradfordInverse * glm::mat3(scale.x, 0.0f, 0.0f, 0.0f, scale.y, 0.0f, 0.0f, 0.0f, scale.z) * kBradford;
     return kXyzToRec709 * adapt * kRec709ToXyz;

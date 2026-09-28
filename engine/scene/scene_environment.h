@@ -21,12 +21,17 @@ enum class EnvironmentMode : uint32_t
 
 // Top-of-atmosphere illuminance of the startup scene's sun, in lux.
 inline constexpr float kDefaultSunIlluminanceLux = 120000.0f;
+// A touch warmer than white above the air's own reddening: the midday sun as the eye remembers it,
+// which the white balance's warm target (white_balance.h) then keeps.
+inline constexpr glm::vec3 kDefaultSunColor{1.0f, 0.96f, 0.9f};
 
 // The parts of Hillaire 2020's Earth atmosphere the editor exposes. Radii and base coefficients
 // are fixed; see engine/renderer/atmosphere.h.
 struct AtmosphereSettings
 {
-    glm::vec3 groundAlbedo{0.3f, 0.3f, 0.3f};
+    // Dry grass and soil rather than a neutral gray: the ground below the horizon and its light on
+    // the sky's underside tint the whole view.
+    glm::vec3 groundAlbedo{0.25f, 0.22f, 0.16f};
     // Draws the ground as a surface: an endless plane at world y = 0 with the ground albedo, in the
     // G-buffer and the DDGI ray scene, so it takes shadows, AO and bounce light. Off, the ground
     // shows only as the sky's own lit ground below the horizon.

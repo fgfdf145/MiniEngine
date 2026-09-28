@@ -19,6 +19,12 @@ inline constexpr float kMaxWhiteBalanceKelvin = 10000.0f;
 // scene's estimate stays near neutral.
 inline constexpr float kWhiteBalanceVirtualLightShare = 0.05f;
 inline constexpr float kWhiteBalanceVirtualLightLux = 1.0f;
+// The white the estimated illuminant is balanced to, on the daylight locus. Below D65's 6504 K the
+// balance leaves sunlight a little warm, as the eye sees it: balanced all the way to D65, a sunlit
+// scene reads cold against its blue sky and shadows.
+inline constexpr float kDefaultWhiteBalanceTargetKelvin = 5800.0f;
+inline constexpr float kMinWhiteBalanceTargetKelvin = 4000.0f;
+inline constexpr float kMaxWhiteBalanceTargetKelvin = 7500.0f;
 
 struct AutoWhiteBalanceSettings
 {
@@ -28,6 +34,8 @@ struct AutoWhiteBalanceSettings
     float degree = 0.6f;
     // Exponential adaptation rate of the white point, per second.
     float adaptPerSecond = 0.5f;
+    // The white the balance aims for, in kelvin on the daylight locus (DaylightXy); 6504 is D65.
+    float targetKelvin = kDefaultWhiteBalanceTargetKelvin;
 };
 
 // Illuminance from the scene's lights, as linear Rec.709 whose luminance is lux. Left empty when the
@@ -56,6 +64,8 @@ glm::vec2 XyzToXy(const glm::vec3& xyz);
 float CorrelatedColorTemperature(const glm::vec2& xy);
 // The Planckian locus (Kang et al. 2002), valid from 1667 K to 25000 K.
 glm::vec2 PlanckianXy(float kelvin);
+// The CIE daylight locus (the D illuminants), valid from 4000 K to 25000 K; 6504 K gives D65.
+glm::vec2 DaylightXy(float kelvin);
 // Inside [kMinWhiteBalanceKelvin, kMaxWhiteBalanceKelvin] the white point is kept; outside, it moves
 // to the Planckian locus at the nearer limit.
 glm::vec2 LimitWhitePoint(const glm::vec2& xy);
@@ -67,7 +77,7 @@ glm::vec2 EstimateIlluminantXy(const WhiteBalanceReferences& references);
 // One step of exponential adaptation of the white point; frame-rate independent.
 glm::vec2 AdaptWhitePointXy(const glm::vec2& current, const glm::vec2& target, float deltaSeconds, float ratePerSecond);
 
-// Linear Rec.709 to linear Rec.709: a Bradford transform from whiteXy to D65 with the given degree
-// of adaptation (cone responses scale by degree * D65 / white + 1 - degree).
-glm::mat3 WhiteBalanceMatrix(const glm::vec2& whiteXy, float degree);
+// Linear Rec.709 to linear Rec.709: a Bradford transform from whiteXy to targetXy with the given
+// degree of adaptation (cone responses scale by degree * target / white + 1 - degree).
+glm::mat3 WhiteBalanceMatrix(const glm::vec2& whiteXy, float degree, const glm::vec2& targetXy = kD65WhiteXy);
 }

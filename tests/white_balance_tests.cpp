@@ -108,6 +108,27 @@ void TheViewTempersTheLights()
     Require(glm::length(EstimateIlluminantXy(viewOnly) - kD65WhiteXy) < 0.002f, "a gray view under no light reads about D65");
 }
 
+void TheDaylightLocusPassesThroughD65()
+{
+    Require(glm::length(DaylightXy(6504.0f) - kD65WhiteXy) < 1e-3f, "the daylight locus at 6504 K is D65");
+    Require(std::abs(CorrelatedColorTemperature(DaylightXy(5500.0f)) - 5500.0f) < 30.0f, "D55 is about 5500 K");
+    Require(std::abs(CorrelatedColorTemperature(DaylightXy(9000.0f)) - 9000.0f) < 60.0f, "past 7000 K too");
+}
+
+void AWarmTargetKeepsSomeWarmth()
+{
+    // The estimated white comes out as the target white rather than as D65: a scene lit by D65 is
+    // left a little warm, as sunlight looks to the eye.
+    const glm::vec2 target = DaylightXy(5500.0f);
+    Require(MaxAbsDifference(WhiteBalanceMatrix(target, 1.0f, target), glm::mat3(1.0f)) < 1e-4f, "the target needs no balance");
+    const glm::vec3 d65Xyz(kD65WhiteXy.x / kD65WhiteXy.y, 1.0f, (1.0f - kD65WhiteXy.x - kD65WhiteXy.y) / kD65WhiteXy.y);
+    const glm::vec3 white = WhiteBalanceMatrix(kD65WhiteXy, 1.0f, target) * XyzToRec709(d65Xyz);
+    Require(glm::length(XyzToXy(Rec709ToXyz(white)) - target) < 1e-3f, "full adaptation lands the white on the target");
+    Require(white.r > white.b, "and it reads warm");
+    Require(MaxAbsDifference(WhiteBalanceMatrix(kIlluminantA, 0.6f, kD65WhiteXy), WhiteBalanceMatrix(kIlluminantA, 0.6f)) < 1e-6f,
+            "a D65 target is the plain balance");
+}
+
 void AdaptationIsFrameRateIndependent()
 {
     const glm::vec2 one = AdaptWhitePointXy(kD65WhiteXy, kIlluminantA, 1.0f, 0.5f);
@@ -130,6 +151,8 @@ int main()
         AWarmSunPullsTheEstimate();
         AdaptationIsFrameRateIndependent();
         TheViewTempersTheLights();
+        TheDaylightLocusPassesThroughD65();
+        AWarmTargetKeepsSomeWarmth();
     }
     catch (const std::exception& error)
     {
