@@ -22,6 +22,7 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
@@ -402,7 +403,7 @@ class GltfBuilder
     // childless mesh the game never draws.
     std::optional<size_t> Emit(const Kn5Node& node)
     {
-        const bool hidden = node.HasGeometry() && !node.renderable;
+        const bool hidden = node.HasGeometry() && (!node.renderable || Kn5Importer::IsTrackMarker(node.name));
         if (hidden)
         {
             ++m_report.hiddenMeshes;
@@ -411,7 +412,8 @@ class GltfBuilder
                 return std::nullopt;
             }
         }
-        if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0))
+        if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0 ||
+                                        (node.HasGeometry() && node.lodIn > 0.0f)))
         {
             ++m_report.droppedVariants;
             return std::nullopt;
@@ -939,12 +941,13 @@ void SurveyNodes(
     std::vector<size_t>& materialTriangles)
 {
     bool dropped = insideDropped;
-    if (!insideDropped && (Kn5Importer::IsRuntimeVariant(node.name) || lowRes.count(node.name) != 0))
+    if (!insideDropped && (Kn5Importer::IsRuntimeVariant(node.name) || lowRes.count(node.name) != 0 ||
+                           (node.HasGeometry() && node.lodIn > 0.0f)))
     {
         ++summary.runtimeVariants;
         dropped = true;
     }
-    if (node.HasGeometry() && !node.renderable)
+    if (node.HasGeometry() && (!node.renderable || Kn5Importer::IsTrackMarker(node.name)))
     {
         ++summary.hiddenMeshes;
     }
@@ -992,6 +995,27 @@ bool IsRuntimeVariant(const std::string& nodeName)
 {
     const std::string lower = ToLowerAscii(nodeName);
     return lower.find("blur") != std::string::npos || lower.find("damage") != std::string::npos;
+}
+
+bool IsTrackMarker(const std::string& nodeName)
+{
+    const std::string lower = ToLowerAscii(nodeName);
+    const auto digitsFrom = [&lower](size_t start, size_t end)
+    {
+        return end > start && std::all_of(lower.begin() + static_cast<std::ptrdiff_t>(start),
+                                          lower.begin() + static_cast<std::ptrdiff_t>(end),
+                                          [](char c) { return c >= '0' && c <= '9'; });
+    };
+    for (const std::string_view prefix : {"ac_start_", "ac_pit_", "ac_hotlap_start_"})
+    {
+        if (lower.starts_with(prefix) && digitsFrom(prefix.size(), lower.size()))
+        {
+            return true;
+        }
+    }
+    constexpr std::string_view kTime = "ac_time_";
+    return lower.starts_with(kTime) && lower.size() > kTime.size() + 2 &&
+           (lower.ends_with("_l") || lower.ends_with("_r")) && digitsFrom(kTime.size(), lower.size() - 2);
 }
 
 std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames)

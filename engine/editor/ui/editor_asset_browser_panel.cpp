@@ -428,7 +428,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
             summary.textures);
         if (summary.hiddenMeshes > 0)
         {
-            ImGui::TextDisabled("%zu meshes the game never draws (physics surfaces) are left out.", summary.hiddenMeshes);
+            ImGui::TextDisabled("%zu meshes the game never draws (physics surfaces, spawn and timing markers) are left out.", summary.hiddenMeshes);
         }
 
         if (!summary.layouts.empty())
@@ -457,7 +457,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
         ImGui::SeparatorText("Options");
         ImGui::Checkbox("Keep runtime variants", &pending.options.keepVariants);
         ImGui::TextDisabled(
-            "%zu *_BLUR, *_DAMAGE and low-res LOD meshes. Kept, they overlap what they replace.",
+            "%zu *_BLUR, *_DAMAGE and low-res or far LOD meshes. Kept, they overlap what they replace.",
             summary.runtimeVariants);
         ImGui::Checkbox("Flip V texture coordinate", &pending.options.flipUv);
         ImGui::TextDisabled("Only for mods whose textures arrive upside down.");

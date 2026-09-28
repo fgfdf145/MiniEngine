@@ -53,7 +53,7 @@ struct Kn5ImportReport
     size_t meshes = 0;
     size_t emptyMeshes = 0;
     size_t droppedVariants = 0;
-    // Meshes the game never draws (isRenderable off), which are not imported.
+    // Meshes the game never draws (isRenderable off, or a track marker's cube), which are not imported.
     size_t hiddenMeshes = 0;
     size_t triangles = 0;
     size_t images = 0;
@@ -86,7 +86,7 @@ struct Kn5ModelSummary
     size_t triangles = 0;
     size_t materials = 0;
     size_t textures = 0;
-    // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins).
+    // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins, far LODs).
     size_t runtimeVariants = 0;
     // Meshes the game never draws, such as a track's physics surfaces: never imported, and not
     // among the meshes and triangles above.
@@ -155,6 +155,10 @@ Kn5ImportReport ConvertToGltf(
 
 // *_BLUR and *_DAMAGE: meshes the game swaps in at runtime (ignoring case).
 bool IsRuntimeVariant(const std::string& nodeName);
+
+// The track's spawn and timing points: AC_START_n, AC_PIT_n, AC_HOTLAP_START_n and AC_TIME_n_L/R
+// (ignoring case). Their unit cubes are never drawn; the dummies of the same name are kept.
+bool IsTrackMarker(const std::string& nodeName);
 
 // The low-res halves of in-file LOD pairs: names ending "_LR" whose "_HR" twin is also present.
 // The twin test matters: "_LR" means left-rear far more often (WHEEL_LR, SUSP_LR), and those have

@@ -70,6 +70,8 @@ struct Kn5Node
     std::uint32_t materialIndex = 0;
     // False for a mesh the game collides with but never draws, such as a track's physics surfaces.
     bool renderable = true;
+    // The distance from which the game starts drawing the mesh: above 0 for a far LOD.
+    float lodIn = 0.0f;
     // Counts, set even when the geometry itself was skipped.
     std::uint32_t vertexCount = 0;
     std::uint32_t triangleCount = 0;

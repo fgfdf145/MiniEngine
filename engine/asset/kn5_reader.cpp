@@ -236,7 +236,8 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
 
         node.materialIndex = reader.U32();
         reader.Skip(4);     // layer
-        reader.Skip(4 * 2); // lodIn, lodOut
+        node.lodIn = reader.F32();
+        reader.Skip(4); // lodOut
         // Only a plain mesh carries a bounding sphere and the isRenderable byte. A skinned one
         // ends at lodOut; reading them anyway desyncs the rest of the tree.
         if (node.type == Kn5NodeType::Mesh)

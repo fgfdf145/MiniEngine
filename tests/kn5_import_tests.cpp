@@ -347,7 +347,7 @@ void WriteDummy(ByteWriter& writer, const std::string& name, std::uint32_t child
 
 // One triangle: (x, 0, 0), (0, 1, 0), (0, 0, 1), offset by `x` so each mesh is recognisable.
 void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t material, float x, bool skinned = false,
-               std::uint32_t children = 0, bool renderable = true)
+               std::uint32_t children = 0, bool renderable = true, float lodIn = 0.0f)
 {
     BeginNode(writer, skinned ? 3 : 2, name, children);
     writer.U8(1); // castShadows
@@ -393,7 +393,7 @@ void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t materi
     writer.U16(2);
     writer.U32(material);
     writer.U32(0);    // layer
-    writer.F32(0.0f); // lodIn
+    writer.F32(lodIn);
     writer.F32(1e6f); // lodOut
     if (!skinned)
     {
@@ -578,6 +578,14 @@ void RulesMatchTheConverter()
     Require(Kn5Importer::IsRuntimeVariant("WHEEL_BLUR_LF") && Kn5Importer::IsRuntimeVariant("door_damage"),
             "blur and damage are runtime variants");
     Require(!Kn5Importer::IsRuntimeVariant("WHEEL_LF"), "a wheel is not a variant");
+    for (const char* marker : {"AC_START_0", "AC_PIT_12", "AC_HOTLAP_START_0", "AC_TIME_0_L", "ac_time_2_r"})
+    {
+        Require(Kn5Importer::IsTrackMarker(marker), std::string(marker) + " is a track marker");
+    }
+    for (const char* object : {"AC_POBJECT_011", "AC_CREW_0_LODA1", "AC_PITLANE_WALL", "AC_TIME_0", "START_LINE"})
+    {
+        Require(!Kn5Importer::IsTrackMarker(object), std::string(object) + " is drawn");
+    }
 
     const std::set<std::string> twins =
         Kn5Importer::LowResTwins({"COCKPIT_HR", "cockpit_lr", "WHEEL_LR", "SUSP_LR", "STEER_HR", "STEER_LR"});
@@ -829,12 +837,17 @@ std::vector<std::uint8_t> BuildTrackKn5(
     }
     writer.U32(1);
     WriteMaterial(writer, {materialName, "ksPerPixel", false, false, {{"ksSpecular", 0.0f}}, {{"txDiffuse", diffuse}}});
-    WriteDummy(writer, meshName + "_ROOT", withCollisionMesh ? 2 : 1, kIdentity);
+    WriteDummy(writer, meshName + "_ROOT", withCollisionMesh ? 4 : 1, kIdentity);
     WriteMesh(writer, meshName, 0, 1.0f);
     if (withCollisionMesh)
     {
         // A physics-only surface, as tracks ship them: the game collides with it but never draws it.
         WriteMesh(writer, meshName + "_PHYSICS", 0, 7.0f, false, 0, false);
+        // A pit box marker: a dummy with a unit cube of the same name under it, never drawn.
+        WriteDummy(writer, "AC_PIT_0", 1, kIdentity);
+        WriteMesh(writer, "AC_PIT_0", 0, 8.0f);
+        // The far LOD of the road, drawn only from 300 m out, where the near one stops.
+        WriteMesh(writer, meshName + "_FAR", 0, 9.0f, false, 0, true, 300.0f);
     }
     return writer.Bytes();
 }
@@ -913,8 +926,9 @@ void ImportsAWholeTrackLayout()
     const std::filesystem::path layoutPath = track / "models_east.ini";
 
     const Kn5ModelSummary summary = Kn5Importer::Inspect(layoutPath);
-    Require(summary.models == 2 && summary.meshes == 2 && summary.materials == 2, "a layout is surveyed across its models");
-    Require(summary.hiddenMeshes == 1, "the collision-only mesh is counted apart from the drawn ones");
+    Require(summary.models == 2 && summary.meshes == 3 && summary.materials == 2, "a layout is surveyed across its models");
+    Require(summary.hiddenMeshes == 2, "the collision-only mesh and the marker cube are counted apart from the drawn ones");
+    Require(summary.runtimeVariants == 1, "the far LOD is a dropped variant");
     Require(summary.skins.size() == 1 && summary.skins[0].name.empty(), "a track offers only its own textures");
     const Kn5ModelSummary main = Kn5Importer::Inspect(track / "ks_fixture_track.kn5");
     Require(main.models == 1 && main.layouts.size() == 1 && main.layouts[0].models == 2, "a kn5 offers the layouts placing it");
@@ -927,6 +941,8 @@ void ImportsAWholeTrackLayout()
     const LoadedModelData model = ModelLoader::LoadModel(imported.string());
     Require(model.submeshes.size() == 2, "both models of the layout load, without the collision-only mesh");
     Require(!HasSubmesh(model, "1ROAD_PHYSICS"), "a mesh the game never renders is not imported");
+    Require(!HasSubmesh(model, "AC_PIT_0"), "a track marker's cube is not imported");
+    Require(!HasSubmesh(model, "1ROAD_FAR"), "a far LOD is not imported beside the near one");
     const ModelSubmeshData& road = FindSubmesh(model, "1ROAD");
     const ModelSubmeshData& tree = FindSubmesh(model, "TREE");
     // Each mesh keeps the material of its own kn5, though both files index theirs from 0.
