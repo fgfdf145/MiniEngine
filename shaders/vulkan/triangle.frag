@@ -31,6 +31,7 @@ layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
 #include "material_layers.glsl"
+#include "detail_layers.glsl"
 #include "transmission_common.glsl"
 #include "volume_scatter_common.glsl"
 
@@ -48,6 +49,7 @@ layout(location = 3) in vec4 fragWorldTangent;
 layout(location = 4) in vec3 fragWorldPosition;
 layout(location = 7) flat in uint fragDrawSlot;
 layout(location = 8) in vec2 fragTexCoord1;
+layout(location = 10) in vec3 fragObjectPosition;
 layout(location = 9) flat in vec3 fragModelScale;
 
 layout(location = 0) out vec4 outColor;
@@ -140,6 +142,7 @@ void main()
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
+    albedo.rgb *= DetailLayersFactor(material, fragTexCoord, fragObjectPosition);
 
     if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;

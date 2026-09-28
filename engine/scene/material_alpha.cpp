@@ -8,6 +8,33 @@
 namespace me
 {
 
+const char* ToString(DetailLayerMapping mapping)
+{
+    switch (mapping)
+    {
+    case DetailLayerMapping::TexCoord:
+        return "texCoord";
+    case DetailLayerMapping::PositionXZ:
+        return "positionXZ";
+    case DetailLayerMapping::None:
+        break;
+    }
+    return nullptr;
+}
+
+std::optional<DetailLayerMapping> ParseDetailLayerMapping(std::string_view value)
+{
+    if (value == "texCoord")
+    {
+        return DetailLayerMapping::TexCoord;
+    }
+    if (value == "positionXZ")
+    {
+        return DetailLayerMapping::PositionXZ;
+    }
+    return std::nullopt;
+}
+
 std::optional<MaterialAlphaMode> ParseMaterialAlphaMode(std::string_view value)
 {
     std::string normalized(value);

@@ -85,11 +85,14 @@ struct MaterialTextureBinding
     TextureDescriptorBinding thickness;
     TextureDescriptorBinding diffuseTransmission;
     TextureDescriptorBinding diffuseTransmissionColor;
+    TextureDescriptorBinding detailMask;
+    std::array<TextureDescriptorBinding, kDetailLayerCount> detailLayers{};
 };
 
 // Set 1's combined image samplers, in binding order: the six primary maps, layer B's six, the
-// blend mask, then the ten layer maps (material_layers.glsl).
-inline constexpr uint32_t kMaterialTextureBindingCount = 27;
+// blend mask, the fourteen layer maps (material_layers.glsl), then the detail mask and the four
+// detail layers (detail_layers.glsl).
+inline constexpr uint32_t kMaterialTextureBindingCount = 32;
 
 // Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
 // positionAndRange : xyz = world position, w = effective range (metres)

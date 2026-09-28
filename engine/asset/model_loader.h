@@ -80,6 +80,7 @@ struct ModelMaterialData
     MaterialPbrSurfaceSettings pbr;
     MaterialTextureBlendGraph blendGraph;
     MaterialShaderGraph shaderGraph;
+    MaterialDetailLayers detailLayers;
     MaterialTextureTransforms textureTransforms{};
     // Each slot's glTF sampler; the metallic and roughness slots share the metallic-roughness one.
     MaterialTextureSamplers textureSamplers{};

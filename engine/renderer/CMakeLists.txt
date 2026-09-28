@@ -236,6 +236,7 @@ set(MINIENGINE_SHADER_INCLUDES
     volume_scatter_common.glsl
     pbr_neutral.glsl
     material_layers.glsl
+    detail_layers.glsl
     material_uv.glsl
     pre_exposure.glsl
     scene_common.glsl

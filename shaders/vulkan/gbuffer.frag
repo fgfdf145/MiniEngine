@@ -28,6 +28,7 @@ layout(set = 1, binding = 10) uniform sampler2D secondaryOcclusionTexture;
 layout(set = 1, binding = 11) uniform sampler2D secondaryEmissiveTexture;
 layout(set = 1, binding = 12) uniform sampler2D blendMaskTexture;
 #include "material_layers.glsl"
+#include "detail_layers.glsl"
 
 // triangle.vert also writes world position at location 4. The G-buffer does not store it; the
 // lighting pass reconstructs it from depth, so the input is deliberately not declared here.
@@ -39,6 +40,7 @@ layout(location = 5) in vec4 fragCurrClip;
 layout(location = 6) in vec4 fragPrevClip;
 layout(location = 7) flat in uint fragDrawSlot;
 layout(location = 8) in vec2 fragTexCoord1;
+layout(location = 10) in vec3 fragObjectPosition;
 
 // Locations match VulkanGeometryPass::kAttachments. All five are vec4 so no attachment receives
 // fewer components than it has; channels the encoding table marks unused are written as stated.
@@ -66,6 +68,7 @@ void main()
     vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
+    albedo.rgb *= DetailLayersFactor(material, fragTexCoord, fragObjectPosition);
 
     if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;

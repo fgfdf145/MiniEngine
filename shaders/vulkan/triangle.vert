@@ -40,6 +40,8 @@ layout(location = 8) out vec2 fragTexCoord1;
 // The model matrix's per-axis scale, for the volume's thickness (KHR_materials_volume), which is in
 // mesh units.
 layout(location = 9) flat out vec3 fragModelScale;
+// The vertex in the model's space, which detail layers mapped by position tile by (detail_layers.glsl).
+layout(location = 10) out vec3 fragObjectPosition;
 
 void main()
 {
@@ -69,5 +71,6 @@ void main()
     fragWorldTangent = vec4(worldTangent, inTangent.w);
     fragWorldPosition = worldPosition.xyz;
     fragDrawSlot = uint(gl_InstanceIndex);
+    fragObjectPosition = inPosition;
     fragModelScale = vec3(length(drawData.model[0].xyz), length(drawData.model[1].xyz), length(drawData.model[2].xyz));
 }

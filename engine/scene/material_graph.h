@@ -272,6 +272,42 @@ struct MaterialShaderGraph
     }
 };
 
+// How a detail layer's texture coordinate is made (MaterialDetailLayers); None is no detail layers.
+// The values are GpuMaterialData::shadingModel.z.
+enum class DetailLayerMapping : uint32_t
+{
+    None = 0,
+    // TEXCOORD_0 times the layer's scale.
+    TexCoord = 1,
+    // The vertex position's x and z in the model's space, times the layer's scale.
+    PositionXZ = 2
+};
+
+// The glTF and sidecar spelling ("texCoord", "positionXZ"); nullptr for None.
+const char* ToString(DetailLayerMapping mapping);
+std::optional<DetailLayerMapping> ParseDetailLayerMapping(std::string_view value);
+
+inline constexpr size_t kDetailLayerCount = 4;
+
+// MINIENGINE_materials_detail_layers, Assetto Corsa's multilayer surfaces: the mask's channels R, G,
+// B and A weight four tiling detail maps, and their sum, times the intensity, multiplies the base
+// colour. Mask, layers and their sum are sRGB-encoded values, combined as the game combines them;
+// the sum is decoded before it multiplies. The mask reads TEXCOORD_0 untransformed.
+struct MaterialDetailLayers
+{
+    DetailLayerMapping mapping = DetailLayerMapping::None;
+    std::string maskTexturePath;
+    // A layer without a texture samples white.
+    std::array<std::string, kDetailLayerCount> layerTexturePaths{};
+    std::array<std::array<float, 2>, kDetailLayerCount> layerScales{{{1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}}};
+    float intensity = 1.0f;
+
+    bool IsEnabled() const
+    {
+        return mapping != DetailLayerMapping::None && !maskTexturePath.empty();
+    }
+};
+
 struct MaterialTextureBlendGraph
 {
     bool enabled = false;

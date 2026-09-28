@@ -44,6 +44,9 @@ struct MaterialTexturePaths
     std::string thickness;
     std::string diffuseTransmission;
     std::string diffuseTransmissionColor;
+    // MaterialDetailLayers: the mask, then the layers its channels R, G, B and A weigh.
+    std::string detailMask;
+    std::array<std::string, kDetailLayerCount> detailLayers{};
 };
 
 struct CpuRenderSubmesh

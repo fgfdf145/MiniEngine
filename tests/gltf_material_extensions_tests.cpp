@@ -1147,12 +1147,107 @@ void SidecarKeepsVolumeScatter()
     Near(applied.scatterAnisotropy, -0.4f, "applied anisotropy");
 }
 
+const char* kDetailTextures = R"("images": [{ "uri": "mask.png" }, { "uri": "d0.png" }, { "uri": "d1.png" }, { "uri": "d3.png" }],
+  "textures": [{ "source": 0 }, { "source": 1 }, { "source": 2 }, { "source": 3 }],)";
+
+void ReadsDetailLayers()
+{
+    const ScopedFixtureDirectory directory;
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteModel(
+            directory.path,
+            "detail_layers",
+            {R"({ "name": "tarmac", "extensions": { "MINIENGINE_materials_detail_layers": {
+                   "maskTexture": { "index": 0 }, "mapping": "positionXZ", "intensity": 1.5,
+                   "layers": [ { "texture": { "index": 1 }, "scale": [-0.8, -0.8] },
+                               { "texture": { "index": 2 }, "scale": [2, 3] },
+                               { "scale": [4, 4] },
+                               { "texture": { "index": 3 } } ] } } })",
+             R"({ "name": "kerb", "extensions": { "MINIENGINE_materials_detail_layers": {
+                   "maskTexture": { "index": 0 }, "mapping": "texCoord",
+                   "layers": [ { "texture": { "index": 1 }, "scale": [10, 10] } ] } } })",
+             R"({ "name": "nomask", "extensions": { "MINIENGINE_materials_detail_layers": {
+                   "mapping": "texCoord", "layers": [ { "texture": { "index": 1 } } ] } } })",
+             R"({ "name": "badmapping", "extensions": { "MINIENGINE_materials_detail_layers": {
+                   "maskTexture": { "index": 0 }, "mapping": "sideways", "layers": [ { "texture": { "index": 1 } } ] } } })",
+             R"({ "name": "plain" })"},
+            kDetailTextures)
+            .string());
+    Require(model.IsValid(), "the detail layer fixture loads");
+
+    const MaterialDetailLayers& tarmac = MaterialNamed(model, "tarmac").detailLayers;
+    Require(tarmac.IsEnabled() && tarmac.mapping == DetailLayerMapping::PositionXZ, "position mapping");
+    Require(tarmac.maskTexturePath == "mask.png", "mask: " + tarmac.maskTexturePath);
+    Require(tarmac.layerTexturePaths[0] == "d0.png" && tarmac.layerTexturePaths[1] == "d1.png", "layers R and G");
+    Require(tarmac.layerTexturePaths[2].empty(), "a layer without a texture has no path");
+    Require(tarmac.layerTexturePaths[3] == "d3.png", "layer A");
+    Near(tarmac.layerScales[0][0], -0.8f, "a negative scale is kept");
+    Near(tarmac.layerScales[1][1], 3.0f, "a scale per axis");
+    Near(tarmac.layerScales[2][0], 4.0f, "a textureless layer keeps its scale");
+    Near(tarmac.layerScales[3][0], 1.0f, "a missing scale is 1");
+    Near(tarmac.intensity, 1.5f, "intensity");
+
+    const MaterialDetailLayers& kerb = MaterialNamed(model, "kerb").detailLayers;
+    Require(kerb.IsEnabled() && kerb.mapping == DetailLayerMapping::TexCoord, "texCoord mapping");
+    Near(kerb.intensity, 1.0f, "intensity defaults to 1");
+    Require(kerb.layerTexturePaths[1].empty(), "absent layers have no texture");
+
+    Require(!MaterialNamed(model, "nomask").detailLayers.IsEnabled(), "without a mask there are no detail layers");
+    Require(!MaterialNamed(model, "badmapping").detailLayers.IsEnabled(), "an unknown mapping is ignored");
+    Require(!MaterialNamed(model, "plain").detailLayers.IsEnabled(), "a plain material has no detail layers");
+}
+
+void SidecarKeepsDetailLayers()
+{
+    const ScopedFixtureDirectory directory;
+    ModelImportedMaterialInfo written{};
+    written.name = "tarmac";
+    written.detailLayers.mapping = DetailLayerMapping::PositionXZ;
+    written.detailLayers.maskTexturePath = "textures/mask.png";
+    written.detailLayers.layerTexturePaths[0] = "textures/d0.png";
+    written.detailLayers.layerTexturePaths[3] = "textures/d3.png";
+    written.detailLayers.layerScales[0] = {-0.8f, -0.5f};
+    written.detailLayers.intensity = 1.25f;
+    YAML::Node root;
+    root["material"] = SerializeMaterialDefinition(written);
+    const std::filesystem::path path = directory.path / "tarmac.material.yaml";
+    std::ofstream(path) << YAML::Dump(root);
+
+    ModelImportedMaterialInfo read{};
+    std::string warning;
+    Require(LoadMaterialDefinition(path, read, warning), "the sidecar loads: " + warning);
+    const MaterialDetailLayers& layers = read.detailLayers;
+    Require(layers.mapping == DetailLayerMapping::PositionXZ, "sidecar mapping");
+    Require(layers.maskTexturePath == "textures/mask.png", "sidecar mask");
+    Require(layers.layerTexturePaths[0] == "textures/d0.png" && layers.layerTexturePaths[1].empty() &&
+                layers.layerTexturePaths[3] == "textures/d3.png",
+            "sidecar layers");
+    Near(layers.layerScales[0][1], -0.5f, "sidecar scale");
+    Near(layers.layerScales[1][0], 1.0f, "sidecar default scale");
+    Near(layers.intensity, 1.25f, "sidecar intensity");
+
+    const std::filesystem::path legacyPath = directory.path / "legacy.material.yaml";
+    std::ofstream(legacyPath) << "material:\n  name: legacy\n  pbr:\n    roughness_factor: 0.5\n";
+    ModelImportedMaterialInfo legacy{};
+    Require(LoadMaterialDefinition(legacyPath, legacy, warning), "the legacy sidecar loads: " + warning);
+    Require(!legacy.detailLayers.IsEnabled(), "a legacy sidecar has no detail layers");
+
+    ModelMaterialData applied{};
+    ApplyImportedMaterialInfo(read, applied);
+    Require(applied.detailLayers.IsEnabled() && applied.detailLayers.layerTexturePaths[3] == "textures/d3.png",
+            "applied detail layers");
+    Require(BuildImportedMaterialInfo(applied).detailLayers.maskTexturePath == "textures/mask.png",
+            "detail layers survive the round trip back");
+}
+
 int main()
 {
     try
     {
         ReadsVolumeScatter();
         SidecarKeepsVolumeScatter();
+        ReadsDetailLayers();
+        SidecarKeepsDetailLayers();
         ReadsEmissiveStrength();
         ReadsClearcoat();
         SidecarKeepsClearcoat();

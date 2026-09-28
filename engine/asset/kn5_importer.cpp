@@ -346,6 +346,18 @@ class GltfBuilder
                     m_alphaTextures.insert(ToLowerAscii(name));
                 }
             }
+            if (IsMultilayer(material))
+            {
+                // The mask's alpha weighs the fourth layer.
+                m_alphaTextures.insert(ToLowerAscii(material.Texture("txMask")));
+                for (const char* slot : kMultilayerSlots)
+                {
+                    if (const std::string name = material.Texture(slot); !name.empty())
+                    {
+                        m_usedTextures.insert(ToLowerAscii(name));
+                    }
+                }
+            }
         }
     }
 
@@ -538,6 +550,16 @@ class GltfBuilder
         return ToLowerAscii(textureName).find("damage") != std::string::npos;
     }
 
+    // The maps a multilayer surface reads besides txDiffuse.
+    static constexpr std::array<const char*, 6> kMultilayerSlots{
+        "txMask", "txDetailR", "txDetailG", "txDetailB", "txDetailA", "txDetailNM"};
+
+    // AC's ksMultilayer family, which blends detail maps by a mask (see AddDetailLayers).
+    static bool IsMultilayer(const Kn5Material& material)
+    {
+        return ToLowerAscii(material.shader).starts_with("ksmultilayer") && !material.Texture("txMask").empty();
+    }
+
     static std::vector<std::uint8_t> StripAlpha(const TextureData& image)
     {
         std::vector<std::uint8_t> rgb;
@@ -724,6 +746,10 @@ class GltfBuilder
                 out["normalTexture"] = {{"index", *normal}};
             }
         }
+        if (IsMultilayer(material))
+        {
+            AddDetailLayers(material, out);
+        }
 
         if (material.alphaBlend)
         {
@@ -744,6 +770,53 @@ class GltfBuilder
             out["emissiveFactor"] = {level, level, level};
         }
         return out;
+    }
+
+    // AC's multilayer surfaces (see docs/design/2026-09-28-detail-layers-design.md): the mask and
+    // the four details as MINIENGINE_materials_detail_layers, txDetailNM as a tiled normal map.
+    void AddDetailLayers(const Kn5Material& material, Json& out)
+    {
+        const std::optional<size_t> mask = TextureIndexForKn5(material.Texture("txMask"));
+        if (!mask.has_value())
+        {
+            return;
+        }
+        // ksMultilayer_objsp tiles by the mesh's UV, the others by the world's x and z. The model's
+        // space is AC's world turned half about Y, so a world-position scale changes sign.
+        const bool byTexCoord = ToLowerAscii(material.shader).starts_with("ksmultilayer_objsp");
+        const float sign = byTexCoord ? 1.0f : -1.0f;
+        Json layers = Json::array();
+        constexpr std::array<std::pair<const char*, const char*>, 4> kLayers{
+            {{"txDetailR", "multR"}, {"txDetailG", "multG"}, {"txDetailB", "multB"}, {"txDetailA", "multA"}}};
+        for (const auto& [slot, multiplier] : kLayers)
+        {
+            const float scale = Round(sign * material.Property(multiplier, 1.0f), 6);
+            Json layer = Json{{"scale", {scale, scale}}};
+            if (const std::optional<size_t> texture = TextureIndexForKn5(material.Texture(slot)))
+            {
+                layer["texture"] = {{"index", *texture}};
+            }
+            layers.push_back(std::move(layer));
+        }
+        out["extensions"]["MINIENGINE_materials_detail_layers"] = {
+            {"maskTexture", {{"index", *mask}}},
+            {"mapping", byTexCoord ? "texCoord" : "positionXZ"},
+            {"intensity", Round(material.Property("magicMult", 1.0f), 6)},
+            {"layers", std::move(layers)}};
+        m_extensionsUsed.insert("MINIENGINE_materials_detail_layers");
+
+        // With detailNMMult 0 AC samples a single texel of the map: no relief worth binding.
+        const float normalTiling = material.Property("detailNMMult", 0.0f);
+        if (!out.contains("normalTexture") && normalTiling > 0.0f)
+        {
+            if (const std::optional<size_t> normal = TextureIndexForKn5(material.Texture("txDetailNM")))
+            {
+                out["normalTexture"] = {
+                    {"index", *normal},
+                    {"extensions", {{"KHR_texture_transform", {{"scale", {Round(normalTiling, 6), Round(normalTiling, 6)}}}}}}};
+                m_extensionsUsed.insert("KHR_texture_transform");
+            }
+        }
     }
 
     size_t AppendView(const void* data, size_t size, int target)

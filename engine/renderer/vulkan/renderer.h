@@ -105,6 +105,8 @@ struct MaterialTextureSlots
     uint32_t thickness = 0;
     uint32_t diffuseTransmission = 0;
     uint32_t diffuseTransmissionColor = 0;
+    uint32_t detailMask = 0;
+    std::array<uint32_t, kDetailLayerCount> detailLayers{};
     // The sampler each binding pairs its texture with, in binding order (MaterialTextureSlot); the
     // blend graph's slots keep the default.
     MaterialTextureSamplers samplers{};

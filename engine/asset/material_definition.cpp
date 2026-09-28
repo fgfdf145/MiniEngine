@@ -3,6 +3,7 @@
 #include "material_graph_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <cctype>
 #include <optional>
@@ -86,6 +87,21 @@ TextureMipFilter ParseTextureMipFilter(const std::string& value, TextureMipFilte
 
 template <size_t Count>
 void ReadFloatSequence(const YAML::Node& node, float (&destination)[Count])
+{
+    if (!node || !node.IsSequence())
+    {
+        return;
+    }
+
+    const size_t count = std::min(Count, node.size());
+    for (size_t index = 0; index < count; ++index)
+    {
+        destination[index] = node[index].as<float>(destination[index]);
+    }
+}
+
+template <size_t Count>
+void ReadFloatSequence(const YAML::Node& node, std::array<float, Count>& destination)
 {
     if (!node || !node.IsSequence())
     {
@@ -223,7 +239,8 @@ ModelImportedMaterialInfo BuildImportedMaterialInfo(const ModelMaterialData& mat
         material.blendGraph,
         material.shaderGraph,
         material.textureTransforms,
-        material.textureSamplers};
+        material.textureSamplers,
+        material.detailLayers};
 }
 
 void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMaterialData& destination)
@@ -256,6 +273,7 @@ void ApplyImportedMaterialInfo(const ModelImportedMaterialInfo& source, ModelMat
     destination.pbr = source.pbr;
     destination.blendGraph = source.blendGraph;
     destination.shaderGraph = source.shaderGraph;
+    destination.detailLayers = source.detailLayers;
     for (size_t index = 0; index < 4; ++index)
     {
         destination.baseColor[index] = source.pbr.baseColorFactor[index];
@@ -450,6 +468,27 @@ YAML::Node SerializeMaterialDefinition(const ModelImportedMaterialInfo& material
         graph["secondary_occlusion_texture_path"] = blendGraph.secondaryOcclusionTexturePath;
         graph["secondary_emissive_texture_path"] = blendGraph.secondaryEmissiveTexturePath;
         node["texture_graph"] = graph;
+    }
+
+    if (material.detailLayers.IsEnabled())
+    {
+        const MaterialDetailLayers& detailLayers = material.detailLayers;
+        YAML::Node detail(YAML::NodeType::Map);
+        detail["mapping"] = ToString(detailLayers.mapping);
+        detail["intensity"] = detailLayers.intensity;
+        detail["mask_texture_path"] = detailLayers.maskTexturePath;
+        YAML::Node layers(YAML::NodeType::Sequence);
+        for (size_t index = 0; index < kDetailLayerCount; ++index)
+        {
+            YAML::Node layer(YAML::NodeType::Map);
+            layer["texture_path"] = detailLayers.layerTexturePaths[index];
+            YAML::Node scale(YAML::NodeType::Sequence);
+            SerializeFloatSequence(scale, detailLayers.layerScales[index].data(), 2);
+            layer["scale"] = scale;
+            layers.push_back(layer);
+        }
+        detail["layers"] = layers;
+        node["detail_layers"] = detail;
     }
 
     if (!material.shaderGraph.IsEmpty())
@@ -649,6 +688,27 @@ bool LoadMaterialDefinition(
             blendGraph.secondaryRoughnessTexturePath = graph["secondary_roughness_texture_path"].as<std::string>(blendGraph.secondaryRoughnessTexturePath);
             blendGraph.secondaryOcclusionTexturePath = graph["secondary_occlusion_texture_path"].as<std::string>(blendGraph.secondaryOcclusionTexturePath);
             blendGraph.secondaryEmissiveTexturePath = graph["secondary_emissive_texture_path"].as<std::string>(blendGraph.secondaryEmissiveTexturePath);
+        }
+
+        if (const YAML::Node detail = node["detail_layers"]; detail && detail.IsMap())
+        {
+            MaterialDetailLayers& detailLayers = material.detailLayers;
+            const std::string mapping = detail["mapping"].as<std::string>("");
+            detailLayers.mapping = ParseDetailLayerMapping(mapping).value_or(DetailLayerMapping::None);
+            if (detailLayers.mapping == DetailLayerMapping::None)
+            {
+                warning = "Unknown detail_layers mapping '" + mapping + "'; the detail layers are ignored";
+            }
+            detailLayers.intensity = detail["intensity"].as<float>(detailLayers.intensity);
+            detailLayers.maskTexturePath = detail["mask_texture_path"].as<std::string>("");
+            if (const YAML::Node layers = detail["layers"]; layers && layers.IsSequence())
+            {
+                for (size_t index = 0; index < std::min<size_t>(layers.size(), kDetailLayerCount); ++index)
+                {
+                    detailLayers.layerTexturePaths[index] = layers[index]["texture_path"].as<std::string>("");
+                    ReadFloatSequence(layers[index]["scale"], detailLayers.layerScales[index]);
+                }
+            }
         }
 
         if (const YAML::Node shaderGraph = node["shader_graph"])

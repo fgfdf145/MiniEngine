@@ -974,6 +974,66 @@ ModelMaterialData BuildMaterialData(
         }
     }
 
+    // MINIENGINE_materials_detail_layers (the kn5 import writes it for AC's multilayer surfaces).
+    // Without a mask or with an unknown mapping it is ignored, and the base map shows alone.
+    if (const auto detail = material.extensions.find("MINIENGINE_materials_detail_layers"); detail != material.extensions.end())
+    {
+        const tinygltf::Value& extension = detail->second;
+        // A textureInfo's image, untransformed and on the default sampler, or "" without one.
+        const auto readTextureIndex = [&](const tinygltf::Value& info) -> std::string
+        {
+            if (!info.IsObject() || !info.Has("index") || !info.Get("index").IsInt())
+            {
+                return {};
+            }
+            return ResolveImagePath(model, modelPath, info.Get("index").GetNumberAsInt());
+        };
+        MaterialDetailLayers layers;
+        const std::string mapping =
+            extension.Has("mapping") && extension.Get("mapping").IsString() ? extension.Get("mapping").Get<std::string>() : "";
+        layers.mapping = ParseDetailLayerMapping(mapping).value_or(DetailLayerMapping::None);
+        layers.maskTexturePath = extension.Has("maskTexture") ? readTextureIndex(extension.Get("maskTexture")) : "";
+        layers.intensity = readExtensionNumber(extension, "intensity", 1.0f);
+        if (extension.Has("layers") && extension.Get("layers").IsArray())
+        {
+            const tinygltf::Value& list = extension.Get("layers");
+            for (size_t index = 0; index < std::min<size_t>(list.ArrayLen(), kDetailLayerCount); ++index)
+            {
+                const tinygltf::Value& layer = list.Get(static_cast<int>(index));
+                if (!layer.IsObject())
+                {
+                    continue;
+                }
+                if (layer.Has("texture"))
+                {
+                    layers.layerTexturePaths[index] = readTextureIndex(layer.Get("texture"));
+                }
+                if (layer.Has("scale") && layer.Get("scale").IsArray() && layer.Get("scale").ArrayLen() >= 2)
+                {
+                    for (int axis = 0; axis < 2; ++axis)
+                    {
+                        const tinygltf::Value& value = layer.Get("scale").Get(axis);
+                        if (value.IsNumber() && std::isfinite(value.GetNumberAsDouble()))
+                        {
+                            layers.layerScales[index][axis] = static_cast<float>(value.GetNumberAsDouble());
+                        }
+                    }
+                }
+            }
+        }
+        if (layers.IsEnabled())
+        {
+            materialData.detailLayers = std::move(layers);
+        }
+        else
+        {
+            LOG_WARN(
+                "Ignoring MINIENGINE_materials_detail_layers on material '{}' in '{}': it needs a mask and a known mapping",
+                material.name,
+                modelPath.string());
+        }
+    }
+
     // KHR_materials_dispersion: 0 (none) when absent or negative.
     if (const auto dispersion = material.extensions.find("KHR_materials_dispersion"); dispersion != material.extensions.end())
     {

@@ -848,7 +848,12 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 materialBinding.transmission,
                 materialBinding.thickness,
                 materialBinding.diffuseTransmission,
-                materialBinding.diffuseTransmissionColor};
+                materialBinding.diffuseTransmissionColor,
+                materialBinding.detailMask,
+                materialBinding.detailLayers[0],
+                materialBinding.detailLayers[1],
+                materialBinding.detailLayers[2],
+                materialBinding.detailLayers[3]};
 
             std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
             for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)

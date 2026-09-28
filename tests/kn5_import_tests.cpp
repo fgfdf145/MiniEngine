@@ -958,6 +958,88 @@ void ImportsAWholeTrackLayout()
     RequireNear(tree.mesh.vertices[0].position[2], -4.0f, 1e-4f, "placed z");
 }
 
+// Three track surfaces: tarmac on world-space detail maps with a detail normal, a kerb on UV-space
+// ones, and a plain wall.
+std::vector<std::uint8_t> BuildSurfacesKn5()
+{
+    ByteWriter writer;
+    writer.Raw("sc6969", 6);
+    writer.U32(5);
+    const std::vector<std::string> textures{"asph.dds", "asph_mask.dds", "tarmac_detail.dds", "grass_detail.dds",
+                                            "tarmac_nm.dds", "kerb.dds", "wall.dds"};
+    writer.U32(static_cast<std::uint32_t>(textures.size()));
+    for (const std::string& name : textures)
+    {
+        writer.U32(1);
+        writer.String(name);
+        writer.Blob(DdsFlat(4, {120, 120, 120, 255}));
+    }
+    const std::vector<FixtureMaterial> materials{
+        {"asph", "ksMultilayer_fresnel_nm", false, false,
+         {{"ksSpecular", 0.0f}, {"multR", 0.8f}, {"multG", 0.25f}, {"multB", 0.0f}, {"multA", 0.0f}, {"magicMult", 1.2f}, {"detailNMMult", 5.0f}},
+         {{"txDiffuse", "asph.dds"}, {"txMask", "asph_mask.dds"}, {"txDetailR", "tarmac_detail.dds"}, {"txDetailG", "grass_detail.dds"},
+          {"txDetailB", "tarmac_detail.dds"}, {"txDetailA", "tarmac_detail.dds"}, {"txDetailNM", "tarmac_nm.dds"}}},
+        {"kerb", "ksMultilayer_objsp", false, false,
+         {{"multR", 12.0f}, {"multG", 3.0f}, {"multB", 1.0f}, {"multA", 1.0f}},
+         {{"txDiffuse", "kerb.dds"}, {"txMask", "asph_mask.dds"}, {"txDetailR", "tarmac_detail.dds"}, {"txDetailG", "grass_detail.dds"},
+          {"txDetailB", "tarmac_detail.dds"}, {"txDetailA", "tarmac_detail.dds"}}},
+        {"wall", "ksPerPixel", false, false, {{"ksSpecular", 0.2f}}, {{"txDiffuse", "wall.dds"}}},
+    };
+    writer.U32(static_cast<std::uint32_t>(materials.size()));
+    for (const FixtureMaterial& material : materials)
+    {
+        WriteMaterial(writer, material);
+    }
+    WriteDummy(writer, "ROOT", 3, kIdentity);
+    WriteMesh(writer, "ROAD", 0, 1.0f);
+    WriteMesh(writer, "KERB", 1, 2.0f);
+    WriteMesh(writer, "WALL", 2, 3.0f);
+    return writer.Bytes();
+}
+
+void ImportsMultilayerSurfacesAsDetailLayers()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = scope.Path() / "surfaces" / "surfaces.kn5";
+    WriteFile(kn5, BuildSurfacesKn5());
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "assets" / "surfaces");
+    const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+    const auto named = [&model](const std::string& name) -> const ModelMaterialData&
+    {
+        for (const ModelMaterialData& material : model.materials)
+        {
+            if (material.name == name)
+            {
+                return material;
+            }
+        }
+        throw std::runtime_error("no material " + name);
+    };
+
+    const ModelMaterialData& asph = named("asph");
+    const MaterialDetailLayers& tarmac = asph.detailLayers;
+    Require(tarmac.IsEnabled() && tarmac.mapping == DetailLayerMapping::PositionXZ, "ksMultilayer maps its details by world position");
+    Require(!tarmac.maskTexturePath.empty() && tarmac.maskTexturePath != asph.baseColorTexturePath, "the mask is its own map");
+    Require(!tarmac.layerTexturePaths[0].empty() && tarmac.layerTexturePaths[1] != tarmac.layerTexturePaths[0], "R and G differ");
+    Require(tarmac.layerTexturePaths[2] == tarmac.layerTexturePaths[0], "B shares R's map");
+    // The model's space is AC's world turned half about Y: x and z both change sign.
+    RequireNear(tarmac.layerScales[0][0], -0.8f, 1e-6f, "multR, negated for the half turn");
+    RequireNear(tarmac.layerScales[0][1], -0.8f, 1e-6f, "on both axes");
+    RequireNear(tarmac.layerScales[1][0], -0.25f, 1e-6f, "multG");
+    RequireNear(tarmac.intensity, 1.2f, 1e-6f, "magicMult is the intensity");
+    Require(!asph.normalTexturePath.empty(), "txDetailNM is the normal map");
+    RequireNear(asph.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Normal)].scale[0], 5.0f, 1e-6f,
+                "tiled by detailNMMult");
+
+    const MaterialDetailLayers& kerb = named("kerb").detailLayers;
+    Require(kerb.IsEnabled() && kerb.mapping == DetailLayerMapping::TexCoord, "ksMultilayer_objsp maps its details by UV");
+    RequireNear(kerb.layerScales[0][0], 12.0f, 1e-6f, "a UV scale is not negated");
+    RequireNear(kerb.intensity, 1.0f, 1e-6f, "magicMult defaults to 1");
+    Require(named("kerb").normalTexturePath.empty(), "no detail normal without txDetailNM");
+
+    Require(!named("wall").detailLayers.IsEnabled(), "a plain material has no detail layers");
+}
+
 int main()
 {
     try
@@ -976,6 +1058,7 @@ int main()
         PaintRankingPrefersTheBodywork();
         ReadsTrackLayouts();
         ImportsAWholeTrackLayout();
+        ImportsMultilayerSurfacesAsDetailLayers();
 
         std::cout << "kn5 import tests passed\n";
         return 0;

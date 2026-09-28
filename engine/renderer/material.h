@@ -48,7 +48,8 @@ struct alignas(16) GpuMaterialData
     float surfaceFactors[4] = {0.0f, 1.0f, 1.0f, 1.0f};
     float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
     // x = kShadingFlag* bits, y = 1 when any texture is transformed or reads the second UV set
-    // (the shaders then read GpuTextureTransforms); zw reserved.
+    // (the shaders then read GpuTextureTransforms), z = the detail layers' DetailLayerMapping (0 for
+    // none: no detail map is sampled); w reserved.
     uint32_t shadingModel[4] = {0u, 0u, 0u, 0u};
     // x = clearcoat factor, y = clearcoat perceptual roughness, both [0, 1], z = the coat normal
     // map's scale; w unused. Read only with kShadingFlagClearcoat.
@@ -83,6 +84,11 @@ struct alignas(16) GpuMaterialData
     // scattering, by the forward pass (diffuse transmission already sends it there) and the scatter
     // pre-pass.
     float volumeScatter[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // MaterialDetailLayers: each layer's (x, y) scale, layers R, G, B and A in turn. Read only when
+    // shadingModel.z names a mapping.
+    float detailLayerScales[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    // x = the detail layers' intensity; yzw reserved.
+    float detailLayerParams[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 // Whether the scatter pre-pass draws the material and the forward pass diffuses its light.
@@ -109,7 +115,9 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 240, "GpuMaterialData must stay 15 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 288, "GpuMaterialData must stay 18 x vec4 to match the shader struct");
+static_assert(offsetof(GpuMaterialData, detailLayerScales) == 240, "detailLayerScales must be the sixteenth and seventeenth vec4");
+static_assert(offsetof(GpuMaterialData, detailLayerParams) == 272, "detailLayerParams must be the eighteenth vec4");
 static_assert(offsetof(GpuMaterialData, diffuseTransmission) == 208, "diffuseTransmission must be the fourteenth vec4");
 static_assert(offsetof(GpuMaterialData, volumeScatter) == 224, "volumeScatter must be the fifteenth vec4");
 static_assert(offsetof(GpuMaterialData, emissiveFactor) == 16, "emissiveFactor must start the second vec4");

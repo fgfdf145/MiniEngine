@@ -298,6 +298,20 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.decal = material.decal && material.alphaMode == MaterialAlphaMode::Blend &&
                               (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
         renderSubmesh.textureSamplers = material.textureSamplers;
+        // The mask reads the first UV set, so without one there are no detail layers.
+        if (submesh.hasTexCoords && material.detailLayers.IsEnabled())
+        {
+            const MaterialDetailLayers& layers = material.detailLayers;
+            renderSubmesh.material.shadingModel[2] = static_cast<uint32_t>(layers.mapping);
+            for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
+            {
+                renderSubmesh.material.detailLayerScales[layer * 2] = layers.layerScales[layer][0];
+                renderSubmesh.material.detailLayerScales[layer * 2 + 1] = layers.layerScales[layer][1];
+                renderSubmesh.textures.detailLayers[layer] = resolveTex(layers.layerTexturePaths[layer]);
+            }
+            renderSubmesh.material.detailLayerParams[0] = std::max(layers.intensity, 0.0f);
+            renderSubmesh.textures.detailMask = resolveTex(layers.maskTexturePath);
+        }
         if (submesh.hasTexCoords && !AreIdentity(material.textureTransforms))
         {
             renderSubmesh.textureTransforms = material.textureTransforms;

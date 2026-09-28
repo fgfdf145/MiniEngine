@@ -263,6 +263,12 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.thickness, TextureUsage::Data);
     visit(textures.diffuseTransmission, TextureUsage::Data);
     visit(textures.diffuseTransmissionColor, TextureUsage::Color);
+    // Combined as sRGB-encoded values (detail_layers.glsl), so read undecoded.
+    visit(textures.detailMask, TextureUsage::Data);
+    for (const std::string& layer : textures.detailLayers)
+    {
+        visit(layer, TextureUsage::Data);
+    }
 }
 
 // What the editor shows while a change is missing from the screen. Kept as one constant so a later
@@ -354,6 +360,12 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
         {
             return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.Get(slots.samplers[slot])};
         };
+        // The detail maps come outside glTF's texture slots: always the default sampler (repeat,
+        // linear, mipmapped), which their tiling needs.
+        const auto bindDefault = [&](uint32_t textureIndex)
+        {
+            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.Get(TextureSampler{})};
+        };
         bindings.push_back(MaterialTextureBinding{
             bind(slots.baseColor, 0),
             bind(slots.normal, 1),
@@ -381,7 +393,10 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
             bind(slots.transmission, 23),
             bind(slots.thickness, 24),
             bind(slots.diffuseTransmission, 25),
-            bind(slots.diffuseTransmissionColor, 26)});
+            bind(slots.diffuseTransmissionColor, 26),
+            bindDefault(slots.detailMask),
+            {bindDefault(slots.detailLayers[0]), bindDefault(slots.detailLayers[1]), bindDefault(slots.detailLayers[2]),
+             bindDefault(slots.detailLayers[3])}});
     }
 
     return bindings;
@@ -2083,6 +2098,11 @@ void VulkanRenderer::UploadSceneResources()
         slots.diffuseTransmission = loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmission, TextureUsage::Data, defaultLayerIndex);
         slots.diffuseTransmissionColor =
             loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmissionColor, TextureUsage::Color, defaultSheenColorIndex);
+        slots.detailMask = loadTextureIndex(cpuRenderSubmesh.textures.detailMask, TextureUsage::Data, defaultLayerIndex);
+        for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
+        {
+            slots.detailLayers[layer] = loadTextureIndex(cpuRenderSubmesh.textures.detailLayers[layer], TextureUsage::Data, defaultLayerIndex);
+        }
 
         renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
         newMaterialTextureSlots.push_back(slots);
