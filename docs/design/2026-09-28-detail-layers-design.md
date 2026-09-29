@@ -90,3 +90,13 @@ space, so the products are of sRGB-encoded values.
 - **Measured on Spa**: all 29 multilayer materials take the extension (52 more images). None sets
   `detailNMMult` above 0, so no detail normal is bound there; the tarmac shows its grain, the grass
   verges their blades.
+- **Multilayer roughness has a floor (2026-09-29).** With the grain in place the tarmac still read as
+  wet plastic with a sun glare. The import turned `ksSpecularEXP` 15 times `tarmacSpecularMultiplier`
+  2.5 (the sheen's intensity, not a lobe width) into roughness 0.225, one value for the whole
+  material, with no detail normal to break the reflection up. Now the multiplier no longer scales the
+  exponent, and a `ksMultilayer*` material is imported at roughness 0.7 at the least (`sand`, `carpet`
+  and the kerbs land on it; the tarmac's own 0.32 is raised to it). `fresnelMaxLevel` still becomes
+  `KHR_materials_specular`. Measured looking down the start straight from behind a car at
+  `240,20.7,610` (yaw 52.6, pitch -8.8), the sun glare at the frame's lower right: tone-mapped
+  luminance 0.88 before, 0.28 after (0.09 with no specular at all). Still out of scope, and the next step for a road with a
+  believable sheen: the combined alpha as a per-pixel specular mask, and a detail normal.

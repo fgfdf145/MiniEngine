@@ -984,16 +984,22 @@ std::vector<std::uint8_t> BuildSurfacesKn5()
          {{"txDiffuse", "kerb.dds"}, {"txMask", "asph_mask.dds"}, {"txDetailR", "tarmac_detail.dds"}, {"txDetailG", "grass_detail.dds"},
           {"txDetailB", "tarmac_detail.dds"}, {"txDetailA", "tarmac_detail.dds"}}},
         {"wall", "ksPerPixel", false, false, {{"ksSpecular", 0.2f}}, {{"txDiffuse", "wall.dds"}}},
+        // Spa's tarmac: a broad exponent, intensity above 1 and a sheen multiplier that once
+        // sharpened the lobe to roughness 0.225.
+        {"glossy_tarmac", "ksMultilayer_fresnel_nm", false, false,
+         {{"ksSpecular", 1.2f}, {"ksSpecularEXP", 15.0f}, {"fresnelMaxLevel", 2.5f}, {"tarmacSpecularMultiplier", 2.5f}},
+         {{"txDiffuse", "asph.dds"}, {"txMask", "asph_mask.dds"}, {"txDetailR", "tarmac_detail.dds"}}},
     };
     writer.U32(static_cast<std::uint32_t>(materials.size()));
     for (const FixtureMaterial& material : materials)
     {
         WriteMaterial(writer, material);
     }
-    WriteDummy(writer, "ROOT", 3, kIdentity);
+    WriteDummy(writer, "ROOT", 4, kIdentity);
     WriteMesh(writer, "ROAD", 0, 1.0f);
     WriteMesh(writer, "KERB", 1, 2.0f);
     WriteMesh(writer, "WALL", 2, 3.0f);
+    WriteMesh(writer, "PIT", 3, 4.0f);
     return writer.Bytes();
 }
 
@@ -1038,6 +1044,14 @@ void ImportsMultilayerSurfacesAsDetailLayers()
     Require(named("kerb").normalTexturePath.empty(), "no detail normal without txDetailNM");
 
     Require(!named("wall").detailLayers.IsEnabled(), "a plain material has no detail layers");
+
+    // Ground is never a tight lobe: exponent 15 at intensity 1.2 is roughness 0.32, raised to the
+    // multilayer floor; the sheen multiplier no longer sharpens it. A plain material keeps its own
+    // (0.577 for the wall), and a matte multilayer one is above the floor already.
+    RequireNear(named("glossy_tarmac").roughnessFactor, 0.7f, 1e-6f, "multilayer roughness has a floor");
+    RequireNear(named("glossy_tarmac").specularFactor, 1.0f, 1e-6f, "fresnelMaxLevel still caps the specular at 1");
+    RequireNear(named("wall").roughnessFactor, 0.57735f, 1e-4f, "the floor is for multilayer surfaces only");
+    RequireNear(named("asph").roughnessFactor, 0.91287f, 1e-4f, "a matte multilayer surface stays matte");
 }
 
 int main()

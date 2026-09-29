@@ -40,6 +40,8 @@ constexpr int kArrayBuffer = 34962;
 constexpr int kElementArrayBuffer = 34963;
 // A texture blob smaller than this is a placeholder (or, encrypted, a decoy).
 constexpr size_t kStubTextureBytes = 128;
+// The least roughness a ksMultilayer surface (tarmac, grass, sand, kerbs) is imported with.
+constexpr float kMultilayerMinRoughness = 0.7f;
 
 constexpr std::array<float, 16> kIdentity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
@@ -679,15 +681,9 @@ class GltfBuilder
     {
         const float exponent = std::max(material.Property("ksSpecularEXP", 20.0f), 1.0f);
         // ksSpecular is the intensity: 0 means no highlight at all in AC (grass, trees).
-        float specular = material.Property("ksSpecular", 1.0f);
-        // ksMultilayer (track surfaces) drives its sheen from tarmacSpecularMultiplier instead,
-        // where the author asked for a reflection at all (fresnelMaxLevel set).
-        if (ToLowerAscii(material.shader).find("multilayer") != std::string::npos &&
-            material.Property("fresnelMaxLevel", 0.0f) > 0.0f)
-        {
-            specular = std::max(specular, material.Property("tarmacSpecularMultiplier", specular));
-        }
+        const float specular = material.Property("ksSpecular", 1.0f);
         const float effectiveExponent = exponent * std::max(specular, 0.02f);
+        const bool multilayer = ToLowerAscii(material.shader).find("multilayer") != std::string::npos;
 
         const bool useDetail = material.Property("useDetail", 0.0f) > 0.0f;
         const std::optional<std::array<float, 3>> tint =
@@ -697,7 +693,16 @@ class GltfBuilder
         pbr["baseColorFactor"] = tint.has_value() ? Json::array({(*tint)[0], (*tint)[1], (*tint)[2], 1.0f})
                                                   : Json::array({1.0f, 1.0f, 1.0f, 1.0f});
         pbr["metallicFactor"] = 0.0f;
-        pbr["roughnessFactor"] = Round(Kn5Importer::SpecularExponentToRoughness(effectiveExponent), 4);
+        float roughness = Kn5Importer::SpecularExponentToRoughness(effectiveExponent);
+        if (multilayer)
+        {
+            // Ground is dry and rough at any scale a lobe can show. AC's exponent is a broad Blinn
+            // lobe plus a faint Fresnel sheen; converted to GGX (and scaled by
+            // tarmacSpecularMultiplier, which the shader spends on the sheen's intensity) it came
+            // out at 0.2 to 0.4, and the road read as wet plastic with a sun glare.
+            roughness = std::max(roughness, kMultilayerMinRoughness);
+        }
+        pbr["roughnessFactor"] = Round(roughness, 4);
         if (const std::optional<size_t> diffuse = TextureIndexForKn5(material.Texture("txDiffuse")))
         {
             pbr["baseColorTexture"] = {{"index", *diffuse}};
