@@ -1801,13 +1801,113 @@ std::vector<glm::mat4> ReadGpuInstanceTransforms(const tinygltf::Model& model, c
     return transforms;
 }
 
+// A node called WHEEL_LF, DISC_RR, SUSP_LR and so on (ignoring case) is a car's wheel, brake disc or
+// suspension at one corner.
+struct WheelNodeTag
+{
+    ModelWheelPart part = ModelWheelPart::None;
+    uint8_t corner = 0;
+};
+
+WheelNodeTag ParseWheelNodeName(const std::string& name)
+{
+    static constexpr std::string_view kCorners[kModelWheelCornerCount] = {"lf", "rf", "lr", "rr"};
+    static constexpr std::pair<std::string_view, ModelWheelPart> kParts[] = {
+        {"wheel_", ModelWheelPart::Wheel},
+        {"disc_", ModelWheelPart::Disc},
+        {"susp_", ModelWheelPart::Suspension}};
+
+    const std::string lower = ToLowerAscii(name);
+    for (const auto& [prefix, part] : kParts)
+    {
+        if (lower.size() != prefix.size() + 2 || lower.compare(0, prefix.size(), prefix) != 0)
+        {
+            continue;
+        }
+        const std::string_view corner = std::string_view(lower).substr(prefix.size());
+        for (size_t index = 0; index < kModelWheelCornerCount; ++index)
+        {
+            if (corner == kCorners[index])
+            {
+                return {part, static_cast<uint8_t>(index)};
+            }
+        }
+    }
+    return {};
+}
+
+// What the traversal learns about a car's wheels: where each WHEEL_xx node sits.
+struct WheelScan
+{
+    std::array<std::optional<glm::vec3>, kModelWheelCornerCount> centers;
+};
+
+// The rig, once every corner has a wheel node with meshes; nullopt otherwise. The submeshes'
+// vertices are already in model space.
+std::optional<ModelWheelRig> BuildWheelRig(const WheelScan& scan, const std::vector<ModelSubmeshData>& submeshes)
+{
+    ModelWheelRig rig;
+    for (size_t corner = 0; corner < kModelWheelCornerCount; ++corner)
+    {
+        if (!scan.centers[corner].has_value())
+        {
+            return std::nullopt;
+        }
+        rig.corners[corner].center = *scan.centers[corner];
+    }
+
+    // The left wheels' mean centre minus the right's.
+    const glm::vec3 axle =
+        (rig.corners[0].center + rig.corners[2].center) - (rig.corners[1].center + rig.corners[3].center);
+    if (glm::length(axle) < 1e-4f)
+    {
+        return std::nullopt;
+    }
+    rig.axle = glm::normalize(axle);
+
+    std::array<float, kModelWheelCornerCount> radiusSquared{};
+    std::array<float, kModelWheelCornerCount> along{};
+    std::array<float, kModelWheelCornerCount> alongMin{};
+    std::array<bool, kModelWheelCornerCount> any{};
+    for (const ModelSubmeshData& submesh : submeshes)
+    {
+        if (submesh.wheelPart != ModelWheelPart::Wheel)
+        {
+            continue;
+        }
+        const size_t corner = submesh.wheelCorner;
+        for (const Vertex& vertex : submesh.mesh.vertices)
+        {
+            const glm::vec3 offset = glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]) - rig.corners[corner].center;
+            const float axial = glm::dot(offset, rig.axle);
+            const glm::vec3 radial = offset - rig.axle * axial;
+            radiusSquared[corner] = std::max(radiusSquared[corner], glm::dot(radial, radial));
+            alongMin[corner] = any[corner] ? std::min(alongMin[corner], axial) : axial;
+            along[corner] = any[corner] ? std::max(along[corner], axial) : axial;
+            any[corner] = true;
+        }
+    }
+    for (size_t corner = 0; corner < kModelWheelCornerCount; ++corner)
+    {
+        if (!any[corner])
+        {
+            return std::nullopt;
+        }
+        rig.corners[corner].radius = std::sqrt(radiusSquared[corner]);
+        rig.corners[corner].width = along[corner] - alongMin[corner];
+    }
+    return rig;
+}
+
 void TraverseNode(
     const tinygltf::Model& model,
     int nodeIndex,
     const glm::mat4& parentTransform,
     LoadedModelData& modelData,
     std::unordered_set<int>& visitedNodes,
-    GltfLoadProgressTracker& progressTracker)
+    GltfLoadProgressTracker& progressTracker,
+    WheelScan& wheelScan,
+    WheelNodeTag wheelTag = {})
 {
     if (!visitedNodes.insert(nodeIndex).second)
     {
@@ -1817,6 +1917,18 @@ void TraverseNode(
     EnsureIndexInRange(static_cast<size_t>(nodeIndex), model.nodes.size(), "node");
     const tinygltf::Node& node = model.nodes[static_cast<size_t>(nodeIndex)];
     const glm::mat4 worldTransform = parentTransform * BuildNodeMatrix(node);
+
+    // The first WHEEL_xx, DISC_xx or SUSP_xx above a node decides what it is; a car's kn5 has each
+    // once (its LODs are other files).
+    if (wheelTag.part == ModelWheelPart::None)
+    {
+        wheelTag = ParseWheelNodeName(node.name);
+        if (wheelTag.part == ModelWheelPart::Wheel && !wheelScan.centers[wheelTag.corner].has_value())
+        {
+            wheelScan.centers[wheelTag.corner] = glm::vec3(worldTransform[3]);
+        }
+    }
+    const size_t firstNewSubmesh = modelData.submeshes.size();
 
     if (node.light >= 0)
     {
@@ -1870,9 +1982,15 @@ void TraverseNode(
         }
     }
 
+    for (size_t index = firstNewSubmesh; index < modelData.submeshes.size(); ++index)
+    {
+        modelData.submeshes[index].wheelPart = wheelTag.part;
+        modelData.submeshes[index].wheelCorner = wheelTag.corner;
+    }
+
     for (int childIndex : node.children)
     {
-        TraverseNode(model, childIndex, worldTransform, modelData, visitedNodes, progressTracker);
+        TraverseNode(model, childIndex, worldTransform, modelData, visitedNodes, progressTracker, wheelScan, wheelTag);
     }
 }
 
@@ -1901,6 +2019,7 @@ LoadedModelData BuildLoadedModelData(
     progressTracker.Report(kProgressMaterialsDone);
 
     std::unordered_set<int> visitedNodes;
+    WheelScan wheelScan;
     if (!tinyModel.scenes.empty())
     {
         const int sceneIndex = tinyModel.defaultScene >= 0 ? tinyModel.defaultScene : 0;
@@ -1908,7 +2027,7 @@ LoadedModelData BuildLoadedModelData(
         const tinygltf::Scene& scene = tinyModel.scenes[static_cast<size_t>(sceneIndex)];
         for (int rootNodeIndex : scene.nodes)
         {
-            TraverseNode(tinyModel, rootNodeIndex, glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
+            TraverseNode(tinyModel, rootNodeIndex, glm::mat4(1.0f), modelData, visitedNodes, progressTracker, wheelScan);
         }
     }
     else
@@ -1931,7 +2050,7 @@ LoadedModelData BuildLoadedModelData(
                 continue;
             }
 
-            TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
+            TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker, wheelScan);
             traversedAnyRoot = true;
         }
 
@@ -1939,10 +2058,12 @@ LoadedModelData BuildLoadedModelData(
         {
             for (size_t nodeIndex = 0; nodeIndex < tinyModel.nodes.size(); ++nodeIndex)
             {
-                TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker);
+                TraverseNode(tinyModel, static_cast<int>(nodeIndex), glm::mat4(1.0f), modelData, visitedNodes, progressTracker, wheelScan);
             }
         }
     }
+
+    modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
 
     if (modelData.submeshes.empty())
     {

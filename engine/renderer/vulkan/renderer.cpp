@@ -758,7 +758,7 @@ void VulkanRenderer::DrawFrame()
     motionKeys.reserve(m_renderSubmeshes.size());
     for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
     {
-        models.push_back(State().rendererWorld.GetModelMatrix(renderSubmesh.entity));
+        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal));
         motionKeys.push_back(renderSubmesh.motionKey);
     }
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
@@ -2499,7 +2499,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
         item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
         item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
         item.indexCount = renderSubmesh.buffer->GetIndexCount();
-        item.model = State().rendererWorld.GetModelMatrix(renderSubmesh.entity);
+        item.model = State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
         item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
         // The largest axis scale keeps the sphere enclosing under non-uniform scale.
         item.worldBoundsRadius =

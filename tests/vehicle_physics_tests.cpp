@@ -1,7 +1,9 @@
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
+#include <engine/physics/vehicle_wheel_motion.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 #include <iostream>
@@ -216,6 +218,107 @@ void TestCarRotatedAtStartDrivesItsOwnWay()
     Require(pose.position.x > 8.0f && std::abs(pose.position.z) < 1.0f, "a car facing +X drives along +X");
 }
 
+// The wheels a model defines: bigger at the back, the axles off the bounds' guess, standing on y = 0.
+VehicleWheelLayout MakeModelWheelLayout()
+{
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.75f, 0.30f, 1.30f), 0.30f, 0.20f};
+    layout[1] = {glm::vec3(-0.75f, 0.30f, 1.30f), 0.30f, 0.20f};
+    layout[2] = {glm::vec3(0.77f, 0.33f, -1.25f), 0.33f, 0.24f};
+    layout[3] = {glm::vec3(-0.77f, 0.33f, -1.25f), 0.33f, 0.24f};
+    return layout;
+}
+
+void TestFitUsesTheModelsWheels()
+{
+    const VehicleWheelLayout layout = MakeModelWheelLayout();
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, {}, &layout);
+    Require(settings.hasWheelLayout, "the layout is kept");
+    Require(std::abs(settings.frontAxleZ - 1.30f) < 1e-4f && std::abs(settings.rearAxleZ + 1.25f) < 1e-4f, "the axles are the wheels'");
+
+    const float rest = ComputeRestSuspensionLength(settings, 9.81f);
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const VehicleWheelGeometry mount = GetVehicleWheelMount(settings, index);
+        Require(std::abs(mount.center.y - rest - layout[index].center.y) < 1e-4f, "each wheel hangs the rest length under its mount");
+        Require(mount.center.x == layout[index].center.x && mount.center.z == layout[index].center.z, "straight above its centre");
+        Require(mount.radius == layout[index].radius && mount.width == layout[index].width, "with its own tyre");
+    }
+}
+
+void TestCarSitsOnTheModelsWheels()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleWheelLayout layout = MakeModelWheelLayout();
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, {}, &layout);
+    const PhysicsPose start{glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)};
+    const VehicleId car = world.AddVehicle(settings, start);
+    Simulate(world, 3.0f);
+
+    Require(world.GetVehicleTelemetry(car).wheelsInContact == 4, "all four wheels touch the ground");
+    const PhysicsPose body = world.GetVehiclePose(car);
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheels[index].pose, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f));
+        Require(glm::length(motion.center - layout[index].center) < 0.06f, "wheel " + std::to_string(index) + " rests where the model draws it");
+        Require(std::abs(motion.center.y - layout[index].radius) < 0.06f, "and its tyre stands on the ground");
+    }
+}
+
+void TestWheelMotionRollsForwardAndSteers()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleWheelLayout layout = MakeModelWheelLayout();
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, {}, &layout);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    const glm::quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 2.0f);
+
+    // Between two frames the wheel's top has moved forward, as it does when the car drives forward.
+    const auto motionAt = [&](size_t index)
+    {
+        return ComputeVehicleWheelMotion(world.GetVehiclePose(car), world.GetVehicleWheels(car)[index].pose, identity, glm::vec3(1.0f));
+    };
+    const VehicleWheelMotion before = motionAt(2);
+    world.Update(0.02f);
+    const VehicleWheelMotion after = motionAt(2);
+    const glm::vec3 topMoved = (after.spin * glm::conjugate(before.spin)) * glm::vec3(0.0f, 1.0f, 0.0f);
+    Require(topMoved.z > 0.0f, "a driven wheel rolls its top forward, z = " + std::to_string(topMoved.z));
+    Require(glm::length(motionAt(0).steer * glm::vec3(0.0f, 0.0f, 1.0f) - glm::vec3(0.0f, 0.0f, 1.0f)) < 1e-3f, "straight wheels are not steered");
+
+    // Steering right turns the front wheels towards -X and leaves the rear alone.
+    controls.steering = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 0.5f);
+    Require((motionAt(0).steer * glm::vec3(0.0f, 0.0f, 1.0f)).x < -0.2f, "the front left wheel steers right");
+    Require((motionAt(1).steer * glm::vec3(0.0f, 0.0f, 1.0f)).x < -0.2f, "so does the front right");
+    Require(std::abs((motionAt(2).steer * glm::vec3(0.0f, 0.0f, 1.0f)).x) < 1e-3f, "the rear does not");
+}
+
+void TestWheelMotionSeesTheModelsAxes()
+{
+    // The same wheel seen by a model that faces the other way: offsets flip in X and Z, and so does
+    // the steering's sideways turn.
+    const glm::quat halfTurn(0.0f, 0.0f, 1.0f, 0.0f);
+    const PhysicsPose body{glm::vec3(5.0f, 1.0f, 2.0f), glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f))};
+    const glm::vec3 offset(0.7f, 0.2f, 1.3f);
+    const glm::quat steer = glm::angleAxis(glm::radians(20.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const PhysicsPose wheel{body.position + body.rotation * offset, body.rotation * steer};
+
+    const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheel, halfTurn, glm::vec3(2.0f));
+    Require(glm::length(motion.center - glm::vec3(-0.35f, 0.1f, -0.65f)) < 1e-4f, "the offset in the model's axes and unscaled");
+    Require(std::abs(glm::degrees(glm::angle(motion.steer)) - 20.0f) < 1e-3f, "the steering angle survives the change of axes");
+    Require(glm::length(motion.spin * glm::vec3(0.0f, 1.0f, 0.0f) - glm::vec3(0.0f, 1.0f, 0.0f)) < 1e-4f, "and there is no roll");
+}
+
 void TestUpdateRunsFixedSteps()
 {
     PhysicsWorld world;
@@ -250,6 +353,10 @@ int main()
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();
         TestCarRotatedAtStartDrivesItsOwnWay();
+        TestFitUsesTheModelsWheels();
+        TestCarSitsOnTheModelsWheels();
+        TestWheelMotionRollsForwardAndSteers();
+        TestWheelMotionSeesTheModelsAxes();
     }
     catch (const std::exception& exception)
     {

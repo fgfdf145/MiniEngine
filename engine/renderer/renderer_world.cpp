@@ -92,6 +92,27 @@ glm::mat4 RendererWorld::GetModelMatrix(entt::entity entity) const
     return GetSceneWorld().GetModelMatrix(entity);
 }
 
+void RendererWorld::SetSubmeshLocalTransforms(entt::entity entity, std::vector<glm::mat4> transforms)
+{
+    m_submeshLocalTransforms[entity] = std::move(transforms);
+}
+
+void RendererWorld::ClearSubmeshLocalTransforms(entt::entity entity)
+{
+    m_submeshLocalTransforms.erase(entity);
+}
+
+glm::mat4 RendererWorld::GetSubmeshModelMatrix(entt::entity entity, uint32_t ordinal) const
+{
+    const glm::mat4 model = GetModelMatrix(entity);
+    const auto found = m_submeshLocalTransforms.find(entity);
+    if (found == m_submeshLocalTransforms.end() || ordinal >= found->second.size())
+    {
+        return model;
+    }
+    return model * found->second[ordinal];
+}
+
 void RendererWorld::SetModelLights(std::vector<CpuModelLight> modelLights)
 {
     m_modelLights = std::move(modelLights);

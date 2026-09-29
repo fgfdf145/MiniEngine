@@ -625,6 +625,71 @@ void MissingMaterialsUseTheDefault()
     Require(mixed.submeshes.at(0).materialIndex == 1, "the primitive without a material does not take the model's first");
 }
 
+// A car's WHEEL_xx, DISC_xx and SUSP_xx nodes define its wheels: every submesh below one is tagged with
+// its part and corner, and the four wheel nodes give the rig.
+void WheelNodesDefineTheRig()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string nodes = R"([
+      { "name": "car", "children": [1, 2, 3, 4, 5, 6, 12] },
+      { "name": "WHEEL_LF", "translation": [0.7, 0.3, 1.3], "children": [7] },
+      { "name": "WHEEL_RF", "translation": [-0.7, 0.3, 1.3], "children": [8] },
+      { "name": "wheel_lr", "translation": [0.7, 0.3, -1.2], "children": [9] },
+      { "name": "WHEEL_RR", "translation": [-0.7, 0.3, -1.2], "children": [10] },
+      { "name": "SUSP_LF", "translation": [0.7, 0.3, 1.3], "children": [11] },
+      { "name": "DISC_RR", "translation": [-0.7, 0.3, -1.2], "children": [13] },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "hub", "mesh": 0 },
+      { "name": "body", "mesh": 0 },
+      { "name": "disc", "mesh": 0 }
+    ])";
+    const LoadedModelData car = ModelLoader::LoadModel(WriteTriangle(directory.path, "car", "", nodes).string());
+    Require(car.submeshes.size() == 7, "a submesh per mesh node");
+    Require(car.wheelRig.has_value(), "four wheel nodes make a rig");
+    const ModelWheelRig& rig = *car.wheelRig;
+    Require(Near(rig.corners[0].center.x, 0.7f) && Near(rig.corners[0].center.z, 1.3f), "the left front wheel's centre");
+    Require(Near(rig.corners[1].center.x, -0.7f) && Near(rig.corners[3].center.z, -1.2f), "the right rear's, and the corners' order");
+    Require(Near(rig.axle.x, 1.0f) && Near(rig.axle.y, 0.0f) && Near(rig.axle.z, 0.0f), "the axle runs from right to left");
+    // The unit triangle reaches one unit from its origin across the axle and one along it.
+    Require(Near(rig.corners[2].radius, 1.0f) && Near(rig.corners[2].width, 1.0f), "the tyre's reach about the axle and along it");
+
+    std::array<int, 4> parts{};
+    for (const ModelSubmeshData& submesh : car.submeshes)
+    {
+        ++parts[static_cast<size_t>(submesh.wheelPart)];
+    }
+    Require(parts[static_cast<size_t>(ModelWheelPart::None)] == 1, "the body is no part of a wheel");
+    Require(parts[static_cast<size_t>(ModelWheelPart::Wheel)] == 4, "four tyres");
+    Require(parts[static_cast<size_t>(ModelWheelPart::Suspension)] == 1 && parts[static_cast<size_t>(ModelWheelPart::Disc)] == 1, "a strut and a disc");
+    for (const ModelSubmeshData& submesh : car.submeshes)
+    {
+        if (submesh.name.rfind("hub", 0) == 0)
+        {
+            Require(submesh.wheelPart == ModelWheelPart::Suspension && submesh.wheelCorner == 0, "the hub under SUSP_LF");
+        }
+        if (submesh.name.rfind("disc", 0) == 0)
+        {
+            Require(submesh.wheelPart == ModelWheelPart::Disc && submesh.wheelCorner == 3, "the disc under DISC_RR");
+        }
+    }
+
+    // Without all four wheels there is no rig.
+    const std::string separate = R"([
+      { "name": "car", "children": [1, 2, 3] },
+      { "name": "WHEEL_LF", "children": [4] },
+      { "name": "WHEEL_RF", "children": [5] },
+      { "name": "WHEEL_LR", "children": [6] },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "tyre", "mesh": 0 },
+      { "name": "tyre", "mesh": 0 }
+    ])";
+    const LoadedModelData incomplete = ModelLoader::LoadModel(WriteTriangle(directory.path, "incomplete", "", separate).string());
+    Require(!incomplete.wheelRig.has_value(), "three wheels are no rig");
+}
+
 int main()
 {
     try
@@ -632,6 +697,7 @@ int main()
         RequiredExtensionsAreChecked();
         MissingMaterialsUseTheDefault();
         GpuInstancesExpand();
+        WheelNodesDefineTheRig();
         QuantizedAttributesDecode();
         PunctualLightsImport();
         MeshoptBufferViewsDecode();

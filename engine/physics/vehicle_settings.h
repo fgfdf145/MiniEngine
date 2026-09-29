@@ -2,6 +2,8 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace me
@@ -27,6 +29,19 @@ enum class VehicleDrive : uint32_t
     AllWheel = 2
 };
 
+// One wheel: its centre in vehicle space and its tyre's size. In a VehicleWheelLayout the centre is
+// where the model draws the wheel at rest.
+struct VehicleWheelGeometry
+{
+    glm::vec3 center{0.0f};
+    float radius = 0.32f;
+    float width = 0.22f;
+};
+
+// The wheels' order everywhere: front left, front right, rear left, rear right.
+inline constexpr size_t kVehicleWheelCount = 4;
+using VehicleWheelLayout = std::array<VehicleWheelGeometry, kVehicleWheelCount>;
+
 struct VehicleSettings
 {
     float massKg = 1400.0f;
@@ -49,6 +64,11 @@ struct VehicleSettings
     float trackCenterX = 0.0f;
     float halfTrackWidth = 0.78f;
     float wheelMountY = 0.5f;
+    // Where the model puts each wheel, when it does (a kn5's WHEEL_xx nodes). Then these replace the
+    // axles, track and radius above: each wheel hangs from center plus the rest suspension
+    // length, so the model's wheels sit where they were drawn once the springs settle.
+    bool hasWheelLayout = false;
+    VehicleWheelLayout wheelLayout{};
 
     // Spring travel below the mount, in metres, and its stiffness as a natural frequency: 1-2 Hz is a
     // road car, 3+ a race car.
@@ -75,7 +95,17 @@ struct VehicleSettings
 // suspension travel, and a ride height that puts the tyres' contact patch on the bounds' floor once the
 // springs have settled under the car's weight. Mass, engine, brakes, steering, drive and spring rate
 // are kept from `tuning`.
-VehicleSettings FitVehicleSettingsToBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds, const VehicleSettings& tuning = {});
+// With `wheelLayout`, the wheels are where the model has them instead of guessed from the bounds
+// (the axles and track are then their averages, the suspension travel follows the tyres' radius).
+VehicleSettings FitVehicleSettingsToBounds(
+    const glm::vec3& minBounds,
+    const glm::vec3& maxBounds,
+    const VehicleSettings& tuning = {},
+    const VehicleWheelLayout* wheelLayout = nullptr);
+
+// The wheel `index` (front left, front right, rear left, rear right) as the vehicle is built with
+// it: its top mount, from which the suspension hangs down, its radius and its width.
+VehicleWheelGeometry GetVehicleWheelMount(const VehicleSettings& settings, size_t index);
 
 // How far the suspension hangs below its mount once the car rests on flat ground under gravity
 // (metres per second squared), with the weight spread evenly over the four wheels. Clamped to the

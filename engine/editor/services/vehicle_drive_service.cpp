@@ -1,9 +1,11 @@
 #include "vehicle_drive_service.h"
 
+#include <engine/asset/model_cache.h>
 #include <engine/core/input/input.h>
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/logic/world_bounds.h>
+#include <engine/physics/vehicle_wheel_motion.h>
 #include <engine/renderer/renderer_world.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -79,6 +81,29 @@ glm::quat VehicleToModelRotation(VehicleModelFront front)
     return front == VehicleModelFront::NegativeZ ? glm::quat(0.0f, 0.0f, 1.0f, 0.0f) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 }
 
+// The way a model faces, from where its wheels are: the front wheels' Z against the rear's.
+VehicleModelFront ModelFrontFromWheels(const ModelWheelRig& rig)
+{
+    const float frontZ = (rig.corners[0].center.z + rig.corners[1].center.z) * 0.5f;
+    const float rearZ = (rig.corners[2].center.z + rig.corners[3].center.z) * 0.5f;
+    return frontZ < rearZ ? VehicleModelFront::NegativeZ : VehicleModelFront::PositiveZ;
+}
+
+// The model's wheels as a layout in vehicle space, scaled as the entity is.
+VehicleWheelLayout BuildWheelLayout(const ModelWheelRig& rig, const glm::quat& vehicleToModel, const glm::vec3& scale)
+{
+    const glm::quat modelToVehicle = glm::conjugate(vehicleToModel);
+    VehicleWheelLayout layout{};
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const ModelWheelRig::Corner& corner = rig.corners[index];
+        layout[index].center = modelToVehicle * (corner.center * scale);
+        layout[index].radius = corner.radius * (scale.y + scale.z) * 0.5f;
+        layout[index].width = corner.width * scale.x;
+    }
+    return layout;
+}
+
 void RestoreCamera(Camera& camera, const Camera& saved)
 {
     // Only where it was and where it looked: exposure and the lens stay as the user left them.
@@ -106,7 +131,15 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->name = world.GetTag(entity).name;
     session->startTransform = world.GetTransform(entity);
     session->startPose = DecomposePose(world.GetModelMatrix(entity), session->scale);
-    session->vehicleToModel = VehicleToModelRotation(tuning.modelFront);
+    // A model that names its wheels says which way it faces; the tuning's guess is for the rest.
+    std::shared_ptr<const LoadedModelData> modelData = ModelCache::Get(world.GetModel(entity).sourcePath);
+    const ModelWheelRig* rig = modelData && modelData->wheelRig.has_value() ? &*modelData->wheelRig : nullptr;
+    VehicleModelFront modelFront = tuning.modelFront;
+    if (rig != nullptr)
+    {
+        modelFront = ModelFrontFromWheels(*rig);
+    }
+    session->vehicleToModel = VehicleToModelRotation(modelFront);
     session->startPose.rotation = glm::normalize(session->startPose.rotation * glm::conjugate(session->vehicleToModel));
     session->cameraBeforeDriving = state.camera;
 
@@ -118,7 +151,22 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     const glm::quat modelToVehicle = glm::conjugate(session->vehicleToModel);
     const glm::vec3 cornerA = modelToVehicle * (localMin * session->scale);
     const glm::vec3 cornerB = modelToVehicle * (localMax * session->scale);
-    const VehicleSettings settings = FitVehicleSettingsToBounds(glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), tuning);
+    VehicleWheelLayout wheelLayout{};
+    if (rig != nullptr)
+    {
+        wheelLayout = BuildWheelLayout(*rig, session->vehicleToModel, session->scale);
+        VehicleWheelAnimation animation;
+        animation.model = modelData;
+        for (size_t index = 0; index < kModelWheelCornerCount; ++index)
+        {
+            animation.restCenters[index] = rig->corners[index].center;
+        }
+        session->wheels = std::move(animation);
+    }
+    VehicleSettings fitTuning = tuning;
+    fitTuning.modelFront = modelFront;
+    const VehicleSettings settings = FitVehicleSettingsToBounds(
+        glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), fitTuning, rig != nullptr ? &wheelLayout : nullptr);
 
     glm::vec3 carWorldMin = session->startPose.position;
     glm::vec3 carWorldMax = session->startPose.position;
@@ -134,8 +182,9 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 
     const double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
     LOG_INFO(
-        "Driving '{}': {} static bodies, {} collision triangles, built in {:.0f} ms",
+        "Driving '{}' on {}: {} static bodies, {} collision triangles, built in {:.0f} ms",
         session->name,
+        rig != nullptr ? "the wheels its nodes define" : "wheels fitted to its bounds",
         session->physics->GetStaticBodyCount(),
         session->physics->GetStaticTriangleCount(),
         buildMs);
@@ -156,6 +205,7 @@ void Stop(RendererSharedState& state)
         return;
     }
 
+    state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
     IEditorWorld& world = state.GetEditorWorld();
     if (world.IsValidEntity(session->entity) && world.Registry().all_of<TransformComponent>(session->entity))
     {
@@ -207,6 +257,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     {
         // Deleted, or the scene was replaced under it: there is nothing left to put back.
         LOG_WARN("Stopped driving '{}': its entity is gone", session->name);
+        state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
         state.vehicleDrive.session.reset();
         return false;
     }
@@ -237,6 +288,18 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     PhysicsPose modelPose = pose;
     modelPose.rotation = pose.rotation * session->vehicleToModel;
     world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));
+    if (session->wheels.has_value())
+    {
+        state.rendererWorld.SetSubmeshLocalTransforms(
+            session->entity,
+            BuildWheelSubmeshTransforms(
+                *session->wheels->model,
+                session->wheels->restCenters,
+                pose,
+                session->physics->GetVehicleWheels(session->vehicle),
+                session->vehicleToModel,
+                session->scale));
+    }
     if (state.vehicleDrive.camera.follow)
     {
         UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds);
@@ -351,6 +414,59 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         }
     }
     return lowest;
+}
+
+std::vector<glm::mat4> BuildWheelSubmeshTransforms(
+    const LoadedModelData& model,
+    const std::array<glm::vec3, kModelWheelCornerCount>& restCenters,
+    const PhysicsPose& body,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::quat& vehicleToModel,
+    const glm::vec3& scale)
+{
+    // Per corner: the transform of its wheel, its brake disc and its suspension, each moving the
+    // vertices from where the model has them at rest to where the simulation has the wheel.
+    struct CornerTransforms
+    {
+        glm::mat4 wheel{1.0f};
+        glm::mat4 disc{1.0f};
+        glm::mat4 suspension{1.0f};
+    };
+    std::array<CornerTransforms, kModelWheelCornerCount> corners;
+    for (size_t index = 0; index < kModelWheelCornerCount && index < wheels.size(); ++index)
+    {
+        const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheels[index].pose, vehicleToModel, scale);
+        const glm::mat4 toCenter = glm::translate(glm::mat4(1.0f), motion.center);
+        const glm::mat4 fromRest = glm::translate(glm::mat4(1.0f), -restCenters[index]);
+        corners[index].wheel = toCenter * glm::mat4_cast(motion.steer * motion.spin) * fromRest;
+        corners[index].disc = toCenter * glm::mat4_cast(motion.steer) * fromRest;
+        corners[index].suspension = glm::translate(glm::mat4(1.0f), motion.center - restCenters[index]);
+    }
+
+    std::vector<glm::mat4> transforms(model.submeshes.size(), glm::mat4(1.0f));
+    for (size_t index = 0; index < model.submeshes.size(); ++index)
+    {
+        const ModelSubmeshData& submesh = model.submeshes[index];
+        if (submesh.wheelCorner >= kModelWheelCornerCount)
+        {
+            continue;
+        }
+        switch (submesh.wheelPart)
+        {
+        case ModelWheelPart::Wheel:
+            transforms[index] = corners[submesh.wheelCorner].wheel;
+            break;
+        case ModelWheelPart::Disc:
+            transforms[index] = corners[submesh.wheelCorner].disc;
+            break;
+        case ModelWheelPart::Suspension:
+            transforms[index] = corners[submesh.wheelCorner].suspension;
+            break;
+        case ModelWheelPart::None:
+            break;
+        }
+    }
+    return transforms;
 }
 
 void UpdateChaseCamera(Camera& camera, const PhysicsPose& vehiclePose, const VehicleCameraSettings& settings, float deltaSeconds)

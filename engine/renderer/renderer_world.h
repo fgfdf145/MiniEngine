@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace me
@@ -100,6 +101,14 @@ class RendererWorld
     const std::vector<CpuRenderSubmesh>& GetRenderSubmeshes() const;
     glm::mat4 GetModelMatrix(entt::entity entity) const;
 
+    // A submesh's own transform inside its model, applied before the entity's: a car's wheels turn
+    // and ride the suspension while the rest of the model stays put. `ordinal` is the submesh's
+    // position among the entity's submeshes; one that has no transform, or none set, is drawn at the
+    // entity's matrix.
+    void SetSubmeshLocalTransforms(entt::entity entity, std::vector<glm::mat4> transforms);
+    void ClearSubmeshLocalTransforms(entt::entity entity);
+    glm::mat4 GetSubmeshModelMatrix(entt::entity entity, uint32_t ordinal) const;
+
     void SetModelLights(std::vector<CpuModelLight> modelLights);
     void ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights);
     bool RemoveEntityModelLights(entt::entity entity);
@@ -109,5 +118,6 @@ class RendererWorld
     ISceneWorld* m_sceneWorld = nullptr;
     std::vector<CpuRenderSubmesh> m_renderSubmeshes;
     std::vector<CpuModelLight> m_modelLights;
+    std::unordered_map<entt::entity, std::vector<glm::mat4>> m_submeshLocalTransforms;
 };
 }

@@ -3,6 +3,8 @@ add_library(engine_physics
     physics_world.h
     vehicle_settings.cpp
     vehicle_settings.h
+    vehicle_wheel_motion.cpp
+    vehicle_wheel_motion.h
 )
 miniengine_group_target_sources(engine_physics)
 

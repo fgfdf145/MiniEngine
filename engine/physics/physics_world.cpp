@@ -162,22 +162,12 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     vehicle->mMaxPitchRollAngle = JPH::DegreesToRadians(std::clamp(settings.maxPitchRollDegrees, 0.0f, 180.0f));
 
     // Front left, front right, rear left, rear right; +X is the car's left.
-    struct WheelPlacement
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
     {
-        float x;
-        float z;
-        bool front;
-    };
-    const WheelPlacement placements[] = {
-        {settings.trackCenterX + settings.halfTrackWidth, settings.frontAxleZ, true},
-        {settings.trackCenterX - settings.halfTrackWidth, settings.frontAxleZ, true},
-        {settings.trackCenterX + settings.halfTrackWidth, settings.rearAxleZ, false},
-        {settings.trackCenterX - settings.halfTrackWidth, settings.rearAxleZ, false},
-    };
-    for (const WheelPlacement& placement : placements)
-    {
+        const bool front = index < 2;
+        const VehicleWheelGeometry mount = GetVehicleWheelMount(settings, index);
         JPH::WheelSettingsWV* wheel = new JPH::WheelSettingsWV();
-        wheel->mPosition = JPH::Vec3(placement.x, settings.wheelMountY, placement.z);
+        wheel->mPosition = ToJolt(mount.center);
         wheel->mSuspensionDirection = JPH::Vec3(0.0f, -1.0f, 0.0f);
         wheel->mSteeringAxis = JPH::Vec3::sAxisY();
         wheel->mWheelUp = JPH::Vec3::sAxisY();
@@ -186,11 +176,11 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         wheel->mSuspensionMaxLength = std::max(settings.suspensionMaxLength, wheel->mSuspensionMinLength);
         wheel->mSuspensionSpring.mFrequency = std::max(settings.suspensionFrequencyHz, 0.01f);
         wheel->mSuspensionSpring.mDamping = std::max(settings.suspensionDamping, 0.0f);
-        wheel->mRadius = std::max(settings.wheelRadius, 0.01f);
-        wheel->mWidth = std::max(settings.wheelWidth, 0.01f);
-        wheel->mMaxSteerAngle = placement.front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
+        wheel->mRadius = std::max(mount.radius, 0.01f);
+        wheel->mWidth = std::max(mount.width, 0.01f);
+        wheel->mMaxSteerAngle = front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
         wheel->mMaxBrakeTorque = std::max(settings.maxBrakeTorque, 0.0f);
-        wheel->mMaxHandBrakeTorque = placement.front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
+        wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
         vehicle->mWheels.push_back(wheel);
     }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/asset/model_loader.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/renderer/camera.h>
@@ -9,9 +10,11 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace me
@@ -45,6 +48,16 @@ struct VehicleDriveStatus
     std::string lastError;
 };
 
+// The model's wheels, tyres and suspension moving with the simulation: which submeshes belong to which
+// wheel, and where each wheel's centre sits at rest, both as the model's WHEEL_xx, DISC_xx and SUSP_xx
+// nodes define them.
+struct VehicleWheelAnimation
+{
+    // Keeps the submeshes' tags alive; the cache may drop the model while it is driven.
+    std::shared_ptr<const LoadedModelData> model;
+    std::array<glm::vec3, kModelWheelCornerCount> restCenters{};
+};
+
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
 struct VehicleDriveSession
 {
@@ -59,6 +72,8 @@ struct VehicleDriveSession
     Camera cameraBeforeDriving;
     std::unique_ptr<PhysicsWorld> physics;
     VehicleId vehicle = 0;
+    // Set when the model defines its wheels.
+    std::optional<VehicleWheelAnimation> wheels;
     bool paused = false;
     bool stepRequested = false;
     // The keyboard's steering, eased towards full lock rather than jumping to it.
@@ -106,6 +121,18 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
 // submeshes' triangles in world space. Returns the lowest vertex height, or `fallbackFloor` when
 // nothing was added.
 float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld, const ISceneWorld& scene, entt::entity exclude, float fallbackFloor);
+
+// The local transform of each of the model's submeshes (in the order of its submeshes) for a car
+// whose wheels are at `wheels`: the wheel's own parts steer, roll and ride the suspension, its brake
+// disc steers and rides, its suspension only rides; every other submesh stays. `body` and `wheels`
+// are as PhysicsWorld reports them.
+std::vector<glm::mat4> BuildWheelSubmeshTransforms(
+    const LoadedModelData& model,
+    const std::array<glm::vec3, kModelWheelCornerCount>& restCenters,
+    const PhysicsPose& body,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::quat& vehicleToModel,
+    const glm::vec3& scale);
 
 // Eases the camera towards its place behind the car, looking at it. With deltaSeconds of zero it
 // jumps straight there.

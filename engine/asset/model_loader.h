@@ -7,6 +7,8 @@
 #include <engine/scene/scene_components.h>
 #include <glm/glm.hpp>
 
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -89,6 +91,20 @@ struct ModelMaterialData
     bool decal = false;
 };
 
+// What a car model's node says a submesh is, by Assetto Corsa's naming (kn5 imports keep the
+// names): under WHEEL_xx the tyre and rim, under DISC_xx the brake disc, under SUSP_xx the hub, arms
+// and dampers. xx is LF, RF, LR or RR.
+enum class ModelWheelPart : uint8_t
+{
+    None = 0,
+    Wheel, // turns with the steering and the axle, rides the suspension
+    Disc,  // turns with the steering, rides the suspension
+    Suspension // rides the suspension
+};
+
+// The order of the corners: left front, right front, left rear, right rear.
+inline constexpr size_t kModelWheelCornerCount = 4;
+
 struct ModelSubmeshData
 {
     MeshData mesh;
@@ -107,6 +123,9 @@ struct ModelSubmeshData
     // with it.
     glm::vec3 nodeScale{1.0f};
     uint32_t materialIndex = 0;
+    ModelWheelPart wheelPart = ModelWheelPart::None;
+    // Which corner's node the submesh hangs under, 0 to 3, when wheelPart is not None.
+    uint8_t wheelCorner = 0;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
     // has no mapping). Empty for a model without variants.
@@ -136,6 +155,23 @@ struct ModelLightData
     glm::vec3 direction{0.0f, 0.0f, -1.0f};
 };
 
+// A car's four wheels as its WHEEL_LF, WHEEL_RF, WHEEL_LR and WHEEL_RR nodes define them, in the
+// model's space (the node transforms are baked into the vertices, so these match them).
+struct ModelWheelRig
+{
+    struct Corner
+    {
+        // The wheel node's origin: the wheel's centre at rest.
+        glm::vec3 center{0.0f};
+        // The outermost reach of the node's meshes about the axle, and their extent along it.
+        float radius = 0.0f;
+        float width = 0.0f;
+    };
+    std::array<Corner, kModelWheelCornerCount> corners;
+    // From the right wheels' centres to the left's, unit length: the axle the wheels spin about.
+    glm::vec3 axle{1.0f, 0.0f, 0.0f};
+};
+
 struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
@@ -143,6 +179,8 @@ struct LoadedModelData
     std::vector<ModelLightData> lights;
     // KHR_materials_variants' names, in the glTF's order.
     std::vector<std::string> materialVariants;
+    // Set when all four WHEEL_xx nodes are there and have meshes.
+    std::optional<ModelWheelRig> wheelRig;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
     glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;
