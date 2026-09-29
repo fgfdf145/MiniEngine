@@ -197,6 +197,15 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
         }
         ImGui::ColorEdit3("Ground albedo", &atmosphere.groundAlbedo.x);
         ImGui::Checkbox("Ground plane", &atmosphere.groundPlane);
+        // A ground plane is a surface, and the sky's own ground beyond it must match it.
+        ImGui::BeginDisabled(atmosphere.groundPlane);
+        ImGui::Checkbox("Seamless horizon", &atmosphere.seamlessHorizon);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip(
+                "No ground in the sky: below the horizon it mirrors the sky above,\nand the sky's ambient light has no bounce off the ground.\nOff while the ground plane is on.");
+        }
         ImGui::DragFloat("Rayleigh density", &atmosphere.rayleighDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::DragFloat("Mie density", &atmosphere.mieDensityScale, 0.01f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         DragFloatInRange("Mie anisotropy", &atmosphere.mieAnisotropy, 0.0f, 0.99f, "%.2f");

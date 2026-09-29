@@ -94,7 +94,10 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     data.groundAlbedo = glm::vec4(
         p.groundAlbedo,
         mode == EnvironmentMode::Atmosphere && environment.atmosphere.groundPlane ? 1.0f : 0.0f);
-    data.radii = glm::vec4(p.bottomRadiusKm, p.topRadiusKm, p.aerialPerspectiveDistanceScale, 0.0f);
+    // The ground plane is a surface and keeps the sky's ground beyond it to itself.
+    const bool seamlessHorizon =
+        mode == EnvironmentMode::Atmosphere && environment.atmosphere.seamlessHorizon && !environment.atmosphere.groundPlane;
+    data.radii = glm::vec4(p.bottomRadiusKm, p.topRadiusKm, p.aerialPerspectiveDistanceScale, seamlessHorizon ? 1.0f : 0.0f);
     data.cameraPositionKm = glm::vec4(ToAtmosphereCameraPositionKm(p, cameraPositionMeters), 0.0f);
     data.hdriParameters = glm::vec4(
         std::max(environment.hdri.intensity, 0.0f),

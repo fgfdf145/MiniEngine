@@ -116,6 +116,19 @@ void BuildsUniformData()
     Require(BuildEnvironmentUniformData(EnvironmentMode::Hdri, withGround, p, sun, glm::vec3(0.0f), nullptr).groundAlbedo.w == 0.0f,
             "the ground plane belongs to the atmosphere and is off under an HDRI");
 
+    // The seamless horizon rides in radii.w, and gives way to a ground plane, which is a surface.
+    Require(data.radii.w == 0.0f, "the sky keeps its ground unless the settings ask otherwise");
+    SceneEnvironment seamless = environment;
+    seamless.atmosphere.seamlessHorizon = true;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, seamless, p, sun, glm::vec3(0.0f), nullptr).radii.w == 1.0f,
+            "the seamless horizon flag is carried in radii.w");
+    seamless.atmosphere.groundPlane = true;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, seamless, p, sun, glm::vec3(0.0f), nullptr).radii.w == 0.0f,
+            "a ground plane keeps the sky's ground beyond it to itself");
+    seamless.atmosphere.groundPlane = false;
+    Require(BuildEnvironmentUniformData(EnvironmentMode::Hdri, seamless, p, sun, glm::vec3(0.0f), nullptr).radii.w == 0.0f,
+            "the seamless horizon belongs to the atmosphere and is off under an HDRI");
+
     ShCoefficients sh{};
     sh[0] = glm::vec3(1.0f, 2.0f, 3.0f);
     sh[3] = glm::vec3(0.5f);

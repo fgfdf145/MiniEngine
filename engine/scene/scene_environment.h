@@ -36,6 +36,12 @@ struct AtmosphereSettings
     // G-buffer and the DDGI ray scene, so it takes shadows, AO and bounce light. Off, the ground
     // shows only as the sky's own lit ground below the horizon.
     bool groundPlane = false;
+    // Takes the ground out of the sky: a ray that would meet it reads the sky at its mirror image
+    // across the horizon, so the air above and below is one and the horizon has no seam. The sky's
+    // ambient light and the clouds' underside follow, with no bounce off the ground below. Off for
+    // scenes saved before it existed; EditorScene::AddDefaultSunAndSky turns it on. Not with the
+    // ground plane, which is a surface of its own.
+    bool seamlessHorizon = false;
     // Multipliers on the base Rayleigh scattering, Mie scattering and extinction, and ozone
     // absorption coefficients.
     float rayleighDensityScale = 1.0f;

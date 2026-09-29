@@ -43,6 +43,12 @@ float TopRadius()
     return ubo.atmosphereRadii.y;
 }
 
+// AtmosphereSettings::seamlessHorizon: the sky has no ground, and reads across the horizon instead.
+bool SeamlessHorizon()
+{
+    return ubo.atmosphereRadii.w > 0.5;
+}
+
 struct MediumSample
 {
     vec3 rayleighScattering;

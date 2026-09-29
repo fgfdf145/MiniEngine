@@ -223,6 +223,7 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         AtmosphereSettings& atmosphere = environment.atmosphere;
         atmosphere.groundAlbedo = ReadVec3(atmosphereNode["ground_albedo"], atmosphere.groundAlbedo);
         atmosphere.groundPlane = atmosphereNode["ground_plane"].as<bool>(atmosphere.groundPlane);
+        atmosphere.seamlessHorizon = atmosphereNode["seamless_horizon"].as<bool>(atmosphere.seamlessHorizon);
         atmosphere.rayleighDensityScale = atmosphereNode["rayleigh_density_scale"].as<float>(atmosphere.rayleighDensityScale);
         atmosphere.mieDensityScale = atmosphereNode["mie_density_scale"].as<float>(atmosphere.mieDensityScale);
         atmosphere.mieAnisotropy = atmosphereNode["mie_anisotropy"].as<float>(atmosphere.mieAnisotropy);
@@ -290,6 +291,7 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     const AtmosphereSettings& atmosphere = environment.atmosphere;
     EmitVec3(emitter, "ground_albedo", atmosphere.groundAlbedo);
     emitter << YAML::Key << "ground_plane" << YAML::Value << atmosphere.groundPlane;
+    emitter << YAML::Key << "seamless_horizon" << YAML::Value << atmosphere.seamlessHorizon;
     emitter << YAML::Key << "rayleigh_density_scale" << YAML::Value << atmosphere.rayleighDensityScale;
     emitter << YAML::Key << "mie_density_scale" << YAML::Value << atmosphere.mieDensityScale;
     emitter << YAML::Key << "mie_anisotropy" << YAML::Value << atmosphere.mieAnisotropy;
@@ -583,9 +585,11 @@ void EditorScene::AddDefaultSunAndSky()
 
     m_environment = SceneEnvironment{};
     m_environment.mode = EnvironmentMode::Atmosphere;
-    // New scenes have fog and clouds; scene files saved without them keep reading as off.
+    // New scenes have fog, clouds and a seamless horizon; scene files saved without them keep reading
+    // as off.
     m_environment.heightFog.enabled = true;
     m_environment.clouds.enabled = true;
+    m_environment.atmosphere.seamlessHorizon = true;
 }
 
 void EditorScene::Clear()

@@ -40,8 +40,11 @@ void main()
         // The clouds hide the sky and the sun behind them and fade into the sky's own haze. TAA
         // averages the per-pixel jitter of the march.
         luminance = ApplyClouds(luminance, SampleSkyForLighting(direction), direction, CloudJitter(gl_FragCoord.xy), 32, 96);
-        // Here and not in SampleSky, which also feeds the probe and the sky SH the fog is lit by.
-        luminance = ApplyHeightFogToSky(luminance, direction);
+        // Here and not in SampleSky, which also feeds the probe and the sky SH the fog is lit by. A
+        // seamless horizon fogs the sky below it as the mirrored sky above: no ground to end the
+        // fog's column, so no wall of fog at and below the horizon either.
+        vec3 fogDirection = SeamlessHorizon() ? vec3(direction.x, abs(direction.y), direction.z) : direction;
+        luminance = ApplyHeightFogToSky(luminance, fogDirection);
     }
     // Pre-exposed (see pre_exposure.glsl). The sun disk alone is ~1e9 cd/m^2, which now fits in half
     // float at daylight exposure; the clamp stays for HDRI texels and low EVs, since the target must

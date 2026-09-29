@@ -62,7 +62,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 mieParameters;              // x scattering per km, y extinction per km, z scale height km, w g
     vec4 ozoneAbsorption;            // rgb per km
     vec4 groundAlbedo;               // rgb, w 1 when the ground plane is drawn (ground_plane.glsl)
-    vec4 atmosphereRadii;            // x bottom km, y top km, z aerial perspective distance scale
+    vec4 atmosphereRadii;            // x bottom km, y top km, z aerial perspective distance scale, w 1 for a seamless horizon
     vec4 atmosphereCameraPositionKm; // xyz camera relative to the planet centre
     vec4 hdriParameters;             // x intensity, y rotation in turns
     vec4 hdriIrradianceSh[9];        // the HDRI's radiance SH, rotated and scaled; xyz used

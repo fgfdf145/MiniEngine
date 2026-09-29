@@ -27,6 +27,7 @@ SceneEnvironment MakeEnvironment()
     environment.mode = EnvironmentMode::Hdri;
     environment.atmosphere.groundAlbedo = glm::vec3(0.25f, 0.5f, 0.125f);
     environment.atmosphere.groundPlane = true;
+    environment.atmosphere.seamlessHorizon = true;
     environment.atmosphere.rayleighDensityScale = 2.0f;
     environment.atmosphere.mieDensityScale = 0.5f;
     environment.atmosphere.mieAnisotropy = 0.75f;
@@ -162,6 +163,32 @@ void MissingCloudsNodeLoadsAsOff()
     Require(!loaded.environment.clouds.enabled, "and the default is off");
 }
 
+// A scene saved before the seamless horizon existed: the atmosphere node has no such key, and reads as off.
+void MissingSeamlessHorizonLoadsAsOff()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->SetEnvironment(MakeEnvironment());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_noseam.yaml";
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
+    std::string yaml;
+    {
+        std::ifstream in(path);
+        yaml.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const size_t begin = yaml.find("\n    seamless_horizon:");
+    const size_t end = begin == std::string::npos ? begin : yaml.find('\n', begin + 1);
+    Require(begin != std::string::npos && end != std::string::npos, "the saved scene has a seamless_horizon key");
+    yaml.erase(begin, end - begin);
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << yaml;
+    }
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::filesystem::remove(path);
+    Require(loaded.environment.atmosphere.groundPlane, "the atmosphere settings before it still load");
+    Require(!loaded.environment.atmosphere.seamlessHorizon, "a scene without seamless_horizon must load with the ground in the sky");
+}
+
 void StartupSceneHasAtmosphereAndSun()
 {
     std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
@@ -209,6 +236,7 @@ void NewSceneKeepsOnlySunAndSky()
     Require(world->GetEnvironment().mode == EnvironmentMode::Atmosphere, "a new scene uses the atmosphere");
     Require(world->GetEnvironment().heightFog.enabled, "a new scene has height fog");
     Require(world->GetEnvironment().clouds.enabled, "a new scene has clouds");
+    Require(world->GetEnvironment().atmosphere.seamlessHorizon, "a new scene has a seamless horizon");
     Require(!world->HasSelection(), "nothing is selected in a new scene");
     Require(world->GetGizmoSettings().operation == ImGuizmo::SCALE, "a new scene keeps the gizmo settings");
 }
@@ -238,6 +266,7 @@ int main()
         MissingNodeLoadsAsNone();
         MissingFogNodeLoadsAsOff();
         MissingCloudsNodeLoadsAsOff();
+        MissingSeamlessHorizonLoadsAsOff();
         StartupSceneHasAtmosphereAndSun();
         NewSceneKeepsOnlySunAndSky();
         ClearKeepsEnvironmentAndFile();

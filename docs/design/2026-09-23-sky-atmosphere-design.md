@@ -174,6 +174,32 @@ the few metres of air in front of the ground: black. Now:
   travels in `groundAlbedo.w`, 1 only under `Atmosphere`. Not in the forward-only order, the CPU
   reference path tracer, picking or the scene bounds.
 
+## Seamless Horizon (2026-09-30)
+
+With the ground in the sky, the horizon is a seam: the blue sky above, a flat brown sunlit ground
+below it (fog off), or a wall of fog (fog on). `AtmosphereSettings::seamlessHorizon` (scene key
+`seamless_horizon`, the "Seamless horizon" checkbox) takes the ground out, so the air above and below
+the horizon is one.
+
+- **The sky below the horizon is the sky above it, mirrored.** A ray that would meet the ground reads
+  the sky-view LUT along its mirror image across the horizon (`FoldAcrossHorizon`): in the plane through
+  the ray and the vertical, the zenith angle theta becomes 2 theta_h - theta, theta_h being the
+  horizon's own (sin theta_h = R / H, past 90 degrees above the ground), so the two sides agree where
+  the ground would have begun. No ground light, no sun disk below the horizon.
+- **The same in every reader of the sky**: the background and the lighting (`SampleSky`,
+  `SampleSkyForLighting`, so the environment probe, the reflections and the DDGI misses follow), and the
+  radiance SH (`atmosphere_irradiance.comp`), which has no skylight bounced off the ground either. The
+  clouds' underside is lit by the sky, not by the ground. Fog on the sky treats a downward ray as its
+  mirror image too (`abs(direction.y)`): a finite column, not the opaque wall the ground ends.
+- **Not with the ground plane**, which is a surface, and whose far-plane match with the sky's ground
+  is the reason the two were built together; the flag is off in the uniform block (`atmosphereRadii.w`)
+  while the plane is on, and the checkbox is disabled. Off by default in the struct and for scenes
+  saved without the key; on for new scenes.
+- **Measured** on an empty scene at 100 degrees of vertical FOV, fog off: the largest row-to-row
+  luminance step at the horizon falls from 0.063 to 0.008 (and no longer sits on the horizon). Fog on,
+  the sky is symmetrical about the horizon. On the Spa grid view the sun glare on the tarmac is gone: it
+  was the road reflecting the sunlit ground below the horizon.
+
 ## Components
 
 ### `engine/scene` and `engine/logic`

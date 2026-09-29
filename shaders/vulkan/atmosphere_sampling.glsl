@@ -82,6 +82,39 @@ vec3 SampleSkyViewLut(vec3 direction, out bool intersectGround)
     return textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
 }
 
+// The direction a seamless horizon reads the sky along for a ray that would meet the ground: its
+// mirror image across the horizon, in the plane through the ray and the vertical. The zenith angle
+// theta becomes 2 theta_h - theta, where theta_h is the horizon's own (sin theta_h = R / H, past 90
+// degrees for a camera above the ground), so the two agree where the ground begins.
+vec3 FoldAcrossHorizon(vec3 direction)
+{
+    vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
+    float viewHeight = length(camera);
+    vec3 up = camera / viewHeight;
+    float cosZenith = clamp(dot(direction, up), -1.0, 1.0);
+    float sinZenith = sqrt(1.0 - cosZenith * cosZenith);
+
+    float sinHorizon = min(BottomRadius() / viewHeight, 1.0);
+    float cosHorizon = -sqrt(max(0.0, 1.0 - sinHorizon * sinHorizon));
+    float cosDoubleHorizon = 1.0 - 2.0 * sinHorizon * sinHorizon;
+    float sinDoubleHorizon = 2.0 * sinHorizon * cosHorizon;
+    float cosFolded = cosDoubleHorizon * cosZenith + sinDoubleHorizon * sinZenith;
+    float sinFolded = sinDoubleHorizon * cosZenith - cosDoubleHorizon * sinZenith;
+
+    vec3 across = direction - cosZenith * up;
+    float acrossLength = length(across);
+    // Straight down has no azimuth; any will do.
+    across = acrossLength > 1e-5 ? across / acrossLength : normalize(cross(up, abs(up.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+    return normalize(cosFolded * up + sinFolded * across);
+}
+
+// The sky along a ray that would meet the ground, with the ground taken away (FoldAcrossHorizon).
+vec3 SampleFoldedSkyViewLut(vec3 direction)
+{
+    bool intersectGround;
+    return SampleSkyViewLut(FoldAcrossHorizon(direction), intersectGround);
+}
+
 // Where a ray from the camera meets the ground sphere: groundUp is the ground's normal there, and
 // the result the atmosphere's transmittance between the camera and it. Both ends look back along
 // -direction, which climbs away from the ground, so the transmittance LUT holds both halves:
@@ -185,7 +218,7 @@ vec3 SampleSky(vec3 direction)
     vec3 luminance = SampleSkyViewLut(direction, intersectGround);
     if (intersectGround)
     {
-        return luminance + GroundLuminance(direction);
+        return SeamlessHorizon() ? SampleFoldedSkyViewLut(direction) : luminance + GroundLuminance(direction);
     }
     vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
     float viewHeight = length(camera);
@@ -234,7 +267,11 @@ vec3 SampleSkyForLighting(vec3 direction)
 {
     bool intersectGround;
     vec3 luminance = SampleSkyViewLut(direction, intersectGround);
-    return intersectGround ? luminance + GroundLuminance(direction) : luminance;
+    if (!intersectGround)
+    {
+        return luminance;
+    }
+    return SeamlessHorizon() ? SampleFoldedSkyViewLut(direction) : luminance + GroundLuminance(direction);
 }
 
 #endif

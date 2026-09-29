@@ -239,7 +239,8 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
     vec3 skyAbove = GroundSkyIrradiance() / ATMOSPHERE_PI;
     vec3 cameraUp = camera / length(camera);
     vec3 groundIrradiance = GroundSkyIrradiance() + GroundSunIrradiance(cameraUp) * max(dot(cameraUp, sunDirection), 0.0);
-    vec3 groundBelow = ubo.groundAlbedo.rgb * groundIrradiance / ATMOSPHERE_PI;
+    // A seamless horizon has no ground to bounce light: below is the sky too.
+    vec3 groundBelow = SeamlessHorizon() ? skyAbove : ubo.groundAlbedo.rgb * groundIrradiance / ATMOSPHERE_PI;
     float albedo = ubo.cloudPhase.w;
 
     vec3 luminance = vec3(0.0);

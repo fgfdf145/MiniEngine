@@ -49,7 +49,12 @@ void main()
         bool intersectGround;
         vec3 radiance = SampleSkyViewLut(direction, intersectGround);
         vec3 groundWeight = vec3(0.0);
-        if (intersectGround)
+        if (intersectGround && SeamlessHorizon())
+        {
+            // No ground: the sky mirrored across the horizon, and no skylight bounced off it.
+            radiance = SampleFoldedSkyViewLut(direction);
+        }
+        else if (intersectGround)
         {
             vec3 groundUp;
             groundWeight = GroundViewTransmittance(direction, groundUp);
