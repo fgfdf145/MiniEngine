@@ -197,6 +197,16 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state)
         });
     registry.AddSeparator("View");
     Add(
+        registry, "view.viewport_fullscreen", "Fullscreen Viewport", "View/Fullscreen Viewport", ICON_FA_EXPAND, ImGuiKey_F11,
+        [&state]
+        {
+            state.viewportFullscreen = !state.viewportFullscreen;
+        },
+        [&state]
+        {
+            return state.viewportFullscreen;
+        });
+    Add(
         registry, "view.gizmos", "Gizmos", "View/Gizmos", ICON_FA_CROSSHAIRS, ImGuiMod_Alt | ImGuiKey_G,
         [&state]
         {

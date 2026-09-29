@@ -2,6 +2,7 @@
 #include "ui/editor_menu_toolbar.h"
 #include "ui/editor_ui_internal.h"
 
+#include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/logic/editor_world.h>
 #include <engine/platform/ui/ui_scale.h>
@@ -179,58 +180,72 @@ EditorUiFrameResult EditorUiController::Draw(
     SyncCommandStateFromEditor(scene);
     const EditorCommandState commandStateBefore = m_commandState;
     ProcessCommandShortcuts(m_commands);
-    DrawMainMenu(m_commands);
-    DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
+    // Escape leaves the fullscreen viewport as F11 does: with no menu there is nothing else to click.
+    if (m_commandState.viewportFullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        m_commandState.viewportFullscreen = false;
+    }
+    UpdateWindowFullscreen();
+    const bool fullscreen = m_commandState.viewportFullscreen;
+    if (!fullscreen)
+    {
+        DrawMainMenu(m_commands);
+        DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
+    }
     ApplyCommandStateToEditor(commandStateBefore, scene);
-    DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
+    if (!fullscreen)
+    {
+        DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
+    }
     result.actions = std::exchange(m_commandActions, {});
     HandleFileCommands(scene, result);
     DrawSceneResetConfirmModal(result);
     // TODO: draw the command palette while m_commandState.commandPaletteRequested is set.
     m_commandState.commandPaletteRequested = false;
 
-    if (m_showCameraWindow)
+    // The fullscreen viewport is all there is: every panel waits for it to end.
+    if (!fullscreen && m_showCameraWindow)
     {
         DrawCameraPanel(camera);
     }
 
-    if (m_showGraphicsDebugWindow)
+    if (!fullscreen && m_showGraphicsDebugWindow)
     {
         DrawGraphicsDebugPanel();
     }
 
     bool themeChanged = false;
-    if (m_showThemeWindow)
+    if (!fullscreen && m_showThemeWindow)
     {
         themeChanged = DrawThemeEditorWindow();
     }
 
-    if (m_showModelProcessorWindow)
+    if (!fullscreen && m_showModelProcessorWindow)
     {
         DrawModelProcessorPanel(scene, result);
     }
 
-    if (m_showInputMonitorWindow)
+    if (!fullscreen && m_showInputMonitorWindow)
     {
         DrawInputMonitorPanel();
     }
 
-    if (m_showVehicleWindow)
+    if (!fullscreen && m_showVehicleWindow)
     {
         DrawVehiclePanel(scene, result);
     }
 
-    if (m_showSceneWindow)
+    if (!fullscreen && m_showSceneWindow)
     {
         DrawScenePanel(scene, lastLoadError, lastSceneIoError, sceneUploadStatus, result);
     }
 
-    if (m_showViewportWindow)
+    if (fullscreen || m_showViewportWindow)
     {
         DrawViewportPanel(camera, matrices, scene, viewportTextureId, currentBackendType, result);
     }
 
-    if (m_showAssetManagerWindow)
+    if (!fullscreen && m_showAssetManagerWindow)
     {
         DrawAssetBrowserPanel(result);
     }
@@ -250,6 +265,21 @@ EditorUiFrameResult EditorUiController::Draw(
     result.vehicleTuning = m_vehicleTuning;
     result.vehicleCamera = m_vehicleCamera;
     return result;
+}
+
+void EditorUiController::UpdateWindowFullscreen()
+{
+    if (m_commandState.viewportFullscreen == m_windowFullscreen)
+    {
+        return;
+    }
+    m_windowFullscreen = m_commandState.viewportFullscreen;
+    m_fullscreenEnteredTime = ImGui::GetTime();
+    // SDL's fullscreen without a display mode is the borderless one at the desktop's resolution.
+    if (m_window != nullptr && !SDL_SetWindowFullscreen(m_window, m_windowFullscreen))
+    {
+        LOG_WARN("Could not switch the window to {}: {}", m_windowFullscreen ? "fullscreen" : "windowed", SDL_GetError());
+    }
 }
 
 void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)

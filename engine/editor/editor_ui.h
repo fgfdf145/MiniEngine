@@ -168,6 +168,8 @@ class EditorUiController
     // The command state the scene and the renderer decide (transform tool, debug view,
     // anti-aliasing), read before the commands run and written back after for what they changed.
     void SyncCommandStateFromEditor(const IEditorWorld& scene);
+    // Makes the window fullscreen or windowed as the command state asks.
+    void UpdateWindowFullscreen();
     void ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene);
     // Runs the File commands asked for this frame, asking for a path where they need one.
     void HandleFileCommands(IEditorWorld& scene, EditorUiFrameResult& result);
@@ -342,6 +344,9 @@ class EditorUiController
     // Main menu, toolbar and shortcuts, all built from m_commands.
     CommandRegistry m_commands;
     EditorCommandState m_commandState;
+    // Whether the window is fullscreen as the command state last asked, and when that began.
+    bool m_windowFullscreen = false;
+    double m_fullscreenEnteredTime = 0.0;
     std::vector<EditorPanel> m_panels; // what the Window menu shows and hides
     ToolbarLayout m_toolbarLayout;
     bool m_resetDockLayoutRequested = false;

@@ -100,6 +100,36 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
     rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
 }
 
+void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, double secondsSinceEntered, const VehicleDriveStatus& vehicle)
+{
+    ImDrawList* drawList = rect.drawList;
+    const float margin = kOverlayTextMarginPixels * uiScale;
+    const ImU32 textColor = IM_COL32(255, 255, 255, 230);
+    const ImU32 shadowColor = IM_COL32(0, 0, 0, 160);
+    const auto drawText = [&](const ImVec2& position, const std::string& text)
+    {
+        drawList->AddText(ImVec2(position.x + 1.0f, position.y + 1.0f), shadowColor, text.c_str());
+        drawList->AddText(position, textColor, text.c_str());
+    };
+
+    // The way out, for the first seconds only.
+    constexpr double kHintSeconds = 3.0;
+    if (secondsSinceEntered < kHintSeconds)
+    {
+        drawText(ImVec2(rect.origin.x + margin, rect.origin.y + margin), "F11 or Esc: leave fullscreen");
+    }
+
+    // While driving, the speed and gear at the bottom right.
+    if (vehicle.active)
+    {
+        const VehicleTelemetry& telemetry = vehicle.telemetry;
+        const std::string gear = telemetry.gear < 0 ? "R" : telemetry.gear == 0 ? "N" : std::to_string(telemetry.gear);
+        const std::string text = std::to_string(static_cast<int>(std::abs(telemetry.forwardSpeed) * 3.6f + 0.5f)) + " km/h   " + gear;
+        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        drawText(ImVec2(rect.origin.x + rect.size.x - size.x - margin, rect.origin.y + rect.size.y - size.y - margin), text);
+    }
+}
+
 constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = {{{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7}, {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
 
 std::string ReadDragDropPayloadString(const ImGuiPayload& payload)
@@ -895,12 +925,28 @@ void EditorUiController::DrawViewportPanel(
     RenderBackendType currentBackendType,
     EditorUiFrameResult& result)
 {
+    // Fullscreen: a window of its own over the whole screen with nothing of the editor around it, so the
+    // docked "Viewport" keeps its place in the layout.
+    const bool fullscreen = m_commandState.viewportFullscreen;
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_None;
+    if (fullscreen)
+    {
+        const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(mainViewport->Pos);
+        ImGui::SetNextWindowSize(mainViewport->Size);
+        windowFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    if (ImGui::Begin("Viewport", &m_showViewportWindow))
+    if (ImGui::Begin(fullscreen ? "Viewport##Fullscreen" : "Viewport", fullscreen ? nullptr : &m_showViewportWindow, windowFlags))
     {
         const bool flipViewportImageY = false;
         const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
-        DrawViewportOverlay(viewportRect, viewportTextureId);
+        if (!fullscreen)
+        {
+            DrawViewportOverlay(viewportRect, viewportTextureId);
+        }
 
         if (const ImGuiPayload* dragPayload = ImGui::GetDragDropPayload();
             dragPayload != nullptr && dragPayload->IsDataType("ASSET_MODEL_PATH") && viewportRect.hovered)
@@ -937,6 +983,13 @@ void EditorUiController::DrawViewportPanel(
         result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
         HandleViewportShortcuts(scene, camera, viewportRect);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+        if (fullscreen)
+        {
+            DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus);
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            return;
+        }
         DrawViewManipulator(camera, matrices, viewportRect, m_effectiveUiScale);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
         DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, m_effectiveUiScale);
@@ -955,6 +1008,6 @@ void EditorUiController::DrawViewportPanel(
         ImGui::EndGroup();
     }
     ImGui::End();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(fullscreen ? 2 : 1);
 }
 }

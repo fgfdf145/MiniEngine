@@ -74,6 +74,9 @@ struct EditorCommandState
     bool rayTracing = false;
     bool wireframe = false;
     bool gizmos = true;
+    // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
+    // The editor UI turns the window fullscreen and back.
+    bool viewportFullscreen = false;
     // TODO: from the device's ray tracing support (VK_KHR_ray_tracing_pipeline); limited on MoltenVK.
     bool rayTracingSupported = true;
     // TODO: the command palette (fuzzy search over every Command label) opens when this is set.

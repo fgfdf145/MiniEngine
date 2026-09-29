@@ -214,6 +214,12 @@ void TestEditorCommands()
     Require(registry.Find("render.reload_shaders")->shortcut == (ImGuiMod_Ctrl | ImGuiKey_R), "Reload Shaders is Ctrl+R");
     Require(registry.Find("tools.command_palette")->shortcut == (ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P), "the command palette is Ctrl+Shift+P");
 
+    const Command& fullscreen = *registry.Find("view.viewport_fullscreen");
+    Require(fullscreen.shortcut == ImGuiKey_F11, "the fullscreen viewport is F11");
+    Require(!IsCommandChecked(fullscreen) && !state.viewportFullscreen, "the viewport starts windowed");
+    Require(Run(registry, "view.viewport_fullscreen") && state.viewportFullscreen && IsCommandChecked(fullscreen), "the command turns fullscreen on");
+    Require(Run(registry, "view.viewport_fullscreen") && !state.viewportFullscreen, "and off again");
+
     // View is debug visualization, Render is the pipeline: neither holds the other's commands.
     for (const Command* command : items)
     {
