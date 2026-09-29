@@ -43,7 +43,7 @@ struct VehicleCameraSettings
 // camera's place behind it.
 struct VehicleCameraOrbit
 {
-    float yawDegrees = 0.0f;   // positive swings the camera to the car's right
+    float yawDegrees = 0.0f;   // positive swings the camera to the car's right, so the view turns left
     float pitchDegrees = 0.0f; // positive raises the camera, looking down on the car
 };
 

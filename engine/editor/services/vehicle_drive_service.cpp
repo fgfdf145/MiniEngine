@@ -305,13 +305,13 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
     if (state.vehicleDrive.camera.follow)
     {
-        // Holding the right mouse button looks around the car: dragging right swings the camera to its right side.
+        // Holding the right mouse button looks around the car: dragging right swings the camera to its left side, as if turning the view to the right.
         const bool lookHeld = state.input.IsMouseLookActive();
         const float sensitivity = state.camera.mouseSensitivity;
         UpdateCameraOrbit(
             session->orbit,
             lookHeld,
-            lookHeld ? state.input.GetMouseDeltaX() * sensitivity : 0.0f,
+            lookHeld ? -state.input.GetMouseDeltaX() * sensitivity : 0.0f,
             lookHeld ? state.input.GetMouseDeltaY() * sensitivity : 0.0f,
             state.vehicleDrive.camera,
             deltaSeconds);
