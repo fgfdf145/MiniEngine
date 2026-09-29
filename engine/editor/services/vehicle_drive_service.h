@@ -59,15 +59,20 @@ struct VehicleDriveStatus
     std::string lastError;
 };
 
-// The model's wheels, tyres and suspension moving with the simulation: which submeshes belong to which
-// wheel, and where each wheel's centre sits at rest, both as the model's WHEEL_xx, DISC_xx and SUSP_xx
-// nodes define them.
+// The model's wheels, tyres, suspension and steering wheel moving with the simulation: which
+// submeshes belong to which wheel, and where each wheel's centre sits at rest, both as the model's
+// WHEEL_xx, DISC_xx, SUSP_xx and STEER_HR nodes define them.
 struct VehicleWheelAnimation
 {
     // Keeps the submeshes' tags alive; the cache may drop the model while it is driven.
     std::shared_ptr<const LoadedModelData> model;
     std::array<glm::vec3, kModelWheelCornerCount> restCenters{};
+    // The front wheels' steering at full lock, which turns the steering wheel by kSteeringWheelLockDegrees.
+    float maxSteerDegrees = 35.0f;
 };
+
+// How far the steering wheel turns each way at full lock: 900 degrees lock to lock, as a road car.
+inline constexpr float kSteeringWheelLockDegrees = 450.0f;
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
 struct VehicleDriveSession
@@ -136,11 +141,11 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
 
 // The local transform of each of the model's submeshes (in the order of its submeshes) for a car
 // whose wheels are at `wheels`: the wheel's own parts steer, roll and ride the suspension, its brake
-// disc steers and rides, its suspension only rides; every other submesh stays. `body` and `wheels`
+// disc steers and rides, its suspension only rides, the steering wheel turns with the front wheels;
+// every other submesh stays. `body` and `wheels`
 // are as PhysicsWorld reports them.
 std::vector<glm::mat4> BuildWheelSubmeshTransforms(
-    const LoadedModelData& model,
-    const std::array<glm::vec3, kModelWheelCornerCount>& restCenters,
+    const VehicleWheelAnimation& animation,
     const PhysicsPose& body,
     const std::vector<VehicleWheelState>& wheels,
     const glm::quat& vehicleToModel,

@@ -126,6 +126,8 @@ struct ModelSubmeshData
     ModelWheelPart wheelPart = ModelWheelPart::None;
     // Which corner's node the submesh hangs under, 0 to 3, when wheelPart is not None.
     uint8_t wheelCorner = 0;
+    // Under the STEER_HR node: the steering wheel, which turns about LoadedModelData::steeringWheel.
+    bool steeringWheel = false;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
     // has no mapping). Empty for a model without variants.
@@ -155,6 +157,14 @@ struct ModelLightData
     glm::vec3 direction{0.0f, 0.0f, -1.0f};
 };
 
+// The steering wheel as the STEER_HR node defines it, in the model's space: it turns about its
+// column, the node's local Z (pointing forward and down in Assetto Corsa cars).
+struct ModelSteeringWheel
+{
+    glm::vec3 center{0.0f};
+    glm::vec3 axis{0.0f, 0.0f, 1.0f};
+};
+
 // A car's four wheels as its WHEEL_LF, WHEEL_RF, WHEEL_LR and WHEEL_RR nodes define them, in the
 // model's space (the node transforms are baked into the vertices, so these match them).
 struct ModelWheelRig
@@ -181,6 +191,8 @@ struct LoadedModelData
     std::vector<std::string> materialVariants;
     // Set when all four WHEEL_xx nodes are there and have meshes.
     std::optional<ModelWheelRig> wheelRig;
+    // Set when a STEER_HR node has meshes.
+    std::optional<ModelSteeringWheel> steeringWheel;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
     glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;

@@ -631,7 +631,7 @@ void WheelNodesDefineTheRig()
 {
     const ScopedFixtureDirectory directory;
     const std::string nodes = R"([
-      { "name": "car", "children": [1, 2, 3, 4, 5, 6, 12] },
+      { "name": "car", "children": [1, 2, 3, 4, 5, 6, 12, 14] },
       { "name": "WHEEL_LF", "translation": [0.7, 0.3, 1.3], "children": [7] },
       { "name": "WHEEL_RF", "translation": [-0.7, 0.3, 1.3], "children": [8] },
       { "name": "wheel_lr", "translation": [0.7, 0.3, -1.2], "children": [9] },
@@ -644,10 +644,12 @@ void WheelNodesDefineTheRig()
       { "name": "tyre", "mesh": 0 },
       { "name": "hub", "mesh": 0 },
       { "name": "body", "mesh": 0 },
-      { "name": "disc", "mesh": 0 }
+      { "name": "disc", "mesh": 0 },
+      { "name": "STEER_HR", "translation": [0.3, 0.8, 0.3], "rotation": [0.7071068, 0, 0, 0.7071068], "children": [15] },
+      { "name": "rim", "mesh": 0 }
     ])";
     const LoadedModelData car = ModelLoader::LoadModel(WriteTriangle(directory.path, "car", "", nodes).string());
-    Require(car.submeshes.size() == 7, "a submesh per mesh node");
+    Require(car.submeshes.size() == 8, "a submesh per mesh node");
     Require(car.wheelRig.has_value(), "four wheel nodes make a rig");
     const ModelWheelRig& rig = *car.wheelRig;
     Require(Near(rig.corners[0].center.x, 0.7f) && Near(rig.corners[0].center.z, 1.3f), "the left front wheel's centre");
@@ -661,7 +663,15 @@ void WheelNodesDefineTheRig()
     {
         ++parts[static_cast<size_t>(submesh.wheelPart)];
     }
-    Require(parts[static_cast<size_t>(ModelWheelPart::None)] == 1, "the body is no part of a wheel");
+    Require(parts[static_cast<size_t>(ModelWheelPart::None)] == 2, "the body and the steering wheel are no part of a wheel");
+    Require(car.steeringWheel.has_value(), "STEER_HR defines the steering wheel");
+    Require(Near(car.steeringWheel->center.x, 0.3f) && Near(car.steeringWheel->center.y, 0.8f), "at its node");
+    // A quarter turn about X takes the node's Z axis to -Y.
+    Require(Near(car.steeringWheel->axis.y, -1.0f) && Near(car.steeringWheel->axis.z, 0.0f), "and turns about the node's Z");
+    for (const ModelSubmeshData& submesh : car.submeshes)
+    {
+        Require(submesh.steeringWheel == (submesh.name.rfind("rim", 0) == 0), "only what is under STEER_HR is the steering wheel");
+    }
     Require(parts[static_cast<size_t>(ModelWheelPart::Wheel)] == 4, "four tyres");
     Require(parts[static_cast<size_t>(ModelWheelPart::Suspension)] == 1 && parts[static_cast<size_t>(ModelWheelPart::Disc)] == 1, "a strut and a disc");
     for (const ModelSubmeshData& submesh : car.submeshes)

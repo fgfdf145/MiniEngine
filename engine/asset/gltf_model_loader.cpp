@@ -1807,6 +1807,8 @@ struct WheelNodeTag
 {
     ModelWheelPart part = ModelWheelPart::None;
     uint8_t corner = 0;
+    // Below a STEER_HR node.
+    bool steeringWheel = false;
 };
 
 WheelNodeTag ParseWheelNodeName(const std::string& name)
@@ -1829,7 +1831,7 @@ WheelNodeTag ParseWheelNodeName(const std::string& name)
         {
             if (corner == kCorners[index])
             {
-                return {part, static_cast<uint8_t>(index)};
+                return {part, static_cast<uint8_t>(index), false};
             }
         }
     }
@@ -1840,6 +1842,7 @@ WheelNodeTag ParseWheelNodeName(const std::string& name)
 struct WheelScan
 {
     std::array<std::optional<glm::vec3>, kModelWheelCornerCount> centers;
+    std::optional<ModelSteeringWheel> steeringWheel;
 };
 
 // The rig, once every corner has a wheel node with meshes; nullopt otherwise. The submeshes'
@@ -1922,11 +1925,18 @@ void TraverseNode(
     // once (its LODs are other files).
     if (wheelTag.part == ModelWheelPart::None)
     {
+        const bool steeringWheel = wheelTag.steeringWheel;
         wheelTag = ParseWheelNodeName(node.name);
+        wheelTag.steeringWheel = steeringWheel;
         if (wheelTag.part == ModelWheelPart::Wheel && !wheelScan.centers[wheelTag.corner].has_value())
         {
             wheelScan.centers[wheelTag.corner] = glm::vec3(worldTransform[3]);
         }
+    }
+    if (!wheelTag.steeringWheel && ToLowerAscii(node.name) == "steer_hr")
+    {
+        wheelTag.steeringWheel = true;
+        wheelScan.steeringWheel = ModelSteeringWheel{glm::vec3(worldTransform[3]), glm::normalize(glm::vec3(worldTransform[2]))};
     }
     const size_t firstNewSubmesh = modelData.submeshes.size();
 
@@ -1986,6 +1996,7 @@ void TraverseNode(
     {
         modelData.submeshes[index].wheelPart = wheelTag.part;
         modelData.submeshes[index].wheelCorner = wheelTag.corner;
+        modelData.submeshes[index].steeringWheel = wheelTag.steeringWheel;
     }
 
     for (int childIndex : node.children)
@@ -2064,6 +2075,13 @@ LoadedModelData BuildLoadedModelData(
     }
 
     modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
+    if (std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)
+                    {
+                        return submesh.steeringWheel;
+                    }))
+    {
+        modelData.steeringWheel = wheelScan.steeringWheel;
+    }
 
     if (modelData.submeshes.empty())
     {
