@@ -135,8 +135,8 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
 VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering);
 
 // Adds the static collision for every loaded model except `exclude`: its opaque and alpha-tested
-// submeshes' triangles in world space. Returns the lowest vertex height, or `fallbackFloor` when
-// nothing was added.
+// submeshes' triangles in world space, less the glass, decals and ground cover (IsGroundCover) the
+// car should drive over. Returns the lowest vertex height, or `fallbackFloor` when nothing was added.
 float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld, const ISceneWorld& scene, entt::entity exclude, float fallbackFloor);
 
 // The local transform of each of the model's submeshes (in the order of its submeshes) for a car

@@ -1,4 +1,6 @@
 add_library(engine_physics
+    collision_filter.cpp
+    collision_filter.h
     physics_world.cpp
     physics_world.h
     vehicle_settings.cpp

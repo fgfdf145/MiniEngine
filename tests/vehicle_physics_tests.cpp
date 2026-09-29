@@ -1,3 +1,4 @@
+#include <engine/physics/collision_filter.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/physics/vehicle_wheel_motion.h>
@@ -329,6 +330,96 @@ void TestUpdateRunsFixedSteps()
     Require(world.Update(0.0f) == 0, "nothing is left over");
 }
 
+// An upright two-sided quad in the XY plane, `width` wide and `height` tall, its foot at (x, foot, z):
+// a card faces the car whichever way the car comes at it.
+void AppendUprightCard(std::vector<glm::vec3>& vertices, std::vector<uint32_t>& indices, float x, float z, float width, float height, float foot = 0.0f)
+{
+    const uint32_t base = static_cast<uint32_t>(vertices.size());
+    vertices.insert(
+        vertices.end(),
+        {{x, foot, z}, {x + width, foot, z}, {x + width, foot + height, z}, {x, foot + height, z}});
+    indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    indices.insert(indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+}
+
+// Grass: cards `spacing` apart along X within +-halfWidth, in rows `spacing` apart from z0 to z1.
+void AppendCardField(std::vector<glm::vec3>& vertices, std::vector<uint32_t>& indices, float halfWidth, float z0, float z1, float spacing, float cardHeight)
+{
+    for (float z = z0; z < z1; z += spacing)
+    {
+        for (float x = -halfWidth; x < halfWidth; x += spacing)
+        {
+            AppendUprightCard(vertices, indices, x, z, spacing * 0.8f, cardHeight);
+        }
+    }
+}
+
+void TestGroundCoverIsRecognised()
+{
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+
+    AppendCardField(vertices, indices, 3.0f, 8.0f, 11.0f, 0.25f, 0.3f);
+    Require(IsGroundCover(vertices, indices), "a field of 30 cm cards is grass");
+
+    vertices.clear();
+    indices.clear();
+    AppendUprightCard(vertices, indices, 0.0f, 0.0f, 3.0f, 2.4f);
+    AppendUprightCard(vertices, indices, 3.0f, 0.0f, 3.0f, 2.4f);
+    Require(!IsGroundCover(vertices, indices), "a fence's panels are solid");
+
+    vertices.clear();
+    indices.clear();
+    AppendUprightCard(vertices, indices, 0.0f, 0.0f, 4.0f, 9.0f);
+    Require(!IsGroundCover(vertices, indices), "a tree's card is solid");
+
+    // A drain grating: a flat cut-out with a few upright bars along its rim.
+    vertices = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}};
+    indices = {0, 1, 2, 0, 2, 3};
+    AppendUprightCard(vertices, indices, 0.0f, 0.0f, 0.2f, 0.1f);
+    Require(!IsGroundCover(vertices, indices), "a mostly flat cut-out is a surface to drive on");
+
+    // Grass with a few blades broken off the mesh's indices, and one card that is not a triangle.
+    vertices.clear();
+    indices.clear();
+    AppendCardField(vertices, indices, 1.0f, 0.0f, 1.0f, 0.25f, 0.3f);
+    indices.insert(indices.end(), {0, 0, 1, 0, 1, 9999});
+    Require(IsGroundCover(vertices, indices), "degenerate and out-of-range triangles are ignored");
+
+    Require(!IsGroundCover({}, {}), "an empty mesh is nothing");
+}
+
+// A field of grass cards across the car's path, on a flat ground.
+void TestGrassCardsStopACarUnlessTheyAreGroundCover()
+{
+    std::vector<glm::vec3> cardVertices;
+    std::vector<uint32_t> cardIndices;
+    AppendCardField(cardVertices, cardIndices, 4.0f, 8.0f, 12.0f, 0.2f, 0.4f);
+
+    const auto driveOver = [&](bool solid)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        if (solid)
+        {
+            Require(world.AddStaticMesh(cardVertices, cardIndices), "the cards build");
+        }
+        const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 6.0f);
+        return world.GetVehiclePose(car).position.z;
+    };
+
+    const float caught = driveOver(true);
+    const float through = driveOver(false);
+    Require(through > 20.0f, "a car with no cards in its way drives on, z = " + std::to_string(through));
+    Require(caught < 12.0f, "solid grass cards stop the car, z = " + std::to_string(caught));
+    Require(IsGroundCover(cardVertices, cardIndices), "and that grass is what IsGroundCover leaves out");
+}
+
 void TestDegenerateMeshIsRejected()
 {
     PhysicsWorld world;
@@ -349,6 +440,8 @@ int main()
         TestFitKeepsTuning();
         TestDriverInputBrakesBeforeReversing();
         TestUpdateRunsFixedSteps();
+        TestGroundCoverIsRecognised();
+        TestGrassCardsStopACarUnlessTheyAreGroundCover();
         TestDegenerateMeshIsRejected();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();

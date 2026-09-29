@@ -5,6 +5,7 @@
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/logic/world_bounds.h>
+#include <engine/physics/collision_filter.h>
 #include <engine/physics/vehicle_wheel_motion.h>
 #include <engine/renderer/renderer_world.h>
 
@@ -405,6 +406,8 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
 {
     bool any = false;
     float lowest = fallbackFloor;
+    size_t groundCoverSubmeshes = 0;
+    size_t groundCoverTriangles = 0;
     std::vector<glm::vec3> worldVertices;
     for (const CpuRenderSubmesh& submesh : renderWorld.GetRenderSubmeshes())
     {
@@ -426,11 +429,22 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
             submeshLowest = worldVertices.empty() ? position.y : std::min(submeshLowest, position.y);
             worldVertices.push_back(position);
         }
+        // Grass and weeds are cut-out cards, drawn and not solid: the verge is a million of them.
+        if (submesh.alphaMode == MaterialAlphaMode::Mask && IsGroundCover(worldVertices, submesh.mesh->indices))
+        {
+            ++groundCoverSubmeshes;
+            groundCoverTriangles += submesh.mesh->indices.size() / 3;
+            continue;
+        }
         if (physics.AddStaticMesh(worldVertices, submesh.mesh->indices))
         {
             lowest = any ? std::min(lowest, submeshLowest) : submeshLowest;
             any = true;
         }
+    }
+    if (groundCoverSubmeshes > 0)
+    {
+        LOG_INFO("Left {} ground-cover submeshes ({} triangles of grass and weeds) out of the collision", groundCoverSubmeshes, groundCoverTriangles);
     }
     return lowest;
 }
