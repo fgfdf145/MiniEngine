@@ -132,6 +132,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         ImGui::TextUnformatted("W/S or Up/Down: throttle, brake and reverse");
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
         ImGui::TextUnformatted("Backspace: reset the car    F5: stop");
+        ImGui::TextUnformatted("Hold the right mouse button: look around the car");
         ImGui::TextDisabled("Gamepad: RT/LT, left stick, A hand brake, Back reset");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
@@ -144,6 +145,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         DragFloatInRange("Height (m)", &m_vehicleCamera.height, 0.2f, 15.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Height (m)", &m_vehicleCamera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
         DragFloatInRange("Stiffness", &m_vehicleCamera.stiffness, 0.5f, 30.0f, "%.1f", 0.1f);
+        DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.5f, 20.0f, "%.1f", 0.1f);
         ImGui::EndDisabled();
     }
 

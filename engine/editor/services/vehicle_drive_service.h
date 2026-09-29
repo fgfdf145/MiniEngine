@@ -34,6 +34,17 @@ struct VehicleCameraSettings
     float lookHeight = 1.0f; // the point above the car's origin the camera looks at
     // How quickly the camera catches up with the car, per second; higher is stiffer.
     float stiffness = 6.0f;
+    // Holding the right mouse button swings the camera round the car; letting go brings it back
+    // behind it at this rate per second (higher is quicker).
+    float lookRecenterRate = 4.0f;
+};
+
+// How far the driver has looked around the car with the right mouse button, added to the chase
+// camera's place behind it.
+struct VehicleCameraOrbit
+{
+    float yawDegrees = 0.0f;   // positive swings the camera to the car's right
+    float pitchDegrees = 0.0f; // positive raises the camera, looking down on the car
 };
 
 // What the Vehicle panel shows.
@@ -79,6 +90,7 @@ struct VehicleDriveSession
     // The keyboard's steering, eased towards full lock rather than jumping to it.
     float keyboardSteering = 0.0f;
     bool resetHeld = false;
+    VehicleCameraOrbit orbit;
 };
 
 struct VehicleDriveState
@@ -134,8 +146,17 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     const glm::quat& vehicleToModel,
     const glm::vec3& scale);
 
-// Eases the camera towards its place behind the car, looking at it. With deltaSeconds of zero it
-// jumps straight there.
-void UpdateChaseCamera(Camera& camera, const PhysicsPose& vehiclePose, const VehicleCameraSettings& settings, float deltaSeconds);
+// Turns the orbit by a mouse movement (degrees), or, with `lookHeld` false, eases it back to zero.
+// Pitch is kept between looking a little up from below and straight down.
+void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, const VehicleCameraSettings& settings, float deltaSeconds);
+
+// Eases the camera towards its place behind the car, looking at it, turned round the car by `orbit`.
+// With deltaSeconds of zero it jumps straight there.
+void UpdateChaseCamera(
+    Camera& camera,
+    const PhysicsPose& vehiclePose,
+    const VehicleCameraSettings& settings,
+    float deltaSeconds,
+    const VehicleCameraOrbit& orbit = {});
 }
 }

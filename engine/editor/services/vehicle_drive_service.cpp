@@ -29,6 +29,9 @@ constexpr float kGamepadStickDeadZone = 0.12f;
 // The ground plane under everything, so a car driven off the edge of the track lands somewhere.
 constexpr float kGroundPlaneHalfSize = 5000.0f;
 constexpr float kGroundPlaneHalfThickness = 0.5f;
+// How far the right mouse button may tilt the chase camera down onto the car and up from below.
+constexpr float kOrbitMaxRaiseDegrees = 60.0f;
+constexpr float kOrbitMaxLowerDegrees = 10.0f;
 
 float MoveTowards(float value, float target, float maxDelta)
 {
@@ -302,7 +305,17 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
     if (state.vehicleDrive.camera.follow)
     {
-        UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds);
+        // Holding the right mouse button looks around the car: dragging right swings the camera to its right side.
+        const bool lookHeld = state.input.IsMouseLookActive();
+        const float sensitivity = state.camera.mouseSensitivity;
+        UpdateCameraOrbit(
+            session->orbit,
+            lookHeld,
+            lookHeld ? state.input.GetMouseDeltaX() * sensitivity : 0.0f,
+            lookHeld ? state.input.GetMouseDeltaY() * sensitivity : 0.0f,
+            state.vehicleDrive.camera,
+            deltaSeconds);
+        UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds, session->orbit);
     }
     return true;
 }
@@ -469,7 +482,25 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     return transforms;
 }
 
-void UpdateChaseCamera(Camera& camera, const PhysicsPose& vehiclePose, const VehicleCameraSettings& settings, float deltaSeconds)
+void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, const VehicleCameraSettings& settings, float deltaSeconds)
+{
+    if (lookHeld)
+    {
+        orbit.yawDegrees = std::remainder(orbit.yawDegrees + yawDeltaDegrees, 360.0f);
+        orbit.pitchDegrees = std::clamp(orbit.pitchDegrees + pitchDeltaDegrees, -kOrbitMaxLowerDegrees, kOrbitMaxRaiseDegrees);
+        return;
+    }
+    const float keep = std::exp(-std::max(settings.lookRecenterRate, 0.0f) * std::max(deltaSeconds, 0.0f));
+    orbit.yawDegrees *= keep;
+    orbit.pitchDegrees *= keep;
+}
+
+void UpdateChaseCamera(
+    Camera& camera,
+    const PhysicsPose& vehiclePose,
+    const VehicleCameraSettings& settings,
+    float deltaSeconds,
+    const VehicleCameraOrbit& orbit)
 {
     // Behind the car along its heading on the ground, so it neither pitches nor rolls with the body.
     glm::vec3 heading = vehiclePose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
@@ -486,7 +517,14 @@ void UpdateChaseCamera(Camera& camera, const PhysicsPose& vehiclePose, const Veh
     heading = glm::normalize(heading);
 
     const glm::vec3 target = vehiclePose.position + glm::vec3(0.0f, settings.lookHeight, 0.0f);
-    const glm::vec3 desired = vehiclePose.position - heading * settings.distance + glm::vec3(0.0f, settings.height, 0.0f);
+    // The place behind the car and above it, swung about the point the camera looks at: pitched about
+    // the car's right, then turned about the vertical.
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    const glm::vec3 lookAt = vehiclePose.position + glm::vec3(0.0f, settings.lookHeight, 0.0f);
+    glm::vec3 arm = vehiclePose.position + glm::vec3(0.0f, settings.height, 0.0f) - heading * settings.distance - lookAt;
+    arm = glm::angleAxis(glm::radians(orbit.pitchDegrees), glm::normalize(glm::cross(up, heading))) * arm;
+    arm = glm::angleAxis(glm::radians(orbit.yawDegrees), up) * arm;
+    const glm::vec3 desired = lookAt + arm;
     const float follow = deltaSeconds <= 0.0f ? 1.0f : 1.0f - std::exp(-std::max(settings.stiffness, 0.0f) * deltaSeconds);
     camera.position = glm::mix(camera.position, desired, follow);
 
