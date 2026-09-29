@@ -182,10 +182,26 @@ struct ModelWheelRig
     glm::vec3 axle{1.0f, 0.0f, 0.0f};
 };
 
+// Geometry that collides and is never drawn: Assetto Corsa's physics meshes, which the kn5 import
+// writes as glTF nodes carrying MINIENGINE_collision. The meshes of one surface are merged, in
+// the model's space (node transforms baked in, as the submeshes' are).
+struct ModelCollisionMesh
+{
+    // The surface's name as its source calls it ("ASPH-SPA_BLACK", "GRASS", "WALL").
+    std::string surface;
+    // The surface's friction coefficient, about 1 for tarmac and 0.6 for grass.
+    float friction = 1.0f;
+    std::vector<glm::vec3> positions;
+    // Three indices into `positions` per triangle.
+    std::vector<uint32_t> indices;
+};
+
 struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
     std::vector<ModelSubmeshData> submeshes;
+    // When present, a physics simulation collides with these instead of the submeshes.
+    std::vector<ModelCollisionMesh> collisionMeshes;
     std::vector<ModelLightData> lights;
     // KHR_materials_variants' names, in the glTF's order.
     std::vector<std::string> materialVariants;

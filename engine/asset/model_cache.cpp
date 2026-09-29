@@ -132,6 +132,11 @@ size_t EstimateBytes(const LoadedModelData& data)
         bytes += submesh.mesh.vertices.size() * sizeof(Vertex);
         bytes += submesh.mesh.indices.size() * sizeof(uint32_t);
     }
+    for (const ModelCollisionMesh& collision : data.collisionMeshes)
+    {
+        bytes += collision.positions.size() * sizeof(glm::vec3);
+        bytes += collision.indices.size() * sizeof(uint32_t);
+    }
     return bytes;
 }
 

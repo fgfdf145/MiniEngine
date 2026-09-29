@@ -591,6 +591,29 @@ void RulesMatchTheConverter()
         Kn5Importer::LowResTwins({"COCKPIT_HR", "cockpit_lr", "WHEEL_LR", "SUSP_LR", "STEER_HR", "STEER_LR"});
     Require(twins == std::set<std::string>{"cockpit_lr", "STEER_LR"}, "only _LR names with an _HR twin are low-res");
 
+    Require(Kn5Importer::IsPhysicsMeshName("1ROAD") && Kn5Importer::IsPhysicsMeshName("20ASPH-SPA_BLACK_004"),
+            "a name that starts with a digit is a physics mesh");
+    Require(!Kn5Importer::IsPhysicsMeshName("cameraface1_KSLAYER3") && !Kn5Importer::IsPhysicsMeshName("AC_START_0") &&
+                !Kn5Importer::IsPhysicsMeshName(""),
+            "the other meshes the game never draws are not");
+
+    const std::vector<Kn5Surface> surfaces = Kn5Importer::ParseSurfaces(
+        "[SURFACE_0]\nKEY=ASPH-SPA_BLACK\nFRICTION=0.98\nDAMPING=0\n\n"
+        "[SURFACE_1]\nKEY=ASPH\nFRICTION=0.5\n\n"
+        "[SURFACE_2]\nKEY=GRASS\nFRICTION=nonsense\n\n"
+        "[SURFACE_3]\nFRICTION=0.3\n\n"
+        "[OTHER]\nKEY=IGNORED\nFRICTION=0.1\n");
+    Require(surfaces.size() == 3 && surfaces[0].key == "ASPH-SPA_BLACK", "a KEY makes a surface; a section without one, or not a SURFACE, does not");
+    RequireNear(surfaces[0].friction, 0.98f, 1e-6f, "FRICTION is read");
+    RequireNear(surfaces[2].friction, kUnknownSurfaceFriction, 1e-6f, "a malformed FRICTION is the unknown surface's");
+    Kn5Surface match = Kn5Importer::MatchSurface(surfaces, "20ASPH-SPA_BLACK_004");
+    Require(match.key == "ASPH-SPA_BLACK", "the longest KEY the name starts with, leading digits dropped");
+    Require(Kn5Importer::MatchSurface(surfaces, "07asph-spa_black").key == "ASPH-SPA_BLACK", "ignoring case");
+    Require(Kn5Importer::MatchSurface(surfaces, "3ASPH2").key == "ASPH", "a shorter key when it is the only one");
+    match = Kn5Importer::MatchSurface(surfaces, "01WALL003");
+    Require(match.key == "WALL", "a name no surface matches is its own, without the digits around it");
+    RequireNear(match.friction, kUnknownSurfaceFriction, 1e-6f, "at the unknown surface's friction");
+
     RequireNear(Kn5Importer::SpecularExponentToRoughness(0.0f), 1.0f, 1e-6f, "exponent 0 is fully rough");
     RequireNear(Kn5Importer::SpecularExponentToRoughness(100.0f), 0.140028f, 1e-5f, "exponent 100");
     RequireNear(Kn5Importer::SpecularExponentToRoughness(1e6f), 0.04f, 1e-6f, "roughness floor");
@@ -872,6 +895,8 @@ std::filesystem::path WriteTrackFolder(const std::filesystem::path& root)
         "[SOMETHING_ELSE]\n"
         "FILE=ignored.kn5\n";
     WriteFile(track / "models_east.ini", std::vector<std::uint8_t>(layout.begin(), layout.end()));
+    const std::string surfaces = "[SURFACE_0]\nKEY=ROAD\nFRICTION=0.77\nDAMPING=0\n";
+    WriteFile(track / "data" / "surfaces.ini", std::vector<std::uint8_t>(surfaces.begin(), surfaces.end()));
     return track;
 }
 
@@ -950,6 +975,16 @@ void ImportsAWholeTrackLayout()
     Require(model.materials[tree.materialIndex].name == "trees", "the second model's material, offset past the first's");
     // The trees' texture lives in the main kn5 only.
     Require(!model.materials[tree.materialIndex].baseColorTexturePath.empty(), "a texture another model of the layout carries resolves");
+
+    // The physics mesh is collision only: not a submesh, on the surface its name and the track's
+    // surfaces.ini say, in the model's space (the axis root turns its (7, 0, 0) to (-7, 0, 0)).
+    Require(model.collisionMeshes.size() == 1, "the physics mesh becomes the model's collision");
+    const ModelCollisionMesh& collision = model.collisionMeshes[0];
+    Require(collision.surface == "ROAD", "surface " + collision.surface);
+    RequireNear(collision.friction, 0.77f, 1e-6f, "friction from the track's surfaces.ini");
+    Require(collision.positions.size() == 3 && collision.indices.size() == 3, "one triangle");
+    RequireNear(collision.positions[0].x, -7.0f, 1e-5f, "in the model's space");
+    Require(model.maxBounds.x < 6.0f, "and outside its bounds");
 
     // Unplaced: (1, 0, 0) under the axis root only. Placed: rotated to (0, 0, -1), moved by
     // (10, 0, 5) to (10, 0, 4), then the axis root's half turn.

@@ -134,9 +134,11 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
 // `keyboardSteering` is the eased keyboard steering, carried between frames.
 VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering);
 
-// Adds the static collision for every loaded model except `exclude`: its opaque and alpha-tested
-// submeshes' triangles in world space, less the glass, decals and ground cover (IsGroundCover) the
-// car should drive over. Returns the lowest vertex height, or `fallbackFloor` when nothing was added.
+// Adds the static collision for every loaded model except `exclude`, in world space. A model with
+// collision meshes of its own (an Assetto Corsa track's physics meshes, each surface at its friction)
+// collides through those alone; any other through its opaque and alpha-tested submeshes' triangles,
+// less the glass, decals and ground cover (IsGroundCover) a car should drive over. Returns the lowest
+// vertex height, or `fallbackFloor` when nothing was added.
 float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld, const ISceneWorld& scene, entt::entity exclude, float fallbackFloor);
 
 // The local transform of each of the model's submeshes (in the order of its submeshes) for a car

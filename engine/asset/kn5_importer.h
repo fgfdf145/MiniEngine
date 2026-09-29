@@ -53,8 +53,12 @@ struct Kn5ImportReport
     size_t meshes = 0;
     size_t emptyMeshes = 0;
     size_t droppedVariants = 0;
-    // Meshes the game never draws (isRenderable off, or a track marker's cube), which are not imported.
+    // Meshes the game never draws (isRenderable off, or a track marker's cube), which are not imported,
+    // except:
     size_t hiddenMeshes = 0;
+    // a track's physics meshes, which are imported as collision only (MINIENGINE_collision).
+    size_t collisionMeshes = 0;
+    size_t collisionTriangles = 0;
     size_t triangles = 0;
     size_t images = 0;
     size_t materials = 0;
@@ -115,6 +119,16 @@ struct Kn5LayoutModel
     std::array<float, 3> rotationDegrees{};
 };
 
+// A surface of a track's surfaces.ini: what a physics mesh named after it is made of.
+struct Kn5Surface
+{
+    std::string key;
+    float friction = 0.8f;
+};
+
+// Friction of a physics mesh whose surface no surfaces.ini defines (Spa's "WALL").
+inline constexpr float kUnknownSurfaceFriction = 0.8f;
+
 namespace Kn5Importer
 {
 bool IsKn5Path(const std::filesystem::path& path);
@@ -159,6 +173,18 @@ bool IsRuntimeVariant(const std::string& nodeName);
 // The track's spawn and timing points: AC_START_n, AC_PIT_n, AC_HOTLAP_START_n and AC_TIME_n_L/R
 // (ignoring case). Their unit cubes are never drawn; the dummies of the same name are kept.
 bool IsTrackMarker(const std::string& nodeName);
+
+// A track's physics mesh: a mesh the game never draws whose name starts with a digit, then the
+// surface's KEY ("1ROAD", "20ASPH-SPA_BLACK_004"). The game collides cars with these alone.
+bool IsPhysicsMeshName(const std::string& nodeName);
+
+// The [SURFACE_n] sections' KEY and FRICTION of a surfaces.ini, in file order.
+std::vector<Kn5Surface> ParseSurfaces(const std::string& iniText);
+
+// The surface a physics mesh is on: the longest KEY its name (leading digits dropped) starts with,
+// ignoring case, the earlier surface winning a tie. When none does, the name without its leading
+// and trailing digits, at kUnknownSurfaceFriction.
+Kn5Surface MatchSurface(const std::vector<Kn5Surface>& surfaces, const std::string& nodeName);
 
 // The low-res halves of in-file LOD pairs: names ending "_LR" whose "_HR" twin is also present.
 // The twin test matters: "_LR" means left-rear far more often (WHEEL_LR, SUSP_LR), and those have

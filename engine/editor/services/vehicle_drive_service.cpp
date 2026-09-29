@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 namespace me
@@ -406,15 +408,63 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
 {
     bool any = false;
     float lowest = fallbackFloor;
+    const auto noteLowest = [&](float meshLowest)
+    {
+        lowest = any ? std::min(lowest, meshLowest) : meshLowest;
+        any = true;
+    };
+    std::vector<glm::vec3> worldVertices;
+
+    // A model that carries the game's own collision (an Assetto Corsa track's physics meshes) collides
+    // through that alone, each surface at its friction: what it draws is for looking at.
+    std::unordered_set<entt::entity> collidesByItself;
+    for (const entt::entity entity : scene.Registry().view<const ModelComponent>())
+    {
+        if (entity == exclude)
+        {
+            continue;
+        }
+        const std::shared_ptr<const LoadedModelData> model = ModelCache::Get(scene.GetModel(entity).sourcePath);
+        if (!model || model->collisionMeshes.empty())
+        {
+            continue;
+        }
+        collidesByItself.insert(entity);
+        const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+        size_t triangles = 0;
+        for (const ModelCollisionMesh& mesh : model->collisionMeshes)
+        {
+            worldVertices.clear();
+            worldVertices.reserve(mesh.positions.size());
+            float meshLowest = 0.0f;
+            for (const glm::vec3& position : mesh.positions)
+            {
+                const glm::vec3 world = glm::vec3(modelMatrix * glm::vec4(position, 1.0f));
+                meshLowest = worldVertices.empty() ? world.y : std::min(meshLowest, world.y);
+                worldVertices.push_back(world);
+            }
+            if (physics.AddStaticMesh(worldVertices, mesh.indices, mesh.friction))
+            {
+                noteLowest(meshLowest);
+                triangles += mesh.indices.size() / 3;
+            }
+        }
+        LOG_INFO(
+            "'{}' collides through its own {} surfaces ({} triangles); its drawn meshes are left out",
+            scene.GetTag(entity).name,
+            model->collisionMeshes.size(),
+            triangles);
+    }
+
     size_t groundCoverSubmeshes = 0;
     size_t groundCoverTriangles = 0;
-    std::vector<glm::vec3> worldVertices;
     for (const CpuRenderSubmesh& submesh : renderWorld.GetRenderSubmeshes())
     {
         // Glass, smoke and decals are drawn over surfaces rather than being any; alpha-tested
         // fences and foliage still count.
         if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal ||
-            submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity))
+            submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
+            collidesByItself.count(submesh.entity) != 0)
         {
             continue;
         }
@@ -438,8 +488,7 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         }
         if (physics.AddStaticMesh(worldVertices, submesh.mesh->indices))
         {
-            lowest = any ? std::min(lowest, submeshLowest) : submeshLowest;
-            any = true;
+            noteLowest(submeshLowest);
         }
     }
     if (groundCoverSubmeshes > 0)

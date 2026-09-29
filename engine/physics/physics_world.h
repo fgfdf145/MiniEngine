@@ -52,16 +52,25 @@ class PhysicsWorld
     // A long frame (a hitch, a breakpoint) runs at most this many steps and drops the rest, rather
     // than taking ever longer to catch up.
     static constexpr int kMaxStepsPerUpdate = 5;
+    // The friction coefficient of static geometry that names none: a road. A wheel's grip is the
+    // square root of its tyre's coefficient times the surface's, so Jolt's own default of 0.2 would
+    // leave a car with half the grip of a tyre on tarmac.
+    static constexpr float kDefaultSurfaceFriction = 1.0f;
 
     PhysicsWorld();
     ~PhysicsWorld();
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
-    // A triangle mesh that never moves, in world space, three indices per triangle. Degenerate
-    // triangles are dropped. False, adding nothing, when no triangle is left.
-    bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices);
-    void AddStaticBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+    // A triangle mesh that never moves, in world space, three indices per triangle, of a surface with
+    // this friction coefficient (about 1 for tarmac, 0.6 for grass). Degenerate triangles are dropped.
+    // False, adding nothing, when no triangle is left.
+    bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, float friction = kDefaultSurfaceFriction);
+    void AddStaticBox(
+        const glm::vec3& center,
+        const glm::vec3& halfExtents,
+        const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+        float friction = kDefaultSurfaceFriction);
     size_t GetStaticBodyCount() const;
     size_t GetStaticTriangleCount() const;
 

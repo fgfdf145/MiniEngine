@@ -42,6 +42,8 @@ constexpr int kElementArrayBuffer = 34963;
 constexpr size_t kStubTextureBytes = 128;
 // The least roughness a ksMultilayer surface (tarmac, grass, sand, kerbs) is imported with.
 constexpr float kMultilayerMinRoughness = 0.7f;
+// The glTF node extension that marks a mesh as collision only (see ModelCollisionMesh).
+constexpr const char* kCollisionExtension = "MINIENGINE_collision";
 
 constexpr std::array<float, 16> kIdentity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
@@ -315,8 +317,8 @@ std::array<float, 3> Perpendicular(const std::array<float, 3>& normal)
 class GltfBuilder
 {
   public:
-    GltfBuilder(const std::filesystem::path& textureDirectory, const Kn5ImportOptions& options)
-        : m_textureDirectory(textureDirectory), m_options(options)
+    GltfBuilder(const std::filesystem::path& textureDirectory, const Kn5ImportOptions& options, std::vector<Kn5Surface> surfaces)
+        : m_textureDirectory(textureDirectory), m_options(options), m_surfaces(std::move(surfaces))
     {
     }
 
@@ -417,7 +419,10 @@ class GltfBuilder
     // childless mesh the game never draws.
     std::optional<size_t> Emit(const Kn5Node& node)
     {
-        const bool hidden = node.HasGeometry() && (!node.renderable || Kn5Importer::IsTrackMarker(node.name));
+        // The game collides cars with its physics meshes and draws none of them: they are kept, as
+        // collision only.
+        const bool collision = node.HasGeometry() && !node.renderable && Kn5Importer::IsPhysicsMeshName(node.name);
+        const bool hidden = node.HasGeometry() && !collision && (!node.renderable || Kn5Importer::IsTrackMarker(node.name));
         if (hidden)
         {
             ++m_report.hiddenMeshes;
@@ -448,6 +453,16 @@ class GltfBuilder
                 {
                     ++m_report.scrubbedMatrices;
                 }
+            }
+        }
+        else if (collision)
+        {
+            if (const std::optional<size_t> mesh = EmitCollisionMesh(node); mesh.has_value())
+            {
+                const Kn5Surface surface = Kn5Importer::MatchSurface(m_surfaces, node.name);
+                gltfNode["mesh"] = *mesh;
+                gltfNode["extensions"][kCollisionExtension] = {{"surface", surface.key}, {"friction", Round(surface.friction, 4)}};
+                m_extensionsUsed.insert(kCollisionExtension);
             }
         }
         else if (hidden)
@@ -858,18 +873,68 @@ class GltfBuilder
         return m_accessors.size() - 1;
     }
 
-    std::optional<size_t> EmitMesh(const Kn5Node& node)
+    // How many of the node's indices to use (a whole number of triangles) when every one lands on a
+    // vertex; 0 for a mesh with none, or one that indexes past its vertices.
+    static size_t UsableIndexCount(const Kn5Node& node)
     {
         const size_t vertexCount = node.vertices.size();
         const size_t indexCount = node.indices.size() - node.indices.size() % 3;
-        bool indicesValid = indexCount > 0 && vertexCount > 0;
-        for (size_t index = 0; indicesValid && index < indexCount; ++index)
+        if (indexCount == 0 || vertexCount == 0)
         {
-            indicesValid = node.indices[index] < vertexCount;
+            return 0;
         }
-        if (!indicesValid)
+        for (size_t index = 0; index < indexCount; ++index)
         {
-            if (indexCount > 0 && vertexCount > 0)
+            if (node.indices[index] >= vertexCount)
+            {
+                return 0;
+            }
+        }
+        return indexCount;
+    }
+
+    // A physics mesh: positions and indices only, and no material. Only the collision needs it.
+    std::optional<size_t> EmitCollisionMesh(const Kn5Node& node)
+    {
+        const size_t indexCount = UsableIndexCount(node);
+        if (indexCount == 0)
+        {
+            ++m_report.emptyMeshes;
+            return std::nullopt;
+        }
+
+        std::vector<float> positions;
+        positions.reserve(node.vertices.size() * 3);
+        for (const Kn5Vertex& vertex : node.vertices)
+        {
+            std::array<float, 3> position = vertex.position;
+            if (!IsFinite(position.data(), 3))
+            {
+                position = {0.0f, 0.0f, 0.0f};
+                ++m_report.scrubbedAttributes;
+            }
+            positions.insert(positions.end(), position.begin(), position.end());
+        }
+        Json attributes = Json::object();
+        attributes["POSITION"] = AppendFloats(positions, 3, true);
+
+        const size_t indexView = AppendView(node.indices.data(), indexCount * sizeof(std::uint16_t), kElementArrayBuffer);
+        m_accessors.push_back(Json{{"bufferView", indexView}, {"componentType", kUnsignedShort}, {"count", indexCount}, {"type", "SCALAR"}});
+
+        Json primitive{{"attributes", std::move(attributes)}, {"indices", m_accessors.size() - 1}};
+        m_meshes.push_back(Json{{"name", node.name}, {"primitives", Json::array({std::move(primitive)})}});
+        ++m_report.collisionMeshes;
+        m_report.collisionTriangles += indexCount / 3;
+        return m_meshes.size() - 1;
+    }
+
+    std::optional<size_t> EmitMesh(const Kn5Node& node)
+    {
+        const size_t vertexCount = node.vertices.size();
+        const size_t indexCount = UsableIndexCount(node);
+        if (indexCount == 0)
+        {
+            if (node.indices.size() >= 3 && vertexCount > 0)
             {
                 LOG_WARN("kn5 mesh '{}' indexes past its {} vertices; kept as an empty node", node.name, vertexCount);
             }
@@ -945,6 +1010,7 @@ class GltfBuilder
 
     std::filesystem::path m_textureDirectory;
     Kn5ImportOptions m_options;
+    std::vector<Kn5Surface> m_surfaces;
     Kn5ImportReport m_report;
     std::set<std::string> m_lowRes;
     size_t m_materialBase = 0;
@@ -1199,20 +1265,17 @@ namespace
 {
 // AC's ini: [SECTION] then KEY=VALUE, keys upper-cased. Hand-rolled because the files have
 // duplicate keys, empty values and '%' in values.
-std::vector<std::pair<std::string, std::map<std::string, std::string>>> ReadAcIni(const std::filesystem::path& path)
+using AcIni = std::vector<std::pair<std::string, std::map<std::string, std::string>>>;
+
+AcIni ParseAcIni(std::istream& file)
 {
-    std::ifstream file(path);
-    if (!file)
-    {
-        throw std::runtime_error("Cannot open '" + path.string() + "'");
-    }
     const auto trim = [](std::string text)
     {
         const size_t first = text.find_first_not_of(" \t\r");
         const size_t last = text.find_last_not_of(" \t\r");
         return first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
     };
-    std::vector<std::pair<std::string, std::map<std::string, std::string>>> sections;
+    AcIni sections;
     std::string line;
     while (std::getline(file, line))
     {
@@ -1239,6 +1302,56 @@ std::vector<std::pair<std::string, std::map<std::string, std::string>>> ReadAcIn
         }
     }
     return sections;
+}
+
+AcIni ReadAcIni(const std::filesystem::path& path)
+{
+    std::ifstream file(path);
+    if (!file)
+    {
+        throw std::runtime_error("Cannot open '" + path.string() + "'");
+    }
+    return ParseAcIni(file);
+}
+
+// The surfaces a track's physics meshes are made of: the track's data/surfaces.ini, then the game's
+// own (system/data/surfaces.ini, above content/tracks/<track>), then the four keys every install
+// has. The first definition of a key is the one a mesh gets.
+std::vector<Kn5Surface> LoadTrackSurfaces(const std::filesystem::path& trackDirectory)
+{
+    std::vector<Kn5Surface> surfaces;
+    const auto append = [&surfaces](const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if (!file)
+        {
+            return;
+        }
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        for (Kn5Surface& surface : Kn5Importer::ParseSurfaces(text))
+        {
+            surfaces.push_back(std::move(surface));
+        }
+    };
+
+    append(trackDirectory / "data" / "surfaces.ini");
+    std::error_code ec;
+    std::filesystem::path ancestor = std::filesystem::absolute(trackDirectory, ec);
+    for (int level = 0; !ec && level < 6 && ancestor.has_parent_path() && ancestor.parent_path() != ancestor; ++level)
+    {
+        const std::filesystem::path system = ancestor / "system" / "data" / "surfaces.ini";
+        if (std::filesystem::is_regular_file(system, ec))
+        {
+            append(system);
+            break;
+        }
+        ancestor = ancestor.parent_path();
+    }
+    for (const Kn5Surface& builtin : {Kn5Surface{"ROAD", 1.0f}, Kn5Surface{"GRASS", 0.6f}, Kn5Surface{"KERB", 0.92f}, Kn5Surface{"SAND", 0.8f}})
+    {
+        surfaces.push_back(builtin);
+    }
+    return surfaces;
 }
 
 // "x, y, z" as three floats; zero for a missing or malformed value, as the game reads it.
@@ -1402,6 +1515,80 @@ void SurveySkins(const std::filesystem::path& kn5Path, const Kn5Model& model, co
 
 namespace Kn5Importer
 {
+bool IsPhysicsMeshName(const std::string& nodeName)
+{
+    return !nodeName.empty() && nodeName.front() >= '0' && nodeName.front() <= '9';
+}
+
+std::vector<Kn5Surface> ParseSurfaces(const std::string& iniText)
+{
+    std::istringstream stream(iniText);
+    std::vector<Kn5Surface> surfaces;
+    for (const auto& [section, values] : ParseAcIni(stream))
+    {
+        const auto key = values.find("KEY");
+        if (ToLowerAscii(section).rfind("surface", 0) != 0 || key == values.end() || key->second.empty())
+        {
+            continue;
+        }
+        Kn5Surface surface;
+        surface.key = key->second;
+        surface.friction = kUnknownSurfaceFriction;
+        if (const auto friction = values.find("FRICTION"); friction != values.end())
+        {
+            try
+            {
+                const float parsed = std::stof(friction->second);
+                if (std::isfinite(parsed) && parsed >= 0.0f)
+                {
+                    surface.friction = parsed;
+                }
+            }
+            catch (const std::exception&)
+            {
+                // Malformed: the unknown-surface friction stands.
+            }
+        }
+        surfaces.push_back(std::move(surface));
+    }
+    return surfaces;
+}
+
+Kn5Surface MatchSurface(const std::vector<Kn5Surface>& surfaces, const std::string& nodeName)
+{
+    const auto isDigit = [](char character)
+    {
+        return character >= '0' && character <= '9';
+    };
+    size_t start = 0;
+    while (start < nodeName.size() && isDigit(nodeName[start]))
+    {
+        ++start;
+    }
+    const std::string name = ToLowerAscii(nodeName.substr(start));
+
+    const Kn5Surface* best = nullptr;
+    for (const Kn5Surface& surface : surfaces)
+    {
+        const std::string key = ToLowerAscii(surface.key);
+        if (!key.empty() && name.rfind(key, 0) == 0 && (best == nullptr || key.size() > best->key.size()))
+        {
+            best = &surface;
+        }
+    }
+    if (best != nullptr)
+    {
+        return *best;
+    }
+
+    size_t end = nodeName.size();
+    while (end > start && isDigit(nodeName[end - 1]))
+    {
+        --end;
+    }
+    return Kn5Surface{nodeName.substr(start, end - start), kUnknownSurfaceFriction};
+}
+
 bool IsLayoutPath(const std::filesystem::path& path)
 {
     const std::string name = ToLowerAscii(path.filename().string());
@@ -1586,7 +1773,7 @@ Kn5ImportReport ConvertToGltf(
         }
     }
 
-    GltfBuilder builder(textureDirectory, options);
+    GltfBuilder builder(textureDirectory, options, LoadTrackSurfaces(source.parent_path()));
     Kn5ImportReport& report = builder.Report();
     // Tracks have no liveries; a car's skin replaces textures in every pass that reads them.
     const std::optional<std::filesystem::path> skin =
@@ -1671,6 +1858,14 @@ Kn5ImportReport ConvertToGltf(
         report.triangles,
         report.images,
         report.materials);
+    if (report.collisionMeshes > 0)
+    {
+        LOG_INFO(
+            "kn5 '{}': {} physics meshes ({} triangles) imported as collision only",
+            sourceName,
+            report.collisionMeshes,
+            report.collisionTriangles);
+    }
     if (!report.skin.empty())
     {
         LOG_INFO("kn5 '{}': skin '{}' ({} textures)", sourceName, report.skin, report.skinTextures);

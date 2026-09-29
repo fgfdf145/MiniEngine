@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -109,7 +110,7 @@ void TestDriverInputBrakesBeforeReversing()
     Require(input.forward == 0.0f && input.handBrake == 1.0f, "the hand brake cuts the throttle");
 }
 
-void AddGroundMesh(PhysicsWorld& world)
+void AddGroundMesh(PhysicsWorld& world, float friction = PhysicsWorld::kDefaultSurfaceFriction)
 {
     // A 400 m square facing up (counter-clockwise seen from above), as a triangle mesh like a track's.
     const std::vector<glm::vec3> vertices = {
@@ -119,7 +120,7 @@ void AddGroundMesh(PhysicsWorld& world)
         {200.0f, 0.0f, -200.0f},
     };
     const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
-    Require(world.AddStaticMesh(vertices, indices), "the ground mesh builds");
+    Require(world.AddStaticMesh(vertices, indices, friction), "the ground mesh builds");
     Require(world.GetStaticTriangleCount() == 2, "the ground has two triangles");
 }
 
@@ -420,6 +421,82 @@ void TestGrassCardsStopACarUnlessTheyAreGroundCover()
     Require(IsGroundCover(cardVertices, cardIndices), "and that grass is what IsGroundCover leaves out");
 }
 
+// A two-sided vertical wall in the plane X = x, from z0 to z1 and `height` tall.
+void AddWallMesh(PhysicsWorld& world, float x, float z0, float z1, float height)
+{
+    const std::vector<glm::vec3> vertices = {{x, 0.0f, z0}, {x, 0.0f, z1}, {x, height, z1}, {x, height, z0}};
+    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2};
+    Require(world.AddStaticMesh(vertices, indices), "the wall builds");
+}
+
+float RollDegrees(const glm::quat& rotation)
+{
+    return glm::degrees(std::asin(std::clamp((rotation * glm::vec3(1.0f, 0.0f, 0.0f)).y, -1.0f, 1.0f)));
+}
+
+// Friction is the surface's half of a tyre's grip: the same car, full throttle, goes further on
+// tarmac than on ice.
+void TestSurfaceFrictionSetsGrip()
+{
+    const auto driveOn = [](float friction)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world, friction);
+        const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 3.0f);
+        return world.GetVehiclePose(car).position.z;
+    };
+    const float tarmac = driveOn(1.0f);
+    const float ice = driveOn(0.1f);
+    Require(tarmac > ice * 1.5f, "tarmac gives grip ice does not, z = " + std::to_string(tarmac) + " against " + std::to_string(ice));
+}
+
+// A car scraping along a wall stops at it and stays on the ground. The wheels' cylinder casts would
+// take a wall's face for ground and climb it (without the wall filter this car ends up 0.5 m up, on
+// its side); the chassis still hits the wall.
+void TestCarScrapingAWallStaysOnTheGround()
+{
+    PhysicsWorld world;
+    // The ground carries on a metre past the wall's foot, as a track's runoff does.
+    const std::vector<glm::vec3> groundVertices = {{-200.0f, 0.0f, -200.0f}, {-200.0f, 0.0f, 400.0f}, {4.0f, 0.0f, 400.0f}, {4.0f, 0.0f, -200.0f}};
+    Require(world.AddStaticMesh(groundVertices, std::vector<uint32_t>{0, 1, 2, 0, 2, 3}), "the ground builds");
+    AddWallMesh(world, 3.0f, -20.0f, 400.0f, 6.0f);
+    const glm::quat towardsWall = glm::angleAxis(glm::radians(6.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.75f, 0.33f, 1.3f), 0.33f, 0.30f};
+    layout[1] = {glm::vec3(-0.75f, 0.33f, 1.3f), 0.33f, 0.30f};
+    layout[2] = {glm::vec3(0.75f, 0.33f, -1.3f), 0.33f, 0.30f};
+    layout[3] = {glm::vec3(-0.75f, 0.33f, -1.3f), 0.33f, 0.30f};
+    const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, {}, &layout), {glm::vec3(0.0f), towardsWall});
+    for (int step = 0; step < 60; ++step)
+    {
+        world.Update(PhysicsWorld::kFixedStepSeconds);
+    }
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+
+    float furthest = 0.0f;
+    float highest = 0.0f;
+    float mostRoll = 0.0f;
+    for (int step = 0; step < 600; ++step)
+    {
+        world.Update(PhysicsWorld::kFixedStepSeconds);
+        const PhysicsPose pose = world.GetVehiclePose(car);
+        furthest = std::max(furthest, pose.position.x);
+        highest = std::max(highest, pose.position.y);
+        mostRoll = std::max(mostRoll, std::abs(RollDegrees(pose.rotation)));
+    }
+    Require(world.GetVehiclePose(car).position.z > 50.0f, "the car drove on along the wall");
+    Require(furthest < 3.0f - 0.85f, "the wall stops the chassis, x = " + std::to_string(furthest));
+    Require(highest < 0.25f, "and the car stays on the ground, y = " + std::to_string(highest));
+    Require(mostRoll < 6.0f, "level, rolling at most " + std::to_string(mostRoll) + " degrees");
+}
+
 void TestDegenerateMeshIsRejected()
 {
     PhysicsWorld world;
@@ -442,6 +519,8 @@ int main()
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
         TestGrassCardsStopACarUnlessTheyAreGroundCover();
+        TestSurfaceFrictionSetsGrip();
+        TestCarScrapingAWallStaysOnTheGround();
         TestDegenerateMeshIsRejected();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();

@@ -1838,6 +1838,99 @@ WheelNodeTag ParseWheelNodeName(const std::string& name)
     return {};
 }
 
+constexpr const char* kCollisionExtension = "MINIENGINE_collision";
+
+// A MINIENGINE_collision node's meshes: their triangles in the model's space, merged into the entry
+// of the node's surface. Nothing here is drawn or counted in the model's bounds.
+void AppendCollisionMesh(
+    const tinygltf::Model& model,
+    const tinygltf::Mesh& mesh,
+    const tinygltf::Value& extension,
+    const glm::mat4& worldTransform,
+    LoadedModelData& modelData)
+{
+    std::string surface = "default";
+    float friction = 1.0f;
+    if (extension.IsObject())
+    {
+        if (const tinygltf::Value& value = extension.Get("surface"); value.IsString())
+        {
+            surface = value.Get<std::string>();
+        }
+        if (const tinygltf::Value& value = extension.Get("friction"); value.IsNumber())
+        {
+            const float parsed = static_cast<float>(value.GetNumberAsDouble());
+            friction = std::isfinite(parsed) ? std::clamp(parsed, 0.0f, 10.0f) : friction;
+        }
+    }
+
+    // A mirroring transform reverses every triangle's winding.
+    const bool mirrored = glm::determinant(glm::mat3(worldTransform)) < 0.0f;
+    for (const tinygltf::Primitive& primitive : mesh.primitives)
+    {
+        const auto positionIt = primitive.attributes.find("POSITION");
+        if (positionIt == primitive.attributes.end())
+        {
+            throw std::runtime_error("glTF collision primitive is missing POSITION data");
+        }
+        const std::vector<float> positions = ReadAccessorFloatComponents(model, positionIt->second, 3);
+        const size_t vertexCount = positions.size() / 3;
+        std::vector<uint32_t> primitiveIndices;
+        if (primitive.indices >= 0)
+        {
+            primitiveIndices = ReadIndices(model, primitive.indices);
+        }
+        else
+        {
+            primitiveIndices.resize(vertexCount);
+            for (size_t index = 0; index < vertexCount; ++index)
+            {
+                primitiveIndices[index] = static_cast<uint32_t>(index);
+            }
+        }
+        std::vector<uint32_t> triangles = BuildTriangleIndices(primitiveIndices, primitive.mode >= 0 ? primitive.mode : kGltfModeTriangles);
+        if (vertexCount == 0 || triangles.empty())
+        {
+            continue;
+        }
+        for (uint32_t index : triangles)
+        {
+            if (index >= vertexCount)
+            {
+                throw std::runtime_error("glTF collision primitive index is out of bounds");
+            }
+        }
+
+        auto entry = std::find_if(
+            modelData.collisionMeshes.begin(),
+            modelData.collisionMeshes.end(),
+            [&](const ModelCollisionMesh& candidate)
+            {
+                return candidate.surface == surface && candidate.friction == friction;
+            });
+        if (entry == modelData.collisionMeshes.end())
+        {
+            modelData.collisionMeshes.push_back(ModelCollisionMesh{surface, friction, {}, {}});
+            entry = modelData.collisionMeshes.end() - 1;
+        }
+
+        const uint32_t base = static_cast<uint32_t>(entry->positions.size());
+        entry->positions.reserve(entry->positions.size() + vertexCount);
+        for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            entry->positions.emplace_back(
+                worldTransform * glm::vec4(positions[vertexIndex * 3 + 0], positions[vertexIndex * 3 + 1], positions[vertexIndex * 3 + 2], 1.0f));
+        }
+        entry->indices.reserve(entry->indices.size() + triangles.size());
+        for (size_t index = 0; index + 2 < triangles.size(); index += 3)
+        {
+            entry->indices.push_back(base + triangles[index]);
+            entry->indices.push_back(base + triangles[index + (mirrored ? 2 : 1)]);
+            entry->indices.push_back(base + triangles[index + (mirrored ? 1 : 2)]);
+        }
+    }
+}
+
 // What the traversal learns about a car's wheels: where each WHEEL_xx node sits.
 struct WheelScan
 {
@@ -1949,7 +2042,18 @@ void TraverseNode(
         }
     }
 
-    if (node.mesh >= 0)
+    const auto collisionExtension = node.extensions.find(kCollisionExtension);
+    if (node.mesh >= 0 && collisionExtension != node.extensions.end())
+    {
+        EnsureIndexInRange(static_cast<size_t>(node.mesh), model.meshes.size(), "mesh");
+        const tinygltf::Mesh& mesh = model.meshes[static_cast<size_t>(node.mesh)];
+        AppendCollisionMesh(model, mesh, collisionExtension->second, worldTransform, modelData);
+        for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex)
+        {
+            progressTracker.ReportPrimitiveProcessed();
+        }
+    }
+    else if (node.mesh >= 0)
     {
         EnsureIndexInRange(static_cast<size_t>(node.mesh), model.meshes.size(), "mesh");
         const tinygltf::Mesh& mesh = model.meshes[static_cast<size_t>(node.mesh)];
@@ -2101,7 +2205,7 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 23> kImplementedExtensions = {
+constexpr std::array<std::string_view, 25> kImplementedExtensions = {
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
@@ -2124,7 +2228,9 @@ constexpr std::array<std::string_view, 23> kImplementedExtensions = {
     "KHR_meshopt_compression",
     "KHR_texture_basisu",
     "KHR_texture_transform",
-    "KHR_xmp_json_ld"};
+    "KHR_xmp_json_ld",
+    "MINIENGINE_collision",
+    "MINIENGINE_materials_detail_layers"};
 
 bool IsImplementedExtension(const std::string& name)
 {

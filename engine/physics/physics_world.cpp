@@ -7,6 +7,7 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
@@ -46,6 +47,33 @@ constexpr JPH::BroadPhaseLayer kStatic(0);
 constexpr JPH::BroadPhaseLayer kMoving(1);
 constexpr JPH::uint kCount = 2;
 }
+
+// A wheel rolls on a surface whose normal is within 70 degrees of up. Steeper is a wall: the chassis
+// hits it, but a wheel's cylinder cast would take its face for ground and climb it.
+constexpr float kMinWheelSurfaceNormalY = 0.34f;
+constexpr uint64_t kWheelsIgnoreBody = 1; // JPH::Body::GetUserData of a wall
+
+// What a vehicle's wheels collide with: everything but the vehicle itself and the walls.
+class WheelBodyFilter final : public JPH::BodyFilter
+{
+  public:
+    explicit WheelBodyFilter(const JPH::BodyID& vehicle) : m_vehicle(vehicle)
+    {
+    }
+
+    bool ShouldCollide(const JPH::BodyID& body) const override
+    {
+        return body != m_vehicle;
+    }
+
+    bool ShouldCollideLocked(const JPH::Body& body) const override
+    {
+        return body.GetUserData() != kWheelsIgnoreBody;
+    }
+
+  private:
+    JPH::BodyID m_vehicle;
+};
 
 constexpr JPH::uint kMaxBodies = 65536;
 constexpr JPH::uint kBodyMutexCount = 0; // Jolt's default
@@ -235,6 +263,7 @@ struct PhysicsWorld::Impl
         JPH::Body* body = nullptr;
         JPH::Ref<JPH::VehicleConstraint> constraint;
         JPH::Ref<JPH::VehicleCollisionTester> collisionTester;
+        std::unique_ptr<WheelBodyFilter> wheelFilter;
         VehicleControls controls;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
         VehicleSnapshot previous;
@@ -361,7 +390,7 @@ PhysicsWorld::~PhysicsWorld()
     ReleaseJolt();
 }
 
-bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices)
+bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, float friction)
 {
     JPH::VertexList joltVertices;
     joltVertices.reserve(vertices.size());
@@ -388,33 +417,60 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
         return false;
     }
 
-    // The settings' constructor drops degenerate triangles; a mesh left empty fails to build.
-    const JPH::MeshShapeSettings shapeSettings(std::move(joltVertices), std::move(triangles));
-    const size_t triangleCount = shapeSettings.mIndexedTriangles.size();
-    const JPH::ShapeSettings::ShapeResult shape = shapeSettings.Create();
-    if (shape.HasError() || triangleCount == 0)
+    // The car's wheels roll on the walkable triangles; the steep ones (walls) only stop the chassis.
+    JPH::IndexedTriangleList walkable;
+    JPH::IndexedTriangleList steep;
+    for (const JPH::IndexedTriangle& triangle : triangles)
     {
-        return false;
+        const JPH::Vec3 a(joltVertices[triangle.mIdx[0]]);
+        const JPH::Vec3 b(joltVertices[triangle.mIdx[1]]);
+        const JPH::Vec3 c(joltVertices[triangle.mIdx[2]]);
+        const JPH::Vec3 normal = (b - a).Cross(c - a);
+        const float length = normal.Length();
+        if (!(length > 1e-12f))
+        {
+            continue; // degenerate
+        }
+        (normal.GetY() >= kMinWheelSurfaceNormalY * length ? walkable : steep).push_back(triangle);
     }
 
-    const JPH::BodyCreationSettings bodySettings(
-        shape.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
-    const JPH::BodyID body = m_impl->physicsSystem.GetBodyInterface().CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
-    if (body.IsInvalid())
+    const float bodyFriction = std::max(friction, 0.0f);
+    const auto addBody = [&](JPH::IndexedTriangleList list, uint64_t userData) -> size_t
     {
-        throw std::runtime_error("PhysicsWorld: out of bodies for static geometry");
-    }
-    m_impl->staticBodies.push_back(body);
-    m_impl->staticTriangleCount += triangleCount;
-    m_impl->broadPhaseDirty = true;
-    return true;
+        if (list.empty())
+        {
+            return 0;
+        }
+        const JPH::MeshShapeSettings shapeSettings(joltVertices, std::move(list));
+        const size_t triangleCount = shapeSettings.mIndexedTriangles.size();
+        const JPH::ShapeSettings::ShapeResult shape = shapeSettings.Create();
+        if (shape.HasError() || triangleCount == 0)
+        {
+            return 0;
+        }
+        JPH::BodyCreationSettings bodySettings(
+            shape.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
+        bodySettings.mFriction = bodyFriction;
+        bodySettings.mUserData = userData;
+        const JPH::BodyID body = m_impl->physicsSystem.GetBodyInterface().CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
+        if (body.IsInvalid())
+        {
+            throw std::runtime_error("PhysicsWorld: out of bodies for static geometry");
+        }
+        m_impl->staticBodies.push_back(body);
+        m_impl->staticTriangleCount += triangleCount;
+        m_impl->broadPhaseDirty = true;
+        return triangleCount;
+    };
+    return addBody(std::move(walkable), 0) + addBody(std::move(steep), kWheelsIgnoreBody) > 0;
 }
 
-void PhysicsWorld::AddStaticBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation)
+void PhysicsWorld::AddStaticBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
 {
     const JPH::Vec3 extents = JPH::Vec3::sMax(ToJolt(halfExtents), JPH::Vec3::sReplicate(0.01f));
-    const JPH::BodyCreationSettings bodySettings(
+    JPH::BodyCreationSettings bodySettings(
         new JPH::BoxShape(extents), ToJoltPosition(center), ToJolt(rotation), JPH::EMotionType::Static, ObjectLayers::kStatic);
+    bodySettings.mFriction = std::max(friction, 0.0f);
     const JPH::BodyID body = m_impl->physicsSystem.GetBodyInterface().CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
     if (body.IsInvalid())
     {
@@ -468,6 +524,8 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     vehicle.constraint = new JPH::VehicleConstraint(*vehicle.body, *BuildVehicleConstraintSettings(settings));
     // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on.
     vehicle.collisionTester = new JPH::VehicleCollisionTesterCastCylinder(ObjectLayers::kMoving);
+    vehicle.wheelFilter = std::make_unique<WheelBodyFilter>(vehicle.body->GetID());
+    vehicle.collisionTester->SetBodyFilter(vehicle.wheelFilter.get());
     vehicle.constraint->SetVehicleCollisionTester(vehicle.collisionTester);
     impl.physicsSystem.AddConstraint(vehicle.constraint);
     impl.physicsSystem.AddStepListener(vehicle.constraint);
