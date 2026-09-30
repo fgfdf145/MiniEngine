@@ -497,6 +497,95 @@ void TestCarScrapingAWallStaysOnTheGround()
     Require(mostRoll < 6.0f, "level, rolling at most " + std::to_string(mostRoll) + " degrees");
 }
 
+// A 718 Boxster S PDK as its data.acd gives it (the kn5 import's MINIENGINE_vehicle): 1460 kg, rear
+// drive, a turbo four with 386 Nm from 2000 to 4500 rpm, seven gears.
+VehicleCarSpec MakeBoxsterSpec()
+{
+    VehicleCarSpec spec;
+    spec.massKg = 1460.0f;
+    spec.drive = VehicleDrive::RearWheel;
+    spec.torqueCurve = {{500.0f, 110.0f}, {1000.0f, 200.0f}, {1500.0f, 297.0f}, {2000.0f, 386.0f}, {4500.0f, 386.0f}, {5500.0f, 366.0f}, {6500.0f, 346.0f}, {7500.0f, 267.0f}, {8500.0f, 0.0f}};
+    spec.minRpm = 900.0f;
+    spec.maxRpm = 7500.0f;
+    spec.gearRatios = {3.91f, 2.29f, 1.65f, 1.30f, 1.08f, 0.88f, 0.62f};
+    spec.reverseGearRatio = -3.55f;
+    spec.finalDriveRatio = 3.62f;
+    spec.maxSteerAngleDegrees = 26.7f;
+    spec.brakeTorquePerWheel = 800.0f;
+    spec.frontBrakeShare = 0.65f;
+    spec.handBrakeTorquePerWheel = 1000.0f;
+    spec.suspensionFrequencyHz = 1.7f;
+    spec.suspensionDamping = 0.7f;
+    spec.antiRollBars = true;
+    spec.limitedSlipDifferentials = true;
+    return spec;
+}
+
+void TestCarSpecReplacesWhatItKnows()
+{
+    VehicleSettings tuning;
+    tuning.suspensionMinLength = 0.07f;
+    tuning.maxHandBrakeTorque = 123.0f;
+    const VehicleSettings applied = ApplyCarSpec(tuning, MakeBoxsterSpec());
+    Require(applied.massKg == 1460.0f, "the mass");
+    Require(applied.drive == VehicleDrive::RearWheel, "the drive");
+    Require(std::abs(applied.maxEngineTorque - 386.0f) < 0.01f, "the engine's torque is the curve's peak");
+    Require(applied.torqueCurve.size() == 9 && applied.torqueCurve.front().x == 500.0f, "the curve, sorted by rpm");
+    Require(applied.minRpm == 900.0f && applied.maxRpm == 7500.0f, "the revs");
+    Require(applied.gearRatios.size() == 7 && applied.reverseGearRatio == -3.55f && applied.finalDriveRatio == 3.62f, "the gearbox");
+    Require(std::abs(applied.shiftUpRpm - 6600.0f) < 1.0f && std::abs(applied.shiftDownRpm - 2250.0f) < 1.0f, "shifts by the revs");
+    Require(applied.maxSteerAngleDegrees == 26.7f, "the steering lock");
+    Require(applied.maxBrakeTorque == 800.0f && applied.frontBrakeShare == 0.65f && applied.maxHandBrakeTorque == 1000.0f, "the brakes");
+    Require(applied.suspensionFrequencyHz == 1.7f && applied.suspensionDamping == 0.7f, "the springs");
+    Require(applied.suspensionMinLength == 0.07f, "what the spec does not say stays as tuned");
+
+    // An empty spec changes nothing; nonsense is ignored rather than applied.
+    const VehicleSettings untouched = ApplyCarSpec(tuning, VehicleCarSpec{});
+    Require(untouched.massKg == tuning.massKg && untouched.maxHandBrakeTorque == 123.0f && untouched.gearRatios.empty(), "an empty spec is a no-op");
+    VehicleCarSpec nonsense;
+    nonsense.massKg = -5.0f;
+    nonsense.maxRpm = 100.0f; // under the default minimum
+    nonsense.torqueCurve = {{1000.0f, 0.0f}, {2000.0f, 0.0f}};
+    const VehicleSettings ignored = ApplyCarSpec(tuning, nonsense);
+    Require(ignored.massKg == tuning.massKg && ignored.maxRpm == tuning.maxRpm && ignored.torqueCurve.empty(), "nonsense is ignored");
+}
+
+// The car on its own data drives: it pulls away, changes up through its seven-speed box and reaches
+// 100 km/h. Not in the real car's 4.2 s: the physics engine's tyres and clutch launch a 386 Nm rear-drive
+// car slower (about 9 s), and the time swings by seconds with the mass or the shift points, so it is
+// only bounded.
+void TestCarOnItsOwnDataAccelerates()
+{
+    const auto timeTo100 = [](const VehicleSettings& tuning, int& gearReached)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        constexpr float kFrame = 1.0f / 144.0f;
+        gearReached = 0;
+        for (float time = 0.0f; time < 15.0f; time += kFrame)
+        {
+            world.Update(kFrame);
+            const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+            gearReached = std::max(gearReached, telemetry.gear);
+            if (telemetry.forwardSpeed >= 100.0f / 3.6f)
+            {
+                return time;
+            }
+        }
+        return 15.0f;
+    };
+    int gear = 0;
+    const float own = timeTo100(ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec()), gear);
+    std::cout << "0-100 km/h on the Boxster's own data: " << own << " s, gear " << gear << '\n';
+    Require(own < 14.0f, "the car reaches 100 km/h, got " + std::to_string(own) + " s");
+    Require(gear >= 2, "the gearbox shifts up, reached gear " + std::to_string(gear));
+}
+
 void TestDegenerateMeshIsRejected()
 {
     PhysicsWorld world;
@@ -522,6 +611,8 @@ int main()
         TestSurfaceFrictionSetsGrip();
         TestCarScrapingAWallStaysOnTheGround();
         TestDegenerateMeshIsRejected();
+        TestCarSpecReplacesWhatItKnows();
+        TestCarOnItsOwnDataAccelerates();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();
         TestCarRotatedAtStartDrivesItsOwnWay();

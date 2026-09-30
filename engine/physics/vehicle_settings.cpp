@@ -77,6 +77,106 @@ VehicleSettings FitVehicleSettingsToBounds(
     return settings;
 }
 
+VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec)
+{
+    // An automatic gearbox changes up a little under the limiter and down where the next gear down
+    // still pulls.
+    constexpr float kShiftUpFraction = 0.88f;
+    constexpr float kShiftDownFraction = 0.3f;
+
+    VehicleSettings settings = tuning;
+    if (spec.massKg.has_value() && *spec.massKg > 0.0f)
+    {
+        settings.massKg = *spec.massKg;
+    }
+    if (spec.drive.has_value())
+    {
+        settings.drive = *spec.drive;
+    }
+    if (spec.minRpm.has_value() && *spec.minRpm > 0.0f)
+    {
+        settings.minRpm = *spec.minRpm;
+    }
+    if (spec.maxRpm.has_value() && *spec.maxRpm > settings.minRpm)
+    {
+        settings.maxRpm = *spec.maxRpm;
+    }
+
+    if (spec.torqueCurve.size() >= 2)
+    {
+        settings.torqueCurve = spec.torqueCurve;
+        std::sort(
+            settings.torqueCurve.begin(),
+            settings.torqueCurve.end(),
+            [](const glm::vec2& a, const glm::vec2& b)
+            {
+                return a.x < b.x;
+            });
+        float peak = 0.0f;
+        for (const glm::vec2& point : settings.torqueCurve)
+        {
+            peak = std::max(peak, point.y);
+        }
+        if (peak > 0.0f)
+        {
+            settings.maxEngineTorque = peak;
+        }
+        else
+        {
+            settings.torqueCurve.clear();
+        }
+    }
+
+    if (!spec.gearRatios.empty())
+    {
+        settings.gearRatios = spec.gearRatios;
+        if (spec.reverseGearRatio.has_value())
+        {
+            settings.reverseGearRatio = -std::abs(*spec.reverseGearRatio);
+        }
+        if (spec.finalDriveRatio.has_value() && *spec.finalDriveRatio > 0.0f)
+        {
+            settings.finalDriveRatio = *spec.finalDriveRatio;
+        }
+        settings.shiftUpRpm = settings.maxRpm * kShiftUpFraction;
+        settings.shiftDownRpm = settings.maxRpm * kShiftDownFraction;
+    }
+
+    if (spec.maxSteerAngleDegrees.has_value() && *spec.maxSteerAngleDegrees > 0.0f)
+    {
+        settings.maxSteerAngleDegrees = *spec.maxSteerAngleDegrees;
+    }
+    if (spec.brakeTorquePerWheel.has_value() && *spec.brakeTorquePerWheel > 0.0f)
+    {
+        settings.maxBrakeTorque = *spec.brakeTorquePerWheel;
+    }
+    if (spec.frontBrakeShare.has_value())
+    {
+        settings.frontBrakeShare = std::clamp(*spec.frontBrakeShare, 0.05f, 0.95f);
+    }
+    if (spec.handBrakeTorquePerWheel.has_value() && *spec.handBrakeTorquePerWheel >= 0.0f)
+    {
+        settings.maxHandBrakeTorque = *spec.handBrakeTorquePerWheel;
+    }
+    if (spec.suspensionFrequencyHz.has_value() && *spec.suspensionFrequencyHz > 0.0f)
+    {
+        settings.suspensionFrequencyHz = *spec.suspensionFrequencyHz;
+    }
+    if (spec.suspensionDamping.has_value() && *spec.suspensionDamping >= 0.0f)
+    {
+        settings.suspensionDamping = *spec.suspensionDamping;
+    }
+    if (spec.antiRollBars.has_value())
+    {
+        settings.antiRollBars = *spec.antiRollBars;
+    }
+    if (spec.limitedSlipDifferentials.has_value())
+    {
+        settings.limitedSlipDifferentials = *spec.limitedSlipDifferentials;
+    }
+    return settings;
+}
+
 VehicleWheelGeometry GetVehicleWheelMount(const VehicleSettings& settings, size_t index)
 {
     const bool left = index % 2 == 0;

@@ -1,5 +1,6 @@
 #include "kn5_importer.h"
 
+#include "ac_car_data.h"
 #include "dds_decoder.h"
 #include "kn5_reader.h"
 #include "texture_loader.h"
@@ -49,6 +50,8 @@ constexpr size_t kStubTextureBytes = 128;
 constexpr float kMultilayerMinRoughness = 0.7f;
 // The glTF node extension that marks a mesh as collision only (see ModelCollisionMesh).
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
+// The glTF extension, on the document, that carries a car's own figures (see VehicleCarSpec).
+constexpr const char* kVehicleExtension = "MINIENGINE_vehicle";
 
 constexpr std::array<float, 16> kIdentity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
@@ -73,6 +76,64 @@ float Round(float value, int digits)
 {
     const float scale = std::pow(10.0f, static_cast<float>(digits));
     return std::round(value * scale) / scale;
+}
+
+// A car's figures as the MINIENGINE_vehicle extension: SI units, a member for each figure the car's
+// data gave.
+Json CarSpecToJson(const VehicleCarSpec& spec)
+{
+    Json out = Json::object();
+    const auto put = [&out](const char* key, const std::optional<float>& value)
+    {
+        if (value.has_value())
+        {
+            out[key] = Round(*value, 4);
+        }
+    };
+    put("massKg", spec.massKg);
+    if (spec.drive.has_value())
+    {
+        out["drive"] = *spec.drive == VehicleDrive::RearWheel ? "rear" : *spec.drive == VehicleDrive::FrontWheel ? "front"
+                                                                                                                 : "all";
+    }
+    if (!spec.torqueCurve.empty())
+    {
+        Json curve = Json::array();
+        for (const glm::vec2& point : spec.torqueCurve)
+        {
+            curve.push_back(Json::array({Round(point.x, 2), Round(point.y, 2)}));
+        }
+        out["torqueCurve"] = std::move(curve);
+    }
+    put("minRpm", spec.minRpm);
+    put("maxRpm", spec.maxRpm);
+    if (!spec.gearRatios.empty())
+    {
+        Json gears = Json::array();
+        for (const float ratio : spec.gearRatios)
+        {
+            gears.push_back(Round(ratio, 4));
+        }
+        out["gearRatios"] = std::move(gears);
+    }
+    put("reverseGearRatio", spec.reverseGearRatio);
+    put("finalDriveRatio", spec.finalDriveRatio);
+    put("maxSteerAngleDegrees", spec.maxSteerAngleDegrees);
+    put("steeringWheelLockDegrees", spec.steeringWheelLockDegrees);
+    put("brakeTorquePerWheel", spec.brakeTorquePerWheel);
+    put("frontBrakeShare", spec.frontBrakeShare);
+    put("handBrakeTorquePerWheel", spec.handBrakeTorquePerWheel);
+    put("suspensionFrequencyHz", spec.suspensionFrequencyHz);
+    put("suspensionDamping", spec.suspensionDamping);
+    if (spec.antiRollBars.has_value())
+    {
+        out["antiRollBars"] = *spec.antiRollBars;
+    }
+    if (spec.limitedSlipDifferentials.has_value())
+    {
+        out["limitedSlipDifferentials"] = *spec.limitedSlipDifferentials;
+    }
+    return out;
 }
 
 std::vector<std::uint8_t> ReadFileBytes(const std::filesystem::path& path)
@@ -597,6 +658,12 @@ class GltfBuilder
         return m_nodes.size() - 1;
     }
 
+    // A car's own figures, written on the document as MINIENGINE_vehicle.
+    void SetVehicle(const VehicleCarSpec& spec)
+    {
+        m_vehicle = CarSpecToJson(spec);
+    }
+
     Json BuildDocument(size_t rootNode, const std::string& binaryUri) const
     {
         Json document = Json::object();
@@ -609,9 +676,15 @@ class GltfBuilder
         document["accessors"] = m_accessors;
         document["bufferViews"] = m_bufferViews;
         document["buffers"] = Json::array({Json{{"uri", binaryUri}, {"byteLength", m_binary.size()}}});
-        if (!m_extensionsUsed.empty())
+        std::set<std::string> extensionsUsed = m_extensionsUsed;
+        if (!m_vehicle.is_null())
         {
-            document["extensionsUsed"] = std::vector<std::string>(m_extensionsUsed.begin(), m_extensionsUsed.end());
+            document["extensions"][kVehicleExtension] = m_vehicle;
+            extensionsUsed.insert(kVehicleExtension);
+        }
+        if (!extensionsUsed.empty())
+        {
+            document["extensionsUsed"] = std::vector<std::string>(extensionsUsed.begin(), extensionsUsed.end());
         }
         if (!m_images.empty())
         {
@@ -1133,6 +1206,7 @@ class GltfBuilder
     Json m_images = Json::array();
     Json m_textures = Json::array();
     std::set<std::string> m_extensionsUsed;
+    Json m_vehicle;
     std::unordered_set<std::string> m_fileNames;
     // Keyed by lower-case texture name.
     std::unordered_set<std::string> m_usedTextures;
@@ -1971,6 +2045,23 @@ Kn5ImportReport ConvertToGltf(
     const size_t sceneRoot = builder.AddRoot(name, roots);
     reportProgress(kTablesShare + kTexturesShare + kGeometryShare);
 
+    // A car's own figures, from the data next to its kn5. A car whose data cannot be read still
+    // imports; it drives on the tuning's defaults.
+    if (!layout)
+    {
+        std::string problem;
+        if (const std::optional<VehicleCarSpec> spec = AcCarData::ReadCarFolder(source.parent_path(), &problem))
+        {
+            builder.SetVehicle(*spec);
+            report.carData = DescribeCarSpec(*spec);
+        }
+        else if (!problem.empty())
+        {
+            report.carDataProblem = problem;
+            LOG_WARN("kn5 '{}': the car's data was not imported: {}", source.filename().string(), problem);
+        }
+    }
+
     const std::string binaryUri = "buffers/" + name + ".bin";
     const Json document = builder.BuildDocument(sceneRoot, binaryUri);
     WriteFileBytes(binaryPath, builder.Binary().data(), builder.Binary().size());
@@ -2008,6 +2099,10 @@ Kn5ImportReport ConvertToGltf(
     if (!report.skin.empty())
     {
         LOG_INFO("kn5 '{}': skin '{}' ({} textures)", sourceName, report.skin, report.skinTextures);
+    }
+    if (!report.carData.empty())
+    {
+        LOG_INFO("kn5 '{}': the car's own data: {}", sourceName, report.carData);
     }
     if (report.foldedTextureNames > 0)
     {

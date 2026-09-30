@@ -1,3 +1,5 @@
+#include <engine/asset/ac_car_data.h>
+#include <engine/asset/acd_archive.h>
 #include <engine/asset/dds_decoder.h>
 #include <engine/asset/kn5_importer.h>
 #include <engine/asset/kn5_reader.h>
@@ -10,12 +12,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -1090,6 +1094,241 @@ std::vector<std::uint8_t> BuildSurfacesKn5()
     return writer.Bytes();
 }
 
+// ---- A car's own data ---------------------------------------------------------------------------------
+
+// The data files of a 718 Boxster S PDK, trimmed to what the import reads (values as the game ships them).
+std::map<std::string, std::string> BoxsterDataFiles()
+{
+    return {
+        {"car.ini",
+         "[HEADER]\r\nVERSION=2 ; version number\r\n\r\n[BASIC]\r\nGRAPHICS_OFFSET=0,-0.33,0.11 ; correction\r\nTOTALMASS=1460 ; kg with driver\r\n\r\n"
+         "[CONTROLS]\r\nSTEER_LOCK=400 ; real car's lock from centre to right\r\nSTEER_RATIO=15.0\r\n"},
+        {"engine.ini",
+         "[HEADER]\r\nVERSION=1\r\nPOWER_CURVE=power.lut ; power curve file\r\n\r\n[ENGINE_DATA]\r\nLIMITER=7500 ; rev limiter\r\nMINIMUM=900\r\n\r\n"
+         "[TURBO_0]\r\nLAG_DN=0.996\r\nMAX_BOOST=1.2\r\nWASTEGATE=1.1\r\nREFERENCE_RPM=1900\r\nGAMMA=2\r\n"},
+        {"power.lut", "0|50\r\n500|110\r\n1000|135\r\n1500|176\r\n1900|184\r\n2000|184\r\n4500|183\r\n6500|165\r\n7500|127\r\n8500|0\r\n"},
+        {"drivetrain.ini",
+         "[TRACTION]\r\nTYPE=RWD ; wheel drive\r\n\r\n[GEARS]\r\nCOUNT=7\r\nGEAR_R=-3.55\r\nGEAR_1=3.91\r\nGEAR_2=2.29\r\nGEAR_3=1.65\r\nGEAR_4=1.30\r\n"
+         "GEAR_5=1.08\r\nGEAR_6=0.88\r\nGEAR_7=0.62\r\nFINAL=3.62\r\n\r\n[DIFFERENTIAL]\r\nPOWER=0.25\r\nCOAST=0.40\r\nPRELOAD=5\r\n"},
+        {"brakes.ini", "[HEADER]\r\nVERSION=1\r\n[DATA]\r\nMAX_TORQUE=3200\r\nFRONT_SHARE=0.65\r\nHANDBRAKE_TORQUE=2000\r\n"},
+        {"suspensions.ini",
+         "[BASIC]\r\nWHEELBASE=2.475\r\nCG_LOCATION=0.455\r\n[ARB]\r\nFRONT=30000\r\nREAR=16000\r\n[FRONT]\r\nTYPE=STRUT\r\nHUB_MASS=70\r\nSPRING_RATE=30760\r\n"
+         "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\n[REAR]\r\nTYPE=STRUT\r\nHUB_MASS=80\r\nSPRING_RATE=42500\r\nDAMP_BUMP=4273\r\nDAMP_REBOUND=6873\r\n"},
+        {"aero.ini", "[WING_0]\r\nNAME=BODY\r\nCHORD=1\r\nSPAN=1.99\r\nPOSITION=0,0.15,-0.10\r\nLUT_AOA_CL=wing_body_AOA_CL.lut\r\nCL_GAIN=1\r\n"}};
+}
+
+// data.acd as the game writes it: a marker and a version word, then per file its name, its size, and one
+// 32-bit word per byte, the byte plus the key's.
+std::vector<std::uint8_t> BuildAcd(
+    const std::string& folderName, int seventh, const std::map<std::string, std::string>& files, bool newFormat = true)
+{
+    const std::string key = AcdArchive::MakeKey(folderName, seventh);
+    std::vector<std::uint8_t> bytes;
+    const auto put32 = [&](std::int32_t value)
+    {
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            bytes.push_back(static_cast<std::uint8_t>((static_cast<std::uint32_t>(value) >> shift) & 0xff));
+        }
+    };
+    if (newFormat)
+    {
+        put32(-1111);
+        put32(835647);
+    }
+    for (const auto& [name, text] : files)
+    {
+        put32(static_cast<std::int32_t>(name.size()));
+        bytes.insert(bytes.end(), name.begin(), name.end());
+        put32(static_cast<std::int32_t>(text.size()));
+        for (size_t index = 0; index < text.size(); ++index)
+        {
+            put32(static_cast<std::int32_t>(static_cast<std::uint8_t>(text[index]) + static_cast<std::uint8_t>(key[index % key.size()])));
+        }
+    }
+    return bytes;
+}
+
+void AcdKeysMatchTheGame()
+{
+    // Keys read back from real archives of the base game, with the seventh number the search finds.
+    Require(AcdArchive::MakeKey("ks_porsche_718_boxster_s_pdk", 15) == "6-105-61-232-126-93-15-108", "the Boxster's key");
+    Require(AcdArchive::MakeKey("abarth500", 21) == "7-248-6-221-246-250-21-49", "a short name's key");
+    Require(AcdArchive::MakeKey("bmw_m3_e30", 73) == "108-96-216-121-166-192-73-49", "a BMW's key");
+    // Where the fifth number starts from 66 rather than 2 (the two differ only in a high bit).
+    Require(AcdArchive::MakeKey("lotus_49", 63) == "3-31-241-236-170-18-63-58", "lotus_49's key");
+    Require(AcdArchive::MakeKey("p4-5_2011", 14) == "41-31-5-202-208-57-14-50", "a name with a dash");
+}
+
+void AcdArchiveDecryptsAndRefusesAWrongFolder()
+{
+    const std::map<std::string, std::string> files = BoxsterDataFiles();
+    for (const int seventh : {0, 15, 77, 255})
+    {
+        const AcdArchive::Files read = AcdArchive::Parse(BuildAcd("ks_fixture", seventh, files), "ks_fixture", "fixture");
+        Require(read == files, "the archive decrypts to its files, seventh " + std::to_string(seventh));
+    }
+    // Names are lower-cased; the older layout has no marker.
+    const std::map<std::string, std::string> upperNames{
+        {"CAR.INI", files.at("car.ini")}, {"power.lut", files.at("power.lut")}, {"engine.ini", files.at("engine.ini")}};
+    Require(AcdArchive::Parse(BuildAcd("ks_fixture", 9, upperNames, false), "ks_fixture", "fixture").count("car.ini") == 1,
+            "an archive without the marker, and upper-case names");
+    // The game keys the archive on its folder's name: as spelled, then in lower case.
+    Require(AcdArchive::Parse(BuildAcd("ks_fixture", 9, files), "KS_Fixture", "fixture") == files, "a folder name in another case");
+    RequireThrows([&]
+                  {
+                      AcdArchive::Parse(BuildAcd("ks_fixture", 9, files), "renamed_fixture", "fixture");
+                  },
+                  "an archive under another folder name");
+    std::vector<std::uint8_t> truncated = BuildAcd("ks_fixture", 9, files);
+    truncated.resize(truncated.size() - 30);
+    RequireThrows([&]
+                  {
+                      AcdArchive::Parse(truncated, "ks_fixture", "fixture");
+                  },
+                  "a truncated archive");
+    RequireThrows([&]
+                  {
+                      AcdArchive::Parse(std::vector<std::uint8_t>(12, 0), "ks_fixture", "fixture");
+                  },
+                  "garbage");
+}
+
+void CarDataBecomesASpec()
+{
+    const VehicleCarSpec spec = AcCarData::BuildSpec(BoxsterDataFiles());
+    Require(spec.massKg == 1460.0f, "the mass");
+    Require(spec.drive == VehicleDrive::RearWheel, "the drive");
+    Require(spec.minRpm == 900.0f && spec.maxRpm == 7500.0f, "the revs");
+    Require(spec.gearRatios.size() == 7 && spec.gearRatios[0] == 3.91f && spec.gearRatios[6] == 0.62f, "seven forward gears");
+    Require(spec.reverseGearRatio == -3.55f && spec.finalDriveRatio == 3.62f, "reverse and the final drive");
+    RequireNear(*spec.maxSteerAngleDegrees, 400.0f / 15.0f, 1e-4f, "the front wheels' lock is the steering wheel's over the ratio");
+    Require(spec.steeringWheelLockDegrees == 400.0f, "the steering wheel's lock");
+    RequireNear(*spec.brakeTorquePerWheel, 800.0f, 1e-3f, "the brakes' total over four wheels");
+    Require(spec.frontBrakeShare == 0.65f, "the front's share");
+    RequireNear(*spec.handBrakeTorquePerWheel, 1000.0f, 1e-3f, "the hand brake over two wheels");
+    Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "a locking differential and anti-roll bars");
+    // Torque is the file's times one plus the boost: 184 Nm at 2000 rpm, where the turbo is at its
+    // wastegate's 1.1, is 386.4; at 500 rpm it has hardly begun (1.1 * (500 / 1900)^2 = 0.076).
+    Require(spec.torqueCurve.size() == 10, "a point for each of the file's");
+    float peak = 0.0f;
+    for (const glm::vec2& point : spec.torqueCurve)
+    {
+        peak = std::max(peak, point.y);
+        if (point.x == 2000.0f)
+        {
+            RequireNear(point.y, 184.0f * 2.1f, 0.05f, "turbo torque at 2000 rpm");
+        }
+        if (point.x == 500.0f)
+        {
+            RequireNear(point.y, 110.0f * (1.0f + 1.1f * (500.0f / 1900.0f) * (500.0f / 1900.0f)), 0.05f, "no boost yet at 500 rpm");
+        }
+    }
+    RequireNear(peak, 386.4f, 0.1f, "the peak");
+    // The springs' natural frequency on one wheel's sprung mass: sqrt(30760 / (1460 * 0.455 / 2 - 70)) / 2pi
+    // = 1.7 Hz at the front, 1.6 at the back; the dampers about 0.7 of critical.
+    Require(*spec.suspensionFrequencyHz > 1.5f && *spec.suspensionFrequencyHz < 1.9f, "the springs' frequency");
+    Require(*spec.suspensionDamping > 0.5f && *spec.suspensionDamping < 0.9f, "the dampers");
+
+    // Missing files leave their fields out instead of making them up.
+    const VehicleCarSpec bare = AcCarData::BuildSpec({{"car.ini", "[BASIC]\nTOTALMASS=900\n"}});
+    Require(bare.massKg == 900.0f && !bare.drive.has_value() && bare.torqueCurve.empty() && bare.gearRatios.empty() &&
+                !bare.suspensionFrequencyHz.has_value() && !bare.brakeTorquePerWheel.has_value(),
+            "only what the files say");
+    // An open differential and a car with no ARB section.
+    const VehicleCarSpec open = AcCarData::BuildSpec({{"drivetrain.ini", "[TRACTION]\nTYPE=AWD2\n[DIFFERENTIAL]\nPOWER=0\nCOAST=0\n"}});
+    Require(open.drive == VehicleDrive::AllWheel && open.limitedSlipDifferentials == false, "AWD2 is all-wheel, and an open differential locks nothing");
+    Require(!open.antiRollBars.has_value(), "no ARB section, no opinion");
+
+    const AcCarData::Ini ini = AcCarData::ParseIni("[a b]\r\nkey = 1 ; x\r\n; whole line\r\nno equals\r\nK2=v=w\r\n");
+    Require(ini.at("A B").at("KEY") == "1" && ini.at("A B").at("K2") == "v=w" && ini.at("A B").size() == 2, "the ini parser");
+    const auto lut = AcCarData::ParseLut("0|1\r\n; c\r\n5|2.5 ; tail\r\nbad|line\r\n");
+    Require(lut.size() == 2 && lut[1].first == 5.0f && lut[1].second == 2.5f, "the lut parser");
+}
+
+// Every car of an Assetto Corsa install (MINIENGINE_AC_CARS = its content/cars folder) opens with the key
+// the folder name gives, and reads as a car. Skipped without the variable: it needs the game.
+void EveryInstalledCarDecrypts()
+{
+    const char* folder = std::getenv("MINIENGINE_AC_CARS");
+    if (folder == nullptr)
+    {
+        return;
+    }
+    size_t archives = 0;
+    std::vector<std::string> failures;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(folder))
+    {
+        if (!entry.is_directory() || !std::filesystem::exists(entry.path() / "data.acd"))
+        {
+            continue;
+        }
+        ++archives;
+        std::string problem;
+        const std::optional<VehicleCarSpec> spec = AcCarData::ReadCarFolder(entry.path(), &problem);
+        if (!spec.has_value() || !spec->massKg.has_value() || spec->torqueCurve.empty() || spec->gearRatios.empty() || !spec->drive.has_value())
+        {
+            failures.push_back(entry.path().filename().string() + (problem.empty() ? " (incomplete)" : " (" + problem + ")"));
+        }
+    }
+    std::cout << archives << " installed cars read, " << failures.size() << " failed\n";
+    for (const std::string& failure : failures)
+    {
+        std::cout << "  " << failure << '\n';
+    }
+    Require(archives > 0 && failures.empty(), "every installed car reads");
+}
+
+void ImportWritesTheCarsOwnData()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    const std::filesystem::path carFolder = kn5.parent_path();
+
+    // Without data next to the kn5 the import says nothing about the car's figures.
+    {
+        const Kn5ImportReport plain = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "plain");
+        Require(plain.carData.empty() && plain.carDataProblem.empty(), "no data, no figures");
+        Require(!ModelLoader::LoadModel(plain.gltfPath.string()).carSpec.has_value(), "the model has no car data");
+    }
+
+    // A data.acd next to it: the figures reach the loaded model.
+    {
+        const std::vector<std::uint8_t> archive = BuildAcd("ks_fixture", 42, BoxsterDataFiles());
+        WriteFile(carFolder / "data.acd", archive);
+        const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "with_data");
+        Require(report.carData.find("1460 kg") != std::string::npos && report.carData.find("RWD") != std::string::npos,
+                "the report names the figures: " + report.carData);
+        const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+        Require(model.carSpec.has_value(), "the model carries the car's figures");
+        const VehicleCarSpec& spec = *model.carSpec;
+        Require(spec.massKg == 1460.0f && spec.drive == VehicleDrive::RearWheel && spec.gearRatios.size() == 7,
+                "mass, drive and gears survive the glTF");
+        Require(spec.torqueCurve.size() == 10 && spec.maxRpm == 7500.0f && spec.finalDriveRatio == 3.62f, "the torque curve and revs survive");
+        Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "and the flags");
+        RequireNear(*spec.suspensionFrequencyHz, *AcCarData::BuildSpec(BoxsterDataFiles()).suspensionFrequencyHz, 1e-3f, "and the springs");
+    }
+
+    // An archive that will not decrypt (here, one made for another folder) does not stop the import.
+    WriteFile(carFolder / "data.acd", BuildAcd("some_other_car", 42, BoxsterDataFiles()));
+    {
+        const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "wrong_folder");
+        Require(report.carData.empty() && !report.carDataProblem.empty(), "the problem is reported");
+        Require(!ModelLoader::LoadModel(report.gltfPath.string()).carSpec.has_value(), "and the model has no car data");
+    }
+
+    // An unpacked data/ folder (as mod authors work in) reads the same.
+    std::filesystem::remove(carFolder / "data.acd");
+    for (const auto& [name, text] : BoxsterDataFiles())
+    {
+        WriteFile(carFolder / "data" / name, std::vector<std::uint8_t>(text.begin(), text.end()));
+    }
+    {
+        const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "unpacked");
+        Require(ModelLoader::LoadModel(report.gltfPath.string()).carSpec->massKg == 1460.0f, "an unpacked data folder");
+    }
+}
+
 void ImportsMultilayerSurfacesAsDetailLayers()
 {
     ScopedDirectory scope;
@@ -1162,6 +1401,11 @@ int main()
         ReadsTrackLayouts();
         ImportsAWholeTrackLayout();
         ImportsMultilayerSurfacesAsDetailLayers();
+        AcdKeysMatchTheGame();
+        AcdArchiveDecryptsAndRefusesAWrongFolder();
+        CarDataBecomesASpec();
+        ImportWritesTheCarsOwnData();
+        EveryInstalledCarDecrypts();
 
         std::cout << "kn5 import tests passed\n";
         return 0;

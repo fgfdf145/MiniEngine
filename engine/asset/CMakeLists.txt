@@ -1,4 +1,8 @@
 ﻿add_library(engine_asset
+    ac_car_data.cpp
+    ac_car_data.h
+    acd_archive.cpp
+    acd_archive.h
     asset_manager.cpp
     asset_manager.h
     asset_paths.cpp

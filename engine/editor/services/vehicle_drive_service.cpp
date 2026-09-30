@@ -1,5 +1,6 @@
 #include "vehicle_drive_service.h"
 
+#include <engine/asset/ac_car_data.h>
 #include <engine/asset/model_cache.h>
 #include <engine/core/input/input.h>
 #include <engine/core/log/log.h>
@@ -162,11 +163,23 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     {
         wheelLayout = BuildWheelLayout(*rig, session->vehicleToModel, session->scale);
     }
+    // A model that carries its car's own figures drives on them, unless the tuning asks otherwise.
+    VehicleSettings fitTuning = tuning;
+    if (tuning.useCarData && modelData && modelData->carSpec.has_value())
+    {
+        fitTuning = ApplyCarSpec(tuning, *modelData->carSpec);
+        session->carData = DescribeCarSpec(*modelData->carSpec);
+    }
+    fitTuning.modelFront = modelFront;
     if (rig != nullptr || (modelData && modelData->steeringWheel.has_value()))
     {
         VehicleWheelAnimation animation;
         animation.model = modelData;
-        animation.maxSteerDegrees = std::max(tuning.maxSteerAngleDegrees, 1.0f);
+        animation.maxSteerDegrees = std::max(fitTuning.maxSteerAngleDegrees, 1.0f);
+        if (tuning.useCarData && modelData && modelData->carSpec.has_value() && modelData->carSpec->steeringWheelLockDegrees.has_value())
+        {
+            animation.steeringWheelLockDegrees = *modelData->carSpec->steeringWheelLockDegrees;
+        }
         if (rig != nullptr)
         {
             for (size_t index = 0; index < kModelWheelCornerCount; ++index)
@@ -176,8 +189,6 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
         }
         session->wheels = std::move(animation);
     }
-    VehicleSettings fitTuning = tuning;
-    fitTuning.modelFront = modelFront;
     const VehicleSettings settings = FitVehicleSettingsToBounds(
         glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), fitTuning, rig != nullptr ? &wheelLayout : nullptr);
 
@@ -194,6 +205,10 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->vehicle = session->physics->AddVehicle(settings, session->startPose);
 
     const double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
+    if (!session->carData.empty())
+    {
+        LOG_INFO("Driving '{}' on the car's own data: {}", session->name, session->carData);
+    }
     LOG_INFO(
         "Driving '{}' on {}: {} static bodies, {} collision triangles, built in {:.0f} ms",
         session->name,
@@ -338,6 +353,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.active = true;
         status.paused = session->paused;
         status.vehicleName = session->name;
+        status.carData = session->carData;
         status.telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
         status.staticBodyCount = session->physics->GetStaticBodyCount();
         status.staticTriangleCount = session->physics->GetStaticTriangleCount();
@@ -539,7 +555,7 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     glm::mat4 steeringWheel(1.0f);
     if (model.steeringWheel.has_value())
     {
-        const float turn = rightSteer / glm::radians(animation.maxSteerDegrees) * glm::radians(kSteeringWheelLockDegrees);
+        const float turn = rightSteer / glm::radians(animation.maxSteerDegrees) * glm::radians(animation.steeringWheelLockDegrees);
         steeringWheel = glm::translate(glm::mat4(1.0f), model.steeringWheel->center) *
                         glm::rotate(glm::mat4(1.0f), turn, model.steeringWheel->axis) *
                         glm::translate(glm::mat4(1.0f), -model.steeringWheel->center);

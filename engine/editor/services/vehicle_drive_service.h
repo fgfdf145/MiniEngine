@@ -53,11 +53,17 @@ struct VehicleDriveStatus
     bool active = false;
     bool paused = false;
     std::string vehicleName;
+    // What the car's own data set, in words; empty when the drive uses the tuning alone.
+    std::string carData;
     VehicleTelemetry telemetry;
     size_t staticBodyCount = 0;
     size_t staticTriangleCount = 0;
     std::string lastError;
 };
+
+// How far the steering wheel turns each way at full lock when the car's data does not say: 900 degrees
+// lock to lock, as a road car.
+inline constexpr float kSteeringWheelLockDegrees = 450.0f;
 
 // The model's wheels, tyres, suspension and steering wheel moving with the simulation: which
 // submeshes belong to which wheel, and where each wheel's centre sits at rest, both as the model's
@@ -67,18 +73,18 @@ struct VehicleWheelAnimation
     // Keeps the submeshes' tags alive; the cache may drop the model while it is driven.
     std::shared_ptr<const LoadedModelData> model;
     std::array<glm::vec3, kModelWheelCornerCount> restCenters{};
-    // The front wheels' steering at full lock, which turns the steering wheel by kSteeringWheelLockDegrees.
+    // The front wheels' steering at full lock, which turns the steering wheel by steeringWheelLockDegrees.
     float maxSteerDegrees = 35.0f;
+    float steeringWheelLockDegrees = kSteeringWheelLockDegrees;
 };
-
-// How far the steering wheel turns each way at full lock: 900 degrees lock to lock, as a road car.
-inline constexpr float kSteeringWheelLockDegrees = 450.0f;
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
 struct VehicleDriveSession
 {
     entt::entity entity = entt::null;
     std::string name;
+    // What the car's own data set (DescribeCarSpec); empty when the drive uses the tuning alone.
+    std::string carData;
     TransformComponent startTransform;
     // The vehicle body's pose (vehicle space, +Z forward), not the model's.
     PhysicsPose startPose;

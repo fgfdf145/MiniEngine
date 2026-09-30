@@ -207,7 +207,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         wheel->mRadius = std::max(mount.radius, 0.01f);
         wheel->mWidth = std::max(mount.width, 0.01f);
         wheel->mMaxSteerAngle = front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
-        wheel->mMaxBrakeTorque = std::max(settings.maxBrakeTorque, 0.0f);
+        // The axles share the four wheels' total by the front's share, so an even 0.5 leaves each
+        // wheel at maxBrakeTorque.
+        const float axleShare = std::clamp(front ? settings.frontBrakeShare : 1.0f - settings.frontBrakeShare, 0.0f, 1.0f);
+        wheel->mMaxBrakeTorque = std::max(settings.maxBrakeTorque, 0.0f) * 2.0f * axleShare;
         wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
         vehicle->mWheels.push_back(wheel);
     }
@@ -225,6 +228,35 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     controller->mEngine.mMaxTorque = std::max(settings.maxEngineTorque, 0.0f);
     controller->mEngine.mMinRPM = std::max(settings.minRpm, 1.0f);
     controller->mEngine.mMaxRPM = std::max(settings.maxRpm, controller->mEngine.mMinRPM + 1.0f);
+    if (settings.torqueCurve.size() >= 2 && settings.maxEngineTorque > 0.0f)
+    {
+        // The physics reads the curve at the engine's rpm over its maximum.
+        controller->mEngine.mNormalizedTorque.Clear();
+        controller->mEngine.mNormalizedTorque.Reserve(static_cast<JPH::uint>(settings.torqueCurve.size()));
+        for (const glm::vec2& point : settings.torqueCurve)
+        {
+            controller->mEngine.mNormalizedTorque.AddPoint(
+                point.x / controller->mEngine.mMaxRPM, std::clamp(point.y / settings.maxEngineTorque, 0.0f, 1.0f));
+        }
+        controller->mEngine.mNormalizedTorque.Sort();
+    }
+
+    if (!settings.gearRatios.empty())
+    {
+        controller->mTransmission.mGearRatios.assign(settings.gearRatios.begin(), settings.gearRatios.end());
+        if (settings.reverseGearRatio != 0.0f)
+        {
+            controller->mTransmission.mReverseGearRatios = {settings.reverseGearRatio};
+        }
+    }
+    if (settings.shiftUpRpm > 0.0f)
+    {
+        controller->mTransmission.mShiftUpRPM = settings.shiftUpRpm;
+    }
+    if (settings.shiftDownRpm > 0.0f)
+    {
+        controller->mTransmission.mShiftDownRPM = settings.shiftDownRpm;
+    }
 
     const float limitedSlipRatio = settings.limitedSlipDifferentials ? 1.4f : FLT_MAX;
     auto addDifferential = [&](int leftWheel, int rightWheel, float torqueRatio)
@@ -234,6 +266,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         differential.mRightWheel = rightWheel;
         differential.mEngineTorqueRatio = torqueRatio;
         differential.mLimitedSlipRatio = limitedSlipRatio;
+        if (settings.finalDriveRatio > 0.0f)
+        {
+            differential.mDifferentialRatio = settings.finalDriveRatio;
+        }
         controller->mDifferentials.push_back(differential);
     };
     switch (settings.drive)

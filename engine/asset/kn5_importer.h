@@ -28,7 +28,9 @@ namespace me
 //  - runtime variants (*_BLUR, *_DAMAGE, the low-res half of an in-file LOD pair) dropped;
 //  - CSP-encrypted files refused: their plain section is decoys;
 //  - a track's layout: models.ini / models_<layout>.ini place several kn5 in one scene, and the
-//    import converts them all, each at its POSITION and ROTATION.
+//    import converts them all, each at its POSITION and ROTATION;
+//  - a car's own data: the data.acd (or unpacked data/) beside the kn5 is read for the figures the
+//    physics has a place for and written as MINIENGINE_vehicle (see AcCarData).
 // Invoked from the importing thread with the overall import fraction in [0, 1], never going
 // backwards. Implementations must be cheap and thread-safe (typically an atomic store).
 using ImportProgressCallback = std::function<void(float)>;
@@ -67,6 +69,11 @@ struct Kn5ImportReport
     size_t triangles = 0;
     size_t images = 0;
     size_t materials = 0;
+    // The figures of the car's data.acd (or data folder) that were imported as MINIENGINE_vehicle, in
+    // words ("1460 kg, RWD, 386 Nm, 7500 rpm, 7 gears"); empty when the kn5 has no data beside it.
+    std::string carData;
+    // Why a data.acd next to the kn5 was not imported (a renamed folder does not decrypt).
+    std::string carDataProblem;
     size_t foldedTextureNames = 0;
     size_t scrubbedAttributes = 0;
     size_t scrubbedMatrices = 0;

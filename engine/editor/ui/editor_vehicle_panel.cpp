@@ -37,6 +37,10 @@ void DrawTelemetry(const VehicleDriveStatus& status)
         "Collision: %zu static bodies, %zu triangles",
         status.staticBodyCount,
         status.staticTriangleCount);
+    if (!status.carData.empty())
+    {
+        ImGui::TextDisabled("Car's own data: %s", status.carData.c_str());
+    }
 }
 
 // The fields a user tunes; the geometry is fitted to the model when driving starts.
@@ -49,6 +53,13 @@ void DrawTuning(VehicleSettings& tuning)
         tuning.modelFront = static_cast<VehicleModelFront>(front);
     }
 
+    ImGui::Checkbox("Use the Car's Own Data", &tuning.useCarData);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "A car imported from Assetto Corsa carries its data.acd's mass, drive, engine, gearbox, steering,\n"
+            "brakes and springs. On, they replace the fields below they cover; off, only the fields below count.");
+    }
     DragFloatInRange("Mass (kg)", &tuning.massKg, 200.0f, 5000.0f, "%.0f", 5.0f);
     DragFloatInRange("Engine Torque (Nm)", &tuning.maxEngineTorque, 50.0f, 2000.0f, "%.0f", 5.0f);
     DragFloatInRange("Max RPM", &tuning.maxRpm, 3000.0f, 12000.0f, "%.0f", 25.0f);

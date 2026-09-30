@@ -5,6 +5,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace me
 {
@@ -81,14 +83,61 @@ struct VehicleSettings
     float maxEngineTorque = 500.0f; // Nm
     float minRpm = 1000.0f;
     float maxRpm = 7000.0f;
-    float maxBrakeTorque = 1500.0f;     // Nm per wheel
+    // The engine's torque by rpm, in Nm (its peak is maxEngineTorque); the default shape of the
+    // physics engine's when empty. Sorted by rpm.
+    std::vector<glm::vec2> torqueCurve;
+    // The gearbox: forward ratios first gear up, the reverse ratio (negative), and the final drive
+    // ratio; the physics engine's own five-speed when empty. The shift points are in rpm, or the
+    // engine's when 0.
+    std::vector<float> gearRatios;
+    float reverseGearRatio = 0.0f;
+    float finalDriveRatio = 0.0f;
+    float shiftUpRpm = 0.0f;
+    float shiftDownRpm = 0.0f;
+    // The brakes' torque per wheel averaged over the four, of which the front axle takes this
+    // share (0.5 is an even split).
+    float maxBrakeTorque = 1500.0f; // Nm per wheel
+    float frontBrakeShare = 0.5f;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;
     bool limitedSlipDifferentials = true;
     // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free.
     float maxPitchRollDegrees = 60.0f;
+
+    // Read by whoever starts a car, not by the physics: a model that carries its own figures
+    // (VehicleCarSpec) drives on them instead of the fields above they cover.
+    bool useCarData = true;
 };
+
+// What a car's own data says, in SI units, for the fields it knows (Assetto Corsa's data.acd, read by
+// the kn5 import). Whatever it leaves out stays as the tuning has it.
+struct VehicleCarSpec
+{
+    std::optional<float> massKg;
+    std::optional<VehicleDrive> drive;
+    // The engine's torque at the crank by rpm, boost included: its peak is the engine's torque.
+    std::vector<glm::vec2> torqueCurve;
+    std::optional<float> minRpm;
+    std::optional<float> maxRpm;
+    std::vector<float> gearRatios;
+    std::optional<float> reverseGearRatio;
+    std::optional<float> finalDriveRatio;
+    // The front wheels' lock each way, and how far the steering wheel turns each way to reach it.
+    std::optional<float> maxSteerAngleDegrees;
+    std::optional<float> steeringWheelLockDegrees;
+    std::optional<float> brakeTorquePerWheel;
+    std::optional<float> frontBrakeShare;
+    std::optional<float> handBrakeTorquePerWheel;
+    std::optional<float> suspensionFrequencyHz;
+    // As a fraction of critical damping.
+    std::optional<float> suspensionDamping;
+    std::optional<bool> antiRollBars;
+    std::optional<bool> limitedSlipDifferentials;
+};
+
+// `tuning` with the fields `spec` knows replaced by its figures.
+VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);
 
 // `tuning` with its geometry fitted to a car whose model spans these vehicle-space bounds (the
 // model's bounds times the entity's scale): the wheels at its corners, the chassis box over them, the

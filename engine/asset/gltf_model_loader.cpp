@@ -2109,6 +2109,88 @@ void TraverseNode(
     }
 }
 
+// MINIENGINE_vehicle (the kn5 import writes it for a car whose data it could read): the figures that
+// are there, in SI units. A member of the wrong type is ignored.
+std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
+{
+    const auto found = model.extensions.find("MINIENGINE_vehicle");
+    if (found == model.extensions.end() || !found->second.IsObject())
+    {
+        return std::nullopt;
+    }
+    const tinygltf::Value& extension = found->second;
+    const auto number = [&](const char* key) -> std::optional<float>
+    {
+        if (!extension.Has(key) || !extension.Get(key).IsNumber())
+        {
+            return std::nullopt;
+        }
+        const float value = static_cast<float>(extension.Get(key).GetNumberAsDouble());
+        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+    };
+    const auto flag = [&](const char* key) -> std::optional<bool>
+    {
+        return extension.Has(key) && extension.Get(key).IsBool() ? std::optional<bool>(extension.Get(key).Get<bool>()) : std::nullopt;
+    };
+
+    VehicleCarSpec spec;
+    spec.massKg = number("massKg");
+    if (extension.Has("drive") && extension.Get("drive").IsString())
+    {
+        const std::string drive = extension.Get("drive").Get<std::string>();
+        if (drive == "rear")
+        {
+            spec.drive = VehicleDrive::RearWheel;
+        }
+        else if (drive == "front")
+        {
+            spec.drive = VehicleDrive::FrontWheel;
+        }
+        else if (drive == "all")
+        {
+            spec.drive = VehicleDrive::AllWheel;
+        }
+    }
+    if (extension.Has("torqueCurve") && extension.Get("torqueCurve").IsArray())
+    {
+        const tinygltf::Value& curve = extension.Get("torqueCurve");
+        for (size_t index = 0; index < curve.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& point = curve.Get(static_cast<int>(index));
+            if (point.IsArray() && point.ArrayLen() >= 2 && point.Get(0).IsNumber() && point.Get(1).IsNumber())
+            {
+                spec.torqueCurve.emplace_back(
+                    static_cast<float>(point.Get(0).GetNumberAsDouble()), static_cast<float>(point.Get(1).GetNumberAsDouble()));
+            }
+        }
+    }
+    spec.minRpm = number("minRpm");
+    spec.maxRpm = number("maxRpm");
+    if (extension.Has("gearRatios") && extension.Get("gearRatios").IsArray())
+    {
+        const tinygltf::Value& gears = extension.Get("gearRatios");
+        for (size_t index = 0; index < gears.ArrayLen(); ++index)
+        {
+            if (gears.Get(static_cast<int>(index)).IsNumber())
+            {
+                spec.gearRatios.push_back(static_cast<float>(gears.Get(static_cast<int>(index)).GetNumberAsDouble()));
+            }
+        }
+    }
+    spec.reverseGearRatio = number("reverseGearRatio");
+    spec.finalDriveRatio = number("finalDriveRatio");
+    spec.maxSteerAngleDegrees = number("maxSteerAngleDegrees");
+    spec.steeringWheelLockDegrees = number("steeringWheelLockDegrees");
+    spec.brakeTorquePerWheel = number("brakeTorquePerWheel");
+    spec.frontBrakeShare = number("frontBrakeShare");
+    spec.handBrakeTorquePerWheel = number("handBrakeTorquePerWheel");
+    spec.suspensionFrequencyHz = number("suspensionFrequencyHz");
+    spec.suspensionDamping = number("suspensionDamping");
+    spec.antiRollBars = flag("antiRollBars");
+    spec.limitedSlipDifferentials = flag("limitedSlipDifferentials");
+    return spec;
+}
+
 LoadedModelData BuildLoadedModelData(
     const tinygltf::Model& tinyModel,
     const std::filesystem::path& modelPath,
@@ -2178,6 +2260,7 @@ LoadedModelData BuildLoadedModelData(
         }
     }
 
+    modelData.carSpec = ReadCarSpec(tinyModel);
     modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
     if (std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)
                     {
@@ -2205,7 +2288,7 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 25> kImplementedExtensions = {
+constexpr std::array<std::string_view, 26> kImplementedExtensions = {
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
@@ -2230,7 +2313,8 @@ constexpr std::array<std::string_view, 25> kImplementedExtensions = {
     "KHR_texture_transform",
     "KHR_xmp_json_ld",
     "MINIENGINE_collision",
-    "MINIENGINE_materials_detail_layers"};
+    "MINIENGINE_materials_detail_layers",
+    "MINIENGINE_vehicle"};
 
 bool IsImplementedExtension(const std::string& name)
 {

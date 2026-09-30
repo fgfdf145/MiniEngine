@@ -4,6 +4,7 @@
 #include "mesh.h"
 
 #include <engine/scene/material_graph.h>
+#include <engine/physics/vehicle_settings.h>
 #include <engine/scene/scene_components.h>
 #include <glm/glm.hpp>
 
@@ -209,6 +210,9 @@ struct LoadedModelData
     std::optional<ModelWheelRig> wheelRig;
     // Set when a STEER_HR node has meshes.
     std::optional<ModelSteeringWheel> steeringWheel;
+    // The car's own figures (MINIENGINE_vehicle: an Assetto Corsa car's data.acd, read by the kn5
+    // import), which a drive uses over the default tuning.
+    std::optional<VehicleCarSpec> carSpec;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
     glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;
