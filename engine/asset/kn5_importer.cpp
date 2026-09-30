@@ -78,6 +78,56 @@ float Round(float value, int digits)
     return std::round(value * scale) / scale;
 }
 
+Json PointsToJson(const std::vector<glm::vec2>& points)
+{
+    Json out = Json::array();
+    for (const glm::vec2& point : points)
+    {
+        out.push_back(Json::array({Round(point.x, 4), Round(point.y, 4)}));
+    }
+    return out;
+}
+
+Json NumbersToJson(const std::vector<float>& numbers)
+{
+    Json out = Json::array();
+    for (const float number : numbers)
+    {
+        out.push_back(Round(number, 4));
+    }
+    return out;
+}
+
+Json NumberMapToJson(const std::map<std::string, float>& numbers)
+{
+    Json out = Json::object();
+    for (const auto& [key, value] : numbers)
+    {
+        out[key] = Round(value, 6);
+    }
+    return out;
+}
+
+Json TyreSettingsToJson(const VehicleTyreSettings& tyres)
+{
+    return Json{{"longitudinalGrip", Round(tyres.longitudinalGrip, 4)},
+                {"lateralGrip", Round(tyres.lateralGrip, 4)},
+                {"peakSlipRatio", Round(tyres.peakSlipRatio, 4)},
+                {"peakSlipAngleDegrees", Round(tyres.peakSlipAngleDegrees, 4)},
+                {"postPeakShare", Round(tyres.postPeakShare, 4)},
+                {"inertia", Round(tyres.inertia, 4)}};
+}
+
+Json TyreDataToJson(const VehicleTyreData& data)
+{
+    Json curves = Json::object();
+    for (const auto& [key, points] : data.curves)
+    {
+        curves[key] = PointsToJson(points);
+    }
+    return Json{{"name", data.name}, {"shortName", data.shortName}, {"values", NumberMapToJson(data.values)}, {"curves", std::move(curves)}};
+}
+
 // A car's figures as the MINIENGINE_vehicle extension: SI units, a member for each figure the car's
 // data gave.
 Json CarSpecToJson(const VehicleCarSpec& spec)
@@ -98,26 +148,27 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     }
     if (!spec.torqueCurve.empty())
     {
-        Json curve = Json::array();
-        for (const glm::vec2& point : spec.torqueCurve)
-        {
-            curve.push_back(Json::array({Round(point.x, 2), Round(point.y, 2)}));
-        }
-        out["torqueCurve"] = std::move(curve);
+        out["torqueCurve"] = PointsToJson(spec.torqueCurve);
     }
     put("minRpm", spec.minRpm);
     put("maxRpm", spec.maxRpm);
     if (!spec.gearRatios.empty())
     {
-        Json gears = Json::array();
-        for (const float ratio : spec.gearRatios)
-        {
-            gears.push_back(Round(ratio, 4));
-        }
-        out["gearRatios"] = std::move(gears);
+        out["gearRatios"] = NumbersToJson(spec.gearRatios);
     }
     put("reverseGearRatio", spec.reverseGearRatio);
     put("finalDriveRatio", spec.finalDriveRatio);
+    put("gearSwitchSeconds", spec.gearSwitchSeconds);
+    put("clutchReleaseSeconds", spec.clutchReleaseSeconds);
+    put("engineInertia", spec.engineInertia);
+    if (spec.frontTyres.has_value())
+    {
+        out["frontTyres"] = TyreSettingsToJson(*spec.frontTyres);
+    }
+    if (spec.rearTyres.has_value())
+    {
+        out["rearTyres"] = TyreSettingsToJson(*spec.rearTyres);
+    }
     put("maxSteerAngleDegrees", spec.maxSteerAngleDegrees);
     put("steeringWheelLockDegrees", spec.steeringWheelLockDegrees);
     put("brakeTorquePerWheel", spec.brakeTorquePerWheel);
@@ -132,6 +183,102 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     if (spec.limitedSlipDifferentials.has_value())
     {
         out["limitedSlipDifferentials"] = *spec.limitedSlipDifferentials;
+    }
+
+    if (!spec.aeroWings.empty())
+    {
+        Json wings = Json::array();
+        for (const VehicleAeroWing& wing : spec.aeroWings)
+        {
+            Json curves = Json::object();
+            for (const auto& [key, points] : wing.curves)
+            {
+                curves[key] = PointsToJson(points);
+            }
+            wings.push_back(Json{{"name", wing.name},
+                                 {"chord", Round(wing.chord, 4)},
+                                 {"span", Round(wing.span, 4)},
+                                 {"position", Json::array({Round(wing.position.x, 4), Round(wing.position.y, 4), Round(wing.position.z, 4)})},
+                                 {"angleDegrees", Round(wing.angleDegrees, 4)},
+                                 {"liftGain", Round(wing.liftGain, 4)},
+                                 {"dragGain", Round(wing.dragGain, 4)},
+                                 {"liftCurve", PointsToJson(wing.liftCurve)},
+                                 {"dragCurve", PointsToJson(wing.dragCurve)},
+                                 {"curves", std::move(curves)},
+                                 {"values", NumberMapToJson(wing.values)}});
+        }
+        out["aeroWings"] = std::move(wings);
+    }
+    if (!spec.aeroControllers.empty())
+    {
+        Json controllers = Json::array();
+        for (const VehicleAeroController& controller : spec.aeroControllers)
+        {
+            controllers.push_back(Json{{"wing", controller.wing},
+                                       {"input", controller.input},
+                                       {"combinator", controller.combinator},
+                                       {"curve", PointsToJson(controller.curve)},
+                                       {"filter", Round(controller.filter, 6)},
+                                       {"upLimit", Round(controller.upLimit, 4)},
+                                       {"downLimit", Round(controller.downLimit, 4)}});
+        }
+        out["aeroControllers"] = std::move(controllers);
+    }
+
+    if (!spec.tyreCompounds.empty())
+    {
+        Json compounds = Json::array();
+        for (const VehicleTyreCompound& compound : spec.tyreCompounds)
+        {
+            compounds.push_back(Json{{"front", TyreDataToJson(compound.front)}, {"rear", TyreDataToJson(compound.rear)}});
+        }
+        out["tyreCompounds"] = std::move(compounds);
+    }
+    if (spec.defaultTyreCompound.has_value())
+    {
+        out["defaultTyreCompound"] = *spec.defaultTyreCompound;
+    }
+    if (!spec.turbos.empty())
+    {
+        Json turbos = Json::array();
+        for (const VehicleTurbo& turbo : spec.turbos)
+        {
+            turbos.push_back(Json{{"maxBoost", Round(turbo.maxBoost, 4)},
+                                  {"wastegate", Round(turbo.wastegate, 4)},
+                                  {"referenceRpm", Round(turbo.referenceRpm, 2)},
+                                  {"gamma", Round(turbo.gamma, 4)},
+                                  {"lagUp", Round(turbo.lagUp, 6)},
+                                  {"lagDown", Round(turbo.lagDown, 6)}});
+        }
+        out["turbos"] = std::move(turbos);
+    }
+    put("coastRpm", spec.coastRpm);
+    put("coastTorque", spec.coastTorque);
+    put("changeUpSeconds", spec.changeUpSeconds);
+    put("changeDownSeconds", spec.changeDownSeconds);
+    put("autoCutoffSeconds", spec.autoCutoffSeconds);
+    put("clutchMaxTorque", spec.clutchMaxTorque);
+    put("autoClutchMinRpm", spec.autoClutchMinRpm);
+    put("autoClutchMaxRpm", spec.autoClutchMaxRpm);
+    if (!spec.upshiftClutchProfile.empty())
+    {
+        out["upshiftClutchProfile"] = NumbersToJson(spec.upshiftClutchProfile);
+    }
+    if (!spec.downshiftClutchProfile.empty())
+    {
+        out["downshiftClutchProfile"] = NumbersToJson(spec.downshiftClutchProfile);
+    }
+    put("differentialPower", spec.differentialPower);
+    put("differentialCoast", spec.differentialCoast);
+    put("differentialPreload", spec.differentialPreload);
+    if (!spec.electronics.empty())
+    {
+        Json electronics = Json::object();
+        for (const auto& [section, numbers] : spec.electronics)
+        {
+            electronics[section] = NumberMapToJson(numbers);
+        }
+        out["electronics"] = std::move(electronics);
     }
     return out;
 }

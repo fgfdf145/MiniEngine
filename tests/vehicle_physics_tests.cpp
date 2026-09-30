@@ -26,6 +26,14 @@ void Require(bool condition, const std::string& message)
     }
 }
 
+void RequireNear(float actual, float expected, float tolerance, const std::string& what)
+{
+    if (std::abs(actual - expected) > tolerance)
+    {
+        throw std::runtime_error(what + ": got " + std::to_string(actual) + ", expected " + std::to_string(expected));
+    }
+}
+
 // A road car's bounds: 1.8 m wide, 1.4 m tall, 4.4 m long, standing on y = 0.
 constexpr glm::vec3 kCarMin(-0.9f, 0.0f, -2.2f);
 constexpr glm::vec3 kCarMax(0.9f, 1.4f, 2.2f);
@@ -498,7 +506,8 @@ void TestCarScrapingAWallStaysOnTheGround()
 }
 
 // A 718 Boxster S PDK as its data.acd gives it (the kn5 import's MINIENGINE_vehicle): 1460 kg, rear
-// drive, a turbo four with 386 Nm from 2000 to 4500 rpm, seven gears.
+// drive, a turbo four with 386 Nm from 2000 to 4500 rpm, seven gears of a dual-clutch box, semislick
+// tyres and a drag area of 0.78 m^2.
 VehicleCarSpec MakeBoxsterSpec()
 {
     VehicleCarSpec spec;
@@ -510,6 +519,11 @@ VehicleCarSpec MakeBoxsterSpec()
     spec.gearRatios = {3.91f, 2.29f, 1.65f, 1.30f, 1.08f, 0.88f, 0.62f};
     spec.reverseGearRatio = -3.55f;
     spec.finalDriveRatio = 3.62f;
+    spec.gearSwitchSeconds = 0.03f;
+    spec.clutchReleaseSeconds = 0.1f;
+    spec.engineInertia = 0.137f;
+    spec.frontTyres = VehicleTyreSettings{1.314f, 1.303f, 0.13f, 7.52f, 0.86f, 1.62f};
+    spec.rearTyres = VehicleTyreSettings{1.294f, 1.271f, 0.128f, 7.27f, 0.86f, 1.97f};
     spec.maxSteerAngleDegrees = 26.7f;
     spec.brakeTorquePerWheel = 800.0f;
     spec.frontBrakeShare = 0.65f;
@@ -518,6 +532,22 @@ VehicleCarSpec MakeBoxsterSpec()
     spec.suspensionDamping = 0.7f;
     spec.antiRollBars = true;
     spec.limitedSlipDifferentials = true;
+
+    VehicleAeroWing body;
+    body.name = "BODY";
+    body.chord = 1.0f;
+    body.span = 1.99f;
+    body.position = glm::vec3(0.0f, 0.15f, -0.10f);
+    body.dragCurve = {{-2.0f, 0.405f}, {0.0f, 0.39f}, {2.0f, 0.40f}};
+    body.liftCurve = {{0.0f, 0.0f}, {2.0f, 0.03f}};
+    VehicleAeroWing rear;
+    rear.name = "REAR";
+    rear.chord = 1.0f;
+    rear.span = 1.99f;
+    rear.position = glm::vec3(0.0f, 0.34f, -1.6f);
+    rear.dragCurve = {{0.0f, 0.005f}, {2.0f, 0.005f}};
+    rear.liftCurve = {{0.0f, -0.23f}, {2.0f, -0.21f}};
+    spec.aeroWings = {body, rear};
     return spec;
 }
 
@@ -534,14 +564,26 @@ void TestCarSpecReplacesWhatItKnows()
     Require(applied.minRpm == 900.0f && applied.maxRpm == 7500.0f, "the revs");
     Require(applied.gearRatios.size() == 7 && applied.reverseGearRatio == -3.55f && applied.finalDriveRatio == 3.62f, "the gearbox");
     Require(std::abs(applied.shiftUpRpm - 6600.0f) < 1.0f && std::abs(applied.shiftDownRpm - 2250.0f) < 1.0f, "shifts by the revs");
+    Require(applied.gearSwitchSeconds == 0.03f && applied.clutchReleaseSeconds == 0.1f && applied.engineInertia == 0.137f,
+            "the clutch and the engine's inertia");
+    Require(applied.frontTyres.longitudinalGrip == 1.314f && applied.rearTyres.inertia == 1.97f && applied.rearTyres.postPeakShare == 0.86f,
+            "the tyres");
     Require(applied.maxSteerAngleDegrees == 26.7f, "the steering lock");
     Require(applied.maxBrakeTorque == 800.0f && applied.frontBrakeShare == 0.65f && applied.maxHandBrakeTorque == 1000.0f, "the brakes");
     Require(applied.suspensionFrequencyHz == 1.7f && applied.suspensionDamping == 0.7f, "the springs");
     Require(applied.suspensionMinLength == 0.07f, "what the spec does not say stays as tuned");
 
+    // The air: each wing's area times its coefficient at its angle; the body's own damping goes.
+    Require(applied.aeroSurfaces.size() == 2 && applied.linearDamping == 0.0f, "the wings replace the body's damping");
+    RequireNear(applied.aeroSurfaces[0].dragArea, 0.39f * 1.99f, 1e-4f, "the body's drag area");
+    RequireNear(applied.aeroSurfaces[1].downforceArea, 0.23f * 1.99f, 1e-4f, "the rear wing's downforce area");
+    Require(applied.aeroSurfaces[1].position.z == -1.6f, "and where it sits");
+
     // An empty spec changes nothing; nonsense is ignored rather than applied.
     const VehicleSettings untouched = ApplyCarSpec(tuning, VehicleCarSpec{});
-    Require(untouched.massKg == tuning.massKg && untouched.maxHandBrakeTorque == 123.0f && untouched.gearRatios.empty(), "an empty spec is a no-op");
+    Require(untouched.massKg == tuning.massKg && untouched.maxHandBrakeTorque == 123.0f && untouched.gearRatios.empty() &&
+                untouched.aeroSurfaces.empty() && untouched.linearDamping == tuning.linearDamping,
+            "an empty spec is a no-op");
     VehicleCarSpec nonsense;
     nonsense.massKg = -5.0f;
     nonsense.maxRpm = 100.0f; // under the default minimum
@@ -550,13 +592,94 @@ void TestCarSpecReplacesWhatItKnows()
     Require(ignored.massKg == tuning.massKg && ignored.maxRpm == tuning.maxRpm && ignored.torqueCurve.empty(), "nonsense is ignored");
 }
 
-// The car on its own data drives: it pulls away, changes up through its seven-speed box and reaches
-// 100 km/h. Not in the real car's 4.2 s: the physics engine's tyres and clutch launch a 386 Nm rear-drive
-// car slower (about 9 s), and the time swings by seconds with the mass or the shift points, so it is
-// only bounded.
+// The time a car takes to reach a speed from rest on flat tarmac at full throttle, and the highest gear it
+// used on the way; `limit` when it does not get there.
+float TimeToSpeed(const VehicleSettings& tuning, float metresPerSecond, int& gearReached, float limit = 15.0f)
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    constexpr float kFrame = 1.0f / 144.0f;
+    gearReached = 0;
+    for (float time = 0.0f; time < limit; time += kFrame)
+    {
+        world.Update(kFrame);
+        const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+        gearReached = std::max(gearReached, telemetry.gear);
+        if (telemetry.forwardSpeed >= metresPerSecond)
+        {
+            return time;
+        }
+    }
+    return limit;
+}
+
+// The car on its own data drives like a quick road car: it launches, changes up through its seven-speed box and
+// reaches 100 km/h in a few seconds. The real car does it in 4.2 s; the physics engine's tyres and clutch
+// get within a second of that once the engine's real inertia, the dual-clutch's shift times, the tyres' grip and
+// air instead of a damped body are in, where the defaults' heavy engine and a 5% damping cost 4 s.
 void TestCarOnItsOwnDataAccelerates()
 {
-    const auto timeTo100 = [](const VehicleSettings& tuning, int& gearReached)
+    int gear = 0;
+    const float own = TimeToSpeed(ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec()), 100.0f / 3.6f, gear);
+    std::cout << "0-100 km/h on the Boxster's own data: " << own << " s, gear " << gear << '\n';
+    Require(own > 3.5f && own < 6.5f, "0-100 km/h in a fast road car's time, got " + std::to_string(own) + " s");
+    Require(gear >= 2, "the gearbox shifts up, reached gear " + std::to_string(gear));
+
+    // What the data changes: the engine's inertia (0.137 kg m^2 against the physics engine's 0.5) is the
+    // biggest part of it, the dual clutch's shift times next.
+    VehicleCarSpec heavyEngine = MakeBoxsterSpec();
+    heavyEngine.engineInertia = 0.5f;
+    Require(TimeToSpeed(ApplyCarSpec(VehicleSettings{}, heavyEngine), 100.0f / 3.6f, gear) > own + 0.5f, "a heavy engine costs a launch");
+    VehicleCarSpec slowBox = MakeBoxsterSpec();
+    slowBox.gearSwitchSeconds = 0.5f;
+    slowBox.clutchReleaseSeconds = 0.3f;
+    Require(TimeToSpeed(ApplyCarSpec(VehicleSettings{}, slowBox), 100.0f / 3.6f, gear) > own + 0.3f, "and so does a slow gear change");
+}
+
+// Grip is what the tyres can hold: the same car on the same tarmac is quicker on grippy tyres than on hard
+// ones, and the tyres' friction multiplies the surface's rather than being averaged with it.
+void TestTyreGripSetsAcceleration()
+{
+    int gear = 0;
+    const auto timeWith = [&](float grip, float surface)
+    {
+        VehicleCarSpec spec = MakeBoxsterSpec();
+        spec.frontTyres->longitudinalGrip = grip;
+        spec.frontTyres->lateralGrip = grip;
+        spec.rearTyres->longitudinalGrip = grip;
+        spec.rearTyres->lateralGrip = grip;
+        PhysicsWorld world;
+        AddGroundMesh(world, surface);
+        const VehicleId car = world.AddVehicle(
+            FitVehicleSettingsToBounds(kCarMin, kCarMax, ApplyCarSpec(VehicleSettings{}, spec)),
+            {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 3.0f);
+        return world.GetVehiclePose(car).position.z;
+    };
+    const float grippy = timeWith(1.3f, 1.0f);
+    const float hard = timeWith(0.7f, 1.0f);
+    Require(grippy > hard * 1.2f, "grippy tyres cover more ground in 3 s, " + std::to_string(grippy) + " m against " + std::to_string(hard) + " m");
+    // The surface multiplies: tyres of 1.3 on a surface of 0.5 grip like tyres of 0.65 on tarmac.
+    const float wet = timeWith(1.3f, 0.5f);
+    const float equivalent = timeWith(0.65f, 1.0f);
+    Require(std::abs(wet - equivalent) < 0.12f * equivalent, "the surface's friction multiplies the tyre's, " + std::to_string(wet) + " m against " + std::to_string(equivalent) + " m");
+    (void)gear;
+}
+
+// The wings slow a car and press it down: after 8 s at full throttle (the ground ends at 200 m) the same car is slower with its
+// drag and rides lower on its downforce.
+void TestAerodynamicsDragsAndPressesDown()
+{
+    const auto runFor = [](const VehicleSettings& tuning, float seconds, float& suspensionLength)
     {
         PhysicsWorld world;
         AddGroundMesh(world);
@@ -565,25 +688,21 @@ void TestCarOnItsOwnDataAccelerates()
         VehicleControls controls;
         controls.throttle = 1.0f;
         world.SetVehicleControls(car, controls);
-        constexpr float kFrame = 1.0f / 144.0f;
-        gearReached = 0;
-        for (float time = 0.0f; time < 15.0f; time += kFrame)
-        {
-            world.Update(kFrame);
-            const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
-            gearReached = std::max(gearReached, telemetry.gear);
-            if (telemetry.forwardSpeed >= 100.0f / 3.6f)
-            {
-                return time;
-            }
-        }
-        return 15.0f;
+        Simulate(world, seconds);
+        suspensionLength = world.GetVehicleWheels(car)[2].suspensionLength;
+        return world.GetVehicleTelemetry(car).forwardSpeed;
     };
-    int gear = 0;
-    const float own = timeTo100(ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec()), gear);
-    std::cout << "0-100 km/h on the Boxster's own data: " << own << " s, gear " << gear << '\n';
-    Require(own < 14.0f, "the car reaches 100 km/h, got " + std::to_string(own) + " s");
-    Require(gear >= 2, "the gearbox shifts up, reached gear " + std::to_string(gear));
+    VehicleSettings noAir = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    noAir.aeroSurfaces.clear();
+    const VehicleSettings air = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    float lengthWithout = 0.0f;
+    float lengthWith = 0.0f;
+    const float withoutAir = runFor(noAir, 8.0f, lengthWithout);
+    const float withAir = runFor(air, 8.0f, lengthWith);
+    std::cout << "8 s at full throttle: " << withoutAir * 3.6f << " km/h without air, " << withAir * 3.6f << " with; suspension "
+              << lengthWithout << " against " << lengthWith << '\n';
+    Require(withoutAir > withAir + 1.0f, "drag holds the car back, " + std::to_string(withoutAir) + " m/s against " + std::to_string(withAir));
+    Require(lengthWith < lengthWithout, "downforce compresses the suspension, " + std::to_string(lengthWith) + " against " + std::to_string(lengthWithout));
 }
 
 void TestDegenerateMeshIsRejected()
@@ -613,6 +732,8 @@ int main()
         TestDegenerateMeshIsRejected();
         TestCarSpecReplacesWhatItKnows();
         TestCarOnItsOwnDataAccelerates();
+        TestTyreGripSetsAcceleration();
+        TestAerodynamicsDragsAndPressesDown();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();
         TestCarRotatedAtStartDrivesItsOwnWay();

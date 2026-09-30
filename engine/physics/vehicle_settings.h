@@ -5,7 +5,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace me
@@ -43,6 +45,34 @@ struct VehicleWheelGeometry
 // The wheels' order everywhere: front left, front right, rear left, rear right.
 inline constexpr size_t kVehicleWheelCount = 4;
 using VehicleWheelLayout = std::array<VehicleWheelGeometry, kVehicleWheelCount>;
+
+// One axle's tyres as the physics engine models them: a friction that rises with slip to a peak and
+// falls a little past it, along the wheel (slip ratio) and across it (slip angle). Each 0 keeps the
+// engine's own default.
+struct VehicleTyreSettings
+{
+    // The friction coefficient at the peak; the surface's friction multiplies it.
+    float longitudinalGrip = 0.0f;
+    float lateralGrip = 0.0f;
+    // Where the peaks are: the slip ratio (wheel speed over ground speed less one) and the slip angle.
+    float peakSlipRatio = 0.0f;
+    float peakSlipAngleDegrees = 0.0f;
+    // The share of the peak grip left once the tyre is well past it (0 keeps the physics engine's
+    // five sixths).
+    float postPeakShare = 0.0f;
+    // The wheel's moment of inertia with its tyre, kg m^2.
+    float inertia = 0.0f;
+
+    bool operator==(const VehicleTyreSettings&) const = default;
+};
+
+// Where the air pushes on a car: at `position`, from the centre of mass, with these effective areas.
+struct VehicleAeroSurface
+{
+    glm::vec3 position{0.0f};
+    float dragArea = 0.0f;
+    float downforceArea = 0.0f;
+};
 
 struct VehicleSettings
 {
@@ -94,6 +124,21 @@ struct VehicleSettings
     float finalDriveRatio = 0.0f;
     float shiftUpRpm = 0.0f;
     float shiftDownRpm = 0.0f;
+    // How long a gear change takes with no torque (s), and how long the clutch then takes to bite;
+    // the physics engine's half a second and 0.3 s when 0. A dual-clutch box changes in a few
+    // hundredths.
+    float gearSwitchSeconds = 0.0f;
+    float clutchReleaseSeconds = 0.0f;
+    // The engine's moment of inertia, kg m^2 (the physics engine's 0.5 when 0). It steals torque from
+    // the wheels while the revs climb, most in the low gears.
+    float engineInertia = 0.0f;
+    // The tyres: with any grip set the vehicle's tyres multiply the surface's friction (as the game does)
+    // instead of the physics engine's square root of the two.
+    VehicleTyreSettings frontTyres;
+    VehicleTyreSettings rearTyres;
+    // The air: the surfaces it acts on, each where it sits from the centre of mass (vehicle axes), as
+    // the drag and the downforce it makes per unit of dynamic pressure (coefficient times area, m^2).
+    std::vector<VehicleAeroSurface> aeroSurfaces;
     // The brakes' torque per wheel averaged over the four, of which the front axle takes this
     // share (0.5 is an even split).
     float maxBrakeTorque = 1500.0f; // Nm per wheel
@@ -102,12 +147,77 @@ struct VehicleSettings
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;
     bool limitedSlipDifferentials = true;
+    // The body's linear damping, a fraction of its speed lost each second: the physics engine's 0.05, a
+    // stand-in for air drag that a car with its own aerodynamics sets to 0.
+    float linearDamping = 0.05f;
     // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free.
     float maxPitchRollDegrees = 60.0f;
 
     // Read by whoever starts a car, not by the physics: a model that carries its own figures
     // (VehicleCarSpec) drives on them instead of the fields above they cover.
     bool useCarData = true;
+};
+
+// One axle of one tyre compound as the game's data keeps it, whole: every number of its sections by
+// upper-case key ("DX0", "FZ0", "FRICTION_LIMIT_ANGLE"; the thermal section's under "THERMAL_"), and
+// the curves its files hold by the key that names them ("WEAR_CURVE", "PERFORMANCE_CURVE"). The
+// physics engine's tyres use only what VehicleCarSpec::frontTyres and rearTyres pick from it.
+struct VehicleTyreData
+{
+    std::string name;
+    std::string shortName;
+    std::map<std::string, float> values;
+    std::map<std::string, std::vector<glm::vec2>> curves;
+};
+
+struct VehicleTyreCompound
+{
+    VehicleTyreData front;
+    VehicleTyreData rear;
+};
+
+// A wing (or the body, or the underfloor) of the car's aerodynamics: a chord and span whose area the
+// air's dynamic pressure acts on through coefficients that depend on the angle of attack.
+struct VehicleAeroWing
+{
+    std::string name;
+    float chord = 1.0f;
+    float span = 1.0f;
+    // From the centre of mass, in the game's axes.
+    glm::vec3 position{0.0f};
+    float angleDegrees = 0.0f;
+    float liftGain = 1.0f;
+    float dragGain = 1.0f;
+    // Angle of attack in degrees to coefficient. Lift is negative for downforce.
+    std::vector<glm::vec2> liftCurve;
+    std::vector<glm::vec2> dragCurve;
+    // The wing's other curves (the ground-height ones), by the key that names them.
+    std::map<std::string, std::vector<glm::vec2>> curves;
+    // The zone modifiers (ZONE_FRONT_CL and the like) and anything else numeric, by key.
+    std::map<std::string, float> values;
+};
+
+// A wing whose angle follows an input of the car, such as a rear spoiler that rises with speed.
+struct VehicleAeroController
+{
+    int wing = 0;
+    std::string input;
+    std::string combinator;
+    std::vector<glm::vec2> curve;
+    float filter = 0.0f;
+    float upLimit = 0.0f;
+    float downLimit = 0.0f;
+};
+
+// A turbocharger: steady boost is `min(maxBoost, wastegate)` reached by (rpm / referenceRpm)^gamma.
+struct VehicleTurbo
+{
+    float maxBoost = 0.0f;
+    float wastegate = 0.0f;
+    float referenceRpm = 0.0f;
+    float gamma = 1.0f;
+    float lagUp = 0.0f;
+    float lagDown = 0.0f;
 };
 
 // What a car's own data says, in SI units, for the fields it knows (Assetto Corsa's data.acd, read by
@@ -123,6 +233,44 @@ struct VehicleCarSpec
     std::vector<float> gearRatios;
     std::optional<float> reverseGearRatio;
     std::optional<float> finalDriveRatio;
+    std::optional<float> gearSwitchSeconds;
+    std::optional<float> clutchReleaseSeconds;
+    std::optional<float> engineInertia;
+    // The tyres the car starts on, as the physics engine takes them (see tyreCompounds).
+    std::optional<VehicleTyreSettings> frontTyres;
+    std::optional<VehicleTyreSettings> rearTyres;
+    // The air: the car's wings with their curves, and the controllers that move them. Drag and
+    // downforce use the wings at their base angle.
+    std::vector<VehicleAeroWing> aeroWings;
+    std::vector<VehicleAeroController> aeroControllers;
+
+    // Data the physics engine has no place for yet, kept whole so a later feature does not need the
+    // car imported again.
+    // Every tyre compound the car ships and the index of the one it starts on.
+    std::vector<VehicleTyreCompound> tyreCompounds;
+    std::optional<int> defaultTyreCompound;
+    std::vector<VehicleTurbo> turbos;
+    // Engine braking at a reference rpm, with the throttle closed.
+    std::optional<float> coastRpm;
+    std::optional<float> coastTorque;
+    // The gearbox: how long a change takes each way and how long the ignition is cut on an upshift
+    // (seconds), the clutch's torque limit (Nm) and the autoclutch's engagement window (rpm) and
+    // profiles (the seconds of each point).
+    std::optional<float> changeUpSeconds;
+    std::optional<float> changeDownSeconds;
+    std::optional<float> autoCutoffSeconds;
+    std::optional<float> clutchMaxTorque;
+    std::optional<float> autoClutchMinRpm;
+    std::optional<float> autoClutchMaxRpm;
+    std::vector<float> upshiftClutchProfile;
+    std::vector<float> downshiftClutchProfile;
+    // The differential's lock under power and on the overrun (0 to 1) and its preload (Nm).
+    std::optional<float> differentialPower;
+    std::optional<float> differentialCoast;
+    std::optional<float> differentialPreload;
+    // The driver aids: section (ABS, TRACTION_CONTROL, EDL) to its numbers (PRESENT, ACTIVE,
+    // SLIP_RATIO_LIMIT, MIN_SPEED_KMH, RATE_HZ, ...).
+    std::map<std::string, std::map<std::string, float>> electronics;
     // The front wheels' lock each way, and how far the steering wheel turns each way to reach it.
     std::optional<float> maxSteerAngleDegrees;
     std::optional<float> steeringWheelLockDegrees;

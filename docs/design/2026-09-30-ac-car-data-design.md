@@ -50,12 +50,26 @@ name**.
 | springs | `suspensions.ini` SPRING_RATE, HUB_MASS, CG_LOCATION | natural frequency of one wheel's sprung mass (1.78 Hz on the Boxster); motion ratio ignored |
 | dampers | DAMP_BUMP, DAMP_REBOUND | their mean over critical damping (0.78) |
 | ARB, LSD | `[ARB]`, `[DIFFERENTIAL]` POWER/COAST | on or off; Jolt's locking ratio is fixed |
+| engine inertia | `engine.ini` INERTIA | Jolt's `mInertia` (0.137 kg m^2 on the Boxster against Jolt's 0.5) |
+| gear change | `drivetrain.ini` CHANGE_UP_TIME | Jolt's `mSwitchTime`, the seconds with no torque (30 ms; Jolt's is 0.5 s) |
+| clutch | `[AUTOCLUTCH]` UPSHIFT_PROFILE | `mClutchReleaseTime`: the profile's last point, or 0.1 s for NONE (Jolt's is 0.3 s) |
+| tyre grip | `tyres.ini` DX_REF, DY_REF, FZ0, LS_EXPX, LS_EXPY | the friction at the load one wheel carries at rest: `REF * (load/FZ0)^(EXP-1)` (1.31 front, 1.29 rear on the Boxster's semislicks), or DX0 + DX1 without those keys |
+| tyre slip | FRICTION_LIMIT_ANGLE, FALLOFF_LEVEL | the slip angle of the peak (7.5 degrees), the slip ratio from it (its tangent), the share of the peak left past it (0.86) |
+| wheel inertia | ANGULAR_INERTIA | the wheel's `mInertia` (1.62 front, 1.97 rear; Jolt's is 0.9) |
+| air | `aero.ini` wings with their LUTs | drag area `Cd(angle) * gain * chord * span` and downforce area from the lift coefficient, each as a force at the wing's position from the centre of mass; the body's linear damping (Jolt's 0.05 stand-in for drag) goes to 0 |
+
+Kept whole but not used by the physics yet: every tyre compound with every number of its sections and its
+curves (wear, temperature), the wings' other curves and zone modifiers and the controllers that move them
+(the Boxster's spoiler rises above 120 km/h), the turbos (lag), engine braking, the gearbox's change-down and
+ignition-cut times, the clutch's torque limit and window, the autoclutch profiles, the differential's
+lock and preload, and the driver aids (ABS, traction control, EDL) with their limits.
 
 ## Out of scope
 
-`tyres.ini` (AC's tyre model has no counterpart in Jolt's wheel friction), `aero.ini`, turbo lag, ABS and
-traction control (`electronics.ini`), the damage model, `.ksanim` animations, sound banks, driver
-position, `lights.ini`, and the car's own `collider.ini`.
+AC's tyre model itself (thermal, wear, pressure, camber: only the peak grip, slip peaks and inertia reach
+Jolt's wheel friction), turbo lag, a controlled wing angle, ABS, traction control and EDL as behaviour (their
+data is carried), the damage model, `.ksanim` animations, sound banks, driver position, `lights.ini`, and
+the car's own `collider.ini`.
 
 ## Measured
 
@@ -64,12 +78,20 @@ position, `lights.ini`, and the car's own `collider.ini`.
   (`ks_ferrari_488_challenge_evo`, `ks_ferrari_488_gt3_2020`) ship no `data.acd` and no `data/`.
 - The Boxster imports as 1460 kg, RWD, 386 Nm (2000 to 4500 rpm), 7500 rpm, seven gears, 26.7 degree
   lock, 800 Nm brakes per wheel at 65% front, 1.78 Hz springs.
-- **Driving it is slower than the default tuning, not faster.** On flat tarmac 0 to 100 km/h takes about
-  9 s on its own data against 6.5 s on the defaults (the real car: 4.2 s). Jolt's tyres and clutch launch
-  a 386 Nm rear-drive car with a 14:1 first gear badly, and the time swings by seconds with small changes
-  (1460 kg instead of 1400 costs 1.7 s). A traction control tried against it (cutting the throttle on rim
-  slip) made it worse and was dropped. The test only bounds the time (under 14 s) and checks that the
-  gearbox shifts.
+- **Acceleration (second pass).** On flat tarmac 0 to 100 km/h took 9.0 s on the first pass's data
+  (the default tuning: 6.5 s; the real car 4.2 s). With the launch, grip and air below it takes 5.3 s.
+  What each part is worth, taken one at a time from the 9.0 s: the engine's inertia 1.2 s (Jolt's 0.5
+  kg m^2 makes the engine reflect 865 kg through a 14:1 first gear), the dual clutch's shift times 0.8 s
+  (Jolt loses half a second of torque at every change), both together 2.2 s, the tyres 0.6 s more, and the
+  body's linear damping (5% of the speed lost each second, several times the real drag at 100 km/h) 1.0 s.
+  The physics engine's own launch, not a launch rpm, was the trouble: the revs climb to 2600 within a
+  quarter second with the real inertia.
+- What is left (1 s): in first gear the engine has more torque than the tyres can hold (15.7 kN at the
+  wheels against about 11 kN of grip), so the driven wheels spin while the engine sits on its limiter and
+  the gearbox refuses to change up (Jolt does not shift while a wheel slips), for 1.75 s. Two traction
+  controls were tried and dropped: cutting the throttle on rim slip (60 Hz cannot hold a wheel that
+  gains 4 m/s of rim speed in one step) and holding the torque to what the load and grip allow (same 0-100
+  time, a smoother first gear).
 
 ## Automated Verification
 
@@ -79,7 +101,12 @@ position, `lights.ini`, and the car's own `collider.ini`.
 - `CarDataBecomesASpec`: every conversion above on the Boxster's figures; missing files leave fields out.
 - `ImportWritesTheCarsOwnData`: no data, a `data.acd`, one for another folder (import survives, problem
   reported), an unpacked `data/`; the figures survive the glTF and the loader.
-- `TestCarSpecReplacesWhatItKnows`, `TestCarOnItsOwnDataAccelerates` (physics).
+- `TestCarSpecReplacesWhatItKnows`, `TestCarOnItsOwnDataAccelerates` (bounds 0-100 to 3.5..6.5 s, and a heavy
+  engine or a slow gear change each cost a launch), `TestTyreGripSetsAcceleration` (grippy against hard
+  tyres; the tyre's friction times the surface's, not the square root), `TestAerodynamicsDragsAndPressesDown`
+  (physics).
+- The asset tests carry the launch, clutch, tyre, wing and driver-aid data through the archive, the glTF and
+  the loader; every installed car must have tyres, wings and an engine inertia.
 
 ## Manual Acceptance (by drive)
 

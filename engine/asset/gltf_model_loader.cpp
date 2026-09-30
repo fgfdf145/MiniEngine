@@ -2109,6 +2109,128 @@ void TraverseNode(
     }
 }
 
+// The members of MINIENGINE_vehicle, read leniently: a member of the wrong type is skipped.
+std::optional<float> VehicleNumber(const tinygltf::Value& object, const char* key)
+{
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsNumber())
+    {
+        return std::nullopt;
+    }
+    const float value = static_cast<float>(object.Get(key).GetNumberAsDouble());
+    return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+}
+
+std::optional<bool> VehicleFlag(const tinygltf::Value& object, const char* key)
+{
+    return object.IsObject() && object.Has(key) && object.Get(key).IsBool() ? std::optional<bool>(object.Get(key).Get<bool>()) : std::nullopt;
+}
+
+std::string VehicleText(const tinygltf::Value& object, const char* key)
+{
+    return object.IsObject() && object.Has(key) && object.Get(key).IsString() ? object.Get(key).Get<std::string>() : std::string{};
+}
+
+std::vector<glm::vec2> VehiclePoints(const tinygltf::Value& object, const char* key)
+{
+    std::vector<glm::vec2> points;
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsArray())
+    {
+        return points;
+    }
+    const tinygltf::Value& list = object.Get(key);
+    for (size_t index = 0; index < list.ArrayLen(); ++index)
+    {
+        const tinygltf::Value& point = list.Get(static_cast<int>(index));
+        if (point.IsArray() && point.ArrayLen() >= 2 && point.Get(0).IsNumber() && point.Get(1).IsNumber())
+        {
+            points.emplace_back(static_cast<float>(point.Get(0).GetNumberAsDouble()), static_cast<float>(point.Get(1).GetNumberAsDouble()));
+        }
+    }
+    return points;
+}
+
+std::vector<float> VehicleNumbers(const tinygltf::Value& object, const char* key)
+{
+    std::vector<float> numbers;
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsArray())
+    {
+        return numbers;
+    }
+    const tinygltf::Value& list = object.Get(key);
+    for (size_t index = 0; index < list.ArrayLen(); ++index)
+    {
+        if (list.Get(static_cast<int>(index)).IsNumber())
+        {
+            numbers.push_back(static_cast<float>(list.Get(static_cast<int>(index)).GetNumberAsDouble()));
+        }
+    }
+    return numbers;
+}
+
+std::map<std::string, float> VehicleNumberMap(const tinygltf::Value& object, const char* key)
+{
+    std::map<std::string, float> numbers;
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsObject())
+    {
+        return numbers;
+    }
+    const tinygltf::Value& map = object.Get(key);
+    for (const std::string& name : map.Keys())
+    {
+        if (map.Get(name).IsNumber())
+        {
+            numbers[name] = static_cast<float>(map.Get(name).GetNumberAsDouble());
+        }
+    }
+    return numbers;
+}
+
+std::map<std::string, std::vector<glm::vec2>> VehiclePointMap(const tinygltf::Value& object, const char* key)
+{
+    std::map<std::string, std::vector<glm::vec2>> curves;
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsObject())
+    {
+        return curves;
+    }
+    const tinygltf::Value& map = object.Get(key);
+    for (const std::string& name : map.Keys())
+    {
+        curves[name] = VehiclePoints(map, name.c_str());
+    }
+    return curves;
+}
+
+std::optional<VehicleTyreSettings> VehicleTyres(const tinygltf::Value& object, const char* key)
+{
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsObject())
+    {
+        return std::nullopt;
+    }
+    const tinygltf::Value& tyres = object.Get(key);
+    VehicleTyreSettings settings;
+    settings.longitudinalGrip = VehicleNumber(tyres, "longitudinalGrip").value_or(0.0f);
+    settings.lateralGrip = VehicleNumber(tyres, "lateralGrip").value_or(0.0f);
+    settings.peakSlipRatio = VehicleNumber(tyres, "peakSlipRatio").value_or(0.0f);
+    settings.peakSlipAngleDegrees = VehicleNumber(tyres, "peakSlipAngleDegrees").value_or(0.0f);
+    settings.postPeakShare = VehicleNumber(tyres, "postPeakShare").value_or(0.0f);
+    settings.inertia = VehicleNumber(tyres, "inertia").value_or(0.0f);
+    return settings;
+}
+
+VehicleTyreData VehicleTyreDataFrom(const tinygltf::Value& object, const char* key)
+{
+    VehicleTyreData data;
+    if (object.IsObject() && object.Has(key) && object.Get(key).IsObject())
+    {
+        const tinygltf::Value& axle = object.Get(key);
+        data.name = VehicleText(axle, "name");
+        data.shortName = VehicleText(axle, "shortName");
+        data.values = VehicleNumberMap(axle, "values");
+        data.curves = VehiclePointMap(axle, "curves");
+    }
+    return data;
+}
+
 // MINIENGINE_vehicle (the kn5 import writes it for a car whose data it could read): the figures that
 // are there, in SI units. A member of the wrong type is ignored.
 std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
@@ -2119,75 +2241,135 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
         return std::nullopt;
     }
     const tinygltf::Value& extension = found->second;
-    const auto number = [&](const char* key) -> std::optional<float>
-    {
-        if (!extension.Has(key) || !extension.Get(key).IsNumber())
-        {
-            return std::nullopt;
-        }
-        const float value = static_cast<float>(extension.Get(key).GetNumberAsDouble());
-        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
-    };
-    const auto flag = [&](const char* key) -> std::optional<bool>
-    {
-        return extension.Has(key) && extension.Get(key).IsBool() ? std::optional<bool>(extension.Get(key).Get<bool>()) : std::nullopt;
-    };
 
     VehicleCarSpec spec;
-    spec.massKg = number("massKg");
-    if (extension.Has("drive") && extension.Get("drive").IsString())
+    spec.massKg = VehicleNumber(extension, "massKg");
+    const std::string drive = VehicleText(extension, "drive");
+    if (drive == "rear")
     {
-        const std::string drive = extension.Get("drive").Get<std::string>();
-        if (drive == "rear")
-        {
-            spec.drive = VehicleDrive::RearWheel;
-        }
-        else if (drive == "front")
-        {
-            spec.drive = VehicleDrive::FrontWheel;
-        }
-        else if (drive == "all")
-        {
-            spec.drive = VehicleDrive::AllWheel;
-        }
+        spec.drive = VehicleDrive::RearWheel;
     }
-    if (extension.Has("torqueCurve") && extension.Get("torqueCurve").IsArray())
+    else if (drive == "front")
     {
-        const tinygltf::Value& curve = extension.Get("torqueCurve");
-        for (size_t index = 0; index < curve.ArrayLen(); ++index)
+        spec.drive = VehicleDrive::FrontWheel;
+    }
+    else if (drive == "all")
+    {
+        spec.drive = VehicleDrive::AllWheel;
+    }
+    spec.torqueCurve = VehiclePoints(extension, "torqueCurve");
+    spec.minRpm = VehicleNumber(extension, "minRpm");
+    spec.maxRpm = VehicleNumber(extension, "maxRpm");
+    spec.gearRatios = VehicleNumbers(extension, "gearRatios");
+    spec.reverseGearRatio = VehicleNumber(extension, "reverseGearRatio");
+    spec.finalDriveRatio = VehicleNumber(extension, "finalDriveRatio");
+    spec.gearSwitchSeconds = VehicleNumber(extension, "gearSwitchSeconds");
+    spec.clutchReleaseSeconds = VehicleNumber(extension, "clutchReleaseSeconds");
+    spec.engineInertia = VehicleNumber(extension, "engineInertia");
+    spec.frontTyres = VehicleTyres(extension, "frontTyres");
+    spec.rearTyres = VehicleTyres(extension, "rearTyres");
+    spec.maxSteerAngleDegrees = VehicleNumber(extension, "maxSteerAngleDegrees");
+    spec.steeringWheelLockDegrees = VehicleNumber(extension, "steeringWheelLockDegrees");
+    spec.brakeTorquePerWheel = VehicleNumber(extension, "brakeTorquePerWheel");
+    spec.frontBrakeShare = VehicleNumber(extension, "frontBrakeShare");
+    spec.handBrakeTorquePerWheel = VehicleNumber(extension, "handBrakeTorquePerWheel");
+    spec.suspensionFrequencyHz = VehicleNumber(extension, "suspensionFrequencyHz");
+    spec.suspensionDamping = VehicleNumber(extension, "suspensionDamping");
+    spec.antiRollBars = VehicleFlag(extension, "antiRollBars");
+    spec.limitedSlipDifferentials = VehicleFlag(extension, "limitedSlipDifferentials");
+
+    if (extension.Has("aeroWings") && extension.Get("aeroWings").IsArray())
+    {
+        const tinygltf::Value& wings = extension.Get("aeroWings");
+        for (size_t index = 0; index < wings.ArrayLen(); ++index)
         {
-            const tinygltf::Value& point = curve.Get(static_cast<int>(index));
-            if (point.IsArray() && point.ArrayLen() >= 2 && point.Get(0).IsNumber() && point.Get(1).IsNumber())
+            const tinygltf::Value& wingValue = wings.Get(static_cast<int>(index));
+            VehicleAeroWing wing;
+            wing.name = VehicleText(wingValue, "name");
+            wing.chord = VehicleNumber(wingValue, "chord").value_or(1.0f);
+            wing.span = VehicleNumber(wingValue, "span").value_or(1.0f);
+            const std::vector<float> position = VehicleNumbers(wingValue, "position");
+            if (position.size() == 3)
             {
-                spec.torqueCurve.emplace_back(
-                    static_cast<float>(point.Get(0).GetNumberAsDouble()), static_cast<float>(point.Get(1).GetNumberAsDouble()));
+                wing.position = glm::vec3(position[0], position[1], position[2]);
             }
+            wing.angleDegrees = VehicleNumber(wingValue, "angleDegrees").value_or(0.0f);
+            wing.liftGain = VehicleNumber(wingValue, "liftGain").value_or(1.0f);
+            wing.dragGain = VehicleNumber(wingValue, "dragGain").value_or(1.0f);
+            wing.liftCurve = VehiclePoints(wingValue, "liftCurve");
+            wing.dragCurve = VehiclePoints(wingValue, "dragCurve");
+            wing.curves = VehiclePointMap(wingValue, "curves");
+            wing.values = VehicleNumberMap(wingValue, "values");
+            spec.aeroWings.push_back(std::move(wing));
         }
     }
-    spec.minRpm = number("minRpm");
-    spec.maxRpm = number("maxRpm");
-    if (extension.Has("gearRatios") && extension.Get("gearRatios").IsArray())
+    if (extension.Has("aeroControllers") && extension.Get("aeroControllers").IsArray())
     {
-        const tinygltf::Value& gears = extension.Get("gearRatios");
-        for (size_t index = 0; index < gears.ArrayLen(); ++index)
+        const tinygltf::Value& controllers = extension.Get("aeroControllers");
+        for (size_t index = 0; index < controllers.ArrayLen(); ++index)
         {
-            if (gears.Get(static_cast<int>(index)).IsNumber())
-            {
-                spec.gearRatios.push_back(static_cast<float>(gears.Get(static_cast<int>(index)).GetNumberAsDouble()));
-            }
+            const tinygltf::Value& value = controllers.Get(static_cast<int>(index));
+            VehicleAeroController controller;
+            controller.wing = static_cast<int>(VehicleNumber(value, "wing").value_or(0.0f));
+            controller.input = VehicleText(value, "input");
+            controller.combinator = VehicleText(value, "combinator");
+            controller.curve = VehiclePoints(value, "curve");
+            controller.filter = VehicleNumber(value, "filter").value_or(0.0f);
+            controller.upLimit = VehicleNumber(value, "upLimit").value_or(0.0f);
+            controller.downLimit = VehicleNumber(value, "downLimit").value_or(0.0f);
+            spec.aeroControllers.push_back(std::move(controller));
         }
     }
-    spec.reverseGearRatio = number("reverseGearRatio");
-    spec.finalDriveRatio = number("finalDriveRatio");
-    spec.maxSteerAngleDegrees = number("maxSteerAngleDegrees");
-    spec.steeringWheelLockDegrees = number("steeringWheelLockDegrees");
-    spec.brakeTorquePerWheel = number("brakeTorquePerWheel");
-    spec.frontBrakeShare = number("frontBrakeShare");
-    spec.handBrakeTorquePerWheel = number("handBrakeTorquePerWheel");
-    spec.suspensionFrequencyHz = number("suspensionFrequencyHz");
-    spec.suspensionDamping = number("suspensionDamping");
-    spec.antiRollBars = flag("antiRollBars");
-    spec.limitedSlipDifferentials = flag("limitedSlipDifferentials");
+    if (extension.Has("tyreCompounds") && extension.Get("tyreCompounds").IsArray())
+    {
+        const tinygltf::Value& compounds = extension.Get("tyreCompounds");
+        for (size_t index = 0; index < compounds.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& value = compounds.Get(static_cast<int>(index));
+            spec.tyreCompounds.push_back(VehicleTyreCompound{VehicleTyreDataFrom(value, "front"), VehicleTyreDataFrom(value, "rear")});
+        }
+    }
+    if (const std::optional<float> index = VehicleNumber(extension, "defaultTyreCompound"))
+    {
+        spec.defaultTyreCompound = static_cast<int>(*index);
+    }
+    if (extension.Has("turbos") && extension.Get("turbos").IsArray())
+    {
+        const tinygltf::Value& turbos = extension.Get("turbos");
+        for (size_t index = 0; index < turbos.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& value = turbos.Get(static_cast<int>(index));
+            VehicleTurbo turbo;
+            turbo.maxBoost = VehicleNumber(value, "maxBoost").value_or(0.0f);
+            turbo.wastegate = VehicleNumber(value, "wastegate").value_or(0.0f);
+            turbo.referenceRpm = VehicleNumber(value, "referenceRpm").value_or(0.0f);
+            turbo.gamma = VehicleNumber(value, "gamma").value_or(1.0f);
+            turbo.lagUp = VehicleNumber(value, "lagUp").value_or(0.0f);
+            turbo.lagDown = VehicleNumber(value, "lagDown").value_or(0.0f);
+            spec.turbos.push_back(turbo);
+        }
+    }
+    spec.coastRpm = VehicleNumber(extension, "coastRpm");
+    spec.coastTorque = VehicleNumber(extension, "coastTorque");
+    spec.changeUpSeconds = VehicleNumber(extension, "changeUpSeconds");
+    spec.changeDownSeconds = VehicleNumber(extension, "changeDownSeconds");
+    spec.autoCutoffSeconds = VehicleNumber(extension, "autoCutoffSeconds");
+    spec.clutchMaxTorque = VehicleNumber(extension, "clutchMaxTorque");
+    spec.autoClutchMinRpm = VehicleNumber(extension, "autoClutchMinRpm");
+    spec.autoClutchMaxRpm = VehicleNumber(extension, "autoClutchMaxRpm");
+    spec.upshiftClutchProfile = VehicleNumbers(extension, "upshiftClutchProfile");
+    spec.downshiftClutchProfile = VehicleNumbers(extension, "downshiftClutchProfile");
+    spec.differentialPower = VehicleNumber(extension, "differentialPower");
+    spec.differentialCoast = VehicleNumber(extension, "differentialCoast");
+    spec.differentialPreload = VehicleNumber(extension, "differentialPreload");
+    if (extension.Has("electronics") && extension.Get("electronics").IsObject())
+    {
+        const tinygltf::Value& electronics = extension.Get("electronics");
+        for (const std::string& section : electronics.Keys())
+        {
+            spec.electronics[section] = VehicleNumberMap(electronics, section.c_str());
+        }
+    }
     return spec;
 }
 

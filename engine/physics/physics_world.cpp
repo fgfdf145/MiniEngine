@@ -182,6 +182,43 @@ struct VehicleSnapshot
     std::vector<VehicleWheelState> wheels;
 };
 
+bool HasTyreGrip(const VehicleTyreSettings& tyres)
+{
+    return tyres.longitudinalGrip > 0.0f || tyres.lateralGrip > 0.0f;
+}
+
+// A wheel's friction curves from its axle's tyres: rising from nothing to the peak at the slip that
+// gives it, then down to the share of the peak the physics engine's own curves fall to, at the
+// same multiple of that slip.
+void ApplyTyres(JPH::WheelSettingsWV& wheel, const VehicleTyreSettings& tyres)
+{
+    // The physics engine's default: 1.2 at a slip ratio of 0.06 and 3 degrees, 1.0 at 0.2 and 20.
+    constexpr float kDefaultPostPeakShare = 1.0f / 1.2f;
+    constexpr float kSlipRatioFall = 0.2f / 0.06f;
+    constexpr float kSlipAngleFall = 20.0f / 3.0f;
+    const float postPeakShare = tyres.postPeakShare > 0.0f ? std::min(tyres.postPeakShare, 1.0f) : kDefaultPostPeakShare;
+    if (tyres.longitudinalGrip > 0.0f)
+    {
+        const float peak = tyres.peakSlipRatio > 0.0f ? tyres.peakSlipRatio : 0.06f;
+        wheel.mLongitudinalFriction.Clear();
+        wheel.mLongitudinalFriction.AddPoint(0.0f, 0.0f);
+        wheel.mLongitudinalFriction.AddPoint(peak, tyres.longitudinalGrip);
+        wheel.mLongitudinalFriction.AddPoint(peak * kSlipRatioFall, tyres.longitudinalGrip * postPeakShare);
+    }
+    if (tyres.lateralGrip > 0.0f)
+    {
+        const float peak = tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 3.0f;
+        wheel.mLateralFriction.Clear();
+        wheel.mLateralFriction.AddPoint(0.0f, 0.0f);
+        wheel.mLateralFriction.AddPoint(peak, tyres.lateralGrip);
+        wheel.mLateralFriction.AddPoint(peak * kSlipAngleFall, tyres.lateralGrip * postPeakShare);
+    }
+    if (tyres.inertia > 0.0f)
+    {
+        wheel.mInertia = tyres.inertia;
+    }
+}
+
 JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const VehicleSettings& settings)
 {
     JPH::Ref<JPH::VehicleConstraintSettings> vehicle = new JPH::VehicleConstraintSettings();
@@ -210,6 +247,7 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         // The axles share the four wheels' total by the front's share, so an even 0.5 leaves each
         // wheel at maxBrakeTorque.
         const float axleShare = std::clamp(front ? settings.frontBrakeShare : 1.0f - settings.frontBrakeShare, 0.0f, 1.0f);
+        ApplyTyres(*wheel, front ? settings.frontTyres : settings.rearTyres);
         wheel->mMaxBrakeTorque = std::max(settings.maxBrakeTorque, 0.0f) * 2.0f * axleShare;
         wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
         vehicle->mWheels.push_back(wheel);
@@ -228,6 +266,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     controller->mEngine.mMaxTorque = std::max(settings.maxEngineTorque, 0.0f);
     controller->mEngine.mMinRPM = std::max(settings.minRpm, 1.0f);
     controller->mEngine.mMaxRPM = std::max(settings.maxRpm, controller->mEngine.mMinRPM + 1.0f);
+    if (settings.engineInertia > 0.0f)
+    {
+        controller->mEngine.mInertia = settings.engineInertia;
+    }
     if (settings.torqueCurve.size() >= 2 && settings.maxEngineTorque > 0.0f)
     {
         // The physics reads the curve at the engine's rpm over its maximum.
@@ -248,6 +290,14 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         {
             controller->mTransmission.mReverseGearRatios = {settings.reverseGearRatio};
         }
+    }
+    if (settings.gearSwitchSeconds > 0.0f)
+    {
+        controller->mTransmission.mSwitchTime = settings.gearSwitchSeconds;
+    }
+    if (settings.clutchReleaseSeconds > 0.0f)
+    {
+        controller->mTransmission.mClutchReleaseTime = settings.clutchReleaseSeconds;
     }
     if (settings.shiftUpRpm > 0.0f)
     {
@@ -301,10 +351,38 @@ struct PhysicsWorld::Impl
         JPH::Ref<JPH::VehicleCollisionTester> collisionTester;
         std::unique_ptr<WheelBodyFilter> wheelFilter;
         VehicleControls controls;
+        // The air acting on the car: where, and how much drag and downforce per square metre of dynamic pressure.
+        std::vector<VehicleAeroSurface> aeroSurfaces;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
         VehicleSnapshot previous;
         VehicleSnapshot current;
     };
+
+    // Drag against the car's velocity and downforce along its down, on each surface where it sits.
+    void ApplyAerodynamics(const Vehicle& vehicle)
+    {
+        if (vehicle.aeroSurfaces.empty())
+        {
+            return;
+        }
+        const JPH::Vec3 velocity = vehicle.body->GetLinearVelocity();
+        const float speed = velocity.Length();
+        if (speed < 0.1f)
+        {
+            return;
+        }
+        constexpr float kAirDensity = 1.2f; // kg/m^3, as the game uses
+        const float dynamicPressure = 0.5f * kAirDensity * speed * speed;
+        const JPH::Quat rotation = vehicle.body->GetRotation();
+        const JPH::Vec3 down = rotation * JPH::Vec3(0.0f, -1.0f, 0.0f);
+        JPH::BodyInterface& bodies = physicsSystem.GetBodyInterface();
+        for (const VehicleAeroSurface& surface : vehicle.aeroSurfaces)
+        {
+            const JPH::Vec3 force = -velocity / speed * (dynamicPressure * surface.dragArea) + down * (dynamicPressure * surface.downforceArea);
+            const JPH::RVec3 point = vehicle.body->GetCenterOfMassPosition() + rotation * ToJolt(surface.position);
+            bodies.AddForce(vehicle.body->GetID(), force, point);
+        }
+    }
 
     Impl()
         : tempAllocator(kTempAllocatorBytes),
@@ -546,6 +624,7 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         shape.Get(), ToJoltPosition(pose.position), ToJolt(pose.rotation), JPH::EMotionType::Dynamic, ObjectLayers::kMoving);
     bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     bodySettings.mMassPropertiesOverride.mMass = std::max(settings.massKg, 1.0f);
+    bodySettings.mLinearDamping = std::max(settings.linearDamping, 0.0f);
     // A fast car against a thin wall would otherwise pass through it between two steps.
     bodySettings.mMotionQuality = JPH::EMotionQuality::LinearCast;
 
@@ -557,7 +636,18 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     }
     impl.physicsSystem.GetBodyInterface().AddBody(vehicle.body->GetID(), JPH::EActivation::Activate);
 
+    vehicle.aeroSurfaces = settings.aeroSurfaces;
     vehicle.constraint = new JPH::VehicleConstraint(*vehicle.body, *BuildVehicleConstraintSettings(settings));
+    if (HasTyreGrip(settings.frontTyres) || HasTyreGrip(settings.rearTyres))
+    {
+        // Tyre grip as the game measures it is multiplied by the surface's, not averaged with it.
+        vehicle.constraint->SetCombineFriction(
+            [](JPH::uint, float& ioLongitudinal, float& ioLateral, const JPH::Body& body, const JPH::SubShapeID&)
+            {
+                ioLongitudinal *= body.GetFriction();
+                ioLateral *= body.GetFriction();
+            });
+    }
     // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on.
     vehicle.collisionTester = new JPH::VehicleCollisionTesterCastCylinder(ObjectLayers::kMoving);
     vehicle.wheelFilter = std::make_unique<WheelBodyFilter>(vehicle.body->GetID());
@@ -651,6 +741,7 @@ int PhysicsWorld::Update(float deltaSeconds)
         {
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             const VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
+            impl.ApplyAerodynamics(vehicle);
             if (input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f)
             {
                 // A car that came to rest is asleep and would ignore the driver.

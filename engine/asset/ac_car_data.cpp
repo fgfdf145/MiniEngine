@@ -130,18 +130,78 @@ float LutValue(const std::vector<std::pair<float, float>>& lut, float rpm)
     return lut.back().second;
 }
 
-struct Turbo
+// "1.5, -0.3,2" as numbers; nullopt unless there are exactly `count`.
+std::optional<std::vector<float>> ParseNumberList(const std::string& text, size_t count)
 {
-    float maxBoost = 0.0f;
-    float wastegate = 0.0f;
-    float referenceRpm = 0.0f;
-    float gamma = 1.0f;
-};
+    std::vector<float> numbers;
+    size_t position = 0;
+    while (position <= text.size())
+    {
+        size_t comma = text.find(',', position);
+        if (comma == std::string::npos)
+        {
+            comma = text.size();
+        }
+        const std::optional<float> number = ParseNumber(text.substr(position, comma - position));
+        if (!number.has_value())
+        {
+            return std::nullopt;
+        }
+        numbers.push_back(*number);
+        position = comma + 1;
+    }
+    return numbers.size() == count ? std::optional<std::vector<float>>(numbers) : std::nullopt;
+}
+
+std::vector<glm::vec2> LutPoints(const AcdArchive::Files& files, const std::string& fileName)
+{
+    std::vector<glm::vec2> points;
+    if (const std::string* text = FindFile(files, ToLowerAscii(Trim(fileName))))
+    {
+        for (const auto& [x, y] : AcCarData::ParseLut(*text))
+        {
+            points.emplace_back(x, y);
+        }
+    }
+    return points;
+}
+
+// The weight on the front axle, as a fraction of the car's.
+float FrontWeightShare(const AcdArchive::Files& files)
+{
+    const AcCarData::Ini ini = ParseFile(files, "suspensions.ini");
+    return std::clamp(IniView(&ini).Number("BASIC", "CG_LOCATION").value_or(0.5f), 0.2f, 0.8f);
+}
 
 void ReadEngine(const AcdArchive::Files& files, VehicleCarSpec& spec)
 {
     const AcCarData::Ini engineIni = ParseFile(files, "engine.ini");
     const IniView engine(&engineIni);
+    if (const std::optional<float> inertia = engine.Number("ENGINE_DATA", "INERTIA"); inertia.has_value() && *inertia > 0.0f)
+    {
+        spec.engineInertia = *inertia;
+    }
+    if (const std::optional<float> rpm = engine.Number("COAST_REF", "RPM"); rpm.has_value() && *rpm > 0.0f)
+    {
+        spec.coastRpm = *rpm;
+        spec.coastTorque = engine.Number("COAST_REF", "TORQUE");
+    }
+    for (const auto& [section, keys] : engineIni)
+    {
+        if (section.rfind("TURBO_", 0) != 0)
+        {
+            continue;
+        }
+        VehicleTurbo turbo;
+        turbo.maxBoost = engine.Number(section, "MAX_BOOST").value_or(0.0f);
+        turbo.wastegate = engine.Number(section, "WASTEGATE").value_or(0.0f);
+        turbo.referenceRpm = engine.Number(section, "REFERENCE_RPM").value_or(0.0f);
+        turbo.gamma = engine.Number(section, "GAMMA").value_or(1.0f);
+        turbo.lagUp = engine.Number(section, "LAG_UP").value_or(0.0f);
+        turbo.lagDown = engine.Number(section, "LAG_DN").value_or(0.0f);
+        spec.turbos.push_back(turbo);
+    }
+
     const std::string* lutText = FindFile(files, ToLowerAscii(engine.Text("HEADER", "POWER_CURVE").value_or("power.lut")));
     if (lutText == nullptr)
     {
@@ -153,26 +213,11 @@ void ReadEngine(const AcdArchive::Files& files, VehicleCarSpec& spec)
         return;
     }
 
-    std::vector<Turbo> turbos;
-    for (const auto& [section, keys] : engineIni)
-    {
-        if (section.rfind("TURBO_", 0) != 0)
-        {
-            continue;
-        }
-        Turbo turbo;
-        turbo.maxBoost = engine.Number(section, "MAX_BOOST").value_or(0.0f);
-        turbo.wastegate = engine.Number(section, "WASTEGATE").value_or(0.0f);
-        turbo.referenceRpm = engine.Number(section, "REFERENCE_RPM").value_or(0.0f);
-        turbo.gamma = engine.Number(section, "GAMMA").value_or(1.0f);
-        turbos.push_back(turbo);
-    }
-
     float lastRpm = 0.0f;
     for (const auto& [rpm, torque] : lut)
     {
         float boost = 0.0f;
-        for (const Turbo& turbo : turbos)
+        for (const VehicleTurbo& turbo : spec.turbos)
         {
             boost += AcCarData::TurboBoost(rpm, turbo.maxBoost, turbo.wastegate, turbo.referenceRpm, turbo.gamma);
         }
@@ -235,7 +280,49 @@ void ReadDrivetrain(const AcdArchive::Files& files, VehicleCarSpec& spec)
         const float power = drivetrain.Number("DIFFERENTIAL", "POWER").value_or(0.0f);
         const float coast = drivetrain.Number("DIFFERENTIAL", "COAST").value_or(0.0f);
         spec.limitedSlipDifferentials = power > 0.0f || coast > 0.0f;
+        spec.differentialPower = power;
+        spec.differentialCoast = coast;
+        spec.differentialPreload = drivetrain.Number("DIFFERENTIAL", "PRELOAD");
     }
+
+    // The gearbox and clutch. Times are milliseconds in the file.
+    const auto seconds = [&](const char* section, const char* key) -> std::optional<float>
+    {
+        const std::optional<float> milliseconds = drivetrain.Number(section, key);
+        return milliseconds.has_value() && *milliseconds >= 0.0f ? std::optional<float>(*milliseconds / 1000.0f) : std::nullopt;
+    };
+    spec.changeUpSeconds = seconds("GEARBOX", "CHANGE_UP_TIME");
+    spec.changeDownSeconds = seconds("GEARBOX", "CHANGE_DN_TIME");
+    spec.autoCutoffSeconds = seconds("GEARBOX", "AUTO_CUTOFF_TIME");
+    spec.clutchMaxTorque = drivetrain.Number("CLUTCH", "MAX_TORQUE");
+    spec.autoClutchMinRpm = drivetrain.Number("AUTOCLUTCH", "MIN_RPM");
+    spec.autoClutchMaxRpm = drivetrain.Number("AUTOCLUTCH", "MAX_RPM");
+    // A profile is a section of POINT_n times, or NONE.
+    const auto profile = [&](const char* key) -> std::vector<float>
+    {
+        std::vector<float> points;
+        const std::string name = ToUpperAscii(Trim(drivetrain.Text("AUTOCLUTCH", key).value_or("NONE")));
+        for (int point = 0; point < 32; ++point)
+        {
+            const std::optional<float> time = drivetrain.Number(name, "POINT_" + std::to_string(point));
+            if (!time.has_value())
+            {
+                break;
+            }
+            points.push_back(*time / 1000.0f);
+        }
+        return points;
+    };
+    spec.upshiftClutchProfile = profile("UPSHIFT_PROFILE");
+    spec.downshiftClutchProfile = profile("DOWNSHIFT_PROFILE");
+
+    // What the physics engine takes of it: a change is over in the time the file gives, and the clutch
+    // then takes as long as the upshift's profile (or a tenth of a second without one) to bite.
+    if (spec.changeUpSeconds.has_value() && *spec.changeUpSeconds > 0.0f)
+    {
+        spec.gearSwitchSeconds = spec.changeUpSeconds;
+    }
+    spec.clutchReleaseSeconds = spec.upshiftClutchProfile.empty() ? 0.1f : std::max(spec.upshiftClutchProfile.back(), 0.05f);
 }
 
 void ReadBrakes(const AcdArchive::Files& files, VehicleCarSpec& spec)
@@ -274,7 +361,7 @@ void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)
 
     // Each axle's spring as a natural frequency of the sprung mass on one of its wheels, and its
     // dampers as a fraction of critical damping. The motion ratio of the linkage is not known.
-    const float frontWeight = std::clamp(suspension.Number("BASIC", "CG_LOCATION").value_or(0.5f), 0.2f, 0.8f);
+    const float frontWeight = FrontWeightShare(files);
     float frequencySum = 0.0f;
     float dampingSum = 0.0f;
     int axles = 0;
@@ -299,6 +386,206 @@ void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)
     {
         spec.suspensionFrequencyHz = frequencySum / static_cast<float>(axles);
         spec.suspensionDamping = std::clamp(dampingSum / static_cast<float>(axles), 0.05f, 1.2f);
+    }
+}
+
+// Every number of a section by key, and the curves its lut files hold; `prefix` goes before each key.
+void ReadSection(
+    const AcdArchive::Files& files, const AcCarData::Ini& ini, const std::string& section, const std::string& prefix, VehicleTyreData& out)
+{
+    const auto found = ini.find(section);
+    if (found == ini.end())
+    {
+        return;
+    }
+    for (const auto& [key, text] : found->second)
+    {
+        if (const std::optional<float> number = ParseNumber(text))
+        {
+            out.values[prefix + key] = *number;
+        }
+        else if (ToLowerAscii(text).size() > 4 && ToLowerAscii(text).compare(ToLowerAscii(text).size() - 4, 4, ".lut") == 0)
+        {
+            out.curves[prefix + key] = LutPoints(files, text);
+        }
+    }
+}
+
+// The friction coefficient of a tyre at a wheel load along one direction: the reference friction at the
+// reference load scaled by the load raised to the sensitivity exponent less one, or the file's plain
+// coefficients without those.
+float GripAtLoad(const VehicleTyreData& tyre, const char* reference, const char* exponent, const char* base, const char* slope, float loadNewtons)
+{
+    const auto value = [&](const char* key) -> float
+    {
+        const auto found = tyre.values.find(key);
+        return found == tyre.values.end() ? 0.0f : found->second;
+    };
+    const float referenceLoad = value("FZ0");
+    if (value(reference) > 0.0f && referenceLoad > 0.0f && value(exponent) > 0.0f && loadNewtons > 0.0f)
+    {
+        return value(reference) * std::pow(loadNewtons / referenceLoad, value(exponent) - 1.0f);
+    }
+    return value(base) + value(slope);
+}
+
+// The physics engine's tyre from a compound's axle at the load one wheel carries at rest.
+VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoadNewtons)
+{
+    const auto value = [&](const char* key) -> float
+    {
+        const auto found = tyre.values.find(key);
+        return found == tyre.values.end() ? 0.0f : found->second;
+    };
+    VehicleTyreSettings settings;
+    settings.longitudinalGrip = GripAtLoad(tyre, "DX_REF", "LS_EXPX", "DX0", "DX1", staticLoadNewtons);
+    settings.lateralGrip = GripAtLoad(tyre, "DY_REF", "LS_EXPY", "DY0", "DY1", staticLoadNewtons);
+    const float limitAngle = value("FRICTION_LIMIT_ANGLE");
+    if (limitAngle > 0.0f)
+    {
+        settings.peakSlipAngleDegrees = limitAngle;
+        // A brush tyre reaches its longitudinal peak at about the slip the lateral one does.
+        settings.peakSlipRatio = std::tan(limitAngle * std::numbers::pi_v<float> / 180.0f);
+    }
+    if (const float falloff = value("FALLOFF_LEVEL"); falloff > 0.0f && falloff <= 1.0f)
+    {
+        settings.postPeakShare = falloff;
+    }
+    settings.inertia = value("ANGULAR_INERTIA");
+    return settings;
+}
+
+void ReadTyres(const AcdArchive::Files& files, VehicleCarSpec& spec)
+{
+    const AcCarData::Ini ini = ParseFile(files, "tyres.ini");
+    if (ini.empty())
+    {
+        return;
+    }
+    const IniView tyres(&ini);
+    // Compound 0's sections carry no number: [FRONT], [THERMAL_FRONT]; the others [FRONT_1].
+    for (int index = 0; index < 16; ++index)
+    {
+        const std::string suffix = index == 0 ? "" : "_" + std::to_string(index);
+        if (!tyres.HasSection("FRONT" + suffix) && !tyres.HasSection("REAR" + suffix))
+        {
+            break;
+        }
+        VehicleTyreCompound compound;
+        for (const bool front : {true, false})
+        {
+            VehicleTyreData& data = front ? compound.front : compound.rear;
+            const std::string axle = front ? "FRONT" : "REAR";
+            data.name = Trim(tyres.Text(axle + suffix, "NAME").value_or(""));
+            data.shortName = Trim(tyres.Text(axle + suffix, "SHORT_NAME").value_or(""));
+            ReadSection(files, ini, axle + suffix, "", data);
+            ReadSection(files, ini, "THERMAL_" + axle + suffix, "THERMAL_", data);
+        }
+        spec.tyreCompounds.push_back(std::move(compound));
+    }
+    if (spec.tyreCompounds.empty())
+    {
+        return;
+    }
+    const int defaultIndex = static_cast<int>(tyres.Number("COMPOUND_DEFAULT", "INDEX").value_or(0.0f));
+    spec.defaultTyreCompound = std::clamp(defaultIndex, 0, static_cast<int>(spec.tyreCompounds.size()) - 1);
+
+    if (spec.massKg.has_value())
+    {
+        // The load one wheel carries standing still.
+        constexpr float kGravity = 9.81f;
+        const float frontWeight = FrontWeightShare(files);
+        const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
+        spec.frontTyres = TyreSettingsFor(compound.front, *spec.massKg * kGravity * frontWeight * 0.5f);
+        spec.rearTyres = TyreSettingsFor(compound.rear, *spec.massKg * kGravity * (1.0f - frontWeight) * 0.5f);
+    }
+}
+
+void ReadAero(const AcdArchive::Files& files, VehicleCarSpec& spec)
+{
+    const AcCarData::Ini ini = ParseFile(files, "aero.ini");
+    const IniView aero(&ini);
+    // WING_0 up to the last that follows; the controllers name a wing by this index.
+    for (int index = 0; index < 32; ++index)
+    {
+        const std::string section = "WING_" + std::to_string(index);
+        if (!aero.HasSection(section))
+        {
+            break;
+        }
+        VehicleAeroWing wing;
+        wing.name = Trim(aero.Text(section, "NAME").value_or(section));
+        wing.chord = aero.Number(section, "CHORD").value_or(1.0f);
+        wing.span = aero.Number(section, "SPAN").value_or(1.0f);
+        if (const std::optional<std::string> position = aero.Text(section, "POSITION"))
+        {
+            if (const std::optional<std::vector<float>> xyz = ParseNumberList(*position, 3))
+            {
+                wing.position = glm::vec3((*xyz)[0], (*xyz)[1], (*xyz)[2]);
+            }
+        }
+        wing.angleDegrees = aero.Number(section, "ANGLE").value_or(0.0f);
+        wing.liftGain = aero.Number(section, "CL_GAIN").value_or(1.0f);
+        wing.dragGain = aero.Number(section, "CD_GAIN").value_or(1.0f);
+        for (const auto& [key, text] : ini.at(section))
+        {
+            if (key == "LUT_AOA_CL")
+            {
+                wing.liftCurve = LutPoints(files, text);
+            }
+            else if (key == "LUT_AOA_CD")
+            {
+                wing.dragCurve = LutPoints(files, text);
+            }
+            else if (key.rfind("LUT_", 0) == 0)
+            {
+                if (!Trim(text).empty())
+                {
+                    wing.curves[key] = LutPoints(files, text);
+                }
+            }
+            else if (key.rfind("ZONE_", 0) == 0)
+            {
+                if (const std::optional<float> number = ParseNumber(text))
+                {
+                    wing.values[key] = *number;
+                }
+            }
+        }
+        spec.aeroWings.push_back(std::move(wing));
+    }
+    for (int index = 0; index < 32; ++index)
+    {
+        const std::string section = "DYNAMIC_CONTROLLER_" + std::to_string(index);
+        if (!aero.HasSection(section))
+        {
+            break;
+        }
+        VehicleAeroController controller;
+        controller.wing = static_cast<int>(aero.Number(section, "WING").value_or(0.0f));
+        controller.input = Trim(aero.Text(section, "INPUT").value_or(""));
+        controller.combinator = Trim(aero.Text(section, "COMBINATOR").value_or(""));
+        controller.curve = LutPoints(files, aero.Text(section, "LUT").value_or(""));
+        controller.filter = aero.Number(section, "FILTER").value_or(0.0f);
+        controller.upLimit = aero.Number(section, "UP_LIMIT").value_or(0.0f);
+        controller.downLimit = aero.Number(section, "DOWN_LIMIT").value_or(0.0f);
+        spec.aeroControllers.push_back(std::move(controller));
+    }
+}
+
+void ReadElectronics(const AcdArchive::Files& files, VehicleCarSpec& spec)
+{
+    for (const auto& [section, keys] : ParseFile(files, "electronics.ini"))
+    {
+        std::map<std::string, float> numbers;
+        for (const auto& [key, text] : keys)
+        {
+            if (const std::optional<float> number = ParseNumber(text))
+            {
+                numbers[key] = *number;
+            }
+        }
+        spec.electronics[section] = std::move(numbers);
     }
 }
 }
@@ -348,6 +635,14 @@ std::string DescribeCarSpec(const VehicleCarSpec& spec)
     if (spec.suspensionFrequencyHz.has_value())
     {
         append("springs");
+    }
+    if (spec.frontTyres.has_value())
+    {
+        append("tyres");
+    }
+    if (!spec.aeroWings.empty())
+    {
+        append("aero");
     }
     return text;
 }
@@ -466,6 +761,9 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
     ReadDrivetrain(files, spec);
     ReadBrakes(files, spec);
     ReadSuspension(files, spec);
+    ReadTyres(files, spec);
+    ReadAero(files, spec);
+    ReadElectronics(files, spec);
     return spec;
 }
 

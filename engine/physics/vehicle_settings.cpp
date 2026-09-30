@@ -12,6 +12,29 @@ namespace
 // Below this the car counts as stopped, and throttle the other way selects the other direction.
 constexpr float kDirectionChangeSpeed = 0.5f; // m/s
 constexpr float kGravity = 9.81f;
+
+// A curve's value at x by linear interpolation, its end values beyond the ends; 0 for no points.
+float EvaluateCurve(const std::vector<glm::vec2>& curve, float x)
+{
+    if (curve.empty())
+    {
+        return 0.0f;
+    }
+    if (x <= curve.front().x)
+    {
+        return curve.front().y;
+    }
+    for (size_t index = 1; index < curve.size(); ++index)
+    {
+        if (x <= curve[index].x)
+        {
+            const float span = curve[index].x - curve[index - 1].x;
+            const float t = span > 0.0f ? (x - curve[index - 1].x) / span : 1.0f;
+            return curve[index - 1].y + (curve[index].y - curve[index - 1].y) * t;
+        }
+    }
+    return curve.back().y;
+}
 }
 
 VehicleSettings FitVehicleSettingsToBounds(
@@ -140,6 +163,44 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         }
         settings.shiftUpRpm = settings.maxRpm * kShiftUpFraction;
         settings.shiftDownRpm = settings.maxRpm * kShiftDownFraction;
+    }
+
+    if (spec.gearSwitchSeconds.has_value() && *spec.gearSwitchSeconds > 0.0f)
+    {
+        settings.gearSwitchSeconds = *spec.gearSwitchSeconds;
+    }
+    if (spec.clutchReleaseSeconds.has_value() && *spec.clutchReleaseSeconds > 0.0f)
+    {
+        settings.clutchReleaseSeconds = *spec.clutchReleaseSeconds;
+    }
+    if (spec.engineInertia.has_value() && *spec.engineInertia > 0.0f)
+    {
+        settings.engineInertia = *spec.engineInertia;
+    }
+    if (!spec.aeroWings.empty())
+    {
+        // The air's drag and downforce come from the car's wings at their base angle; the body's own
+        // damping, a stand-in for the drag, goes.
+        settings.aeroSurfaces.clear();
+        for (const VehicleAeroWing& wing : spec.aeroWings)
+        {
+            const float area = std::max(wing.chord, 0.0f) * std::max(wing.span, 0.0f);
+            VehicleAeroSurface surface;
+            surface.position = wing.position;
+            surface.dragArea = std::max(EvaluateCurve(wing.dragCurve, wing.angleDegrees), 0.0f) * wing.dragGain * area;
+            // A lift coefficient below zero pushes the car down.
+            surface.downforceArea = -EvaluateCurve(wing.liftCurve, wing.angleDegrees) * wing.liftGain * area;
+            settings.aeroSurfaces.push_back(surface);
+        }
+        settings.linearDamping = 0.0f;
+    }
+    if (spec.frontTyres.has_value())
+    {
+        settings.frontTyres = *spec.frontTyres;
+    }
+    if (spec.rearTyres.has_value())
+    {
+        settings.rearTyres = *spec.rearTyres;
     }
 
     if (spec.maxSteerAngleDegrees.has_value() && *spec.maxSteerAngleDegrees > 0.0f)

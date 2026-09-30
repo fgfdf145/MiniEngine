@@ -1104,17 +1104,49 @@ std::map<std::string, std::string> BoxsterDataFiles()
          "[HEADER]\r\nVERSION=2 ; version number\r\n\r\n[BASIC]\r\nGRAPHICS_OFFSET=0,-0.33,0.11 ; correction\r\nTOTALMASS=1460 ; kg with driver\r\n\r\n"
          "[CONTROLS]\r\nSTEER_LOCK=400 ; real car's lock from centre to right\r\nSTEER_RATIO=15.0\r\n"},
         {"engine.ini",
-         "[HEADER]\r\nVERSION=1\r\nPOWER_CURVE=power.lut ; power curve file\r\n\r\n[ENGINE_DATA]\r\nLIMITER=7500 ; rev limiter\r\nMINIMUM=900\r\n\r\n"
-         "[TURBO_0]\r\nLAG_DN=0.996\r\nMAX_BOOST=1.2\r\nWASTEGATE=1.1\r\nREFERENCE_RPM=1900\r\nGAMMA=2\r\n"},
+         "[HEADER]\r\nVERSION=1\r\nPOWER_CURVE=power.lut ; power curve file\r\n\r\n[ENGINE_DATA]\r\nINERTIA=0.137 ; kg m^2\r\nLIMITER=7500 ; rev limiter\r\nMINIMUM=900\r\n\r\n"
+         "[COAST_REF]\r\nRPM=7500\r\nTORQUE=90\r\n\r\n"
+         "[TURBO_0]\r\nLAG_DN=0.996\r\nLAG_UP=0.99\r\nMAX_BOOST=1.2\r\nWASTEGATE=1.1\r\nREFERENCE_RPM=1900\r\nGAMMA=2\r\n"},
         {"power.lut", "0|50\r\n500|110\r\n1000|135\r\n1500|176\r\n1900|184\r\n2000|184\r\n4500|183\r\n6500|165\r\n7500|127\r\n8500|0\r\n"},
         {"drivetrain.ini",
          "[TRACTION]\r\nTYPE=RWD ; wheel drive\r\n\r\n[GEARS]\r\nCOUNT=7\r\nGEAR_R=-3.55\r\nGEAR_1=3.91\r\nGEAR_2=2.29\r\nGEAR_3=1.65\r\nGEAR_4=1.30\r\n"
-         "GEAR_5=1.08\r\nGEAR_6=0.88\r\nGEAR_7=0.62\r\nFINAL=3.62\r\n\r\n[DIFFERENTIAL]\r\nPOWER=0.25\r\nCOAST=0.40\r\nPRELOAD=5\r\n"},
+         "GEAR_5=1.08\r\nGEAR_6=0.88\r\nGEAR_7=0.62\r\nFINAL=3.62\r\n\r\n[DIFFERENTIAL]\r\nPOWER=0.25\r\nCOAST=0.40\r\nPRELOAD=5\r\n\r\n"
+         "[GEARBOX]\r\nCHANGE_UP_TIME=30\r\nCHANGE_DN_TIME=160\r\nAUTO_CUTOFF_TIME=35\r\n\r\n[CLUTCH]\r\nMAX_TORQUE=700\r\n\r\n"
+         "[AUTOCLUTCH]\r\nUPSHIFT_PROFILE=NONE\r\nDOWNSHIFT_PROFILE=DOWNSHIFT_PROFILE\r\nMIN_RPM=1200\r\nMAX_RPM=1800\r\n\r\n"
+         "[DOWNSHIFT_PROFILE]\r\nPOINT_0=50\r\nPOINT_1=170\r\n"},
         {"brakes.ini", "[HEADER]\r\nVERSION=1\r\n[DATA]\r\nMAX_TORQUE=3200\r\nFRONT_SHARE=0.65\r\nHANDBRAKE_TORQUE=2000\r\n"},
         {"suspensions.ini",
          "[BASIC]\r\nWHEELBASE=2.475\r\nCG_LOCATION=0.455\r\n[ARB]\r\nFRONT=30000\r\nREAR=16000\r\n[FRONT]\r\nTYPE=STRUT\r\nHUB_MASS=70\r\nSPRING_RATE=30760\r\n"
          "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\n[REAR]\r\nTYPE=STRUT\r\nHUB_MASS=80\r\nSPRING_RATE=42500\r\nDAMP_BUMP=4273\r\nDAMP_REBOUND=6873\r\n"},
-        {"aero.ini", "[WING_0]\r\nNAME=BODY\r\nCHORD=1\r\nSPAN=1.99\r\nPOSITION=0,0.15,-0.10\r\nLUT_AOA_CL=wing_body_AOA_CL.lut\r\nCL_GAIN=1\r\n"}};
+        {"aero.ini",
+         "[HEADER]\r\nVERSION=2\r\n[WING_0]\r\nNAME=BODY\r\nCHORD=1\r\nSPAN=1.99\r\nPOSITION=0,0.15,-0.10\r\nLUT_AOA_CL=wing_body_AOA_CL.lut\r\nLUT_GH_CL=\r\n"
+         "CL_GAIN=1\r\nLUT_AOA_CD=wing_body_AOA_CD.lut\r\nCD_GAIN=1\r\nANGLE=0\r\nZONE_FRONT_CD=0.005\r\n"
+         "[WING_1]\r\nNAME=REAR\r\nCHORD=1\r\nSPAN=1.99\r\nPOSITION=0,0.34 ,-1.600\r\nLUT_AOA_CL=wing_rear_AOA_CL.lut\r\nCL_GAIN=1.0\r\n"
+         "LUT_AOA_CD=wing_rear_AOA_CD.lut\r\nCD_GAIN=1.0\r\nANGLE=2\r\n"
+         "[DYNAMIC_CONTROLLER_0]\r\nWING=1\r\nCOMBINATOR=ADD\r\nINPUT=SPEED_KMH\r\nLUT=r_wing_controller_speed.lut\r\nFILTER=0.998\r\nUP_LIMIT=10\r\nDOWN_LIMIT=0\r\n"},
+        {"wing_body_aoa_cl.lut", "-2|-0.00\r\n0|-0.00\r\n2|0.03\r\n5|0.04\r\n"},
+        {"wing_body_aoa_cd.lut", "-2|0.405\r\n0|0.39\r\n2|0.40\r\n5|0.42\r\n"},
+        {"wing_rear_aoa_cl.lut", "-2|-0.250\r\n0|-0.230\r\n2|-0.210\r\n4|-0.08\r\n"},
+        {"wing_rear_aoa_cd.lut", "-2|0.02\r\n0|0.005\r\n2|0.005\r\n4|0.0\r\n"},
+        {"r_wing_controller_speed.lut", "0|0\r\n119|0\r\n120|10\r\n159|10\r\n"},
+        {"electronics.ini",
+         "[ABS]\r\nSLIP_RATIO_LIMIT=0.11\r\nCURVE=\r\nPRESENT=1\r\nACTIVE=1\r\nRATE_HZ=250\r\n[TRACTION_CONTROL]\r\nSLIP_RATIO_LIMIT=0.08\r\n"
+         "CURVE=traction_control.lut\r\nPRESENT=1\r\nACTIVE=1\r\nRATE_HZ=200\r\nMIN_SPEED_KMH=30\r\n[EDL]\r\nPRESENT=1\r\nMAX_SPIN_POWER=0.8\r\n"},
+        {"tyres.ini",
+         "[HEADER]\r\nVERSION=10\r\n[COMPOUND_DEFAULT]\r\nINDEX=0\r\n"
+         "[FRONT]\r\nNAME=Semislicks\r\nSHORT_NAME=SM\r\nWIDTH=0.235\r\nRADIUS=0.336\r\nANGULAR_INERTIA=1.62\r\nDY0=1.3080\r\nDY1=-0.048\r\nDX0=1.3114\r\nDX1=-0.046\r\n"
+         "WEAR_CURVE=semislicks_front.lut\r\nFRICTION_LIMIT_ANGLE=7.52\r\nFZ0=3606\r\nLS_EXPY=0.8273\r\nLS_EXPX=0.8915\r\nDY_REF=1.28\r\nDX_REF=1.30\r\nFALLOFF_LEVEL=0.86\r\n"
+         "[REAR]\r\nNAME=Semislicks\r\nSHORT_NAME=SM\r\nWIDTH=0.265\r\nRADIUS=0.347\r\nANGULAR_INERTIA=1.97\r\nDY0=1.3114\r\nDY1=-0.048\r\nDX0=1.3195\r\nDX1=-0.046\r\n"
+         "WEAR_CURVE=semislicks_rear.lut\r\nFRICTION_LIMIT_ANGLE=7.27\r\nFZ0=3724\r\nLS_EXPY=0.8461\r\nLS_EXPX=0.9065\r\nDY_REF=1.28\r\nDX_REF=1.30\r\nFALLOFF_LEVEL=0.86\r\n"
+         "[THERMAL_FRONT]\r\nFRICTION_K=0.04767\r\nPERFORMANCE_CURVE=tcurve_semis.lut\r\n"
+         "[THERMAL_REAR]\r\nFRICTION_K=0.04366\r\nPERFORMANCE_CURVE=tcurve_semis.lut\r\n"
+         "[FRONT_1]\r\nNAME=Street\r\nSHORT_NAME=ST\r\nANGULAR_INERTIA=1.62\r\nDY0=1.2798\r\nDX0=1.2368\r\nWEAR_CURVE=street_front.lut\r\n"
+         "[REAR_1]\r\nNAME=Street\r\nSHORT_NAME=ST\r\nANGULAR_INERTIA=1.97\r\nDY0=1.28\r\nDX0=1.24\r\nWEAR_CURVE=street_rear.lut\r\n"},
+        {"semislicks_front.lut", "0|1\r\n5000|0.9\r\n10000|0.7\r\n"},
+        {"semislicks_rear.lut", "0|1\r\n5000|0.9\r\n"},
+        {"street_front.lut", "0|1\r\n"},
+        {"street_rear.lut", "0|1\r\n"},
+        {"tcurve_semis.lut", "0|0.5\r\n80|1\r\n150|0.8\r\n"}};
 }
 
 // data.acd as the game writes it: a marker and a version word, then per file its name, its size, and one
@@ -1230,6 +1262,53 @@ void CarDataBecomesASpec()
     Require(*spec.suspensionFrequencyHz > 1.5f && *spec.suspensionFrequencyHz < 1.9f, "the springs' frequency");
     Require(*spec.suspensionDamping > 0.5f && *spec.suspensionDamping < 0.9f, "the dampers");
 
+    // Launch and clutch: the inertia, the gearbox's times, the clutch and its profiles.
+    Require(spec.engineInertia == 0.137f, "the engine's inertia");
+    Require(spec.coastRpm == 7500.0f && spec.coastTorque == 90.0f, "engine braking");
+    Require(spec.turbos.size() == 1 && spec.turbos[0].lagUp == 0.99f && spec.turbos[0].referenceRpm == 1900.0f, "the turbo");
+    Require(spec.changeUpSeconds == 0.03f && spec.changeDownSeconds == 0.16f && spec.autoCutoffSeconds == 0.035f, "the gearbox's times");
+    Require(spec.gearSwitchSeconds == 0.03f, "a change is over in the upshift's time");
+    Require(spec.clutchMaxTorque == 700.0f && spec.autoClutchMinRpm == 1200.0f && spec.autoClutchMaxRpm == 1800.0f, "the clutch");
+    Require(spec.upshiftClutchProfile.empty() && spec.downshiftClutchProfile.size() == 2 && spec.downshiftClutchProfile[1] == 0.17f,
+            "the autoclutch's profiles");
+    Require(spec.clutchReleaseSeconds == 0.1f, "no upshift profile, a tenth of a second to bite");
+    Require(spec.differentialPower == 0.25f && spec.differentialCoast == 0.4f && spec.differentialPreload == 5.0f, "the differential");
+
+    // Grip: every compound whole, and the default one's at the load a wheel carries at rest.
+    Require(spec.tyreCompounds.size() == 2 && spec.defaultTyreCompound == 0, "two compounds, the first the default");
+    const VehicleTyreData& front = spec.tyreCompounds[0].front;
+    Require(front.name == "Semislicks" && front.shortName == "SM" && spec.tyreCompounds[1].rear.name == "Street", "the compounds' names");
+    Require(front.values.at("DX0") == 1.3114f && front.values.at("FZ0") == 3606.0f && front.values.at("WIDTH") == 0.235f, "every number of the section");
+    Require(front.values.at("THERMAL_FRICTION_K") == 0.04767f, "the thermal section's, under its prefix");
+    Require(front.curves.at("WEAR_CURVE").size() == 3 && front.curves.at("WEAR_CURVE")[2] == glm::vec2(10000.0f, 0.7f), "the wear curve");
+    Require(front.curves.at("THERMAL_PERFORMANCE_CURVE").size() == 3, "the temperature curve");
+    Require(front.values.count("NAME") == 0, "text is not a number");
+    // 1460 kg with 45.5% on the front axle: 3258.6 N on a front wheel, 3903.7 N on a rear.
+    const float frontLoad = 1460.0f * 9.81f * 0.455f * 0.5f;
+    const float rearLoad = 1460.0f * 9.81f * 0.545f * 0.5f;
+    Require(spec.frontTyres.has_value() && spec.rearTyres.has_value(), "the tyres the physics takes");
+    RequireNear(spec.frontTyres->longitudinalGrip, 1.30f * std::pow(frontLoad / 3606.0f, 0.8915f - 1.0f), 1e-3f, "front longitudinal grip at its load");
+    RequireNear(spec.frontTyres->lateralGrip, 1.28f * std::pow(frontLoad / 3606.0f, 0.8273f - 1.0f), 1e-3f, "front lateral grip");
+    RequireNear(spec.rearTyres->longitudinalGrip, 1.30f * std::pow(rearLoad / 3724.0f, 0.9065f - 1.0f), 1e-3f, "rear longitudinal grip at its load");
+    RequireNear(spec.frontTyres->peakSlipAngleDegrees, 7.52f, 1e-4f, "the slip angle at the peak");
+    RequireNear(spec.frontTyres->peakSlipRatio, std::tan(7.52f * 3.14159265f / 180.0f), 1e-3f, "and a slip ratio from it");
+    Require(spec.frontTyres->postPeakShare == 0.86f && spec.frontTyres->inertia == 1.62f && spec.rearTyres->inertia == 1.97f, "falloff and wheel inertia");
+    // Grip near 1.3 is what the real tyres have; the physics engine's own peak is 1.2.
+    Require(spec.frontTyres->longitudinalGrip > 1.25f && spec.frontTyres->longitudinalGrip < 1.4f, "a semislick's grip");
+
+    // The air.
+    Require(spec.aeroWings.size() == 2 && spec.aeroControllers.size() == 1, "two wings and a controller");
+    const VehicleAeroWing& body = spec.aeroWings[0];
+    Require(body.name == "BODY" && body.chord == 1.0f && body.span == 1.99f && body.position == glm::vec3(0.0f, 0.15f, -0.10f), "the body's wing");
+    Require(body.dragCurve.size() == 4 && body.dragCurve[1] == glm::vec2(0.0f, 0.39f) && body.liftCurve.size() == 4, "and its curves");
+    Require(body.values.at("ZONE_FRONT_CD") == 0.005f && body.curves.count("LUT_GH_CL") == 0, "the zone modifier, and no curve for an empty file name");
+    Require(spec.aeroWings[1].position == glm::vec3(0.0f, 0.34f, -1.6f) && spec.aeroWings[1].angleDegrees == 2.0f, "a position with a space in it, and an angle");
+    const VehicleAeroController& controller = spec.aeroControllers[0];
+    Require(controller.wing == 1 && controller.input == "SPEED_KMH" && controller.curve.size() == 4 && controller.upLimit == 10.0f, "the controller");
+    Require(spec.electronics.at("TRACTION_CONTROL").at("SLIP_RATIO_LIMIT") == 0.08f && spec.electronics.at("ABS").at("PRESENT") == 1.0f &&
+                spec.electronics.at("TRACTION_CONTROL").count("CURVE") == 0,
+            "the driver aids' numbers");
+
     // Missing files leave their fields out instead of making them up.
     const VehicleCarSpec bare = AcCarData::BuildSpec({{"car.ini", "[BASIC]\nTOTALMASS=900\n"}});
     Require(bare.massKg == 900.0f && !bare.drive.has_value() && bare.torqueCurve.empty() && bare.gearRatios.empty() &&
@@ -1266,7 +1345,9 @@ void EveryInstalledCarDecrypts()
         ++archives;
         std::string problem;
         const std::optional<VehicleCarSpec> spec = AcCarData::ReadCarFolder(entry.path(), &problem);
-        if (!spec.has_value() || !spec->massKg.has_value() || spec->torqueCurve.empty() || spec->gearRatios.empty() || !spec->drive.has_value())
+        if (!spec.has_value() || !spec->massKg.has_value() || spec->torqueCurve.empty() || spec->gearRatios.empty() || !spec->drive.has_value() ||
+            spec->tyreCompounds.empty() || !spec->frontTyres.has_value() || !spec->rearTyres.has_value() || spec->aeroWings.empty() ||
+            !spec->engineInertia.has_value())
         {
             failures.push_back(entry.path().filename().string() + (problem.empty() ? " (incomplete)" : " (" + problem + ")"));
         }
@@ -1307,6 +1388,23 @@ void ImportWritesTheCarsOwnData()
         Require(spec.torqueCurve.size() == 10 && spec.maxRpm == 7500.0f && spec.finalDriveRatio == 3.62f, "the torque curve and revs survive");
         Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "and the flags");
         RequireNear(*spec.suspensionFrequencyHz, *AcCarData::BuildSpec(BoxsterDataFiles()).suspensionFrequencyHz, 1e-3f, "and the springs");
+        // Everything else the data holds comes through too.
+        const VehicleCarSpec expected = AcCarData::BuildSpec(BoxsterDataFiles());
+        Require(spec.engineInertia == expected.engineInertia && spec.gearSwitchSeconds == expected.gearSwitchSeconds &&
+                    spec.clutchReleaseSeconds == expected.clutchReleaseSeconds && spec.clutchMaxTorque == 700.0f,
+                "launch and clutch survive");
+        Require(spec.frontTyres.has_value() && spec.frontTyres->postPeakShare == 0.86f && spec.frontTyres->inertia == 1.62f, "the tyres survive");
+        RequireNear(spec.rearTyres->longitudinalGrip, expected.rearTyres->longitudinalGrip, 1e-3f, "with their grip");
+        Require(spec.tyreCompounds.size() == 2 && spec.defaultTyreCompound == 0, "both compounds survive");
+        Require(spec.tyreCompounds[0].front.values.at("DX0") == 1.3114f && spec.tyreCompounds[1].front.name == "Street", "with their numbers");
+        Require(spec.tyreCompounds[0].rear.curves.at("WEAR_CURVE").size() == 2 && spec.tyreCompounds[0].front.curves.at("THERMAL_PERFORMANCE_CURVE").size() == 3,
+                "and their curves");
+        Require(spec.aeroWings.size() == 2 && spec.aeroWings[1].position == glm::vec3(0.0f, 0.34f, -1.6f) && spec.aeroWings[0].dragCurve.size() == 4,
+                "the wings survive");
+        Require(spec.aeroControllers.size() == 1 && spec.aeroControllers[0].input == "SPEED_KMH", "and the controller");
+        Require(spec.turbos.size() == 1 && spec.turbos[0].gamma == 2.0f && spec.coastTorque == 90.0f, "the turbo and engine braking survive");
+        Require(spec.downshiftClutchProfile.size() == 2 && spec.differentialPreload == 5.0f, "the profiles and the differential survive");
+        Require(spec.electronics.at("TRACTION_CONTROL").at("MIN_SPEED_KMH") == 30.0f, "the driver aids survive");
     }
 
     // An archive that will not decrypt (here, one made for another folder) does not stop the import.
