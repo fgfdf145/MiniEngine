@@ -1,0 +1,62 @@
+# A vehicle test track (tools/render_scenes/make_car_test_track.py) and a plain box car on its apron,
+# facing +Z. Select the car and press F5 to drive it. From the apron three courses lead away:
+#   x 0, ahead:      suspension - speed humps, washboard, bumps under one side then the other, a kerb, a jump
+#   x -34, to the left: body attitude - 6 and 12 degree climbs, three waves, a bank swinging +12 / -12 degrees
+#   x 28..60, right: grip - eight 4 m lanes (asphalt, wet, grass, dirt, gravel, mud, snow, ice), then a
+#                    split-friction road (asphalt left, ice right) and asphalt / ice / gravel bands
+# Each surface collides at its own friction (1.0 dry asphalt down to 0.1 ice). Backspace puts the car back.
+scene:
+  version: 3
+  selected_entity_uuid: 00000000-0000-4000-8000-000000000502
+  selected_entity: 0
+entities:
+  - entity_uuid: 00000000-0000-4000-8000-000000000501
+    tag: CarTestTrack
+    model:
+      display_name: car_test_track
+      source_path: models/car_test_track/car_test_track.gltf
+      source_uuid: 7c2e5a90-1d43-4b6f-8a17-3e9d0b5c2f41
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 00000000-0000-4000-8000-000000000502
+    tag: TestCar
+    model:
+      display_name: car_test_car
+      source_path: models/car_test_car/car_test_car.gltf
+      source_uuid: a4f81d36-92b7-4c0e-b5d3-6e1f7a28c904
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.05, -10]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 00000000-0000-4000-8000-000000000503
+    tag: Sun
+    light_type: directional
+    color: [1, 1, 1]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 10, 0]
+      rotation: [35, 0, 55]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

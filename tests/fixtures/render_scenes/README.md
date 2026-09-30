@@ -71,6 +71,7 @@ miniengine_app --scene assets/scenes/test/cornell_box.yaml --frames 600 --camera
 | `texture_transforms_unlit.yaml` | A checker scaled, rotated and offset; the second UV set; unlit; a Mask cutout's shadow; a rotated normal map | Texture transforms, second UV set, unlit |
 | `cornell_box.yaml` | A Cornell box (`tools/render_scenes/make_cornell_box.py`) lit only by the sun through a hole in its ceiling: the red and green walls' colour on the white ones | Cascaded DDGI, against the reference path tracer |
 | `ddgi_track.yaml` | A generated outdoor track (`tools/render_scenes/make_ddgi_track.py`): road, 60 m tunnel, roofed grandstand, leaf-card trees, a car, afternoon sun | Cascaded DDGI |
+| `car_test_track.yaml` | A vehicle test track (`tools/render_scenes/make_car_test_track.py`) and a box car: suspension course (humps, washboard, one-sided bumps, kerb, jump), body attitude course (6/12 degree slopes, waves, a bank swinging ±12 degrees), grip lanes (asphalt to ice, split friction, friction bands). Select the car and press F5 | Vehicle physics |
 
 The two Sponza scenes need Khronos' New Sponza (`assets/NewSponza_Main_glTF_003/`), which is not in
 the repository either. Sponza is turned 90 degrees and lowered 1.7 m in front of the default camera,
