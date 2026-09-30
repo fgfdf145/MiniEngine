@@ -512,11 +512,16 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     }
 
     // Loading overlay — drawn on top of all other windows.
-    if (State().asyncLoad.IsLoading() || State().asyncSceneLoad.IsLoading())
+    const bool importing = State().asyncImport.IsLoading();
+    if (State().asyncLoad.IsLoading() || State().asyncSceneLoad.IsLoading() || importing)
     {
         const bool loadingScene = State().asyncSceneLoad.IsLoading();
-        const std::string& activePath = loadingScene ? State().asyncSceneLoad.path : State().asyncLoad.path;
-        const char* label = loadingScene ? "Loading Scene" : "Loading";
+        // A model or scene load takes precedence: the overlay shows one task at a time.
+        const bool showImport = importing && !loadingScene && !State().asyncLoad.IsLoading();
+        const std::string& activePath = showImport      ? State().asyncImport.sourcePath
+                                        : loadingScene ? State().asyncSceneLoad.path
+                                                       : State().asyncLoad.path;
+        const char* label = showImport ? "Importing" : loadingScene ? "Loading Scene" : "Loading";
 
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -534,8 +539,9 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
             ImGui::Text("%c  %s: %s", kSpinner[spinFrame], label, filename.c_str());
 
             ImGui::Spacing();
-            const float fraction =
-                loadingScene ? State().asyncSceneLoad.Progress() : State().asyncLoad.Progress();
+            const float fraction = showImport      ? State().asyncImport.Progress()
+                                   : loadingScene ? State().asyncSceneLoad.Progress()
+                                                  : State().asyncLoad.Progress();
             char progressText[16];
             std::snprintf(progressText, sizeof(progressText), "%.0f%%", fraction * 100.0f);
             ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), progressText);

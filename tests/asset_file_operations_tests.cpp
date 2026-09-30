@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <vector>
 
 // main() stays in the global namespace; everything it drives lives in me::.
 using namespace me;
@@ -125,6 +126,29 @@ std::string Import(const ScratchTree& tree, ImportConflictPolicy policy)
 {
     return ModelImportService::ImportModelIntoAssetDirectory(
         tree.Source().string(), tree.Assets().string(), policy);
+}
+
+void ImportReportsProgressToCompletion()
+{
+    ScratchTree tree("progress");
+    std::vector<float> reported;
+    ModelImportService::ImportModelIntoAssetDirectory(
+        tree.Source().string(),
+        tree.Assets().string(),
+        ImportConflictPolicy::FailIfExists,
+        {},
+        [&](float fraction)
+        {
+            reported.push_back(fraction);
+        });
+
+    Require(!reported.empty(), "an import reported no progress");
+    Require(reported.back() == 1.0f, "an import did not end at 100%");
+    for (size_t index = 0; index < reported.size(); ++index)
+    {
+        Require(reported[index] >= 0.0f && reported[index] <= 1.0f, "progress left [0, 1]");
+        Require(index == 0 || reported[index] >= reported[index - 1], "progress went backwards");
+    }
 }
 
 void SecondImportAsksAndKeepsBoth()
@@ -313,6 +337,7 @@ int main()
 {
     try
     {
+        ImportReportsProgressToCompletion();
         SecondImportAsksAndKeepsBoth();
         OverwriteReplacesFilesAndKeepsUuid();
         FailedOverwriteKeepsTheOldModel();

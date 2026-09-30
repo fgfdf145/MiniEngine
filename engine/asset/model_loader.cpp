@@ -289,7 +289,8 @@ const char* ModelLoader::GetImporterName()
 std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     const std::filesystem::path& modelPath,
     const std::filesystem::path& targetDirectory,
-    const Kn5ImportOptions& kn5Options)
+    const Kn5ImportOptions& kn5Options,
+    const ImportProgressCallback& progress)
 {
     const std::string extension = ToLowerAscii(modelPath.extension().string());
 
@@ -297,11 +298,27 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     if (Kn5Importer::IsKn5Path(modelPath) || Kn5Importer::IsLayoutPath(modelPath))
     {
         // Converted rather than copied: the result is a glTF bundle, so it needs no unpacking.
-        return Kn5Importer::ConvertToGltf(modelPath, targetDirectory, kn5Options).gltfPath;
+        return Kn5Importer::ConvertToGltf(modelPath, targetDirectory, kn5Options, progress).gltfPath;
     }
+    // A .gltf's copy and its unpacking of embedded textures split the bar between them; a .glb's
+    // one file copy is over in a single step.
+    constexpr float kCopyShare = 0.8f;
+    const auto reportProgress = [&progress](float fraction)
+    {
+        if (progress)
+        {
+            progress(fraction);
+        }
+    };
     if (extension == ".gltf")
     {
-        dst = GltfModelLoader::CopyWithSortedReferences(modelPath, targetDirectory);
+        dst = GltfModelLoader::CopyWithSortedReferences(
+            modelPath,
+            targetDirectory,
+            [&](float fraction)
+            {
+                reportProgress(kCopyShare * fraction);
+            });
     }
     else
     {
@@ -322,7 +339,14 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     // Images whose pixels live inside the model file become real files in the
     // bundle, so every texture path the loader produces is model-relative and
     // loading never has to write anything.
-    GltfModelLoader::UnpackEmbeddedTextures(dst);
+    reportProgress(kCopyShare);
+    GltfModelLoader::UnpackEmbeddedTextures(
+        dst,
+        [&](float fraction)
+        {
+            reportProgress(kCopyShare + (1.0f - kCopyShare) * fraction);
+        });
+    reportProgress(1.0f);
     return dst;
 }
 

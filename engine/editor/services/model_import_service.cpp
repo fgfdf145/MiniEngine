@@ -18,9 +18,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -60,8 +62,11 @@ std::string ImportModelIntoAssetDirectory(
     const std::string& sourcePath,
     const std::string& destinationDirectory,
     ImportConflictPolicy policy,
-    const Kn5ImportOptions& kn5Options)
+    const Kn5ImportOptions& kn5Options,
+    const ImportProgressCallback& progress)
 {
+    // The copy is nearly all of an import; the rescan that registers the result is the rest.
+    constexpr float kCopyShare = 0.95f;
     const std::filesystem::path src = std::filesystem::path(sourcePath);
     if (!std::filesystem::exists(src))
     {
@@ -102,7 +107,17 @@ std::string ImportModelIntoAssetDirectory(
     std::filesystem::path dst;
     try
     {
-        dst = ModelLoader::CopyModelWithSortedReferences(src, copyFolder, kn5Options);
+        dst = ModelLoader::CopyModelWithSortedReferences(
+            src,
+            copyFolder,
+            kn5Options,
+            [&progress](float fraction)
+            {
+                if (progress)
+                {
+                    progress(kCopyShare * fraction);
+                }
+            });
     }
     catch (...)
     {
@@ -137,7 +152,15 @@ std::string ImportModelIntoAssetDirectory(
     // Register the freshly imported bundle (model + copied textures) so it has
     // stable uuids from the very first reference; this also prunes the uuid
     // sidecars of files an overwrite removed.
+    if (progress)
+    {
+        progress(kCopyShare);
+    }
     AssetRegistry::RescanAssetTree();
+    if (progress)
+    {
+        progress(1.0f);
+    }
 
     LOG_INFO("Imported model '{}' -> '{}'", src.string(), dst.string());
     return dst.string();
@@ -157,11 +180,21 @@ void StartAsyncImport(
 
     state.asyncImport.sourcePath = sourcePath;
     state.asyncImport.destinationDirectory = destinationDirectory;
-    state.asyncImport.future = std::async(std::launch::async, [sourcePath, destinationDirectory, policy, kn5Options]()
-                                          {
-                                              return ImportModelIntoAssetDirectory(
-                                                  sourcePath, destinationDirectory, policy, kn5Options);
-                                          });
+    state.asyncImport.progress = std::make_shared<std::atomic<float>>(0.0f);
+    state.asyncImport.future = std::async(
+        std::launch::async,
+        [sourcePath, destinationDirectory, policy, kn5Options, progress = state.asyncImport.progress]()
+        {
+            return ImportModelIntoAssetDirectory(
+                sourcePath,
+                destinationDirectory,
+                policy,
+                kn5Options,
+                [&progress](float fraction)
+                {
+                    progress->store(fraction);
+                });
+        });
 
     LOG_INFO("Started async import: {} -> {}", sourcePath, destinationDirectory);
 }

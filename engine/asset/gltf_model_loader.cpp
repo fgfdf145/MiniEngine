@@ -2406,7 +2406,7 @@ LoadedModelData GltfModelLoader::LoadModel(const std::string& path, const ModelL
     return BuildLoadedModelData(tinyModel, modelPath, progress);
 }
 
-void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelPath)
+void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelPath, const ImportProgressCallback& progress)
 {
     const std::string extension = ToLowerAscii(modelPath.extension().string());
 
@@ -2443,6 +2443,10 @@ void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelP
     size_t unpacked = 0;
     for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
     {
+        if (progress)
+        {
+            progress(static_cast<float>(imageIndex) / static_cast<float>(model.images.size()));
+        }
         const tinygltf::Image& image = model.images[imageIndex];
         if (!IsEmbeddedImage(image))
         {
@@ -2473,7 +2477,8 @@ void GltfModelLoader::UnpackEmbeddedTextures(const std::filesystem::path& modelP
 
 std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
     const std::filesystem::path& gltfPath,
-    const std::filesystem::path& targetDirectory)
+    const std::filesystem::path& targetDirectory,
+    const ImportProgressCallback& progress)
 {
     std::ifstream file(gltfPath, std::ios::binary);
     if (!file)
@@ -2489,6 +2494,27 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
     std::unordered_map<std::string, std::string> rewrittenUris; // decoded source URI -> new encoded URI
     std::unordered_set<std::string> claimedRelPaths;            // destination-relative paths already assigned
 
+    // References are counted up front, so each companion moves the bar by its share; the
+    // report comes as one is started, hearing how many are already done.
+    size_t referenceCount = 0;
+    for (const char* arrayName : {"buffers", "images"})
+    {
+        const auto arrayIt = document.find(arrayName);
+        if (arrayIt != document.end() && arrayIt->is_array())
+        {
+            referenceCount += arrayIt->size();
+        }
+    }
+    size_t referencesDone = 0;
+    const auto reportReference = [&]
+    {
+        if (progress)
+        {
+            progress(static_cast<float>(referencesDone) / static_cast<float>(referenceCount));
+        }
+        ++referencesDone;
+    };
+
     const auto processArray = [&](const char* arrayName, const char* subdirName)
     {
         const auto arrayIt = document.find(arrayName);
@@ -2498,6 +2524,7 @@ std::filesystem::path GltfModelLoader::CopyWithSortedReferences(
         }
         for (nlohmann::ordered_json& element : *arrayIt)
         {
+            reportReference();
             const auto uriIt = element.find("uri");
             if (uriIt == element.end() || !uriIt->is_string())
             {

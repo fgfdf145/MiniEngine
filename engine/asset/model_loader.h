@@ -257,10 +257,11 @@ class ModelLoader
     // with its buffer and PNG textures laid out the same way, as `kn5Options`
     // asks (the car's default skin unless it names another).
     // Existing destination files are kept, never overwritten. Returns the
-    // path of the model the engine loads.
+    // path of the model the engine loads. `progress` hears how far the copy got.
     static std::filesystem::path CopyModelWithSortedReferences(
         const std::filesystem::path& modelPath,
         const std::filesystem::path& targetDirectory,
-        const Kn5ImportOptions& kn5Options = {});
+        const Kn5ImportOptions& kn5Options = {},
+        const ImportProgressCallback& progress = {});
 };
 }

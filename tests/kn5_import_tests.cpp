@@ -630,6 +630,29 @@ void RulesMatchTheConverter()
     Require(!Kn5Importer::FlatDetailTint(pattern, 2, 1).has_value(), "a pattern is not a paint colour");
 }
 
+void ConversionReportsProgressToCompletion()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    std::vector<float> reported;
+    Kn5Importer::ConvertToGltf(
+        kn5,
+        scope.Path() / "assets" / "progress",
+        {},
+        [&](float fraction)
+        {
+            reported.push_back(fraction);
+        });
+
+    Require(!reported.empty(), "a conversion reported no progress");
+    Require(reported.back() == 1.0f, "a conversion did not end at 100%");
+    for (size_t index = 0; index < reported.size(); ++index)
+    {
+        Require(reported[index] >= 0.0f && reported[index] <= 1.0f, "progress left [0, 1]");
+        Require(index == 0 || reported[index] >= reported[index - 1], "progress went backwards");
+    }
+}
+
 void ConvertsHierarchyGeometryAndMaterials()
 {
     ScopedDirectory scope;
@@ -1099,6 +1122,7 @@ int main()
         DdsRejectsBadInput();
         ReaderParsesTheContainer();
         RulesMatchTheConverter();
+        ConversionReportsProgressToCompletion();
         ConvertsHierarchyGeometryAndMaterials();
         SkinChoiceChangesThePaint();
         RefusesEncryptedAndExistingTargets();

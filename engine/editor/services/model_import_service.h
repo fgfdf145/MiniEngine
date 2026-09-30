@@ -23,16 +23,18 @@ namespace ModelImportService
 // and the returned path is that glTF, converted as `kn5Options` asks (ignored
 // for other formats). `policy`
 // decides what happens when that folder already holds files; see
-// ModelImportTarget. Returns the imported model path. Blocking; prefer
-// StartAsyncImport from the UI thread.
+// ModelImportTarget. `progress` hears the overall fraction done. Returns the
+// imported model path. Blocking; prefer StartAsyncImport from the UI thread.
 std::string ImportModelIntoAssetDirectory(
     const std::string& sourcePath,
     const std::string& destinationDirectory,
     ImportConflictPolicy policy = ImportConflictPolicy::FailIfExists,
-    const Kn5ImportOptions& kn5Options = {});
+    const Kn5ImportOptions& kn5Options = {},
+    const ImportProgressCallback& progress = {});
 
 // Runs ImportModelIntoAssetDirectory on a background thread via
-// state.asyncImport. Throws if another import is still in flight.
+// state.asyncImport, whose Progress() follows it. Throws if another import is
+// still in flight.
 void StartAsyncImport(
     RendererSharedState& state,
     const std::string& sourcePath,

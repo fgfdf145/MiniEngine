@@ -367,10 +367,17 @@ class GltfBuilder
 
     // Writes the sampled textures this model carries and no earlier model already wrote: the game
     // keeps one texture per name.
-    void WriteTextures(const Kn5Model& model)
+    // `progress` hears the fraction of the model's textures gone through.
+    void WriteTextures(const Kn5Model& model, const ImportProgressCallback& progress = {})
     {
+        size_t visited = 0;
         for (const Kn5Texture& texture : model.textures)
         {
+            if (progress)
+            {
+                progress(static_cast<float>(visited) / static_cast<float>(model.textures.size()));
+            }
+            ++visited;
             const std::string key = ToLowerAscii(texture.name);
             if (!m_usedTextures.count(key) || texture.data.size() < kStubTextureBytes || m_textureUris.count(key) != 0)
             {
@@ -1737,8 +1744,24 @@ Kn5ModelSummary Inspect(const std::filesystem::path& source)
 Kn5ImportReport ConvertToGltf(
     const std::filesystem::path& source,
     const std::filesystem::path& targetDirectory,
-    const Kn5ImportOptions& options)
+    const Kn5ImportOptions& options,
+    const ImportProgressCallback& progress)
 {
+    // The passes' shares of the whole; the geometry pass and the final write take the rest.
+    constexpr float kTablesShare = 0.05f;
+    constexpr float kTexturesShare = 0.45f;
+    constexpr float kGeometryShare = 0.40f;
+    float lastReported = 0.0f;
+    const auto reportProgress = [&](float fraction)
+    {
+        // Passes only ever move forward, whichever model or texture they are on.
+        lastReported = std::max(lastReported, std::clamp(fraction, 0.0f, 1.0f));
+        if (progress)
+        {
+            progress(lastReported);
+        }
+    };
+
     const std::vector<Kn5LayoutModel> sources = ImportSources(source);
     const bool layout = IsLayoutPath(source);
     // Refused before anything is written.
@@ -1782,12 +1805,16 @@ Kn5ImportReport ConvertToGltf(
     // Three passes, one model at a time, each reading only what it needs: a track's kn5 run to
     // hundreds of megabytes. First which textures the whole import samples, then those textures
     // from whichever model carries each, then materials and geometry.
+    const float modelCount = static_cast<float>(sources.size());
+    float modelIndex = 0.0f;
     for (const Kn5LayoutModel& placed : sources)
     {
         Kn5Model tables = Kn5Reader::Load(placed.file, Kn5ReadScope::Tables);
         FoldTextureCase(tables);
         builder.CollectTextureUse(tables);
+        reportProgress(kTablesShare * (++modelIndex / modelCount));
     }
+    modelIndex = 0.0f;
     for (const Kn5LayoutModel& placed : sources)
     {
         Kn5Model textures = Kn5Reader::Load(placed.file, Kn5ReadScope::Textures);
@@ -1796,12 +1823,20 @@ Kn5ImportReport ConvertToGltf(
         {
             ApplySkin(textures, *skin);
         }
-        builder.WriteTextures(textures);
+        builder.WriteTextures(
+            textures,
+            [&](float fraction)
+            {
+                reportProgress(kTablesShare + kTexturesShare * ((modelIndex + fraction) / modelCount));
+            });
+        ++modelIndex;
     }
 
     std::vector<size_t> roots;
+    modelIndex = 0.0f;
     for (const Kn5LayoutModel& placed : sources)
     {
+        reportProgress(kTablesShare + kTexturesShare + kGeometryShare * (modelIndex++ / modelCount));
         Kn5Model model = Kn5Reader::Load(placed.file);
         report.foldedTextureNames += FoldTextureCase(model);
         ++report.models;
@@ -1832,12 +1867,14 @@ Kn5ImportReport ConvertToGltf(
         roots.push_back(*root);
     }
     const size_t sceneRoot = builder.AddRoot(name, roots);
+    reportProgress(kTablesShare + kTexturesShare + kGeometryShare);
 
     const std::string binaryUri = "buffers/" + name + ".bin";
     const Json document = builder.BuildDocument(sceneRoot, binaryUri);
     WriteFileBytes(binaryPath, builder.Binary().data(), builder.Binary().size());
     const std::string text = document.dump();
     WriteFileBytes(gltfPath, text.data(), text.size());
+    reportProgress(1.0f);
 
     report.gltfPath = gltfPath;
     report.nodes = builder.NodeCount();

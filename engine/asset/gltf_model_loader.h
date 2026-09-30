@@ -17,17 +17,18 @@ class GltfModelLoader
     // textures/) and rewriting the copied glTF's URIs to match. Existing files
     // at the destination are kept, never overwritten. Returns the path of the
     // glTF written inside targetDirectory. Throws on unreadable or malformed
-    // JSON.
+    // JSON. `progress` hears the fraction of the referenced files copied.
     static std::filesystem::path CopyWithSortedReferences(
         const std::filesystem::path& gltfPath,
-        const std::filesystem::path& targetDirectory);
+        const std::filesystem::path& targetDirectory,
+        const ImportProgressCallback& progress = {});
 
     // Writes every image whose pixels live inside the model file (.glb
     // payloads and data: URIs) into "<model directory>/textures/", naming each
     // file the way ResolveImagePath derives it at load time. External URIs are
     // left alone. A destination that already exists is kept, never rewritten.
     // Does nothing for a model with no embedded images. Throws only if the
-    // model itself cannot be parsed.
-    static void UnpackEmbeddedTextures(const std::filesystem::path& modelPath);
+    // model itself cannot be parsed. `progress` hears the fraction of the images gone through.
+    static void UnpackEmbeddedTextures(const std::filesystem::path& modelPath, const ImportProgressCallback& progress = {});
 };
 }

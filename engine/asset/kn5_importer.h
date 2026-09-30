@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -28,6 +29,10 @@ namespace me
 //  - CSP-encrypted files refused: their plain section is decoys;
 //  - a track's layout: models.ini / models_<layout>.ini place several kn5 in one scene, and the
 //    import converts them all, each at its POSITION and ROTATION.
+// Invoked from the importing thread with the overall import fraction in [0, 1], never going
+// backwards. Implementations must be cheap and thread-safe (typically an atomic store).
+using ImportProgressCallback = std::function<void(float)>;
+
 struct Kn5ImportOptions
 {
     // A folder under the car's skins/, matched ignoring case. Empty takes the first one, which is
@@ -159,11 +164,13 @@ std::vector<std::string> ListSkins(const std::filesystem::path& kn5Path);
 // Converts a kn5, or every model of a layout, into targetDirectory (created if missing) as one
 // glTF named ImportName(source), and returns what was written. Throws std::runtime_error for an
 // encrypted, corrupt or unreadable kn5, an unknown skin, a layout that ReadLayout rejects, or a
-// destination glTF that already exists (an import never overwrites).
+// destination glTF that already exists (an import never overwrites). `progress` hears how far
+// the conversion got.
 Kn5ImportReport ConvertToGltf(
     const std::filesystem::path& source,
     const std::filesystem::path& targetDirectory,
-    const Kn5ImportOptions& options = {});
+    const Kn5ImportOptions& options = {},
+    const ImportProgressCallback& progress = {});
 
 // ---- The rules, exposed for tests --------------------------------------------------------------
 

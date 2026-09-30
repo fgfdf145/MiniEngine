@@ -91,7 +91,7 @@ struct AsyncSceneLoad : AsyncTaskWithProgress<SerializedSceneData>
 // State for a single in-flight asset import: the file copies run on a
 // background thread so large models don't stall the UI frame.
 // The future resolves to the imported model path, or throws.
-struct AsyncAssetImport : AsyncTask<std::string>
+struct AsyncAssetImport : AsyncTaskWithProgress<std::string>
 {
     std::string sourcePath;
     std::string destinationDirectory;
