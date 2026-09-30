@@ -46,11 +46,13 @@ float ComputeBrakeTorquePerWheel(const VehicleSettings& settings)
     // Without tyre data the physics engine's own tyres peak at 1.2 and are combined with the surface's
     // friction (1 by default) by a square root.
     constexpr float kDefaultGrip = 1.1f;
-    constexpr float kGripUsed = 0.75f;
+    // Sharing the brakes by load gives the fronts more of the torque than the fixed split does, and they
+    // lock first: the total is held a little lower so that the car keeps its steering.
+    const float gripUsed = settings.dynamicBrakeBias ? 0.66f : 0.75f;
     const float front = settings.frontTyres.longitudinalGrip;
     const float rear = settings.rearTyres.longitudinalGrip;
     const float grip = front > 0.0f && rear > 0.0f ? 0.5f * (front + rear) : std::max(front, rear) > 0.0f ? std::max(front, rear) : kDefaultGrip;
-    return kGripUsed * grip * std::max(settings.massKg, 1.0f) * kGravity * std::max(settings.wheelRadius, 0.01f) * 0.25f;
+    return gripUsed * grip * std::max(settings.massKg, 1.0f) * kGravity * std::max(settings.wheelRadius, 0.01f) * 0.25f;
 }
 
 VehicleSettings FitVehicleSettingsToBounds(
@@ -250,6 +252,11 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     if (spec.limitedSlipDifferentials.has_value())
     {
         settings.limitedSlipDifferentials = *spec.limitedSlipDifferentials;
+        // The game's lock under power is the share of the drive torque the clutch pack takes.
+        if (spec.differentialPower.has_value() && *spec.differentialPower > 0.0f)
+        {
+            settings.limitedSlipLock = std::clamp(*spec.differentialPower, 0.05f, 1.0f);
+        }
     }
     return settings;
 }

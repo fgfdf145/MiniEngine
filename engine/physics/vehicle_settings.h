@@ -132,6 +132,9 @@ struct VehicleSettings
     // The engine's moment of inertia, kg m^2 (the physics engine's 0.5 when 0). It steals torque from
     // the wheels while the revs climb, most in the low gears.
     float engineInertia = 0.0f;
+    // How hard the clutch drags the wheels along with the engine, torque per rad/s of difference (the
+    // physics engine's 10 when 0).
+    float clutchStrength = 0.0f;
     // The tyres: with any grip set the vehicle's tyres multiply the surface's friction (as the game does)
     // instead of the physics engine's square root of the two.
     VehicleTyreSettings frontTyres;
@@ -145,10 +148,21 @@ struct VehicleSettings
     // front axle, so it takes the larger share, though not much more than 0.55 before the fronts lock.
     float maxBrakeTorque = 0.0f; // Nm per wheel
     float frontBrakeShare = 0.55f;
+    // With this on, the four wheels share the brakes' total torque (four times maxBrakeTorque) by the
+    // load each carries at the moment: braking, cornering and bumps move weight between them, and a
+    // wheel in the air gets none. frontBrakeShare then only holds until the car's loads are known.
+    bool dynamicBrakeBias = true;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;
     bool limitedSlipDifferentials = true;
+    // How much of the drive torque a limited-slip differential can move from the wheel that spins to the one
+    // that grips: 0 is open, 1 nearly locked.
+    float limitedSlipLock = 0.4f;
+    // Traction control: the clutch slips once the engine asks the driven wheels for more torque than their
+    // tyres can hold, this share of their peak grip on the load they carry (1 is the limit, less stays short of
+    // it). 0 is off. Without it a car at full throttle in a low gear spins its tyres several times over.
+    float tractionControlGrip = 0.85f;
     // The body's linear damping, a fraction of its speed lost each second: the physics engine's 0.05, a
     // stand-in for air drag that a car with its own aerodynamics sets to 0.
     float linearDamping = 0.05f;
@@ -290,7 +304,8 @@ struct VehicleCarSpec
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);
 
 // The brake torque per wheel (Nm) that stops the car as hard as its tyres allow, a little short of
-// locking them: 75% of the grip on the car's weight, over the wheel radius, shared by four wheels.
+// locking them: 75% of the grip on the car's weight (66% with dynamicBrakeBias), over the wheel radius,
+// shared by four wheels.
 // The tuned maxBrakeTorque when it is set.
 float ComputeBrakeTorquePerWheel(const VehicleSettings& settings);
 

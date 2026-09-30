@@ -526,6 +526,10 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
                 NavigateTo(entry.path);
                 navigated = true;
             }
+            else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.type == AssetType::Scene)
+            {
+                result.openScenePath = entry.path.string();
+            }
             else
             {
                 const ImGuiIO& io = ImGui::GetIO();

@@ -55,6 +55,10 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
                 LOG_INFO("Ignored dropped file '{}': it is already in the assets folder", dropped);
             }
         }
+        if (assetResult.openScenePath.has_value())
+        {
+            result.actions.selectedSceneLoadPath = assetResult.openScenePath;
+        }
         if (assetResult.selectedModelPath.has_value())
         {
             result.actions.selectedModelPath = assetResult.selectedModelPath;

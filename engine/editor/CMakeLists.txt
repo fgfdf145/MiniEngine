@@ -38,6 +38,8 @@ add_library(engine_editor
     ui/editor_theme_panel.cpp
     ui/editor_ui_internal.h
     ui/editor_ui_shared.cpp
+    ui/editor_vehicle_overlay.cpp
+    ui/editor_vehicle_overlay.h
     ui/editor_vehicle_panel.cpp
     ui/editor_viewport_panel.cpp
 )

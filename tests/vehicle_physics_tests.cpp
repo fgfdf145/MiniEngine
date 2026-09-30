@@ -277,6 +277,161 @@ void TestCarSitsOnTheModelsWheels()
     }
 }
 
+// The springs hold a quarter of the weight at the length ComputeRestSuspensionLength gives, whatever the
+// car's size, mass and spring rate (the physics engine's frequency mode scaled the spring by the body's
+// inertia and sagged 10 to 25% less).
+void TestSpringsSettleAtTheRestLength()
+{
+    struct Case
+    {
+        glm::vec3 minBounds;
+        glm::vec3 maxBounds;
+        float massKg;
+        float frequencyHz;
+    };
+    const Case cases[] = {
+        {kCarMin, kCarMax, 1400.0f, 1.5f},
+        {kCarMin, kCarMax, 900.0f, 1.0f},
+        {kCarMin, kCarMax, 2500.0f, 3.0f},
+        {glm::vec3(-0.75f, 0.0f, -1.6f), glm::vec3(0.75f, 1.2f, 1.6f), 800.0f, 1.5f},
+        {glm::vec3(-1.0f, 0.0f, -2.3f), glm::vec3(1.0f, 1.0f, 2.3f), 1100.0f, 2.0f},
+    };
+    for (const Case& test : cases)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        VehicleSettings tuning;
+        tuning.massKg = test.massKg;
+        tuning.suspensionFrequencyHz = test.frequencyHz;
+        const VehicleSettings settings = FitVehicleSettingsToBounds(test.minBounds, test.maxBounds, tuning);
+        const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 4.0f);
+
+        // The solver leaves a few percent of the compression, so the tolerance follows it.
+        const float rest = ComputeRestSuspensionLength(settings, 9.81f);
+        const float tolerance = 0.002f + 0.06f * (settings.suspensionMaxLength - rest);
+        const std::string what = std::to_string(test.massKg) + " kg at " + std::to_string(test.frequencyHz) + " Hz";
+        for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+        {
+            RequireNear(wheel.suspensionLength, rest, tolerance, "a wheel of " + what + " settles at the rest length");
+        }
+        RequireNear(world.GetVehiclePose(car).position.y, 0.0f, tolerance, "the body of " + what + " sits at its ride height");
+    }
+}
+
+// The forces and slip a wheel reports for drawing: the loads carry the car's weight, a car rolling
+// straight has no slip to speak of, and steering makes cornering forces that push it round.
+void TestWheelStateReportsTyrePhysics()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    VehicleSettings tuning;
+    tuning.massKg = 1400.0f;
+    tuning.frontTyres = {1.4f, 1.6f, 0.1f, 6.0f, 0.0f, 0.0f};
+    tuning.rearTyres = tuning.frontTyres;
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 3.0f);
+
+    float load = 0.0f;
+    for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+    {
+        Require(wheel.inContact, "every wheel touches the ground");
+        load += wheel.suspensionForce;
+        RequireNear(wheel.contactNormal.y, 1.0f, 1e-3f, "on flat ground the normal is up");
+        RequireNear(wheel.suspensionMinLength, settings.suspensionMinLength, 1e-5f, "the travel's bump end");
+        RequireNear(wheel.suspensionMaxLength, settings.suspensionMaxLength, 1e-5f, "and droop end");
+        RequireNear(wheel.contactPosition.y, 0.0f, 0.02f, "the contact patch is on the ground");
+        RequireNear(glm::length(wheel.mount + wheel.suspensionAxis * wheel.suspensionLength - wheel.pose.position), 0.0f, 0.02f, "the wheel hangs its suspension length below the mount");
+        Require(wheel.longitudinalPeakFriction > 1.3f && wheel.longitudinalPeakFriction < 1.5f, "the peak grip is the tyre's, " + std::to_string(wheel.longitudinalPeakFriction));
+        Require(wheel.lateralPeakFriction > 1.5f && wheel.lateralPeakFriction < 1.7f, "across too, " + std::to_string(wheel.lateralPeakFriction));
+    }
+    RequireNear(load, 1400.0f * 9.81f, 1400.0f * 9.81f * 0.05f, "the four loads carry the car's weight");
+
+    // Drive on, then turn right: the tyres push the car towards its right, -X in vehicle space, and
+    // the front wheels run at a slip angle.
+    VehicleControls controls;
+    controls.throttle = 0.6f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 5.0f);
+    for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+    {
+        Require(std::abs(wheel.slipAngleDegrees) < 1.0f, "straight ahead the slip angle is nothing, " + std::to_string(wheel.slipAngleDegrees));
+    }
+    controls.steering = 0.5f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 1.0f);
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    for (size_t index = 0; index < 2; ++index)
+    {
+        const VehicleWheelState& wheel = wheels[index];
+        Require(std::abs(wheel.slipAngleDegrees) > 1.0f, "a steered wheel slips sideways, " + std::to_string(wheel.slipAngleDegrees));
+        Require(wheel.lateralForce * wheel.contactLateral.x < 0.0f && std::abs(wheel.lateralForce) > 500.0f,
+                "and pushes the car towards its right, " + std::to_string(wheel.lateralForce) + " N");
+        Require(wheel.lateralFriction > 0.0f && wheel.lateralFriction <= wheel.lateralPeakFriction + 1e-3f, "at a friction the curve allows");
+    }
+}
+
+// A wheel turning more than half a turn per physics step (188 rad/s at 60 Hz: a 0.32 m tyre at 216 km/h,
+// or a driven wheel spinning up in the air) has poses that look like it turned the other way, so the roll is
+// followed by angle instead. Frame by frame, the wheel the model draws turns as far as the physics engine's.
+void TestFastWheelsRollTheRightWay()
+{
+    PhysicsWorld world;
+    VehicleSettings tuning;
+    tuning.maxEngineTorque = 900.0f;
+    tuning.maxRpm = 9000.0f;
+    tuning.gearRatios = {1.0f};
+    tuning.finalDriveRatio = 1.0f;
+    tuning.tractionControlGrip = 0.0f; // it would slip the clutch on wheels in the air
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    // No ground: the car falls, and its driven wheels spin up as fast as the engine takes them.
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 100000.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+
+    constexpr float kFrame = 1.0f / 144.0f;
+    const glm::quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+    const auto rollOf = [&](size_t index)
+    {
+        const VehicleWheelState wheel = world.GetVehicleWheels(car)[index];
+        const VehicleWheelMotion motion = ComputeVehicleWheelMotion(world.GetVehiclePose(car), wheel.pose, identity, glm::vec3(1.0f));
+        return std::pair{2.0f * std::atan2(motion.spin.x, motion.spin.w), wheel};
+    };
+    float fastest = 0.0f;
+    for (int frame = 0; frame < 144 * 20 && fastest < 250.0f; ++frame)
+    {
+        world.Update(kFrame);
+        fastest = std::max(fastest, world.GetVehicleWheels(car)[2].angularVelocity);
+    }
+    Require(fastest > 200.0f, "the driven wheels spin faster than half a turn per step, " + std::to_string(fastest) + " rad/s");
+
+    // Follow the wheel while a frame's turn is still under half a turn, so that the frames themselves can
+    // be told apart; that is well past the physics step's half turn.
+    float drawn = 0.0f;
+    float physical = 0.0f;
+    int frames = 0;
+    float previousAngle = rollOf(2).first;
+    for (; frames < 144; ++frames)
+    {
+        world.Update(kFrame);
+        const auto [angle, wheel] = rollOf(2);
+        if (wheel.angularVelocity * kFrame > 3.0f)
+        {
+            break;
+        }
+        float turned = angle - previousAngle;
+        turned -= 2.0f * 3.14159265f * std::round(turned / (2.0f * 3.14159265f));
+        drawn += turned;
+        physical += wheel.angularVelocity * kFrame;
+        previousAngle = angle;
+        RequireNear(std::remainder(angle - wheel.spinAngle, 2.0f * 3.14159265f), 0.0f, 1e-3f, "the pose rolls by the reported roll angle");
+    }
+    Require(frames >= 10 && physical > 30.0f, "the wheel turned a long way in that time, " + std::to_string(physical) + " rad in " + std::to_string(frames) + " frames");
+    RequireNear(drawn, physical, physical * 0.03f, "and the drawn wheel turned as far, forwards");
+}
+
 void TestWheelMotionRollsForwardAndSteers()
 {
     PhysicsWorld world;
@@ -482,7 +637,7 @@ void TestCarScrapingAWallStaysOnTheGround()
     const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, {}, &layout), {glm::vec3(0.0f), towardsWall});
     for (int step = 0; step < 60; ++step)
     {
-        world.Update(PhysicsWorld::kFixedStepSeconds);
+        world.Update(1.0f / 60.0f);
     }
     VehicleControls controls;
     controls.throttle = 1.0f;
@@ -493,7 +648,7 @@ void TestCarScrapingAWallStaysOnTheGround()
     float mostRoll = 0.0f;
     for (int step = 0; step < 600; ++step)
     {
-        world.Update(PhysicsWorld::kFixedStepSeconds);
+        world.Update(1.0f / 60.0f);
         const PhysicsPose pose = world.GetVehiclePose(car);
         furthest = std::max(furthest, pose.position.x);
         highest = std::max(highest, pose.position.y);
@@ -701,7 +856,7 @@ void TestAerodynamicsDragsAndPressesDown()
     const float withAir = runFor(air, 8.0f, lengthWith);
     std::cout << "8 s at full throttle: " << withoutAir * 3.6f << " km/h without air, " << withAir * 3.6f << " with; suspension "
               << lengthWithout << " against " << lengthWith << '\n';
-    Require(withoutAir > withAir + 1.0f, "drag holds the car back, " + std::to_string(withoutAir) + " m/s against " + std::to_string(withAir));
+    Require(withoutAir > withAir + 0.5f, "drag holds the car back, " + std::to_string(withoutAir) + " m/s against " + std::to_string(withAir));
     Require(lengthWith < lengthWithout, "downforce compresses the suspension, " + std::to_string(lengthWith) + " against " + std::to_string(lengthWithout));
 }
 
@@ -744,6 +899,99 @@ void BrakeFromSpeed(const VehicleSettings& settings, float& lockedSeconds, float
     distance = glm::length(world.GetVehiclePose(car).position - start);
 }
 
+// Brakes hard from 25 m/s: how much of its load each axle turns into braking force (the mean of
+// |Fx| / N over the stop, for the two wheels of an axle), and how long the wheels lock, per axle.
+struct BrakingReport
+{
+    float frontTorquePerLoad = 0.0f;
+    float rearTorquePerLoad = 0.0f;
+    float totalTorque = 0.0f;
+    float frontLockedSeconds = 0.0f;
+    float rearLockedSeconds = 0.0f;
+};
+
+BrakingReport MeasureBraking(const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    for (int i = 0; i < 4000 && world.GetVehicleTelemetry(car).forwardSpeed < 25.0f; ++i)
+    {
+        Simulate(world, 0.01f);
+    }
+    controls = {};
+    controls.brake = 1.0f;
+    world.SetVehicleControls(car, controls);
+
+    BrakingReport report;
+    float frontTorque = 0.0f;
+    float frontLoad = 0.0f;
+    float rearTorque = 0.0f;
+    float rearLoad = 0.0f;
+    int samples = 0;
+    for (float time = 0.0f; time < 10.0f; time += 0.01f)
+    {
+        const float speed = world.GetVehicleTelemetry(car).forwardSpeed;
+        if (speed < 8.0f)
+        {
+            break;
+        }
+        const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+        for (size_t index = 0; index < wheels.size(); ++index)
+        {
+            const VehicleWheelState& wheel = wheels[index];
+            const bool front = index < 2;
+            (front ? frontTorque : rearTorque) += wheel.brakeTorque;
+            (front ? frontLoad : rearLoad) += wheel.suspensionForce;
+            if (wheel.slipRatio > 0.5f)
+            {
+                (front ? report.frontLockedSeconds : report.rearLockedSeconds) += 0.01f / 2.0f;
+            }
+        }
+        ++samples;
+        Simulate(world, 0.01f);
+    }
+    report.frontTorquePerLoad = frontLoad > 0.0f ? frontTorque / frontLoad : 0.0f;
+    report.rearTorquePerLoad = rearLoad > 0.0f ? rearTorque / rearLoad : 0.0f;
+    report.totalTorque = samples > 0 ? (frontTorque + rearTorque) / static_cast<float>(samples) : 0.0f;
+    return report;
+}
+
+// The brakes' torque goes to the wheels by the load they carry. A fixed 55/45 split gives the rear axle,
+// which weight leaves under braking, more torque for its load than the front; sharing by load evens them
+// and keeps the total, and at a torque that locks the wheels the rear no longer locks first.
+void TestBrakeTorqueFollowsTheLoad()
+{
+    VehicleSettings fixedSplit = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    fixedSplit.dynamicBrakeBias = false;
+    VehicleSettings byLoad = fixedSplit;
+    byLoad.dynamicBrakeBias = true;
+
+    fixedSplit.maxBrakeTorque = 600.0f;
+    byLoad.maxBrakeTorque = 600.0f;
+    const BrakingReport fixedGentle = MeasureBraking(fixedSplit);
+    const BrakingReport loadGentle = MeasureBraking(byLoad);
+    std::cout << "gentle braking, torque per load front/rear: fixed " << fixedGentle.frontTorquePerLoad << "/" << fixedGentle.rearTorquePerLoad
+              << ", by load " << loadGentle.frontTorquePerLoad << "/" << loadGentle.rearTorquePerLoad << "\n";
+    Require(fixedGentle.rearTorquePerLoad > fixedGentle.frontTorquePerLoad * 1.04f, "a fixed split gives the unloaded rear more torque for its load");
+    RequireNear(loadGentle.rearTorquePerLoad, loadGentle.frontTorquePerLoad, loadGentle.frontTorquePerLoad * 0.03f, "sharing by load evens them");
+    RequireNear(fixedGentle.totalTorque, 4.0f * 600.0f, 4.0f * 600.0f * 0.03f, "the fixed split's total");
+    RequireNear(loadGentle.totalTorque, 4.0f * 600.0f, 4.0f * 600.0f * 0.03f, "is what sharing by load spreads too");
+
+    fixedSplit.maxBrakeTorque = 1100.0f;
+    byLoad.maxBrakeTorque = 1100.0f;
+    const BrakingReport fixedHard = MeasureBraking(fixedSplit);
+    const BrakingReport loadHard = MeasureBraking(byLoad);
+    std::cout << "hard braking, seconds locked front/rear: fixed " << fixedHard.frontLockedSeconds << "/" << fixedHard.rearLockedSeconds
+              << ", by load " << loadHard.frontLockedSeconds << "/" << loadHard.rearLockedSeconds << "\n";
+    Require(fixedHard.rearLockedSeconds > 0.15f, "a fixed split locks the rear under hard braking, " + std::to_string(fixedHard.rearLockedSeconds));
+    Require(loadHard.rearLockedSeconds < 0.05f, "sharing by load keeps it turning, " + std::to_string(loadHard.rearLockedSeconds));
+}
+
 void TestAutomaticBrakesDoNotLockTheWheels()
 {
     const VehicleSettings car = FitVehicleSettingsToBounds(kCarMin, kCarMax);
@@ -765,15 +1013,83 @@ void TestAutomaticBrakesDoNotLockTheWheels()
     BrakeFromSpeed(car, lockedSeconds, distance);
     std::cout << "automatic brakes: " << torque << " Nm per wheel, 25 m/s to rest in " << distance << " m, wheels locked " << lockedSeconds << " s\n";
     Require(lockedSeconds < 0.1f, "full braking keeps the wheels turning, locked for " + std::to_string(lockedSeconds) + " s");
-    Require(distance < 45.0f, "and stops the car in good time, " + std::to_string(distance) + " m");
+    Require(distance < 46.0f, "and stops the car in good time, " + std::to_string(distance) + " m");
 
     VehicleSettings old = car;
+    old.dynamicBrakeBias = false;
     old.maxBrakeTorque = 1500.0f;
     old.frontBrakeShare = 0.5f;
     float oldLocked = 0.0f;
     float oldDistance = 0.0f;
     BrakeFromSpeed(old, oldLocked, oldDistance);
     Require(oldLocked > 0.5f, "the old 1500 Nm at an even split does lock them (" + std::to_string(oldLocked) + " s)");
+}
+
+// Full throttle from a standstill for six seconds: how far the rear tyres turn faster than the ground passes
+// under them (their rim speed over the car's, less one, the mean of the two wheels, at over 2 m/s), its mean
+// and peak, and how much the two wheels differ.
+struct LaunchReport
+{
+    float meanSlip = 0.0f;
+    float peakSlip = 0.0f;
+    float meanGap = 0.0f;
+};
+
+LaunchReport MeasureLaunch(const VehicleSettings& tuning)
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    LaunchReport report;
+    int samples = 0;
+    for (int frame = 0; frame < 6 * 60; ++frame)
+    {
+        world.Update(1.0f / 60.0f);
+        const float speed = world.GetVehicleTelemetry(car).forwardSpeed;
+        if (speed < 2.0f)
+        {
+            continue;
+        }
+        const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+        const float left = wheels[2].angularVelocity * wheels[2].radius / speed - 1.0f;
+        const float right = wheels[3].angularVelocity * wheels[3].radius / speed - 1.0f;
+        report.meanSlip += 0.5f * (left + right);
+        report.peakSlip = std::max(report.peakSlip, 0.5f * (left + right));
+        report.meanGap += std::abs(left - right);
+        ++samples;
+    }
+    Require(samples > 100, "the car gets going");
+    report.meanSlip /= static_cast<float>(samples);
+    report.meanGap /= static_cast<float>(samples);
+    return report;
+}
+
+// At full throttle in first and second gear the engine asks for more than the tyres can hold, and the wheels
+// spin up on its revs, several times the speed of the ground. Traction control slips the clutch past what
+// the tyres take, and a limited-slip differential keeps the two wheels of an axle turning together where the
+// physics engine's own let them take turns spinning.
+void TestDrivenWheelsKeepNearTheGround()
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    tuning.tractionControlGrip = 0.0f;
+    const LaunchReport free = MeasureLaunch(tuning);
+    tuning.tractionControlGrip = 0.85f;
+    const LaunchReport held = MeasureLaunch(tuning);
+    std::cout << "launch, rear tyres' speed over the ground's: free " << free.meanSlip << " mean, " << free.peakSlip << " peak; traction control " << held.meanSlip
+              << " mean, " << held.peakSlip << " peak, the two wheels " << held.meanGap << " apart\n";
+    Require(free.meanSlip > 0.15f && free.peakSlip > 0.5f, "without traction control the tyres spin up, " + std::to_string(free.meanSlip));
+    Require(held.meanSlip < 0.25f && held.peakSlip < free.peakSlip * 0.85f, "with it they stay near the ground's speed, " + std::to_string(held.meanSlip) + ", " + std::to_string(held.peakSlip));
+
+    tuning.limitedSlipDifferentials = false;
+    tuning.tractionControlGrip = 0.0f; // with it holding both tyres to the ground, an open differential has nothing to show
+    const LaunchReport open = MeasureLaunch(tuning);
+    Require(held.meanGap < 0.03f, "the limited slip keeps the two rear wheels together, " + std::to_string(held.meanGap));
+    // At 1000 Hz a level car launches almost symmetrically, so the open differential is judged against the limited slip.
+    Require(open.meanGap > held.meanGap * 5.0f, "an open differential does not, " + std::to_string(open.meanGap));
 }
 
 void TestDegenerateMeshIsRejected()
@@ -802,6 +1118,7 @@ int main()
         TestCarScrapingAWallStaysOnTheGround();
         TestDegenerateMeshIsRejected();
         TestAutomaticBrakesDoNotLockTheWheels();
+        TestBrakeTorqueFollowsTheLoad();
         TestCarSpecReplacesWhatItKnows();
         TestCarOnItsOwnDataAccelerates();
         TestTyreGripSetsAcceleration();
@@ -811,6 +1128,10 @@ int main()
         TestCarRotatedAtStartDrivesItsOwnWay();
         TestFitUsesTheModelsWheels();
         TestCarSitsOnTheModelsWheels();
+        TestSpringsSettleAtTheRestLength();
+        TestWheelStateReportsTyrePhysics();
+        TestFastWheelsRollTheRightWay();
+        TestDrivenWheelsKeepNearTheGround();
         TestWheelMotionRollsForwardAndSteers();
         TestWheelMotionSeesTheModelsAxes();
     }

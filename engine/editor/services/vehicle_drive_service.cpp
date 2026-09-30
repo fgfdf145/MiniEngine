@@ -308,7 +308,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
     else if (session->stepRequested)
     {
-        session->physics->Update(PhysicsWorld::kFixedStepSeconds);
+        session->physics->Update(1.0f / 60.0f); // one 60 Hz frame's worth of steps
     }
     session->stepRequested = false;
 
@@ -355,6 +355,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.vehicleName = session->name;
         status.carData = session->carData;
         status.telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
+        status.wheels = session->physics->GetVehicleWheels(session->vehicle);
         status.staticBodyCount = session->physics->GetStaticBodyCount();
         status.staticTriangleCount = session->physics->GetStaticTriangleCount();
     }

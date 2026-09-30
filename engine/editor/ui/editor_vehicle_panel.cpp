@@ -75,9 +75,25 @@ void DrawTuning(VehicleSettings& tuning)
     {
         ImGui::SetTooltip("Per wheel. Auto (0) sizes the brakes to the car's weight and tyres so that they stop it hard without locking the wheels.");
     }
+    ImGui::Checkbox("Brake Torque by Load", &tuning.dynamicBrakeBias);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "On, the four wheels share the brakes' total torque by the load each carries at the moment (braking\n"
+            "moves weight onto the front, a wheel in the air gets none); the car's own front/rear split is not used.\n"
+            "Off, the torque goes by that fixed split.");
+    }
     DragFloatInRange("Hand Brake Torque (Nm)", &tuning.maxHandBrakeTorque, 0.0f, 10000.0f, "%.0f", 10.0f);
     DragFloatInRange("Spring Frequency (Hz)", &tuning.suspensionFrequencyHz, 0.5f, 5.0f, "%.2f", 0.01f);
     DragFloatInRange("Spring Damping", &tuning.suspensionDamping, 0.0f, 2.0f, "%.2f", 0.01f);
+    DragFloatInRange("Traction Control (grip)", &tuning.tractionControlGrip, 0.0f, 1.5f, tuning.tractionControlGrip > 0.0f ? "%.2f" : "Off", 0.01f);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "The clutch slips once the engine asks the driven wheels for more than their tyres can hold: this share of\n"
+            "their peak grip on the load they carry. 1 is the limit; more lets them spin up. Off (0) leaves a car at\n"
+            "full throttle in a low gear spinning its tyres several times the ground's speed.");
+    }
     ImGui::Checkbox("Anti-roll Bars", &tuning.antiRollBars);
     ImGui::SameLine();
     ImGui::Checkbox("Limited-slip Differentials", &tuning.limitedSlipDifferentials);
@@ -161,6 +177,49 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         DragFloatInRange("Look Height (m)", &m_vehicleCamera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
         DragFloatInRange("Stiffness", &m_vehicleCamera.stiffness, 0.5f, 30.0f, "%.1f", 0.1f);
         DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.5f, 20.0f, "%.1f", 0.1f);
+        ImGui::EndDisabled();
+    }
+
+    if (ImGui::CollapsingHeader("Physics Overlay", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        VehiclePhysicsOverlaySettings& overlay = m_vehicleOverlay;
+        ImGui::Checkbox("Show Suspension and Tyre Physics", &overlay.enabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Draws over the viewport while a car is driven, also with the simulation paused.");
+        }
+        ImGui::BeginDisabled(!overlay.enabled);
+        ImGui::Checkbox("Springs", &overlay.suspension);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "The spring from its mount to the wheel, and a rail beside the tyre for its travel: the red end is\n"
+                "full bump, the far end full droop. The marker turns red as the spring nears its bump stop.");
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Tyres", &overlay.tyres);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "The tread and the contact patch, green to red by how much of the tyre's peak grip its forces\n"
+                "use (grey in the air).");
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Forces", &overlay.forces);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "At each contact patch, what the ground does to the car: green the load up through the\n"
+                "spring, orange the drive and braking along the tyre, blue the cornering across it.");
+        }
+        ImGui::Checkbox("Friction Circles", &overlay.frictionCircles);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Bottom left: a circle per wheel, its edge the tyre's peak grip. The dot is the tyre's force, along\n"
+                "it up and across it to the right. With the load, the slip (ratio and angle), the spring's travel and the brake torque.");
+        }
+        DragFloatInRange("Arrow Length (m/kN)", &overlay.metresPerKilonewton, 0.02f, 1.0f, "%.2f", 0.005f);
         ImGui::EndDisabled();
     }
 

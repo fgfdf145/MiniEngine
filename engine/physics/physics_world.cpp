@@ -22,9 +22,12 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -239,8 +242,14 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         wheel->mWheelForward = JPH::Vec3::sAxisZ();
         wheel->mSuspensionMinLength = std::max(settings.suspensionMinLength, 0.0f);
         wheel->mSuspensionMaxLength = std::max(settings.suspensionMaxLength, wheel->mSuspensionMinLength);
-        wheel->mSuspensionSpring.mFrequency = std::max(settings.suspensionFrequencyHz, 0.01f);
-        wheel->mSuspensionSpring.mDamping = std::max(settings.suspensionDamping, 0.0f);
+        // A fixed stiffness for a quarter of the car's weight. The frequency mode would scale the
+        // spring by the body's effective mass at the wheel, which its inertia makes 10 to 30% off a
+        // quarter, and the car would not settle at the ride height ComputeRestSuspensionLength gives.
+        const float quarterMass = std::max(settings.massKg, 1.0f) * 0.25f;
+        const float omega = 2.0f * std::numbers::pi_v<float> * std::max(settings.suspensionFrequencyHz, 0.01f);
+        wheel->mSuspensionSpring.mMode = JPH::ESpringMode::StiffnessAndDamping;
+        wheel->mSuspensionSpring.mStiffness = quarterMass * omega * omega;
+        wheel->mSuspensionSpring.mDamping = 2.0f * std::max(settings.suspensionDamping, 0.0f) * quarterMass * omega;
         wheel->mRadius = std::max(mount.radius, 0.01f);
         wheel->mWidth = std::max(mount.width, 0.01f);
         wheel->mMaxSteerAngle = front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
@@ -291,6 +300,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
             controller->mTransmission.mReverseGearRatios = {settings.reverseGearRatio};
         }
     }
+    if (settings.clutchStrength > 0.0f)
+    {
+        controller->mTransmission.mClutchStrength = settings.clutchStrength;
+    }
     if (settings.gearSwitchSeconds > 0.0f)
     {
         controller->mTransmission.mSwitchTime = settings.gearSwitchSeconds;
@@ -315,7 +328,9 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         differential.mLeftWheel = leftWheel;
         differential.mRightWheel = rightWheel;
         differential.mEngineTorqueRatio = torqueRatio;
-        differential.mLimitedSlipRatio = limitedSlipRatio;
+        // A limited-slip differential is a clutch pack that the vehicle applies each step
+        // (CoupleDifferentialWheels); the physics engine's own would snap all the torque to one wheel.
+        differential.mLimitedSlipRatio = FLT_MAX;
         if (settings.finalDriveRatio > 0.0f)
         {
             differential.mDifferentialRatio = settings.finalDriveRatio;
@@ -354,9 +369,149 @@ struct PhysicsWorld::Impl
         // The air acting on the car: where, and how much drag and downforce per square metre of dynamic pressure.
         std::vector<VehicleAeroSurface> aeroSurfaces;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
+        // The brakes: the wheels' settings whose torque is set each step, the torque of each wheel as the
+        // fixed front/rear split has it, and (when dynamicBrakeBias) the loads that share the total.
+        std::vector<JPH::WheelSettingsWV*> wheelSettings;
+        std::array<float, kVehicleWheelCount> staticBrakeTorque{};
+        std::array<float, kVehicleWheelCount> filteredLoad{};
+        bool dynamicBrakeBias = false;
+        bool filteredLoadValid = false;
+        // Traction control, see LimitClutchTorque.
+        float tractionControlGrip = 0.0f;
+        VehicleDrive drive = VehicleDrive::RearWheel;
+        // The share of the drive torque a limited-slip differential can move between the wheels, see
+        // CoupleDifferentialWheels; 0 for an open one.
+        float limitedSlipLock = 0.0f;
+        // The clutch's own strength, which traction control lowers while it slips it.
+        float defaultClutchStrength = 10.0f;
+        float weightNewtons = 0.0f;
         VehicleSnapshot previous;
         VehicleSnapshot current;
     };
+
+    // Sets each wheel's brake torque for the coming step. Fixed, it is the front/rear split's. Dynamic, the
+    // four wheels share the same total by the load they carried in the last step, a little smoothed, so a
+    // wheel that weight has left brakes less and one it has moved to brakes more, all wheels reaching
+    // their grip together.
+    void DistributeBrakeTorque(Vehicle& vehicle) const
+    {
+        const size_t count = std::min(vehicle.wheelSettings.size(), vehicle.staticBrakeTorque.size());
+        const auto useFixedSplit = [&]
+        {
+            for (size_t index = 0; index < count; ++index)
+            {
+                vehicle.wheelSettings[index]->mMaxBrakeTorque = vehicle.staticBrakeTorque[index];
+            }
+        };
+        if (!vehicle.dynamicBrakeBias || vehicle.current.wheels.size() < count)
+        {
+            useFixedSplit();
+            return;
+        }
+
+        // The loads over about three steps: the solver's force on a wheel jumps about from step to step.
+        constexpr float kLoadFilterSeconds = 0.05f;
+        // No wheel takes more than half the total, so one wheel on the ground does not carry the whole
+        // car's brakes.
+        constexpr float kMaxShareOfTotal = 0.5f;
+        const float blend = vehicle.filteredLoadValid ? 1.0f - std::exp(-kFixedStepSeconds / kLoadFilterSeconds) : 1.0f;
+        float total = 0.0f;
+        float loadSum = 0.0f;
+        for (size_t index = 0; index < count; ++index)
+        {
+            const VehicleWheelState& wheel = vehicle.current.wheels[index];
+            const float load = wheel.inContact ? std::max(wheel.suspensionForce, 0.0f) : 0.0f;
+            vehicle.filteredLoad[index] += (load - vehicle.filteredLoad[index]) * blend;
+            loadSum += vehicle.filteredLoad[index];
+            total += vehicle.staticBrakeTorque[index];
+        }
+        vehicle.filteredLoadValid = true;
+
+        // With hardly any weight on the ground (just dropped, or launched off a jump) the loads say nothing.
+        if (loadSum < vehicle.weightNewtons * 0.1f)
+        {
+            useFixedSplit();
+            return;
+        }
+        for (size_t index = 0; index < count; ++index)
+        {
+            vehicle.wheelSettings[index]->mMaxBrakeTorque = total * std::min(vehicle.filteredLoad[index] / loadSum, kMaxShareOfTotal);
+        }
+    }
+
+    // Traction control by the clutch: it slips once the engine asks the driven wheels for more torque than their
+    // tyres can hold (their peak grip on the load they carry, times the setting), so that the wheels get no more
+    // than they can pass to the ground while the engine keeps its revs and its throttle, as a driver slips the
+    // clutch on a start. The clutch's torque is its strength times the gap between the engine's speed and the
+    // wheels', so the strength is set to the torque allowed over the gap, up to its own.
+    void LimitClutchTorque(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
+    {
+        JPH::VehicleTransmission& transmission = controller.GetTransmission();
+        const float ratio = std::abs(transmission.GetCurrentRatio());
+        if (vehicle.tractionControlGrip <= 0.0f || ratio < 1e-3f || controller.GetDifferentials().empty() ||
+            vehicle.current.wheels.size() < kVehicleWheelCount)
+        {
+            transmission.mClutchStrength = vehicle.defaultClutchStrength;
+            return;
+        }
+        float holdTorque = 0.0f;
+        float wheelSpeed = 0.0f;
+        int driven = 0;
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
+        {
+            const bool front = index < 2;
+            const bool isDriven = vehicle.drive == VehicleDrive::AllWheel || (vehicle.drive == VehicleDrive::FrontWheel) == front;
+            const VehicleWheelState& wheel = vehicle.current.wheels[index];
+            if (!isDriven)
+            {
+                continue;
+            }
+            ++driven;
+            wheelSpeed += std::abs(wheel.angularVelocity);
+            if (wheel.inContact)
+            {
+                holdTorque += wheel.longitudinalPeakFriction * std::max(wheel.suspensionForce, 0.0f) * wheel.radius;
+            }
+        }
+        const float overall = ratio * controller.GetDifferentials()[0].mDifferentialRatio;
+        const float engineSide = holdTorque * vehicle.tractionControlGrip / overall;
+        const float engineSpeed = controller.GetEngine().GetCurrentRPM() * 2.0f * std::numbers::pi_v<float> / 60.0f;
+        const float gap = std::abs(engineSpeed - wheelSpeed / static_cast<float>(std::max(driven, 1)) * overall);
+        transmission.mClutchStrength = std::clamp(engineSide / std::max(gap, 1.0f), 0.05f, vehicle.defaultClutchStrength);
+    }
+
+    // A limited-slip differential as a clutch pack between the two wheels of an axle: a torque, growing with
+    // how much faster one turns than the other and held to a limit that follows the drive torque, is taken
+    // from the faster wheel and given to the slower, so that the pair is kept turning together and the drive
+    // goes where the grip is. The physics engine's own gives all the torque to the slower wheel once the gap
+    // passes a ratio: that wheel then spins up past the other and they take turns, each spinning several times
+    // the ground's speed in turn.
+    void CoupleDifferentialWheels(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
+    {
+        if (vehicle.limitedSlipLock <= 0.0f)
+        {
+            return;
+        }
+        constexpr float kPreloadTorque = 40.0f; // Nm, holds them together even when coasting
+        const float driveTorque = controller.GetEngine().GetTorque(1.0f) * std::abs(controller.GetTransmission().GetCurrentRatio());
+        for (const JPH::VehicleDifferentialSettings& differential : controller.GetDifferentials())
+        {
+            if (differential.mLeftWheel < 0 || differential.mRightWheel < 0)
+            {
+                continue;
+            }
+            auto* left = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mLeftWheel)]);
+            auto* right = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mRightWheel)]);
+            const float limit = kPreloadTorque + vehicle.limitedSlipLock * driveTorque * differential.mDifferentialRatio * differential.mEngineTorqueRatio * 0.5f;
+            // Stiff enough that a wheel is pulled to the other's speed within a few steps, and no stiffer than
+            // the step can integrate.
+            const float inertia = 0.5f * (left->GetSettings()->mInertia + right->GetSettings()->mInertia);
+            const float stiffness = 0.25f * inertia / kFixedStepSeconds;
+            const float torque = std::clamp(stiffness * (left->GetAngularVelocity() - right->GetAngularVelocity()), -limit, limit);
+            left->ApplyTorque(-torque, kFixedStepSeconds);
+            right->ApplyTorque(torque, kFixedStepSeconds);
+        }
+    }
 
     // Drag against the car's velocity and downforce along its down, on each surface where it sits.
     void ApplyAerodynamics(const Vehicle& vehicle)
@@ -456,9 +611,65 @@ struct PhysicsWorld::Impl
             VehicleWheelState state;
             // The wheel model's right is -X, the car's right; its up is +Y.
             state.pose = FromJolt(vehicle.constraint->GetWheelWorldTransform(index, -JPH::Vec3::sAxisX(), JPH::Vec3::sAxisY()));
+            // The roll is kept apart from the pose (GetVehicleWheels puts it back), for it is a turn about
+            // the axle by an angle that the pose alone cannot follow past half a turn per step.
+            constexpr float kTurn = 2.0f * std::numbers::pi_v<float>;
+            state.spinAngle = wheel.GetRotationAngle();
+            if (vehicle.previous.wheels.size() > index)
+            {
+                // The change in the physics engine's angle, folded to a half turn either way and then
+                // moved by whole turns to the one nearest what the wheel's speed says it rolled.
+                float step = state.spinAngle - vehicle.previous.wheels[index].spinAngle;
+                step -= kTurn * std::round(step / kTurn);
+                const float expected = wheel.GetAngularVelocity() * kFixedStepSeconds;
+                step += kTurn * std::round((expected - step) / kTurn);
+                state.spinStep = step;
+            }
+            state.pose.rotation = state.pose.rotation * glm::angleAxis(-state.spinAngle, glm::vec3(1.0f, 0.0f, 0.0f));
             state.inContact = wheel.HasContact();
             state.suspensionLength = wheel.GetSuspensionLength();
             state.angularVelocity = wheel.GetAngularVelocity();
+
+            const JPH::WheelSettings& wheelSettings = *wheel.GetSettings();
+            const JPH::Quat bodyRotation = vehicle.body->GetRotation();
+            state.mount = FromJolt(vehicle.body->GetPosition() + bodyRotation * wheelSettings.mPosition);
+            state.suspensionAxis = FromJolt(bodyRotation * wheelSettings.mSuspensionDirection.Normalized());
+            state.suspensionMinLength = wheelSettings.mSuspensionMinLength;
+            state.suspensionMaxLength = wheelSettings.mSuspensionMaxLength;
+            state.radius = wheelSettings.mRadius;
+            state.width = wheelSettings.mWidth;
+            state.brakeTorque = static_cast<const JPH::WheelWV&>(wheel).GetSettings()->mMaxBrakeTorque;
+            if (state.inContact)
+            {
+                const auto& wheelWV = static_cast<const JPH::WheelWV&>(wheel);
+                // The solver's impulses over the step it ran are the step's mean forces.
+                state.contactPosition = FromJolt(wheel.GetContactPosition());
+                state.contactNormal = FromJolt(wheel.GetContactNormal());
+                state.contactLongitudinal = FromJolt(wheel.GetContactLongitudinal());
+                state.contactLateral = FromJolt(wheel.GetContactLateral());
+                state.suspensionForce = wheel.GetSuspensionLambda() / kFixedStepSeconds;
+                state.longitudinalForce = wheel.GetLongitudinalLambda() / kFixedStepSeconds;
+                state.lateralForce = wheel.GetLateralLambda() / kFixedStepSeconds;
+                state.slipRatio = wheelWV.mLongitudinalSlip;
+                state.slipAngleDegrees = JPH::RadiansToDegrees(wheelWV.mLateralSlip);
+                state.longitudinalFriction = wheelWV.mCombinedLongitudinalFriction;
+                state.lateralFriction = wheelWV.mCombinedLateralFriction;
+                // The ground's share is what the combined value is of the curve's at this slip; where
+                // that is nothing (no slip) the ground counts for what it does by default.
+                const auto peakOf = [](const JPH::LinearCurve& curve, float slip, float combined)
+                {
+                    float peak = 0.0f;
+                    for (const JPH::LinearCurve::Point& point : curve.mPoints)
+                    {
+                        peak = std::max(peak, point.mY);
+                    }
+                    const float atSlip = curve.GetValue(std::abs(slip));
+                    return atSlip > 1e-3f ? peak * combined / atSlip : peak;
+                };
+                const JPH::WheelSettingsWV& tyre = *wheelWV.GetSettings();
+                state.longitudinalPeakFriction = peakOf(tyre.mLongitudinalFriction, wheelWV.mLongitudinalSlip, wheelWV.mCombinedLongitudinalFriction);
+                state.lateralPeakFriction = peakOf(tyre.mLateralFriction, JPH::RadiansToDegrees(wheelWV.mLateralSlip), wheelWV.mCombinedLateralFriction);
+            }
             snapshot.wheels.push_back(state);
         }
         return snapshot;
@@ -656,6 +867,21 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     impl.physicsSystem.AddConstraint(vehicle.constraint);
     impl.physicsSystem.AddStepListener(vehicle.constraint);
 
+    // The wheels' settings were made above and are ours to change: the controller reads the brake torque
+    // from them each step.
+    for (size_t index = 0; index < kVehicleWheelCount && index < vehicle.constraint->GetWheels().size(); ++index)
+    {
+        auto* wheelSettings = const_cast<JPH::WheelSettingsWV*>(static_cast<const JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(index)])->GetSettings());
+        vehicle.wheelSettings.push_back(wheelSettings);
+        vehicle.staticBrakeTorque[index] = wheelSettings->mMaxBrakeTorque;
+    }
+    vehicle.dynamicBrakeBias = settings.dynamicBrakeBias;
+    vehicle.tractionControlGrip = std::max(settings.tractionControlGrip, 0.0f);
+    vehicle.defaultClutchStrength = settings.clutchStrength > 0.0f ? settings.clutchStrength : 10.0f;
+    vehicle.limitedSlipLock = settings.limitedSlipDifferentials ? std::max(settings.limitedSlipLock, 0.0f) : 0.0f;
+    vehicle.drive = settings.drive;
+    vehicle.weightNewtons = std::max(settings.massKg, 1.0f) * 9.81f;
+
     vehicle.current = impl.Capture(vehicle);
     vehicle.previous = vehicle.current;
     impl.vehicles.push_back(std::move(vehicle));
@@ -683,7 +909,13 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     controller->SetDriverInput(0.0f, 0.0f, 0.0f, 0.0f);
     vehicle.controls = {};
     vehicle.direction = 1.0f;
+    vehicle.filteredLoadValid = false;
     vehicle.current = m_impl->Capture(vehicle);
+    // Nothing has rolled: the capture compared the wheels with the step before the reset.
+    for (VehicleWheelState& wheel : vehicle.current.wheels)
+    {
+        wheel.spinStep = 0.0f;
+    }
     vehicle.previous = vehicle.current;
 }
 
@@ -700,7 +932,18 @@ std::vector<VehicleWheelState> PhysicsWorld::GetVehicleWheels(VehicleId id) cons
     std::vector<VehicleWheelState> wheels = vehicle.current.wheels;
     for (size_t index = 0; index < wheels.size() && index < vehicle.previous.wheels.size(); ++index)
     {
-        wheels[index].pose = Interpolate(vehicle.previous.wheels[index].pose, wheels[index].pose, alpha);
+        const VehicleWheelState& before = vehicle.previous.wheels[index];
+        wheels[index].pose = Interpolate(before.pose, wheels[index].pose, alpha);
+        // The roll runs on from where it was before the step by the step's share, straight through
+        // however many turns that is.
+        wheels[index].spinAngle -= (1.0f - alpha) * wheels[index].spinStep;
+        wheels[index].pose.rotation = wheels[index].pose.rotation * glm::angleAxis(wheels[index].spinAngle, glm::vec3(1.0f, 0.0f, 0.0f));
+        // The points drawn on the wheel move with it; the forces are the last step's.
+        wheels[index].mount = glm::mix(before.mount, wheels[index].mount, alpha);
+        if (before.inContact && wheels[index].inContact)
+        {
+            wheels[index].contactPosition = glm::mix(before.contactPosition, wheels[index].contactPosition, alpha);
+        }
     }
     return wheels;
 }
@@ -742,12 +985,15 @@ int PhysicsWorld::Update(float deltaSeconds)
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             const VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
             impl.ApplyAerodynamics(vehicle);
+            impl.DistributeBrakeTorque(vehicle);
             if (input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f)
             {
                 // A car that came to rest is asleep and would ignore the driver.
                 bodies.ActivateBody(vehicle.body->GetID());
             }
             auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+            impl.CoupleDifferentialWheels(vehicle, *controller);
+            impl.LimitClutchTorque(vehicle, *controller);
             controller->SetDriverInput(input.forward, input.right, input.brake, input.handBrake);
         }
 

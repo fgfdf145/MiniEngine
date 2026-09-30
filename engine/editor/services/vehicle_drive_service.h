@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -47,6 +48,22 @@ struct VehicleCameraOrbit
     float pitchDegrees = 0.0f; // positive raises the camera, looking down on the car
 };
 
+// What the viewport draws over a driven car's suspension and tyres.
+struct VehiclePhysicsOverlaySettings
+{
+    bool enabled = false;
+    // The springs from the mounts to the wheels, and a gauge of how far each has travelled.
+    bool suspension = true;
+    // The tyres' outline and contact patch, coloured by how much of their grip is in use.
+    bool tyres = true;
+    // The load, drive and cornering forces at each contact patch.
+    bool forces = true;
+    // A friction circle and figures for each wheel, over a corner of the viewport.
+    bool frictionCircles = true;
+    // How long an arrow is per kilonewton.
+    float metresPerKilonewton = 0.15f;
+};
+
 // What the Vehicle panel shows.
 struct VehicleDriveStatus
 {
@@ -56,6 +73,8 @@ struct VehicleDriveStatus
     // What the car's own data set, in words; empty when the drive uses the tuning alone.
     std::string carData;
     VehicleTelemetry telemetry;
+    // Front left, front right, rear left, rear right, as the last step left them, in world space.
+    std::vector<VehicleWheelState> wheels;
     size_t staticBodyCount = 0;
     size_t staticTriangleCount = 0;
     std::string lastError;

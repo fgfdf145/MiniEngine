@@ -337,6 +337,7 @@ class EditorUiController
     VehicleDriveStatus m_vehicleStatus;
     VehicleSettings m_vehicleTuning;
     VehicleCameraSettings m_vehicleCamera;
+    VehiclePhysicsOverlaySettings m_vehicleOverlay;
     bool m_inputMonitorAutoScroll = true;
     std::vector<std::string> m_inputMonitorMessages;
     uint64_t m_inputMonitorMessagesRevision = 0;

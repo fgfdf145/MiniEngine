@@ -1,6 +1,8 @@
 ﻿#include <engine/editor/editor_ui.h>
 #include "editor_ui_internal.h"
 
+#include "editor_vehicle_overlay.h"
+
 #include <engine/logic/editor_world.h>
 #include <engine/logic/world_bounds.h>
 #include <imgui.h>
@@ -983,6 +985,17 @@ void EditorUiController::DrawViewportPanel(
         result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
         HandleViewportShortcuts(scene, camera, viewportRect);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+        if (m_vehicleStatus.active)
+        {
+            DrawVehiclePhysicsOverlay(
+                *viewportRect.drawList,
+                viewportRect.origin,
+                viewportRect.size,
+                matrices.projection * matrices.view,
+                m_vehicleStatus.wheels,
+                m_vehicleOverlay,
+                m_effectiveUiScale);
+        }
         if (fullscreen)
         {
             DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus);
