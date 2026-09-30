@@ -12,18 +12,23 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <exception>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -366,47 +371,114 @@ class GltfBuilder
     }
 
     // Writes the sampled textures this model carries and no earlier model already wrote: the game
-    // keeps one texture per name.
-    // `progress` hears the fraction of the model's textures gone through.
+    // keeps one texture per name. Decoding a DDS and encoding its PNG are independent per texture
+    // and the bulk of an import, so they run on several threads; which textures are written and
+    // under which names is settled first, on the calling thread, so the result does not depend on
+    // the schedule. `progress` hears the fraction of the model's textures written, one at a time.
     void WriteTextures(const Kn5Model& model, const ImportProgressCallback& progress = {})
     {
-        size_t visited = 0;
+        struct Job
+        {
+            const Kn5Texture* texture = nullptr;
+            std::string key;
+            std::string fileName;
+            bool written = false;
+        };
+
+        std::vector<Job> jobs;
         for (const Kn5Texture& texture : model.textures)
         {
-            if (progress)
-            {
-                progress(static_cast<float>(visited) / static_cast<float>(model.textures.size()));
-            }
-            ++visited;
             const std::string key = ToLowerAscii(texture.name);
             if (!m_usedTextures.count(key) || texture.data.size() < kStubTextureBytes || m_textureUris.count(key) != 0)
             {
                 continue;
             }
-            std::optional<TextureData> image = DecodeTextureBlob(texture.data, texture.name);
-            if (!image.has_value())
-            {
-                continue;
-            }
+            // Reserved now so a later texture of this model sees the name taken; a texture that
+            // then fails to decode gives it back below.
+            std::string fileName = UniqueFileName(SafeStem(texture.name), ".png");
+            m_textureUris[key] = "textures/" + fileName;
+            jobs.push_back(Job{&texture, key, std::move(fileName), false});
+        }
+        if (jobs.empty())
+        {
+            return;
+        }
 
-            bool alpha = m_alphaTextures.count(key) != 0;
-            if (alpha)
+        // A texture is a few tens of megabytes decoded; the cap keeps a many-core machine from
+        // holding that many at once.
+        constexpr size_t kMaxWriterThreads = 8;
+        const size_t threadCount =
+            std::min({jobs.size(), kMaxWriterThreads, static_cast<size_t>(std::max(1u, std::thread::hardware_concurrency()))});
+
+        std::atomic<size_t> nextJob{0};
+        std::atomic<bool> failed{false};
+        std::mutex progressMutex;
+        size_t finished = 0;
+        const auto work = [&]
+        {
+            for (size_t index = nextJob.fetch_add(1); index < jobs.size() && !failed.load(); index = nextJob.fetch_add(1))
             {
-                alpha = false;
-                for (size_t index = 3; index < image->pixels.size(); index += 4)
+                try
                 {
-                    if (image->pixels[index] != 255)
-                    {
-                        alpha = true;
-                        break;
-                    }
+                    Job& job = jobs[index];
+                    job.written = WriteTexture(*job.texture, job.key, job.fileName);
+                }
+                catch (...)
+                {
+                    failed.store(true);
+                    throw;
+                }
+                if (progress)
+                {
+                    // Under the lock, so the callback is never entered twice at once and the
+                    // fractions it hears only grow.
+                    const std::lock_guard<std::mutex> lock(progressMutex);
+                    progress(static_cast<float>(++finished) / static_cast<float>(jobs.size()));
                 }
             }
-            const std::string fileName = UniqueFileName(SafeStem(texture.name), ".png");
-            const int channels = alpha ? 4 : 3;
-            WritePng(m_textureDirectory / fileName, image->width, image->height, channels,
-                     alpha ? image->pixels.data() : StripAlpha(*image).data());
-            m_textureUris[key] = "textures/" + fileName;
+        };
+
+        // The calling thread is one of the writers.
+        std::vector<std::future<void>> helpers;
+        for (size_t helper = 1; helper < threadCount; ++helper)
+        {
+            helpers.push_back(std::async(std::launch::async, work));
+        }
+        std::exception_ptr error;
+        try
+        {
+            work();
+        }
+        catch (...)
+        {
+            error = std::current_exception();
+        }
+        for (std::future<void>& helper : helpers)
+        {
+            try
+            {
+                helper.get();
+            }
+            catch (...)
+            {
+                if (!error)
+                {
+                    error = std::current_exception();
+                }
+            }
+        }
+        if (error)
+        {
+            std::rethrow_exception(error);
+        }
+
+        for (const Job& job : jobs)
+        {
+            if (!job.written)
+            {
+                m_textureUris.erase(job.key);
+                m_fileNames.erase(ToLowerAscii(job.fileName));
+            }
         }
     }
 
@@ -582,6 +654,36 @@ class GltfBuilder
     static bool IsMultilayer(const Kn5Material& material)
     {
         return ToLowerAscii(material.shader).starts_with("ksmultilayer") && !material.Texture("txMask").empty();
+    }
+
+    // Decodes one texture and writes it as PNG under m_textureDirectory / fileName; false, with a
+    // warning, when it cannot be decoded. Reads only state that is fixed by now, so texture
+    // writers may run concurrently.
+    bool WriteTexture(const Kn5Texture& texture, const std::string& key, const std::string& fileName) const
+    {
+        std::optional<TextureData> image = DecodeTextureBlob(texture.data, texture.name);
+        if (!image.has_value())
+        {
+            return false;
+        }
+
+        bool alpha = m_alphaTextures.count(key) != 0;
+        if (alpha)
+        {
+            alpha = false;
+            for (size_t index = 3; index < image->pixels.size(); index += 4)
+            {
+                if (image->pixels[index] != 255)
+                {
+                    alpha = true;
+                    break;
+                }
+            }
+        }
+        const int channels = alpha ? 4 : 3;
+        WritePng(m_textureDirectory / fileName, image->width, image->height, channels,
+                 alpha ? image->pixels.data() : StripAlpha(*image).data());
+        return true;
     }
 
     static std::vector<std::uint8_t> StripAlpha(const TextureData& image)

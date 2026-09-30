@@ -13,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -653,6 +654,34 @@ void ConversionReportsProgressToCompletion()
     }
 }
 
+// Textures are decoded and written on several threads; the schedule must not show in the result.
+void ConversionIsDeterministicAcrossTextureThreads()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    const Kn5ImportReport first = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "assets" / "first");
+    const Kn5ImportReport second = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "assets" / "second");
+    Require(first.images > 1, "the fixture needs several textures for this to mean anything");
+
+    const auto readAll = [](const std::filesystem::path& path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    Require(readAll(first.gltfPath.parent_path() / "buffers" / "first.bin").size() ==
+                readAll(second.gltfPath.parent_path() / "buffers" / "second.bin").size(),
+            "the buffers differ in size");
+    size_t compared = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(scope.Path() / "assets" / "first" / "textures"))
+    {
+        const std::filesystem::path other = scope.Path() / "assets" / "second" / "textures" / entry.path().filename();
+        Require(std::filesystem::exists(other), "texture " + entry.path().filename().string() + " is missing from the second import");
+        Require(readAll(entry.path()) == readAll(other), "texture " + entry.path().filename().string() + " differs between imports");
+        ++compared;
+    }
+    Require(compared == first.images, "every image is a file in textures/");
+}
+
 void ConvertsHierarchyGeometryAndMaterials()
 {
     ScopedDirectory scope;
@@ -1123,6 +1152,7 @@ int main()
         ReaderParsesTheContainer();
         RulesMatchTheConverter();
         ConversionReportsProgressToCompletion();
+        ConversionIsDeterministicAcrossTextureThreads();
         ConvertsHierarchyGeometryAndMaterials();
         SkinChoiceChangesThePaint();
         RefusesEncryptedAndExistingTargets();
