@@ -70,7 +70,11 @@ void DrawTuning(VehicleSettings& tuning)
         tuning.drive = static_cast<VehicleDrive>(drive);
     }
     DragFloatInRange("Max Steer (deg)", &tuning.maxSteerAngleDegrees, 5.0f, 60.0f, "%.1f", 0.25f);
-    DragFloatInRange("Brake Torque (Nm)", &tuning.maxBrakeTorque, 100.0f, 10000.0f, "%.0f", 10.0f);
+    DragFloatInRange("Brake Torque (Nm)", &tuning.maxBrakeTorque, 0.0f, 10000.0f, tuning.maxBrakeTorque > 0.0f ? "%.0f" : "Auto", 10.0f);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Per wheel. Auto (0) sizes the brakes to the car's weight and tyres so that they stop it hard without locking the wheels.");
+    }
     DragFloatInRange("Hand Brake Torque (Nm)", &tuning.maxHandBrakeTorque, 0.0f, 10000.0f, "%.0f", 10.0f);
     DragFloatInRange("Spring Frequency (Hz)", &tuning.suspensionFrequencyHz, 0.5f, 5.0f, "%.2f", 0.01f);
     DragFloatInRange("Spring Damping", &tuning.suspensionDamping, 0.0f, 2.0f, "%.2f", 0.01f);

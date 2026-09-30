@@ -705,6 +705,77 @@ void TestAerodynamicsDragsAndPressesDown()
     Require(lengthWith < lengthWithout, "downforce compresses the suspension, " + std::to_string(lengthWith) + " against " + std::to_string(lengthWithout));
 }
 
+// Runs a car up to 25 m/s, brakes flat out and reports how long the wheels spent locked (slipping past
+// 0.5 of the ground speed above 8 m/s, below which a wheel rolls to a stop however gently) and how far the car went.
+void BrakeFromSpeed(const VehicleSettings& settings, float& lockedSeconds, float& distance)
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    for (int i = 0; i < 4000 && world.GetVehicleTelemetry(car).forwardSpeed < 25.0f; ++i)
+    {
+        Simulate(world, 0.01f);
+    }
+    controls = {};
+    controls.brake = 1.0f;
+    world.SetVehicleControls(car, controls);
+    const glm::vec3 start = world.GetVehiclePose(car).position;
+    lockedSeconds = 0.0f;
+    for (float time = 0.0f; time < 10.0f; time += 0.01f)
+    {
+        const float speed = world.GetVehicleTelemetry(car).forwardSpeed;
+        if (speed < 0.3f)
+        {
+            break;
+        }
+        for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+        {
+            if (speed > 8.0f && 1.0f - std::abs(wheel.angularVelocity) * settings.wheelRadius / speed > 0.5f)
+            {
+                lockedSeconds += 0.01f / 4.0f;
+            }
+        }
+        Simulate(world, 0.01f);
+    }
+    distance = glm::length(world.GetVehiclePose(car).position - start);
+}
+
+void TestAutomaticBrakesDoNotLockTheWheels()
+{
+    const VehicleSettings car = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    Require(car.maxBrakeTorque == 0.0f, "the brakes are automatic by default");
+    const float torque = ComputeBrakeTorquePerWheel(car);
+    VehicleSettings heavy = car;
+    heavy.massKg = car.massKg * 2.0f;
+    RequireNear(ComputeBrakeTorquePerWheel(heavy), torque * 2.0f, 1e-3f, "a car twice as heavy needs brakes twice as strong");
+    VehicleSettings grippy = car;
+    grippy.frontTyres.longitudinalGrip = 2.2f;
+    grippy.rearTyres.longitudinalGrip = 2.2f;
+    Require(ComputeBrakeTorquePerWheel(grippy) > torque * 1.8f, "and tyres twice as grippy hold twice the torque");
+    VehicleSettings tuned = car;
+    tuned.maxBrakeTorque = 321.0f;
+    RequireNear(ComputeBrakeTorquePerWheel(tuned), 321.0f, 1e-4f, "a tuned torque stands");
+
+    float lockedSeconds = 0.0f;
+    float distance = 0.0f;
+    BrakeFromSpeed(car, lockedSeconds, distance);
+    std::cout << "automatic brakes: " << torque << " Nm per wheel, 25 m/s to rest in " << distance << " m, wheels locked " << lockedSeconds << " s\n";
+    Require(lockedSeconds < 0.1f, "full braking keeps the wheels turning, locked for " + std::to_string(lockedSeconds) + " s");
+    Require(distance < 45.0f, "and stops the car in good time, " + std::to_string(distance) + " m");
+
+    VehicleSettings old = car;
+    old.maxBrakeTorque = 1500.0f;
+    old.frontBrakeShare = 0.5f;
+    float oldLocked = 0.0f;
+    float oldDistance = 0.0f;
+    BrakeFromSpeed(old, oldLocked, oldDistance);
+    Require(oldLocked > 0.5f, "the old 1500 Nm at an even split does lock them (" + std::to_string(oldLocked) + " s)");
+}
+
 void TestDegenerateMeshIsRejected()
 {
     PhysicsWorld world;
@@ -730,6 +801,7 @@ int main()
         TestSurfaceFrictionSetsGrip();
         TestCarScrapingAWallStaysOnTheGround();
         TestDegenerateMeshIsRejected();
+        TestAutomaticBrakesDoNotLockTheWheels();
         TestCarSpecReplacesWhatItKnows();
         TestCarOnItsOwnDataAccelerates();
         TestTyreGripSetsAcceleration();

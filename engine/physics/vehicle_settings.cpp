@@ -37,6 +37,22 @@ float EvaluateCurve(const std::vector<glm::vec2>& curve, float x)
 }
 }
 
+float ComputeBrakeTorquePerWheel(const VehicleSettings& settings)
+{
+    if (settings.maxBrakeTorque > 0.0f)
+    {
+        return settings.maxBrakeTorque;
+    }
+    // Without tyre data the physics engine's own tyres peak at 1.2 and are combined with the surface's
+    // friction (1 by default) by a square root.
+    constexpr float kDefaultGrip = 1.1f;
+    constexpr float kGripUsed = 0.75f;
+    const float front = settings.frontTyres.longitudinalGrip;
+    const float rear = settings.rearTyres.longitudinalGrip;
+    const float grip = front > 0.0f && rear > 0.0f ? 0.5f * (front + rear) : std::max(front, rear) > 0.0f ? std::max(front, rear) : kDefaultGrip;
+    return kGripUsed * grip * std::max(settings.massKg, 1.0f) * kGravity * std::max(settings.wheelRadius, 0.01f) * 0.25f;
+}
+
 VehicleSettings FitVehicleSettingsToBounds(
     const glm::vec3& minBounds,
     const glm::vec3& maxBounds,

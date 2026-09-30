@@ -140,9 +140,11 @@ struct VehicleSettings
     // the drag and the downforce it makes per unit of dynamic pressure (coefficient times area, m^2).
     std::vector<VehicleAeroSurface> aeroSurfaces;
     // The brakes' torque per wheel averaged over the four, of which the front axle takes this
-    // share (0.5 is an even split).
-    float maxBrakeTorque = 1500.0f; // Nm per wheel
-    float frontBrakeShare = 0.5f;
+    // share (0.5 is an even split). A torque of 0 is automatic: what the car's weight and tyres can
+    // hold without the wheels locking, see ComputeBrakeTorquePerWheel. Braking throws weight onto the
+    // front axle, so it takes the larger share, though not much more than 0.55 before the fronts lock.
+    float maxBrakeTorque = 0.0f; // Nm per wheel
+    float frontBrakeShare = 0.55f;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;
@@ -286,6 +288,11 @@ struct VehicleCarSpec
 
 // `tuning` with the fields `spec` knows replaced by its figures.
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);
+
+// The brake torque per wheel (Nm) that stops the car as hard as its tyres allow, a little short of
+// locking them: 75% of the grip on the car's weight, over the wheel radius, shared by four wheels.
+// The tuned maxBrakeTorque when it is set.
+float ComputeBrakeTorquePerWheel(const VehicleSettings& settings);
 
 // `tuning` with its geometry fitted to a car whose model spans these vehicle-space bounds (the
 // model's bounds times the entity's scale): the wheels at its corners, the chassis box over them, the

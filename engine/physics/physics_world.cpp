@@ -245,10 +245,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         wheel->mWidth = std::max(mount.width, 0.01f);
         wheel->mMaxSteerAngle = front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
         // The axles share the four wheels' total by the front's share, so an even 0.5 leaves each
-        // wheel at maxBrakeTorque.
+        // wheel at the brake torque.
         const float axleShare = std::clamp(front ? settings.frontBrakeShare : 1.0f - settings.frontBrakeShare, 0.0f, 1.0f);
         ApplyTyres(*wheel, front ? settings.frontTyres : settings.rearTyres);
-        wheel->mMaxBrakeTorque = std::max(settings.maxBrakeTorque, 0.0f) * 2.0f * axleShare;
+        wheel->mMaxBrakeTorque = ComputeBrakeTorquePerWheel(settings) * 2.0f * axleShare;
         wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
         vehicle->mWheels.push_back(wheel);
     }
