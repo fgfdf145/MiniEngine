@@ -245,6 +245,11 @@ EditorUiFrameResult EditorUiController::Draw(
         }
         m_suspensionRigs->Draw(scene, &m_showSuspensionRigWindow, m_vehicleRigStatus, result);
     }
+    if (m_suspensionRigs)
+    {
+        // Also when the window is not drawn (fullscreen): the running rig keeps its settings.
+        result.vehicleRigExcitation = m_suspensionRigs->Excitation();
+    }
     if (!m_showSuspensionRigWindow && m_vehicleRigStatus.active)
     {
         // Closing the window takes the car off the rig.

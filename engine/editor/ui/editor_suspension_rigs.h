@@ -46,6 +46,11 @@ public:
     {
         return m_options;
     }
+    // The live rig's settings as the Live Rig tab has them.
+    const VehicleRigExcitation& Excitation() const
+    {
+        return m_excitation;
+    }
     void StartRun();
     bool IsRunning() const
     {

@@ -214,7 +214,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleRigService::Stop(State());
     }
-    VehicleRigService::SetExcitation(State(), uiFrame.vehicleRigExcitation);
+    if (uiFrame.vehicleRigExcitation.has_value())
+    {
+        VehicleRigService::SetExcitation(State(), *uiFrame.vehicleRigExcitation);
+    }
     if (actions.startVehicleRig)
     {
         RunUiAction(State().vehicleRig.lastError, "start the seven-post rig", [&]
@@ -222,7 +225,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                         // One or the other: the rig and driving both move the car.
                         VehicleDriveService::Stop(State());
                         const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
-                        VehicleRigService::Start(State(), selected, uiFrame.vehicleRigExcitation);
+                        VehicleRigService::Start(State(), selected, uiFrame.vehicleRigExcitation.value_or(VehicleRigExcitation{}));
                     });
     }
     if (actions.startVehicleDrive)
