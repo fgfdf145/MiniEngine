@@ -50,6 +50,8 @@ struct CornerOutput
     // velocity per metre of travel (the knuckle-fixed point under the tyre).
     double normalPerTravel = 1.0;
     Vec3 contactPerTravel{0.0, 0.0, 1.0};
+    // The wheel centre's velocity per metre of travel: the hub's mass moves with it.
+    Vec3 wheelCenterPerTravel{0.0, 0.0, 1.0};
     // Compliance (only when enabled): the wheel's attitude with bushings under the same loads.
     bool complianceSolved = false;
     WheelAttitude compliantAttitude;

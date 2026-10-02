@@ -109,6 +109,7 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
     // Springs at the wheel: preload for the static load, the rate rising by the progressive rate.
     suspension::StrutUnitSettings& unit = setup.unit;
     unit.springPreload = staticLoad;
+    unit.springPushesOnly = true;
     unit.coilSpring = suspension::Curve::Polynomial(std::max(axle.wheelRate, 1.0f), 0.5 * axle.progressiveRate, 0.0);
     if (axle.bumpStopRate > 0.0f && axle.bumpStopTravel > 0.0f)
     {

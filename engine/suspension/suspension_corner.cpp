@@ -96,7 +96,8 @@ const CornerOutput& SuspensionCorner::Step(const CornerInput& input)
     }
 
     const Vec3 omega = KnuckleAngularRate(m_kinematics, m_kinematics.DqDTravel(), 0.0);
-    out.contactPerTravel = m_kinematics.PointDTravel(model.wheelCenter) + glm::cross(omega, out.geometry.contactPoint - out.geometry.wheelCenter);
+    out.wheelCenterPerTravel = m_kinematics.PointDTravel(model.wheelCenter);
+    out.contactPerTravel = out.wheelCenterPerTravel + glm::cross(omega, out.geometry.contactPoint - out.geometry.wheelCenter);
     out.normalPerTravel = glm::dot(input.contactNormal, out.contactPerTravel);
 
     out.complianceSolved = false;

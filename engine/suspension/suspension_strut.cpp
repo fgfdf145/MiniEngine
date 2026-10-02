@@ -55,7 +55,11 @@ double StrutUnit::StiffnessSlope(double compression) const
     // out: it only matters when the stop is hit hard).
     const double coil = m_settings.coilSpring.Slope(compression - m_springMount);
     double spring = coil;
-    if (!m_settings.springMount.IsZero())
+    if (m_settings.springPushesOnly && m_settings.springPreload + m_settings.coilSpring.Value(compression - m_springMount) <= 0.0)
+    {
+        spring = 0.0;
+    }
+    if (spring != 0.0 && !m_settings.springMount.IsZero())
     {
         const double mount = m_settings.springMount.Slope(m_springMount);
         spring = (coil > 0.0 && mount > 0.0) ? coil * mount / (coil + mount) : 0.0;
@@ -121,6 +125,10 @@ double StrutUnit::Step(double compression, double compressionRate, double normal
     }
     const double coilForce = m_settings.coilSpring.Value(compression - m_springMount);
     m_springForce = m_settings.springPreload + coilForce;
+    if (m_settings.springPushesOnly)
+    {
+        m_springForce = std::max(m_springForce, 0.0);
+    }
 
     // Damper path. With a rigid mount the rod moves with the element.
     double w = 0.0;

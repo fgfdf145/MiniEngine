@@ -24,6 +24,9 @@ struct StrutUnitSettings
     double springPreload = 0.0; // N at the design length
     Curve coilSpring;           // added force over the preload, against coil compression
     Curve springMount;          // spring-seat rubber, force against its deflection (Zero: rigid)
+    // A coil sitting loose in its seats: past the extension where it unloads it goes slack instead
+    // of pulling (the wheel then hangs on its rebound stop).
+    bool springPushesOnly = false;
 
     Curve damper;               // hydraulic force against piston compression velocity
     Curve bumpStop;             // force against rod compression (damper path)

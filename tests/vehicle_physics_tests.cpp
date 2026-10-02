@@ -756,6 +756,9 @@ VehicleCarSpec MakeGtrSpec()
     front.dampFastReboundThreshold = 0.12f;
     front.antiRollBarRate = 68000.0f;
     front.hubMass = 59.0f;
+    front.tyreRadius = 0.355f;
+    front.tyreRate = 284861.0f;
+    front.tyreDamping = 500.0f;
 
     VehicleSuspensionAxle rear;
     rear.type = VehicleSuspensionType::DoubleWishbone;
@@ -782,16 +785,25 @@ VehicleCarSpec MakeGtrSpec()
     rear.dampFastReboundThreshold = 0.12f;
     rear.antiRollBarRate = 12050.0f;
     rear.hubMass = 66.0f;
+    rear.tyreRadius = 0.355f;
+    rear.tyreRate = 284861.0f;
+    rear.tyreDamping = 500.0f;
     spec.frontSuspension = front;
     spec.rearSuspension = rear;
     return spec;
 }
 
 // The GT-R's wheels where the model draws them: wheelbase 2.78 m with 55.5% on the front, tracks
-// 1.675 m and 1.68 m, 0.355 m tyres.
-VehicleSettings GtrSettings(bool multibody = true)
+// 1.675 m and 1.68 m, 0.355 m tyres. Without `unsprung` the data loses its tyre rates, and the
+// multibody suspension runs with massless wheels.
+VehicleSettings GtrSettings(bool multibody = true, bool unsprung = true)
 {
     VehicleCarSpec spec = MakeGtrSpec();
+    if (!unsprung)
+    {
+        spec.frontSuspension->tyreRate = 0.0f;
+        spec.rearSuspension->tyreRate = 0.0f;
+    }
     if (!multibody)
     {
         spec.frontSuspension.reset();
@@ -814,9 +826,9 @@ VehicleSettings GtrSettings(bool multibody = true)
     return settings;
 }
 
-void TestMultibodyCarRestsAtItsDesignPosition()
+void TestMultibodyCarRestsAtItsDesignPosition(bool unsprung)
 {
-    const VehicleSettings settings = GtrSettings();
+    const VehicleSettings settings = GtrSettings(true, unsprung);
     Require(HasSuspensionGeometry(settings), "the GT-R's data carries its linkage");
     PhysicsWorld world;
     AddGroundMesh(world);
@@ -829,6 +841,7 @@ void TestMultibodyCarRestsAtItsDesignPosition()
         const VehicleWheelState& wheel = wheels[index];
         const std::string name = "wheel " + std::to_string(index);
         Require(wheel.multibody, name + " runs on the multibody suspension");
+        Require(wheel.unsprungMass == unsprung, name + (unsprung ? " has its hub mass" : " has massless wheels"));
         // The springs' preload puts the car on its design position.
         RequireNear(wheel.travel, 0.0f, 0.006f, name + ": travel at rest");
         RequireNear(wheel.camberDegrees, index < 2 ? -2.9f : -1.1f, 0.2f, name + ": static camber");
@@ -839,15 +852,15 @@ void TestMultibodyCarRestsAtItsDesignPosition()
         const float outward = index % 2 == 0 ? 1.0f : -1.0f;
         Require(axle.y * outward > 0.01f, name + ": the drawn wheel leans in at the top");
     }
-    std::cout << "GT-R at rest: travel FL " << wheels[0].travel * 1000.0f << " mm, RL " << wheels[2].travel * 1000.0f
+    std::cout << (unsprung ? "GT-R at rest (hub masses): travel FL " : "GT-R at rest (massless wheels): travel FL ") << wheels[0].travel * 1000.0f << " mm, RL " << wheels[2].travel * 1000.0f
               << " mm; camber FL " << wheels[0].camberDegrees << " deg, RL " << wheels[2].camberDegrees << " deg\n";
 }
 
-void TestMultibodyCarCornersOnItsLinkage()
+void TestMultibodyCarCornersOnItsLinkage(bool unsprung)
 {
     PhysicsWorld world;
     AddGroundMesh(world);
-    const VehicleId car = world.AddVehicle(GtrSettings(), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    const VehicleId car = world.AddVehicle(GtrSettings(true, unsprung), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 1.0f);
     VehicleControls controls;
     controls.throttle = 1.0f;
@@ -872,7 +885,15 @@ void TestMultibodyCarCornersOnItsLinkage()
     const PhysicsPose pose = world.GetVehiclePose(car);
     const glm::vec3 forward = pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
-    std::cout << "GT-R turning: roll " << RollDegrees(pose.rotation) << " deg; travel FL " << wheels[0].travel * 1000.0f << " mm, FR "
+    const float turnSpeed = world.GetVehicleTelemetry(car).forwardSpeed;
+    float lateralLoad = 0.0f;
+    for (const VehicleWheelState& wheel : wheels)
+    {
+        lateralLoad += wheel.lateralForce;
+    }
+    std::cout << (unsprung ? "GT-R turning (hub masses): " : "GT-R turning (massless wheels): ") << turnSpeed << " m/s, "
+              << lateralLoad / (GtrSettings().massKg * 9.81f) << " g; loads FL " << wheels[0].suspensionForce << " FR " << wheels[1].suspensionForce
+              << " RL " << wheels[2].suspensionForce << " RR " << wheels[3].suspensionForce << "; roll " << RollDegrees(pose.rotation) << " deg; travel FL " << wheels[0].travel * 1000.0f << " mm, FR "
               << wheels[1].travel * 1000.0f << " mm; toe FL " << wheels[0].toeDegrees << ", FR " << wheels[1].toeDegrees
               << " deg; camber FL " << wheels[0].camberDegrees << ", FR " << wheels[1].camberDegrees << " deg\n";
     Require(forward.x < -0.1f, "steering right turns right, forward.x = " + std::to_string(forward.x));
@@ -886,6 +907,135 @@ void TestMultibodyCarCornersOnItsLinkage()
     std::cout << "GT-R steering: outer front turned " << outerTurn << " deg, inner " << innerTurn << " deg\n";
     Require(innerTurn > outerTurn, "Ackermann: the inner wheel turns further");
     Require(std::abs(wheels[2].toeDegrees) < 1.0f && std::abs(wheels[3].toeDegrees) < 1.0f, "the rears only move with their linkage");
+}
+
+// With hub masses the tyre is a spring of its own: at rest each one is squashed by its load over its
+// rate, the loads add up to the car's weight (hubs included), and the hub is drawn that much nearer
+// the ground than the tyre's radius.
+void TestUnsprungCarStandsOnItsTyres()
+{
+    const VehicleSettings settings = GtrSettings();
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 3.0f);
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    float total = 0.0f;
+    for (size_t index = 0; index < wheels.size(); ++index)
+    {
+        const VehicleWheelState& wheel = wheels[index];
+        const std::string name = "wheel " + std::to_string(index);
+        Require(wheel.inContact && wheel.unsprungMass, name + " stands on its tyre");
+        total += wheel.suspensionForce;
+        RequireNear(wheel.tyreDeflection, wheel.suspensionForce / 284861.0f, 0.0005f, name + ": the tyre squashed by its load");
+        // The hub over the ground: the tyre's radius less its deflection (the camber's lean aside).
+        RequireNear(wheel.pose.position.y, 0.355f - wheel.tyreDeflection, 0.012f, name + ": the hub's height over the ground");
+    }
+    const float weight = settings.massKg * 9.81f;
+    RequireNear(total, weight, 0.01f * weight, "the tyres carry the whole car");
+    std::cout << "GT-R on its tyres: load FL " << wheels[0].suspensionForce << " N, deflection " << wheels[0].tyreDeflection * 1000.0f
+              << " mm, hub " << wheels[0].pose.position.y * 1000.0f << " mm up; RL " << wheels[2].suspensionForce << " N, "
+              << wheels[2].tyreDeflection * 1000.0f << " mm\n";
+}
+
+// Dropped from half a metre the hubs hang out with the tyres unloaded, then the car lands
+// on them and comes back to rest at the design position.
+void TestUnsprungWheelsHangInTheAirAndLand()
+{
+    const VehicleSettings settings = GtrSettings();
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 0.15f);
+    std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    for (size_t index = 0; index < wheels.size(); ++index)
+    {
+        const std::string name = "wheel " + std::to_string(index);
+        Require(!wheels[index].inContact && wheels[index].tyreDeflection == 0.0f, name + " is off the ground");
+        // Falling, the hub weighs nothing against the body: the spring pushes it out until it goes
+        // slack (about its static deflection, 20 mm), short of the droop stop.
+        const float droop = index < 2 ? 0.05f : 0.08f;
+        Require(wheels[index].travel < -0.015f && wheels[index].travel > -droop - 1e-4f,
+                name + " hangs out on its slack spring, " + std::to_string(wheels[index].travel));
+    }
+    float mostLoad = 0.0f;
+    float mostBump = 0.0f;
+    constexpr float kFrame = 1.0f / 144.0f;
+    for (float time = 0.0f; time < 3.0f; time += kFrame)
+    {
+        world.Update(kFrame);
+        for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+        {
+            Require(std::isfinite(wheel.travel) && std::isfinite(wheel.suspensionForce), "the landing stays finite");
+            mostLoad = std::max(mostLoad, wheel.suspensionForce);
+            mostBump = std::max(mostBump, wheel.travel);
+        }
+    }
+    wheels = world.GetVehicleWheels(car);
+    for (size_t index = 0; index < wheels.size(); ++index)
+    {
+        const std::string name = "wheel " + std::to_string(index);
+        Require(wheels[index].inContact, name + " is back on the ground");
+        RequireNear(wheels[index].travel, 0.0f, 0.006f, name + " is back at the design position");
+    }
+    const float quarter = settings.massKg * 9.81f * 0.25f;
+    std::cout << "GT-R dropped 0.5 m: most tyre load " << mostLoad / quarter << " x a quarter of the weight, most bump " << mostBump * 1000.0f << " mm\n";
+    Require(mostLoad > 2.0f * quarter, "the landing loads the tyres");
+}
+
+// A 2 cm bump across the road at speed: the hubs ride over it (the front ones' travel and tyre loads
+// jump), the body hardly feels it, and the car goes on straight.
+void TestUnsprungCarTakesABump()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    world.AddStaticBox(glm::vec3(0.0f, 0.01f, 45.0f), glm::vec3(5.0f, 0.01f, 0.4f));
+    const VehicleId car = world.AddVehicle(GtrSettings(), {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    constexpr float kFrame = 1.0f / 144.0f;
+    float time = 0.0f;
+    while (world.GetVehiclePose(car).position.z < 30.0f && time < 10.0f)
+    {
+        world.Update(kFrame);
+        time += kFrame;
+    }
+    controls.throttle = 0.3f;
+    world.SetVehicleControls(car, controls);
+    const float speed = world.GetVehicleTelemetry(car).forwardSpeed;
+    const float rest = world.GetVehicleWheels(car)[0].suspensionForce;
+    float mostTravel = 0.0f;
+    float mostLoad = 0.0f;
+    float lowestBody = 1.0f;
+    float highestBody = -1.0f;
+    const float bodyBefore = world.GetVehiclePose(car).position.y;
+    while (world.GetVehiclePose(car).position.z < 60.0f && time < 20.0f)
+    {
+        world.Update(kFrame);
+        time += kFrame;
+        const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+        mostTravel = std::max(mostTravel, wheels[0].travel);
+        mostLoad = std::max(mostLoad, wheels[0].suspensionForce);
+        const float body = world.GetVehiclePose(car).position.y - bodyBefore;
+        lowestBody = std::min(lowestBody, body);
+        highestBody = std::max(highestBody, body);
+    }
+    Simulate(world, 1.5f);
+    const PhysicsPose pose = world.GetVehiclePose(car);
+    const glm::vec3 forward = pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+    std::cout << "GT-R over a 2 cm bump at " << speed << " m/s: front travel up to " << mostTravel * 1000.0f << " mm, tyre load up to "
+              << mostLoad / rest << " x rest; body moved " << lowestBody * 1000.0f << " to " << highestBody * 1000.0f << " mm\n";
+    Require(speed > 15.0f, "the GT-R reaches the bump at speed");
+    Require(mostTravel > 0.008f, "the front hub rides up over the bump");
+    Require(mostLoad > 1.3f * rest, "the bump loads the front tyre");
+    Require(highestBody - lowestBody < 0.02f, "the body hardly feels it");
+    Require(std::abs(forward.x) < 0.05f && forward.z > 0.99f, "the car goes on straight");
+    for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+    {
+        Require(wheel.inContact && std::abs(wheel.travel) < 0.01f, "the car runs on with its wheels settled");
+    }
 }
 
 void TestCarSpecReplacesWhatItKnows()
@@ -1314,8 +1464,13 @@ int main()
         TestWheelStateReportsTyrePhysics();
         TestFastWheelsRollTheRightWay();
         TestDrivenWheelsKeepNearTheGround();
-        TestMultibodyCarRestsAtItsDesignPosition();
-        TestMultibodyCarCornersOnItsLinkage();
+        TestMultibodyCarRestsAtItsDesignPosition(false);
+        TestMultibodyCarRestsAtItsDesignPosition(true);
+        TestUnsprungCarStandsOnItsTyres();
+        TestUnsprungWheelsHangInTheAirAndLand();
+        TestUnsprungCarTakesABump();
+        TestMultibodyCarCornersOnItsLinkage(false);
+        TestMultibodyCarCornersOnItsLinkage(true);
         TestWheelMotionRollsForwardAndSteers();
         TestWheelMotionSeesTheModelsAxes();
     }

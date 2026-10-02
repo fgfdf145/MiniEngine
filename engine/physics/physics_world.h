@@ -82,6 +82,11 @@ struct VehicleWheelState
     float toeDegrees = 0.0f;
     float springForce = 0.0f;
     float antiRollBarForce = 0.0f;
+    // When the data gives the axle a hub mass and a tyre rate the wheel is a mass of its own on the
+    // tyre's spring: the pose and suspensionLength are then the hub's, which the tyre's deflection
+    // (m) keeps above where the physics engine touches the ground.
+    bool unsprungMass = false;
+    float tyreDeflection = 0.0f;
 };
 
 struct VehicleTelemetry

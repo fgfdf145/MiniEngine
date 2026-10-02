@@ -623,6 +623,24 @@ void TestTopMountLetsTheRodStickAndSlip()
     Require(smooth == 0, "and not without the drop");
 }
 
+// A coil loose in its seats: preloaded 3000 N at 30 N/mm it unloads 100 mm out, and further out it is
+// slack (no force, no stiffness) rather than pulling; a held coil pulls on.
+void TestLooseSpringGoesSlack()
+{
+    StrutUnitSettings s;
+    s.springPreload = 3000.0;
+    s.coilSpring = Curve::Linear(30000.0);
+    s.springPushesOnly = true;
+    StrutUnit loose(s, std::make_unique<NoFriction>());
+    s.springPushesOnly = false;
+    StrutUnit held(s, std::make_unique<NoFriction>());
+    RequireNear(loose.Step(-0.05, 0.0, 0.0, 1e-3), 1500.0, 1e-9, "half way out the loose coil still pushes");
+    RequireNear(loose.StiffnessSlope(-0.05), 30000.0, 1e-9, "with its rate");
+    RequireNear(loose.Step(-0.12, 0.0, 0.0, 1e-3), 0.0, 1e-9, "past where it unloads it is slack");
+    RequireNear(loose.StiffnessSlope(-0.12), 0.0, 1e-9, "and has no rate");
+    RequireNear(held.Step(-0.12, 0.0, 0.0, 1e-3), -600.0, 1e-9, "a held coil pulls");
+}
+
 void TestSpringPathSeriesRubber()
 {
     StrutUnitSettings s;
@@ -873,6 +891,7 @@ int main()
         TestLuGreSteadyStateIsTheStribeckCurve();
         TestLuGreSticksBelowBreakaway();
         TestSpringPathSeriesRubber();
+        TestLooseSpringGoesSlack();
         TestTopMountLetsTheRodStickAndSlip();
         TestCornerStepsAtOneKilohertz();
         TestRillSweepParameters();
