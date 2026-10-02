@@ -996,6 +996,53 @@ void TestCarDataPlacesTheCentreOfMass()
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "and all of the weight");
 }
 
+// The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
+// mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
+// twice adds nothing, and the car at rest carries it.
+void TestStartingFuelMovesTheMass()
+{
+    VehicleCarSpec spec = MakeGtrSpec();
+    spec.wheelbase = 2.78f;
+    spec.frontWeightShare = 0.555f;
+    spec.frontSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.fuelLitres = 30.0f;
+    spec.fuelTankPosition = glm::vec3(0.0f, -0.15f, -0.85f);
+    const VehicleCarSpec fuelled = WithStartingFuel(spec);
+    const float fuel = 30.0f * kFuelKgPerLitre;
+    RequireNear(*fuelled.massKg, 1375.0f + fuel, 1e-3f, "the fuel's mass");
+    const float tankShare = 0.555f - 0.85f / 2.78f;
+    RequireNear(*fuelled.frontWeightShare, (0.555f * 1375.0f + tankShare * fuel) / (1375.0f + fuel), 1e-5f, "the weight split with the tank behind");
+    RequireNear(fuelled.frontSuspension->centerOfMassAboveWheel, -0.075f - fuel * 0.15f / (1375.0f + fuel), 1e-6f, "the centre of mass lower");
+    Require(!fuelled.fuelLitres.has_value(), "the fuel is counted once");
+    const VehicleCarSpec twice = WithStartingFuel(fuelled);
+    Require(*twice.massKg == *fuelled.massKg && *twice.frontWeightShare == *fuelled.frontWeightShare, "and applying it again adds nothing");
+    std::cout << "GT-R with 30 L of fuel: " << *fuelled.massKg << " kg, " << *fuelled.frontWeightShare * 100.0f << " % front, centre of mass "
+              << (0.355f + fuelled.frontSuspension->centerOfMassAboveWheel) * 1000.0f << " mm up\n";
+
+    // Driven: the settings take the fuelled figures.
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    const VehicleSettings settings =
+        FitVehicleSettingsToBounds(glm::vec3(-1.031f, -0.066f, -2.401f), glm::vec3(1.031f, 1.357f, 2.453f), ApplyCarSpec(VehicleSettings{}, spec), &layout);
+    RequireNear(settings.massKg, 1375.0f + fuel, 1e-3f, "the car is driven with its fuel");
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls hold;
+    hold.brake = 1.0f;
+    world.SetVehicleControls(car, hold);
+    Simulate(world, 3.0f);
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    const float front = wheels[0].suspensionForce + wheels[1].suspensionForce;
+    const float total = front + wheels[2].suspensionForce + wheels[3].suspensionForce;
+    RequireNear(front / total, *fuelled.frontWeightShare, 0.01f, "the front tyres carry the fuelled share");
+    RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "the tyres carry the fuel too");
+}
+
 void TestCarSpecReplacesWhatItKnows()
 {
     VehicleSettings tuning;
@@ -1428,6 +1475,7 @@ int main()
         TestUnsprungWheelsHangInTheAirAndLand();
         TestUnsprungCarTakesABump();
         TestCarDataPlacesTheCentreOfMass();
+        TestStartingFuelMovesTheMass();
         TestMultibodyCarCornersOnItsLinkage(false);
         TestMultibodyCarCornersOnItsLinkage(true);
         TestWheelMotionRollsForwardAndSteers();

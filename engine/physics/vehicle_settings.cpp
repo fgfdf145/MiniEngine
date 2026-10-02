@@ -133,8 +133,41 @@ bool HasSuspensionGeometry(const VehicleSettings& settings)
     return settings.frontSuspension.type != VehicleSuspensionType::None && settings.rearSuspension.type != VehicleSuspensionType::None;
 }
 
-VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec)
+VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec)
 {
+    VehicleCarSpec fuelled = spec;
+    fuelled.fuelLitres.reset();
+    fuelled.fuelTankPosition.reset();
+    if (!spec.fuelLitres.has_value() || *spec.fuelLitres <= 0.0f || !spec.massKg.has_value() || *spec.massKg <= 0.0f)
+    {
+        return fuelled;
+    }
+    const float fuel = *spec.fuelLitres * kFuelKgPerLitre;
+    const float mass = *spec.massKg + fuel;
+    const glm::vec3 tank = spec.fuelTankPosition.value_or(glm::vec3(0.0f));
+    fuelled.massKg = mass;
+    // The tank's share of its weight on the front axle: its distance ahead of the rear axle over the
+    // wheelbase (the centre of mass being frontWeightShare of the wheelbase ahead of it).
+    if (spec.frontWeightShare.has_value() && spec.wheelbase.has_value() && *spec.wheelbase > 0.0f)
+    {
+        const float tankShare = *spec.frontWeightShare + tank.z / *spec.wheelbase;
+        fuelled.frontWeightShare = (*spec.frontWeightShare * *spec.massKg + tankShare * fuel) / mass;
+    }
+    // The centre of mass moves up or down by the fuel's moment over the new mass.
+    const float rise = fuel * tank.y / mass;
+    for (std::optional<VehicleSuspensionAxle>* axle : {&fuelled.frontSuspension, &fuelled.rearSuspension})
+    {
+        if (axle->has_value())
+        {
+            (*axle)->centerOfMassAboveWheel += rise;
+        }
+    }
+    return fuelled;
+}
+
+VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& dryspec)
+{
+    const VehicleCarSpec spec = WithStartingFuel(dryspec);
     // An automatic gearbox changes up a little under the limiter and down where the next gear down
     // still pulls.
     constexpr float kShiftUpFraction = 0.88f;

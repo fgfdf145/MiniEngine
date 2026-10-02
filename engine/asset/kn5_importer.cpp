@@ -249,6 +249,11 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     {
         out["inertiaBox"] = Json::array({Round(spec.inertiaBox->x, 4), Round(spec.inertiaBox->y, 4), Round(spec.inertiaBox->z, 4)});
     }
+    put("fuelLitres", spec.fuelLitres);
+    if (spec.fuelTankPosition.has_value())
+    {
+        out["fuelTankPosition"] = Json::array({Round(spec.fuelTankPosition->x, 4), Round(spec.fuelTankPosition->y, 4), Round(spec.fuelTankPosition->z, 4)});
+    }
 
     if (!spec.aeroWings.empty())
     {

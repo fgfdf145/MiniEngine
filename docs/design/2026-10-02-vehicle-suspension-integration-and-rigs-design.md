@@ -255,4 +255,9 @@ m_z = m_hub·|∂W/∂z|²
 - 新测试 `TestCarDataPlacesTheCentreOfMass`：GT-R 按编辑器的路径构建（数据、`ApplyCarSpec`、模型真实的包围盒和轮心），重心为前 55.5%、高 280 mm。静止时前轮承担 55.50% 的车重，四轮之和等于车重。
 - 全量 88 项测试通过。
 
-**没做的。** AC 起步默认带 30 L 燃油（约 22 kg，油箱在重心后方 0.85 m、下方 0.15 m），我们没有把它加进去，质量仍按 `TOTALMASS` 计。
+**燃油（用户要求加上）。**
+- 数据：`[FUEL] FUEL`（起步油量，升）和 `[FUELTANK] POSITION`（油箱相对重心的位置：横向、上、前），导入时写进 `MINIENGINE_vehicle` 的 `fuelLitres` 和 `fuelTankPosition`。
+- 计算：`WithStartingFuel` 把燃油加进质量，再按油箱位置修正前轴重量比和重心高度。`ApplyCarSpec`（开车）和 `BuildCarModel`（台架）都调用它，并且只会加一次。
+- 燃油密度取 0.75 kg/L **[未核对：AC 的取值没查到，汽油在 0.72–0.77 之间]**。
+- GT-R：30 L 即 22.5 kg，结果为 1397.5 kg、前轴 55.0%、重心 277.6 mm。新测试 `TestStartingFuelMovesTheMass` 验证这些数值，并验证静止时前轮承担的比例与之一致。
+- 用户的 GT-R 资产只补了这两个字段，补之前的文件在 `out/backup/nissan_gtr_gt3.gltf.before-fuel.backup`。

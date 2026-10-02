@@ -2443,6 +2443,11 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
     {
         spec.inertiaBox = glm::vec3(box[0], box[1], box[2]);
     }
+    spec.fuelLitres = VehicleNumber(extension, "fuelLitres");
+    if (const std::vector<float> tank = VehicleNumbers(extension, "fuelTankPosition"); tank.size() == 3)
+    {
+        spec.fuelTankPosition = glm::vec3(tank[0], tank[1], tank[2]);
+    }
     return spec;
 }
 

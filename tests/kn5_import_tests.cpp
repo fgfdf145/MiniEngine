@@ -1102,6 +1102,7 @@ std::map<std::string, std::string> BoxsterDataFiles()
     return {
         {"car.ini",
          "[HEADER]\r\nVERSION=2 ; version number\r\n\r\n[BASIC]\r\nGRAPHICS_OFFSET=0,-0.33,0.11 ; correction\r\nTOTALMASS=1460 ; kg with driver\r\n\r\n"
+         "[FUEL]\r\nFUEL=30 ; default starting fuel in litres\r\nMAX_FUEL=64\r\n\r\n[FUELTANK]\r\nPOSITION=0,-0.15,-0.85\r\n\r\n"
          "[CONTROLS]\r\nSTEER_LOCK=400 ; real car's lock from centre to right\r\nSTEER_RATIO=15.0\r\n"},
         {"engine.ini",
          "[HEADER]\r\nVERSION=1\r\nPOWER_CURVE=power.lut ; power curve file\r\n\r\n[ENGINE_DATA]\r\nINERTIA=0.137 ; kg m^2\r\nLIMITER=7500 ; rev limiter\r\nMINIMUM=900\r\n\r\n"
@@ -1238,6 +1239,7 @@ void CarDataBecomesASpec()
 {
     const VehicleCarSpec spec = AcCarData::BuildSpec(BoxsterDataFiles());
     Require(spec.massKg == 1460.0f, "the mass");
+    Require(spec.fuelLitres == 30.0f && spec.fuelTankPosition == glm::vec3(0.0f, -0.15f, -0.85f), "the starting fuel and its tank");
     Require(spec.drive == VehicleDrive::RearWheel, "the drive");
     Require(spec.minRpm == 900.0f && spec.maxRpm == 7500.0f, "the revs");
     Require(spec.gearRatios.size() == 7 && spec.gearRatios[0] == 3.91f && spec.gearRatios[6] == 0.62f, "seven forward gears");
@@ -1395,6 +1397,7 @@ void ImportWritesTheCarsOwnData()
                 "mass, drive and gears survive the glTF");
         Require(spec.torqueCurve.size() == 10 && spec.maxRpm == 7500.0f && spec.finalDriveRatio == 3.62f, "the torque curve and revs survive");
         Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "and the flags");
+        Require(spec.fuelLitres == 30.0f && spec.fuelTankPosition == glm::vec3(0.0f, -0.15f, -0.85f), "and the fuel");
         RequireNear(*spec.suspensionFrequencyHz, *AcCarData::BuildSpec(BoxsterDataFiles()).suspensionFrequencyHz, 1e-3f, "and the springs");
         // Everything else the data holds comes through too.
         const VehicleCarSpec expected = AcCarData::BuildSpec(BoxsterDataFiles());

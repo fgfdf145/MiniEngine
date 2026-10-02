@@ -700,7 +700,14 @@ std::string DescribeCarSpec(const VehicleCarSpec& spec)
     char buffer[64];
     if (spec.massKg.has_value())
     {
-        std::snprintf(buffer, sizeof(buffer), "%.0f kg", *spec.massKg);
+        if (spec.fuelLitres.has_value() && *spec.fuelLitres > 0.0f)
+        {
+            std::snprintf(buffer, sizeof(buffer), "%.0f kg + %.0f L fuel", *spec.massKg, *spec.fuelLitres);
+        }
+        else
+        {
+            std::snprintf(buffer, sizeof(buffer), "%.0f kg", *spec.massKg);
+        }
         append(buffer);
     }
     if (spec.drive.has_value())
@@ -847,6 +854,18 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
     if (const std::optional<float> mass = car.Number("BASIC", "TOTALMASS"); mass.has_value() && *mass > 0.0f)
     {
         spec.massKg = *mass;
+    }
+    // TOTALMASS has the driver but no fuel: the car starts with FUEL litres in its tank.
+    if (const std::optional<float> fuel = car.Number("FUEL", "FUEL"); fuel.has_value() && *fuel > 0.0f)
+    {
+        spec.fuelLitres = *fuel;
+        if (const std::optional<std::string> position = car.Text("FUELTANK", "POSITION"))
+        {
+            if (const std::optional<std::vector<float>> xyz = ParseNumberList(*position, 3))
+            {
+                spec.fuelTankPosition = glm::vec3((*xyz)[0], (*xyz)[1], (*xyz)[2]);
+            }
+        }
     }
     const std::optional<float> lock = car.Number("CONTROLS", "STEER_LOCK");
     const std::optional<float> ratio = car.Number("CONTROLS", "STEER_RATIO");

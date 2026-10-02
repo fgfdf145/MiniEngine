@@ -382,7 +382,20 @@ struct VehicleCarSpec
     std::optional<float> wheelbase;
     std::optional<float> frontWeightShare;
     std::optional<glm::vec3> inertiaBox;
+    // The fuel the car starts with (Assetto Corsa's [FUEL] FUEL, litres) and where its tank sits from
+    // the centre of mass (m, [FUELTANK] POSITION: across, up, forward). massKg, frontWeightShare and
+    // the axles' centerOfMassAboveWheel are the car without it (TOTALMASS has the driver, no fuel);
+    // WithStartingFuel adds it.
+    std::optional<float> fuelLitres;
+    std::optional<glm::vec3> fuelTankPosition;
 };
+
+// Fuel's mass per litre. [Not checked against the game: petrol is 0.72 to 0.77.]
+inline constexpr float kFuelKgPerLitre = 0.75f;
+
+// `spec` with its starting fuel in the mass, the weight split and the centre of mass's height (the
+// fuel fields then cleared, so applying it twice adds nothing). Unchanged without fuel or a mass.
+VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec);
 
 // Whether the settings carry a multibody suspension for both axles.
 bool HasSuspensionGeometry(const VehicleSettings& settings);

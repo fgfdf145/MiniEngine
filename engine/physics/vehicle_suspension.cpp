@@ -205,8 +205,9 @@ double FitSteeringRackTravel(const VehicleSettings& settings)
     return sign * 0.5 * (low + high);
 }
 
-suspension::CarModel BuildCarModel(const VehicleCarSpec& spec, const std::string& name)
+suspension::CarModel BuildCarModel(const VehicleCarSpec& dryspec, const std::string& name)
 {
+    const VehicleCarSpec spec = WithStartingFuel(dryspec);
     if (!spec.frontSuspension.has_value() || !spec.rearSuspension.has_value() || !spec.massKg.has_value() || !spec.wheelbase.has_value() || !spec.frontWeightShare.has_value())
     {
         throw std::invalid_argument("BuildCarModel: the car's data lacks its linkage, mass, wheelbase or weight split");
