@@ -1,0 +1,156 @@
+# The Nissan GT-R GT3 on a seven-post rig: four wheel pads and three aero loaders on a base plate.
+# The car is selected, so Window > Suspension Rigs (or the Vehicle panel's button) loads it at once;
+# its Live Rig tab runs the seven-post rig and moves the car, its wheels, the pads ("Wheel pad FL"...)
+# and the loaders ("Aero loader ..."). Driving it from here drops it onto the pads.
+# Needs the car imported from Assetto Corsa's ks_nissan_gtr_gt3 at assets/nissan_gtr_gt3 (not in git:
+# the game's content), run from the repository's root.
+scene:
+  version: 3
+  selected_entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
+  selected_entity: 0
+entities:
+  - entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
+    tag: nissan_gtr_gt3
+    model:
+      display_name: nissan_gtr_gt3.gltf
+      source_path: assets/nissan_gtr_gt3/nissan_gtr_gt3.gltf
+      source_uuid: 5226e6cc-0904-4320-afe3-50821f29d39c
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.7131, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: d934e7e6-98bf-43d5-a71f-d033fe8a18d4
+    tag: Rig base plate
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.15, 0]
+      rotation: [0, 0, 0]
+      scale: [3.2, 0.3, 4.6]
+  - entity_uuid: 57edf2a5-e37f-4e5d-9078-da7a4f5f0e27
+    tag: Wheel pad FL
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-0.8583, 0.475, -1.432]
+      rotation: [0, 0, 0]
+      scale: [0.5, 0.35, 0.6]
+  - entity_uuid: 19b26680-425d-48fe-b455-924fbbb6da99
+    tag: Wheel pad FR
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0.8583, 0.475, -1.432]
+      rotation: [0, 0, 0]
+      scale: [0.5, 0.35, 0.6]
+  - entity_uuid: a6928209-0bad-4bb9-bc0f-63d7794373d9
+    tag: Wheel pad RL
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-0.869, 0.475, 1.3454]
+      rotation: [0, 0, 0]
+      scale: [0.5, 0.35, 0.6]
+  - entity_uuid: 7ba1de52-144f-4031-b367-be8bacc4ce25
+    tag: Wheel pad RR
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0.869, 0.475, 1.3454]
+      rotation: [0, 0, 0]
+      scale: [0.5, 0.35, 0.6]
+  - entity_uuid: cb275130-e274-4dc5-a2eb-1752bcef8a64
+    tag: Aero loader front left
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-0.45, 0.4965, -0.9]
+      rotation: [0, 0, 0]
+      scale: [0.12, 0.3931, 0.12]
+  - entity_uuid: ca9d8a31-1046-4b06-941b-32d7d37bb2b1
+    tag: Aero loader front right
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0.45, 0.4965, -0.9]
+      rotation: [0, 0, 0]
+      scale: [0.12, 0.3931, 0.12]
+  - entity_uuid: ae4195bc-60bf-466f-ba9a-66e16454fff3
+    tag: Aero loader rear
+    model:
+      display_name: Cube
+      source_path: ""
+      source_uuid: ""
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.4965, 0.9]
+      rotation: [0, 0, 0]
+      scale: [0.12, 0.3931, 0.12]
+lights:
+  - entity_uuid: 3289c2f5-55fd-447e-9915-397160b07c1d
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 10, 0]
+      rotation: [35, 0, 55]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+  atmosphere:
+    ground_albedo: [0.25, 0.22, 0.16]
+    ground_plane: true
+    seamless_horizon: true
+    rayleigh_density_scale: 1
+    mie_density_scale: 1
+    mie_anisotropy: 0.8
+    ozone_density_scale: 1
+    aerial_perspective_distance_scale: 1
+    sun_angular_diameter_degrees: 0.545
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
