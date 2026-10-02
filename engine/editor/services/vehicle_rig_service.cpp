@@ -185,6 +185,42 @@ void Pose(RendererSharedState& state, VehicleRigSession& session)
     }
     state.rendererWorld.SetSubmeshLocalTransforms(session.entity, std::move(transforms));
 
+    // The linkage at the drawn travel, from each axle's frame onto the model and into the world.
+    const glm::mat4 entity = session.startMatrix * body;
+    const std::array<ModelWheelRig::Corner, kModelWheelCornerCount>& wheels = session.model->wheelRig->corners;
+    VehicleLinkage& linkage = session.history.linkage;
+    linkage = VehicleLinkage{};
+    for (int axle = 0; axle < 2; ++axle)
+    {
+        suspension::AxleSuspension& sketchAxle = *session.sketchAxles[axle];
+        sketchAxle.Pose(rig.Travel(2 * axle) * gain, rig.Travel(2 * axle + 1) * gain, 0.0);
+        const double halfTrack = sketchAxle.SketchHalfTrack(std::abs(session.car.corners[2 * axle].position.y));
+        suspension::LinkageSketch sketch;
+        sketchAxle.Sketch(halfTrack, sketch);
+        const glm::vec3 leftWheel = wheels[2 * axle].center;
+        const auto toWorld = [&](const suspension::Vec3& p) {
+            const suspension::Vec3 q = p - suspension::Vec3(0.0, halfTrack, 0.0);
+            const glm::vec3 inModel = leftWheel + session.forward * static_cast<float>(q.x) + session.left * static_cast<float>(q.y) + session.up * static_cast<float>(q.z);
+            return glm::vec3(entity * glm::vec4(inModel, 1.0f));
+        };
+        for (const auto& [a, b] : sketch.links)
+        {
+            linkage.links.push_back({toWorld(a), toWorld(b)});
+        }
+        for (const auto& [a, b] : sketch.carriers)
+        {
+            linkage.carriers.push_back({toWorld(a), toWorld(b)});
+        }
+        for (const suspension::Vec3& p : sketch.chassis)
+        {
+            linkage.chassis.push_back(toWorld(p));
+        }
+        for (const suspension::Vec3& p : sketch.joints)
+        {
+            linkage.joints.push_back(toWorld(p));
+        }
+    }
+
     for (const VehicleRigSession::Prop& prop : session.props)
     {
         if (!world.IsValidEntity(prop.entity))
@@ -238,6 +274,10 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleRigExci
     session->excitation = excitation;
     session->friction = excitation.friction;
     session->rig = MakeRig(session->car, session->friction);
+    for (int axle = 0; axle < 2; ++axle)
+    {
+        session->sketchAxles[axle] = suspension::MakeAxleSuspension(session->car, axle, false);
+    }
 
     // The rig frame in the model: forward from the rear wheels to the front, left from the right
     // wheels to the left, its origin the sprung mass's centre (the rig's own) at the wheels' height.

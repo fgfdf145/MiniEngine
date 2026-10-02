@@ -216,6 +216,10 @@ public:
     {
         return m_car;
     }
+    const AxleSuspension& Axle(int axle) const
+    {
+        return *m_axles[axle];
+    }
 
 private:
     CarModel m_car;

@@ -400,6 +400,111 @@ void AxleSuspension::Step(const std::array<CornerInput, 2>& in)
     }
 }
 
+void AxleSuspension::Pose(double leftTravel, double rightTravel, double rack)
+{
+    if (m_solid)
+    {
+        m_solid->Solve(leftTravel, rightTravel);
+        return;
+    }
+    const std::array<double, 2> travel = {leftTravel, rightTravel};
+    for (int side = 0; side < 2; ++side)
+    {
+        Kinematics& kinematics = m_corners[side]->MutableKinematics();
+        // In small steps: the solver starts from where the linkage is.
+        const double fromTravel = kinematics.Travel();
+        const double fromRack = kinematics.Rack();
+        const int steps = std::clamp(static_cast<int>(std::max(std::abs(travel[side] - fromTravel) / 0.005, std::abs(rack - fromRack) / 0.002)) + 1, 1, 50);
+        for (int i = 1; i <= steps; ++i)
+        {
+            const double t = static_cast<double>(i) / steps;
+            kinematics.Solve(fromTravel + (travel[side] - fromTravel) * t, fromRack + (rack - fromRack) * t);
+        }
+    }
+}
+
+void AxleSuspension::Sketch(double halfTrack, LinkageSketch& out) const
+{
+    out = LinkageSketch{};
+    if (m_solid)
+    {
+        const SolidAxleDefinition& def = m_solid->Definition();
+        for (const AxleLinkDef& link : def.links)
+        {
+            const Vec3 end = m_solid->Point(link.axle);
+            out.links.push_back({link.chassis, end});
+            out.chassis.push_back(link.chassis);
+            out.joints.push_back(end);
+        }
+        const double half = 0.5 * def.track;
+        out.wheelCenters = {m_solid->Point(Vec3(0.0, half, 0.0)), m_solid->Point(Vec3(0.0, -half, 0.0))};
+        out.carriers.push_back(out.wheelCenters);
+        return;
+    }
+    for (int side = 0; side < 2; ++side)
+    {
+        const Kinematics& kinematics = m_corners[side]->GetKinematics();
+        const Model& model = kinematics.GetModel();
+        const SuspensionDefinition& def = model.definition;
+        const Vec3 offset(0.0, side == 0 ? halfTrack : -halfTrack, 0.0);
+        // Game data gives its springs at the wheel: their seats are made up, so they are left out.
+        const auto drawn = [](const std::string& name) {
+            return name.rfind("spring_", 0) != 0 && name.find("axis") == std::string::npos;
+        };
+        const auto at = [&](const std::string& name) {
+            return kinematics.Point(model.Find(name)) + offset;
+        };
+        for (const BodyDef& body : def.bodies)
+        {
+            std::vector<std::string> names;
+            for (const std::string& name : body.points)
+            {
+                if (drawn(name) && model.Find(name) >= 0)
+                {
+                    names.push_back(name);
+                }
+            }
+            if (body.name == def.knuckle)
+            {
+                for (const std::string& name : names)
+                {
+                    if (name != def.wheelCenter)
+                    {
+                        out.carriers.push_back({at(def.wheelCenter), at(name)});
+                    }
+                }
+                continue;
+            }
+            // A rod between its two ends; an arm (three or more points) as its outline.
+            if (names.size() == 2)
+            {
+                out.links.push_back({at(names[0]), at(names[1])});
+            }
+            else if (names.size() > 2)
+            {
+                for (std::size_t i = 0; i < names.size(); ++i)
+                {
+                    out.links.push_back({at(names[i]), at(names[(i + 1) % names.size()])});
+                }
+            }
+        }
+        for (const SliderDef& slider : def.sliders)
+        {
+            out.links.push_back({at(slider.through), at(slider.base)});
+        }
+        for (std::size_t i = 0; i < model.pointNames.size(); ++i)
+        {
+            if (!drawn(model.pointNames[i]) || model.pointNames[i] == def.wheelCenter)
+            {
+                continue;
+            }
+            const Vec3 p = kinematics.Point(static_cast<int>(i)) + offset;
+            (model.roles[i] == PointRole::Moving ? out.joints : out.chassis).push_back(p);
+        }
+        out.wheelCenters[side] = at(def.wheelCenter);
+    }
+}
+
 const CornerOutput& AxleSuspension::Output(int side) const
 {
     return m_solid ? m_solid->Output(side) : m_corners[side]->Output();

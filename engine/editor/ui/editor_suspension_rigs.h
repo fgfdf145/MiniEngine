@@ -51,6 +51,11 @@ public:
     {
         return m_excitation;
     }
+    // Whether the viewport draws the linkage on the car while it is on the live rig.
+    bool ShowLinkage() const
+    {
+        return m_showLinkage;
+    }
     void StartRun();
     bool IsRunning() const
     {
@@ -111,6 +116,7 @@ private:
 
     // Live rig tab.
     VehicleRigExcitation m_excitation;
+    bool m_showLinkage = true;
     int m_roadRoughness = 1; // smooth track, bumpy road, rough road
 
     // Seven-post tab.

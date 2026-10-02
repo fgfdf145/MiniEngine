@@ -353,6 +353,37 @@ void DrawFrictionCircles(const Painter& painter, const std::vector<VehicleWheelS
 }
 }
 
+void DrawVehicleLinkageOverlay(
+    ImDrawList& drawList,
+    const ImVec2& origin,
+    const ImVec2& size,
+    const glm::mat4& viewProjection,
+    const VehicleLinkage& linkage,
+    float uiScale)
+{
+    const Painter painter{drawList, origin, size, viewProjection, uiScale};
+    constexpr ImU32 kLinkColor = IM_COL32(90, 165, 255, 255);
+    constexpr ImU32 kCarrierColor = IM_COL32(255, 155, 50, 255);
+    constexpr ImU32 kChassisColor = IM_COL32(205, 205, 210, 255);
+    constexpr ImU32 kJointColor = IM_COL32(255, 215, 75, 255);
+    for (const auto& [a, b] : linkage.links)
+    {
+        painter.Line(a, b, kLinkColor, 2.5f);
+    }
+    for (const auto& [a, b] : linkage.carriers)
+    {
+        painter.Line(a, b, kCarrierColor, 3.0f);
+    }
+    for (const glm::vec3& p : linkage.chassis)
+    {
+        painter.Dot(p, 3.5f, kChassisColor);
+    }
+    for (const glm::vec3& p : linkage.joints)
+    {
+        painter.Dot(p, 3.5f, kJointColor);
+    }
+}
+
 float ComputeTyreGripUsage(const VehicleWheelState& wheel)
 {
     return wheel.inContact ? std::max(GripUsageAlong(wheel), GripUsageAcross(wheel)) : 0.0f;

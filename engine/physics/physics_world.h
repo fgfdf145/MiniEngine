@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <array>
 #include <vector>
 
 namespace me
@@ -89,6 +90,17 @@ struct VehicleWheelState
     float tyreDeflection = 0.0f;
 };
 
+// A car's suspension linkage where the last step left it, in world space, for drawing: the rods and
+// arms, the wheel carriers (uprights, or a solid axle's beam), the chassis pivots and the joints on the
+// moving parts. Empty for a car on straight springs.
+struct VehicleLinkage
+{
+    std::vector<std::array<glm::vec3, 2>> links;
+    std::vector<std::array<glm::vec3, 2>> carriers;
+    std::vector<glm::vec3> chassis;
+    std::vector<glm::vec3> joints;
+};
+
 struct VehicleTelemetry
 {
     float forwardSpeed = 0.0f; // metres per second along the car's +Z, negative when reversing
@@ -139,6 +151,7 @@ class PhysicsWorld
     void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
     PhysicsPose GetVehiclePose(VehicleId vehicle) const;
     std::vector<VehicleWheelState> GetVehicleWheels(VehicleId vehicle) const;
+    VehicleLinkage GetVehicleLinkage(VehicleId vehicle) const;
     VehicleTelemetry GetVehicleTelemetry(VehicleId vehicle) const;
 
     // Returns how many fixed steps ran.

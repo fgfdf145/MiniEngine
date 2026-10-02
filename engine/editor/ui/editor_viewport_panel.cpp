@@ -1,4 +1,5 @@
 ﻿#include <engine/editor/editor_ui.h>
+#include "editor_suspension_rigs.h"
 #include "editor_ui_internal.h"
 
 #include "editor_vehicle_overlay.h"
@@ -995,6 +996,16 @@ void EditorUiController::DrawViewportPanel(
                 m_vehicleStatus.wheels,
                 m_vehicleOverlay,
                 m_effectiveUiScale);
+            if (m_vehicleOverlay.enabled && m_vehicleOverlay.linkage)
+            {
+                DrawVehicleLinkageOverlay(
+                    *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleStatus.linkage, m_effectiveUiScale);
+            }
+        }
+        if (m_vehicleRigStatus.active && m_suspensionRigs && m_suspensionRigs->ShowLinkage())
+        {
+            DrawVehicleLinkageOverlay(
+                *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleRigStatus.linkage, m_effectiveUiScale);
         }
         if (fullscreen)
         {

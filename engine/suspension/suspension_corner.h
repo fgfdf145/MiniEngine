@@ -81,6 +81,11 @@ public:
     {
         return m_kinematics;
     }
+    // For posing the linkage without a step (drawing): the next Step moves it from there.
+    Kinematics& MutableKinematics()
+    {
+        return m_kinematics;
+    }
     const StrutUnit& Strut() const
     {
         return m_strut;

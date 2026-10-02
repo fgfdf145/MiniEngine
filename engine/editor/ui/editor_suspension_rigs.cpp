@@ -1055,6 +1055,12 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
     }
     ImGui::SameLine();
     ImGui::Checkbox("Damper friction (assumed)", &e.friction);
+    ImGui::SameLine();
+    ImGui::Checkbox("Linkage on the car", &m_showLinkage);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Draws the suspension at each wheel in the viewport, over the body, moving with the drawn motion.");
+    }
     result.vehicleRigExcitation = e;
 
     if (live.sampleTime.empty())

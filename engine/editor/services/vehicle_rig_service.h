@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/physics/physics_world.h>
 #include <engine/scene/scene_components.h>
 #include <engine/suspension/suspension_rigs.h>
 
@@ -64,6 +65,8 @@ struct VehicleRigStatus
     std::vector<double> pitch;  // deg, nose up
     std::vector<double> roll;   // deg, right side down
     std::array<double, 4> staticTyreLoad{};
+    // The linkage where the car is drawn (its motion exaggerated as the car's), in world space.
+    VehicleLinkage linkage;
     std::string lastError;
 };
 
@@ -95,6 +98,8 @@ struct VehicleRigSession
     suspension::CarModel car;
     std::unique_ptr<suspension::SevenPostRig> rig;
     std::unique_ptr<suspension::RandomRoad> road;
+    // The linkage posed at the drawn travel, for the viewport (the rig's own is at the true travel).
+    std::array<std::unique_ptr<suspension::AxleSuspension>, 2> sketchAxles;
     VehicleRigExcitation excitation;
     bool friction = false;
     double time = 0.0;

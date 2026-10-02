@@ -770,6 +770,18 @@ void TestMultibodyCarRestsAtItsDesignPosition(bool unsprung)
         const float outward = index % 2 == 0 ? 1.0f : -1.0f;
         Require(axle.y * outward > 0.01f, name + ": the drawn wheel leans in at the top");
     }
+    // The linkage for drawing sits at the wheels: every joint on an upright within half a metre of one.
+    const VehicleLinkage linkage = world.GetVehicleLinkage(car);
+    Require(linkage.links.size() >= 16 && linkage.carriers.size() >= 12 && !linkage.joints.empty(), "the linkage to draw");
+    for (const glm::vec3& joint : linkage.joints)
+    {
+        float nearest = 1e9f;
+        for (const VehicleWheelState& wheel : wheels)
+        {
+            nearest = std::min(nearest, glm::length(joint - wheel.pose.position));
+        }
+        Require(nearest < 0.5f, "a joint at its wheel, " + std::to_string(nearest) + " m away");
+    }
     std::cout << (unsprung ? "GT-R at rest (hub masses): travel FL " : "GT-R at rest (massless wheels): travel FL ") << wheels[0].travel * 1000.0f << " mm, RL " << wheels[2].travel * 1000.0f
               << " mm; camber FL " << wheels[0].camberDegrees << " deg, RL " << wheels[2].camberDegrees << " deg\n";
 }

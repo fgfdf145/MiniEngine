@@ -1365,6 +1365,47 @@ PhysicsPose PhysicsWorld::GetVehiclePose(VehicleId id) const
     return Interpolate(vehicle.previous.chassis, vehicle.current.chassis, m_impl->Alpha());
 }
 
+VehicleLinkage PhysicsWorld::GetVehicleLinkage(VehicleId id) const
+{
+    const Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
+    VehicleLinkage linkage;
+    if (vehicle.corners.size() < kVehicleWheelCount)
+    {
+        return linkage;
+    }
+    const JPH::RMat44 transform = vehicle.body->GetWorldTransform();
+    for (size_t axle = 0; axle < 2; ++axle)
+    {
+        // The axle's frame from its left wheel's: that wheel's design centre is half a track to the left.
+        const Impl::Vehicle::Corner& left = vehicle.corners[2 * axle];
+        const Impl::Vehicle::Corner& right = vehicle.corners[2 * axle + 1];
+        const double halfTrack = vehicle.axles[axle]->SketchHalfTrack(0.5 * std::abs(left.designCenter.x - right.designCenter.x));
+        suspension::LinkageSketch sketch;
+        vehicle.axles[axle]->Sketch(halfTrack, sketch);
+        const auto toWorld = [&](const suspension::Vec3& p) {
+            const glm::vec3 inVehicle = left.designCenter + CornerToVehicle(p - suspension::Vec3(0.0, halfTrack, 0.0));
+            return FromJolt(transform * ToJolt(inVehicle));
+        };
+        for (const auto& [a, b] : sketch.links)
+        {
+            linkage.links.push_back({toWorld(a), toWorld(b)});
+        }
+        for (const auto& [a, b] : sketch.carriers)
+        {
+            linkage.carriers.push_back({toWorld(a), toWorld(b)});
+        }
+        for (const suspension::Vec3& p : sketch.chassis)
+        {
+            linkage.chassis.push_back(toWorld(p));
+        }
+        for (const suspension::Vec3& p : sketch.joints)
+        {
+            linkage.joints.push_back(toWorld(p));
+        }
+    }
+    return linkage;
+}
+
 std::vector<VehicleWheelState> PhysicsWorld::GetVehicleWheels(VehicleId id) const
 {
     const Impl::Vehicle& vehicle = m_impl->GetVehicle(id);

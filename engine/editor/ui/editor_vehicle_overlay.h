@@ -23,6 +23,17 @@ void DrawVehiclePhysicsOverlay(
     const VehiclePhysicsOverlaySettings& settings,
     float uiScale);
 
+// Draws a car's suspension linkage (VehicleLinkage, world space) over the viewport, on top of the body:
+// arms and rods blue, uprights or the axle beam orange, chassis pivots grey and the joints on the moving
+// parts yellow.
+void DrawVehicleLinkageOverlay(
+    ImDrawList& drawList,
+    const ImVec2& origin,
+    const ImVec2& size,
+    const glm::mat4& viewProjection,
+    const VehicleLinkage& linkage,
+    float uiScale);
+
 // The share of a tyre's grip in use: 0 for none, 1 at the limit of the friction it has on the ground,
 // more when it slides past it.
 float ComputeTyreGripUsage(const VehicleWheelState& wheel);

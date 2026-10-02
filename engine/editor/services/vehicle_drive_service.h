@@ -60,6 +60,8 @@ struct VehiclePhysicsOverlaySettings
     bool forces = true;
     // A friction circle and figures for each wheel, over a corner of the viewport.
     bool frictionCircles = true;
+    // The multibody suspension's arms, rods, uprights and joints at each wheel, over the body.
+    bool linkage = true;
     // How long an arrow is per kilonewton.
     float metresPerKilonewton = 0.15f;
 };
@@ -75,6 +77,7 @@ struct VehicleDriveStatus
     VehicleTelemetry telemetry;
     // Front left, front right, rear left, rear right, as the last step left them, in world space.
     std::vector<VehicleWheelState> wheels;
+    VehicleLinkage linkage;
     size_t staticBodyCount = 0;
     size_t staticTriangleCount = 0;
     std::string lastError;

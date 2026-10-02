@@ -228,6 +228,14 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 "Bottom left: a circle per wheel, its edge the tyre's peak grip. The dot is the tyre's force, along\n"
                 "it up and across it to the right. With the load, the slip (ratio and angle), the spring's travel and the brake torque.");
         }
+        ImGui::SameLine();
+        ImGui::Checkbox("Linkage", &overlay.linkage);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "The multibody suspension at each wheel, over the body: arms and rods blue, uprights (or a solid\n"
+                "axle's beam) orange, chassis pivots grey, the joints on the moving parts yellow.");
+        }
         DragFloatInRange("Arrow Length (m/kN)", &overlay.metresPerKilonewton, 0.02f, 1.0f, "%.2f", 0.005f);
         ImGui::EndDisabled();
     }

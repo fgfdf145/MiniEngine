@@ -116,6 +116,21 @@ private:
     std::array<CornerOutput, 2> m_out;
 };
 
+// ---- An axle's linkage, for drawing ----
+//
+// In the axle frame (x forward, y left, z up from midway between the wheel centres at the design
+// position): the rods and arms, the wheel carriers (each upright from its wheel centre to its joints,
+// or a solid axle's beam), the chassis pivots and the joints on the moving parts, and the wheel
+// centres.
+struct LinkageSketch
+{
+    std::vector<std::array<Vec3, 2>> links;
+    std::vector<std::array<Vec3, 2>> carriers;
+    std::vector<Vec3> chassis;
+    std::vector<Vec3> joints;
+    std::array<Vec3, 2> wheelCenters{};
+};
+
 // ---- An axle's two wheels, stepped together ----
 //
 // Independent corners (each its own SuspensionCorner) or a solid axle: the rigs and the vehicle step
@@ -133,6 +148,15 @@ public:
     SuspensionCorner* Corner(int side) const
     {
         return m_corners[side].get();
+    }
+    // Moves the linkage to the wheels' travel and the rack without stepping its units (for drawing).
+    void Pose(double leftTravel, double rightTravel, double rack);
+    // Where the linkage is now. `halfTrack` places independent corners' frames (their wheel centres at
+    // the design position) either side of the axle's centre; a solid axle uses its own track.
+    void Sketch(double halfTrack, LinkageSketch& out) const;
+    double SketchHalfTrack(double halfTrack) const
+    {
+        return m_solid ? 0.5 * m_solid->Definition().track : halfTrack;
     }
     SolidAxle* Solid() const
     {

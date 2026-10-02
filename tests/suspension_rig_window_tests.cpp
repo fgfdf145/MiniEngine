@@ -395,6 +395,18 @@ void TestLiveRigMovesTheCarAndThePads()
     Require(sideAgrees, "the drawn body rolls the way the rig does");
     Require(mostLeftUp > 0.005, "the body rolls visibly");
     const VehicleRigStatus status = VehicleRigService::GetStatus(state);
+    // The linkage to draw rides with the car: every joint near one of its wheels where the model is now.
+    Require(!status.linkage.links.empty() && !status.linkage.joints.empty(), "the rig's linkage to draw");
+    const glm::mat4 carMatrix = world.GetModelMatrix(car);
+    for (const glm::vec3& joint : status.linkage.joints)
+    {
+        float nearest = 1e9f;
+        for (const ModelWheelRig::Corner& wheel : MakeGtrModel()->wheelRig->corners)
+        {
+            nearest = std::min(nearest, glm::length(joint - glm::vec3(carMatrix * glm::vec4(wheel.center, 1.0f))));
+        }
+        Require(nearest < 0.5f, "a joint at its wheel, " + std::to_string(nearest) + " m away");
+    }
     Require(status.active && status.sampleTime.size() > 500 && status.tyreLoad[0].size() == status.sampleTime.size(), "the status records the run");
 
     // The body loaders instead: a cornering roll moment of 0.5 g at 1 Hz with the pads level. The body
