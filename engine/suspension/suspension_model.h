@@ -69,6 +69,16 @@ struct ElementDef
     std::string b;
 };
 
+// Makes the distance between two points of a body `delta` longer than the design positions say (a
+// tie rod shortened or lengthened to set toe). The design position then no longer closes; the
+// kinematics assembles it on construction.
+struct LengthAdjust
+{
+    std::string a;
+    std::string b;
+    double delta = 0.0;
+};
+
 struct SuspensionDefinition
 {
     std::string name;
@@ -80,6 +90,7 @@ struct SuspensionDefinition
     std::vector<SliderDef> sliders;
     std::vector<BushingDef> bushings;
     std::vector<ElementDef> elements;
+    std::vector<LengthAdjust> lengthAdjusts;
 
     // The body that carries the wheel, its centre point, and the wheel's spin axis in the design
     // position (unit, pointing outward; static camber and toe go here).

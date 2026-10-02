@@ -27,6 +27,7 @@ struct StrutUnitSettings
 
     Curve damper;               // hydraulic force against piston compression velocity
     Curve bumpStop;             // force against rod compression (damper path)
+    Curve reboundStop;          // force against rod compression, acting in extension (negative)
     Curve damperMount;          // damper-rod rubber, force against its deflection (Zero: rigid)
     double damperMountDamping = 0.0; // N s/m in parallel with that rubber
 };
@@ -46,6 +47,11 @@ public:
     {
         return m_force;
     }
+    // The force's slopes at the last step: against compression (springs and stops through their
+    // mounts) and against compression rate (damper and friction through the damper mount, for the
+    // next step from the current state). For handing the force to a solver that linearises it.
+    double StiffnessSlope(double compression) const;
+    double RateSlope(double compressionRate, double normal, double dt) const;
     double SpringPathForce() const
     {
         return m_springForce;

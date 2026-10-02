@@ -316,6 +316,25 @@ Model Compile(const SuspensionDefinition& definition, ModelMode mode)
         throw std::invalid_argument("the knuckle needs at least three hardpoints besides the wheel centre's axis point");
     }
 
+    for (const LengthAdjust& adjust : definition.lengthAdjusts)
+    {
+        const int a = require(adjust.a);
+        const int b = require(adjust.b);
+        bool found = false;
+        for (Constraint& c : model.constraints)
+        {
+            if (c.kind == ConstraintKind::Distance && ((c.a == a && c.b == b) || (c.a == b && c.b == a)))
+            {
+                c.length += adjust.delta;
+                found = true;
+            }
+        }
+        if (!found)
+        {
+            throw std::invalid_argument("no link between " + adjust.a + " and " + adjust.b + " to adjust");
+        }
+    }
+
     for (const SliderDef& def : definition.sliders)
     {
         Constraint c;

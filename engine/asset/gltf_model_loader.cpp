@@ -2231,6 +2231,71 @@ VehicleTyreData VehicleTyreDataFrom(const tinygltf::Value& object, const char* k
     return data;
 }
 
+// One axle's suspension as SuspensionAxleToJson writes it; nullopt without a known type.
+std::optional<VehicleSuspensionAxle> VehicleSuspension(const tinygltf::Value& object, const char* key)
+{
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsObject())
+    {
+        return std::nullopt;
+    }
+    const tinygltf::Value& axle = object.Get(key);
+    VehicleSuspensionAxle out;
+    const std::string type = VehicleText(axle, "type");
+    if (type == "doubleWishbone")
+    {
+        out.type = VehicleSuspensionType::DoubleWishbone;
+    }
+    else if (type == "macPherson")
+    {
+        out.type = VehicleSuspensionType::MacPherson;
+    }
+    else
+    {
+        return std::nullopt;
+    }
+    const auto point = [&axle](const char* name, glm::vec3& target)
+    {
+        const std::vector<float> xyz = VehicleNumbers(axle, name);
+        if (xyz.size() == 3)
+        {
+            target = glm::vec3(xyz[0], xyz[1], xyz[2]);
+        }
+    };
+    point("lowerFront", out.lowerFront);
+    point("lowerRear", out.lowerRear);
+    point("lowerBall", out.lowerBall);
+    point("upperFront", out.upperFront);
+    point("upperRear", out.upperRear);
+    point("upperBall", out.upperBall);
+    point("strutTop", out.strutTop);
+    point("strutLower", out.strutLower);
+    point("tieInner", out.tieInner);
+    point("tieOuter", out.tieOuter);
+    out.staticCamberDegrees = VehicleNumber(axle, "staticCamberDegrees").value_or(0.0f);
+    out.toeOutRodLength = VehicleNumber(axle, "toeOutRodLength").value_or(0.0f);
+    out.track = VehicleNumber(axle, "track").value_or(0.0f);
+    out.wheelRate = VehicleNumber(axle, "wheelRate").value_or(0.0f);
+    out.progressiveRate = VehicleNumber(axle, "progressiveRate").value_or(0.0f);
+    out.bumpStopRate = VehicleNumber(axle, "bumpStopRate").value_or(0.0f);
+    out.bumpStopTravel = VehicleNumber(axle, "bumpStopTravel").value_or(0.0f);
+    out.reboundStopTravel = VehicleNumber(axle, "reboundStopTravel").value_or(0.0f);
+    out.dampBump = VehicleNumber(axle, "dampBump").value_or(0.0f);
+    out.dampFastBump = VehicleNumber(axle, "dampFastBump").value_or(0.0f);
+    out.dampFastBumpThreshold = VehicleNumber(axle, "dampFastBumpThreshold").value_or(0.0f);
+    out.dampRebound = VehicleNumber(axle, "dampRebound").value_or(0.0f);
+    out.dampFastRebound = VehicleNumber(axle, "dampFastRebound").value_or(0.0f);
+    out.dampFastReboundThreshold = VehicleNumber(axle, "dampFastReboundThreshold").value_or(0.0f);
+    out.antiRollBarRate = VehicleNumber(axle, "antiRollBarRate").value_or(0.0f);
+    out.hubMass = VehicleNumber(axle, "hubMass").value_or(0.0f);
+    out.tyreRadius = VehicleNumber(axle, "tyreRadius").value_or(0.0f);
+    out.tyreRate = VehicleNumber(axle, "tyreRate").value_or(0.0f);
+    out.tyreDamping = VehicleNumber(axle, "tyreDamping").value_or(0.0f);
+    out.centerOfMassAboveWheel = VehicleNumber(axle, "centerOfMassAboveWheel").value_or(0.0f);
+    out.frictionCoulomb = VehicleNumber(axle, "frictionCoulomb").value_or(0.0f);
+    out.frictionBreakaway = VehicleNumber(axle, "frictionBreakaway").value_or(0.0f);
+    return out;
+}
+
 // MINIENGINE_vehicle (the kn5 import writes it for a car whose data it could read): the figures that
 // are there, in SI units. A member of the wrong type is ignored.
 std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
@@ -2369,6 +2434,14 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
         {
             spec.electronics[section] = VehicleNumberMap(electronics, section.c_str());
         }
+    }
+    spec.frontSuspension = VehicleSuspension(extension, "frontSuspension");
+    spec.rearSuspension = VehicleSuspension(extension, "rearSuspension");
+    spec.wheelbase = VehicleNumber(extension, "wheelbase");
+    spec.frontWeightShare = VehicleNumber(extension, "frontWeightShare");
+    if (const std::vector<float> box = VehicleNumbers(extension, "inertiaBox"); box.size() == 3)
+    {
+        spec.inertiaBox = glm::vec3(box[0], box[1], box[2]);
     }
     return spec;
 }

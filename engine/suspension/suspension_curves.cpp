@@ -94,6 +94,36 @@ Curve Curve::Table(std::vector<double> x, std::vector<double> f)
     return curve;
 }
 
+Curve Curve::Polyline(std::vector<double> x, std::vector<double> f)
+{
+    if (x.size() != f.size() || x.size() < 2)
+    {
+        throw std::invalid_argument("Curve::Polyline needs at least two samples of each");
+    }
+    for (std::size_t i = 1; i < x.size(); ++i)
+    {
+        if (!(x[i] > x[i - 1]))
+        {
+            throw std::invalid_argument("Curve::Polyline samples must be ascending");
+        }
+    }
+    Curve curve;
+    curve.m_kind = Kind::Polyline;
+    curve.m_x = std::move(x);
+    curve.m_f = std::move(f);
+    return curve;
+}
+
+Curve Curve::Polynomial(double a1, double a2, double a3)
+{
+    Curve curve;
+    curve.m_kind = Kind::Cubic;
+    curve.m_a = a1;
+    curve.m_b = a2;
+    curve.m_c = a3;
+    return curve;
+}
+
 double Curve::Value(double x) const
 {
     double slope = 0.0;
@@ -118,8 +148,8 @@ double Curve::Evaluate(double x, double& slope) const
         slope = m_a;
         return m_a * x;
     case Kind::Cubic:
-        slope = m_a + 3.0 * m_c * x * x;
-        return m_a * x + m_c * x * x * x;
+        slope = m_a + 2.0 * m_b * x + 3.0 * m_c * x * x;
+        return m_a * x + m_b * x * x + m_c * x * x * x;
     case Kind::Stop:
     {
         const double sign = x >= 0.0 ? 1.0 : -1.0;
@@ -136,6 +166,21 @@ double Curve::Evaluate(double x, double& slope) const
         }
         slope = m_b + 2.0 * m_c * overlap;
         return sign * (m_b * overlap + m_c * overlap * overlap);
+    }
+    case Kind::Polyline:
+    {
+        const std::size_t n = m_x.size();
+        std::size_t i = 0;
+        if (x >= m_x[n - 1])
+        {
+            i = n - 2;
+        }
+        else if (x > m_x[0])
+        {
+            i = static_cast<std::size_t>(std::upper_bound(m_x.begin(), m_x.end(), x) - m_x.begin()) - 1;
+        }
+        slope = (m_f[i + 1] - m_f[i]) / (m_x[i + 1] - m_x[i]);
+        return m_f[i] + slope * (x - m_x[i]);
     }
     case Kind::Table:
     {

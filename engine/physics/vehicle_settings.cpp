@@ -118,6 +118,11 @@ VehicleSettings FitVehicleSettingsToBounds(
     return settings;
 }
 
+bool HasSuspensionGeometry(const VehicleSettings& settings)
+{
+    return settings.frontSuspension.type != VehicleSuspensionType::None && settings.rearSuspension.type != VehicleSuspensionType::None;
+}
+
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec)
 {
     // An automatic gearbox changes up a little under the limiter and down where the next gear down
@@ -257,6 +262,12 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         {
             settings.limitedSlipLock = std::clamp(*spec.differentialPower, 0.05f, 1.0f);
         }
+    }
+    // The linkage only when both axles have one: half a multibody car would not drive.
+    if (spec.frontSuspension.has_value() && spec.rearSuspension.has_value() && spec.frontSuspension->type != VehicleSuspensionType::None && spec.rearSuspension->type != VehicleSuspensionType::None)
+    {
+        settings.frontSuspension = *spec.frontSuspension;
+        settings.rearSuspension = *spec.rearSuspension;
     }
     return settings;
 }

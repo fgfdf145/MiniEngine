@@ -23,8 +23,13 @@ public:
     // Zero until |x| passes `gap` on the side `sign` (+1 compression only, -1 tension only, 0 both),
     // then grows as `slope * d + quadratic * d^2` with d the overlap.
     static Curve Stop(double gap, double slope, double quadratic, int sign);
-    // Samples (x ascending).
+    // Samples (x ascending) joined by a monotone cubic.
     static Curve Table(std::vector<double> x, std::vector<double> f);
+    // Samples (x ascending) joined by straight lines (a slope that jumps at the samples), extended
+    // linearly: a damper's slow and fast ranges as a game's data gives them.
+    static Curve Polyline(std::vector<double> x, std::vector<double> f);
+    // F = a1 x + a2 x^2 + a3 x^3 (a2 > 0: a rate that rises with compression, not odd in x).
+    static Curve Polynomial(double a1, double a2, double a3);
 
     double Value(double x) const;
     double Slope(double x) const;
@@ -44,6 +49,7 @@ private:
         Cubic,
         Stop,
         Table,
+        Polyline,
     };
 
     Kind m_kind = Kind::Zero;

@@ -5,6 +5,8 @@ add_library(engine_physics
     physics_world.h
     vehicle_settings.cpp
     vehicle_settings.h
+    vehicle_suspension.cpp
+    vehicle_suspension.h
     vehicle_wheel_motion.cpp
     vehicle_wheel_motion.h
 )
@@ -20,6 +22,7 @@ target_include_directories(engine_physics
 target_link_libraries(engine_physics
     PUBLIC
         glm::glm
+        engine_suspension
     PRIVATE
         Jolt::Jolt
 )

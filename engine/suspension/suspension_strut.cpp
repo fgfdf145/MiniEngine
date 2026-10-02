@@ -49,13 +49,43 @@ StrutUnit& StrutUnit::operator=(const StrutUnit& other)
     return *this;
 }
 
+double StrutUnit::StiffnessSlope(double compression) const
+{
+    // Coil and seat rubber in series; the bump stop on the rod (its mount's series rubber is left
+    // out: it only matters when the stop is hit hard).
+    const double coil = m_settings.coilSpring.Slope(compression - m_springMount);
+    double spring = coil;
+    if (!m_settings.springMount.IsZero())
+    {
+        const double mount = m_settings.springMount.Slope(m_springMount);
+        spring = (coil > 0.0 && mount > 0.0) ? coil * mount / (coil + mount) : 0.0;
+    }
+    const double stroke = compression - m_damperMount;
+    return spring + m_settings.bumpStop.Slope(stroke) + m_settings.reboundStop.Slope(stroke);
+}
+
+double StrutUnit::RateSlope(double compressionRate, double normal, double dt) const
+{
+    const double h = 1e-4;
+    const double damper = m_settings.damper.Slope(compressionRate);
+    const double friction = (m_friction->Evaluate(compressionRate + h, normal, dt) - m_friction->Evaluate(compressionRate - h, normal, dt)) / (2.0 * h);
+    double slope = damper + std::max(friction, 0.0);
+    if (!m_settings.damperMount.IsZero() || m_settings.damperMountDamping > 0.0)
+    {
+        // In series with the rubber (its stiffness over a step acts as a damping k dt).
+        const double rubber = m_settings.damperMount.Slope(m_damperMount) * dt + m_settings.damperMountDamping;
+        slope = (slope > 0.0 && rubber > 0.0) ? slope * rubber / (slope + rubber) : 0.0;
+    }
+    return slope;
+}
+
 double StrutUnit::RodBalance(double w, double compression, double rate, double normal, double dt) const
 {
     // Rubber force (deflection after the step, plus its damping) minus what the rod carries.
     const double mount = m_settings.damperMount.Value(m_damperMount + w * dt) + m_settings.damperMountDamping * w;
     const double piston = rate - w;
     const double stroke = compression - (m_damperMount + w * dt);
-    const double rod = m_settings.damper.Value(piston) + m_friction->Evaluate(piston, normal, dt) + m_settings.bumpStop.Value(stroke);
+    const double rod = m_settings.damper.Value(piston) + m_friction->Evaluate(piston, normal, dt) + m_settings.bumpStop.Value(stroke) + m_settings.reboundStop.Value(stroke);
     return mount - rod;
 }
 
@@ -161,7 +191,7 @@ double StrutUnit::Step(double compression, double compressionRate, double normal
     m_hydraulicForce = m_settings.damper.Value(m_pistonVelocity);
     m_frictionForce = m_friction->Evaluate(m_pistonVelocity, normal, dt);
     m_friction->Commit(m_pistonVelocity, normal, dt);
-    m_rodForce = m_hydraulicForce + m_frictionForce + m_settings.bumpStop.Value(stroke);
+    m_rodForce = m_hydraulicForce + m_frictionForce + m_settings.bumpStop.Value(stroke) + m_settings.reboundStop.Value(stroke);
     m_damperMount += w * dt;
 
     m_force = m_springForce + m_rodForce;

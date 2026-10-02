@@ -1117,7 +1117,15 @@ std::map<std::string, std::string> BoxsterDataFiles()
         {"brakes.ini", "[HEADER]\r\nVERSION=1\r\n[DATA]\r\nMAX_TORQUE=3200\r\nFRONT_SHARE=0.65\r\nHANDBRAKE_TORQUE=2000\r\n"},
         {"suspensions.ini",
          "[BASIC]\r\nWHEELBASE=2.475\r\nCG_LOCATION=0.455\r\n[ARB]\r\nFRONT=30000\r\nREAR=16000\r\n[FRONT]\r\nTYPE=STRUT\r\nHUB_MASS=70\r\nSPRING_RATE=30760\r\n"
-         "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\n[REAR]\r\nTYPE=STRUT\r\nHUB_MASS=80\r\nSPRING_RATE=42500\r\nDAMP_BUMP=4273\r\nDAMP_REBOUND=6873\r\n"},
+         "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\nBASEY=-0.105\r\nTRACK=1.515\r\nSTATIC_CAMBER=-1.6\r\nTOE_OUT=-0.00030\r\nBUMP_STOP_RATE=72000\r\nBUMPSTOP_UP=0.080\r\n"
+         "BUMPSTOP_DN=0.080\r\nDAMP_FAST_BUMP=1934\r\nDAMP_FAST_BUMPTHRESHOLD=0.080\r\nDAMP_FAST_REBOUND=2601\r\nDAMP_FAST_REBOUNDTHRESHOLD=0.130\r\n"
+         "STRUT_CAR=0.28497, 0.40218, -0.08294\r\nSTRUT_TYRE=0.10784, -0.16402, 0.01798\r\nWBCAR_BOTTOM_FRONT=0.43800, -0.16775, 0.26073\r\n"
+         "WBCAR_BOTTOM_REAR=0.41057, -0.15672, -0.01280\r\nWBTYRE_BOTTOM=0.10784, -0.16402, 0.01798\r\nWBCAR_STEER=0.48843, -0.09289, 0.10865\r\n"
+         "WBTYRE_STEER=0.09707, -0.08479, 0.14781\r\n"
+         "[REAR]\r\nTYPE=STRUT\r\nHUB_MASS=80\r\nSPRING_RATE=42500\r\nDAMP_BUMP=4273\r\nDAMP_REBOUND=6873\r\nTRACK=1.540\r\n"
+         "STRUT_CAR=0.3355, 0.4601, -0.0506\r\nSTRUT_TYRE=0.1106, -0.1804, 0.0095\r\nWBCAR_BOTTOM_FRONT=0.2688, -0.0641, 0.6175\r\n"
+         "WBCAR_BOTTOM_REAR=0.4054, -0.1744, -0.0565\r\nWBTYRE_BOTTOM=0.1106, -0.1804, 0.0095\r\nWBCAR_STEER=0.5410, -0.1257, 0.1950\r\n"
+         "WBTYRE_STEER=0.2082, -0.1351, 0.2028\r\n"},
         {"aero.ini",
          "[HEADER]\r\nVERSION=2\r\n[WING_0]\r\nNAME=BODY\r\nCHORD=1\r\nSPAN=1.99\r\nPOSITION=0,0.15,-0.10\r\nLUT_AOA_CL=wing_body_AOA_CL.lut\r\nLUT_GH_CL=\r\n"
          "CL_GAIN=1\r\nLUT_AOA_CD=wing_body_AOA_CD.lut\r\nCD_GAIN=1\r\nANGLE=0\r\nZONE_FRONT_CD=0.005\r\n"
@@ -1394,6 +1402,21 @@ void ImportWritesTheCarsOwnData()
                     spec.clutchReleaseSeconds == expected.clutchReleaseSeconds && spec.clutchMaxTorque == 700.0f,
                 "launch and clutch survive");
         Require(spec.frontTyres.has_value() && spec.frontTyres->postPeakShare == 0.86f && spec.frontTyres->inertia == 1.62f, "the tyres survive");
+        // The suspension linkage: AC's (towards the centre, up, forward) as (forward, outward, up).
+        Require(spec.frontSuspension.has_value() && spec.rearSuspension.has_value(), "both axles' linkage survives");
+        Require(spec.frontSuspension->type == VehicleSuspensionType::MacPherson && spec.rearSuspension->type == VehicleSuspensionType::MacPherson, "as struts");
+        RequireNear(spec.frontSuspension->strutTop.x, -0.08294f, 1e-5f, "the top mount's forward offset");
+        RequireNear(spec.frontSuspension->strutTop.y, -0.28497f, 1e-5f, "inboard of the wheel");
+        RequireNear(spec.frontSuspension->strutTop.z, 0.40218f, 1e-5f, "and above it");
+        RequireNear(spec.frontSuspension->tieOuter.x, 0.14781f, 1e-5f, "the tie rod ahead of the axle");
+        Require(spec.frontSuspension->wheelRate == 30760.0f && spec.frontSuspension->dampFastRebound == 2601.0f && spec.frontSuspension->bumpStopTravel == 0.08f,
+                "the wheel rate, dampers and bump stops");
+        RequireNear(spec.frontSuspension->staticCamberDegrees, -1.6f, 1e-5f, "the static camber");
+        RequireNear(spec.frontSuspension->toeOutRodLength, -0.0003f, 1e-7f, "the toe rod");
+        Require(spec.frontSuspension->antiRollBarRate == 30000.0f && spec.rearSuspension->antiRollBarRate == 16000.0f, "the anti-roll bars");
+        RequireNear(spec.frontSuspension->centerOfMassAboveWheel, -0.105f, 1e-5f, "BASEY");
+        Require(spec.wheelbase.has_value() && *spec.wheelbase == 2.475f && spec.frontWeightShare.has_value(), "the wheelbase and weight split");
+        Require(spec.steeringWheelLockDegrees == 400.0f && spec.maxSteerAngleDegrees.has_value(), "the steering lock");
         RequireNear(spec.rearTyres->longitudinalGrip, expected.rearTyres->longitudinalGrip, 1e-3f, "with their grip");
         Require(spec.tyreCompounds.size() == 2 && spec.defaultTyreCompound == 0, "both compounds survive");
         Require(spec.tyreCompounds[0].front.values.at("DX0") == 1.3114f && spec.tyreCompounds[1].front.name == "Street", "with their numbers");

@@ -2,6 +2,7 @@
 #include <engine/suspension/suspension_friction.h>
 #include <engine/suspension/suspension_kinematics.h>
 #include <engine/suspension/suspension_model.h>
+#include <engine/suspension/suspension_rigs.h>
 #include <engine/suspension/suspension_statics.h>
 #include <engine/suspension/suspension_strut.h>
 
@@ -656,6 +657,103 @@ void TestCornerStepsAtOneKilohertz()
     Require(worstResidual < 1e-10, "corner residual");
 }
 
+// A symmetric car on Rill's double wishbone at all four corners, with rates at the wheel: 1200 kg,
+// 2.6 m wheelbase, 50/50, 40 kN/m wheels, 200 kN/m tyres, 40 kg hubs.
+CarModel RigTestCar(double damping, double antiRollBar)
+{
+    CarModel car;
+    car.name = "rig test car";
+    car.mass = 1200.0;
+    car.wheelbase = 2.6;
+    car.cgHeight = 0.5;
+    car.frontBrakeShare = 0.6;
+    for (int i = 0; i < 4; ++i)
+    {
+        CarCorner& c = car.corners[i];
+        const SuspensionDefinition left = RillDoubleWishbone();
+        c.definition = i % 2 == 0 ? left : MirrorToRight(left);
+        c.definition.steered = i < 2;
+        c.unit.coilSpring = Curve::Linear(40000.0);
+        c.unit.damper = Curve::Linear(damping);
+        c.antiRollBarRate = antiRollBar;
+        c.hubMass = 40.0;
+        c.tyreRate = 200000.0;
+        c.tyreDamping = 0.0;
+        c.position = Vec3(i < 2 ? car.wheelbase : 0.0, i % 2 == 0 ? 0.768 : -0.768, 0.0);
+    }
+    BalanceCar(car, 0.5);
+    car.rollInertia = 450.0;
+    car.pitchInertia = 1500.0;
+    car.rackAtLock = 0.06;
+    car.steeringWheelLockDegrees = 450.0;
+    return car;
+}
+
+void TestRillSweepParameters()
+{
+    // Rill 2012, p. 179: 1 Hz to 2 Hz in N + 1 = 4 cycles: q = 0.2310, q/p = 0.2063, 2.9237 s.
+    const SineSweep sweep(1.0, 2.0, 3);
+    RequireNear(sweep.q, 0.2310, 1e-4, "sweep q");
+    RequireNear(sweep.q / sweep.p, 0.2063, 1e-4, "sweep q/p");
+    RequireNear(sweep.Duration(), 2.9237, 1e-4, "sweep duration");
+    RequireNear(1.0 / (sweep.CycleStart(1) - sweep.CycleStart(0)), 1.0, 1e-9, "first cycle at f0");
+}
+
+void TestSevenPostRigRestsAndResonatesWhereItShould()
+{
+    // At rest it stays at rest: the springs' preloads carry the body, the tyres the whole car.
+    const CarModel car = RigTestCar(1500.0, 0.0);
+    SevenPostRig rig(car);
+    const std::array<double, 4> zero{};
+    double loads = 0.0;
+    for (int i = 0; i < 2000; ++i)
+    {
+        rig.Step(zero, zero, 0.0, 0.0, 0.0, 1e-3);
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        loads += rig.TyreLoad(i);
+    }
+    RequireNear(rig.Heave(), 0.0, 1e-6, "the rig at rest stays put");
+    RequireNear(loads, car.mass * 9.81, 1e-3, "the tyres carry the car");
+
+    // Heave sweep, lightly damped: the body resonates at the ride rate's frequency and the hubs at
+    // theirs (quarter-car estimates: springs and tyres in series for the body, in parallel for the hub).
+    const SweepResult heave = RunSweep(car, RigMode::Heave, SineSweep(0.5, 25.0, 120), 0.002, 0.05);
+    const double ride = 40000.0 * 200000.0 / (40000.0 + 200000.0);
+    const double body = std::sqrt(4.0 * ride / car.sprungMass) / (2.0 * kPi);
+    const double hop = std::sqrt((40000.0 + 200000.0) / 40.0) / (2.0 * kPi);
+    std::cout << "  seven-post heave: body " << heave.bodyFrequency << " Hz (estimate " << body << "), wheel hop " << heave.wheelHopFrequency
+              << " Hz (estimate " << hop << "), damping " << heave.bodyDamping << "\n";
+    RequireNear(heave.bodyFrequency, body, 0.08 * body, "heave resonance");
+    RequireNear(heave.wheelHopFrequency, hop, 0.1 * hop, "wheel hop");
+    // The damper's ratio at the body (quarter car, ride rate): c / (2 sqrt(k m)).
+    const double zeta = 1500.0 / (2.0 * std::sqrt(ride * car.sprungMass / 4.0));
+    RequireNear(heave.bodyDamping, zeta, 0.5 * zeta, "half-power damping estimate");
+}
+
+void TestKcRigMeasuresTheSpringsAndTheLinkage()
+{
+    const CarModel car = RigTestCar(1500.0, 20000.0);
+    const KcResult kc = RunKcRig(car);
+    const double track = 2.0 * 0.768;
+    // Roll stiffness of an axle: (k + 2 k_arb) t^2 / 2 per radian.
+    const double expected = (40000.0 + 2.0 * 20000.0) * track * track / 2.0 * kDeg;
+    std::cout << "  K&C: roll stiffness " << kc.axles[0].rollStiffness << " Nm/deg (springs+bar " << expected << "), wheel rate "
+              << kc.axles[0].wheelRate << " N/mm, RC " << kc.axles[0].rollCenterHeight << " mm, ratio " << kc.steeringRatio << ", anti-dive "
+              << kc.antiDiveFront << " %\n";
+    RequireNear(kc.axles[0].rollStiffness, expected, 0.03 * expected, "roll stiffness from springs and bar");
+    RequireNear(kc.axles[0].wheelRate, 40.0, 1.0, "wheel rate");
+    // The linkage's numbers are those of the single corner (Rill's: roll centre 86 mm, kingpin 10.5).
+    RequireNear(kc.axles[0].rollCenterHeight, 86.0, 1.0, "roll centre height");
+    RequireNear(kc.axles[0].kingpinInclination, 10.5182, 1e-3, "kingpin inclination");
+    RequireNear(kc.rollStiffnessFrontShare, 0.5, 1e-6, "same axles share the roll stiffness");
+    // Steering: both wheels turn the way the wheel does, near-Ackermann, a car's ratio.
+    const KcSteerPoint& full = kc.steer.back();
+    Require(full.left > 5.0 && full.right > 5.0, "full lock turns both wheels right");
+    Require(kc.steeringRatio > 5.0 && kc.steeringRatio < 40.0, "a car's steering ratio");
+}
+
 template <typename F>
 double TimePerCall(F&& f, int calls)
 {
@@ -777,6 +875,9 @@ int main()
         TestSpringPathSeriesRubber();
         TestTopMountLetsTheRodStickAndSlip();
         TestCornerStepsAtOneKilohertz();
+        TestRillSweepParameters();
+        TestSevenPostRigRestsAndResonatesWhereItShould();
+        TestKcRigMeasuresTheSpringsAndTheLinkage();
         TestTimingBudget();
         if (const char* directory = std::getenv("MINIENGINE_SUSPENSION_CSV"))
         {

@@ -225,6 +225,23 @@ Kinematics::Kinematics(const Model& model, SolverSettings settings)
         throw std::invalid_argument("the suspension is singular in its design position");
     }
     UpdateSensitivities();
+    // A design that does not close (an adjusted link) is assembled at zero travel and rack.
+    std::vector<double> phi;
+    EvaluateConstraints(m_model, m_q, 0.0, 0.0, phi);
+    double residual = 0.0;
+    for (double v : phi)
+    {
+        residual = std::max(residual, std::abs(v));
+    }
+    if (residual > m_settings.residualTolerance)
+    {
+        int iterations = 0;
+        int factorisations = 0;
+        if (!Attempt(0.0, 0.0, iterations, factorisations))
+        {
+            throw std::invalid_argument("the suspension cannot be assembled at its design position");
+        }
+    }
     m_report.travel = 0.0;
     m_report.rack = 0.0;
 }

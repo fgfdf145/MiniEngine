@@ -344,6 +344,80 @@ void ReadBrakes(const AcdArchive::Files& files, VehicleCarSpec& spec)
     }
 }
 
+// One axle's linkage and rates. Assetto Corsa gives hardpoints from the wheel centre with x towards
+// the car's centre, y up and z forward; the spec wants (forward, outward, up).
+std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspension, const std::string& axle, float antiRollBar)
+{
+    const std::string type = ToUpperAscii(Trim(suspension.Text(axle, "TYPE").value_or("")));
+    VehicleSuspensionAxle out;
+    if (type == "DWB")
+    {
+        out.type = VehicleSuspensionType::DoubleWishbone;
+    }
+    else if (type == "STRUT")
+    {
+        out.type = VehicleSuspensionType::MacPherson;
+    }
+    else
+    {
+        return std::nullopt; // AXLE, ML and others are not modelled
+    }
+    const auto point = [&](const char* key, glm::vec3& target) {
+        const std::optional<std::string> text = suspension.Text(axle, key);
+        const std::optional<std::vector<float>> xyz = text.has_value() ? ParseNumberList(*text, 3) : std::nullopt;
+        if (!xyz.has_value())
+        {
+            return false;
+        }
+        target = glm::vec3((*xyz)[2], -(*xyz)[0], (*xyz)[1]);
+        return true;
+    };
+    bool complete = point("WBCAR_BOTTOM_FRONT", out.lowerFront) && point("WBCAR_BOTTOM_REAR", out.lowerRear) && point("WBTYRE_BOTTOM", out.lowerBall) && point("WBCAR_STEER", out.tieInner) && point("WBTYRE_STEER", out.tieOuter);
+    if (out.type == VehicleSuspensionType::DoubleWishbone)
+    {
+        complete = complete && point("WBCAR_TOP_FRONT", out.upperFront) && point("WBCAR_TOP_REAR", out.upperRear) && point("WBTYRE_TOP", out.upperBall);
+    }
+    else
+    {
+        complete = complete && point("STRUT_CAR", out.strutTop) && point("STRUT_TYRE", out.strutLower);
+    }
+    if (!complete)
+    {
+        return std::nullopt;
+    }
+    const auto number = [&](const char* key) {
+        return suspension.Number(axle, key).value_or(0.0f);
+    };
+    out.staticCamberDegrees = number("STATIC_CAMBER");
+    out.toeOutRodLength = number("TOE_OUT");
+    out.track = number("TRACK");
+    out.wheelRate = number("SPRING_RATE");
+    out.progressiveRate = number("PROGRESSIVE_SPRING_RATE");
+    out.bumpStopRate = number("BUMP_STOP_RATE");
+    out.bumpStopTravel = number("BUMPSTOP_UP");
+    out.reboundStopTravel = number("BUMPSTOP_DN");
+    out.dampBump = number("DAMP_BUMP");
+    out.dampFastBump = number("DAMP_FAST_BUMP");
+    out.dampFastBumpThreshold = number("DAMP_FAST_BUMPTHRESHOLD");
+    out.dampRebound = number("DAMP_REBOUND");
+    out.dampFastRebound = number("DAMP_FAST_REBOUND");
+    out.dampFastReboundThreshold = number("DAMP_FAST_REBOUNDTHRESHOLD");
+    out.hubMass = number("HUB_MASS");
+    out.centerOfMassAboveWheel = number("BASEY");
+    out.antiRollBarRate = antiRollBar;
+    return out;
+}
+
+// The default compound's vertical tyre: RADIUS, RATE and DAMP of tyres.ini's [FRONT] or [REAR].
+void ReadVerticalTyre(const AcdArchive::Files& files, const std::string& axle, VehicleSuspensionAxle& out)
+{
+    const AcCarData::Ini ini = ParseFile(files, "tyres.ini");
+    const IniView tyres(&ini);
+    out.tyreRadius = tyres.Number(axle, "RADIUS").value_or(0.0f);
+    out.tyreRate = tyres.Number(axle, "RATE").value_or(0.0f);
+    out.tyreDamping = tyres.Number(axle, "DAMP").value_or(0.0f);
+}
+
 void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)
 {
     if (!spec.massKg.has_value())
@@ -357,6 +431,32 @@ void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)
         const float front = suspension.Number("ARB", "FRONT").value_or(0.0f);
         const float rear = suspension.Number("ARB", "REAR").value_or(0.0f);
         spec.antiRollBars = front > 0.0f || rear > 0.0f;
+    }
+    spec.frontSuspension = ReadSuspensionAxle(suspension, "FRONT", suspension.Number("ARB", "FRONT").value_or(0.0f));
+    spec.rearSuspension = ReadSuspensionAxle(suspension, "REAR", suspension.Number("ARB", "REAR").value_or(0.0f));
+    if (spec.frontSuspension.has_value())
+    {
+        ReadVerticalTyre(files, "FRONT", *spec.frontSuspension);
+    }
+    if (spec.rearSuspension.has_value())
+    {
+        ReadVerticalTyre(files, "REAR", *spec.rearSuspension);
+    }
+    if (const std::optional<float> wheelbase = suspension.Number("BASIC", "WHEELBASE"); wheelbase.has_value() && *wheelbase > 0.0f)
+    {
+        spec.wheelbase = *wheelbase;
+    }
+    if (suspension.Number("BASIC", "CG_LOCATION").has_value())
+    {
+        spec.frontWeightShare = FrontWeightShare(files);
+    }
+    const AcCarData::Ini carIni = ParseFile(files, "car.ini");
+    if (const std::optional<std::string> box = IniView(&carIni).Text("BASIC", "INERTIA"))
+    {
+        if (const std::optional<std::vector<float>> xyz = ParseNumberList(*box, 3))
+        {
+            spec.inertiaBox = glm::vec3((*xyz)[0], (*xyz)[1], (*xyz)[2]);
+        }
     }
 
     // Each axle's spring as a natural frequency of the sprung mass on one of its wheels, and its
@@ -750,11 +850,12 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
     }
     const std::optional<float> lock = car.Number("CONTROLS", "STEER_LOCK");
     const std::optional<float> ratio = car.Number("CONTROLS", "STEER_RATIO");
-    if (lock.has_value() && ratio.has_value() && *lock > 0.0f && *ratio > 0.0f)
+    if (lock.has_value() && ratio.has_value() && *lock > 0.0f && *ratio != 0.0f)
     {
-        // The steering wheel's lock over the steering ratio is how far the front wheels turn.
+        // The steering wheel's lock over the steering ratio is how far the front wheels turn. The
+        // ratio's sign is only the steering's direction (the GT-R GT3 has -13.6).
         spec.steeringWheelLockDegrees = *lock;
-        spec.maxSteerAngleDegrees = std::clamp(*lock / *ratio, 8.0f, 60.0f);
+        spec.maxSteerAngleDegrees = std::clamp(*lock / std::abs(*ratio), 8.0f, 60.0f);
     }
 
     ReadEngine(files, spec);

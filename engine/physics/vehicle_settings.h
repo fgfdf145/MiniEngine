@@ -66,6 +66,67 @@ struct VehicleTyreSettings
     bool operator==(const VehicleTyreSettings&) const = default;
 };
 
+// One axle's suspension linkage and its springs as a car's data gives them, for the multibody
+// suspension (engine/suspension) that then replaces the physics engine's straight spring: the
+// wheel follows its hardpoints' kinematics (camber, toe, steering, track change) and the spring,
+// damper, bump stops and anti-roll bar act through them.
+//
+// Hardpoints are the left wheel's, from the wheel centre at the design position, in the axes
+// (forward, outward, up), metres. The right wheel is the mirror image. Rates are at the wheel (per
+// metre of wheel-centre travel), as Assetto Corsa gives them.
+enum class VehicleSuspensionType : uint32_t
+{
+    None = 0,
+    DoubleWishbone = 1,
+    MacPherson = 2
+};
+
+struct VehicleSuspensionAxle
+{
+    VehicleSuspensionType type = VehicleSuspensionType::None;
+    glm::vec3 lowerFront{0.0f};
+    glm::vec3 lowerRear{0.0f};
+    glm::vec3 lowerBall{0.0f};
+    glm::vec3 upperFront{0.0f}; // double wishbone
+    glm::vec3 upperRear{0.0f};
+    glm::vec3 upperBall{0.0f};
+    glm::vec3 strutTop{0.0f};   // MacPherson: top mount on the body
+    glm::vec3 strutLower{0.0f}; // and a point of the strut axis on the knuckle
+    glm::vec3 tieInner{0.0f};   // tie rod (front) or toe link (rear) on the rack or body
+    glm::vec3 tieOuter{0.0f};
+    float staticCamberDegrees = 0.0f; // negative: the wheel's top leans in
+    // Toe set by the tie rod's length (Assetto Corsa's TOE_OUT): metres the rod is made longer or
+    // shorter, positive in whichever way turns the wheel's front outward.
+    float toeOutRodLength = 0.0f;
+    float track = 0.0f;
+
+    float wheelRate = 0.0f;            // N/m
+    float progressiveRate = 0.0f;      // N/m^2: the rate grows by this per metre of compression
+    float bumpStopRate = 0.0f;         // N/m
+    float bumpStopTravel = 0.0f;       // compression from the design position where it starts, m
+    float reboundStopTravel = 0.0f;    // extension from the design position to full droop, m
+    float dampBump = 0.0f;             // N s/m below the fast threshold
+    float dampFastBump = 0.0f;
+    float dampFastBumpThreshold = 0.0f; // m/s
+    float dampRebound = 0.0f;
+    float dampFastRebound = 0.0f;
+    float dampFastReboundThreshold = 0.0f;
+    float antiRollBarRate = 0.0f;      // N/m of left/right travel difference
+    float hubMass = 0.0f;              // kg, unsprung, each side
+    // The tyre as a vertical spring: unloaded radius, rate and damping (for rigs with unsprung masses).
+    float tyreRadius = 0.0f;
+    float tyreRate = 0.0f;             // N/m
+    float tyreDamping = 0.0f;          // N s/m
+    // The centre of mass's height above the wheel centre (Assetto Corsa's BASEY, negative below).
+    float centerOfMassAboveWheel = 0.0f;
+    // The damper's seal friction at the wheel (LuGre): Coulomb and breakaway force, N. No car data
+    // gives these; 0 leaves it out.
+    float frictionCoulomb = 0.0f;
+    float frictionBreakaway = 0.0f;
+
+    bool operator==(const VehicleSuspensionAxle&) const = default;
+};
+
 // Where the air pushes on a car: at `position`, from the centre of mass, with these effective areas.
 struct VehicleAeroSurface
 {
@@ -168,6 +229,14 @@ struct VehicleSettings
     float linearDamping = 0.05f;
     // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free.
     float maxPitchRollDegrees = 60.0f;
+
+    // The multibody suspension, used when both axles have a type: the hardpoints then decide where
+    // each wheel goes and how it leans, the rates replace suspensionFrequencyHz / suspensionDamping
+    // and antiRollBars, and steering moves the rack (the wheels' angles follow from the linkage;
+    // steeringRackTravel is the rack's travel at full lock, 0 to fit it to maxSteerAngleDegrees).
+    VehicleSuspensionAxle frontSuspension;
+    VehicleSuspensionAxle rearSuspension;
+    float steeringRackTravel = 0.0f;
 
     // Read by whoever starts a car, not by the physics: a model that carries its own figures
     // (VehicleCarSpec) drives on them instead of the fields above they cover.
@@ -298,7 +367,18 @@ struct VehicleCarSpec
     std::optional<float> suspensionDamping;
     std::optional<bool> antiRollBars;
     std::optional<bool> limitedSlipDifferentials;
+    // The suspension linkage and its rates, per axle.
+    std::optional<VehicleSuspensionAxle> frontSuspension;
+    std::optional<VehicleSuspensionAxle> rearSuspension;
+    // Where the axles are and how the mass sits: the wheelbase (m), the front axle's share of the
+    // weight, and the box (width, height, length, m) the body's inertia is a uniform box of.
+    std::optional<float> wheelbase;
+    std::optional<float> frontWeightShare;
+    std::optional<glm::vec3> inertiaBox;
 };
+
+// Whether the settings carry a multibody suspension for both axles.
+bool HasSuspensionGeometry(const VehicleSettings& settings);
 
 // `tuning` with the fields `spec` knows replaced by its figures.
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);

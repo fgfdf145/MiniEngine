@@ -128,6 +128,57 @@ Json TyreDataToJson(const VehicleTyreData& data)
     return Json{{"name", data.name}, {"shortName", data.shortName}, {"values", NumberMapToJson(data.values)}, {"curves", std::move(curves)}};
 }
 
+// One axle's suspension: its type, hardpoints (forward, outward, up from the wheel centre) and rates.
+Json SuspensionAxleToJson(const VehicleSuspensionAxle& axle)
+{
+    Json out = Json::object();
+    out["type"] = axle.type == VehicleSuspensionType::DoubleWishbone ? "doubleWishbone" : axle.type == VehicleSuspensionType::MacPherson ? "macPherson"
+                                                                                                                                     : "none";
+    // Small numbers (hardpoints, a toe rod's tenths of a millimetre) to the micrometre; rates and
+    // masses to two places, which a float scaled by a million would not hold.
+    const auto number = [](float value)
+    {
+        return std::abs(value) >= 100.0f ? Round(value, 2) : Round(value, 6);
+    };
+    const auto point = [&out](const char* key, const glm::vec3& value)
+    {
+        out[key] = Json::array({Round(value.x, 6), Round(value.y, 6), Round(value.z, 6)});
+    };
+    point("lowerFront", axle.lowerFront);
+    point("lowerRear", axle.lowerRear);
+    point("lowerBall", axle.lowerBall);
+    point("upperFront", axle.upperFront);
+    point("upperRear", axle.upperRear);
+    point("upperBall", axle.upperBall);
+    point("strutTop", axle.strutTop);
+    point("strutLower", axle.strutLower);
+    point("tieInner", axle.tieInner);
+    point("tieOuter", axle.tieOuter);
+    out["staticCamberDegrees"] = number(axle.staticCamberDegrees);
+    out["toeOutRodLength"] = number(axle.toeOutRodLength);
+    out["track"] = number(axle.track);
+    out["wheelRate"] = number(axle.wheelRate);
+    out["progressiveRate"] = number(axle.progressiveRate);
+    out["bumpStopRate"] = number(axle.bumpStopRate);
+    out["bumpStopTravel"] = number(axle.bumpStopTravel);
+    out["reboundStopTravel"] = number(axle.reboundStopTravel);
+    out["dampBump"] = number(axle.dampBump);
+    out["dampFastBump"] = number(axle.dampFastBump);
+    out["dampFastBumpThreshold"] = number(axle.dampFastBumpThreshold);
+    out["dampRebound"] = number(axle.dampRebound);
+    out["dampFastRebound"] = number(axle.dampFastRebound);
+    out["dampFastReboundThreshold"] = number(axle.dampFastReboundThreshold);
+    out["antiRollBarRate"] = number(axle.antiRollBarRate);
+    out["hubMass"] = number(axle.hubMass);
+    out["tyreRadius"] = number(axle.tyreRadius);
+    out["tyreRate"] = number(axle.tyreRate);
+    out["tyreDamping"] = number(axle.tyreDamping);
+    out["centerOfMassAboveWheel"] = number(axle.centerOfMassAboveWheel);
+    out["frictionCoulomb"] = number(axle.frictionCoulomb);
+    out["frictionBreakaway"] = number(axle.frictionBreakaway);
+    return out;
+}
+
 // A car's figures as the MINIENGINE_vehicle extension: SI units, a member for each figure the car's
 // data gave.
 Json CarSpecToJson(const VehicleCarSpec& spec)
@@ -183,6 +234,20 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     if (spec.limitedSlipDifferentials.has_value())
     {
         out["limitedSlipDifferentials"] = *spec.limitedSlipDifferentials;
+    }
+    if (spec.frontSuspension.has_value())
+    {
+        out["frontSuspension"] = SuspensionAxleToJson(*spec.frontSuspension);
+    }
+    if (spec.rearSuspension.has_value())
+    {
+        out["rearSuspension"] = SuspensionAxleToJson(*spec.rearSuspension);
+    }
+    put("wheelbase", spec.wheelbase);
+    put("frontWeightShare", spec.frontWeightShare);
+    if (spec.inertiaBox.has_value())
+    {
+        out["inertiaBox"] = Json::array({Round(spec.inertiaBox->x, 4), Round(spec.inertiaBox->y, 4), Round(spec.inertiaBox->z, 4)});
     }
 
     if (!spec.aeroWings.empty())

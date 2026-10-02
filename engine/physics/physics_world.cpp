@@ -1,4 +1,7 @@
 #include "physics_world.h"
+#include "vehicle_suspension.h"
+
+#include <engine/suspension/suspension_corner.h>
 
 // Jolt.h comes first: it sets up the configuration every other Jolt header depends on.
 #include <Jolt/Jolt.h>
@@ -26,6 +29,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <numbers>
 #include <stdexcept>
@@ -222,6 +226,20 @@ void ApplyTyres(JPH::WheelSettingsWV& wheel, const VehicleTyreSettings& tyres)
     }
 }
 
+// The multibody suspension's straight-spring stand-in: the mount sits this far above the wheel's
+// design centre, enough for the bump travel of either axle.
+float MultibodyDesignLength(const VehicleSettings& settings)
+{
+    const float bump = std::max(settings.frontSuspension.bumpStopTravel, settings.rearSuspension.bumpStopTravel);
+    return std::max(bump, 0.03f) + 0.04f + 0.05f;
+}
+
+// Where the wheel's centre is at the design position: where the model draws it at rest.
+glm::vec3 MultibodyDesignCenter(const VehicleSettings& settings, size_t index)
+{
+    return GetVehicleWheelMount(settings, index).center - glm::vec3(0.0f, ComputeRestSuspensionLength(settings, 9.81f), 0.0f);
+}
+
 JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const VehicleSettings& settings)
 {
     JPH::Ref<JPH::VehicleConstraintSettings> vehicle = new JPH::VehicleConstraintSettings();
@@ -230,6 +248,7 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     vehicle->mMaxPitchRollAngle = JPH::DegreesToRadians(std::clamp(settings.maxPitchRollDegrees, 0.0f, 180.0f));
 
     // Front left, front right, rear left, rear right; +X is the car's left.
+    const bool multibody = HasSuspensionGeometry(settings);
     for (size_t index = 0; index < kVehicleWheelCount; ++index)
     {
         const bool front = index < 2;
@@ -259,10 +278,24 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         ApplyTyres(*wheel, front ? settings.frontTyres : settings.rearTyres);
         wheel->mMaxBrakeTorque = ComputeBrakeTorquePerWheel(settings) * 2.0f * axleShare;
         wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
+        if (multibody)
+        {
+            // The multibody suspension sets the spring each step and steers through the rack: the
+            // straight spring starts at its design length, and the wheels' own steering is off.
+            const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
+            const float bump = std::max(axle.bumpStopTravel, 0.03f) + 0.04f;
+            const float droop = axle.reboundStopTravel > 0.0f ? axle.reboundStopTravel : 0.08f;
+            const float designLength = MultibodyDesignLength(settings);
+            const glm::vec3 center = MultibodyDesignCenter(settings, index);
+            wheel->mPosition = ToJolt(center + glm::vec3(0.0f, designLength, 0.0f));
+            wheel->mSuspensionMinLength = designLength - bump;
+            wheel->mSuspensionMaxLength = designLength + droop;
+            wheel->mMaxSteerAngle = 0.0f;
+        }
         vehicle->mWheels.push_back(wheel);
     }
 
-    if (settings.antiRollBars)
+    if (settings.antiRollBars && !multibody)
     {
         vehicle->mAntiRollBars.resize(2);
         vehicle->mAntiRollBars[0].mLeftWheel = 0;
@@ -387,7 +420,136 @@ struct PhysicsWorld::Impl
         float weightNewtons = 0.0f;
         VehicleSnapshot previous;
         VehicleSnapshot current;
+
+        // The multibody suspension, when the settings have one: a corner per wheel.
+        struct Corner
+        {
+            std::unique_ptr<suspension::SuspensionCorner> corner;
+            glm::vec3 designCenter{0.0f}; // vehicle space
+            float designLength = 0.0f;    // the straight spring's length at the design position
+            double travel = 0.0;
+            double antiRollBarRate = 0.0;
+            float camberDegrees = 0.0f;
+            float toeDegrees = 0.0f;
+            float springForce = 0.0f;
+            float antiRollBarForce = 0.0f;
+            bool front = true;
+        };
+        std::vector<Corner> corners;
+        double rackAtLock = 0.0;
+        VehicleSettings settings;
     };
+
+    void BuildCorners(Vehicle& vehicle) const
+    {
+        vehicle.corners.clear();
+        const VehicleSettings& settings = vehicle.settings;
+        if (!HasSuspensionGeometry(settings))
+        {
+            return;
+        }
+        // Each wheel's static load from where the centre of mass sits between the axles.
+        const glm::vec3 com = settings.chassisCenter + settings.centerOfMassOffset;
+        const float frontZ = MultibodyDesignCenter(settings, 0).z;
+        const float rearZ = MultibodyDesignCenter(settings, 2).z;
+        const float frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com.z - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
+        const float weight = std::max(settings.massKg, 1.0f) * 9.81f;
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
+        {
+            const bool front = index < 2;
+            const double load = 0.5 * weight * (front ? frontShare : 1.0f - frontShare);
+            const VehicleCornerSetup setup = BuildVehicleCorner(settings, index, load);
+            Vehicle::Corner corner;
+            corner.corner = std::make_unique<suspension::SuspensionCorner>(setup.definition, MakeVehicleCornerUnit(setup), suspension::SuspensionCorner::kWheelTravel);
+            corner.designCenter = MultibodyDesignCenter(settings, index);
+            corner.designLength = MultibodyDesignLength(settings);
+            corner.antiRollBarRate = setup.antiRollBarRate;
+            corner.front = front;
+            vehicle.corners.push_back(std::move(corner));
+        }
+        vehicle.rackAtLock = FitSteeringRackTravel(settings);
+    }
+
+    // Before each step: the multibody suspension reads where the physics engine left each wheel, moves
+    // the wheel along its linkage (the mount's horizontal place, camber, toe and steering), and hands
+    // the physics engine's straight spring the stiffness, damping and preload that make its force, near
+    // the current state, the suspension's: springs, damper, stops and anti-roll bar at the wheel, plus
+    // the tyre's horizontal forces through the linkage's geometry (anti-dive, anti-squat, jacking).
+    void UpdateCorners(Vehicle& vehicle, float steering) const
+    {
+        if (vehicle.corners.empty())
+        {
+            return;
+        }
+        constexpr double dt = kFixedStepSeconds;
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        const JPH::Quat toBody = vehicle.body->GetRotation().Conjugated();
+        const double rack = vehicle.rackAtLock * std::clamp(static_cast<double>(steering), -1.0, 1.0);
+
+        std::array<double, kVehicleWheelCount> travel{};
+        for (size_t index = 0; index < vehicle.corners.size(); ++index)
+        {
+            travel[index] = vehicle.corners[index].designLength - wheels[static_cast<JPH::uint>(index)]->GetSuspensionLength();
+        }
+        for (size_t index = 0; index < vehicle.corners.size(); ++index)
+        {
+            Vehicle::Corner& c = vehicle.corners[index];
+            const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+            JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
+
+            suspension::CornerInput in;
+            in.dt = dt;
+            in.travel = travel[index];
+            in.travelRate = (travel[index] - c.travel) / dt;
+            in.rack = c.front ? rack : 0.0;
+            float cosine = 1.0f;
+            if (wheel.HasContact())
+            {
+                // The road's horizontal push on the tyre over the last step, in the corner's frame.
+                const JPH::Vec3 longitudinal = toBody * wheel.GetContactLongitudinal();
+                const JPH::Vec3 lateral = toBody * wheel.GetContactLateral();
+                const JPH::Vec3 normal = toBody * wheel.GetContactNormal();
+                const JPH::Vec3 force = longitudinal * (wheel.GetLongitudinalLambda() / static_cast<float>(dt)) + lateral * (wheel.GetLateralLambda() / static_cast<float>(dt));
+                in.load.force = VehicleToCorner(FromJolt(force));
+                in.contactNormal = VehicleToCorner(FromJolt(normal));
+                cosine = std::max(0.1f, normal.GetY());
+            }
+            const suspension::CornerOutput& out = c.corner->Step(in);
+            c.travel = travel[index];
+
+            // The anti-roll bar from the two wheels' travel difference.
+            const size_t other = index ^ 1u;
+            const double arb = -c.antiRollBarRate * (travel[index] - travel[other]);
+
+            // The road's normal force that balances the travel: F_n * dPn/dz + G = 0.
+            const double perTravel = std::max(out.normalPerTravel, 0.2);
+            const double generalised = out.strutTravelForce + arb + out.loadTravelForce;
+            const double normalForce = -generalised / perTravel;
+            const double stiffness = std::max(-(out.strutTravelStiffness - c.antiRollBarRate) / perTravel, 1000.0);
+            const double damping = std::max(-out.strutTravelDamping / perTravel, 0.0);
+            // The physics engine's spring is k (Lmax + preload - L) - c dL/dt along the normal (its k
+            // and c divided by the cosine between the suspension and the normal): match force and slopes.
+            settings.mSuspensionSpring.mMode = JPH::ESpringMode::StiffnessAndDamping;
+            settings.mSuspensionSpring.mStiffness = static_cast<float>(stiffness) * cosine;
+            settings.mSuspensionSpring.mDamping = static_cast<float>(damping) * cosine;
+            settings.mSuspensionPreloadLength = static_cast<float>((normalForce - stiffness * in.travel - damping * in.travelRate) / stiffness) - settings.mSuspensionMaxLength + c.designLength;
+
+            // The wheel where the linkage has it: the mount above its centre, turned by camber and toe.
+            const glm::vec3 center = c.designCenter + CornerToVehicle(out.geometry.wheelCenter);
+            settings.mPosition = JPH::Vec3(center.x, c.designCenter.y + c.designLength, center.z);
+            const suspension::Vec3 axis = out.geometry.spinAxis;
+            const suspension::Vec3 leftward = axis * (index % 2 == 0 ? 1.0 : -1.0);
+            const suspension::Vec3 forward = glm::normalize(glm::cross(leftward, suspension::Vec3(0.0, 0.0, 1.0)));
+            const suspension::Vec3 up = glm::cross(forward, leftward);
+            settings.mWheelForward = ToJolt(CornerToVehicle(forward));
+            settings.mWheelUp = ToJolt(CornerToVehicle(up));
+
+            c.camberDegrees = static_cast<float>(out.geometry.camber * 180.0 / std::numbers::pi);
+            c.toeDegrees = static_cast<float>(out.geometry.toe * 180.0 / std::numbers::pi);
+            c.springForce = static_cast<float>(out.strutForce);
+            c.antiRollBarForce = static_cast<float>(-arb);
+        }
+    }
 
     // Sets each wheel's brake torque for the coming step. Fixed, it is the front/rear split's. Dynamic, the
     // four wheels share the same total by the load they carried in the last step, a little smoothed, so a
@@ -639,6 +801,16 @@ struct PhysicsWorld::Impl
             state.radius = wheelSettings.mRadius;
             state.width = wheelSettings.mWidth;
             state.brakeTorque = static_cast<const JPH::WheelWV&>(wheel).GetSettings()->mMaxBrakeTorque;
+            if (index < vehicle.corners.size())
+            {
+                const Vehicle::Corner& corner = vehicle.corners[index];
+                state.multibody = true;
+                state.travel = static_cast<float>(corner.travel);
+                state.camberDegrees = corner.camberDegrees;
+                state.toeDegrees = corner.toeDegrees;
+                state.springForce = corner.springForce;
+                state.antiRollBarForce = corner.antiRollBarForce;
+            }
             if (state.inContact)
             {
                 const auto& wheelWV = static_cast<const JPH::WheelWV&>(wheel);
@@ -881,6 +1053,8 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     vehicle.limitedSlipLock = settings.limitedSlipDifferentials ? std::max(settings.limitedSlipLock, 0.0f) : 0.0f;
     vehicle.drive = settings.drive;
     vehicle.weightNewtons = std::max(settings.massKg, 1.0f) * 9.81f;
+    vehicle.settings = settings;
+    impl.BuildCorners(vehicle);
 
     vehicle.current = impl.Capture(vehicle);
     vehicle.previous = vehicle.current;
@@ -910,6 +1084,7 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.controls = {};
     vehicle.direction = 1.0f;
     vehicle.filteredLoadValid = false;
+    m_impl->BuildCorners(vehicle);
     vehicle.current = m_impl->Capture(vehicle);
     // Nothing has rolled: the capture compared the wheels with the step before the reset.
     for (VehicleWheelState& wheel : vehicle.current.wheels)
@@ -994,6 +1169,7 @@ int PhysicsWorld::Update(float deltaSeconds)
             auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
             impl.CoupleDifferentialWheels(vehicle, *controller);
             impl.LimitClutchTorque(vehicle, *controller);
+            impl.UpdateCorners(vehicle, input.right);
             controller->SetDriverInput(input.forward, input.right, input.brake, input.handBrake);
         }
 

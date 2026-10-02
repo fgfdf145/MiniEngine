@@ -71,6 +71,17 @@ struct VehicleWheelState
     float lateralFriction = 0.0f;
     float longitudinalPeakFriction = 0.0f;
     float lateralPeakFriction = 0.0f;
+
+    // With a multibody suspension (VehicleSettings::frontSuspension/rearSuspension): the wheel's
+    // travel from the design position (bump positive, m), its camber (top outward positive) and toe
+    // (toe-in positive) in degrees relative to the body, the spring/damper/stop force at the wheel and
+    // the anti-roll bar's, N.
+    bool multibody = false;
+    float travel = 0.0f;
+    float camberDegrees = 0.0f;
+    float toeDegrees = 0.0f;
+    float springForce = 0.0f;
+    float antiRollBarForce = 0.0f;
 };
 
 struct VehicleTelemetry
