@@ -980,10 +980,17 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
 
     int waveform = static_cast<int>(e.waveform);
     ImGui::TextUnformatted("Input:");
-    for (const auto& [label, value] : {std::pair<const char*, int>{"Sine", 0}, {"Sweep 0.5-20 Hz", 1}, {"Step", 2}, {"Random road", 3}})
+    for (const auto& [label, value] :
+         {std::pair<const char*, int>{"Sine", 0}, {"Sweep 0.5-20 Hz", 1}, {"Step", 2}, {"Random road", 3}, {"Body loads", 4}})
     {
         ImGui::SameLine();
         ImGui::RadioButton(label, &waveform, value);
+        if (value == 4 && ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The pads stay level; the three body loaders push the body (heave), pitch it (as braking does)\n"
+                              "or roll it (as cornering does), so it moves on its springs. The pad inputs instead move the\n"
+                              "ground under the car, which below the body's resonance mostly tilts the car as a whole.");
+        }
     }
     e.waveform = static_cast<VehicleRigWaveform>(waveform);
 
@@ -1008,6 +1015,18 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
         constexpr float kRoughness[3] = {1e-7f, 2e-6f, 1e-5f};
         e.roadRoughness = kRoughness[std::clamp(m_roadRoughness, 0, 2)];
     }
+    else if (e.waveform == VehicleRigWaveform::BodyLoads)
+    {
+        ImGui::SliderFloat("Body load (g)", &e.bodyLoad, 0.05f, 2.0f, "%.2f");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Heave: the sprung weight times this. Pitch and roll: that times the centre of mass's height,\n"
+                              "the moment of braking or cornering at this many g.");
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderFloat("Frequency (Hz)", &e.frequency, 0.2f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    }
     else
     {
         float amplitude = e.amplitude * 1000.0f;
@@ -1029,7 +1048,7 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
     ImGui::SliderFloat("Slow motion (sim s per s)", &e.playbackRate, 0.02f, 1.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::SliderFloat("Drawn motion x", &e.exaggeration, 1.0f, 10.0f, "%.1f");
+    ImGui::SliderFloat("Drawn motion x", &e.exaggeration, 1.0f, 20.0f, "%.1f");
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("Pads, body and wheels are drawn this many times further than they move. The plots are true size.");

@@ -25,6 +25,10 @@ enum class VehicleRigWaveform
     Sweep, // Rill's sine sweep from 0.5 to 20 Hz over 60 cycles, again and again
     Step,  // the pads up and down by `amplitude` every half period of `frequency`
     Road,  // a random road at `roadSpeed` (left and right tracks, the rears following the fronts)
+    // The pads level, the three body loaders pushing the body at `frequency` in the mode (heave force,
+    // pitch moment or roll moment) by `bodyLoad` g: the body moves on its springs as it does under
+    // braking or cornering.
+    BodyLoads,
 };
 
 struct VehicleRigExcitation
@@ -35,6 +39,9 @@ struct VehicleRigExcitation
     float amplitude = 0.02f; // m at the pads
     float roadSpeed = 30.0f; // m/s
     float roadRoughness = 2e-6f; // Rill's phi0, m^3
+    // The body loaders' push in g: the sprung weight times this (heave), or times it and the centre of
+    // mass's height (the pitch moment of braking, the roll moment of cornering, at this g).
+    float bodyLoad = 1.0f;
     // Simulated seconds per real second: below 1 the motion plays in slow motion.
     float playbackRate = 0.25f;
     // The drawn motion's scale over the simulated one (pads, body and wheels alike).

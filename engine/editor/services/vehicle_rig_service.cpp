@@ -80,6 +80,9 @@ std::array<double, 4> PadHeights(VehicleRigSession& session, double& frequency)
         x = since < 0.5 ? 0.0 : (cycle < 0.5 ? e.amplitude : 0.0);
         break;
     }
+    case VehicleRigWaveform::BodyLoads:
+        frequency = std::max(e.frequency, 0.01f);
+        return pads; // level: the loaders do the work
     case VehicleRigWaveform::Road:
     {
         if (!session.road)
@@ -360,7 +363,31 @@ bool Tick(RendererSharedState& state, float deltaSeconds)
         {
             rates[i] = (session->pads[i] - previous[i]) / kStep;
         }
-        session->rig->Step(session->pads, rates, 0.0, 0.0, 0.0, kStep);
+        // The body loaders: a sine at the input's frequency, faded in like the pads.
+        double heaveForce = 0.0;
+        double pitchMoment = 0.0;
+        double rollMoment = 0.0;
+        const VehicleRigExcitation& e = session->excitation;
+        if (e.waveform == VehicleRigWaveform::BodyLoads)
+        {
+            const double since = session->time - session->inputStart;
+            session->phase = std::fmod(session->phase + kTwoPi * std::max(e.frequency, 0.01f) * kStep, kTwoPi);
+            const double load = std::clamp(since / kFadeSeconds, 0.0, 1.0) * std::sin(session->phase) * e.bodyLoad * session->car.sprungMass * 9.81;
+            switch (e.mode)
+            {
+            case suspension::RigMode::Heave:
+                heaveForce = load;
+                break;
+            case suspension::RigMode::Pitch:
+                pitchMoment = load * session->car.cgHeight;
+                break;
+            case suspension::RigMode::Roll:
+            case suspension::RigMode::Warp:
+                rollMoment = load * session->car.cgHeight;
+                break;
+            }
+        }
+        session->rig->Step(session->pads, rates, heaveForce, pitchMoment, rollMoment, kStep);
         if (session->time >= session->nextSample)
         {
             session->nextSample = session->time + kSampleStep;

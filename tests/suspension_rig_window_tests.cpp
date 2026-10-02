@@ -397,6 +397,32 @@ void TestLiveRigMovesTheCarAndThePads()
     const VehicleRigStatus status = VehicleRigService::GetStatus(state);
     Require(status.active && status.sampleTime.size() > 500 && status.tyreLoad[0].size() == status.sampleTime.size(), "the status records the run");
 
+    // The body loaders instead: a cornering roll moment of 0.5 g at 1 Hz with the pads level. The body
+    // rolls on its springs, the suspension working: left and right travel opposite. The GT3 car is stiff:
+    // 1147 kg x 9.81 x 0.5 x 0.43 m = 2.4 kNm on about 10.6 kNm/deg is 0.23 deg, 3.3 mm at the wheels.
+    excitation.waveform = VehicleRigWaveform::BodyLoads;
+    excitation.bodyLoad = 0.5f;
+    excitation.frequency = 1.0f;
+    VehicleRigService::SetExcitation(state, excitation);
+    double mostTravel = 0.0;
+    bool opposite = true;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        VehicleRigService::Tick(state, 0.1f);
+        const VehicleRigSession& session = *state.vehicleRig.session;
+        Require(session.pads[0] == 0.0 && session.pads[1] == 0.0, "the pads stay level under the body loads");
+        const double left = session.rig->Travel(0);
+        const double right = session.rig->Travel(1);
+        mostTravel = std::max(mostTravel, std::abs(left));
+        if (std::abs(left) > 0.002)
+        {
+            opposite = opposite && left * right < 0.0;
+        }
+    }
+    std::cout << "live rig, body roll moment of 0.5 g: front travel up to " << mostTravel * 1000.0 << " mm\n";
+    Require(mostTravel > 0.0025 && mostTravel < 0.0045, "the body rolls on its springs as stiffly as the analysis says");
+    Require(opposite, "the left and right wheels' travel opposite");
+
     // Saving the scene sees the car and the props where they were.
     VehicleRigService::RunWithRigAtStart(state, [&] {
         Require(world.GetTransform(car).translation == carStart.translation && world.GetTransform(padFL).translation == padStart.translation,
