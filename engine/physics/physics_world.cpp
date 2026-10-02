@@ -1224,6 +1224,14 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         shape.Get(), ToJoltPosition(pose.position), ToJolt(pose.rotation), JPH::EMotionType::Dynamic, ObjectLayers::kMoving);
     bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     bodySettings.mMassPropertiesOverride.mMass = std::max(settings.massKg, 1.0f);
+    if (settings.inertiaBox.x > 0.0f && settings.inertiaBox.y > 0.0f && settings.inertiaBox.z > 0.0f)
+    {
+        // The car's data gives its inertia as a uniform box (width, height, length) of its mass about
+        // the centre of mass, not the collision box's.
+        bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+        bodySettings.mMassPropertiesOverride.SetMassAndInertiaOfSolidBox(ToJolt(settings.inertiaBox), 1.0f);
+        bodySettings.mMassPropertiesOverride.ScaleToMass(std::max(settings.massKg, 1.0f));
+    }
     bodySettings.mLinearDamping = std::max(settings.linearDamping, 0.0f);
     // A fast car against a thin wall would otherwise pass through it between two steps.
     bodySettings.mMotionQuality = JPH::EMotionQuality::LinearCast;

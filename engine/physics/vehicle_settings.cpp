@@ -112,9 +112,19 @@ VehicleSettings FitVehicleSettingsToBounds(
     settings.chassisCenter = glm::vec3(center.x, (chassisBottom + chassisTop) * 0.5f, center.z);
     settings.chassisHalfExtents = glm::vec3(size.x * 0.5f, (chassisTop - chassisBottom) * 0.5f, size.z * 0.5f);
 
-    // A road car's centre of mass is around a third of its height above the ground.
-    const float centerOfMassY = floorY + std::max(size.y * 0.33f, settings.wheelRadius * 1.2f);
-    settings.centerOfMassOffset = glm::vec3(0.0f, centerOfMassY - settings.chassisCenter.y, 0.0f);
+    // A road car's centre of mass is around a third of its height above the ground, over the middle of
+    // the model; the car's own data says where (its weight split between the axles, its height over
+    // the ground under the tyres).
+    const float groundY = wheelLayout != nullptr ? centerOfWheels.y - settings.wheelRadius : floorY;
+    const float centerOfMassY = settings.centerOfMassHeight > 0.0f ? groundY + settings.centerOfMassHeight
+                                                                  : floorY + std::max(size.y * 0.33f, settings.wheelRadius * 1.2f);
+    glm::vec3 centerOfMass(settings.chassisCenter.x, centerOfMassY, settings.chassisCenter.z);
+    if (settings.frontWeightShare > 0.0f)
+    {
+        centerOfMass.x = settings.trackCenterX;
+        centerOfMass.z = settings.rearAxleZ + settings.frontWeightShare * (settings.frontAxleZ - settings.rearAxleZ);
+    }
+    settings.centerOfMassOffset = centerOfMass - settings.chassisCenter;
     return settings;
 }
 
@@ -134,6 +144,28 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     if (spec.massKg.has_value() && *spec.massKg > 0.0f)
     {
         settings.massKg = *spec.massKg;
+    }
+    if (spec.frontWeightShare.has_value() && *spec.frontWeightShare > 0.0f && *spec.frontWeightShare < 1.0f)
+    {
+        settings.frontWeightShare = *spec.frontWeightShare;
+    }
+    if (spec.inertiaBox.has_value() && spec.inertiaBox->x > 0.0f && spec.inertiaBox->y > 0.0f && spec.inertiaBox->z > 0.0f)
+    {
+        settings.inertiaBox = *spec.inertiaBox;
+    }
+    // The centre of mass's height: each axle's tyre radius plus its height over the wheel centre
+    // (Assetto Corsa's BASEY), by the weight on it.
+    if (spec.frontSuspension.has_value() && spec.rearSuspension.has_value() && spec.frontSuspension->tyreRadius > 0.0f &&
+        spec.rearSuspension->tyreRadius > 0.0f)
+    {
+        const float share = settings.frontWeightShare > 0.0f ? settings.frontWeightShare : 0.5f;
+        const float front = spec.frontSuspension->tyreRadius + spec.frontSuspension->centerOfMassAboveWheel;
+        const float rear = spec.rearSuspension->tyreRadius + spec.rearSuspension->centerOfMassAboveWheel;
+        const float height = share * front + (1.0f - share) * rear;
+        if (height > 0.0f)
+        {
+            settings.centerOfMassHeight = height;
+        }
     }
     if (spec.drive.has_value())
     {

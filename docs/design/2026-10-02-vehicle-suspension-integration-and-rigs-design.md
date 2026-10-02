@@ -230,3 +230,29 @@ m_z = m_hub·|∂W/∂z|²
 3. 轮毂的转动惯量（绕主销、外倾方向）没有算进 m_z。
 4. 防倾杆仍取对侧上一步的行程。
 5. 落地或刚接触的那一步，轮胎力从 0 开始（Jolt 这一步才发现接触）。
+
+## 8. 补充（2026-10-02）：整车的重心和惯量改用车辆数据
+
+用户问“车辆的重量和重心是对的吗”。查下来：
+
+| | AC 数据（`car.ini` / `suspensions.ini`） | 修复前的编辑器驾驶模式 |
+|---|---|---|
+| 质量 | `TOTALMASS=1375`，含车手、不含燃油 | 1375 ✓ |
+| 前轴重量比 | `CG_LOCATION=0.555` | 49.4%（取模型包围盒中心） |
+| 重心高度 | R + `BASEY` = 0.355 − 0.075 = 0.28 m | 0.47 m（取模型高度的 1/3） |
+| 惯量 | `INERTIA=1.80,1.35,4.80` 的均匀长方体 | 取模型包围盒 2.06 × 1.14 × 4.85 m |
+
+- 数据本身是自洽的：`GRAPHICS_OFFSET` 的 z = −0.20 m，与 55.5% 前重比算出的重心（在模型原点前方 0.195 m）只差 5 mm。
+- K&C 和七立柱台架（`BuildCarModel`）一直用的就是数据，没有问题。问题只在驾驶模式：`ApplyCarSpec` 只拷贝了质量，重心和惯量都由 `FitVehicleSettingsToBounds` 按包围盒估计。重心高出 19 cm，意味着载荷转移多了约 68%。
+
+**修复。**
+- `VehicleSettings` 新增 `frontWeightShare`、`centerOfMassHeight`、`inertiaBox` 三项，都由 `ApplyCarSpec` 从数据填入。重心高度按前后轴的 R + BASEY 以重量比加权。
+- `FitVehicleSettingsToBounds` 有了这三项时，重心放在两轴之间按重量比的位置，高度从车轮下方的地面算起。
+- `PhysicsWorld::AddVehicle` 改用数据里的惯量盒（`MassAndInertiaProvided`，以整车质量计）。
+- 没有这些数据的车仍按原来的方式估计。
+
+**验证。**
+- 新测试 `TestCarDataPlacesTheCentreOfMass`：GT-R 按编辑器的路径构建（数据、`ApplyCarSpec`、模型真实的包围盒和轮心），重心为前 55.5%、高 280 mm。静止时前轮承担 55.50% 的车重，四轮之和等于车重。
+- 全量 88 项测试通过。
+
+**没做的。** AC 起步默认带 30 L 燃油（约 22 kg，油箱在重心后方 0.85 m、下方 0.15 m），我们没有把它加进去，质量仍按 `TOTALMASS` 计。

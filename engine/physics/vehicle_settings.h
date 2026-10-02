@@ -147,6 +147,13 @@ struct VehicleSettings
     // The centre of mass relative to chassisCenter. A car's sits low; a box's centre would roll it
     // over in the first corner.
     glm::vec3 centerOfMassOffset{0.0f, -0.35f, 0.0f};
+    // How the car's own data places its mass (ApplyCarSpec); 0 leaves FitVehicleSettingsToBounds to
+    // guess from the model's size. The front axle's share of the weight, the centre of mass's height
+    // above the ground (m), and the box (width, height, length, m) whose uniform inertia the body takes
+    // instead of the collision box's.
+    float frontWeightShare = 0.0f;
+    float centerOfMassHeight = 0.0f;
+    glm::vec3 inertiaBox{0.0f};
 
     // The wheels: front left, front right, rear left, rear right, placed by the axles' Z, the half
     // track width either side of trackCenterX, and the suspension's top mount at wheelMountY.

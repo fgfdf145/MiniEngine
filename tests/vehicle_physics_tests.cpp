@@ -954,6 +954,48 @@ void TestUnsprungCarTakesABump()
     }
 }
 
+// The GT-R as the editor drives it: its data through ApplyCarSpec, then fitted to its model's bounds and
+// wheel nodes (vehicle space). The centre of mass is the data's, not the model's middle: 55.5 % of the
+// weight on the front axle (CG_LOCATION) and 0.28 m up (tyre radius 0.355 + BASEY -0.075); at rest
+// the front tyres carry that share.
+void TestCarDataPlacesTheCentreOfMass()
+{
+    VehicleCarSpec spec = MakeGtrSpec();
+    spec.wheelbase = 2.78f;
+    spec.frontWeightShare = 0.555f;
+    spec.inertiaBox = glm::vec3(1.8f, 1.35f, 4.8f);
+    spec.frontSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    const VehicleSettings settings =
+        FitVehicleSettingsToBounds(glm::vec3(-1.031f, -0.066f, -2.401f), glm::vec3(1.031f, 1.357f, 2.453f), ApplyCarSpec(VehicleSettings{}, spec), &layout);
+    const glm::vec3 com = settings.chassisCenter + settings.centerOfMassOffset;
+    const float ground = 0.2919f - 0.355f;
+    const float share = (com.z - settings.rearAxleZ) / (settings.frontAxleZ - settings.rearAxleZ);
+    std::cout << "GT-R centre of mass from its data: " << share * 100.0f << " % front, " << (com.y - ground) * 1000.0f << " mm up\n";
+    RequireNear(share, 0.555f, 0.002f, "the data's weight split");
+    RequireNear(com.y - ground, 0.28f, 0.002f, "the data's centre of mass height");
+    RequireNear(com.x, 0.0f, 1e-4f, "on the car's centre line");
+
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls hold;
+    hold.brake = 1.0f; // awake until the loads have settled
+    world.SetVehicleControls(car, hold);
+    Simulate(world, 3.0f);
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    const float front = wheels[0].suspensionForce + wheels[1].suspensionForce;
+    const float total = front + wheels[2].suspensionForce + wheels[3].suspensionForce;
+    std::cout << "GT-R at rest: the front tyres carry " << front / total * 100.0f << " % of " << total << " N\n";
+    RequireNear(front / total, 0.555f, 0.01f, "the front tyres carry the data's share");
+    RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "and all of the weight");
+}
+
 void TestCarSpecReplacesWhatItKnows()
 {
     VehicleSettings tuning;
@@ -1385,6 +1427,7 @@ int main()
         TestUnsprungCarStandsOnItsTyres();
         TestUnsprungWheelsHangInTheAirAndLand();
         TestUnsprungCarTakesABump();
+        TestCarDataPlacesTheCentreOfMass();
         TestMultibodyCarCornersOnItsLinkage(false);
         TestMultibodyCarCornersOnItsLinkage(true);
         TestWheelMotionRollsForwardAndSteers();
