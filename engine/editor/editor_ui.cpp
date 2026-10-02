@@ -1,5 +1,6 @@
 ﻿#include "editor_ui.h"
 #include "ui/editor_menu_toolbar.h"
+#include "ui/editor_suspension_rigs.h"
 #include "ui/editor_ui_internal.h"
 
 #include <engine/core/log/log.h>
@@ -34,6 +35,7 @@ void EditorUiController::RegisterCommands()
         {"assets", "Assets", ICON_FA_FOLDER_TREE, &m_showAssetManagerWindow},
         {"input_monitor", "Input Monitor", ICON_FA_KEYBOARD, &m_showInputMonitorWindow},
         {"vehicle", "Vehicle", ICON_FA_CAR, &m_showVehicleWindow},
+        {"suspension_rigs", "Suspension Rigs", ICON_FA_CHART_LINE, &m_showSuspensionRigWindow},
         {"theme", "Theme", ICON_FA_PALETTE, &m_showThemeWindow},
     };
 
@@ -233,6 +235,15 @@ EditorUiFrameResult EditorUiController::Draw(
     if (!fullscreen && m_showVehicleWindow)
     {
         DrawVehiclePanel(scene, result);
+    }
+
+    if (!fullscreen && m_showSuspensionRigWindow)
+    {
+        if (!m_suspensionRigs)
+        {
+            m_suspensionRigs = std::make_shared<SuspensionRigWindow>();
+        }
+        m_suspensionRigs->Draw(scene, &m_showSuspensionRigWindow);
     }
 
     if (!fullscreen && m_showSceneWindow)

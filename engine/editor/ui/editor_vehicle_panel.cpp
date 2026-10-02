@@ -153,6 +153,15 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 m_vehicleTuning.modelFront == VehicleModelFront::NegativeZ ? "-Z" : "+Z");
         }
     }
+    if (ImGui::Button(ICON_FA_CHART_LINE " Suspension Rigs"))
+    {
+        m_showSuspensionRigWindow = true;
+        ImGui::SetWindowFocus("Suspension Rigs");
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The virtual K&C and seven-post rigs on the selected car's suspension data, with its linkage animated.");
+    }
     if (!status.lastError.empty())
     {
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", status.lastError.c_str());

@@ -128,6 +128,7 @@ endif()
 find_package(glm CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
+find_package(implot CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 # Vehicle physics (engine_physics): the static Jolt::Jolt, whose exported compile definitions keep

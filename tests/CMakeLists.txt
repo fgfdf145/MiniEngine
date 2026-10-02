@@ -78,6 +78,7 @@ set_target_properties(miniengine_scene_environment_tests PROPERTIES FOLDER "Test
 
 add_executable(miniengine_vehicle_physics_tests
     vehicle_physics_tests.cpp
+    gtr_car_spec.h
 )
 miniengine_group_target_sources(miniengine_vehicle_physics_tests)
 
@@ -1311,6 +1312,32 @@ set_target_properties(miniengine_asset_paths_tests PROPERTIES FOLDER "Tests")
 
 # The editor's command registry, and the menus and toolbar built from it. Links engine_editor for
 # the commands; nothing is drawn.
+add_executable(miniengine_suspension_rig_window_tests
+    suspension_rig_window_tests.cpp
+    gtr_car_spec.h
+)
+miniengine_group_target_sources(miniengine_suspension_rig_window_tests)
+
+target_link_libraries(miniengine_suspension_rig_window_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_suspension_rig_window_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_suspension_rig_window_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_suspension_rig_window_tests>
+            $<TARGET_FILE_DIR:miniengine_suspension_rig_window_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.suspension_rig_window
+    COMMAND miniengine_suspension_rig_window_tests
+)
+
 add_executable(miniengine_command_registry_tests
     command_registry_tests.cpp
 )

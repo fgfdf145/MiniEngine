@@ -13,6 +13,8 @@ add_library(engine_suspension
     suspension_model.h
     suspension_rigs.cpp
     suspension_rigs.h
+    suspension_rig_report.cpp
+    suspension_rig_report.h
     suspension_statics.cpp
     suspension_statics.h
     suspension_strut.cpp

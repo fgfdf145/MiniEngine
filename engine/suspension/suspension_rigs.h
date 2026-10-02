@@ -303,7 +303,8 @@ WarpResult RunWarp(const CarModel& car, double padWarp, bool friction = true);
 
 // A random road (Rill eq. 2.x: PSD Phi(Omega) = phi0 (Omega / 1)^-w over the sampled wavelengths),
 // driven at `speed`: left and right tracks independent, the rear following the front by the
-// wheelbase.
+// wheelbase. The statistics leave out the first 2 s (the road fades in over the first): `seconds`
+// must be longer (std::invalid_argument otherwise).
 struct RoadResult
 {
     std::array<double, 4> loadRms{};   // RMS of (load - static) / static

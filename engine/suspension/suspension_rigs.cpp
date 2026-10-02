@@ -827,6 +827,10 @@ RoadResult RunRoad(const CarModel& car, double speed, double phi0, double wavine
             ++samples;
         }
     }
+    if (samples == 0)
+    {
+        throw std::invalid_argument("RunRoad: the road must run longer than its 2 s lead-in");
+    }
     for (int i = 0; i < 4; ++i)
     {
         r.loadRms[i] = std::sqrt(square[i] / samples);

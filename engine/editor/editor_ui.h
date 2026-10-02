@@ -21,6 +21,7 @@
 #include <array>
 #include <deque>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -30,6 +31,7 @@ namespace me
 {
 
 class IEditorWorld;
+class SuspensionRigWindow;
 
 struct EditorUiActions
 {
@@ -334,6 +336,9 @@ class EditorUiController
     bool m_showViewportWindow = true;
     bool m_showGraphicsDebugWindow = false;
     bool m_showVehicleWindow = false;
+    bool m_showSuspensionRigWindow = false;
+    // Created when first shown; shared_ptr so this header needs no complete type.
+    std::shared_ptr<SuspensionRigWindow> m_suspensionRigs;
     VehicleDriveStatus m_vehicleStatus;
     VehicleSettings m_vehicleTuning;
     VehicleCameraSettings m_vehicleCamera;

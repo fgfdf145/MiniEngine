@@ -7,6 +7,7 @@
 #include <engine/editor/editor_icons.h>
 
 #include <imgui.h>
+#include <implot.h>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -294,6 +295,7 @@ VulkanImGuiLayer::VulkanImGuiLayer(
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = m_iniFilePath.c_str();
@@ -313,6 +315,7 @@ VulkanImGuiLayer::~VulkanImGuiLayer()
     DestroyVulkanResources();
     CleanupImGuiViewportState();
     ImGui_ImplSDL3_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
     if (m_descriptorPool != VK_NULL_HANDLE)

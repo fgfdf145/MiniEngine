@@ -40,6 +40,8 @@ add_library(engine_editor
     ui/editor_ui_shared.cpp
     ui/editor_vehicle_overlay.cpp
     ui/editor_vehicle_overlay.h
+    ui/editor_suspension_rigs.cpp
+    ui/editor_suspension_rigs.h
     ui/editor_vehicle_panel.cpp
     ui/editor_viewport_panel.cpp
 )
@@ -82,6 +84,7 @@ target_link_libraries(engine_editor
         glm::glm
         imgui::imgui
         imguizmo::imguizmo
+        implot::implot
         EnTT::EnTT
     PRIVATE
         yaml-cpp::yaml-cpp
