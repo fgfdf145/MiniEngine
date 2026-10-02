@@ -187,7 +187,7 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         settings.inertiaBox = *spec.inertiaBox;
     }
     // The centre of mass's height: each axle's tyre radius plus its height over the wheel centre
-    // (Assetto Corsa's BASEY), by the weight on it.
+    // (centerOfMassAboveWheel, Assetto Corsa's -BASEY), by the weight on it.
     if (spec.frontSuspension.has_value() && spec.rearSuspension.has_value() && spec.frontSuspension->tyreRadius > 0.0f &&
         spec.rearSuspension->tyreRadius > 0.0f)
     {

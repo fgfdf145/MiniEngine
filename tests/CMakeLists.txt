@@ -78,6 +78,7 @@ set_target_properties(miniengine_scene_environment_tests PROPERTIES FOLDER "Test
 
 add_executable(miniengine_vehicle_physics_tests
     vehicle_physics_tests.cpp
+    ae86_car_spec.h
     gtr_car_spec.h
 )
 miniengine_group_target_sources(miniengine_vehicle_physics_tests)
@@ -1314,6 +1315,7 @@ set_target_properties(miniengine_asset_paths_tests PROPERTIES FOLDER "Tests")
 # the commands; nothing is drawn.
 add_executable(miniengine_suspension_rig_window_tests
     suspension_rig_window_tests.cpp
+    ae86_car_spec.h
     gtr_car_spec.h
 )
 miniengine_group_target_sources(miniengine_suspension_rig_window_tests)

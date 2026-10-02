@@ -2249,6 +2249,10 @@ std::optional<VehicleSuspensionAxle> VehicleSuspension(const tinygltf::Value& ob
     {
         out.type = VehicleSuspensionType::MacPherson;
     }
+    else if (type == "solidAxle")
+    {
+        out.type = VehicleSuspensionType::SolidAxle;
+    }
     else
     {
         return std::nullopt;
@@ -2293,6 +2297,27 @@ std::optional<VehicleSuspensionAxle> VehicleSuspension(const tinygltf::Value& ob
     out.centerOfMassAboveWheel = VehicleNumber(axle, "centerOfMassAboveWheel").value_or(0.0f);
     out.frictionCoulomb = VehicleNumber(axle, "frictionCoulomb").value_or(0.0f);
     out.frictionBreakaway = VehicleNumber(axle, "frictionBreakaway").value_or(0.0f);
+    if (out.type == VehicleSuspensionType::SolidAxle)
+    {
+        const tinygltf::Value& links = axle.Get("axleLinks");
+        for (size_t i = 0; links.IsArray() && i < links.ArrayLen(); ++i)
+        {
+            const tinygltf::Value& link = links.Get(static_cast<int>(i));
+            if (!link.IsArray() || link.ArrayLen() != 6)
+            {
+                continue;
+            }
+            float v[6] = {};
+            for (int k = 0; k < 6; ++k)
+            {
+                v[k] = link.Get(k).IsNumber() ? static_cast<float>(link.Get(k).GetNumberAsDouble()) : 0.0f;
+            }
+            out.axleLinks.push_back({glm::vec3(v[0], v[1], v[2]), glm::vec3(v[3], v[4], v[5])});
+        }
+        out.axleSpringPosition = VehicleNumber(axle, "axleSpringPosition").value_or(1.0f);
+        out.axleLateralStiffness = VehicleNumber(axle, "axleLateralStiffness").value_or(0.0f);
+        out.axleTorqueReaction = VehicleNumber(axle, "axleTorqueReaction").value_or(0.0f);
+    }
     return out;
 }
 

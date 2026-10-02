@@ -99,11 +99,15 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
     VehicleCornerSetup setup;
     setup.front = front;
     setup.left = left;
-    setup.definition = LeftDefinition(axle, std::max(mount.radius, 0.05f), front);
-    ApplyToeOut(setup.definition, axle.toeOutRodLength);
-    if (!left)
+    // A solid axle's wheels have no linkage of their own (BuildSolidAxle has it), only their units.
+    if (axle.type != VehicleSuspensionType::SolidAxle)
     {
-        setup.definition = suspension::MirrorToRight(setup.definition);
+        setup.definition = LeftDefinition(axle, std::max(mount.radius, 0.05f), front);
+        ApplyToeOut(setup.definition, axle.toeOutRodLength);
+        if (!left)
+        {
+            setup.definition = suspension::MirrorToRight(setup.definition);
+        }
     }
 
     // Springs at the wheel: preload for the static load, the rate rising by the progressive rate.
@@ -157,8 +161,26 @@ suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup)
     return suspension::StrutUnit(setup.unit, std::make_unique<suspension::NoFriction>());
 }
 
+suspension::SolidAxleDefinition BuildSolidAxle(const VehicleSuspensionAxle& axle, double tyreRadius)
+{
+    suspension::SolidAxleDefinition def;
+    for (const VehicleAxleLink& link : axle.axleLinks)
+    {
+        def.links.push_back({ToSuspension(link.chassis), ToSuspension(link.axle)});
+    }
+    def.track = std::max(static_cast<double>(axle.track), 0.5);
+    def.tyreRadius = std::max(tyreRadius, 0.05);
+    def.springPosition = std::clamp(static_cast<double>(axle.axleSpringPosition), 0.0, 1.0);
+    def.lateralStiffness = std::max(static_cast<double>(axle.axleLateralStiffness), 0.0);
+    return def;
+}
+
 double FitSteeringRackTravel(const VehicleSettings& settings)
 {
+    if (settings.frontSuspension.type == VehicleSuspensionType::SolidAxle)
+    {
+        return 0.0; // a solid front axle does not steer here
+    }
     const VehicleCornerSetup setup = BuildVehicleCorner(settings, 0, 1.0);
     const auto toeAt = [&](double rack, double& reached) {
         suspension::Kinematics kinematics(suspension::Compile(setup.definition));
@@ -236,6 +258,10 @@ suspension::CarModel BuildCarModel(const VehicleCarSpec& dryspec, const std::str
         corner.tyreDamping = axle.tyreDamping;
         const double halfTrack = 0.5 * axle.track;
         corner.position = suspension::Vec3(front ? car.wheelbase : 0.0, index % 2 == 0 ? halfTrack : -halfTrack, 0.0);
+        if (axle.type == VehicleSuspensionType::SolidAxle && index % 2 == 0)
+        {
+            car.solidAxles[index / 2] = BuildSolidAxle(axle, axle.tyreRadius > 0.0f ? axle.tyreRadius : settings.wheelRadius);
+        }
     }
     suspension::BalanceCar(car, *spec.frontWeightShare);
 
@@ -244,7 +270,8 @@ suspension::CarModel BuildCarModel(const VehicleCarSpec& dryspec, const std::str
     const glm::vec3 box = spec.inertiaBox.value_or(glm::vec3(1.8f, 1.2f, 4.5f));
     car.rollInertia = car.sprungMass / 12.0 * (box.x * box.x + box.y * box.y);
     car.pitchInertia = car.sprungMass / 12.0 * (box.y * box.y + box.z * box.z);
-    // The centre of mass's height: each axle's tyre radius plus its BASEY, by the weight on it.
+    // The centre of mass's height: each axle's tyre radius plus its centre of mass's height over the
+    // wheel centre (-BASEY), by the weight on it.
     const auto height = [](const VehicleSuspensionAxle& axle) {
         return static_cast<double>(axle.tyreRadius + axle.centerOfMassAboveWheel);
     };

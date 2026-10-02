@@ -1,5 +1,6 @@
 #pragma once
 
+#include "suspension_axle.h"
 #include "suspension_corner.h"
 #include "suspension_friction.h"
 #include "suspension_model.h"
@@ -8,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +42,9 @@ struct CarModel
 {
     std::string name;
     std::array<CarCorner, 4> corners;
+    // An axle (front, rear) that is a solid axle: its corners' definitions are then unused, their
+    // units are its springs and dampers (rates at the units, at springPosition along the axle).
+    std::array<std::optional<SolidAxleDefinition>, 2> solidAxles;
     double mass = 0.0;        // the whole car, kg
     double sprungMass = 0.0;
     double rollInertia = 0.0; // of the sprung mass about its centre, kg m^2
@@ -60,6 +65,9 @@ struct CarModel
 void BalanceCar(CarModel& car, double frontAxleShareOfWeight);
 
 StrutUnit MakeCornerUnit(const CarCorner& corner);
+
+// The front (0) or rear (1) axle's two wheels for a rig: their corners, or their solid axle.
+std::unique_ptr<AxleSuspension> MakeAxleSuspension(const CarModel& car, int axle, bool friction = true);
 
 // ---- K&C rig: quasi-static, body held, wheel pads at set heights ----
 
@@ -211,7 +219,7 @@ public:
 
 private:
     CarModel m_car;
-    std::vector<std::unique_ptr<SuspensionCorner>> m_corners;
+    std::array<std::unique_ptr<AxleSuspension>, 2> m_axles;
     std::array<double, 4> m_staticTyreLoad{};
     double m_heave = 0.0;
     double m_pitch = 0.0;

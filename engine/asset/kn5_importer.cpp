@@ -132,8 +132,10 @@ Json TyreDataToJson(const VehicleTyreData& data)
 Json SuspensionAxleToJson(const VehicleSuspensionAxle& axle)
 {
     Json out = Json::object();
-    out["type"] = axle.type == VehicleSuspensionType::DoubleWishbone ? "doubleWishbone" : axle.type == VehicleSuspensionType::MacPherson ? "macPherson"
-                                                                                                                                     : "none";
+    out["type"] = axle.type == VehicleSuspensionType::DoubleWishbone ? "doubleWishbone"
+                  : axle.type == VehicleSuspensionType::MacPherson   ? "macPherson"
+                  : axle.type == VehicleSuspensionType::SolidAxle    ? "solidAxle"
+                                                                     : "none";
     // Small numbers (hardpoints, a toe rod's tenths of a millimetre) to the micrometre; rates and
     // masses to two places, which a float scaled by a million would not hold.
     const auto number = [](float value)
@@ -176,6 +178,19 @@ Json SuspensionAxleToJson(const VehicleSuspensionAxle& axle)
     out["centerOfMassAboveWheel"] = number(axle.centerOfMassAboveWheel);
     out["frictionCoulomb"] = number(axle.frictionCoulomb);
     out["frictionBreakaway"] = number(axle.frictionBreakaway);
+    if (axle.type == VehicleSuspensionType::SolidAxle)
+    {
+        Json links = Json::array();
+        for (const VehicleAxleLink& link : axle.axleLinks)
+        {
+            links.push_back(Json::array({Round(link.chassis.x, 6), Round(link.chassis.y, 6), Round(link.chassis.z, 6), Round(link.axle.x, 6),
+                                         Round(link.axle.y, 6), Round(link.axle.z, 6)}));
+        }
+        out["axleLinks"] = std::move(links);
+        out["axleSpringPosition"] = number(axle.axleSpringPosition);
+        out["axleLateralStiffness"] = number(axle.axleLateralStiffness);
+        out["axleTorqueReaction"] = number(axle.axleTorqueReaction);
+    }
     return out;
 }
 

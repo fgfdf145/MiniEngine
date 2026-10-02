@@ -101,6 +101,55 @@ SuspensionDefinition MakeDoubleWishbone(const DoubleWishboneHardpoints& hp, doub
     return def;
 }
 
+SuspensionDefinition MakeFiveLink(const FiveLinkHardpoints& hp, double tyreRadius, const Vec3& wheelAxis)
+{
+    if (hp.steerLink < 0 || hp.steerLink >= 5)
+    {
+        throw std::invalid_argument("MakeFiveLink: the steering link must be one of the five");
+    }
+    SuspensionDefinition def;
+    def.name = "five-link";
+    BodyDef knuckle{"knuckle", {}, 0.0};
+    // The knuckle's ball joints, one per distinct point (rods meeting there share it).
+    std::vector<Vec3> joints;
+    std::array<std::string, 5> jointOf;
+    for (int i = 0; i < 5; ++i)
+    {
+        int found = -1;
+        for (std::size_t j = 0; j < joints.size(); ++j)
+        {
+            if (glm::length(joints[j] - hp.knuckle[i]) < 1e-9)
+            {
+                found = static_cast<int>(j);
+            }
+        }
+        if (found < 0)
+        {
+            found = static_cast<int>(joints.size());
+            joints.push_back(hp.knuckle[i]);
+            const std::string name = "joint_" + std::to_string(found);
+            def.points.push_back({name, hp.knuckle[i], PointRole::Moving});
+            knuckle.points.push_back(name);
+        }
+        jointOf[i] = "joint_" + std::to_string(found);
+    }
+    for (int i = 0; i < 5; ++i)
+    {
+        const std::string chassis = "link_" + std::to_string(i) + "_chassis";
+        def.points.push_back({chassis, hp.chassis[i], i == hp.steerLink ? PointRole::Rack : PointRole::Chassis});
+        def.bodies.push_back({"link_" + std::to_string(i), {chassis, jointOf[i]}, 0.0});
+    }
+    def.points.push_back({"wheel_center", hp.wheelCenter, PointRole::Moving});
+    knuckle.points.push_back("wheel_center");
+    def.bodies.insert(def.bodies.begin(), knuckle);
+    def.steered = hp.steered;
+    def.knuckle = "knuckle";
+    def.wheelCenter = "wheel_center";
+    def.wheelAxis = glm::normalize(wheelAxis);
+    def.tyreRadius = tyreRadius;
+    return def;
+}
+
 SuspensionDefinition MakeMacPherson(const MacPhersonHardpoints& hp, double tyreRadius, const Vec3& wheelAxis)
 {
     SuspensionDefinition def;

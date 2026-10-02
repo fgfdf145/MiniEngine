@@ -2,6 +2,7 @@
 
 #include "vehicle_settings.h"
 
+#include <engine/suspension/suspension_axle.h>
 #include <engine/suspension/suspension_friction.h>
 #include <engine/suspension/suspension_model.h>
 #include <engine/suspension/suspension_rigs.h>
@@ -40,6 +41,9 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
 
 // The wheel's force unit with its friction (none when the setup has none).
 suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup);
+
+// A solid axle's links and layout (the axle's type is SolidAxle), with the wheels' tyre radius.
+suspension::SolidAxleDefinition BuildSolidAxle(const VehicleSuspensionAxle& axle, double tyreRadius);
 
 // The rack travel (m) at full steering lock: the settings' own, or the one that turns the front
 // wheels by maxSteerAngleDegrees on average (outer and inner wheel). Its sign makes positive

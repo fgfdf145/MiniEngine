@@ -261,3 +261,5 @@ m_z = m_hub·|∂W/∂z|²
 - 燃油密度取 0.75 kg/L **[未核对：AC 的取值没查到，汽油在 0.72–0.77 之间]**。
 - GT-R：30 L 即 22.5 kg，结果为 1397.5 kg、前轴 55.0%、重心 277.6 mm。新测试 `TestStartingFuelMovesTheMass` 验证这些数值，并验证静止时前轮承担的比例与之一致。
 - 用户的 GT-R 资产只补了这两个字段，补之前的文件在 `out/backup/nissan_gtr_gt3.gltf.before-fuel.backup`。
+
+> **更正（2026-10-03）：** 第 8 节的重心高度用的是 R + BASEY，符号反了。BASEY 是轮心相对重心的高度，重心高度 = R − BASEY（证据见 [整体桥设计文档 §7.5](2026-10-03-solid-axle-and-five-link-design.md)）。GT-R 的重心是 0.43 m（加燃油后 0.4276 m），不是 0.28 m（加燃油后 0.2776 m）。前后重量比、惯量和燃油的修正都不受影响。

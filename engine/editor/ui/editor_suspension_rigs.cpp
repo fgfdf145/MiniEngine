@@ -120,6 +120,75 @@ bool IsDrawn(const std::string& name)
     return name.rfind("spring_", 0) != 0;
 }
 
+// A tyre: its two sidewall circles and the tread's top and bottom between them, and its axle stub.
+void DrawTyre(View view, const Vec3& center, const Vec3& spin, double radius, Segments& tyre, Segments& axis)
+{
+    const Vec3 e1 = glm::normalize(Vec3(0.0, 0.0, 1.0) - spin * spin.z);
+    const Vec3 e2 = glm::cross(spin, e1);
+    constexpr int kSides = 48;
+    for (const double side : {-0.5, 0.5})
+    {
+        const Vec3 c = center + spin * (side * kDrawnTyreWidth);
+        for (int i = 0; i < kSides; ++i)
+        {
+            const double a0 = 2.0 * std::numbers::pi * i / kSides;
+            const double a1 = 2.0 * std::numbers::pi * (i + 1) / kSides;
+            tyre.Add(view, c + radius * (std::cos(a0) * e1 + std::sin(a0) * e2), c + radius * (std::cos(a1) * e1 + std::sin(a1) * e2));
+        }
+    }
+    for (const double up : {-1.0, 1.0})
+    {
+        tyre.Add(view, center + up * radius * e1 - spin * (0.5 * kDrawnTyreWidth), center + up * radius * e1 + spin * (0.5 * kDrawnTyreWidth));
+    }
+    axis.Add(view, center, center + spin * (0.5 * kDrawnTyreWidth + 0.05));
+}
+
+// A solid axle where it is posed, in the axle's frame: its links from the chassis to the axle, the
+// beam between the wheel centres, both tyres, and (rear view) the roll centre with the lines to it
+// from the contact points.
+void DrawSolidAxle(View view, const suspension::SolidAxle& axle, bool showGeometry, Segments& links, Segments& beam, Segments& tyre, Segments& axis,
+                   Segments& road, Segments& geometry, Markers& chassis, Markers& joints, Markers& centres)
+{
+    const suspension::SolidAxleDefinition& def = axle.Definition();
+    for (const suspension::AxleLinkDef& link : def.links)
+    {
+        const Vec3 end = axle.Point(link.axle);
+        links.Add(view, link.chassis, end);
+        chassis.Add(view, link.chassis);
+        joints.Add(view, end);
+    }
+    const double half = 0.5 * def.track;
+    beam.Add(view, axle.Point(Vec3(0.0, half, 0.0)), axle.Point(Vec3(0.0, -half, 0.0)));
+    std::array<Vec3, 2> contacts{};
+    for (int side = 0; side < 2; ++side)
+    {
+        if (view == View::Side && side == 1)
+        {
+            break;
+        }
+        KinematicOutputs out;
+        axle.ComputeOutputs(side, out);
+        const Vec3 origin(0.0, side == 0 ? half : -half, 0.0);
+        DrawTyre(view, out.wheelCenter + origin, out.spinAxis, def.tyreRadius, tyre, axis);
+        contacts[side] = out.contactPoint + origin;
+        if (view == View::Side)
+        {
+            road.Add(view, contacts[side] - Vec3(0.6, 0.0, 0.0), contacts[side] + Vec3(0.6, 0.0, 0.0));
+        }
+        if (showGeometry && view == View::Rear && out.frontInstantCenterValid)
+        {
+            const Vec3 rollCentre = out.frontInstantCenter + origin;
+            geometry.Add(view, contacts[side], rollCentre);
+            centres.Add(view, rollCentre);
+        }
+    }
+    if (view == View::Rear)
+    {
+        const Vec3 d = contacts[1] - contacts[0];
+        road.Add(view, contacts[0] - d * 0.25, contacts[1] + d * 0.25);
+    }
+}
+
 // One corner of the axle where its kinematics has it, in the axle's frame (x forward, y left, z up,
 // from the axle's centre at the wheel centres' design height).
 void DrawCorner(View view, const Kinematics& kinematics, double yOffset, bool showGeometry, Segments& links, Segments& knuckle, Segments& tyre,
@@ -183,28 +252,8 @@ void DrawCorner(View view, const Kinematics& kinematics, double yOffset, bool sh
     KinematicOutputs out;
     suspension::ComputeOutputs(kinematics, out);
     const Vec3 center = out.wheelCenter + offset;
-    const Vec3 spin = out.spinAxis;
-    // The tyre: its two sidewall circles and the tread's top and bottom between them.
-    Vec3 e1 = glm::normalize(Vec3(0.0, 0.0, 1.0) - spin * spin.z);
-    Vec3 e2 = glm::cross(spin, e1);
     const double radius = def.tyreRadius;
-    constexpr int kSides = 48;
-    for (const double side : {-0.5, 0.5})
-    {
-        const Vec3 c = center + spin * (side * kDrawnTyreWidth);
-        for (int i = 0; i < kSides; ++i)
-        {
-            const double a0 = 2.0 * std::numbers::pi * i / kSides;
-            const double a1 = 2.0 * std::numbers::pi * (i + 1) / kSides;
-            tyre.Add(view, c + radius * (std::cos(a0) * e1 + std::sin(a0) * e2), c + radius * (std::cos(a1) * e1 + std::sin(a1) * e2));
-        }
-    }
-    for (const double up : {-1.0, 1.0})
-    {
-        tyre.Add(view, center + up * radius * e1 - spin * (0.5 * kDrawnTyreWidth), center + up * radius * e1 + spin * (0.5 * kDrawnTyreWidth));
-    }
-    // The axle stub, outward from the centre.
-    axis.Add(view, center, center + spin * (0.5 * kDrawnTyreWidth + 0.05));
+    DrawTyre(view, center, out.spinAxis, radius, tyre, axis);
 
     const Vec3 contact = out.contactPoint + offset;
     if (view == View::Side)
@@ -262,8 +311,8 @@ void DrawCorner(View view, const Kinematics& kinematics, double yOffset, bool sh
     }
 }
 
-void DrawLinkageView(const char* title, View view, const std::array<std::unique_ptr<Kinematics>, 2>& corners, const std::array<double, 2>& yOffsets,
-                     bool showGeometry, bool fit, const ImVec2& size)
+void DrawLinkageView(const char* title, View view, const std::array<std::unique_ptr<Kinematics>, 2>& corners, const suspension::SolidAxle* solid,
+                     const std::array<double, 2>& yOffsets, bool showGeometry, bool fit, const ImVec2& size)
 {
     if (fit)
     {
@@ -280,7 +329,7 @@ void DrawLinkageView(const char* title, View view, const std::array<std::unique_
 
     Segments links, knuckle, tyre, axis, road, geometry;
     Markers chassis, joints, centres;
-    for (int side = 0; side < 2; ++side)
+    for (int side = 0; side < 2 && solid == nullptr; ++side)
     {
         if (view == View::Side && side == 1)
         {
@@ -288,7 +337,11 @@ void DrawLinkageView(const char* title, View view, const std::array<std::unique_
         }
         DrawCorner(view, *corners[side], yOffsets[side], showGeometry, links, knuckle, tyre, axis, road, geometry, chassis, joints, centres);
     }
-    if (view == View::Rear)
+    if (solid != nullptr)
+    {
+        DrawSolidAxle(view, *solid, showGeometry, links, knuckle, tyre, axis, road, geometry, chassis, joints, centres);
+    }
+    else if (view == View::Rear)
     {
         // The road under both tyres (pads at the contact points).
         KinematicOutputs left;
@@ -304,7 +357,7 @@ void DrawLinkageView(const char* title, View view, const std::array<std::unique_
     tyre.Plot("Tyre", ImVec4(0.45f, 0.45f, 0.5f, 1.0f), 1.0f);
     axis.Plot("Tyre", ImVec4(0.45f, 0.45f, 0.5f, 1.0f), 1.0f);
     links.Plot("Links", ImVec4(0.35f, 0.65f, 1.0f, 1.0f), 2.5f);
-    knuckle.Plot("Upright", ImVec4(1.0f, 0.6f, 0.2f, 1.0f), 2.5f);
+    knuckle.Plot(solid != nullptr ? "Axle" : "Upright", ImVec4(1.0f, 0.6f, 0.2f, 1.0f), solid != nullptr ? 4.0f : 2.5f);
     chassis.Plot("Chassis pivots", ImPlotMarker_Square, ImVec4(0.8f, 0.8f, 0.8f, 1.0f), 4.0f);
     joints.Plot("Joints", ImPlotMarker_Circle, ImVec4(1.0f, 0.85f, 0.3f, 1.0f), 3.5f);
     if (showGeometry)
@@ -461,6 +514,7 @@ void SuspensionRigWindow::LoadCar(const std::string& sourcePath, const std::stri
     m_runError.clear();
     m_carError.clear();
     m_kinematics = {};
+    m_solid.reset();
     m_kinematicsAxle = -1;
     const std::shared_ptr<const LoadedModelData> model = ModelCache::Get(sourcePath);
     if (!model)
@@ -1046,9 +1100,19 @@ void SuspensionRigWindow::PoseLinkage()
     const suspension::CarModel& car = *m_car;
     if (m_kinematicsAxle != m_axle)
     {
-        for (int side = 0; side < 2; ++side)
+        m_kinematics = {};
+        m_solid.reset();
+        if (car.solidAxles[m_axle].has_value())
         {
-            m_kinematics[side] = std::make_unique<Kinematics>(suspension::Compile(car.corners[m_axle * 2 + side].definition));
+            m_solid = std::make_unique<suspension::SolidAxle>(*car.solidAxles[m_axle], suspension::MakeCornerUnit(car.corners[m_axle * 2]),
+                                                              suspension::MakeCornerUnit(car.corners[m_axle * 2 + 1]));
+        }
+        else
+        {
+            for (int side = 0; side < 2; ++side)
+            {
+                m_kinematics[side] = std::make_unique<Kinematics>(suspension::Compile(car.corners[m_axle * 2 + side].definition));
+            }
         }
         m_kinematicsAxle = m_axle;
     }
@@ -1074,12 +1138,21 @@ void SuspensionRigWindow::PoseLinkage()
     const double roll = m_rollDegrees / kDegrees;
     const double rack = m_axle == 0 ? car.rackAtLock * m_steering : 0.0;
     m_poseFailed = false;
+    std::array<double, 2> travel{};
     for (int side = 0; side < 2; ++side)
     {
         // The K&C rig's roll: the body turns, the pads stay level, z = -y sin(roll).
         const double y = car.corners[m_axle * 2 + side].position.y;
-        const double travel = m_heaveMm / 1000.0 - y * std::sin(roll);
-        SolveTo(*m_kinematics[side], travel, rack);
+        travel[side] = m_heaveMm / 1000.0 - y * std::sin(roll);
+    }
+    if (m_solid)
+    {
+        m_solid->Solve(travel[0], travel[1]);
+        return;
+    }
+    for (int side = 0; side < 2; ++side)
+    {
+        SolveTo(*m_kinematics[side], travel[side], rack);
         m_poseFailed = m_poseFailed || m_kinematics[side]->LastReport().status != suspension::SolveStatus::Converged;
     }
 }
@@ -1151,12 +1224,19 @@ void SuspensionRigWindow::DrawLinkageTab()
         for (int side = 0; side < 2; ++side)
         {
             KinematicOutputs out;
-            suspension::ComputeOutputs(*m_kinematics[side], out);
+            if (m_solid)
+            {
+                m_solid->ComputeOutputs(side, out);
+            }
+            else
+            {
+                suspension::ComputeOutputs(*m_kinematics[side], out);
+            }
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(kWheelNames[m_axle * 2 + side]);
             ImGui::TableNextColumn();
-            ImGui::Text("%.1f", m_kinematics[side]->Travel() * 1000.0);
+            ImGui::Text("%.1f", (m_solid ? m_solid->Travel(side) : m_kinematics[side]->Travel()) * 1000.0);
             ImGui::TableNextColumn();
             ImGui::Text("%.2f", out.camber * kDegrees);
             ImGui::TableNextColumn();
@@ -1185,11 +1265,11 @@ void SuspensionRigWindow::DrawLinkageTab()
     const float height = std::max(ImGui::GetContentRegionAvail().y, 360.0f);
     const ImVec2 large(width * 0.5f - 4.0f, height);
     const ImVec2 small(width * 0.5f - 4.0f, height * 0.5f - 4.0f);
-    DrawLinkageView("Rear view (from behind)", View::Rear, m_kinematics, offsets, m_showGeometry, fit, large);
+    DrawLinkageView("Rear view (from behind)", View::Rear, m_kinematics, m_solid.get(), offsets, m_showGeometry, fit, large);
     ImGui::SameLine();
     ImGui::BeginGroup();
-    DrawLinkageView("Side view (left wheel)", View::Side, m_kinematics, offsets, m_showGeometry, fit, small);
-    DrawLinkageView("Top view", View::Top, m_kinematics, offsets, m_showGeometry, fit, small);
+    DrawLinkageView("Side view (left wheel)", View::Side, m_kinematics, m_solid.get(), offsets, m_showGeometry, fit, small);
+    DrawLinkageView("Top view", View::Top, m_kinematics, m_solid.get(), offsets, m_showGeometry, fit, small);
     ImGui::EndGroup();
 }
 }

@@ -1,3 +1,4 @@
+#include <engine/suspension/suspension_axle.h>
 #include <engine/suspension/suspension_corner.h>
 #include <engine/suspension/suspension_friction.h>
 #include <engine/suspension/suspension_kinematics.h>
@@ -641,6 +642,193 @@ void TestLooseSpringGoesSlack()
     RequireNear(held.Step(-0.12, 0.0, 0.0, 1e-3), -600.0, 1e-9, "a held coil pulls");
 }
 
+// Assetto Corsa's [AXLE] links (x left, y up, z forward from the axle's centre) in the axle frame
+// (forward, left, up).
+AxleLinkDef AcLink(Vec3 car, Vec3 axle)
+{
+    return AxleLinkDef{Vec3(car.z, car.x, car.y), Vec3(axle.z, axle.x, axle.y)};
+}
+
+// The AE86's rear axle (ks_toyota_ae86): four trailing links and a Panhard rod, 1.35 m track, springs
+// of 22 kN/m at 72 % of the half axle, 0.29 m tyres.
+SolidAxleDefinition Ae86Axle()
+{
+    SolidAxleDefinition def;
+    def.links = {
+        AcLink(Vec3(0.4933, -0.020, 0.498), Vec3(0.4900, -0.080, 0.0)),
+        AcLink(Vec3(-0.4933, -0.020, 0.498), Vec3(-0.4900, -0.080, 0.0)),
+        AcLink(Vec3(0.2488, 0.075, 0.2405), Vec3(0.2488, 0.020, 0.0)),
+        AcLink(Vec3(-0.2488, 0.075, 0.2405), Vec3(-0.2488, 0.020, 0.0)),
+        AcLink(Vec3(-0.435, 0.010, -0.100), Vec3(0.435, -0.070, -0.110)),
+    };
+    def.track = 1.35;
+    def.tyreRadius = 0.29;
+    def.springPosition = 0.72;
+    return def;
+}
+
+StrutUnit AxleUnit(double preload)
+{
+    StrutUnitSettings s;
+    s.springPreload = preload;
+    s.coilSpring = Curve::Linear(22000.0);
+    s.damper = Curve::Linear(2000.0);
+    return StrutUnit(s, std::make_unique<NoFriction>());
+}
+
+// A solid axle at rest, bouncing and rolling: it rises without changing camber, it rolls the wheels
+// with it (camber to the body = its roll), its Panhard rod sets the roll centre, and the redundant
+// fifth link only asks the bushings for fractions of a millimetre.
+void TestSolidAxleMovesAsOnePiece()
+{
+    SolidAxle axle(Ae86Axle(), AxleUnit(3000.0), AxleUnit(3000.0));
+    RequireNear(axle.LinkStretch(), 0.0, 1e-9, "the axle sits on its links at the design position");
+    KinematicOutputs left;
+    KinematicOutputs right;
+
+    axle.Solve(0.04, 0.04);
+    axle.ComputeOutputs(0, left);
+    axle.ComputeOutputs(1, right);
+    RequireNear(axle.Pose().center.z, 0.04, 1e-12, "bounce lifts the axle's centre");
+    RequireNear(axle.Pose().roll, 0.0, 1e-9, "without rolling it");
+    RequireNear(left.camber, 0.0, 1e-6, "bounce keeps the camber");
+    RequireNear(left.wheelCenter.z, 0.04, 1e-9, "the wheel centre follows its travel");
+    std::cout << "AE86 axle at 40 mm bump: centre moves " << axle.Pose().center.x * 1000.0 << " mm forward, " << axle.Pose().center.y * 1000.0
+              << " mm left (Panhard arc), pitches " << axle.Pose().pitch * 180.0 / 3.14159265 << " deg; links give " << axle.LinkStretch() * 1000.0 << " mm\n";
+    Require(axle.LinkStretch() < 1e-4, "bounce suits the links");
+
+    axle.Solve(0.03, -0.03);
+    axle.ComputeOutputs(0, left);
+    axle.ComputeOutputs(1, right);
+    // The wheel centres rise by their travel: sin(roll) = 60 mm over the track (the axle's small pitch aside).
+    const double roll = std::asin(0.06 / 1.35);
+    RequireNear(axle.Pose().roll, roll, 1e-4, "the axle rolls by the travel difference over the track");
+    RequireNear(left.camber, -roll, 1e-4, "the rising wheel's top leans in");
+    RequireNear(right.camber, roll, 1e-4, "the falling wheel's top leans out");
+    std::cout << "AE86 axle rolled 2.5 deg: links give " << axle.LinkStretch() * 1000.0 << " mm, roll steer " << left.toe * 180.0 / 3.14159265 << " deg\n";
+    Require(axle.LinkStretch() < 1e-3, "the redundant link binds by under a millimetre");
+
+    // The roll centre: where the Panhard rod crosses the centre plane (30 mm under the wheel centres),
+    // moved by the axle's roll steer: the rod sits 0.11 m behind the wheels, so a yaw rate r per unit
+    // roll rate shifts the point in the wheels' plane by 0.11 r.
+    axle.Solve(0.0, 0.0);
+    axle.ComputeOutputs(0, left);
+    const double rod = -0.070 + (0.010 - (-0.070)) * 0.435 / 0.870;
+    axle.Solve(0.001, -0.001);
+    const double yawPerRoll = axle.Pose().yaw / axle.Pose().roll;
+    axle.Solve(0.0, 0.0);
+    const double expected = 0.29 + rod + 0.110 * yawPerRoll;
+    std::cout << "AE86 axle roll centre " << left.rollCenterHeight * 1000.0 << " mm up: the Panhard rod at the centre " << (0.29 + rod) * 1000.0
+              << " mm, moved by the roll steer to " << expected * 1000.0 << " mm\n";
+    RequireNear(left.rollCenterHeight, expected, 0.002, "the roll centre from the Panhard rod and the roll steer");
+}
+
+// Assetto Corsa's 250 GTO: four parallel trailing links, the leaf springs holding the axle sideways.
+// Rolling, it turns about its own centre.
+void TestLeafSprungAxleRollsAboutItsCentre()
+{
+    SolidAxleDefinition def;
+    def.links = {
+        AcLink(Vec3(0.4588, -0.102, 0.441), Vec3(0.458, -0.082, -0.031)),
+        AcLink(Vec3(-0.4588, -0.102, 0.441), Vec3(-0.458, -0.082, -0.031)),
+        AcLink(Vec3(0.4588, 0.060, 0.441), Vec3(0.458, 0.076, 0.031)),
+        AcLink(Vec3(-0.4588, 0.060, 0.441), Vec3(-0.458, 0.076, 0.031)),
+    };
+    def.track = 1.4;
+    def.tyreRadius = 0.32;
+    def.lateralStiffness = 350000.0;
+    SolidAxle axle(def, AxleUnit(3000.0), AxleUnit(3000.0));
+    KinematicOutputs left;
+    axle.ComputeOutputs(0, left);
+    RequireNear(left.rollCenterHeight, 0.32, 0.01, "the leaf springs hold the axle's centre: the roll centre at the wheel centres");
+    axle.Solve(0.03, -0.03);
+    RequireNear(axle.Pose().center.y, 0.0, 1e-4, "the axle stays centred");
+}
+
+// The units at 72 % of the half axle: bounce meets the spring rate at the wheel, roll only 0.72 squared
+// of it (the analytic 2 k a^2 h^2 roll stiffness of the springs).
+void TestSolidAxleSpringsAtTheirPlace()
+{
+    SolidAxle axle(Ae86Axle(), AxleUnit(0.0), AxleUnit(0.0));
+    std::array<CornerInput, 2> in{};
+    in[0].travel = in[1].travel = 0.01;
+    axle.Step(in);
+    RequireNear(axle.Output(0).strutTravelForce, -220.0, 1e-6, "bounce: the spring's rate at the wheel");
+    in[0].travel = 0.01;
+    in[1].travel = -0.01;
+    axle.Step(in);
+    RequireNear(axle.Output(0).strutTravelForce, -22000.0 * 0.72 * 0.72 * 0.01, 1e-6, "roll: the rate times 0.72 squared");
+    RequireNear(axle.Output(1).strutTravelForce, 22000.0 * 0.72 * 0.72 * 0.01, 1e-6, "and the other way on the other wheel");
+}
+
+// Rill's double wishbone as five rods: each arm split into its front and rear rod, meeting at the arm's
+// ball joint, and the tie rod. The linkage is the same, so is every curve: camber, toe and half-track
+// over the travel, and the steering.
+void TestFiveLinkSplitWishboneIsTheWishbone()
+{
+    const SuspensionDefinition dwb = RillDoubleWishbone();
+    const auto at = [&](const char* name) {
+        for (const PointDef& p : dwb.points)
+        {
+            if (p.name == name)
+            {
+                return p.position;
+            }
+        }
+        throw std::runtime_error(std::string("no point ") + name);
+    };
+    FiveLinkHardpoints hp;
+    hp.chassis = {at("lower_front"), at("lower_rear"), at("upper_front"), at("upper_rear"), at("tie_inner")};
+    hp.knuckle = {at("lower_ball"), at("lower_ball"), at("upper_ball"), at("upper_ball"), at("tie_outer")};
+    hp.steerLink = 4;
+    hp.wheelCenter = at("wheel_center");
+    const SuspensionDefinition five = MakeFiveLink(hp, dwb.tyreRadius, dwb.wheelAxis);
+    Kinematics a(Compile(dwb));
+    Kinematics b(Compile(five));
+    double worst = 0.0;
+    for (int s = 0; s <= 16; ++s)
+    {
+        const double z = -0.08 + 0.01 * s;
+        for (const double rack : {-0.02, 0.0, 0.02})
+        {
+            a.Solve(z, rack);
+            b.Solve(z, rack);
+            KinematicOutputs oa;
+            KinematicOutputs ob;
+            ComputeOutputs(a, oa);
+            ComputeOutputs(b, ob);
+            worst = std::max({worst, std::abs(oa.camber - ob.camber), std::abs(oa.toe - ob.toe), std::abs(oa.halfTrackChange - ob.halfTrackChange)});
+        }
+    }
+    RequireNear(worst, 0.0, 1e-9, "the split wishbone moves as the wishbone");
+}
+
+// A five-link with all its joints apart (a typical rear multi-link: two lower rods, two short upper rods
+// rising outboard as the GT-R's upper arm does, and a toe link, unsteered) solves across its travel; the
+// rising upper rods steepen as the wheel rises and pull its top in.
+void TestFiveLinkSolvesAcrossItsTravel()
+{
+    FiveLinkHardpoints hp;
+    hp.chassis = {Vec3(0.20, 0.30, -0.10), Vec3(-0.15, 0.30, -0.12), Vec3(0.12, 0.40, 0.08), Vec3(-0.18, 0.42, 0.07), Vec3(-0.25, 0.35, -0.02)};
+    hp.knuckle = {Vec3(0.06, 0.70, -0.12), Vec3(-0.05, 0.71, -0.13), Vec3(0.04, 0.66, 0.16), Vec3(-0.05, 0.66, 0.15), Vec3(-0.14, 0.69, -0.02)};
+    hp.wheelCenter = Vec3(0.0, 0.76, 0.0);
+    hp.steered = false;
+    SuspensionDefinition def = MakeFiveLink(hp, 0.32, Vec3(0.0, 1.0, 0.0));
+    def.vehicleCenter = Vec3(0.0, 0.0, 0.0);
+    Kinematics k(Compile(def));
+    KinematicOutputs out;
+    for (int s = 0; s <= 12; ++s)
+    {
+        const double z = -0.06 + 0.01 * s;
+        Require(k.Solve(z, 0.0).status == SolveStatus::Converged, "the five-link solves at " + std::to_string(z));
+    }
+    k.Solve(0.0, 0.0);
+    ComputeOutputs(k, out);
+    std::cout << "five-link: camber gain " << out.camberPerTravel / kDeg << " deg/m, bump steer " << out.toePerTravel / kDeg << " deg/m, roll centre "
+              << out.rollCenterHeight * 1000.0 << " mm\n";
+    Require(out.camberPerTravel < 0.0, "the upper rods shorter: the wheel's top leans in as it rises");
+}
+
 void TestSpringPathSeriesRubber()
 {
     StrutUnitSettings s;
@@ -892,6 +1080,11 @@ int main()
         TestLuGreSticksBelowBreakaway();
         TestSpringPathSeriesRubber();
         TestLooseSpringGoesSlack();
+        TestSolidAxleMovesAsOnePiece();
+        TestLeafSprungAxleRollsAboutItsCentre();
+        TestSolidAxleSpringsAtTheirPlace();
+        TestFiveLinkSplitWishboneIsTheWishbone();
+        TestFiveLinkSolvesAcrossItsTravel();
         TestTopMountLetsTheRodStickAndSlip();
         TestCornerStepsAtOneKilohertz();
         TestRillSweepParameters();

@@ -1,4 +1,6 @@
 add_library(engine_suspension
+    suspension_axle.cpp
+    suspension_axle.h
     suspension_corner.cpp
     suspension_corner.h
     suspension_curves.cpp

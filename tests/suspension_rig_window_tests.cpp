@@ -3,6 +3,7 @@
 // With MINIENGINE_UI_SNAPSHOT_DIR set, each tab is also rasterised in software to a PNG there, to
 // look at.
 
+#include "ae86_car_spec.h"
 #include "gtr_car_spec.h"
 
 #include <engine/asset/model_cache.h>
@@ -211,8 +212,8 @@ std::shared_ptr<LoadedModelData> MakeGtrModel()
     VehicleCarSpec spec = test::MakeGtrSpec();
     spec.wheelbase = 2.78f;
     spec.frontWeightShare = 0.555f;
-    spec.frontSuspension->centerOfMassAboveWheel = -0.075f;
-    spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.frontSuspension->centerOfMassAboveWheel = 0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = 0.075f;
     auto model = std::make_shared<LoadedModelData>();
     model->carSpec = spec;
     ModelWheelRig rig;
@@ -279,6 +280,46 @@ void TestWindowRunsTheRigsOnTheSelectedCar()
     window.RequestTab(SuspensionRigWindow::LinkageTab);
     window.SetLinkagePose(0, 0.0f, 0.0f, 0.0f);
     Frames(window, scene, 3);
+    ModelCache::Invalidate(path);
+}
+
+// The AE86's live rear axle in the window: the linkage view draws the axle on its links, posed by travel
+// and roll, and the rigs run on it.
+void TestWindowDrawsTheLiveAxle()
+{
+    auto model = std::make_shared<LoadedModelData>();
+    model->carSpec = test::MakeAe86Spec();
+    const std::string path = "suspension_rig_window_tests/ae86/toyota_ae86.gltf";
+    ModelCache::Store(path, model);
+    EditorScene scene;
+    SerializedEntityData car;
+    car.tagName = "Toyota AE86";
+    car.modelSourcePath = path;
+    scene.SetSelectedEntity(scene.CreateEntity(car));
+
+    SuspensionRigWindow window;
+    window.RequestTab(SuspensionRigWindow::LinkageTab);
+    Frames(window, scene, 2);
+    window.SetLinkagePose(1, 0.0f, 0.0f, 0.0f);
+    Frames(window, scene, 3, "rigs_ae86_axle_rest.png");
+    window.SetLinkagePose(1, 25.0f, 3.0f, 0.0f);
+    Frames(window, scene, 3, "rigs_ae86_axle_rolled.png");
+
+    suspension::RigReportOptions& options = window.Options();
+    options.sweepCycles = 30;
+    options.roadSeconds = 3.0;
+    options.frictionComparison = false;
+    window.StartRun();
+    const auto start = std::chrono::steady_clock::now();
+    while (window.IsRunning())
+    {
+        Frame(window, scene);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(120), "the AE86's run finishes");
+    }
+    Require(window.HasReport(), "the rigs run on a live axle");
+    window.RequestTab(SuspensionRigWindow::KcTab);
+    Frames(window, scene, 3, "rigs_ae86_kc.png");
     ModelCache::Invalidate(path);
 }
 
@@ -387,6 +428,7 @@ int main()
     {
         TestLiveRigMovesTheCarAndThePads();
         TestWindowRunsTheRigsOnTheSelectedCar();
+        TestWindowDrawsTheLiveAxle();
         std::cout << "suspension rig window tests passed\n";
     }
     catch (const std::exception& error)

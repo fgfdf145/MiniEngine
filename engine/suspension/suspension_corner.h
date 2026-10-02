@@ -71,6 +71,11 @@ public:
     void EnableCompliance(bool enable);
 
     const CornerOutput& Step(const CornerInput& input);
+    // What the last Step gave.
+    const CornerOutput& Output() const
+    {
+        return m_out;
+    }
 
     const Kinematics& GetKinematics() const
     {

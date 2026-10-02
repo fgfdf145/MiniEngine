@@ -1370,6 +1370,51 @@ void EveryInstalledCarDecrypts()
     Require(archives > 0 && failures.empty(), "every installed car reads");
 }
 
+// The Boxster's data with a live rear axle as the AE86 has one: TYPE=AXLE and an [AXLE] section of five
+// links. The spec has them in the axle's frame (forward, left, up), and they survive the glTF.
+std::map<std::string, std::string> LiveAxleDataFiles()
+{
+    std::map<std::string, std::string> files = BoxsterDataFiles();
+    std::string& suspension = files.at("suspensions.ini");
+    const std::string strut = "[REAR]\r\nTYPE=STRUT\r\n";
+    suspension.replace(suspension.find(strut), strut.size(), "[REAR]\r\nTYPE=AXLE\r\n");
+    suspension +=
+        "\r\n[AXLE]\r\nLINK_COUNT=5\r\n"
+        "J0_CAR=0.4933,-0.020,0.498 ; car bottom left arm\r\nJ0_AXLE=0.4900,-0.080,0.0\r\n"
+        "J1_CAR=-0.4933,-0.020,0.498\r\nJ1_AXLE=-0.4900,-0.080,0.0\r\n"
+        "J2_CAR=0.2488,0.075,0.2405\r\nJ2_AXLE=0.2488,0.020,0.0\r\n"
+        "J3_CAR=-0.2488,0.075,0.2405\r\nJ3_AXLE=-0.2488,0.020,0.0\r\n"
+        "J4_AXLE=0.435,-0.070,-0.110\r\nJ4_CAR=-0.435,0.010,-0.100\r\n"
+        "TORQUE_REACTION=-0.5\r\nATTACH_REL_POS=0.72\r\nLEAF_SPRING_LAT_K=0\r\n";
+    return files;
+}
+
+void LiveAxleDataBecomesASolidAxle()
+{
+    const VehicleCarSpec spec = AcCarData::BuildSpec(LiveAxleDataFiles());
+    Require(spec.rearSuspension.has_value() && spec.rearSuspension->type == VehicleSuspensionType::SolidAxle, "the rear is a solid axle");
+    const VehicleSuspensionAxle& rear = *spec.rearSuspension;
+    Require(rear.axleLinks.size() == 5, "with its five links");
+    // J0: the car end (x left 0.4933, y up -0.02, z forward 0.498) as (forward, left, up).
+    Require(rear.axleLinks[0].chassis == glm::vec3(0.498f, 0.4933f, -0.020f) && rear.axleLinks[0].axle == glm::vec3(0.0f, 0.49f, -0.08f), "the first link's ends");
+    Require(rear.axleLinks[4].chassis == glm::vec3(-0.100f, -0.435f, 0.010f) && rear.axleLinks[4].axle == glm::vec3(-0.110f, 0.435f, -0.070f),
+            "the Panhard rod across the car");
+    Require(rear.axleSpringPosition == 0.72f && rear.axleTorqueReaction == -0.5f && rear.axleLateralStiffness == 0.0f, "where the springs sit and the rest");
+    Require(rear.wheelRate == 42500.0f && rear.hubMass == 80.0f, "its springs and hub as the axle's");
+
+    // Through the import's glTF and back.
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    WriteFile(kn5.parent_path() / "data.acd", BuildAcd("ks_fixture", 42, LiveAxleDataFiles()));
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "out");
+    const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+    Require(model.carSpec.has_value() && model.carSpec->rearSuspension.has_value(), "the model carries the axle");
+    const VehicleSuspensionAxle& loaded = *model.carSpec->rearSuspension;
+    Require(loaded.type == VehicleSuspensionType::SolidAxle && loaded.axleLinks == rear.axleLinks && loaded.axleSpringPosition == rear.axleSpringPosition &&
+                loaded.axleTorqueReaction == rear.axleTorqueReaction,
+            "the solid axle survives the glTF");
+}
+
 void ImportWritesTheCarsOwnData()
 {
     ScopedDirectory scope;
@@ -1417,7 +1462,7 @@ void ImportWritesTheCarsOwnData()
         RequireNear(spec.frontSuspension->staticCamberDegrees, -1.6f, 1e-5f, "the static camber");
         RequireNear(spec.frontSuspension->toeOutRodLength, -0.0003f, 1e-7f, "the toe rod");
         Require(spec.frontSuspension->antiRollBarRate == 30000.0f && spec.rearSuspension->antiRollBarRate == 16000.0f, "the anti-roll bars");
-        RequireNear(spec.frontSuspension->centerOfMassAboveWheel, -0.105f, 1e-5f, "BASEY");
+        RequireNear(spec.frontSuspension->centerOfMassAboveWheel, 0.105f, 1e-5f, "BASEY -0.105: the centre of mass above the wheel centre");
         Require(spec.wheelbase.has_value() && *spec.wheelbase == 2.475f && spec.frontWeightShare.has_value(), "the wheelbase and weight split");
         Require(spec.steeringWheelLockDegrees == 400.0f && spec.maxSteerAngleDegrees.has_value(), "the steering lock");
         RequireNear(spec.rearTyres->longitudinalGrip, expected.rearTyres->longitudinalGrip, 1e-3f, "with their grip");
@@ -1529,6 +1574,7 @@ int main()
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();
         ImportWritesTheCarsOwnData();
+        LiveAxleDataBecomesASolidAxle();
         EveryInstalledCarDecrypts();
 
         std::cout << "kn5 import tests passed\n";

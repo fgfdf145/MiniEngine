@@ -122,6 +122,7 @@ private:
     double m_animationTime = 0.0;
     bool m_showGeometry = true;
     std::array<std::unique_ptr<suspension::Kinematics>, 2> m_kinematics; // left, right of m_axle
+    std::unique_ptr<suspension::SolidAxle> m_solid;                       // m_axle when it is a solid axle
     int m_kinematicsAxle = -1;
     bool m_poseFailed = false;
 };

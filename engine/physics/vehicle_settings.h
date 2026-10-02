@@ -78,7 +78,17 @@ enum class VehicleSuspensionType : uint32_t
 {
     None = 0,
     DoubleWishbone = 1,
-    MacPherson = 2
+    MacPherson = 2,
+    SolidAxle = 3 // a live axle on links (Assetto Corsa's AXLE): both wheels on one beam
+};
+
+// A link of a solid axle: its chassis end and its end on the axle, in the axle's frame (forward, left,
+// up from the axle's centre, midway between the wheel centres, at the design position).
+struct VehicleAxleLink
+{
+    glm::vec3 chassis{0.0f};
+    glm::vec3 axle{0.0f};
+    bool operator==(const VehicleAxleLink&) const = default;
 };
 
 struct VehicleSuspensionAxle
@@ -117,12 +127,22 @@ struct VehicleSuspensionAxle
     float tyreRadius = 0.0f;
     float tyreRate = 0.0f;             // N/m
     float tyreDamping = 0.0f;          // N s/m
-    // The centre of mass's height above the wheel centre (Assetto Corsa's BASEY, negative below).
+    // The centre of mass's height above the wheel centre (Assetto Corsa's BASEY negated: BASEY is the
+    // wheel centre's height against the centre of mass).
     float centerOfMassAboveWheel = 0.0f;
     // The damper's seal friction at the wheel (LuGre): Coulomb and breakaway force, N. No car data
     // gives these; 0 leaves it out.
     float frictionCoulomb = 0.0f;
     float frictionBreakaway = 0.0f;
+
+    // A solid axle (type SolidAxle; the hardpoints above are then unused): its links, where its springs
+    // and dampers sit along each half (0 at the centre, 1 at the wheel; their rates are there), what
+    // else holds it sideways (leaf springs, N/m), and Assetto Corsa's TORQUE_REACTION (kept, not
+    // modelled).
+    std::vector<VehicleAxleLink> axleLinks;
+    float axleSpringPosition = 1.0f;
+    float axleLateralStiffness = 0.0f;
+    float axleTorqueReaction = 0.0f;
 
     bool operator==(const VehicleSuspensionAxle&) const = default;
 };

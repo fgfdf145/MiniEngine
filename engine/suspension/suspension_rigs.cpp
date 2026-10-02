@@ -120,6 +120,21 @@ StrutUnit MakeCornerUnit(const CarCorner& corner)
     return StrutUnit(corner.unit, std::make_unique<NoFriction>());
 }
 
+std::unique_ptr<AxleSuspension> MakeAxleSuspension(const CarModel& car, int axle, bool friction)
+{
+    CarCorner left = car.corners[2 * axle];
+    CarCorner right = car.corners[2 * axle + 1];
+    left.hasFriction = left.hasFriction && friction;
+    right.hasFriction = right.hasFriction && friction;
+    if (car.solidAxles[axle].has_value())
+    {
+        return std::make_unique<AxleSuspension>(std::make_unique<SolidAxle>(*car.solidAxles[axle], MakeCornerUnit(left), MakeCornerUnit(right)));
+    }
+    return std::make_unique<AxleSuspension>(
+        std::make_unique<SuspensionCorner>(left.definition, MakeCornerUnit(left), left.unitElement, left.slider),
+        std::make_unique<SuspensionCorner>(right.definition, MakeCornerUnit(right), right.unitElement, right.slider));
+}
+
 void BalanceCar(CarModel& car, double frontAxleShareOfWeight)
 {
     const double weight = car.mass * kGravity;
@@ -138,7 +153,7 @@ void BalanceCar(CarModel& car, double frontAxleShareOfWeight)
         car.staticLoad[i] = 0.5 * weight * axle - corner.hubMass * kGravity;
         // The unit's preload: the load over its motion ratio when it sits in the linkage.
         double ratio = 1.0;
-        if (corner.unitElement != SuspensionCorner::kWheelTravel)
+        if (corner.unitElement != SuspensionCorner::kWheelTravel && !car.solidAxles[i / 2].has_value())
         {
             Kinematics kinematics(Compile(corner.definition));
             KinematicOutputs out;
@@ -163,20 +178,27 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
     const int bounceSteps = 24;
     const int rollSteps = 12;
 
-    // A corner walked to a travel and rack in small steps (as the rig's actuators move), at rest.
-    const auto settle = [&](SuspensionCorner& corner, double& travel, double& rack, double toTravel, double toRack) {
+    // An axle's wheels walked to a travel each and a rack in small steps (as the rig's actuators
+    // move), at rest.
+    struct Walk
+    {
+        std::unique_ptr<AxleSuspension> axle;
+        std::array<double, 2> travel{};
+        double rack = 0.0;
+    };
+    const auto settle = [&](Walk& walk, double toLeft, double toRight, double toRack) {
         const int steps = 10;
-        const CornerOutput* out = nullptr;
         for (int s = 1; s <= steps; ++s)
         {
-            CornerInput in;
-            in.travel = travel + (toTravel - travel) * s / steps;
-            in.rack = rack + (toRack - rack) * s / steps;
-            out = &corner.Step(in);
+            std::array<CornerInput, 2> in{};
+            in[0].travel = walk.travel[0] + (toLeft - walk.travel[0]) * s / steps;
+            in[1].travel = walk.travel[1] + (toRight - walk.travel[1]) * s / steps;
+            in[0].rack = in[1].rack = walk.rack + (toRack - walk.rack) * s / steps;
+            walk.axle->Step(in);
         }
-        travel = toTravel;
-        rack = toRack;
-        return *out;
+        walk.travel = {toLeft, toRight};
+        walk.rack = toRack;
+        return std::array<CornerOutput, 2>{walk.axle->Output(0), walk.axle->Output(1)};
     };
     const auto wheel = [](const CornerOutput& out, double force) {
         KcWheel w;
@@ -196,16 +218,14 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
 
         // Bounce: both wheels together from full rebound to full bump.
         {
-            SuspensionCorner l(left.definition, MakeCornerUnit(left), left.unitElement, left.slider);
-            SuspensionCorner r(right.definition, MakeCornerUnit(right), right.unitElement, right.slider);
-            double lt = 0.0, lr = 0.0, rt = 0.0, rr = 0.0;
-            settle(l, lt, lr, -bounceRange, 0.0);
-            settle(r, rt, rr, -bounceRange, 0.0);
+            Walk walk{MakeAxleSuspension(car, axle)};
+            settle(walk, -bounceRange, -bounceRange, 0.0);
             for (int s = 0; s <= bounceSteps; ++s)
             {
                 const double z = -bounceRange + 2.0 * bounceRange * s / bounceSteps;
-                const CornerOutput lo = settle(l, lt, lr, z, 0.0);
-                const CornerOutput ro = settle(r, rt, rr, z, 0.0);
+                const std::array<CornerOutput, 2> both = settle(walk, z, z, 0.0);
+                const CornerOutput& lo = both[0];
+                const CornerOutput& ro = both[1];
                 KcBouncePoint p;
                 p.travel = z * 1000.0;
                 p.left = wheel(lo, PadForce(lo, 0.0));
@@ -247,16 +267,15 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
         // Roll: the body rolled to the right with the pads held, each wheel's travel the body's
         // drop at it; the anti-roll bar works against the travel difference.
         {
-            SuspensionCorner l(left.definition, MakeCornerUnit(left), left.unitElement, left.slider);
-            SuspensionCorner r(right.definition, MakeCornerUnit(right), right.unitElement, right.slider);
-            double lt = 0.0, lr = 0.0, rt = 0.0, rr = 0.0;
+            Walk walk{MakeAxleSuspension(car, axle)};
             for (int s = 0; s <= 2 * rollSteps; ++s)
             {
                 const double roll = (-rollRange + rollRange * s / rollSteps) * kDeg;
                 const double zl = -left.position.y * std::sin(roll);
                 const double zr = -right.position.y * std::sin(roll);
-                const CornerOutput lo = settle(l, lt, lr, zl, 0.0);
-                const CornerOutput ro = settle(r, rt, rr, zr, 0.0);
+                const std::array<CornerOutput, 2> both = settle(walk, zl, zr, 0.0);
+                const CornerOutput& lo = both[0];
+                const CornerOutput& ro = both[1];
                 const double arbLeft = -left.antiRollBarRate * (zl - zr);
                 const double arbRight = -right.antiRollBarRate * (zr - zl);
                 KcRollPoint p;
@@ -292,23 +311,20 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
     {
         const CarCorner& left = car.corners[0];
         const CarCorner& right = car.corners[1];
-        SuspensionCorner l(left.definition, MakeCornerUnit(left), left.unitElement, left.slider);
-        SuspensionCorner r(right.definition, MakeCornerUnit(right), right.unitElement, right.slider);
-        double lt = 0.0, lr = 0.0, rt = 0.0, rr = 0.0;
-        const CornerOutput l0 = settle(l, lt, lr, 0.0, 0.0);
-        const CornerOutput r0 = settle(r, rt, rr, 0.0, 0.0);
-        const double toeL0 = l0.geometry.toe / kDeg;
-        const double toeR0 = r0.geometry.toe / kDeg;
+        Walk walk{MakeAxleSuspension(car, 0)};
+        const std::array<CornerOutput, 2> straight = settle(walk, 0.0, 0.0, 0.0);
+        const double toeL0 = straight[0].geometry.toe / kDeg;
+        const double toeR0 = straight[1].geometry.toe / kDeg;
         const double lock = car.rackAtLock * rackFraction;
         const double track = std::abs(left.position.y - right.position.y);
         const int steps = 20;
-        settle(l, lt, lr, 0.0, -lock);
-        settle(r, rt, rr, 0.0, -lock);
+        settle(walk, 0.0, 0.0, -lock);
         for (int s = 0; s <= 2 * steps; ++s)
         {
             const double rack = -lock + lock * s / steps;
-            const CornerOutput lo = settle(l, lt, lr, 0.0, rack);
-            const CornerOutput ro = settle(r, rt, rr, 0.0, rack);
+            const std::array<CornerOutput, 2> both = settle(walk, 0.0, 0.0, rack);
+            const CornerOutput& lo = both[0];
+            const CornerOutput& ro = both[1];
             KcSteerPoint p;
             p.rack = rack * 1000.0;
             p.steeringWheel = car.rackAtLock != 0.0 ? rack / car.rackAtLock * car.steeringWheelLockDegrees : 0.0;
@@ -384,9 +400,12 @@ SevenPostRig::SevenPostRig(const CarModel& car, bool friction)
         {
             throw std::invalid_argument("SevenPostRig needs each corner's hub mass and tyre rate");
         }
-        m_corners.push_back(std::make_unique<SuspensionCorner>(corner.definition, MakeCornerUnit(corner), corner.unitElement, corner.slider));
         m_staticTyreLoad[i] = m_car.staticLoad[i] + corner.hubMass * kGravity;
         m_tyreLoad[i] = m_staticTyreLoad[i];
+    }
+    for (int axle = 0; axle < 2; ++axle)
+    {
+        m_axles[axle] = MakeAxleSuspension(m_car, axle, friction);
     }
 }
 
@@ -406,14 +425,21 @@ void SevenPostRig::Step(const std::array<double, 4>& pads, const std::array<doub
     double pitch = pitchMoment;
     double roll = rollMoment;
     std::array<double, 4> wheelAccel{};
+    for (int axle = 0; axle < 2; ++axle)
+    {
+        std::array<CornerInput, 2> in{};
+        for (int side = 0; side < 2; ++side)
+        {
+            in[side].travel = travel[2 * axle + side];
+            in[side].travelRate = travelRate[2 * axle + side];
+            in[side].dt = dt;
+        }
+        m_axles[axle]->Step(in);
+    }
     for (int i = 0; i < 4; ++i)
     {
         const CarCorner& corner = m_car.corners[i];
-        CornerInput in;
-        in.travel = travel[i];
-        in.travelRate = travelRate[i];
-        in.dt = dt;
-        const CornerOutput& out = m_corners[i]->Step(in);
+        const CornerOutput& out = m_axles[i / 2]->Output(i % 2);
         const int other = i ^ 1;
         const double arb = -corner.antiRollBarRate * (travel[i] - travel[other]);
         // Generalised force on the travel (vertical, between hub and body): pushes the wheel down

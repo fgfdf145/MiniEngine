@@ -1,3 +1,4 @@
+#include "ae86_car_spec.h"
 #include "gtr_car_spec.h"
 
 #include <engine/physics/collision_filter.h>
@@ -17,6 +18,7 @@
 
 // main() stays in the global namespace; everything it drives lives in me::.
 using namespace me;
+using me::test::MakeAe86Spec;
 using me::test::MakeGtrSpec;
 
 namespace
@@ -956,7 +958,7 @@ void TestUnsprungCarTakesABump()
 
 // The GT-R as the editor drives it: its data through ApplyCarSpec, then fitted to its model's bounds and
 // wheel nodes (vehicle space). The centre of mass is the data's, not the model's middle: 55.5 % of the
-// weight on the front axle (CG_LOCATION) and 0.28 m up (tyre radius 0.355 + BASEY -0.075); at rest
+// weight on the front axle (CG_LOCATION) and 0.43 m up (tyre radius 0.355 - BASEY -0.075); at rest
 // the front tyres carry that share.
 void TestCarDataPlacesTheCentreOfMass()
 {
@@ -964,8 +966,8 @@ void TestCarDataPlacesTheCentreOfMass()
     spec.wheelbase = 2.78f;
     spec.frontWeightShare = 0.555f;
     spec.inertiaBox = glm::vec3(1.8f, 1.35f, 4.8f);
-    spec.frontSuspension->centerOfMassAboveWheel = -0.075f;
-    spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.frontSuspension->centerOfMassAboveWheel = 0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = 0.075f;
     VehicleWheelLayout layout{};
     layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
     layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
@@ -978,7 +980,7 @@ void TestCarDataPlacesTheCentreOfMass()
     const float share = (com.z - settings.rearAxleZ) / (settings.frontAxleZ - settings.rearAxleZ);
     std::cout << "GT-R centre of mass from its data: " << share * 100.0f << " % front, " << (com.y - ground) * 1000.0f << " mm up\n";
     RequireNear(share, 0.555f, 0.002f, "the data's weight split");
-    RequireNear(com.y - ground, 0.28f, 0.002f, "the data's centre of mass height");
+    RequireNear(com.y - ground, 0.43f, 0.002f, "the data's centre of mass height");
     RequireNear(com.x, 0.0f, 1e-4f, "on the car's centre line");
 
     PhysicsWorld world;
@@ -1004,8 +1006,8 @@ void TestStartingFuelMovesTheMass()
     VehicleCarSpec spec = MakeGtrSpec();
     spec.wheelbase = 2.78f;
     spec.frontWeightShare = 0.555f;
-    spec.frontSuspension->centerOfMassAboveWheel = -0.075f;
-    spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
+    spec.frontSuspension->centerOfMassAboveWheel = 0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = 0.075f;
     spec.fuelLitres = 30.0f;
     spec.fuelTankPosition = glm::vec3(0.0f, -0.15f, -0.85f);
     const VehicleCarSpec fuelled = WithStartingFuel(spec);
@@ -1013,7 +1015,7 @@ void TestStartingFuelMovesTheMass()
     RequireNear(*fuelled.massKg, 1375.0f + fuel, 1e-3f, "the fuel's mass");
     const float tankShare = 0.555f - 0.85f / 2.78f;
     RequireNear(*fuelled.frontWeightShare, (0.555f * 1375.0f + tankShare * fuel) / (1375.0f + fuel), 1e-5f, "the weight split with the tank behind");
-    RequireNear(fuelled.frontSuspension->centerOfMassAboveWheel, -0.075f - fuel * 0.15f / (1375.0f + fuel), 1e-6f, "the centre of mass lower");
+    RequireNear(fuelled.frontSuspension->centerOfMassAboveWheel, 0.075f - fuel * 0.15f / (1375.0f + fuel), 1e-6f, "the centre of mass lower");
     Require(!fuelled.fuelLitres.has_value(), "the fuel is counted once");
     const VehicleCarSpec twice = WithStartingFuel(fuelled);
     Require(*twice.massKg == *fuelled.massKg && *twice.frontWeightShare == *fuelled.frontWeightShare, "and applying it again adds nothing");
@@ -1041,6 +1043,61 @@ void TestStartingFuelMovesTheMass()
     const float total = front + wheels[2].suspensionForce + wheels[3].suspensionForce;
     RequireNear(front / total, *fuelled.frontWeightShare, 0.01f, "the front tyres carry the fuelled share");
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "the tyres carry the fuel too");
+}
+
+// The AE86 on its own data: struts in front, a live axle behind. It rests on its design position; in a
+// right-hand turn the body rolls onto its left wheels and the rear axle, one rigid beam, keeps both
+// rear wheels upright to the road: against the body their cambers are equal and opposite, the
+// compressed (left) wheel's top leaning in.
+void TestLiveAxleCarRestsAndCorners()
+{
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.6775f, 0.2888f, 1.2f), 0.2888f, 0.185f};
+    layout[1] = {glm::vec3(-0.6775f, 0.2888f, 1.2f), 0.2888f, 0.185f};
+    layout[2] = {glm::vec3(0.675f, 0.2888f, -1.2f), 0.2888f, 0.185f};
+    layout[3] = {glm::vec3(-0.675f, 0.2888f, -1.2f), 0.2888f, 0.185f};
+    const VehicleSettings settings =
+        FitVehicleSettingsToBounds(glm::vec3(-0.83f, 0.0f, -2.1f), glm::vec3(0.83f, 1.33f, 2.1f), ApplyCarSpec(VehicleSettings{}, MakeAe86Spec()), &layout);
+    Require(HasSuspensionGeometry(settings) && settings.rearSuspension.type == VehicleSuspensionType::SolidAxle, "the AE86's live axle");
+
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.brake = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 3.0f);
+    std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+    for (size_t index = 0; index < wheels.size(); ++index)
+    {
+        const std::string name = "wheel " + std::to_string(index);
+        Require(wheels[index].multibody && wheels[index].inContact, name + " on its suspension and the ground");
+        RequireNear(wheels[index].travel, 0.0f, 0.006f, name + ": travel at rest");
+    }
+    RequireNear(wheels[2].camberDegrees, 0.0f, 0.05f, "the rear axle's wheels upright at rest");
+    RequireNear(wheels[3].camberDegrees, 0.0f, 0.05f, "both of them");
+    std::cout << "AE86 at rest: travel FL " << wheels[0].travel * 1000.0f << " mm, RL " << wheels[2].travel * 1000.0f << " mm, RR "
+              << wheels[3].travel * 1000.0f << " mm; camber FL " << wheels[0].camberDegrees << " deg\n";
+
+    controls = VehicleControls{};
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 3.0f);
+    controls.throttle = 0.3f;
+    controls.steering = 0.3f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 2.0f);
+    const PhysicsPose pose = world.GetVehiclePose(car);
+    const glm::vec3 forward = pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+    wheels = world.GetVehicleWheels(car);
+    const float roll = RollDegrees(pose.rotation);
+    std::cout << "AE86 turning at " << world.GetVehicleTelemetry(car).forwardSpeed << " m/s: roll " << roll << " deg; rear travel L "
+              << wheels[2].travel * 1000.0f << " mm, R " << wheels[3].travel * 1000.0f << " mm; rear camber to the body L " << wheels[2].camberDegrees
+              << ", R " << wheels[3].camberDegrees << " deg; rear toe L " << wheels[2].toeDegrees << ", R " << wheels[3].toeDegrees << " deg\n";
+    Require(forward.x < -0.1f, "steering right turns right");
+    Require(wheels[2].travel > wheels[3].travel + 0.003f, "the outer (left) rear is compressed");
+    Require(wheels[2].camberDegrees < -0.1f, "the compressed rear wheel's top leans in against the body");
+    RequireNear(wheels[2].camberDegrees + wheels[3].camberDegrees, 0.0f, 0.02f, "one beam: the rear cambers equal and opposite");
 }
 
 void TestCarSpecReplacesWhatItKnows()
@@ -1476,6 +1533,7 @@ int main()
         TestUnsprungCarTakesABump();
         TestCarDataPlacesTheCentreOfMass();
         TestStartingFuelMovesTheMass();
+        TestLiveAxleCarRestsAndCorners();
         TestMultibodyCarCornersOnItsLinkage(false);
         TestMultibodyCarCornersOnItsLinkage(true);
         TestWheelMotionRollsForwardAndSteers();

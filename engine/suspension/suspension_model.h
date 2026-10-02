@@ -3,6 +3,7 @@
 #include "suspension_curves.h"
 #include "suspension_math.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -151,7 +152,21 @@ struct MacPhersonHardpoints
     bool steered = true;
 };
 
+// Five rods with a ball joint at either end between the chassis and the knuckle (a multi-link; a
+// double wishbone whose arms are split into single rods). Rods that meet the knuckle at the same
+// point share its ball joint. `steerLink` names the tie rod (or toe link): its chassis end is on the
+// rack, which moves it when `steered`.
+struct FiveLinkHardpoints
+{
+    std::array<Vec3, 5> chassis{};
+    std::array<Vec3, 5> knuckle{};
+    int steerLink = 4;
+    Vec3 wheelCenter{0.0};
+    bool steered = true;
+};
+
 SuspensionDefinition MakeDoubleWishbone(const DoubleWishboneHardpoints& hardpoints, double tyreRadius, const Vec3& wheelAxis);
+SuspensionDefinition MakeFiveLink(const FiveLinkHardpoints& hardpoints, double tyreRadius, const Vec3& wheelAxis);
 SuspensionDefinition MakeMacPherson(const MacPhersonHardpoints& hardpoints, double tyreRadius, const Vec3& wheelAxis);
 
 // ---- The compiled form the solvers work on ----

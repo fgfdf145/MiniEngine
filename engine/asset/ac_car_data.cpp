@@ -358,9 +358,13 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
     {
         out.type = VehicleSuspensionType::MacPherson;
     }
+    else if (type == "AXLE")
+    {
+        out.type = VehicleSuspensionType::SolidAxle;
+    }
     else
     {
-        return std::nullopt; // AXLE, ML and others are not modelled
+        return std::nullopt; // ML and others are not modelled
     }
     const auto point = [&](const char* key, glm::vec3& target) {
         const std::optional<std::string> text = suspension.Text(axle, key);
@@ -372,12 +376,43 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
         target = glm::vec3((*xyz)[2], -(*xyz)[0], (*xyz)[1]);
         return true;
     };
-    bool complete = point("WBCAR_BOTTOM_FRONT", out.lowerFront) && point("WBCAR_BOTTOM_REAR", out.lowerRear) && point("WBTYRE_BOTTOM", out.lowerBall) && point("WBCAR_STEER", out.tieInner) && point("WBTYRE_STEER", out.tieOuter);
+    bool complete = true;
+    if (out.type == VehicleSuspensionType::SolidAxle)
+    {
+        // The [AXLE] section: LINK_COUNT links from Jn_CAR to Jn_AXLE, from the axle's centre with x
+        // to the car's left, y up and z forward.
+        const auto link = [&](const std::string& key, glm::vec3& target) {
+            const std::optional<std::string> text = suspension.Text("AXLE", key);
+            const std::optional<std::vector<float>> xyz = text.has_value() ? ParseNumberList(*text, 3) : std::nullopt;
+            if (!xyz.has_value())
+            {
+                return false;
+            }
+            target = glm::vec3((*xyz)[2], (*xyz)[0], (*xyz)[1]);
+            return true;
+        };
+        const int count = static_cast<int>(suspension.Number("AXLE", "LINK_COUNT").value_or(0.0f));
+        for (int i = 0; i < count; ++i)
+        {
+            VehicleAxleLink l;
+            const std::string name = "J" + std::to_string(i);
+            complete = complete && link(name + "_CAR", l.chassis) && link(name + "_AXLE", l.axle);
+            out.axleLinks.push_back(l);
+        }
+        complete = complete && count >= 3;
+        out.axleSpringPosition = suspension.Number("AXLE", "ATTACH_REL_POS").value_or(1.0f);
+        out.axleLateralStiffness = suspension.Number("AXLE", "LEAF_SPRING_LAT_K").value_or(0.0f);
+        out.axleTorqueReaction = suspension.Number("AXLE", "TORQUE_REACTION").value_or(0.0f);
+    }
+    else
+    {
+        complete = point("WBCAR_BOTTOM_FRONT", out.lowerFront) && point("WBCAR_BOTTOM_REAR", out.lowerRear) && point("WBTYRE_BOTTOM", out.lowerBall) && point("WBCAR_STEER", out.tieInner) && point("WBTYRE_STEER", out.tieOuter);
+    }
     if (out.type == VehicleSuspensionType::DoubleWishbone)
     {
         complete = complete && point("WBCAR_TOP_FRONT", out.upperFront) && point("WBCAR_TOP_REAR", out.upperRear) && point("WBTYRE_TOP", out.upperBall);
     }
-    else
+    else if (out.type == VehicleSuspensionType::MacPherson)
     {
         complete = complete && point("STRUT_CAR", out.strutTop) && point("STRUT_TYRE", out.strutLower);
     }
@@ -403,7 +438,11 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
     out.dampFastRebound = number("DAMP_FAST_REBOUND");
     out.dampFastReboundThreshold = number("DAMP_FAST_REBOUNDTHRESHOLD");
     out.hubMass = number("HUB_MASS");
-    out.centerOfMassAboveWheel = number("BASEY");
+    // BASEY is the wheel centre's height against the centre of mass (negative: the wheel below it).
+    // The comment in the game's files ("wheel radius + BASEY = CoG") has the sign the other way, but
+    // the data settles it: the SUVs have the most negative BASEY (Cayenne -0.28) and the F1 and LMP cars
+    // positive ones (F138 +0.14), and the AE86's -0.25 would put its centre of mass 4 cm off the road.
+    out.centerOfMassAboveWheel = -number("BASEY");
     out.antiRollBarRate = antiRollBar;
     return out;
 }

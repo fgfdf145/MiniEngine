@@ -451,7 +451,6 @@ struct PhysicsWorld::Impl
         // The multibody suspension, when the settings have one: a corner per wheel.
         struct Corner
         {
-            std::unique_ptr<suspension::SuspensionCorner> corner;
             glm::vec3 designCenter{0.0f}; // vehicle space
             float designLength = 0.0f;    // the straight spring's length at the design position
             double travel = 0.0;
@@ -479,6 +478,8 @@ struct PhysicsWorld::Impl
             bool lastMountValid = false;
         };
         std::vector<Corner> corners;
+        // Front and rear: each axle's two wheels (independent corners or a solid axle), stepped together.
+        std::array<std::unique_ptr<suspension::AxleSuspension>, 2> axles;
         double rackAtLock = 0.0;
         // The body's velocities a step ago, for the acceleration the hubs ride on.
         JPH::Vec3 lastLinearVelocity = JPH::Vec3::sZero();
@@ -501,6 +502,7 @@ struct PhysicsWorld::Impl
         const float rearZ = MultibodyDesignCenter(settings, 2).z;
         const float frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com.z - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
         const float weight = std::max(settings.massKg, 1.0f) * 9.81f;
+        std::array<VehicleCornerSetup, kVehicleWheelCount> setups{};
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             const bool front = index < 2;
@@ -512,9 +514,9 @@ struct PhysicsWorld::Impl
                 // The spring holds the body; the hub's own weight goes straight to the tyre.
                 load -= axle.hubMass * 9.81;
             }
-            const VehicleCornerSetup setup = BuildVehicleCorner(settings, index, load);
+            setups[index] = BuildVehicleCorner(settings, index, load);
+            const VehicleCornerSetup& setup = setups[index];
             Vehicle::Corner corner;
-            corner.corner = std::make_unique<suspension::SuspensionCorner>(setup.definition, MakeVehicleCornerUnit(setup), suspension::SuspensionCorner::kWheelTravel);
             corner.designCenter = MultibodyDesignCenter(settings, index);
             corner.designLength = MultibodyDesignLength(settings);
             corner.antiRollBarRate = setup.antiRollBarRate;
@@ -526,11 +528,36 @@ struct PhysicsWorld::Impl
             corner.bumpTravel = setup.bumpTravel;
             corner.droopTravel = setup.droopTravel;
             corner.hubCenter = corner.designCenter;
-            suspension::Kinematics kinematics(suspension::Compile(setup.definition));
-            suspension::KinematicOutputs design;
-            suspension::ComputeOutputs(kinematics, design);
-            corner.designContactHeight = design.contactPoint.z;
+            if (axle.type == VehicleSuspensionType::SolidAxle)
+            {
+                corner.designContactHeight = -std::max(GetVehicleWheelMount(settings, index).radius, 0.05f);
+            }
+            else
+            {
+                suspension::Kinematics kinematics(suspension::Compile(setup.definition));
+                suspension::KinematicOutputs design;
+                suspension::ComputeOutputs(kinematics, design);
+                corner.designContactHeight = design.contactPoint.z;
+            }
             vehicle.corners.push_back(std::move(corner));
+        }
+        for (size_t axle = 0; axle < 2; ++axle)
+        {
+            const VehicleSuspensionAxle& data = axle == 0 ? settings.frontSuspension : settings.rearSuspension;
+            const VehicleCornerSetup& left = setups[2 * axle];
+            const VehicleCornerSetup& right = setups[2 * axle + 1];
+            if (data.type == VehicleSuspensionType::SolidAxle)
+            {
+                const double radius = std::max(GetVehicleWheelMount(settings, 2 * axle).radius, 0.05f);
+                vehicle.axles[axle] = std::make_unique<suspension::AxleSuspension>(
+                    std::make_unique<suspension::SolidAxle>(BuildSolidAxle(data, radius), MakeVehicleCornerUnit(left), MakeVehicleCornerUnit(right)));
+            }
+            else
+            {
+                vehicle.axles[axle] = std::make_unique<suspension::AxleSuspension>(
+                    std::make_unique<suspension::SuspensionCorner>(left.definition, MakeVehicleCornerUnit(left), suspension::SuspensionCorner::kWheelTravel),
+                    std::make_unique<suspension::SuspensionCorner>(right.definition, MakeVehicleCornerUnit(right), suspension::SuspensionCorner::kWheelTravel));
+            }
         }
         vehicle.rackAtLock = FitSteeringRackTravel(settings);
     }
@@ -566,13 +593,13 @@ struct PhysicsWorld::Impl
             const Vehicle::Corner& c = vehicle.corners[index];
             travel[index] = c.unsprung ? c.travel : c.designLength - wheels[static_cast<JPH::uint>(index)]->GetSuspensionLength();
         }
+        std::array<suspension::CornerInput, kVehicleWheelCount> inputs{};
+        std::array<float, kVehicleWheelCount> cosines{};
         for (size_t index = 0; index < vehicle.corners.size(); ++index)
         {
-            Vehicle::Corner& c = vehicle.corners[index];
+            const Vehicle::Corner& c = vehicle.corners[index];
             const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
-            JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
-
-            suspension::CornerInput in;
+            suspension::CornerInput& in = inputs[index];
             in.dt = dt;
             in.travel = travel[index];
             in.travelRate = c.unsprung ? c.travelRate : (travel[index] - c.travel) / dt;
@@ -589,7 +616,20 @@ struct PhysicsWorld::Impl
                 in.contactNormal = VehicleToCorner(FromJolt(normal));
                 cosine = std::max(0.1f, normal.GetY());
             }
-            const suspension::CornerOutput& out = c.corner->Step(in);
+            cosines[index] = cosine;
+        }
+        for (size_t axle = 0; axle < 2; ++axle)
+        {
+            vehicle.axles[axle]->Step({inputs[2 * axle], inputs[2 * axle + 1]});
+        }
+        for (size_t index = 0; index < vehicle.corners.size(); ++index)
+        {
+            Vehicle::Corner& c = vehicle.corners[index];
+            const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+            JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
+            const suspension::CornerInput& in = inputs[index];
+            const float cosine = cosines[index];
+            const suspension::CornerOutput& out = vehicle.axles[index / 2]->Output(static_cast<int>(index % 2));
 
             // The anti-roll bar from the two wheels' travel difference.
             const size_t other = index ^ 1u;
