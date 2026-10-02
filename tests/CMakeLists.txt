@@ -103,6 +103,23 @@ endif()
 
 set_target_properties(miniengine_vehicle_physics_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_suspension_tests
+    suspension_tests.cpp
+)
+miniengine_group_target_sources(miniengine_suspension_tests)
+
+target_link_libraries(miniengine_suspension_tests
+    PRIVATE
+        engine_suspension
+)
+
+add_test(
+    NAME miniengine.suspension
+    COMMAND miniengine_suspension_tests
+)
+
+set_target_properties(miniengine_suspension_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gizmo_settings_tests
     gizmo_settings_tests.cpp
 )

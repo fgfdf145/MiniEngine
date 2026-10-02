@@ -31,7 +31,7 @@ def report(name,P,r_tyre,phis,us=(0.0,)):
         R,C,lam,de=s.solve(np.radians(ph),u,prev); prev=de
         W=C+R@(W0-P['C']); e=R@ey; Pc=W+R@(P0-W0)
         Q=C+R@(P['Q']-P['C']); res=(abs(np.linalg.norm(Q-(P['R']+[0,u,0]))-np.linalg.norm(P['Q']-P['R'])), np.linalg.norm(np.cross(R@(P['T']-P['S'])/np.linalg.norm(P['T']-P['S']), (P['T']-(C+R@(P['S']-P['C'])))/lam)))
-        print(f" u={1000*u:5.1f} phi={ph:6.1f} dz={1000*W[2]:7.2f} dx={1000*W[0]:6.2f} dyW={1000*W[1]:6.2f} dyCP={1000*(Pc[1]-P0[1]):6.2f} camber(top-out+)={-np.degrees(np.arcsin(e[2])):6.3f} toe-in+={np.degrees(np.arctan2(-e[0],e[1])):7.3f} strut={1000*lam:6.1f} res={max(res):.1e}")
+        print(f" u={1000*u:5.1f} phi={ph:6.1f} dz={1000*W[2]:7.2f} dx={1000*W[0]:6.2f} dyW={1000*W[1]:6.2f} dyCP={1000*(Pc[1]-P0[1]):6.2f} camber(top-out+)={-np.degrees(np.arcsin(e[2])):6.3f} toe-in+={np.degrees(np.arctan2(e[0],e[1])):7.3f} strut={1000*lam:6.1f} res={max(res):.1e}")
     return s
 def acset(sec):
     g=lambda k: AC(np.array(sec[k]))
