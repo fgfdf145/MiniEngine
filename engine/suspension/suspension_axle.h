@@ -80,6 +80,14 @@ public:
     // The wheel's geometry at the current pose, in its corner frame.
     void ComputeOutputs(int side, KinematicOutputs& out) const;
 
+    // The moment the drivetrain puts on the axle housing (N m, axle frame), its reaction on the body
+    // being the caller's: the propshaft's torque reacting on a live axle twists it about the car's
+    // length, loading one rear tyre and unloading the other. Held until changed.
+    void SetHousingMoment(const Vec3& moment)
+    {
+        m_housingMoment = moment;
+    }
+
     // One step: kinematics, both units, and the reactions as CornerOutputs (rack and side load are
     // not used).
     void Step(const std::array<CornerInput, 2>& in);
@@ -113,6 +121,7 @@ private:
     std::array<std::array<double, 4>, 2> m_sensitivity{}; // d free / d travel, each wheel
     std::array<double, 2> m_travel{};
     double m_stretch = 0.0;
+    Vec3 m_housingMoment{0.0};
     std::array<CornerOutput, 2> m_out;
 };
 

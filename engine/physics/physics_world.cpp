@@ -480,6 +480,9 @@ struct PhysicsWorld::Impl
         std::vector<Corner> corners;
         // Front and rear: each axle's two wheels (independent corners or a solid axle), stepped together.
         std::array<std::unique_ptr<suspension::AxleSuspension>, 2> axles;
+        // A solid axle's propshaft torque reaction on its housing in the last step (N m, about the
+        // car's length, positive lifting its left side), see ApplyAxleTorqueReaction.
+        std::array<float, 2> axleTorqueReaction{};
         double rackAtLock = 0.0;
         // The body's velocities a step ago, for the acceleration the hubs ride on.
         JPH::Vec3 lastLinearVelocity = JPH::Vec3::sZero();
@@ -618,6 +621,7 @@ struct PhysicsWorld::Impl
             }
             cosines[index] = cosine;
         }
+        ApplyAxleTorqueReaction(vehicle);
         for (size_t axle = 0; axle < 2; ++axle)
         {
             vehicle.axles[axle]->Step({inputs[2 * axle], inputs[2 * axle + 1]});
@@ -687,6 +691,41 @@ struct PhysicsWorld::Impl
         vehicle.lastLinearVelocity = vehicle.body->GetLinearVelocity();
         vehicle.lastAngularVelocity = vehicle.body->GetAngularVelocity();
         vehicle.lastVelocityValid = true;
+    }
+
+    // A driven solid axle's propshaft torque reaction (Assetto Corsa's TORQUE_REACTION, a signed share
+    // of the propshaft's torque taken as a moment about the car's length): on the axle housing, and the
+    // opposite on the body. The propshaft's torque is the engine's at the throttle, through the clutch's
+    // grip and the gear, times the axle's differential's share of it.
+    void ApplyAxleTorqueReaction(Vehicle& vehicle)
+    {
+        for (size_t axle = 0; axle < 2; ++axle)
+        {
+            suspension::SolidAxle* solid = vehicle.axles[axle]->Solid();
+            const VehicleSuspensionAxle& data = axle == 0 ? vehicle.settings.frontSuspension : vehicle.settings.rearSuspension;
+            if (solid == nullptr || data.axleTorqueReaction == 0.0f)
+            {
+                continue;
+            }
+            const auto* controller = static_cast<const JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+            double share = 0.0;
+            for (const JPH::VehicleDifferentialSettings& differential : controller->GetDifferentials())
+            {
+                if (differential.mLeftWheel == static_cast<int>(2 * axle) || differential.mRightWheel == static_cast<int>(2 * axle))
+                {
+                    share += differential.mEngineTorqueRatio;
+                }
+            }
+            const JPH::VehicleTransmission& transmission = controller->GetTransmission();
+            const double propshaft = controller->GetEngine().GetTorque(std::max(controller->GetForwardInput(), 0.0f)) * transmission.GetClutchFriction() *
+                                     transmission.GetCurrentRatio() * share;
+            const double moment = data.axleTorqueReaction * propshaft;
+            solid->SetHousingMoment(suspension::Vec3(moment, 0.0, 0.0));
+            // The body takes the other end of it, about its own length.
+            const JPH::Vec3 onBody = vehicle.body->GetRotation() * JPH::Vec3(0.0f, 0.0f, static_cast<float>(-moment));
+            physicsSystem.GetBodyInterfaceNoLock().AddTorque(vehicle.body->GetID(), onBody, JPH::EActivation::DontActivate);
+            vehicle.axleTorqueReaction[axle] = static_cast<float>(moment);
+        }
     }
 
     // One step of a wheel with its own mass. The travel z (bump positive) moves by

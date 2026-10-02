@@ -1112,6 +1112,53 @@ void TestLiveAxleCarRestsAndCorners()
     RequireNear(wheels[2].camberDegrees + wheels[3].camberDegrees, 0.0f, 0.02f, "one beam: the rear cambers equal and opposite");
 }
 
+// The AE86's live axle under full throttle in first gear: the propshaft's torque twists the axle housing
+// (TORQUE_REACTION -0.5), loading the left rear tyre and unloading the right, the body taking the
+// opposite. Without the reaction the two rear tyres carry about the same.
+float RearLoadSplitUnderPower(float torqueReaction)
+{
+    VehicleCarSpec spec = MakeAe86Spec();
+    spec.rearSuspension->axleTorqueReaction = torqueReaction;
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.6775f, 0.2888f, 1.2f), 0.2888f, 0.185f};
+    layout[1] = {glm::vec3(-0.6775f, 0.2888f, 1.2f), 0.2888f, 0.185f};
+    layout[2] = {glm::vec3(0.675f, 0.2888f, -1.2f), 0.2888f, 0.185f};
+    layout[3] = {glm::vec3(-0.675f, 0.2888f, -1.2f), 0.2888f, 0.185f};
+    const VehicleSettings settings =
+        FitVehicleSettingsToBounds(glm::vec3(-0.83f, 0.0f, -2.1f), glm::vec3(0.83f, 1.33f, 2.1f), ApplyCarSpec(VehicleSettings{}, spec), &layout);
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 2.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    // The left rear's load over the right's, averaged while the car pulls away.
+    float split = 0.0f;
+    int samples = 0;
+    constexpr float kFrame = 1.0f / 144.0f;
+    for (float time = 0.0f; time < 1.0f; time += kFrame)
+    {
+        world.Update(kFrame);
+        if (time > 0.3f)
+        {
+            const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+            split += wheels[2].suspensionForce - wheels[3].suspensionForce;
+            ++samples;
+        }
+    }
+    return split / static_cast<float>(std::max(samples, 1));
+}
+
+void TestLiveAxleTorqueReactionLoadsTheLeftRear()
+{
+    const float without = RearLoadSplitUnderPower(0.0f);
+    const float with = RearLoadSplitUnderPower(-0.5f);
+    std::cout << "AE86 pulling away: rear left minus right load " << without << " N without the axle's torque reaction, " << with << " N with it\n";
+    Require(std::abs(without) < 60.0f, "without it the rear tyres share the load");
+    Require(with - without > 100.0f, "the propshaft's torque loads the left rear and unloads the right");
+}
+
 void TestCarSpecReplacesWhatItKnows()
 {
     VehicleSettings tuning;
@@ -1546,6 +1593,7 @@ int main()
         TestCarDataPlacesTheCentreOfMass();
         TestStartingFuelMovesTheMass();
         TestLiveAxleCarRestsAndCorners();
+        TestLiveAxleTorqueReactionLoadsTheLeftRear();
         TestMultibodyCarCornersOnItsLinkage(false);
         TestMultibodyCarCornersOnItsLinkage(true);
         TestWheelMotionRollsForwardAndSteers();

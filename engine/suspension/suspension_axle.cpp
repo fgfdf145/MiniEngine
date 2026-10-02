@@ -363,7 +363,7 @@ void SolidAxle::Step(const std::array<CornerInput, 2>& in)
         out.strutTravelStiffness = -(near * near * stiffness[side] + far * far * stiffness[other]);
         out.strutTravelDamping = -(near * near * damping[side] + far * far * damping[other]);
         // Both tyres' loads through the axle: a push on one wheel moves the other too.
-        double load = 0.0;
+        double load = glm::dot(m_housingMoment, own[side].omega);
         for (int w = 0; w < 2; ++w)
         {
             load += glm::dot(in[w].load.force, own[side].contact[w]) + glm::dot(in[w].load.moment, own[side].omega);
