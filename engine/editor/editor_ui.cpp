@@ -243,7 +243,12 @@ EditorUiFrameResult EditorUiController::Draw(
         {
             m_suspensionRigs = std::make_shared<SuspensionRigWindow>();
         }
-        m_suspensionRigs->Draw(scene, &m_showSuspensionRigWindow);
+        m_suspensionRigs->Draw(scene, &m_showSuspensionRigWindow, m_vehicleRigStatus, result);
+    }
+    if (!m_showSuspensionRigWindow && m_vehicleRigStatus.active)
+    {
+        // Closing the window takes the car off the rig.
+        result.actions.stopVehicleRig = true;
     }
 
     if (!fullscreen && m_showSceneWindow)

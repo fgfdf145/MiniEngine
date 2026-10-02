@@ -148,6 +148,8 @@ enum class RigMode
 };
 
 const char* RigModeName(RigMode mode);
+// Each pad's share of the input in a mode (FL, FR, RL, RR): +1 or -1.
+std::array<double, 4> RigModePattern(RigMode mode);
 
 // The car on the rig: sprung body in heave, pitch and roll; four unsprung masses; tyres as
 // springs (they leave the pad when unloaded); each corner's suspension through SuspensionCorner.
@@ -305,6 +307,20 @@ WarpResult RunWarp(const CarModel& car, double padWarp, bool friction = true);
 // driven at `speed`: left and right tracks independent, the rear following the front by the
 // wheelbase. The statistics leave out the first 2 s (the road fades in over the first): `seconds`
 // must be longer (std::invalid_argument otherwise).
+// The road itself: two tracks (0 left, 1 right) of Rill's sum of sines, heights in m against the
+// distance along the road in m.
+class RandomRoad
+{
+public:
+    RandomRoad(double phi0, double waviness, std::uint32_t seed);
+    double Height(int track, double distance) const;
+
+private:
+    std::vector<double> m_omega;
+    std::vector<double> m_amplitude;
+    std::array<std::vector<double>, 2> m_phase;
+};
+
 struct RoadResult
 {
     std::array<double, 4> loadRms{};   // RMS of (load - static) / static

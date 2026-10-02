@@ -1,6 +1,7 @@
 #include "editor_suspension_rigs.h"
 
 #include <engine/asset/model_cache.h>
+#include <engine/editor/editor_ui.h>
 #include <engine/logic/editor_world.h>
 #include <engine/physics/vehicle_suspension.h>
 
@@ -357,8 +358,9 @@ SuspensionRigWindow::~SuspensionRigWindow()
     }
 }
 
-void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open)
+void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open, const VehicleRigStatus& live, EditorUiFrameResult& result)
 {
+    result.vehicleRigExcitation = m_excitation;
     ImGui::SetNextWindowSize(ImVec2(1100.0f, 760.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Suspension Rigs", open))
     {
@@ -380,6 +382,11 @@ void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open)
         const auto flags = [&](Tab tab) {
             return m_requestedTab == tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
         };
+        if (ImGui::BeginTabItem(ICON_FA_PLAY " Live Rig", nullptr, flags(LiveTab)))
+        {
+            DrawLiveTab(scene, live, result);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem(ICON_FA_GEARS " Linkage", nullptr, flags(LinkageTab)))
         {
             DrawLinkageTab();
@@ -881,6 +888,157 @@ void SuspensionRigWindow::DrawSevenPostTab()
         ImPlot::EndPlot();
     }
     ImPlot::EndSubplots();
+}
+
+void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result)
+{
+    VehicleRigExcitation& e = m_excitation;
+    if (live.active)
+    {
+        if (ImGui::Button(ICON_FA_STOP " Stop the Rig"))
+        {
+            result.actions.stopVehicleRig = true;
+        }
+        ImGui::SameLine();
+        ImGui::Text("'%s' on the rig: %.2f s simulated", live.vehicleName.c_str(), live.time);
+        if (live.inputFrequency > 0.0)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("input %.2f Hz", live.inputFrequency);
+        }
+    }
+    else
+    {
+        const bool canStart = scene.HasSelection() && scene.HasModelComponent(scene.GetSelectedEntity());
+        ImGui::BeginDisabled(!canStart);
+        if (ImGui::Button(ICON_FA_PLAY " Put the Selected Car on the Rig"))
+        {
+            result.actions.startVehicleRig = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("The car, its wheels and the scene's pads (\"Wheel pad FL\"...) and loaders (\"Aero loader ...\") move in the viewport.");
+        if (!live.lastError.empty())
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", live.lastError.c_str());
+        }
+    }
+
+    int waveform = static_cast<int>(e.waveform);
+    ImGui::TextUnformatted("Input:");
+    for (const auto& [label, value] : {std::pair<const char*, int>{"Sine", 0}, {"Sweep 0.5-20 Hz", 1}, {"Step", 2}, {"Random road", 3}})
+    {
+        ImGui::SameLine();
+        ImGui::RadioButton(label, &waveform, value);
+    }
+    e.waveform = static_cast<VehicleRigWaveform>(waveform);
+
+    int mode = static_cast<int>(e.mode);
+    ImGui::BeginDisabled(e.waveform == VehicleRigWaveform::Road);
+    ImGui::TextUnformatted("Mode: ");
+    for (int m = 0; m < 4; ++m)
+    {
+        ImGui::SameLine();
+        ImGui::RadioButton(kModeNames[m], &mode, m);
+    }
+    ImGui::EndDisabled();
+    e.mode = static_cast<suspension::RigMode>(mode);
+
+    ImGui::SetNextItemWidth(200.0f);
+    if (e.waveform == VehicleRigWaveform::Road)
+    {
+        ImGui::SliderFloat("Speed (m/s)", &e.roadSpeed, 5.0f, 80.0f, "%.0f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::Combo("Road", &m_roadRoughness, "Smooth track\0Bumpy road\0Rough road\0");
+        constexpr float kRoughness[3] = {1e-7f, 2e-6f, 1e-5f};
+        e.roadRoughness = kRoughness[std::clamp(m_roadRoughness, 0, 2)];
+    }
+    else
+    {
+        float amplitude = e.amplitude * 1000.0f;
+        if (ImGui::SliderFloat("Amplitude (mm)", &amplitude, 1.0f, 50.0f, "%.1f"))
+        {
+            e.amplitude = amplitude / 1000.0f;
+        }
+        if (e.waveform != VehicleRigWaveform::Sweep)
+        {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::SliderFloat(e.waveform == VehicleRigWaveform::Step ? "Steps per second / 2" : "Frequency (Hz)", &e.frequency, 0.2f, 20.0f, "%.2f",
+                               ImGuiSliderFlags_Logarithmic);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(pads at most 0.5 m/s: high frequencies move less)");
+    }
+    ImGui::SetNextItemWidth(200.0f);
+    ImGui::SliderFloat("Slow motion (sim s per s)", &e.playbackRate, 0.02f, 1.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SliderFloat("Drawn motion x", &e.exaggeration, 1.0f, 10.0f, "%.1f");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Pads, body and wheels are drawn this many times further than they move. The plots are true size.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Damper friction (assumed)", &e.friction);
+    result.vehicleRigExcitation = e;
+
+    if (live.sampleTime.empty())
+    {
+        ImGui::TextDisabled("Put the car on the rig to see the pads, the body and the tyres move.");
+        return;
+    }
+    const int n = static_cast<int>(live.sampleTime.size());
+    const double t1 = live.sampleTime.back();
+    const double t0 = t1 - 10.0;
+    const auto scaled = [](const std::vector<double>& v, double k) {
+        std::vector<double> out(v.size());
+        std::transform(v.begin(), v.end(), out.begin(), [k](double x) { return x * k; });
+        return out;
+    };
+    const float height = std::max((ImGui::GetContentRegionAvail().y - 8.0f) / 3.0f, 160.0f);
+    if (ImPlot::BeginPlot("Pads and body", ImVec2(-1.0f, height)))
+    {
+        ImPlot::SetupLegend(ImPlotLocation_North, ImPlotLegendFlags_Horizontal | ImPlotLegendFlags_Outside);
+        ImPlot::SetupAxes("simulated time (s)", "mm", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxis(ImAxis_Y2, "deg", ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_Opposite);
+        ImPlot::SetupAxisLimits(ImAxis_X1, t0, t1, ImPlotCond_Always);
+        for (int i = 0; i < 4; ++i)
+        {
+            const std::vector<double> pad = scaled(live.pad[i], 1000.0);
+            ImPlot::PlotLine((std::string("pad ") + kWheelNames[i]).c_str(), live.sampleTime.data(), pad.data(), n);
+        }
+        const std::vector<double> heave = scaled(live.heave, 1000.0);
+        ImPlot::PlotLine("body heave", live.sampleTime.data(), heave.data(), n);
+        ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
+        ImPlot::PlotLine("pitch (nose up)", live.sampleTime.data(), live.pitch.data(), n);
+        ImPlot::PlotLine("roll (right down)", live.sampleTime.data(), live.roll.data(), n);
+        ImPlot::EndPlot();
+    }
+    if (ImPlot::BeginPlot("Tyre loads", ImVec2(-1.0f, height)))
+    {
+        ImPlot::SetupLegend(ImPlotLocation_North, ImPlotLegendFlags_Horizontal | ImPlotLegendFlags_Outside);
+        ImPlot::SetupAxes("simulated time (s)", "N", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisLimits(ImAxis_X1, t0, t1, ImPlotCond_Always);
+        for (int i = 0; i < 4; ++i)
+        {
+            ImPlot::PlotLine(kWheelNames[i], live.sampleTime.data(), live.tyreLoad[i].data(), n);
+        }
+        ImPlot::EndPlot();
+    }
+    if (ImPlot::BeginPlot("Suspension travel", ImVec2(-1.0f, height)))
+    {
+        ImPlot::SetupLegend(ImPlotLocation_North, ImPlotLegendFlags_Horizontal | ImPlotLegendFlags_Outside);
+        ImPlot::SetupAxes("simulated time (s)", "mm, bump +", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisLimits(ImAxis_X1, t0, t1, ImPlotCond_Always);
+        for (int i = 0; i < 4; ++i)
+        {
+            const std::vector<double> travel = scaled(live.travel[i], 1000.0);
+            ImPlot::PlotLine(kWheelNames[i], live.sampleTime.data(), travel.data(), n);
+        }
+        ImPlot::EndPlot();
+    }
 }
 
 void SuspensionRigWindow::PoseLinkage()

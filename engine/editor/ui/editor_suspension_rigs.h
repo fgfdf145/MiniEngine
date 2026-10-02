@@ -1,5 +1,6 @@
 #pragma once
 
+#include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/suspension/suspension_kinematics.h>
 #include <engine/suspension/suspension_rig_report.h>
 
@@ -14,6 +15,7 @@
 namespace me
 {
 class IEditorWorld;
+struct EditorUiFrameResult;
 
 // The Suspension Rigs window: the virtual K&C rig and seven-post rig (engine/suspension) run on the
 // selected car's own data (its model's MINIENGINE_vehicle), plotted, with a view of the linkage
@@ -26,11 +28,14 @@ public:
     SuspensionRigWindow(const SuspensionRigWindow&) = delete;
     SuspensionRigWindow& operator=(const SuspensionRigWindow&) = delete;
 
-    void Draw(const IEditorWorld& scene, bool* open);
+    // `live` is the running rig's record; the window asks to start or stop it through `result`,
+    // which also takes its live settings.
+    void Draw(const IEditorWorld& scene, bool* open, const VehicleRigStatus& live, EditorUiFrameResult& result);
 
     // What the window's own controls do, for callers that drive it (and its tests).
     enum Tab
     {
+        LiveTab,
         LinkageTab,
         SummaryTab,
         KcTab,
@@ -83,6 +88,7 @@ private:
     void DrawKcTab();
     void DrawSevenPostTab();
     void DrawLinkageTab();
+    void DrawLiveTab(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result);
     // Moves the linkage view's two corners to the sliders' (or the animation's) travel, roll and rack.
     void PoseLinkage();
 
@@ -97,6 +103,10 @@ private:
     std::string m_runError;
 
     int m_requestedTab = -1;
+
+    // Live rig tab.
+    VehicleRigExcitation m_excitation;
+    int m_roadRoughness = 1; // smooth track, bumpy road, rough road
 
     // Seven-post tab.
     int m_mode = 0; // RigMode order

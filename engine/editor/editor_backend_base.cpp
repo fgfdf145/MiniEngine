@@ -6,6 +6,7 @@
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 #include "services/vehicle_drive_service.h"
+#include "services/vehicle_rig_service.h"
 
 #include <engine/asset/asset_registry.h>
 #include <engine/asset/kn5_importer.h>
@@ -102,6 +103,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     // with the mouse, and not even that while it chases the car.
     const bool keyboardCaptured = WantsKeyboardCapture();
     const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
+    VehicleRigService::Tick(State(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)
     {
         UpdateCameraFromInput(State().camera, State().input, deltaTime, keyboardCaptured || driving);
@@ -208,8 +210,24 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleDriveService::Stop(State());
     }
+    if (actions.stopVehicleRig)
+    {
+        VehicleRigService::Stop(State());
+    }
+    VehicleRigService::SetExcitation(State(), uiFrame.vehicleRigExcitation);
+    if (actions.startVehicleRig)
+    {
+        RunUiAction(State().vehicleRig.lastError, "start the seven-post rig", [&]
+                    {
+                        // One or the other: the rig and driving both move the car.
+                        VehicleDriveService::Stop(State());
+                        const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
+                        VehicleRigService::Start(State(), selected, uiFrame.vehicleRigExcitation);
+                    });
+    }
     if (actions.startVehicleDrive)
     {
+        VehicleRigService::Stop(State());
         RunUiAction(State().vehicleDrive.lastError, "start driving", [&]
                     {
                         const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
@@ -355,7 +373,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                     {
                         VehicleDriveService::RunWithVehicleAtStart(State(), [&]
                                                                    {
-                                                                       SceneIoService::SaveScene(State(), *savePath);
+                                                                       VehicleRigService::RunWithRigAtStart(State(), [&]
+                                                                                                            {
+                                                                                                                SceneIoService::SaveScene(State(), *savePath);
+                                                                                                            });
                                                                    });
                     });
     }
@@ -487,6 +508,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
         selectionIsModel ? EditorWorld().GetSelectedModel().sourcePath : std::string{};
 
     State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
+    State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

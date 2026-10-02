@@ -18,21 +18,6 @@ constexpr double kPi = std::numbers::pi;
 constexpr double kDeg = kPi / 180.0;
 
 // The pads' pattern for a mode: FL, FR, RL, RR.
-std::array<double, 4> ModePattern(RigMode mode)
-{
-    switch (mode)
-    {
-    case RigMode::Heave:
-        return {1.0, 1.0, 1.0, 1.0};
-    case RigMode::Pitch:
-        return {1.0, 1.0, -1.0, -1.0};
-    case RigMode::Roll:
-        return {1.0, -1.0, 1.0, -1.0};
-    case RigMode::Warp:
-        return {1.0, -1.0, -1.0, 1.0};
-    }
-    return {1.0, 1.0, 1.0, 1.0};
-}
 
 // The body's displacement that a mode moves, in metres at the wheels.
 double ModeBody(const SevenPostRig& rig, RigMode mode)
@@ -356,6 +341,22 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
     return result;
 }
 
+std::array<double, 4> RigModePattern(RigMode mode)
+{
+    switch (mode)
+    {
+    case RigMode::Heave:
+        return {1.0, 1.0, 1.0, 1.0};
+    case RigMode::Pitch:
+        return {1.0, 1.0, -1.0, -1.0};
+    case RigMode::Roll:
+        return {1.0, -1.0, 1.0, -1.0};
+    case RigMode::Warp:
+        return {1.0, -1.0, -1.0, 1.0};
+    }
+    return {1.0, 1.0, 1.0, 1.0};
+}
+
 const char* RigModeName(RigMode mode)
 {
     switch (mode)
@@ -478,7 +479,7 @@ SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, 
     SevenPostRig rig(car, friction);
     SweepResult result;
     result.mode = mode;
-    const std::array<double, 4> pattern = ModePattern(mode);
+    const std::array<double, 4> pattern = RigModePattern(mode);
     std::array<double, 4> zero{};
     for (int i = 0; i < 500; ++i)
     {
@@ -621,7 +622,7 @@ SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, 
 StepResponse RunStep(const CarModel& car, RigMode mode, double height, double seconds, bool friction, double dt)
 {
     SevenPostRig rig(car, friction);
-    const std::array<double, 4> pattern = ModePattern(mode);
+    const std::array<double, 4> pattern = RigModePattern(mode);
     StepResponse r;
     std::array<double, 4> pads{};
     std::array<double, 4> rates{};
@@ -727,7 +728,7 @@ WarpResult RunWarp(const CarModel& car, double padWarp, bool friction)
 {
     const auto diagonal = [&](double warp) {
         SevenPostRig rig(car, friction);
-        const std::array<double, 4> pattern = ModePattern(RigMode::Warp);
+        const std::array<double, 4> pattern = RigModePattern(RigMode::Warp);
         std::array<double, 4> pads{};
         const std::array<double, 4> rates{};
         double sum = 0.0;
@@ -755,31 +756,43 @@ WarpResult RunWarp(const CarModel& car, double padWarp, bool friction)
     return r;
 }
 
-RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction, double dt)
+RandomRoad::RandomRoad(double phi0, double waviness, std::uint32_t seed)
 {
     // Rill's random road as a sum of sines: Omega from 2 pi / 200 m to 2 pi / 0.2 m.
     const int n = 400;
     const double omegaMin = 2.0 * kPi / 200.0;
     const double omegaMax = 2.0 * kPi / 0.2;
     const double dOmega = (omegaMax - omegaMin) / (n - 1);
-    std::vector<double> omega(n), amplitude(n);
-    std::array<std::vector<double>, 2> phase{std::vector<double>(n), std::vector<double>(n)};
+    m_omega.resize(n);
+    m_amplitude.resize(n);
+    m_phase[0].resize(n);
+    m_phase[1].resize(n);
     std::mt19937 random(seed);
     std::uniform_real_distribution<double> uniform(0.0, 2.0 * kPi);
     for (int k = 0; k < n; ++k)
     {
-        omega[k] = omegaMin + k * dOmega;
-        amplitude[k] = std::sqrt(2.0 * phi0 * std::pow(omega[k], -waviness) * dOmega);
-        phase[0][k] = uniform(random);
-        phase[1][k] = uniform(random);
+        m_omega[k] = omegaMin + k * dOmega;
+        m_amplitude[k] = std::sqrt(2.0 * phi0 * std::pow(m_omega[k], -waviness) * dOmega);
+        m_phase[0][k] = uniform(random);
+        m_phase[1][k] = uniform(random);
     }
+}
+
+double RandomRoad::Height(int track, double distance) const
+{
+    double z = 0.0;
+    for (size_t k = 0; k < m_omega.size(); ++k)
+    {
+        z += m_amplitude[k] * std::sin(m_omega[k] * distance + m_phase[track][k]);
+    }
+    return z;
+}
+
+RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction, double dt)
+{
+    const RandomRoad randomRoad(phi0, waviness, seed);
     const auto road = [&](int track, double s) {
-        double z = 0.0;
-        for (int k = 0; k < n; ++k)
-        {
-            z += amplitude[k] * std::sin(omega[k] * s + phase[track][k]);
-        }
-        return z;
+        return randomRoad.Height(track, s);
     };
     const double frontX = 0.5 * (car.corners[0].position.x + car.corners[1].position.x);
     const double rearX = 0.5 * (car.corners[2].position.x + car.corners[3].position.x);

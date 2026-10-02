@@ -23,6 +23,8 @@ add_library(engine_editor
     services/scene_renderables.cpp
     services/scene_renderables.h
     services/vehicle_drive_service.cpp
+    services/vehicle_rig_service.cpp
+    services/vehicle_rig_service.h
     services/vehicle_drive_service.h
     ui/editor_asset_browser_panel.cpp
     ui/editor_dockspace.cpp

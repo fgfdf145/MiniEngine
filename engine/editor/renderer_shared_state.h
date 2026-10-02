@@ -3,6 +3,7 @@
 #include "editor_ui.h"
 #include "engine_settings.h"
 #include "services/vehicle_drive_service.h"
+#include "services/vehicle_rig_service.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
@@ -166,6 +167,8 @@ struct RendererSharedState
     RenderDebugSettings renderDebug;
     // Play mode: the model being driven as a car, if any (VehicleDriveService).
     VehicleDriveState vehicleDrive;
+    // The selected car on the live seven-post rig, if it is running (VehicleRigService).
+    VehicleRigState vehicleRig;
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.

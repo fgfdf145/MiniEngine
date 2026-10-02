@@ -4,6 +4,7 @@
 #include "editor_commands.h"
 #include "engine_settings.h"
 #include "services/vehicle_drive_service.h"
+#include "services/vehicle_rig_service.h"
 
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/model_import_target.h>
@@ -98,6 +99,9 @@ struct EditorUiActions
     std::optional<bool> pauseVehicleDrive;
     bool stepVehicleDrive = false;
     bool resetVehicle = false;
+    // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
+    bool startVehicleRig = false;
+    bool stopVehicleRig = false;
 };
 
 struct EditorUiFrameResult
@@ -111,6 +115,8 @@ struct EditorUiFrameResult
     // The Vehicle panel's tuning, which the next drive starts with, and its chase camera.
     VehicleSettings vehicleTuning;
     VehicleCameraSettings vehicleCamera;
+    // The Suspension Rigs window's settings for the live rig, taken while it runs.
+    VehicleRigExcitation vehicleRigExcitation;
 };
 
 class EditorUiController
@@ -163,6 +169,11 @@ class EditorUiController
     void SetVehicleDriveStatus(VehicleDriveStatus status)
     {
         m_vehicleStatus = std::move(status);
+    }
+    // Whether the live seven-post rig runs, and what it recorded, for the Suspension Rigs window.
+    void SetVehicleRigStatus(VehicleRigStatus status)
+    {
+        m_vehicleRigStatus = std::move(status);
     }
 
   private:
@@ -339,6 +350,7 @@ class EditorUiController
     bool m_showSuspensionRigWindow = false;
     // Created when first shown; shared_ptr so this header needs no complete type.
     std::shared_ptr<SuspensionRigWindow> m_suspensionRigs;
+    VehicleRigStatus m_vehicleRigStatus;
     VehicleDriveStatus m_vehicleStatus;
     VehicleSettings m_vehicleTuning;
     VehicleCameraSettings m_vehicleCamera;

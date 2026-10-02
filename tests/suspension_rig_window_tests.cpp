@@ -6,6 +6,9 @@
 #include "gtr_car_spec.h"
 
 #include <engine/asset/model_cache.h>
+#include <engine/editor/editor_ui.h>
+#include <engine/editor/renderer_shared_state.h>
+#include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/editor/ui/editor_suspension_rigs.h>
 #include <engine/logic/editor_scene.h>
 
@@ -38,6 +41,8 @@ void Require(bool condition, const std::string& what)
 }
 
 constexpr int kWidth = 1400;
+// What the window's Live Rig tab is shown.
+VehicleRigStatus g_liveStatus;
 constexpr int kHeight = 900;
 
 // The textures ImGui asks for (the font atlas): kept where ImGui has them, the id is the texture.
@@ -178,7 +183,8 @@ void Frame(SuspensionRigWindow& window, const EditorScene& scene, const char* sn
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowSize(io.DisplaySize);
     bool open = true;
-    window.Draw(scene, &open);
+    EditorUiFrameResult result;
+    window.Draw(scene, &open, g_liveStatus, result);
     ImGui::Render();
     ImDrawData* drawData = ImGui::GetDrawData();
     ServeTextures(*drawData);
@@ -198,9 +204,10 @@ void Frames(SuspensionRigWindow& window, const EditorScene& scene, int count, co
     }
 }
 
-void TestWindowRunsTheRigsOnTheSelectedCar()
+// The GT-R as its imported model carries it: the car's data, its wheel nodes (facing -Z, left -X) and
+// one submesh per wheel.
+std::shared_ptr<LoadedModelData> MakeGtrModel()
 {
-    // The GT-R as its imported model carries it.
     VehicleCarSpec spec = test::MakeGtrSpec();
     spec.wheelbase = 2.78f;
     spec.frontWeightShare = 0.555f;
@@ -208,6 +215,24 @@ void TestWindowRunsTheRigsOnTheSelectedCar()
     spec.rearSuspension->centerOfMassAboveWheel = -0.075f;
     auto model = std::make_shared<LoadedModelData>();
     model->carSpec = spec;
+    ModelWheelRig rig;
+    rig.corners[0].center = glm::vec3(-0.8583f, 0.2919f, -1.432f);
+    rig.corners[1].center = glm::vec3(0.8583f, 0.2919f, -1.432f);
+    rig.corners[2].center = glm::vec3(-0.869f, 0.2919f, 1.3454f);
+    rig.corners[3].center = glm::vec3(0.869f, 0.2919f, 1.3454f);
+    model->wheelRig = rig;
+    model->submeshes.resize(5);
+    for (uint8_t corner = 0; corner < 4; ++corner)
+    {
+        model->submeshes[corner].wheelPart = ModelWheelPart::Wheel;
+        model->submeshes[corner].wheelCorner = corner;
+    }
+    return model;
+}
+
+void TestWindowRunsTheRigsOnTheSelectedCar()
+{
+    std::shared_ptr<LoadedModelData> model = MakeGtrModel();
     const std::string path = "suspension_rig_window_tests/nissan_gtr_gt3.gltf";
     ModelCache::Store(path, model);
 
@@ -249,10 +274,102 @@ void TestWindowRunsTheRigsOnTheSelectedCar()
     Frames(window, scene, 3, "rigs_kc.png");
     window.RequestTab(SuspensionRigWindow::SevenPostTab);
     Frames(window, scene, 3, "rigs_seven_post.png");
+    window.RequestTab(SuspensionRigWindow::LiveTab);
+    Frames(window, scene, 3, "rigs_live.png");
     window.RequestTab(SuspensionRigWindow::LinkageTab);
     window.SetLinkagePose(0, 0.0f, 0.0f, 0.0f);
     Frames(window, scene, 3);
     ModelCache::Invalidate(path);
+}
+
+// The live rig moves the selected car, its wheels and the scene's pads and loaders: the pads follow the
+// input, roll lifts the body's left side when the left pads rise, the loaders stretch with the body,
+// and stopping puts everything back.
+void TestLiveRigMovesTheCarAndThePads()
+{
+    const std::string path = "suspension_rig_window_tests/live/nissan_gtr_gt3.gltf";
+    ModelCache::Store(path, MakeGtrModel());
+    RendererSharedState state;
+    state.editorWorld = CreateEditorWorld();
+    IEditorWorld& world = state.GetEditorWorld();
+    SerializedEntityData carData;
+    carData.tagName = "Nissan GT-R GT3";
+    carData.modelSourcePath = path;
+    carData.transform.translation = glm::vec3(0.0f, 0.713f, 0.0f);
+    const entt::entity car = world.CreateEntity(carData);
+    const auto prop = [&](const char* tag, glm::vec3 position, glm::vec3 scale) {
+        SerializedEntityData data;
+        data.tagName = tag;
+        data.transform.translation = position;
+        data.transform.scale = scale;
+        return world.CreateEntity(data);
+    };
+    const entt::entity padFL = prop("Wheel pad FL", glm::vec3(-0.86f, 0.475f, -1.43f), glm::vec3(0.5f, 0.35f, 0.6f));
+    const entt::entity padFR = prop("Wheel pad FR", glm::vec3(0.86f, 0.475f, -1.43f), glm::vec3(0.5f, 0.35f, 0.6f));
+    const entt::entity loader = prop("Aero loader rear", glm::vec3(0.0f, 0.5f, 0.9f), glm::vec3(0.12f, 0.4f, 0.12f));
+    const TransformComponent carStart = world.GetTransform(car);
+    const TransformComponent padStart = world.GetTransform(padFL);
+    const TransformComponent loaderStart = world.GetTransform(loader);
+
+    // Roll at 1.5 Hz, 20 mm at the pads, drawn true size, in real time.
+    VehicleRigExcitation excitation;
+    excitation.mode = suspension::RigMode::Roll;
+    excitation.waveform = VehicleRigWaveform::Sine;
+    excitation.frequency = 1.5f;
+    excitation.amplitude = 0.02f;
+    excitation.playbackRate = 1.0f;
+    excitation.exaggeration = 1.0f;
+    VehicleRigService::Start(state, car, excitation);
+    Require(state.vehicleRig.session != nullptr && state.vehicleRig.session->props.size() == 3, "the rig finds the pads and the loader");
+
+    double mostLeftUp = 0.0;
+    double padMoved = 0.0;
+    double loaderStretched = 0.0;
+    bool sideAgrees = true;
+    for (int frame = 0; frame < 40; ++frame)
+    {
+        Require(VehicleRigService::Tick(state, 0.1f), "the rig runs");
+        const VehicleRigSession& session = *state.vehicleRig.session;
+        // The pads where the input has them.
+        const double pad = world.GetTransform(padFL).translation.y - padStart.translation.y;
+        Require(std::abs(pad - session.pads[0]) < 1e-5, "the FL pad follows the input");
+        Require(std::abs((world.GetTransform(padFR).translation.y - padStart.translation.y) + pad) < 1e-5, "in roll the FR pad moves the other way");
+        padMoved = std::max(padMoved, std::abs(pad));
+        loaderStretched = std::max(loaderStretched, static_cast<double>(std::abs(world.GetTransform(loader).scale.y - loaderStart.scale.y)));
+        // The model's left front wheel centre against its right front's, in the world.
+        const glm::mat4 m = world.GetModelMatrix(car);
+        const float leftY = (m * glm::vec4(-0.8583f, 0.2919f, -1.432f, 1.0f)).y;
+        const float rightY = (m * glm::vec4(0.8583f, 0.2919f, -1.432f, 1.0f)).y;
+        const double leftUp = leftY - rightY;
+        if (session.time > 1.5 && std::abs(session.rig->Roll()) > 1e-3)
+        {
+            // Roll is right side down: the left side up.
+            sideAgrees = sideAgrees && (leftUp > 0.0) == (session.rig->Roll() > 0.0);
+        }
+        mostLeftUp = std::max(mostLeftUp, leftUp);
+    }
+    std::cout << "live rig, roll 20 mm at 1.5 Hz: pads up to " << padMoved * 1000.0 << " mm, the left front up to " << mostLeftUp * 1000.0
+              << " mm over the right, the rear loader stretched up to " << loaderStretched * 1000.0 << " mm\n";
+    Require(padMoved > 0.015, "the pads move by about the amplitude");
+    Require(sideAgrees, "the drawn body rolls the way the rig does");
+    Require(mostLeftUp > 0.005, "the body rolls visibly");
+    const VehicleRigStatus status = VehicleRigService::GetStatus(state);
+    Require(status.active && status.sampleTime.size() > 500 && status.tyreLoad[0].size() == status.sampleTime.size(), "the status records the run");
+
+    // Saving the scene sees the car and the props where they were.
+    VehicleRigService::RunWithRigAtStart(state, [&] {
+        Require(world.GetTransform(car).translation == carStart.translation && world.GetTransform(padFL).translation == padStart.translation,
+                "the scene saves its own transforms, not the rig's");
+    });
+
+    VehicleRigService::Stop(state);
+    Require(world.GetTransform(car).translation == carStart.translation && world.GetTransform(padFL).translation == padStart.translation &&
+                world.GetTransform(loader).scale == loaderStart.scale,
+            "stopping puts everything back");
+    ModelCache::Invalidate(path);
+
+    // The window's Live Rig tab on that record.
+    g_liveStatus = status;
 }
 }
 
@@ -268,6 +385,7 @@ int main()
     int result = 0;
     try
     {
+        TestLiveRigMovesTheCarAndThePads();
         TestWindowRunsTheRigsOnTheSelectedCar();
         std::cout << "suspension rig window tests passed\n";
     }
