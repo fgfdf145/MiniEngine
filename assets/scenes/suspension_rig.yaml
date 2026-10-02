@@ -13,7 +13,7 @@ entities:
     tag: nissan_gtr_gt3
     model:
       display_name: nissan_gtr_gt3.gltf
-      source_path: assets/nissan_gtr_gt3/nissan_gtr_gt3.gltf
+      source_path: C:\Project\MiniEngine\assets\nissan_gtr_gt3\nissan_gtr_gt3.gltf
       source_uuid: 5226e6cc-0904-4320-afe3-50821f29d39c
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
@@ -24,7 +24,7 @@ entities:
   - entity_uuid: d934e7e6-98bf-43d5-a71f-d033fe8a18d4
     tag: Rig base plate
     model:
-      display_name: Cube
+      display_name: Rig base plate
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -36,7 +36,7 @@ entities:
   - entity_uuid: 57edf2a5-e37f-4e5d-9078-da7a4f5f0e27
     tag: Wheel pad FL
     model:
-      display_name: Cube
+      display_name: Wheel pad FL
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -48,7 +48,7 @@ entities:
   - entity_uuid: 19b26680-425d-48fe-b455-924fbbb6da99
     tag: Wheel pad FR
     model:
-      display_name: Cube
+      display_name: Wheel pad FR
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -60,7 +60,7 @@ entities:
   - entity_uuid: a6928209-0bad-4bb9-bc0f-63d7794373d9
     tag: Wheel pad RL
     model:
-      display_name: Cube
+      display_name: Wheel pad RL
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -72,7 +72,7 @@ entities:
   - entity_uuid: 7ba1de52-144f-4031-b367-be8bacc4ce25
     tag: Wheel pad RR
     model:
-      display_name: Cube
+      display_name: Wheel pad RR
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -84,7 +84,7 @@ entities:
   - entity_uuid: cb275130-e274-4dc5-a2eb-1752bcef8a64
     tag: Aero loader front left
     model:
-      display_name: Cube
+      display_name: Aero loader front left
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -96,7 +96,7 @@ entities:
   - entity_uuid: ca9d8a31-1046-4b06-941b-32d7d37bb2b1
     tag: Aero loader front right
     model:
-      display_name: Cube
+      display_name: Aero loader front right
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -108,7 +108,7 @@ entities:
   - entity_uuid: ae4195bc-60bf-466f-ba9a-66e16454fff3
     tag: Aero loader rear
     model:
-      display_name: Cube
+      display_name: Aero loader rear
       source_path: ""
       source_uuid: ""
       base_color_texture_override: ""
@@ -131,9 +131,9 @@ lights:
     source_radius: 0
     ground_color: [0.3, 0.25, 0.2]
     transform:
-      translation: [0, 10, 0]
-      rotation: [35, 0, 55]
-      scale: [1, 1, 1]
+      translation: [0, 0, 0]
+      rotation: [-7.897634e-06, -30.13556, 44.05117]
+      scale: [0.99999833, 0.99999774, 0.9999993]
 environment:
   mode: atmosphere
   atmosphere:
@@ -146,6 +146,36 @@ environment:
     ozone_density_scale: 1
     aerial_perspective_distance_scale: 1
     sun_angular_diameter_degrees: 0.545
+  hdri:
+    path: ""
+    uuid: ""
+    intensity: 1000
+    rotation_degrees: 0
+  height_fog:
+    enabled: false
+    density: 0.001
+    height_falloff: 0.02
+    fog_height: 0
+    start_distance: 0
+    max_opacity: 1
+    albedo: [1, 1, 1]
+    anisotropy: 0.3
+  clouds:
+    enabled: false
+    coverage: 0.45
+    base_altitude: 1500
+    thickness: 2500
+    density: 0.02
+    shape_scale: 7000
+    detail_scale: 900
+    weather_scale: 40000
+    detail_erosion: 0.35
+    forward_anisotropy: 0.8
+    back_anisotropy: -0.3
+    back_weight: 0.3
+    albedo: 0.98
+    ambient_scale: 1
+    haze_distance: 25000
 editor:
   gizmo:
     operation: combined
