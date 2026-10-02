@@ -1,9 +1,11 @@
 #include <engine/editor/command_registry.h>
 #include <engine/editor/editor_commands.h>
+#include <engine/editor/engine_settings.h>
 
 #include <imgui.h>
 
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -57,6 +59,20 @@ void CollectItems(const CommandRegistry& registry, const CommandMenuNode& node, 
             CollectItems(registry, child, depth + 1, maxDepth, items);
         }
     }
+}
+
+// Every window's open state survives the settings file, the ones added after the first seven too.
+void TestWindowStatesSurviveTheSettingsFile()
+{
+    EngineSettings saved;
+    saved.editorUi.windows.open = {{"asset_manager", false}, {"camera", true}, {"suspension_rigs", true}, {"vehicle", true}};
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_window_states_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.editorUi.windows.open == saved.editorUi.windows.open, "every window's open state comes back");
 }
 
 void TestRegistration()
@@ -302,6 +318,7 @@ int main()
         TestExecute();
         TestFormatShortcut();
         TestEditorCommands();
+        TestWindowStatesSurviveTheSettingsFile();
     }
     catch (const std::exception& error)
     {

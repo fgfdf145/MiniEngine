@@ -190,6 +190,8 @@ class EditorUiController
     // Asks before New Scene or Clear Scene throws the scene's contents away.
     void DrawSceneResetConfirmModal(EditorUiFrameResult& result);
     void ApplyEngineSettings(const EngineSettings& settings);
+    // The key a Window-menu window's open state is saved under.
+    static std::string PanelSettingsKey(const EditorPanel& panel);
     void ApplyUiScale();
     void CaptureDefaultThemeColors();
     void SyncBaseStyleColorsFromCurrentStyle();

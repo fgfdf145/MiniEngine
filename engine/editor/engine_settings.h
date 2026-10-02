@@ -5,21 +5,18 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 
 namespace me
 {
 
+// Which of the Window menu's windows are open, by the settings key of each (EditorUiController's panel
+// ids; the asset browser keeps its older "asset_manager"). A window not named keeps its default.
 struct EditorWindowVisibilitySettings
 {
-    bool camera = true;
-    bool assetManager = false;
-    bool inputMonitor = false;
-    bool scene = true;
-    bool theme = true;
-    bool viewport = true;
-    bool graphicsDebug = false;
+    std::map<std::string, bool> open;
 };
 
 struct EditorThemeSettings

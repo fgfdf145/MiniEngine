@@ -149,13 +149,12 @@ EditorUiFrameResult EditorUiController::Draw(
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
     const float previousUiScale = m_uiScale;
-    const bool previousShowCameraWindow = m_showCameraWindow;
-    const bool previousShowAssetManagerWindow = m_showAssetManagerWindow;
-    const bool previousShowInputMonitorWindow = m_showInputMonitorWindow;
-    const bool previousShowSceneWindow = m_showSceneWindow;
-    const bool previousShowThemeWindow = m_showThemeWindow;
-    const bool previousShowViewportWindow = m_showViewportWindow;
-    const bool previousShowGraphicsDebugWindow = m_showGraphicsDebugWindow;
+    // Every Window-menu window's open state, to save the settings when one opens or closes.
+    std::vector<bool> previousOpen;
+    for (const EditorPanel& panel : m_panels)
+    {
+        previousOpen.push_back(*panel.visible);
+    }
 
     // Close the processor once its model is gone. Checking the disk every frame is a filesystem
     // call per frame for a file that rarely changes, so it is checked twice a second.
@@ -271,16 +270,12 @@ EditorUiFrameResult EditorUiController::Draw(
         DrawAssetBrowserPanel(result);
     }
 
-    result.engineSettingsChanged =
-        themeChanged ||
-        std::abs(previousUiScale - m_uiScale) > 0.0001f ||
-        previousShowCameraWindow != m_showCameraWindow ||
-        previousShowAssetManagerWindow != m_showAssetManagerWindow ||
-        previousShowInputMonitorWindow != m_showInputMonitorWindow ||
-        previousShowSceneWindow != m_showSceneWindow ||
-        previousShowThemeWindow != m_showThemeWindow ||
-        previousShowViewportWindow != m_showViewportWindow ||
-        previousShowGraphicsDebugWindow != m_showGraphicsDebugWindow;
+    bool windowToggled = false;
+    for (size_t index = 0; index < m_panels.size(); ++index)
+    {
+        windowToggled = windowToggled || previousOpen[index] != *m_panels[index].visible;
+    }
+    result.engineSettingsChanged = themeChanged || std::abs(previousUiScale - m_uiScale) > 0.0001f || windowToggled;
 
     result.renderDebug = m_renderDebug;
     result.vehicleTuning = m_vehicleTuning;
@@ -479,16 +474,23 @@ void EditorUiController::DrawSceneResetConfirmModal(EditorUiFrameResult& result)
     ImGui::EndPopup();
 }
 
+std::string EditorUiController::PanelSettingsKey(const EditorPanel& panel)
+{
+    // The asset browser was saved as "asset_manager" before every window was.
+    return std::string(panel.id) == "assets" ? "asset_manager" : std::string(panel.id);
+}
+
 void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)
 {
     m_uiScale = platform::ui::ResolveConfiguredUiScale(settings.editorUi.scale);
-    m_showCameraWindow = settings.editorUi.windows.camera;
-    m_showAssetManagerWindow = settings.editorUi.windows.assetManager;
-    m_showInputMonitorWindow = settings.editorUi.windows.inputMonitor;
-    m_showSceneWindow = settings.editorUi.windows.scene;
-    m_showThemeWindow = settings.editorUi.windows.theme;
-    m_showViewportWindow = settings.editorUi.windows.viewport;
-    m_showGraphicsDebugWindow = settings.editorUi.windows.graphicsDebug;
+    for (const EditorPanel& panel : m_panels)
+    {
+        const auto open = settings.editorUi.windows.open.find(PanelSettingsKey(panel));
+        if (open != settings.editorUi.windows.open.end())
+        {
+            *panel.visible = open->second;
+        }
+    }
 
     if (settings.editorUi.theme.hasCustomColors)
     {
@@ -509,13 +511,10 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
 {
     settings.version = 1;
     platform::ui::SetConfiguredUiScaleForCurrentPlatform(settings.editorUi.scale, m_uiScale);
-    settings.editorUi.windows.camera = m_showCameraWindow;
-    settings.editorUi.windows.assetManager = m_showAssetManagerWindow;
-    settings.editorUi.windows.inputMonitor = m_showInputMonitorWindow;
-    settings.editorUi.windows.scene = m_showSceneWindow;
-    settings.editorUi.windows.theme = m_showThemeWindow;
-    settings.editorUi.windows.viewport = m_showViewportWindow;
-    settings.editorUi.windows.graphicsDebug = m_showGraphicsDebugWindow;
+    for (const EditorPanel& panel : m_panels)
+    {
+        settings.editorUi.windows.open[PanelSettingsKey(panel)] = *panel.visible;
+    }
     settings.editorUi.theme.hasCustomColors = true;
 
     const ImGuiStyle& style = ImGui::GetStyle();

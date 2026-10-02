@@ -130,13 +130,14 @@ void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVis
         return;
     }
 
-    windows.camera = ReadBoolOrDefault(windowsNode["camera"], windows.camera);
-    windows.assetManager = ReadBoolOrDefault(windowsNode["asset_manager"], windows.assetManager);
-    windows.inputMonitor = ReadBoolOrDefault(windowsNode["input_monitor"], windows.inputMonitor);
-    windows.scene = ReadBoolOrDefault(windowsNode["scene"], windows.scene);
-    windows.theme = ReadBoolOrDefault(windowsNode["theme"], windows.theme);
-    windows.viewport = ReadBoolOrDefault(windowsNode["viewport"], windows.viewport);
-    windows.graphicsDebug = ReadBoolOrDefault(windowsNode["graphics_debug"], windows.graphicsDebug);
+    for (const auto& entry : windowsNode)
+    {
+        const std::string key = entry.first.as<std::string>("");
+        if (!key.empty() && entry.second.IsScalar())
+        {
+            windows.open[key] = ReadBoolOrDefault(entry.second, false);
+        }
+    }
 }
 
 void LoadThemeSettings(const YAML::Node& themeNode, EditorThemeSettings& theme)
@@ -256,13 +257,12 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         }
         output << "    },\n";
         output << "    \"windows\": {\n";
-        output << "      \"camera\": " << JsonBool(settings.editorUi.windows.camera) << ",\n";
-        output << "      \"asset_manager\": " << JsonBool(settings.editorUi.windows.assetManager) << ",\n";
-        output << "      \"input_monitor\": " << JsonBool(settings.editorUi.windows.inputMonitor) << ",\n";
-        output << "      \"scene\": " << JsonBool(settings.editorUi.windows.scene) << ",\n";
-        output << "      \"theme\": " << JsonBool(settings.editorUi.windows.theme) << ",\n";
-        output << "      \"viewport\": " << JsonBool(settings.editorUi.windows.viewport) << ",\n";
-        output << "      \"graphics_debug\": " << JsonBool(settings.editorUi.windows.graphicsDebug) << "\n";
+        size_t windowIndex = 0;
+        for (const auto& [key, open] : settings.editorUi.windows.open)
+        {
+            output << "      \"" << key << "\": " << JsonBool(open);
+            output << (++windowIndex < settings.editorUi.windows.open.size() ? ",\n" : "\n");
+        }
         output << "    },\n";
         output << "    \"theme\": {\n";
         output << "      \"colors\": {\n";

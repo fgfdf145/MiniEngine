@@ -299,6 +299,9 @@ VulkanImGuiLayer::VulkanImGuiLayer(
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = m_iniFilePath.c_str();
+    // The layout (positions, sizes, docking) is written a second after it changes rather than ImGui's
+    // default five, so a crash or a killed process loses little of it.
+    io.IniSavingRate = 1.0f;
     ConfigureImGuiStyle();
     ConfigureImGuiFonts(io);
 
