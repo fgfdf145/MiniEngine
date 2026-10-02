@@ -13,7 +13,7 @@ entities:
     tag: nissan_gtr_gt3
     model:
       display_name: nissan_gtr_gt3.gltf
-      source_path: C:\Project\MiniEngine\assets\nissan_gtr_gt3\nissan_gtr_gt3.gltf
+      source_path: assets/nissan_gtr_gt3/nissan_gtr_gt3.gltf
       source_uuid: 5226e6cc-0904-4320-afe3-50821f29d39c
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
