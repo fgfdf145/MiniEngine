@@ -95,7 +95,11 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
     patch.pressureScale = area > 0.0 ? patch.load / area : 0.0;
     const double loadRatio = std::max(patch.load, 1.0) / std::max(p.referenceLoad, 1.0);
     patch.staticFriction = std::max(p.staticFriction * std::pow(loadRatio, p.loadExponent - 1.0) * in.frictionScale, 0.0);
-    patch.kineticFriction = patch.staticFriction * std::clamp(p.kineticShare, 0.0, 1.0);
+    if (in.frictionCap > 0.0)
+    {
+        patch.staticFriction = std::min(patch.staticFriction, in.frictionCap);
+    }
+    patch.kineticFriction = patch.staticFriction * std::clamp(in.slidingShare > 0.0 ? in.slidingShare : p.kineticShare, 0.0, 1.0);
     patch.vx = in.forwardVelocity;
     patch.vy = in.lateralVelocity;
     patch.spin = in.yawRate + p.camberSpinShare * in.wheelSpeed * sinCamber;
@@ -389,7 +393,7 @@ BrushTyreOutput MakeOutput(const BrushTyreParameters& p, const Patch& patch, con
     out.slipRatio = (in.wheelSpeed * patch.effectiveRadius - in.forwardVelocity) / reference;
     out.slipAngle = std::atan2(in.lateralVelocity, std::max(std::abs(in.forwardVelocity), p.lowSpeed));
     // Rolling resistance turns smoothly through a standstill.
-    out.rollingResistanceTorque = -p.rollingResistance * patch.load * patch.effectiveRadius * std::tanh(in.wheelSpeed / 0.5);
+    out.rollingResistanceTorque = -(p.rollingResistance + std::max(in.extraRollingResistance, 0.0)) * patch.load * patch.effectiveRadius * std::tanh(in.wheelSpeed / 0.5);
     out.evaluations = s.evaluations;
     out.converged = s.converged;
     return out;

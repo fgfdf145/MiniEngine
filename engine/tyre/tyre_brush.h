@@ -89,7 +89,13 @@ struct BrushTyreInput
     double yawRate = 0.0;
     double wheelSpeed = 0.0;    // rad/s about the axle, positive rolling forward
     double camber = 0.0;        // rad, positive with the wheel's top leaning right
-    double frictionScale = 1.0; // the road's
+    double frictionScale = 1.0; // the road's ratio to the friction the tyre's figures are for
+    // The road's own limit on the static coefficient (frozen, loose ground; 0 for none), the share of
+    // it left sliding there (0 keeps the tyre's kineticShare), and its rolling resistance coefficient,
+    // added to the tyre's.
+    double frictionCap = 0.0;
+    double slidingShare = 0.0;
+    double extraRollingResistance = 0.0;
 };
 
 struct BrushTyreOutput

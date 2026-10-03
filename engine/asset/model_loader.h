@@ -190,8 +190,14 @@ struct ModelCollisionMesh
 {
     // The surface's name as its source calls it ("ASPH-SPA_BLACK", "GRASS", "WALL").
     std::string surface;
-    // The surface's friction coefficient, about 1 for tarmac and 0.6 for grass.
+    // The surface's friction coefficient, about 1 for tarmac and 0.6 for grass (a ratio to dry asphalt),
+    // and the rest of how it grips (PhysicsWorld's SurfaceGrip): an absolute cap on the coefficient,
+    // the wet loss with speed (per m/s), the sliding share of the peak, and added rolling resistance.
     float friction = 1.0f;
+    float frictionCap = 0.0f;
+    float wetSpeedFalloff = 0.0f;
+    float slidingShare = 0.0f;
+    float rollingResistance = 0.0f;
     std::vector<glm::vec3> positions;
     // Three indices into `positions` per triangle.
     std::vector<uint32_t> indices;

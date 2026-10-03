@@ -386,6 +386,97 @@ void ReportCost(const char* car, const VehicleSettings& brush, const VehicleSett
     const double e = measure(engine);
     std::cout << car << " physics per simulated second (1000 steps): brush " << b * 1000.0 << " ms, physics engine " << e * 1000.0 << " ms\n";
 }
+
+// ---- Surfaces ----
+
+// Dry asphalt for z < 0 and the surface under test beyond: the car gets up to speed on the asphalt.
+void AddRunUp(PhysicsWorld& world, const SurfaceGrip& surface)
+{
+    const std::vector<uint32_t> quad{0, 1, 2, 0, 2, 3};
+    const std::vector<glm::vec3> asphalt = {{-200.0f, 0.0f, -300.0f}, {-200.0f, 0.0f, 0.0f}, {200.0f, 0.0f, 0.0f}, {200.0f, 0.0f, -300.0f}};
+    const std::vector<glm::vec3> test = {{-200.0f, 0.0f, 0.0f}, {-200.0f, 0.0f, 300.0f}, {200.0f, 0.0f, 300.0f}, {200.0f, 0.0f, 0.0f}};
+    Require(world.AddStaticMesh(asphalt, quad), "the run-up builds");
+    Require(world.AddStaticMesh(test, quad, surface), "the test surface builds");
+}
+
+// Up to `speed` on the asphalt, then onto the surface: the mean deceleration over the first `seconds`
+// of full braking (or of coasting with `brake` off), in g.
+float DecelerationOn(const VehicleSettings& settings, const SurfaceGrip& surface, float speed, bool brake, float seconds)
+{
+    PhysicsWorld world;
+    AddRunUp(world, surface);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -280.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(id, controls);
+    // Held at the speed onto the surface.
+    for (int i = 0; i < 6000 && world.GetVehiclePose(id).position.z < 8.0f; ++i)
+    {
+        controls.throttle = world.GetVehicleTelemetry(id).forwardSpeed < speed ? 1.0f : 0.0f;
+        world.SetVehicleControls(id, controls);
+        Simulate(world, 0.01f);
+    }
+    controls = {};
+    Require(world.GetVehiclePose(id).position.z >= 8.0f, "the car reaches the test surface");
+    controls.brake = brake ? 1.0f : 0.0f;
+    world.SetVehicleControls(id, controls);
+    const float before = world.GetVehicleTelemetry(id).forwardSpeed;
+    Simulate(world, seconds);
+    return (before - world.GetVehicleTelemetry(id).forwardSpeed) / seconds / 9.81f;
+}
+
+SurfaceGrip Grip(float friction, float cap = 0.0f, float falloff = 0.0f, float sliding = 0.0f, float rolling = 0.0f)
+{
+    SurfaceGrip grip;
+    grip.friction = friction;
+    grip.frictionCap = cap;
+    grip.wetSpeedFalloff = falloff;
+    grip.slidingShare = sliding;
+    grip.rollingResistance = rolling;
+    return grip;
+}
+
+// The test track's surfaces (tools/render_scenes/make_car_test_track.py, after Wong's table): off the
+// pavement the ground's own limit holds whatever the tyre, on either tyre model; wet asphalt loses grip
+// with speed; soft ground drags.
+void TestSurfacesGripAsTheGroundDoes(const char* car, VehicleSettings (*make)(VehicleTyreModel))
+{
+    // Without the body's stand-in for air drag (5% of the speed a second, 0.08 g at 15 m/s), so what
+    // slows the car is the tyres and the ground; the tyre's own rolling resistance (0.012) remains.
+    VehicleSettings brush = make(VehicleTyreModel::Brush);
+    VehicleSettings engine = make(VehicleTyreModel::PhysicsEngine);
+    brush.linearDamping = 0.0f;
+    engine.linearDamping = 0.0f;
+    const SurfaceGrip ice = Grip(0.12f, 0.1f, 0.0f, 0.7f);
+    const SurfaceGrip snow = Grip(0.24f, 0.2f, 0.0f, 0.75f, 0.013f);
+    const SurfaceGrip wet = Grip(0.95f, 0.0f, 0.0173f, 0.86f);
+    const SurfaceGrip grass = Grip(0.53f, 0.45f, 0.0f, 0.9f, 0.06f);
+
+    const float dry = DecelerationOn(brush, Grip(1.0f), 15.0f, true, 1.0f);
+    const float onIce = DecelerationOn(brush, ice, 15.0f, true, 1.0f);
+    const float onSnow = DecelerationOn(brush, snow, 15.0f, true, 1.0f);
+    const float engineIce = DecelerationOn(engine, ice, 15.0f, true, 1.0f);
+    std::cout << car << " braking from 15 m/s: dry " << dry << " g, snow " << onSnow << " g, ice " << onIce << " g (physics engine tyre on ice " << engineIce << " g)\n";
+    Require(onIce > 0.04f && onIce < 0.1f + 0.02f, std::string(car) + " brakes on ice within its 0.1 cap, got " + std::to_string(onIce));
+    Require(onSnow > 0.1f && onSnow < 0.2f + 0.03f, std::string(car) + " brakes on snow within its 0.2 cap, got " + std::to_string(onSnow));
+    Require(engineIce < 0.1f + 0.02f, "the physics engine's tyre is held to the cap too, got " + std::to_string(engineIce));
+    Require(dry > 0.5f, "dry asphalt still stops it as hard as its brakes do (about 0.65 g from 15 m/s for these two)");
+
+    // Brakes that lock the wheels and no air, so the stop is the wet road's sliding grip alone.
+    VehicleSettings locking = brush;
+    locking.maxBrakeTorque = 5000.0f;
+    locking.aeroSurfaces.clear();
+    const float wetSlow = DecelerationOn(locking, wet, 9.0f, true, 0.3f);
+    const float wetFast = DecelerationOn(locking, wet, 30.0f, true, 0.3f);
+    std::cout << car << " braking on wet asphalt: " << wetSlow << " g at 9 m/s, " << wetFast << " g at 30 m/s\n";
+    Require(wetFast < 0.85f * wetSlow, "wet asphalt grips less at speed");
+
+    const float coastDry = DecelerationOn(brush, Grip(1.0f), 15.0f, false, 2.0f);
+    const float coastGrass = DecelerationOn(brush, grass, 15.0f, false, 2.0f);
+    std::cout << car << " coasting from 15 m/s: asphalt " << coastDry << " g, grass " << coastGrass << " g\n";
+    Require(coastGrass - coastDry > 0.03f, "grass drags a coasting car");
+}
 }
 
 int main()
@@ -438,6 +529,10 @@ int main()
         run(prefix + "runs straight", [&]
             {
                 TestCarRunsStraight(car.name, brush);
+            });
+        run(prefix + "surfaces", [&]
+            {
+                TestSurfacesGripAsTheGroundDoes(car.name, car.make);
             });
         run(prefix + "cost", [&]
             {

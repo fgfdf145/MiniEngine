@@ -122,6 +122,22 @@ struct VehicleTelemetry
 // Update advances the simulation in fixed steps and carries the remainder over to the next call;
 // poses read back are interpolated between the last two steps, so motion stays smooth at any frame
 // rate.
+// How a ground surface grips a tyre. friction is a ratio to dry asphalt that multiplies the tyre's own
+// coefficient (as Assetto Corsa's surfaces.ini FRICTION does), which suits paved surfaces, where the
+// rubber decides. On loose, soft and frozen ground the surface decides, and a stickier tyre gains
+// little: frictionCap is then the absolute coefficient the contact cannot pass. Wet surfaces lose
+// grip with speed, friction times exp(-wetSpeedFalloff * speed in m/s). On loose ground the grip
+// hardly falls past its peak: slidingShare is the sliding friction's share of the peak there (0
+// keeps the tyre's own). rollingResistance is added to the tyre's own coefficient on soft ground.
+struct SurfaceGrip
+{
+    float friction = 1.0f;
+    float frictionCap = 0.0f;
+    float wetSpeedFalloff = 0.0f;
+    float slidingShare = 0.0f;
+    float rollingResistance = 0.0f;
+};
+
 class PhysicsWorld
 {
   public:
@@ -129,9 +145,9 @@ class PhysicsWorld
     // A long frame (a hitch, a breakpoint) runs at most this many steps and drops the rest, rather
     // than taking ever longer to catch up.
     static constexpr int kMaxStepsPerUpdate = 50;
-    // The friction coefficient of static geometry that names none: a road. A wheel's grip is the
-    // square root of its tyre's coefficient times the surface's, so Jolt's own default of 0.2 would
-    // leave a car with half the grip of a tyre on tarmac.
+    // The friction of static geometry that names none: a road. A wheel's grip is its tyre's coefficient
+    // times the surface's ratio (see SurfaceGrip), so Jolt's own default of 0.2 would leave a car with a
+    // fifth of its grip.
     static constexpr float kDefaultSurfaceFriction = 1.0f;
 
     PhysicsWorld();
@@ -143,6 +159,7 @@ class PhysicsWorld
     // this friction coefficient (about 1 for tarmac, 0.6 for grass). Degenerate triangles are dropped.
     // False, adding nothing, when no triangle is left.
     bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, float friction = kDefaultSurfaceFriction);
+    bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip);
     void AddStaticBox(
         const glm::vec3& center,
         const glm::vec3& halfExtents,

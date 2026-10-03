@@ -37,6 +37,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace me
 {
@@ -190,11 +191,6 @@ struct VehicleSnapshot
     PhysicsPose chassis;
     std::vector<VehicleWheelState> wheels;
 };
-
-bool HasTyreGrip(const VehicleTyreSettings& tyres)
-{
-    return tyres.longitudinalGrip > 0.0f || tyres.lateralGrip > 0.0f;
-}
 
 // A wheel's friction curves from its axle's tyres: rising from nothing to the peak at the slip that
 // gives it, then down to the share of the peak the physics engine's own curves fall to, at the
@@ -1084,7 +1080,14 @@ struct PhysicsWorld::Impl
             in.camber = std::asin(std::clamp(static_cast<double>(-(rotation * right).Dot(normal)), -1.0, 1.0));
             {
                 JPH::BodyLockRead lock(context.mPhysicsSystem->GetBodyLockInterfaceNoLock(), wheel.GetContactBodyID());
-                in.frictionScale = lock.Succeeded() ? lock.GetBody().GetFriction() : 1.0f;
+                if (lock.Succeeded())
+                {
+                    const SurfaceGrip grip = GripOf(lock.GetBody());
+                    in.frictionScale = SurfaceFriction(grip, velocity.Length());
+                    in.frictionCap = grip.frictionCap;
+                    in.slidingShare = grip.slidingShare;
+                    in.extraRollingResistance = grip.rollingResistance;
+                }
             }
             const tyre::BrushTyreOutput out = vehicle.brushTyres[index].Step(in, dt);
             const JPH::Vec3 force = longitudinal * static_cast<float>(out.Fx) + left * static_cast<float>(out.Fy);
@@ -1095,6 +1098,36 @@ struct PhysicsWorld::Impl
             state.force = force;
             state.load = static_cast<float>(in.load);
             state.contact = true;
+        }
+    }
+
+    // Soft ground's rolling resistance on the physics engine's tyres (the brush tyre has its own): a
+    // moment against each wheel's roll of the surface's coefficient times the wheel's load and radius.
+    void ApplySurfaceRollingResistance(Vehicle& vehicle)
+    {
+        if (!vehicle.brushTyres.empty())
+        {
+            return;
+        }
+        for (JPH::Wheel* wheel : vehicle.constraint->GetWheels())
+        {
+            if (!wheel->HasContact())
+            {
+                continue;
+            }
+            JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), wheel->GetContactBodyID());
+            if (!lock.Succeeded())
+            {
+                continue;
+            }
+            const float coefficient = GripOf(lock.GetBody()).rollingResistance;
+            if (coefficient <= 0.0f)
+            {
+                continue;
+            }
+            const float load = std::max(wheel->GetSuspensionLambda() / kFixedStepSeconds, 0.0f);
+            const float radius = wheel->GetSettings()->mRadius;
+            static_cast<JPH::WheelWV*>(wheel)->ApplyTorque(-coefficient * load * radius * std::tanh(wheel->GetAngularVelocity() / 0.5f), kFixedStepSeconds);
         }
     }
 
@@ -1316,6 +1349,30 @@ struct PhysicsWorld::Impl
 
     std::vector<JPH::BodyID> staticBodies;
     size_t staticTriangleCount = 0;
+    // Each static body's surface by its ID; a body not here (a car's chassis) grips by its friction alone.
+    std::unordered_map<JPH::uint32, SurfaceGrip> surfaceGrips;
+
+    SurfaceGrip GripOf(const JPH::Body& body) const
+    {
+        const auto found = surfaceGrips.find(body.GetID().GetIndexAndSequenceNumber());
+        if (found != surfaceGrips.end())
+        {
+            return found->second;
+        }
+        SurfaceGrip grip;
+        grip.friction = body.GetFriction();
+        return grip;
+    }
+
+    // The friction ratio a surface gives at a speed over it, and its cap applied to a coefficient.
+    static float SurfaceFriction(const SurfaceGrip& grip, float speed)
+    {
+        return grip.friction * std::exp(-grip.wetSpeedFalloff * speed);
+    }
+    static float CappedFriction(const SurfaceGrip& grip, float coefficient)
+    {
+        return grip.frictionCap > 0.0f ? std::min(coefficient, grip.frictionCap) : coefficient;
+    }
     std::vector<Vehicle> vehicles;
     float accumulatedSeconds = 0.0f;
     bool broadPhaseDirty = false;
@@ -1343,6 +1400,14 @@ PhysicsWorld::~PhysicsWorld()
 
 bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, float friction)
 {
+    SurfaceGrip grip;
+    grip.friction = friction;
+    return AddStaticMesh(vertices, indices, grip);
+}
+
+bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip)
+{
+    const float friction = grip.friction;
     JPH::VertexList joltVertices;
     joltVertices.reserve(vertices.size());
     for (const glm::vec3& vertex : vertices)
@@ -1409,6 +1474,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
             throw std::runtime_error("PhysicsWorld: out of bodies for static geometry");
         }
         m_impl->staticBodies.push_back(body);
+        m_impl->surfaceGrips[body.GetIndexAndSequenceNumber()] = grip;
         m_impl->staticTriangleCount += triangleCount;
         m_impl->broadPhaseDirty = true;
         return triangleCount;
@@ -1483,14 +1549,17 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
 
     vehicle.aeroSurfaces = settings.aeroSurfaces;
     vehicle.constraint = new JPH::VehicleConstraint(*vehicle.body, *BuildVehicleConstraintSettings(settings));
-    if (HasTyreGrip(settings.frontTyres) || HasTyreGrip(settings.rearTyres))
     {
-        // Tyre grip as the game measures it is multiplied by the surface's, not averaged with it.
+        // The tyre's grip times the surface's ratio (as the game measures both), held to the surface's cap,
+        // rather than the physics engine's square root of the two, which leaves ice with a third of tarmac's.
+        const VehicleId id = static_cast<VehicleId>(impl.vehicles.size());
         vehicle.constraint->SetCombineFriction(
-            [](JPH::uint, float& ioLongitudinal, float& ioLateral, const JPH::Body& body, const JPH::SubShapeID&)
+            [&impl, id](JPH::uint, float& ioLongitudinal, float& ioLateral, const JPH::Body& body, const JPH::SubShapeID&)
             {
-                ioLongitudinal *= body.GetFriction();
-                ioLateral *= body.GetFriction();
+                const SurfaceGrip grip = impl.GripOf(body);
+                const float scale = Impl::SurfaceFriction(grip, impl.vehicles[id].body->GetLinearVelocity().Length());
+                ioLongitudinal = Impl::CappedFriction(grip, ioLongitudinal * scale);
+                ioLateral = Impl::CappedFriction(grip, ioLateral * scale);
             });
     }
     // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on.
@@ -1691,6 +1760,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             const VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
             impl.ApplyAerodynamics(vehicle);
+            impl.ApplySurfaceRollingResistance(vehicle);
             impl.DistributeBrakeTorque(vehicle);
             if (input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f)
             {

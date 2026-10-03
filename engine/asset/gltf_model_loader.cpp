@@ -1851,8 +1851,21 @@ void AppendCollisionMesh(
 {
     std::string surface = "default";
     float friction = 1.0f;
+    ModelCollisionMesh grip;
     if (extension.IsObject())
     {
+        const auto number = [&](const char* key, float& out, float most)
+        {
+            if (const tinygltf::Value& value = extension.Get(key); value.IsNumber())
+            {
+                const float parsed = static_cast<float>(value.GetNumberAsDouble());
+                out = std::isfinite(parsed) ? std::clamp(parsed, 0.0f, most) : out;
+            }
+        };
+        number("frictionCap", grip.frictionCap, 10.0f);
+        number("wetSpeedFalloff", grip.wetSpeedFalloff, 1.0f);
+        number("slidingShare", grip.slidingShare, 1.0f);
+        number("rollingResistance", grip.rollingResistance, 1.0f);
         if (const tinygltf::Value& value = extension.Get("surface"); value.IsString())
         {
             surface = value.Get<std::string>();
@@ -1906,11 +1919,16 @@ void AppendCollisionMesh(
             modelData.collisionMeshes.end(),
             [&](const ModelCollisionMesh& candidate)
             {
-                return candidate.surface == surface && candidate.friction == friction;
+                return candidate.surface == surface && candidate.friction == friction && candidate.frictionCap == grip.frictionCap &&
+                       candidate.wetSpeedFalloff == grip.wetSpeedFalloff && candidate.slidingShare == grip.slidingShare &&
+                       candidate.rollingResistance == grip.rollingResistance;
             });
         if (entry == modelData.collisionMeshes.end())
         {
-            modelData.collisionMeshes.push_back(ModelCollisionMesh{surface, friction, {}, {}});
+            ModelCollisionMesh created = grip;
+            created.surface = surface;
+            created.friction = friction;
+            modelData.collisionMeshes.push_back(std::move(created));
             entry = modelData.collisionMeshes.end() - 1;
         }
 

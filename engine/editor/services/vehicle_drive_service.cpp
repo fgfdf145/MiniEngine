@@ -478,7 +478,13 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
                 meshLowest = worldVertices.empty() ? world.y : std::min(meshLowest, world.y);
                 worldVertices.push_back(world);
             }
-            if (physics.AddStaticMesh(worldVertices, mesh.indices, mesh.friction))
+            SurfaceGrip grip;
+            grip.friction = mesh.friction;
+            grip.frictionCap = mesh.frictionCap;
+            grip.wetSpeedFalloff = mesh.wetSpeedFalloff;
+            grip.slidingShare = mesh.slidingShare;
+            grip.rollingResistance = mesh.rollingResistance;
+            if (physics.AddStaticMesh(worldVertices, mesh.indices, grip))
             {
                 noteLowest(meshLowest);
                 triangles += mesh.indices.size() / 3;

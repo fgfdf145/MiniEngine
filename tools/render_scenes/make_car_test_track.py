@@ -10,6 +10,7 @@ Three courses leave one asphalt apron. The car stands on the apron facing +Z, in
       sine waves for heave and pitch, and a banked road whose bank swings 0, +12, -12, 0 degrees for roll.
   Grip (x 28..60): eight 4 m lanes side by side over 100 m, from dry asphalt to ice; then an 8 m road
       whose left half is asphalt and right half ice (split friction), then bands of asphalt, ice and gravel.
+      Each surface grips as Wong's table of road adhesion has it (see SURFACES and GRIP).
 
 The track collides through its own MINIENGINE_collision nodes, each surface at its friction (the same
 meshes are also drawn). Posts every 10 m beside the courses are only drawn. Metres, Y up, ground at y = 0.
@@ -25,21 +26,44 @@ import struct
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures", "render_scenes", "models")
 
-# Surface name: (colour, roughness, friction coefficient or None when the surface is only drawn).
+# Surface name: (colour, roughness, friction or None when the surface is only drawn). The friction is a
+# ratio to dry asphalt that multiplies the tyre's own coefficient (as Assetto Corsa's surfaces.ini does).
+# Peak / sliding coefficients from J.Y. Wong, Theory of Ground Vehicles, Table 1.3 ("average values of
+# coefficient of road adhesion"), over dry asphalt's 0.85 (0.8-0.9): wet asphalt 0.5-0.7 / 0.45-0.6,
+# gravel 0.6 / 0.55, dry earth road 0.68 / 0.65, wet earth road 0.55 / 0.4-0.5, hard-packed snow
+# 0.2 / 0.15, ice 0.1 / 0.07; concrete is dry asphalt's (Burckhardt: 1.09 against 1.17). Dry mown grass
+# is not in the table: 0.4-0.5 in the literature.
 SURFACES = {
     "asphalt": ((0.045, 0.045, 0.05, 1.0), 0.85, 1.0),
-    "hazard": ((0.70, 0.50, 0.03, 1.0), 0.6, 1.0),
-    "concrete": ((0.35, 0.35, 0.34, 1.0), 0.9, 0.9),
-    "wet_asphalt": ((0.02, 0.022, 0.028, 1.0), 0.12, 0.7),
-    "grass": ((0.06, 0.16, 0.03, 1.0), 1.0, 0.6),
-    "dirt": ((0.16, 0.09, 0.045, 1.0), 1.0, 0.5),
-    "gravel": ((0.28, 0.26, 0.23, 1.0), 1.0, 0.55),
-    "mud": ((0.07, 0.045, 0.03, 1.0), 0.5, 0.4),
-    "snow": ((0.75, 0.78, 0.80, 1.0), 0.7, 0.3),
-    "ice": ((0.55, 0.70, 0.80, 1.0), 0.05, 0.1),
+    "hazard": ((0.70, 0.50, 0.03, 1.0), 0.6, 1.0),  # raised asphalt, yellow to see it
+    "concrete": ((0.35, 0.35, 0.34, 1.0), 0.9, 0.95),
+    "wet_asphalt": ((0.02, 0.022, 0.028, 1.0), 0.12, 0.95),  # at a standstill; falls with speed, see GRIP
+    "grass": ((0.06, 0.16, 0.03, 1.0), 1.0, 0.53),
+    "dirt": ((0.16, 0.09, 0.045, 1.0), 1.0, 0.8),
+    "gravel": ((0.28, 0.26, 0.23, 1.0), 1.0, 0.71),
+    "mud": ((0.07, 0.045, 0.03, 1.0), 0.5, 0.65),  # wet earth
+    "snow": ((0.75, 0.78, 0.80, 1.0), 0.7, 0.24),
+    "ice": ((0.55, 0.70, 0.80, 1.0), 0.05, 0.12),
     "marking": ((0.70, 0.70, 0.70, 1.0), 0.7, None),
     "post_white": ((0.75, 0.75, 0.75, 1.0), 0.6, None),
     "post_red": ((0.7, 0.03, 0.03, 1.0), 0.6, None),
+}
+
+
+# How the rest of each surface grips (MINIENGINE_collision, PhysicsWorld's SurfaceGrip). Off the pavement
+# the ground, not the rubber, sets the limit: frictionCap is the absolute coefficient (Wong's peak), which
+# a race slick does not pass. slidingShare is Wong's sliding over peak. Wet asphalt's grip falls with
+# speed, exp(-wetSpeedFalloff * v): 0.7 of dry at 30 km/h to 0.5 at 100 km/h, the ends of Wong's range.
+# rollingResistance is added to the tyre's own 0.012, after the Bosch Automotive Handbook's car-tyre
+# coefficients: rolled gravel 0.02, unpaved road 0.05, field / grass 0.1 and up; packed snow about 0.025.
+GRIP = {
+    "wet_asphalt": {"wetSpeedFalloff": 0.0173, "slidingShare": 0.86},
+    "grass": {"frictionCap": 0.45, "slidingShare": 0.9, "rollingResistance": 0.06},
+    "dirt": {"frictionCap": 0.68, "slidingShare": 0.96, "rollingResistance": 0.037},
+    "gravel": {"frictionCap": 0.6, "slidingShare": 0.92, "rollingResistance": 0.012},
+    "mud": {"frictionCap": 0.55, "slidingShare": 0.82, "rollingResistance": 0.09},
+    "snow": {"frictionCap": 0.2, "slidingShare": 0.75, "rollingResistance": 0.013},
+    "ice": {"frictionCap": 0.1, "slidingShare": 0.7},
 }
 
 
@@ -373,7 +397,9 @@ def write_gltf(path, meshes, materials, collision_friction, generator):
         nodes.append({"mesh": len(gltf_meshes) - 1, "name": name})
         friction = None if collision_friction is None else collision_friction(name)
         if friction is not None:
-            nodes.append({"mesh": len(gltf_meshes) - 1, "name": name + "_collision", "extensions": {"MINIENGINE_collision": {"surface": name, "friction": friction}}})
+            collision = {"surface": name, "friction": friction}
+            collision.update(GRIP.get(name, {}))
+            nodes.append({"mesh": len(gltf_meshes) - 1, "name": name + "_collision", "extensions": {"MINIENGINE_collision": collision}})
 
     gltf = {
         "asset": {"version": "2.0", "generator": generator},
