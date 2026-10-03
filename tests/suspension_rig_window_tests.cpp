@@ -398,10 +398,12 @@ void TestLiveRigMovesTheCarAndThePads()
     // The linkage to draw rides with the car: every joint near one of its wheels where the model is now.
     Require(!status.linkage.links.empty() && !status.linkage.joints.empty(), "the rig's linkage to draw");
     const glm::mat4 carMatrix = world.GetModelMatrix(car);
+    // Held for the loops: a range-for over a temporary's member reads it after it is freed.
+    const std::shared_ptr<LoadedModelData> gtr = MakeGtrModel();
     for (const glm::vec3& joint : status.linkage.joints)
     {
         float nearest = 1e9f;
-        for (const ModelWheelRig::Corner& wheel : MakeGtrModel()->wheelRig->corners)
+        for (const ModelWheelRig::Corner& wheel : gtr->wheelRig->corners)
         {
             nearest = std::min(nearest, glm::length(joint - glm::vec3(carMatrix * glm::vec4(wheel.center, 1.0f))));
         }
@@ -459,6 +461,9 @@ int main()
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    // As the editor's Vulkan backend does, and the snapshot rasteriser reads VtxOffset: the long plots
+    // pass 64k vertices in one window.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
     io.Fonts->AddFontDefault();
     ImGui::StyleColorsDark();
     int result = 0;
