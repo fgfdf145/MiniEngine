@@ -62,6 +62,12 @@ struct VehiclePhysicsOverlaySettings
     bool frictionCircles = true;
     // The multibody suspension's arms, rods, uprights and joints at each wheel, over the body.
     bool linkage = true;
+    // The brush tyre's contact patch (VehicleTyreModel::Brush): each rib over its contact length, green
+    // where its bristles stick and red where they slide, on the carcass's shifted, bent and twisted
+    // centre line, with the patch at rest outlined. The carcass's deflection is drawn this many times
+    // its size (a few millimetres would not show).
+    bool contactPatch = true;
+    float deformationScale = 10.0f;
     // How long an arrow is per kilonewton.
     float metresPerKilonewton = 0.15f;
 };

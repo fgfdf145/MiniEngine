@@ -1314,8 +1314,17 @@ struct PhysicsWorld::Impl
                 const tyre::BrushTyreState& tyreState = vehicle.brushTyres[index].State();
                 state.brushTyre = true;
                 state.carcassDeflection = glm::vec3(static_cast<float>(tyreState.carcass[0]), static_cast<float>(tyreState.carcass[1]), static_cast<float>(tyreState.carcass[2]));
+                state.carcassBendingShape = static_cast<float>(vehicle.brushTyres[index].Parameters().bendingShape);
                 if (state.inContact && brush.contact)
                 {
+                    static_assert(VehicleWheelState::kMaxBrushRibs == tyre::kBrushMaxRibs);
+                    state.treadRollingForward = brush.out.rollingForward;
+                    state.brushRibCount = brush.out.ribCount;
+                    for (int rib = 0; rib < brush.out.ribCount; ++rib)
+                    {
+                        const tyre::BrushRibContact& contact = brush.out.ribs[static_cast<size_t>(rib)];
+                        state.brushRibs[static_cast<size_t>(rib)] = {static_cast<float>(contact.y), static_cast<float>(contact.length), static_cast<float>(contact.stuckLength)};
+                    }
                     const float load = std::max(brush.load, 1.0f);
                     state.longitudinalForce = static_cast<float>(brush.out.Fx);
                     state.lateralForce = static_cast<float>(-brush.out.Fy);

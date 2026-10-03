@@ -299,6 +299,19 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 "axle's beam) orange, chassis pivots grey, the joints on the moving parts yellow.");
         }
         DragFloatInRange("Arrow Length (m/kN)", &overlay.metresPerKilonewton, 0.02f, 1.0f, "%.2f", 0.005f);
+        ImGui::Checkbox("Brush Contact Patch", &overlay.contactPatch);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "With the brush tyre: each rib's contact, green where its bristles stick to the road and red where they\n"
+                "slide, on the carcass's centre line (yellow), shifted, bent and twisted against the rim. The patch at rest\n"
+                "is outlined in grey.");
+        }
+        DragFloatInRange("Deformation Scale", &overlay.deformationScale, 1.0f, 50.0f, "%.0fx", 0.25f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("How many times its size the carcass's deflection is drawn: it is a few millimetres.");
+        }
         ImGui::EndDisabled();
     }
 

@@ -217,3 +217,12 @@ TMeasy（Rill）参数少且直观，能处理静止，风格接近 AC 的 `tyre
 
   冰雪上的数值正好是"上限 × 滑动比例"，因为车轮抱死后进入滑动；Jolt 轮胎没有滑动比例，所以贴着上限本身。Boxster 湿路的理论值是 0.91 / 0.63 g（1.3 × 0.86 × 路面比例），实测与之吻合。
 - **未改动**：AC 赛道（Spa）仍只有 surfaces.ini 里的 FRICTION 比例，和 AC 的行为保持一致；AC 的 DAMPING 等字段还没读。Jolt 轮胎不支持滑动比例和湿路随车速的变化，因为它的曲线是按车建的，不是按路面建的。
+
+### 6.6 接地区可视化（2026-10-03）
+
+- 物理叠加层新增 "Brush Contact Patch"（默认打开）和 "Deformation Scale"（默认 10 倍）。每个刷子轮胎会画出：
+  - 静止时的接地区（灰框）；
+  - 每根胎肋的实际接地长度：从前缘到粘着/滑移分界为绿色，之后为红色，分界处画一条白线；
+  - 胎体中心线（黄色）：按 x_c 平移，并按 `y_c + θ_c (x - x_c) - y_c Ψ/2 (x - x_c)^2` 横向偏移、弯曲和扭转。胎体变形只有几毫米，所以按放大倍数绘制。
+- 数据链：`BrushTyreOutput::ribs`（每根胎肋的位置、接地长度、从前缘起的粘着长度）→ `VehicleWheelState::brushRibs`、`carcassBendingShape`、`treadRollingForward` → `DrawBrushPatch`（`editor_vehicle_overlay.cpp`）。
+- 验证：`miniengine.vehicle_overlay`。GT-R 以 20 m/s 右转（外侧前轮 Fy = −5.6 kN）；断言胎肋长度、粘着长度和胎体侧移方向（与路面对轮胎的力同向，−7.9 mm），并把叠加层软件光栅化后统计绿、红、黄像素。设置 `MINIENGINE_UI_SNAPSHOT_DIR` 时会输出 `brush_contact_patch.png`。

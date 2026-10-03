@@ -95,6 +95,21 @@ struct VehicleWheelState
     float aligningTorque = 0.0f;
     float slidingShare = 0.0f;
     glm::vec3 carcassDeflection{0.0f};
+    // The brush tyre's contact patch, for drawing it: the carcass's bending shape factor Psi (its centre
+    // line across the patch is y_c + theta_c (x - x_c) - y_c Psi/2 (x - x_c)^2, x forward and y left
+    // along contactLongitudinal and -contactLateral), whether the tread runs through it forwards, and
+    // each rib's place across the tread, contact length and stuck length from the leading edge (m).
+    struct BrushRib
+    {
+        float y = 0.0f;
+        float length = 0.0f;
+        float stuckLength = 0.0f;
+    };
+    static constexpr int kMaxBrushRibs = 16;
+    float carcassBendingShape = 0.0f;
+    bool treadRollingForward = true;
+    int brushRibCount = 0;
+    std::array<BrushRib, kMaxBrushRibs> brushRibs{};
 };
 
 // A car's suspension linkage where the last step left it, in world space, for drawing: the rods and

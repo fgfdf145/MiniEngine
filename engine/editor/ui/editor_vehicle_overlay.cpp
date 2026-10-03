@@ -235,7 +235,7 @@ void DrawSuspension(const Painter& painter, const VehicleWheelState& wheel, size
     painter.Dot(wheel.mount + wheel.suspensionAxis * wheel.suspensionLength + offset, 4.5f, color);
 }
 
-void DrawTyre(const Painter& painter, const VehicleWheelState& wheel)
+void DrawTyre(const Painter& painter, const VehicleWheelState& wheel, bool drawsPatch)
 {
     const WheelAxes axes = GetWheelAxes(wheel);
     const glm::vec3 center = wheel.pose.position;
@@ -261,7 +261,7 @@ void DrawTyre(const Painter& painter, const VehicleWheelState& wheel)
     }
     painter.Line(center, center + axes.up * wheel.radius, color, 2.0f);
 
-    if (!wheel.inContact)
+    if (!wheel.inContact || drawsPatch)
     {
         return;
     }
@@ -284,6 +284,117 @@ void DrawTyre(const Painter& painter, const VehicleWheelState& wheel)
     }
     painter.drawList.AddConvexPolyFilled(projected.data(), 4, WithAlpha(color, 110));
     painter.drawList.AddPolyline(projected.data(), 4, color, ImDrawFlags_Closed, 1.5f * painter.uiScale);
+}
+
+constexpr ImU32 kStuckColor = IM_COL32(70, 220, 110, 255);
+constexpr ImU32 kSlidingColor = IM_COL32(255, 70, 50, 255);
+constexpr ImU32 kCarcassColor = IM_COL32(255, 220, 60, 255);
+constexpr ImU32 kPatchAtRestColor = IM_COL32(220, 220, 230, 160);
+
+// The brush tyre's contact patch in its frame (x forward, y left, on the ground): each rib a strip over
+// its contact length on the carcass's centre line, which the carcass shifts by x_c and moves sideways by
+// y_c + theta_c (x - x_c) - y_c Psi/2 (x - x_c)^2, all `scale` times their size. The leading part of a
+// rib, where the bristles stick, is green; past the transition they slide, red. The patch at rest is
+// outlined, and the carcass's centre line runs through it in yellow.
+void DrawBrushPatch(const Painter& painter, const VehicleWheelState& wheel, float scale)
+{
+    if (!wheel.inContact || wheel.brushRibCount <= 0)
+    {
+        return;
+    }
+    const glm::vec3 origin = wheel.contactPosition + wheel.contactNormal * 0.004f;
+    const glm::vec3 forward = wheel.contactLongitudinal;
+    const glm::vec3 left = -wheel.contactLateral;
+    const float xc = wheel.carcassDeflection.x;
+    const float yc = wheel.carcassDeflection.y;
+    const float thetac = wheel.carcassDeflection.z;
+    const float psi = wheel.carcassBendingShape;
+    const auto carcass = [&](float x)
+    {
+        const float dx = x - xc;
+        return yc + thetac * dx - 0.5f * yc * psi * dx * dx;
+    };
+    const auto at = [&](float x, float y)
+    {
+        return origin + forward * x + left * y;
+    };
+    // Where a point of the patch is drawn: moved with the carcass, exaggerated.
+    const auto deformed = [&](float x, float y)
+    {
+        return at(x + scale * xc, y + scale * carcass(x));
+    };
+
+    float longest = 0.0f;
+    float halfWidth = 0.0f;
+    const float ribWidth = wheel.width / static_cast<float>(wheel.brushRibCount);
+    for (int index = 0; index < wheel.brushRibCount; ++index)
+    {
+        const VehicleWheelState::BrushRib& rib = wheel.brushRibs[static_cast<size_t>(index)];
+        longest = std::max(longest, rib.length);
+        halfWidth = std::max(halfWidth, std::abs(rib.y) + 0.5f * ribWidth);
+    }
+    if (longest <= 0.0f)
+    {
+        return;
+    }
+
+    // At rest: the patch as long as its longest rib and as wide as the tread.
+    painter.Line(at(longest * 0.5f, halfWidth), at(longest * 0.5f, -halfWidth), kPatchAtRestColor, 1.0f);
+    painter.Line(at(-longest * 0.5f, halfWidth), at(-longest * 0.5f, -halfWidth), kPatchAtRestColor, 1.0f);
+    painter.Line(at(longest * 0.5f, halfWidth), at(-longest * 0.5f, halfWidth), kPatchAtRestColor, 1.0f);
+    painter.Line(at(longest * 0.5f, -halfWidth), at(-longest * 0.5f, -halfWidth), kPatchAtRestColor, 1.0f);
+
+    // The ribs, cut into slices along their length, each filled by whether its bristles stick.
+    constexpr int kSlices = 12;
+    const float direction = wheel.treadRollingForward ? 1.0f : -1.0f;
+    const float half = 0.42f * ribWidth;
+    for (int index = 0; index < wheel.brushRibCount; ++index)
+    {
+        const VehicleWheelState::BrushRib& rib = wheel.brushRibs[static_cast<size_t>(index)];
+        if (rib.length <= 0.0f)
+        {
+            continue;
+        }
+        // One outline per region, from a to b along the rib (distances from the leading edge): down one
+        // side of the bent strip and back up the other, so the region fills without seams.
+        const auto drawRegion = [&](float a, float b, ImU32 color)
+        {
+            if (b - a <= 1e-5f)
+            {
+                return;
+            }
+            std::array<ImVec2, 2 * (kSlices + 1)> outline;
+            for (int slice = 0; slice <= kSlices; ++slice)
+            {
+                const float distance = a + (b - a) * static_cast<float>(slice) / kSlices;
+                const float x = direction * (0.5f * rib.length - distance);
+                if (!painter.Project(deformed(x, rib.y + half), outline[static_cast<size_t>(slice)]) ||
+                    !painter.Project(deformed(x, rib.y - half), outline[static_cast<size_t>(2 * kSlices + 1 - slice)]))
+                {
+                    return;
+                }
+            }
+            painter.drawList.AddConcavePolyFilled(outline.data(), static_cast<int>(outline.size()), WithAlpha(color, 170));
+        };
+        const float split = std::clamp(rib.stuckLength, 0.0f, rib.length);
+        drawRegion(0.0f, split, kStuckColor);
+        drawRegion(split, rib.length, kSlidingColor);
+        // The transition from sticking to sliding, across the rib.
+        if (rib.stuckLength < rib.length)
+        {
+            const float x = direction * (0.5f * rib.length - rib.stuckLength);
+            painter.Line(deformed(x, rib.y + half), deformed(x, rib.y - half), kTextColor, 1.5f);
+        }
+    }
+
+    // The carcass's centre line over a little more than the patch.
+    constexpr int kLinePoints = 16;
+    for (int point = 0; point < kLinePoints; ++point)
+    {
+        const float a = (static_cast<float>(point) / kLinePoints - 0.5f) * longest * 1.4f;
+        const float b = (static_cast<float>(point + 1) / kLinePoints - 0.5f) * longest * 1.4f;
+        painter.Line(deformed(a, 0.0f), deformed(b, 0.0f), kCarcassColor, 2.0f);
+    }
 }
 
 void DrawForces(const Painter& painter, const VehicleWheelState& wheel, float metresPerKilonewton)
@@ -416,9 +527,14 @@ void DrawVehiclePhysicsOverlay(
     drawList.PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
     for (size_t index = 0; index < wheels.size(); ++index)
     {
+        const bool brushPatch = settings.contactPatch && wheels[index].brushTyre;
         if (settings.tyres)
         {
-            DrawTyre(painter, wheels[index]);
+            DrawTyre(painter, wheels[index], brushPatch);
+        }
+        if (brushPatch)
+        {
+            DrawBrushPatch(painter, wheels[index], settings.deformationScale);
         }
         if (settings.suspension)
         {

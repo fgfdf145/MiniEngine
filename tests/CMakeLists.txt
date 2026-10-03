@@ -1680,3 +1680,31 @@ add_test(
 )
 
 set_target_properties(miniengine_vehicle_brush_tyre_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_vehicle_overlay_tests
+    vehicle_overlay_tests.cpp
+    gtr_car_spec.h
+)
+miniengine_group_target_sources(miniengine_vehicle_overlay_tests)
+
+target_link_libraries(miniengine_vehicle_overlay_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_vehicle_overlay_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_vehicle_overlay_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_vehicle_overlay_tests>
+            $<TARGET_FILE_DIR:miniengine_vehicle_overlay_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.vehicle_overlay
+    COMMAND miniengine_vehicle_overlay_tests
+)
+
+set_target_properties(miniengine_vehicle_overlay_tests PROPERTIES FOLDER "Tests")

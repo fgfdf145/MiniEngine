@@ -5,6 +5,19 @@
 namespace me::tyre
 {
 
+// The most ribs a brush tyre is cut into.
+inline constexpr int kBrushMaxRibs = 16;
+
+// One rib's contact where the last step left it, for drawing the patch: its place across the tread
+// (m, left positive), its contact length, and how far from the leading edge its bristles stick to the
+// road before they slide (the whole length when none slide).
+struct BrushRibContact
+{
+    double y = 0.0;
+    double length = 0.0;
+    double stuckLength = 0.0;
+};
+
 // A brush tyre with a flexible carcass after Stocco, Biral & Bertolazzi, "A physical tire model for
 // real-time simulations", Math. Comput. Simul. 223 (2024) 654-676 (docs/references): the tread is
 // cut into ribs across its width, each a row of bristles over its own contact length; the bristles'
@@ -111,6 +124,10 @@ struct BrushTyreOutput
     double slipAngle = 0.0;       // rad, atan(V_y / |V_x|) as MF-Tyre's (positive moving left)
     int evaluations = 0;
     bool converged = true;
+    // Each rib's contact, and whether the tread runs through it forwards (enters at +x).
+    std::array<BrushRibContact, kBrushMaxRibs> ribs{};
+    int ribCount = 0;
+    bool rollingForward = true;
 };
 
 class BrushTyre

@@ -9,7 +9,7 @@ namespace me::tyre
 
 namespace
 {
-constexpr int kMaxRibs = 32;
+constexpr int kMaxRibs = kBrushMaxRibs;
 
 struct Rib
 {
@@ -39,6 +39,8 @@ struct Forces
 {
     std::array<double, 3> f{}; // Fx, Fy, Mz
     double slidingLoad = 0.0;
+    // Each rib's stuck length from its leading edge.
+    std::array<double, kMaxRibs> stuckLength{};
 };
 
 // The quartic pressure shape of (7): zero at both edges, unit area, centroid at 1/2 - delta, second
@@ -129,6 +131,7 @@ Forces TreadForces(const BrushTyreParameters& p, const Patch& patch, const std::
         {
             continue;
         }
+        out.stuckLength[i] = rib.length;
         const double h = rib.length / segments;
         const double vr = rib.rollSpeed;
         // The tread enters at the front rolling forward, at the back rolling backward.
@@ -172,6 +175,7 @@ Forces TreadForces(const BrushTyreParameters& p, const Patch& patch, const std::
                 if (stuck < 1.0)
                 {
                     sliding = true; // from the transition on, the rest of the rib slides
+                    out.stuckLength[i] = (j + stuck) * h;
                 }
                 ux += dux;
                 uy += duy;
@@ -396,6 +400,12 @@ BrushTyreOutput MakeOutput(const BrushTyreParameters& p, const Patch& patch, con
     out.rollingResistanceTorque = -(p.rollingResistance + std::max(in.extraRollingResistance, 0.0)) * patch.load * patch.effectiveRadius * std::tanh(in.wheelSpeed / 0.5);
     out.evaluations = s.evaluations;
     out.converged = s.converged;
+    out.ribCount = patch.ribCount;
+    for (int i = 0; i < patch.ribCount; ++i)
+    {
+        out.ribs[i] = {patch.ribs[i].y, patch.ribs[i].length, s.residual.forces.stuckLength[i]};
+    }
+    out.rollingForward = in.wheelSpeed >= 0.0;
     return out;
 }
 }
