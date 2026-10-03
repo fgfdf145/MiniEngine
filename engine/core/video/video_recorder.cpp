@@ -7,6 +7,7 @@
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 
@@ -55,6 +56,16 @@ void AppendBytes(void* context, void* data, int size)
 }
 }
 
+VideoCodec VideoCodecForPath(const std::filesystem::path& path)
+{
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c)
+                   {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return extension == ".mp4" ? VideoCodec::H264Mp4 : VideoCodec::MjpegAvi;
+}
+
 uint64_t VideoFramesStartedBy(double seconds, uint32_t framesPerSecond)
 {
     if (!(seconds > 0.0))
@@ -98,6 +109,55 @@ std::vector<uint8_t> ConvertVideoFrameToRgba8(const VideoFrame& frame, uint32_t 
     return rgba;
 }
 
+std::vector<uint8_t> ConvertRgba8ToNv12(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height)
+{
+    // BT.709 in 16.16 fixed point, scaled to limited range: Y 16..235, Cb Cr 16..240 about 128.
+    // Y = 16 + 219 (0.2126 R + 0.7152 G + 0.0722 B), Cb = 128 + 224 (B - Y) / 1.8556,
+    // Cr = 128 + 224 (R - Y) / 1.5748, with R G B and Y from 0 to 1.
+    constexpr int32_t kYr = 11966, kYg = 40254, kYb = 4064;
+    constexpr int32_t kCbR = -6596, kCbG = -22189, kCbB = 28784;
+    constexpr int32_t kCrR = 28784, kCrG = -26145, kCrB = -2639;
+    const uint32_t outWidth = width & ~1u;
+    const uint32_t outHeight = height & ~1u;
+    std::vector<uint8_t> nv12(static_cast<size_t>(outWidth) * outHeight * 3 / 2);
+    if (rgba.size() < static_cast<size_t>(width) * height * 4)
+    {
+        return nv12;
+    }
+    uint8_t* luma = nv12.data();
+    uint8_t* chroma = nv12.data() + static_cast<size_t>(outWidth) * outHeight;
+    for (uint32_t y = 0; y < outHeight; y += 2)
+    {
+        const uint8_t* rows[2] = {
+            rgba.data() + static_cast<size_t>(y) * width * 4,
+            rgba.data() + static_cast<size_t>(y + 1) * width * 4};
+        uint8_t* lumaRows[2] = {luma + static_cast<size_t>(y) * outWidth, luma + static_cast<size_t>(y + 1) * outWidth};
+        uint8_t* chromaRow = chroma + static_cast<size_t>(y / 2) * outWidth;
+        for (uint32_t x = 0; x < outWidth; x += 2)
+        {
+            int32_t r = 0, g = 0, b = 0;
+            for (int row = 0; row < 2; ++row)
+            {
+                for (uint32_t column = x; column < x + 2; ++column)
+                {
+                    const uint8_t* texel = rows[row] + column * 4;
+                    lumaRows[row][column] = static_cast<uint8_t>(
+                        16 + ((kYr * texel[0] + kYg * texel[1] + kYb * texel[2] + 32768) >> 16));
+                    r += texel[0];
+                    g += texel[1];
+                    b += texel[2];
+                }
+            }
+            // The four texels' average, its quarter folded into the shift.
+            const int32_t cb = 128 + ((kCbR * r + kCbG * g + kCbB * b + (1 << 17)) >> 18);
+            const int32_t cr = 128 + ((kCrR * r + kCrG * g + kCrB * b + (1 << 17)) >> 18);
+            chromaRow[x] = static_cast<uint8_t>(std::clamp(cb, 16, 240));
+            chromaRow[x + 1] = static_cast<uint8_t>(std::clamp(cr, 16, 240));
+        }
+    }
+    return nv12;
+}
+
 VideoRecorder::~VideoRecorder()
 {
     Stop();
@@ -112,17 +172,35 @@ bool VideoRecorder::Start(const VideoRecordingSettings& settings, std::string& e
     }
     m_settings = settings;
     m_settings.jpegQuality = std::clamp(m_settings.jpegQuality, 1, 100);
-    m_writer.SetMaxFileBytes(m_settings.maxFileBytes);
-    if (!m_writer.Open(SegmentPath(0), settings.width, settings.height, settings.framesPerSecond, error))
+    m_codec = VideoCodecForPath(settings.path);
+    if (m_codec == VideoCodec::H264Mp4)
     {
-        return false;
+        // 4:2:0 needs an even size: an odd last column or row is left out.
+        const uint32_t width = settings.width & ~1u;
+        const uint32_t height = settings.height & ~1u;
+        if (m_settings.bitsPerSecond == 0)
+        {
+            m_settings.bitsPerSecond = Mp4H264Writer::DefaultBitsPerSecond(width, height, settings.framesPerSecond);
+        }
+        if (!m_mp4Writer.Open(settings.path, width, height, settings.framesPerSecond, m_settings.bitsPerSecond, error))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        m_writer.SetMaxFileBytes(m_settings.maxFileBytes);
+        if (!m_writer.Open(SegmentPath(0), settings.width, settings.height, settings.framesPerSecond, error))
+        {
+            return false;
+        }
     }
     m_started = true;
     m_status = {};
     m_status.recording = true;
     m_status.files.push_back(SegmentPath(0));
 
-    // JPEG encoding is what takes the time; leave a core for the render thread.
+    // JPEG encoding (or the NV12 conversion) is what takes the time; leave a core for the render thread.
     const unsigned cores = std::max(2u, std::thread::hardware_concurrency());
     const unsigned workers = std::clamp(cores - 1, 1u, 4u);
     // Each pending frame holds its pixels: a few per worker absorbs a hitch without much memory.
@@ -225,8 +303,19 @@ VideoRecordingStatus VideoRecorder::Stop()
 
     std::lock_guard writeLock(m_writeMutex);
     std::string error;
-    const uint64_t lastFileBytes = m_writer.GetProjectedFileBytes();
-    const bool closed = m_writer.Close(error);
+    uint64_t lastFileBytes = 0;
+    bool closed = false;
+    if (m_codec == VideoCodec::H264Mp4)
+    {
+        // The encoder's last frames are written by Close: the file's size is known after it.
+        closed = m_mp4Writer.Close(error);
+        lastFileBytes = m_mp4Writer.GetFileBytes();
+    }
+    else
+    {
+        lastFileBytes = m_writer.GetProjectedFileBytes();
+        closed = m_writer.Close(error);
+    }
     std::lock_guard lock(m_mutex);
     m_status.bytesWritten = m_finishedFileBytes + lastFileBytes;
     if (!closed && m_status.error.empty())
@@ -266,15 +355,22 @@ void VideoRecorder::WorkerLoop()
         encoded.timeSeconds = job.frame.timeSeconds;
         const std::vector<uint8_t> rgba = ConvertVideoFrameToRgba8(job.frame, m_settings.width, m_settings.height);
         job.frame.pixels = {};
-        encoded.jpeg.reserve(rgba.size() / 8);
-        stbi_write_jpg_to_func(
-            AppendBytes,
-            &encoded.jpeg,
-            static_cast<int>(m_settings.width),
-            static_cast<int>(m_settings.height),
-            4,
-            rgba.data(),
-            m_settings.jpegQuality);
+        if (m_codec == VideoCodec::H264Mp4)
+        {
+            encoded.data = ConvertRgba8ToNv12(rgba, m_settings.width, m_settings.height);
+        }
+        else
+        {
+            encoded.data.reserve(rgba.size() / 8);
+            stbi_write_jpg_to_func(
+                AppendBytes,
+                &encoded.data,
+                static_cast<int>(m_settings.width),
+                static_cast<int>(m_settings.height),
+                4,
+                rgba.data(),
+                m_settings.jpegQuality);
+        }
 
         {
             std::lock_guard lock(m_mutex);
@@ -348,19 +444,19 @@ void VideoRecorder::WriteEncoded(Encoded&& encoded)
         // What was on screen until this frame came stays there until its video frame.
         for (uint64_t repeat = written + 1; repeat < due; ++repeat)
         {
-            if (!WriteJpeg(m_previousJpeg))
+            if (!WriteFrameData(m_previousFrame))
             {
                 return;
             }
         }
     }
-    if (WriteJpeg(encoded.jpeg))
+    if (WriteFrameData(encoded.data))
     {
-        m_previousJpeg = std::move(encoded.jpeg);
+        m_previousFrame = std::move(encoded.data);
     }
 }
 
-bool VideoRecorder::WriteJpeg(const std::vector<uint8_t>& jpeg)
+bool VideoRecorder::WriteFrameData(const std::vector<uint8_t>& data)
 {
     {
         std::lock_guard lock(m_mutex);
@@ -370,7 +466,7 @@ bool VideoRecorder::WriteJpeg(const std::vector<uint8_t>& jpeg)
         }
     }
     std::string error;
-    if (!m_writer.CanFit(jpeg.size()))
+    if (m_codec == VideoCodec::MjpegAvi && !m_writer.CanFit(data.size()))
     {
         // The file is as large as an AVI's 32-bit sizes allow: go on in the next one.
         const uint64_t fileBytes = m_writer.GetProjectedFileBytes();
@@ -390,7 +486,7 @@ bool VideoRecorder::WriteJpeg(const std::vector<uint8_t>& jpeg)
         }
         m_status.files.push_back(SegmentPath(segment));
     }
-    const bool written = m_writer.WriteFrame(jpeg, error);
+    const bool written = m_codec == VideoCodec::H264Mp4 ? m_mp4Writer.WriteFrame(data, error) : m_writer.WriteFrame(data, error);
     std::lock_guard lock(m_mutex);
     if (!written)
     {
@@ -398,9 +494,14 @@ bool VideoRecorder::WriteJpeg(const std::vector<uint8_t>& jpeg)
         return false;
     }
     ++m_status.framesWritten;
-    m_status.bytesWritten = m_finishedFileBytes + m_writer.GetProjectedFileBytes();
+    m_status.bytesWritten = m_finishedFileBytes + CurrentFileBytes();
     m_status.videoSeconds = static_cast<double>(m_status.framesWritten) / m_settings.framesPerSecond;
     return true;
+}
+
+uint64_t VideoRecorder::CurrentFileBytes() const
+{
+    return m_codec == VideoCodec::H264Mp4 ? m_mp4Writer.GetFileBytes() : m_writer.GetProjectedFileBytes();
 }
 
 std::filesystem::path VideoRecorder::SegmentPath(size_t segment) const

@@ -7,10 +7,22 @@
 ## 0. 范围
 
 - 录的是**视口**：色调映射后的 LDR 场景图（`SceneLdr`），与 Capture Viewport 的 PNG 是同一张图。ImGui 画的东西（gizmo、选中框、车辆叠加层、REC 标志）不在视频里。不录整个窗口，也不录声音。
-- 编辑器里用 **Tools > Record Viewport**（`Shift+F12`，工具栏播放按钮右边的按钮）开始和停止。文件写到 `captures/recording_<日期>_<时间>.avi`。
-- 脚本运行用 `--record <file.avi>`（可加 `--record-fps <n>`，默认 30），与 `--frames` 配合，用于复现和对比。
+- 编辑器里用 **Tools > Record Viewport**（`Shift+F12`，工具栏播放按钮右边的按钮）开始和停止。文件写到 `captures/recording_<日期>_<时间>.mp4`（没有 Media Foundation 的平台写 `.avi`）。
+- 脚本运行用 `--record <file.mp4>` 或 `--record <file.avi>`（可加 `--record-fps <n>`，默认 30），与 `--frames` 配合，用于复现和对比。格式按扩展名选（`VideoCodecForPath`）。
 
-## 1. 格式：MJPEG AVI
+## 1a. 格式：H.264 MP4（默认，2026-10-04 加）
+
+MJPEG AVI 的颜色在一些播放器里不对：JPEG 是全范围 YUV，Windows 的播放器等会按限制范围（16–235）解，结果对比度过高、颜色过浓。文件里的像素本身没错（最后一帧和 PNG 截图平均差 0.5/255）。要发到 Reddit 这类网站，改成它们直接接受的格式：
+
+- **编码：** Windows Media Foundation 的 sink writer（`Mp4H264Writer`），有 GPU 硬件编码器就用它。High profile，4:2:0，恒定帧率，码率 0.2 bit/像素/帧（4–120 Mbit/s，1080p30 约 12 Mbit/s），给网站自己的二次压缩留余量。不加新依赖，只链接系统的 `mfplat`/`mfreadwrite`/`mfuuid`。
+- **颜色：** 工作线程把 RGBA8（sRGB 编码）转成 NV12，**BT.709 限制范围**（`ConvertRgba8ToNv12`，16.16 定点），输入和输出类型都标上 range/matrix/primaries/transfer = 16–235/709/709/709，编码器把它写进 SPS 的 VUI。**[已验证：解析 SPS 得到 full_range 0，primaries/transfer/matrix 都是 1；Chromium 播放时解出的最后一帧与 PNG 截图平均差 0.45/255]**
+- **尺寸：** 4:2:0 要求偶数宽高，奇数视口丢掉最后一列/行。
+- **fast start：** Media Foundation 把 moov 写在文件末尾。它自带的 `MF_MPEG4SINK_MOOV_BEFORE_MDAT` 写出的文件 moov 之后的数据是坏的 **[已验证：解码 0 帧]**，所以不用它，而是在 `Finalize` 之后由 `MoveMp4IndexToFront` 重写文件：moov 挪到 mdat 前，`stco`/`co64` 里的偏移都加上 moov 的大小。浏览器可以边下边播。
+- **大小：** MP4 的大小是 64 位，不分段。录制中显示的大小是磁盘上的文件大小（sink writer 的统计只算到 sink 对象的几百字节）。
+- **速度：** 1080p 600 帧 2.5 s，约 240 fps（含转换和编码）**[已验证：本机 Windows]**。
+- 非 Windows 平台 `Mp4H264Writer::Open` 失败，编辑器改写 `.avi`。
+
+## 1. 格式：MJPEG AVI（`.avi`）
 
 每帧一张独立的 JPEG，装在 AVI（RIFF，带 `idx1` 索引）里。
 

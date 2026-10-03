@@ -17,6 +17,8 @@ add_library(engine_core
     version/engine_version.h
     video/mjpeg_avi_writer.cpp
     video/mjpeg_avi_writer.h
+    video/mp4_h264_writer.cpp
+    video/mp4_h264_writer.h
     video/video_recorder.cpp
     video/video_recorder.h
 )
@@ -58,5 +60,10 @@ if(WIN32)
     target_link_libraries(engine_core
         PUBLIC
             Xinput
+            # mp4_h264_writer.cpp: Media Foundation's sink writer and H.264 encoder.
+            mfplat
+            mfreadwrite
+            mfuuid
+            ole32
     )
 endif()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mjpeg_avi_writer.h"
+#include "mp4_h264_writer.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -35,17 +36,32 @@ enum class VideoPacing
     EveryFrame,
 };
 
+// What a recording is written as, chosen by the file's extension (VideoCodecForPath).
+enum class VideoCodec
+{
+    // .avi: every frame a JPEG. Any platform; large files, and some players decode its full-range
+    // YUV as limited range, so the colours come out with too much contrast.
+    MjpegAvi,
+    // .mp4: H.264 through Media Foundation, BT.709 limited range. Windows only. For sharing.
+    H264Mp4,
+};
+
+VideoCodec VideoCodecForPath(const std::filesystem::path& path);
+
 struct VideoRecordingSettings
 {
-    // An .avi; past MjpegAviWriter::kMaxFileBytes the recording continues in <stem>_2.avi, _3 ...
+    // An .mp4 (H264Mp4) or an .avi (MjpegAvi). Past MjpegAviWriter::kMaxFileBytes an AVI recording
+    // continues in <stem>_2.avi, _3 ... An MP4 has 64-bit sizes and stays one file.
     std::filesystem::path path;
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t framesPerSecond = 30;
-    // stb's JPEG quality, 1 to 100.
+    // stb's JPEG quality, 1 to 100 (MjpegAvi).
     int jpegQuality = 90;
+    // The H.264 bit rate (H264Mp4); 0 for Mp4H264Writer::DefaultBitsPerSecond.
+    uint32_t bitsPerSecond = 0;
     VideoPacing pacing = VideoPacing::RealTime;
-    // Where a file ends and the next begins; lowered by tests.
+    // Where an AVI file ends and the next begins; lowered by tests.
     uint64_t maxFileBytes = MjpegAviWriter::kMaxFileBytes;
 };
 
@@ -80,8 +96,12 @@ uint64_t VideoFramesStartedBy(double seconds, uint32_t framesPerSecond);
 // Converts a frame to tightly packed RGBA8.
 std::vector<uint8_t> ConvertVideoFrameToRgba8(const VideoFrame& frame, uint32_t width, uint32_t height);
 
-// Records frames to an MJPEG AVI. Frames are converted and JPEG-encoded on worker threads and
-// written in the order they were submitted, so Submit costs the caller a move. Not reusable after
+// Converts tightly packed RGBA8 (sRGB-encoded) of width x height to NV12 in BT.709 limited range,
+// keeping the top-left even width x height (an odd last column or row is cut: 4:2:0 needs pairs).
+std::vector<uint8_t> ConvertRgba8ToNv12(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height);
+
+// Records frames to an H.264 MP4 or an MJPEG AVI. Frames are converted (and JPEG-encoded) on worker
+// threads and written in the order they were submitted, so Submit costs the caller a move. Not reusable after
 // Stop: make a new one per recording.
 class VideoRecorder
 {
@@ -117,7 +137,8 @@ class VideoRecorder
     };
     struct Encoded
     {
-        std::vector<uint8_t> jpeg;
+        // A JPEG (MjpegAvi) or an NV12 frame for the H.264 encoder (H264Mp4).
+        std::vector<uint8_t> data;
         double timeSeconds = 0.0;
     };
 
@@ -127,10 +148,12 @@ class VideoRecorder
     // Writes one encoded frame, after repeating the one before for as long as it was on screen
     // (RealTime). Called with m_writeMutex held.
     void WriteEncoded(Encoded&& encoded);
-    bool WriteJpeg(const std::vector<uint8_t>& jpeg);
+    bool WriteFrameData(const std::vector<uint8_t>& data);
+    uint64_t CurrentFileBytes() const;
     std::filesystem::path SegmentPath(size_t segment) const;
 
     VideoRecordingSettings m_settings;
+    VideoCodec m_codec = VideoCodec::MjpegAvi;
     size_t m_maxPending = 0;
 
     mutable std::mutex m_mutex;
@@ -155,9 +178,10 @@ class VideoRecorder
     // The writer's state: held by whichever worker writes.
     std::mutex m_writeMutex;
     MjpegAviWriter m_writer;
+    Mp4H264Writer m_mp4Writer;
     // The bytes of the files already finished.
     uint64_t m_finishedFileBytes = 0;
-    std::vector<uint8_t> m_previousJpeg;
+    std::vector<uint8_t> m_previousFrame;
     bool m_haveFirstTime = false;
     double m_firstTime = 0.0;
 

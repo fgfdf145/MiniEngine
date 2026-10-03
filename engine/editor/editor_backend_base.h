@@ -60,7 +60,8 @@ class EditorRenderBackendBase : public IRenderBackend
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();
     void SaveEngineSettings();
-    // Tools > Record Viewport: starts a recording to captures/recording_<date>_<time>.avi, or stops
+    // Tools > Record Viewport: starts a recording to captures/recording_<date>_<time>.mp4 (.avi where
+    // there is no Media Foundation), or stops
     // the one running.
     void ToggleVideoRecordingFromEditor();
     // Every frame: stops a recording whose file could not be written, and updates what the viewport

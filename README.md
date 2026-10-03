@@ -140,7 +140,7 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --scene <path>      启动后加载指定场景文件，替换默认的双立方体测试场景
 --frames <count>    渲染指定正整数帧后退出
 --capture <file.png> 与 --frames 一起使用，退出前把最后一帧的视口（色调映射后的 LDR 图）保存为 PNG
---record <file.avi> 把视口录成 MJPEG AVI：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
+--record <file.mp4|file.avi> 把视口录成视频（.mp4 为 H.264，仅 Windows；.avi 为 MJPEG）：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
 --record-fps <n>    --record 的视频帧率，默认 30
 ```
 

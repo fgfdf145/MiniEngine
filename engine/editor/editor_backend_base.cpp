@@ -555,7 +555,8 @@ void EditorRenderBackendBase::ToggleVideoRecordingFromEditor()
         return;
     }
     VideoRecordingRequest request;
-    request.path = BuildCapturePath("recording", ".avi");
+    // H.264 MP4 where Media Foundation is there to encode it: small, and sites take it as is.
+    request.path = BuildCapturePath("recording", Mp4H264Writer::IsSupported() ? ".mp4" : ".avi");
     std::string error;
     if (!StartVideoRecording(request, error))
     {

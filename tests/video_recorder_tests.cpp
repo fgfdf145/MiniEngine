@@ -6,6 +6,19 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
+#endif
+
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -168,6 +181,197 @@ void TestPixelConversion()
     Require(fromHalf[1] == 188, "linear 0.5 is sRGB-encoded");
 }
 
+void TestNv12Conversion()
+{
+    // BT.709 limited range: white 235, black 16, chroma 128 for greys.
+    const auto convert = [](std::array<uint8_t, 3> rgb)
+    {
+        std::vector<uint8_t> rgba;
+        for (int texel = 0; texel < 4; ++texel)
+        {
+            rgba.insert(rgba.end(), {rgb[0], rgb[1], rgb[2], 255});
+        }
+        return ConvertRgba8ToNv12(rgba, 2, 2);
+    };
+    Require(convert({255, 255, 255}) == std::vector<uint8_t>{235, 235, 235, 235, 128, 128}, "white is Y 235, no chroma");
+    Require(convert({0, 0, 0}) == std::vector<uint8_t>{16, 16, 16, 16, 128, 128}, "black is Y 16, no chroma");
+    // Red: Y = 16 + 219 * 0.2126 = 62.6, Cb = 128 - 224 * 0.2126 / 1.8556 = 102.3, Cr = 128 + 112.
+    const std::vector<uint8_t> red = convert({255, 0, 0});
+    Require(red[0] == 63 && red[4] == 102 && red[5] == 240, "red has BT.709's luma and chroma");
+    // Blue: Y = 16 + 219 * 0.0722 = 31.8, Cb = 240, Cr = 128 - 224 * 0.0722 / 1.5748 = 117.7.
+    const std::vector<uint8_t> blue = convert({0, 0, 255});
+    Require(blue[0] == 32 && blue[4] == 240 && blue[5] == 118, "blue has BT.709's luma and chroma");
+
+    // An odd size loses its last column and row; the chroma is each 2x2 block's average.
+    std::vector<uint8_t> odd(3 * 3 * 4, 0);
+    for (int texel : {0, 3})
+    {
+        odd[texel * 4 + 0] = odd[texel * 4 + 1] = odd[texel * 4 + 2] = 255; // (0,0) and (0,1) white
+    }
+    const std::vector<uint8_t> cut = ConvertRgba8ToNv12(odd, 3, 3);
+    Require(cut.size() == 2 * 2 * 3 / 2, "an odd frame becomes the even one inside it");
+    Require(cut[0] == 235 && cut[1] == 16 && cut[2] == 235 && cut[3] == 16, "the rows keep their place");
+    Require(cut[4] == 128 && cut[5] == 128, "grey averages to no chroma");
+}
+
+#ifdef _WIN32
+// What a player sees in an MP4: the stream's size and colour signalling, and each frame decoded to NV12.
+struct DecodedMp4
+{
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t nominalRange = 0;
+    uint32_t matrix = 0;
+    uint32_t primaries = 0;
+    std::vector<std::vector<uint8_t>> frames; // tightly packed NV12
+};
+
+DecodedMp4 DecodeMp4(const std::filesystem::path& path)
+{
+    using Microsoft::WRL::ComPtr;
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    Require(SUCCEEDED(MFStartup(MF_VERSION)), "Media Foundation starts");
+    DecodedMp4 decoded;
+    {
+        ComPtr<IMFSourceReader> reader;
+        Require(SUCCEEDED(MFCreateSourceReaderFromURL(path.wstring().c_str(), nullptr, &reader)), "the MP4 opens");
+        const DWORD stream = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+        ComPtr<IMFMediaType> native;
+        Require(SUCCEEDED(reader->GetNativeMediaType(stream, 0, &native)), "the MP4 has a video stream");
+        GUID subtype{};
+        native->GetGUID(MF_MT_SUBTYPE, &subtype);
+        Require(subtype == MFVideoFormat_H264, "the stream is H.264");
+        MFGetAttributeSize(native.Get(), MF_MT_FRAME_SIZE, &decoded.width, &decoded.height);
+        decoded.nominalRange = MFGetAttributeUINT32(native.Get(), MF_MT_VIDEO_NOMINAL_RANGE, 0);
+        decoded.matrix = MFGetAttributeUINT32(native.Get(), MF_MT_YUV_MATRIX, 0);
+        decoded.primaries = MFGetAttributeUINT32(native.Get(), MF_MT_VIDEO_PRIMARIES, 0);
+
+        ComPtr<IMFMediaType> nv12;
+        MFCreateMediaType(&nv12);
+        nv12->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        nv12->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+        Require(SUCCEEDED(reader->SetCurrentMediaType(stream, nullptr, nv12.Get())), "the stream decodes to NV12");
+        while (true)
+        {
+            DWORD flags = 0;
+            ComPtr<IMFSample> sample;
+            Require(SUCCEEDED(reader->ReadSample(stream, 0, nullptr, &flags, nullptr, &sample)), "the frames decode");
+            if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+            {
+                break;
+            }
+            if (!sample)
+            {
+                continue;
+            }
+            ComPtr<IMFMediaBuffer> buffer;
+            sample->ConvertToContiguousBuffer(&buffer);
+            ComPtr<IMF2DBuffer> buffer2d;
+            std::vector<uint8_t> frame(static_cast<size_t>(decoded.width) * decoded.height * 3 / 2);
+            BYTE* scanline = nullptr;
+            LONG pitch = 0;
+            if (SUCCEEDED(buffer.As(&buffer2d)) && SUCCEEDED(buffer2d->Lock2D(&scanline, &pitch)))
+            {
+                // The decoder's planes are padded to 16 rows: the chroma starts after the padded height.
+                ComPtr<IMFMediaType> current;
+                reader->GetCurrentMediaType(stream, &current);
+                UINT32 paddedWidth = 0, paddedHeight = 0;
+                MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &paddedWidth, &paddedHeight);
+                for (uint32_t row = 0; row < decoded.height; ++row)
+                {
+                    std::memcpy(frame.data() + static_cast<size_t>(row) * decoded.width, scanline + static_cast<size_t>(row) * pitch, decoded.width);
+                }
+                const BYTE* chroma = scanline + static_cast<size_t>(paddedHeight) * pitch;
+                for (uint32_t row = 0; row < decoded.height / 2; ++row)
+                {
+                    std::memcpy(
+                        frame.data() + static_cast<size_t>(decoded.width) * decoded.height + static_cast<size_t>(row) * decoded.width,
+                        chroma + static_cast<size_t>(row) * pitch,
+                        decoded.width);
+                }
+                buffer2d->Unlock2D();
+            }
+            else
+            {
+                BYTE* data = nullptr;
+                DWORD length = 0;
+                Require(SUCCEEDED(buffer->Lock(&data, nullptr, &length)), "a frame's buffer locks");
+                Require(length >= frame.size(), "a decoded frame has the stream's size");
+                std::memcpy(frame.data(), data, frame.size());
+                buffer->Unlock();
+            }
+            decoded.frames.push_back(std::move(frame));
+        }
+    }
+    MFShutdown();
+    return decoded;
+}
+
+void TestMp4RecordingDecodes()
+{
+    const std::filesystem::path path = TempPath("miniengine_video_test.mp4");
+    VideoRecordingSettings settings;
+    settings.path = path;
+    // Odd on purpose: the video is the even 320 x 240 inside it.
+    settings.width = 321;
+    settings.height = 241;
+    settings.framesPerSecond = 30;
+    settings.pacing = VideoPacing::EveryFrame;
+    VideoRecorder recorder;
+    std::string error;
+    Require(recorder.Start(settings, error), "the MP4 recording starts: " + error);
+    for (int frame = 0; frame < 20; ++frame)
+    {
+        const uint8_t level = static_cast<uint8_t>(frame * 12);
+        recorder.Submit(SplitFrame(321, 241, {level, level, level}, {0, 0, 255}, 0.0));
+    }
+    const VideoRecordingStatus status = recorder.Stop();
+    Require(status.error.empty(), "the MP4 recording has no error: " + status.error);
+    Require(status.framesWritten == 20, "every frame is one video frame");
+    Require(status.bytesWritten == std::filesystem::file_size(path), "the status has the file's size");
+
+    // Fast start: the moov box (the index) comes before the media data.
+    const std::vector<uint8_t> bytes = ReadFile(path);
+    size_t moov = 0;
+    size_t mdat = 0;
+    for (size_t offset = 0; offset + 8 <= bytes.size();)
+    {
+        const uint32_t size = (bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
+        if (FourCcAt(bytes, offset + 4, "moov"))
+            moov = offset + 1;
+        if (FourCcAt(bytes, offset + 4, "mdat"))
+            mdat = offset + 1;
+        if (size < 8)
+            break;
+        offset += size;
+    }
+    Require(moov != 0 && mdat != 0 && moov < mdat, "the moov box comes before mdat");
+
+    const DecodedMp4 decoded = DecodeMp4(path);
+    std::filesystem::remove(path);
+    Require(decoded.width == 320 && decoded.height == 240, "the video is the even size inside the frames");
+    Require(decoded.nominalRange == MFNominalRange_16_235, "the stream says limited range");
+    Require(decoded.matrix == MFVideoTransferMatrix_BT709, "the stream says BT.709's matrix");
+    Require(decoded.primaries == MFVideoPrimaries_BT709, "the stream says BT.709's primaries");
+    Require(decoded.frames.size() == 20, "the file has every frame: " + std::to_string(decoded.frames.size()));
+    const auto within = [](int value, int expected, int tolerance)
+    {
+        return std::abs(value - expected) <= tolerance;
+    };
+    for (int frame = 0; frame < 20; ++frame)
+    {
+        const std::vector<uint8_t>& nv12 = decoded.frames[frame];
+        const int expected = 16 + (219 * frame * 12 + 127) / 255;
+        Require(within(nv12[120 * 320 + 40], expected, 4), "frame " + std::to_string(frame) + " is in its place with its grey");
+    }
+    // The right half's blue, in the chroma plane (Cb Cr pairs, half size): Y 32, Cb 240, Cr 118.
+    const std::vector<uint8_t>& last = decoded.frames.back();
+    const size_t chroma = 320 * 240 + 60 * 320 + 240;
+    Require(within(last[120 * 320 + 280], 32, 4), "blue keeps its luma");
+    Require(within(last[chroma], 240, 6) && within(last[chroma + 1], 118, 6), "blue keeps its chroma: not swapped or mirrored");
+}
+#endif
+
 void TestWriterProducesAPlayableAvi()
 {
     const std::filesystem::path path = TempPath("miniengine_video_writer_test.avi");
@@ -309,6 +513,10 @@ int main()
     {
         TestFramesStartedBy();
         TestPixelConversion();
+        TestNv12Conversion();
+#ifdef _WIN32
+        TestMp4RecordingDecodes();
+#endif
         TestWriterProducesAPlayableAvi();
         TestEveryFramePacing();
         TestRealTimePacing();
