@@ -81,7 +81,11 @@ ImGuizmo::OPERATION ParseOperation(
     {
         return ImGuizmo::SCALE;
     }
-    if (value == "combined" || value == "translate" || value == "rotate")
+    if (value == "rotate")
+    {
+        return ImGuizmo::ROTATE;
+    }
+    if (value == "combined" || value == "translate")
     {
         return kCombinedGizmoOperation;
     }
@@ -99,7 +103,11 @@ ImGuizmo::MODE ParseMode(const std::string& value)
 
 const char* ToString(ImGuizmo::OPERATION operation)
 {
-    return operation == ImGuizmo::SCALE ? "scale" : "combined";
+    if (operation == ImGuizmo::SCALE)
+    {
+        return "scale";
+    }
+    return operation == ImGuizmo::ROTATE ? "rotate" : "combined";
 }
 
 const char* ToString(ImGuizmo::MODE mode)

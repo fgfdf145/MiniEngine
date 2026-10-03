@@ -150,9 +150,23 @@ struct DdgiSettings
     int probeViewLevel = 0;
 };
 
+// The operator the tone mapping pass applies to the shaded image (the G-buffer views pick their own).
+// The numeric values are not the tonemap.frag push constant: VulkanTonemapPass maps them.
+enum class ToneMapper : uint32_t
+{
+    // GT7's operator, SDR or HDR10 (gt7_tonemap.glsl).
+    Gt7 = 0,
+    // Khronos PBR Neutral on the exposed value, without the Khronos reference view's viewer encoding.
+    PbrNeutral = 1,
+    // The exposed value clipped to the display's range: no curve, to see what the operator changes.
+    None = 2
+};
+
 struct RenderDebugSettings
 {
     GBufferDebugView gbufferView = GBufferDebugView::Off;
+    // The Khronos reference view uses PBR Neutral whatever this says.
+    ToneMapper toneMapper = ToneMapper::Gt7;
     // Records the forward-only order instead of the deferred one: the comparison switch that makes
     // pixel equivalence something a reviewer flips rather than judges.
     bool forwardOnly = false;

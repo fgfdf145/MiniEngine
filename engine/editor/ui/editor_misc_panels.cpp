@@ -2,12 +2,18 @@
 #include "editor_ui_internal.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
+#include <engine/core/version/engine_version.h>
 #include <engine/platform/ui/ui_scale.h>
 #include <engine/renderer/glare.h>
+#include <SDL3/SDL.h>
 #include <imgui.h>
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -181,6 +187,15 @@ void EditorUiController::DrawGraphicsDebugPanel()
         ImGui::BeginDisabled(!m_renderDebug.hdrOutput);
         DragFloatInRange("Display peak (nits)", &m_renderDebug.hdrPeakNits, 250.0f, 10000.0f, "%.0f");
         ImGui::EndDisabled();
+        // Also Render > Tone Mapping. The Khronos reference view always uses PBR Neutral.
+        static constexpr std::array<const char*, 3> kToneMapperNames = {"GT7", "PBR Neutral", "None (clipped)"};
+        int toneMapper = static_cast<int>(m_renderDebug.toneMapper);
+        ImGui::BeginDisabled(m_renderDebug.khronosReference);
+        if (ImGui::Combo("Tone mapping", &toneMapper, kToneMapperNames.data(), static_cast<int>(kToneMapperNames.size())))
+        {
+            m_renderDebug.toneMapper = static_cast<ToneMapper>(toneMapper);
+        }
+        ImGui::EndDisabled();
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
@@ -315,5 +330,110 @@ void EditorUiController::DrawInputMonitorPanel()
         ImGui::EndChild();
     }
     ImGui::End();
+}
+
+void EditorUiController::FocusWindowWhenDrawn(std::string windowName)
+{
+    m_focusWindowRequest = std::move(windowName);
+}
+
+void EditorUiController::DrawPreferencesWindow()
+{
+    ImGui::SetNextWindowSize(ImVec2(420.0f * m_effectiveUiScale, 0.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Preferences", &m_showPreferencesWindow))
+    {
+        ImGui::SeparatorText("Interface");
+        // The same setting as the Camera panel's, saved with the editor settings.
+        if (DragFloatInRange("UI Scale Multiplier", &m_uiScale, 0.75f, 2.50f, "%.2f x"))
+        {
+            ApplyUiScale();
+        }
+        ImGui::Text("Effective UI Scale: %.2f x", m_effectiveUiScale);
+        ImGui::SeparatorText("Theme");
+        ImGui::TextUnformatted("The editor's colours are edited in the Theme window.");
+        if (ImGui::Button("Open Theme"))
+        {
+            m_showThemeWindow = true;
+            FocusWindowWhenDrawn("Theme");
+        }
+        ImGui::SeparatorText("Rendering");
+        ImGui::TextUnformatted("Debug views, tone mapping and the render passes' switches are in");
+        ImGui::TextUnformatted("the Graphics Debug window.");
+        if (ImGui::Button("Open Graphics Debug"))
+        {
+            m_showGraphicsDebugWindow = true;
+            FocusWindowWhenDrawn("Graphics Debug");
+        }
+    }
+    ImGui::End();
+}
+
+void EditorUiController::OpenDocumentation()
+{
+    const std::filesystem::path readme = EnginePaths::ProjectRoot() / "README.md";
+    std::error_code error;
+    if (!std::filesystem::exists(readme, error))
+    {
+        LOG_WARN("No documentation at {}", readme.string());
+        return;
+    }
+    // A file URL: three slashes before a drive letter, two before an absolute POSIX path. Spaces are
+    // the one character project paths commonly hold that a URL cannot.
+    std::string path = std::filesystem::absolute(readme, error).generic_string();
+    std::string url = path.starts_with('/') ? "file://" : "file:///";
+    for (const char character : path)
+    {
+        url += character == ' ' ? std::string("%20") : std::string(1, character);
+    }
+    if (!SDL_OpenURL(url.c_str()))
+    {
+        LOG_WARN("Could not open {}: {}", url, SDL_GetError());
+    }
+}
+
+void EditorUiController::DrawHelpWindows(bool fullscreen)
+{
+    // The About modal also shows over the fullscreen viewport; the shortcuts window waits for it to end.
+    if (!fullscreen && m_showKeyboardShortcutsWindow)
+    {
+        // Keys the viewport handles itself, not through a command.
+        static constexpr std::array<std::pair<const char*, const char*>, 6> kViewportKeys = {{
+            {"W A S D", "Move the camera"},
+            {"Right mouse", "Look around"},
+            {"Middle mouse", "Pan"},
+            {"R", "Toggle the combined and scale gizmo"},
+            {"F", "Frame the selection"},
+            {"Escape", "Leave the fullscreen viewport"},
+        }};
+        ImGui::SetNextWindowSize(ImVec2(460.0f * m_effectiveUiScale, 520.0f * m_effectiveUiScale), ImGuiCond_FirstUseEver);
+        DrawKeyboardShortcutsWindow(m_commands, &m_showKeyboardShortcutsWindow, kViewportKeys);
+    }
+
+    constexpr const char* kAboutTitle = "About MiniEngine";
+    if (std::exchange(m_openAboutModal, false))
+    {
+        ImGui::OpenPopup(kAboutTitle);
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kAboutTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("MiniEngine %s", EngineVersion::String());
+        ImGui::TextUnformatted("A Vulkan renderer and scene editor.");
+        ImGui::Separator();
+        const int sdlVersion = SDL_GetVersion();
+        ImGui::TextDisabled(
+            "Dear ImGui %s, SDL %d.%d.%d",
+            ImGui::GetVersion(),
+            SDL_VERSIONNUM_MAJOR(sdlVersion),
+            SDL_VERSIONNUM_MINOR(sdlVersion),
+            SDL_VERSIONNUM_MICRO(sdlVersion));
+        ImGui::TextDisabled("Project folder: %s", EnginePaths::ProjectRoot().string().c_str());
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(120.0f * m_effectiveUiScale, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 }

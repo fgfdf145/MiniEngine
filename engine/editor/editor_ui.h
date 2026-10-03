@@ -189,6 +189,11 @@ class EditorUiController
     void HandleFileCommands(IEditorWorld& scene, EditorUiFrameResult& result);
     // Asks before New Scene or Clear Scene throws the scene's contents away.
     void DrawSceneResetConfirmModal(EditorUiFrameResult& result);
+    // The Help menu's windows, the Preferences window and the window focus they ask for.
+    void DrawHelpWindows(bool fullscreen);
+    void DrawPreferencesWindow();
+    void OpenDocumentation();
+    void FocusWindowWhenDrawn(std::string windowName);
     void ApplyEngineSettings(const EngineSettings& settings);
     // The key a Window-menu window's open state is saved under.
     static std::string PanelSettingsKey(const EditorPanel& panel);
@@ -383,6 +388,12 @@ class EditorUiController
     };
     std::optional<SceneReset> m_pendingSceneReset; // waiting for the confirmation modal
     bool m_openSceneResetModal = false;
+    CommandPalette m_commandPalette;
+    bool m_showKeyboardShortcutsWindow = false;
+    bool m_showPreferencesWindow = false;
+    bool m_openAboutModal = false;
+    // A window a command opened, brought to the front once it has been drawn.
+    std::string m_focusWindowRequest;
     EditorUiActions m_commandActions; // what the Edit and Scene commands asked for this frame
     bool m_hasSceneSelection = false; // at the start of this frame, for Delete
 };

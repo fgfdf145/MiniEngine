@@ -1064,6 +1064,7 @@ void VulkanRenderer::DrawFrame()
     // The Khronos reference view renders what the Sample Viewer does: no glare or bloom (nor AO or
     // SSR, above and below).
     frame.khronosReference = renderDebug.khronosReference;
+    frame.toneMapper = renderDebug.toneMapper;
     frame.bloom.enabled = renderDebug.bloom.enabled && !renderDebug.khronosReference;
 
     frame.whiteBalance = UpdateWhiteBalance();

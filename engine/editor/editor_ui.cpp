@@ -105,6 +105,30 @@ void EditorUiController::RegisterCommands()
     {
         m_commandActions.stepVehicleDrive = true;
     };
+    scene.openPreferences = [this]
+    {
+        m_showPreferencesWindow = true;
+        FocusWindowWhenDrawn("Preferences");
+    };
+    // The scene's environment, fog and clouds are edited in the Scene panel.
+    scene.openSceneSettings = [this]
+    {
+        m_showSceneWindow = true;
+        FocusWindowWhenDrawn("Scene");
+    };
+    scene.showDocumentation = [this]
+    {
+        OpenDocumentation();
+    };
+    scene.showKeyboardShortcuts = [this]
+    {
+        m_showKeyboardShortcutsWindow = true;
+        FocusWindowWhenDrawn("Keyboard Shortcuts");
+    };
+    scene.showAbout = [this]
+    {
+        m_openAboutModal = true;
+    };
     RegisterEditorCommands(m_commands, m_commandState, window, scene);
     m_toolbarLayout = BuildEditorToolbarLayout();
 }
@@ -182,7 +206,9 @@ EditorUiFrameResult EditorUiController::Draw(
     const EditorCommandState commandStateBefore = m_commandState;
     ProcessCommandShortcuts(m_commands);
     // Escape leaves the fullscreen viewport as F11 does: with no menu there is nothing else to click.
-    if (m_commandState.viewportFullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    // An open popup (a typed-path prompt, the command palette) takes Escape to close itself instead.
+    if (m_commandState.viewportFullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
     {
         m_commandState.viewportFullscreen = false;
     }
@@ -193,6 +219,12 @@ EditorUiFrameResult EditorUiController::Draw(
         DrawMainMenu(m_commands);
         DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
     }
+    // Before the command state is applied, so what a command picked here shows this frame.
+    if (std::exchange(m_commandState.commandPaletteRequested, false))
+    {
+        m_commandPalette.Open();
+    }
+    m_commandPalette.Draw(m_commands, m_effectiveUiScale);
     ApplyCommandStateToEditor(commandStateBefore, scene);
     if (!fullscreen)
     {
@@ -201,8 +233,6 @@ EditorUiFrameResult EditorUiController::Draw(
     result.actions = std::exchange(m_commandActions, {});
     HandleFileCommands(scene, result);
     DrawSceneResetConfirmModal(result);
-    // TODO: draw the command palette while m_commandState.commandPaletteRequested is set.
-    m_commandState.commandPaletteRequested = false;
 
     // The fullscreen viewport is all there is: every panel waits for it to end.
     if (!fullscreen && m_showCameraWindow)
@@ -270,6 +300,18 @@ EditorUiFrameResult EditorUiController::Draw(
         DrawAssetBrowserPanel(result);
     }
 
+    if (!fullscreen && m_showPreferencesWindow)
+    {
+        DrawPreferencesWindow();
+    }
+    DrawHelpWindows(fullscreen);
+    // Once every window has been drawn, so one opened this frame exists to be focused.
+    if (!fullscreen && !m_focusWindowRequest.empty())
+    {
+        ImGui::SetWindowFocus(m_focusWindowRequest.c_str());
+        m_focusWindowRequest.clear();
+    }
+
     bool windowToggled = false;
     for (size_t index = 0; index < m_panels.size(); ++index)
     {
@@ -300,23 +342,16 @@ void EditorUiController::UpdateWindowFullscreen()
 
 void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
 {
-    m_commandState.transformTool =
-        scene.GetGizmoSettings().operation == ImGuizmo::SCALE ? TransformTool::Scale : TransformTool::Move;
-    // The other G-buffer views have no View command; the menu keeps its last choice for them.
-    switch (m_renderDebug.gbufferView)
-    {
-    case GBufferDebugView::Off:
-        m_commandState.debugView = ViewportDebugView::Lit;
-        break;
-    case GBufferDebugView::Albedo:
-        m_commandState.debugView = ViewportDebugView::Albedo;
-        break;
-    case GBufferDebugView::Normal:
-        m_commandState.debugView = ViewportDebugView::Normal;
-        break;
-    default:
-        break;
-    }
+    const ImGuizmo::OPERATION operation = scene.GetGizmoSettings().operation;
+    m_commandState.transformTool = operation == ImGuizmo::SCALE    ? TransformTool::Scale
+                                   : operation == ImGuizmo::ROTATE ? TransformTool::Rotate
+                                                                   : TransformTool::Move;
+    // Every debug view has a View command, so the menu and the toolbar show whichever is set, also
+    // when the Graphics Debug panel set it.
+    m_commandState.debugView = m_renderDebug.gbufferView;
+    m_commandState.gbufferAvailable = !m_renderDebug.forwardOnly;
+    m_commandState.toneMapping = m_renderDebug.toneMapper;
+    m_commandState.khronosReference = m_renderDebug.khronosReference;
     m_commandState.antiAliasing = m_renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
     m_commandState.playState = !m_vehicleStatus.active ? PlayState::Stopped
@@ -326,8 +361,6 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
 
 void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene)
 {
-    // A choice with nothing behind it yet changes nothing, and the next frame's sync shows the
-    // editor's own state again.
     if (m_commandState.transformTool != before.transformTool)
     {
         GizmoSettings& gizmo = scene.GetGizmoSettings();
@@ -340,25 +373,17 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
             gizmo.operation = ImGuizmo::SCALE;
             break;
         case TransformTool::Rotate:
+            gizmo.operation = ImGuizmo::ROTATE;
             break;
         }
     }
     if (m_commandState.debugView != before.debugView)
     {
-        switch (m_commandState.debugView)
-        {
-        case ViewportDebugView::Lit:
-            m_renderDebug.gbufferView = GBufferDebugView::Off;
-            break;
-        case ViewportDebugView::Albedo:
-            m_renderDebug.gbufferView = GBufferDebugView::Albedo;
-            break;
-        case ViewportDebugView::Normal:
-            m_renderDebug.gbufferView = GBufferDebugView::Normal;
-            break;
-        default:
-            break;
-        }
+        m_renderDebug.gbufferView = m_commandState.debugView;
+    }
+    if (m_commandState.toneMapping != before.toneMapping)
+    {
+        m_renderDebug.toneMapper = m_commandState.toneMapping;
     }
     if (m_commandState.antiAliasing != before.antiAliasing)
     {

@@ -99,6 +99,8 @@ struct ScenePassFrameContext
     // The Khronos reference view: Khronos PBR Neutral instead of GT7's operator, and an HDRI
     // background blurred as the Sample Viewer blurs it.
     bool khronosReference = false;
+    // The operator for the shaded image; the Khronos reference view overrides it.
+    ToneMapper toneMapper = ToneMapper::Gt7;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
