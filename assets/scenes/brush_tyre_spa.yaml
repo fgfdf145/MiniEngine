@@ -1,0 +1,60 @@
+# The brush tyre at Spa: the Nissan GT-R GT3 on the start-finish straight, pointing along the road.
+# Select-and-drive as in brush_tyre_test_track.yaml (Vehicle panel, "Tyre Model", Drive / F5). The track
+# collides at its own surfaces' friction (road, kerbs, grass, gravel from surfaces.ini).
+# If the car faces the wrong way for you, turn it half a turn (rotation y 30.26) before driving.
+# Needs Spa and the GT-R imported from Assetto Corsa at assets/spa and assets/nissan_gtr_gt3 (not in git).
+scene:
+  version: 3
+  selected_entity_uuid: 2b7e1c40-6a1d-4f8e-9c3b-1d2e3f405202
+  selected_entity: 0
+entities:
+  - entity_uuid: 2b7e1c40-6a1d-4f8e-9c3b-1d2e3f405201
+    tag: spa
+    model:
+      display_name: spa.gltf
+      source_path: assets/spa/spa.gltf
+      source_uuid: 5a0ab1ba-d92a-4846-8166-02c9502b1c1b
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 2b7e1c40-6a1d-4f8e-9c3b-1d2e3f405202
+    tag: nissan_gtr_gt3
+    model:
+      display_name: nissan_gtr_gt3.gltf
+      source_path: assets/nissan_gtr_gt3/nissan_gtr_gt3.gltf
+      source_uuid: 5226e6cc-0904-4320-afe3-50821f29d39c
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [244.09, 19.0, 615.62]
+      rotation: [0, -149.74, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 2b7e1c40-6a1d-4f8e-9c3b-1d2e3f405203
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    transform:
+      translation: [0, 10, 0]
+      rotation: [0, -30, 44]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+editor:
+  gizmo:
+    operation: translate
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
