@@ -311,7 +311,16 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     session->physics->SetVehicleControls(session->vehicle, controls);
     if (!session->paused)
     {
-        session->physics->Update(deltaSeconds);
+        // At most this long on physics a frame, so a world too slow for real time slows down rather
+        // than the frame rate.
+        constexpr float kPhysicsBudgetSeconds = 0.025f;
+        const int steps = session->physics->Update(deltaSeconds, kPhysicsBudgetSeconds);
+        if (deltaSeconds > 0.0f)
+        {
+            const float share = std::min(steps * PhysicsWorld::kFixedStepSeconds / deltaSeconds, 1.0f);
+            const float blend = 1.0f - std::exp(-deltaSeconds / 1.0f);
+            session->realTimeShare += (share - session->realTimeShare) * blend;
+        }
     }
     else if (session->stepRequested)
     {
@@ -366,6 +375,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.linkage = session->physics->GetVehicleLinkage(session->vehicle);
         status.staticBodyCount = session->physics->GetStaticBodyCount();
         status.staticTriangleCount = session->physics->GetStaticTriangleCount();
+        status.realTimeShare = session->realTimeShare;
     }
     return status;
 }

@@ -33,6 +33,16 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     ImGui::Text("Speed: %.0f km/h", std::abs(telemetry.forwardSpeed) * 3.6f);
     ImGui::Text("Engine: %.0f rpm   Gear: %s", telemetry.engineRpm, GetGearLabel(telemetry.gear));
     ImGui::Text("Wheels on the ground: %u of 4", telemetry.wheelsInContact);
+    if (status.realTimeShare < 0.95f)
+    {
+        // The physics can't keep up: the drive is in slow motion (a debug build runs the multibody car
+        // and its tyres many times slower than a release one).
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Physics at %.0f%% of real time (slow motion)", status.realTimeShare * 100.0f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The physics steps at 1000 Hz and gets at most 25 ms a frame. A Debug build runs the\nmultibody suspension and the brush tyres 15-20 times slower than Release: use the Release build to drive.");
+        }
+    }
     ImGui::TextDisabled(
         "Collision: %zu static bodies, %zu triangles",
         status.staticBodyCount,

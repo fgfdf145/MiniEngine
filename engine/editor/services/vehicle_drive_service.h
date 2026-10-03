@@ -80,6 +80,9 @@ struct VehicleDriveStatus
     VehicleLinkage linkage;
     size_t staticBodyCount = 0;
     size_t staticTriangleCount = 0;
+    // How much of real time the physics kept up with over the last second or so (1 is real time;
+    // less when the build or the car is too slow and the drive runs in slow motion).
+    float realTimeShare = 1.0f;
     std::string lastError;
 };
 
@@ -113,6 +116,8 @@ struct VehicleDriveSession
     glm::vec3 scale{1.0f};
     // Turns vehicle space into the model's own: the entity's rotation is the body's times this.
     glm::quat vehicleToModel{1.0f, 0.0f, 0.0f, 0.0f};
+    // The share of real time the physics has kept up with, smoothed over about a second.
+    float realTimeShare = 1.0f;
     Camera cameraBeforeDriving;
     std::unique_ptr<PhysicsWorld> physics;
     VehicleId vehicle = 0;

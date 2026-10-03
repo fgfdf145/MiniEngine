@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -1668,8 +1669,10 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     return telemetry;
 }
 
-int PhysicsWorld::Update(float deltaSeconds)
+int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
 {
+    const auto started = std::chrono::steady_clock::now();
+    bool outOfTime = false;
     Impl& impl = *m_impl;
     if (impl.broadPhaseDirty)
     {
@@ -1715,8 +1718,13 @@ int PhysicsWorld::Update(float deltaSeconds)
         }
         impl.accumulatedSeconds -= kFixedStepSeconds;
         ++steps;
+        if (wallBudgetSeconds > 0.0f && std::chrono::duration<float>(std::chrono::steady_clock::now() - started).count() > wallBudgetSeconds)
+        {
+            outOfTime = true;
+            break;
+        }
     }
-    if (steps == kMaxStepsPerUpdate)
+    if (steps == kMaxStepsPerUpdate || outOfTime)
     {
         impl.accumulatedSeconds = std::min(impl.accumulatedSeconds, kFixedStepSeconds);
     }

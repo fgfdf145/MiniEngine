@@ -161,8 +161,11 @@ class PhysicsWorld
     VehicleLinkage GetVehicleLinkage(VehicleId vehicle) const;
     VehicleTelemetry GetVehicleTelemetry(VehicleId vehicle) const;
 
-    // Returns how many fixed steps ran.
-    int Update(float deltaSeconds);
+    // Returns how many fixed steps ran. With a wall-clock budget (seconds, 0 for none) the steps stop
+    // once that much real time has gone and the backlog is dropped as for a capped frame: a world too
+    // slow to keep up with real time (a debug build, a heavy car) then runs in slow motion instead of
+    // taking the frame rate down with it.
+    int Update(float deltaSeconds, float wallBudgetSeconds = 0.0f);
 
   private:
     struct Impl;
