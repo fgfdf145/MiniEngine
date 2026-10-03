@@ -33,3 +33,6 @@ CMakeLists.txt text eol=crlf
 
 # Fonts embedded into the editor binary.
 *.ttf binary
+
+# Reference papers kept with the design docs.
+*.pdf binary
