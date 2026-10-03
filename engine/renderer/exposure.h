@@ -54,6 +54,8 @@ inline constexpr uint32_t kExposureHistogramBinCount = 256;
 
 struct AutoExposureSettings
 {
+    bool operator==(const AutoExposureSettings&) const = default;
+
     bool enabled = true;
 
     // Added on top of the metered exposure, in stops. Positive brightens the image.

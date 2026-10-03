@@ -46,6 +46,7 @@ add_library(engine_editor
     ui/editor_suspension_rigs.h
     ui/editor_vehicle_panel.cpp
     ui/editor_viewport_panel.cpp
+    view_settings_fields.h
 )
 miniengine_group_target_sources(engine_editor)
 

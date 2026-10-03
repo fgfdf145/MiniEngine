@@ -28,6 +28,8 @@ inline constexpr float kMaxWhiteBalanceTargetKelvin = 7500.0f;
 
 struct AutoWhiteBalanceSettings
 {
+    bool operator==(const AutoWhiteBalanceSettings&) const = default;
+
     bool enabled = true;
     // Degree of chromatic adaptation: 1 balances fully to D65, 0 not at all.
     // Partial: the estimate is uncertain and the eye never fully discounts the light either.

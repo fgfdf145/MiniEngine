@@ -75,6 +75,59 @@ void TestWindowStatesSurviveTheSettingsFile()
     Require(loaded.editorUi.windows.open == saved.editorUi.windows.open, "every window's open state comes back");
 }
 
+// The camera's and the renderer's settings survive the settings file, field for field.
+void TestViewSettingsSurviveTheSettingsFile()
+{
+    Camera camera;
+    camera.fovDegrees = 62.5f;
+    camera.farPlane = 4321.0f;
+    camera.mouseSensitivity = 0.37f;
+    camera.autoExposure.enabled = false;
+    camera.exposureEv100 = 11.25f;
+    camera.autoExposure.compensationEv = -0.7f;
+    camera.autoWhiteBalance.enabled = false;
+    camera.autoWhiteBalance.degree = 0.35f;
+    camera.autoWhiteBalance.targetKelvin = 5600.0f;
+    RenderDebugSettings renderDebug;
+    renderDebug.gbufferView = GBufferDebugView::Normal;
+    renderDebug.toneMapper = ToneMapper::PbrNeutral;
+    renderDebug.taa = false;
+    renderDebug.shadowDistance = 150.0f;
+    renderDebug.renderScale = 0.75f;
+    renderDebug.ao.sliceCount = 3;
+    renderDebug.ddgi.hysteresis = 0.9f;
+    renderDebug.bloom.strength = 0.123456789f;
+
+    EngineSettings saved;
+    Require(UpdateEngineViewSettings(saved.view, camera, renderDebug), "changed settings mark the view changed");
+    Require(!UpdateEngineViewSettings(saved.view, camera, renderDebug), "the same settings again change nothing");
+    Require(saved.view.renderDebug.gbufferView == GBufferDebugView::Off, "the G-buffer view is not saved");
+
+    // While auto exposure runs, the exposure it writes is not a setting.
+    Camera autoCamera = camera;
+    autoCamera.autoExposure.enabled = true;
+    autoCamera.exposureEv100 = 3.0f;
+    EngineViewSettings autoView = saved.view;
+    UpdateEngineViewSettings(autoView, autoCamera, renderDebug);
+    Require(autoView.exposureEv100 == 11.25f, "auto exposure keeps the manual exposure");
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_view_settings_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.view == saved.view, "every camera and render setting comes back");
+
+    Camera applied;
+    RenderDebugSettings appliedDebug;
+    appliedDebug.gbufferView = GBufferDebugView::GeometricNormal;
+    ApplyEngineViewSettings(loaded.view, applied, appliedDebug);
+    Require(applied.fovDegrees == 62.5f && applied.autoWhiteBalance.targetKelvin == 5600.0f, "the camera takes the settings");
+    Require(appliedDebug.toneMapper == ToneMapper::PbrNeutral && !appliedDebug.taa, "the renderer takes the settings");
+    Require(appliedDebug.gbufferView == GBufferDebugView::GeometricNormal, "applying leaves the G-buffer view alone");
+}
+
 void TestRegistration()
 {
     CommandRegistry registry;
@@ -383,6 +436,7 @@ int main()
         TestCommandPalette();
         TestEditorCommands();
         TestWindowStatesSurviveTheSettingsFile();
+        TestViewSettingsSurviveTheSettingsFile();
     }
     catch (const std::exception& error)
     {

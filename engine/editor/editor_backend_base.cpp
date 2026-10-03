@@ -530,6 +530,13 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     {
         State().engineSettingsDirty = true;
     }
+    // The camera and the renderer are edited in place by the panels, the menus and the mouse wheel:
+    // compare them with what was saved rather than flag each of those edits.
+    if (!State().viewSettingsFromCommandLine &&
+        UpdateEngineViewSettings(State().engineSettings.view, State().camera, result.renderDebug))
+    {
+        State().engineSettingsDirty = true;
+    }
     if ((State().engineSettingsDirty || State().engineSettingsNeedsBootstrapSave) && !ImGui::IsAnyItemActive())
     {
         State().editorUi.WriteEngineSettings(State().engineSettings);
@@ -734,6 +741,10 @@ void EditorRenderBackendBase::EnsureInitialized(std::optional<std::string> start
     else
     {
         State().lastEngineSettingsError.clear();
+    }
+    if (!State().viewSettingsFromCommandLine)
+    {
+        ApplyEngineViewSettings(State().engineSettings.view, State().camera, State().editorUi.EditRenderDebug());
     }
 
     // Deterministic first scan of the asset tree (uuid sidecars, duplicate

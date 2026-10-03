@@ -306,6 +306,11 @@ int EditorApplication::Run()
     }
 
     auto sharedState = std::make_shared<RendererSharedState>();
+    // A scripted run renders what its options say, not what the editor was last left at, and does
+    // not save the camera or render settings its options changed.
+    sharedState->viewSettingsFromCommandLine =
+        m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
+        m_options.debugView.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value();
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
     if (m_options.statePath.has_value())

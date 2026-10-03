@@ -1,5 +1,7 @@
 #include "capture_state.h"
 
+#include <engine/editor/view_settings_fields.h>
+
 #include <yaml-cpp/yaml.h>
 
 #include <fstream>
@@ -30,75 +32,6 @@ void ReadVec3(const YAML::Node& node, const char* key, glm::vec3& value)
     {
         value = glm::vec3(node[key][0].as<float>(), node[key][1].as<float>(), node[key][2].as<float>());
     }
-}
-
-// Each settings group as a map of its fields, written and read by the same list so the two cannot
-// drift apart.
-template <typename Visitor>
-void VisitRenderDebug(RenderDebugSettings& settings, Visitor&& visit)
-{
-    visit("", "forward_only", settings.forwardOnly);
-    visit("", "clustered_lighting", settings.clusteredLighting);
-    visit("", "local_light_shadows", settings.localLightShadows);
-    visit("", "shadow_distance", settings.shadowDistance);
-    visit("", "taa", settings.taa);
-    visit("", "specular_anti_aliasing", settings.specularAntiAliasing);
-    visit("", "hdr_output", settings.hdrOutput);
-    visit("", "hdr_peak_nits", settings.hdrPeakNits);
-    visit("", "khronos_reference", settings.khronosReference);
-    visit("", "render_scale", settings.renderScale);
-    visit("bloom", "enabled", settings.bloom.enabled);
-    visit("bloom", "strength", settings.bloom.strength);
-    visit("ssr", "enabled", settings.ssr.enabled);
-    visit("ssr", "max_roughness", settings.ssr.maxRoughness);
-    visit("ssr", "max_distance", settings.ssr.maxDistance);
-    visit("ao", "enabled", settings.ao.enabled);
-    visit("ao", "radius", settings.ao.radius);
-    visit("ao", "thickness", settings.ao.thickness);
-    visit("ao", "slice_count", settings.ao.sliceCount);
-    visit("ao", "step_count", settings.ao.stepCount);
-    visit("ao", "spatial_filter", settings.ao.spatialFilter);
-    visit("ao", "temporal_filter", settings.ao.temporalFilter);
-    visit("gi", "enabled", settings.gi.enabled);
-    visit("gi", "radius", settings.gi.radius);
-    visit("gi", "thickness", settings.gi.thickness);
-    visit("gi", "slice_count", settings.gi.sliceCount);
-    visit("gi", "step_count", settings.gi.stepCount);
-    visit("gi", "strength", settings.gi.strength);
-    visit("gi", "spatial_filter", settings.gi.spatialFilter);
-    visit("gi", "temporal_filter", settings.gi.temporalFilter);
-    visit("ddgi", "enabled", settings.ddgi.enabled);
-    visit("ddgi", "levels", settings.ddgi.levels);
-    visit("ddgi", "base_spacing", settings.ddgi.baseSpacing);
-    visit("ddgi", "probes_per_frame", settings.ddgi.probesPerFrame);
-    visit("ddgi", "hysteresis", settings.ddgi.hysteresis);
-    visit("ddgi", "normal_bias", settings.ddgi.normalBias);
-    visit("ddgi", "view_bias", settings.ddgi.viewBias);
-    visit("ddgi", "probe_view_level", settings.ddgi.probeViewLevel);
-}
-
-template <typename Visitor>
-void VisitExposure(Camera& camera, Visitor&& visit)
-{
-    AutoExposureSettings& exposure = camera.autoExposure;
-    visit("auto_exposure", "enabled", exposure.enabled);
-    visit("auto_exposure", "compensation_ev", exposure.compensationEv);
-    visit("auto_exposure", "min_ev100", exposure.minEv100);
-    visit("auto_exposure", "max_ev100", exposure.maxEv100);
-    visit("auto_exposure", "low_percentile", exposure.lowPercentile);
-    visit("auto_exposure", "high_percentile", exposure.highPercentile);
-    visit("auto_exposure", "adapt_to_brighter_per_second", exposure.adaptToBrighterPerSecond);
-    visit("auto_exposure", "adapt_to_darker_per_second", exposure.adaptToDarkerPerSecond);
-    visit("auto_exposure", "short_term_range_ev", exposure.shortTermRangeEv);
-    visit("auto_exposure", "long_term_to_brighter_per_second", exposure.longTermToBrighterPerSecond);
-    visit("auto_exposure", "long_term_to_darker_per_second", exposure.longTermToDarkerPerSecond);
-    visit("auto_exposure", "frame_reference_weight", exposure.frameReferenceWeight);
-    visit("auto_exposure", "sun_reference_weight", exposure.sunReferenceWeight);
-    visit("auto_exposure", "sky_reference_weight", exposure.skyReferenceWeight);
-    visit("auto_white_balance", "enabled", camera.autoWhiteBalance.enabled);
-    visit("auto_white_balance", "degree", camera.autoWhiteBalance.degree);
-    visit("auto_white_balance", "adapt_per_second", camera.autoWhiteBalance.adaptPerSecond);
-    visit("auto_white_balance", "target_kelvin", camera.autoWhiteBalance.targetKelvin);
 }
 
 // Emits one map per group, the ungrouped fields at the top level of the current map.
@@ -169,7 +102,7 @@ void CaptureStateService::Write(const std::filesystem::path& path, const Capture
     out << YAML::Key << "exposure_ev100" << YAML::Value << copy.camera.exposureEv100;
     EmitGroups(out, [&](auto&& visit)
                {
-                   VisitExposure(copy.camera, visit);
+                   VisitCameraAdaptationFields(copy.camera.autoExposure, copy.camera.autoWhiteBalance, visit);
                });
     out << YAML::EndMap;
 
@@ -178,7 +111,7 @@ void CaptureStateService::Write(const std::filesystem::path& path, const Capture
     out << YAML::Key << "tone_mapper" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.toneMapper);
     EmitGroups(out, [&](auto&& visit)
                {
-                   VisitRenderDebug(copy.renderDebug, visit);
+                   VisitRenderDebugFields(copy.renderDebug, visit);
                });
     out << YAML::EndMap;
     out << YAML::EndMap;
@@ -225,7 +158,7 @@ CaptureState CaptureStateService::Read(const std::filesystem::path& path)
     ReadField(camera, "exposure_ev100", state.camera.exposureEv100);
     ReadGroups(camera, [&](auto&& visit)
                {
-                   VisitExposure(state.camera, visit);
+                   VisitCameraAdaptationFields(state.camera.autoExposure, state.camera.autoWhiteBalance, visit);
                });
 
     const YAML::Node renderDebug = root["render_debug"];
@@ -237,7 +170,7 @@ CaptureState CaptureStateService::Read(const std::filesystem::path& path)
     state.renderDebug.toneMapper = static_cast<ToneMapper>(std::min(toneMapper, static_cast<uint32_t>(ToneMapper::None)));
     ReadGroups(renderDebug, [&](auto&& visit)
                {
-                   VisitRenderDebug(state.renderDebug, visit);
+                   VisitRenderDebugFields(state.renderDebug, visit);
                });
     return state;
 }

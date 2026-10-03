@@ -69,10 +69,12 @@ enum class GBufferDebugView : uint32_t
     DdgiProbes = 16
 };
 
-// Visibility bitmask ambient occlusion. Not persisted. The pass clamps every value again before the
+// Visibility bitmask ambient occlusion. The pass clamps every value again before the
 // shader sees it, so the editor's slider ranges are a convenience, not a guarantee.
 struct AoSettings
 {
+    bool operator==(const AoSettings&) const = default;
+
     bool enabled = true;
     // World-space search radius, in metres.
     float radius = 1.5f;
@@ -87,10 +89,12 @@ struct AoSettings
 };
 
 // One bounce of diffuse light in screen space (see gi_trace.comp): the lit image, as far as the
-// screen shows it, lights its neighbours through the visibility bitmask the AO marches. Not
-// persisted. The pass clamps every value again before the shader sees it.
+// screen shows it, lights its neighbours through the visibility bitmask the AO marches.
+// The pass clamps every value again before the shader sees it.
 struct GiSettings
 {
+    bool operator==(const GiSettings&) const = default;
+
     bool enabled = true;
     // World-space search radius, in metres: how far light bounces.
     float radius = 3.0f;
@@ -108,19 +112,22 @@ struct GiSettings
 // Renderer switches the editor owns and the backend reads when it builds each frame. Plain data,
 // handed over by copy in EditorUiFrameResult.
 // Glare (bloom): each pixel gives the share of its energy that diffraction through the exposure's
-// aperture carries past 2 pixels to a blur of its surroundings (see glare.h). Not persisted, like the
-// rest of RenderDebugSettings.
+// aperture carries past 2 pixels to a blur of its surroundings (see glare.h).
 struct BloomSettings
 {
+    bool operator==(const BloomSettings&) const = default;
+
     bool enabled = true;
     // Multiplies the diffraction energy; 1 is the physical value.
     float strength = 1.0f;
 };
 
 // Screen-space reflections (see ssr_common.glsl): replace the environment's specular radiance where
-// the screen shows what a glossy surface reflects. Not persisted, like the rest of RenderDebugSettings.
+// the screen shows what a glossy surface reflects.
 struct SsrSettings
 {
+    bool operator==(const SsrSettings&) const = default;
+
     bool enabled = true;
     // Rougher lobes are left to the prefiltered environment; the trace fades out from 0.4 to this.
     // 0.8 keeps rough stone (Sponza's floor is 0.6-0.8) in the trace: a blurry, dim reflection that
@@ -131,10 +138,12 @@ struct SsrSettings
 };
 
 // Cascaded DDGI (docs/design/2026-09-27-ddgi-design.md): probes around the camera that trace the
-// ray scene every frame and light every surface's diffuse ambient with what they see. Not persisted.
+// ray scene every frame and light every surface's diffuse ambient with what they see.
 // The renderer clamps every value again before the GPU sees it.
 struct DdgiSettings
 {
+    bool operator==(const DdgiSettings&) const = default;
+
     bool enabled = true;
     // Levels of kDdgiGridSize probes, the spacing doubling per level.
     int levels = 4;
@@ -162,8 +171,12 @@ enum class ToneMapper : uint32_t
     None = 2
 };
 
+// Saved in miniengine.settings.json (EngineViewSettings), all but the G-buffer view: a debug view
+// left on should not survive a restart.
 struct RenderDebugSettings
 {
+    bool operator==(const RenderDebugSettings&) const = default;
+
     GBufferDebugView gbufferView = GBufferDebugView::Off;
     // The Khronos reference view uses PBR Neutral whatever this says.
     ToneMapper toneMapper = ToneMapper::Gt7;

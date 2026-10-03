@@ -155,6 +155,10 @@ struct RendererSharedState
     bool engineSettingsNeedsBootstrapSave = false;
     // Set when the editor UI changed a persisted setting that has not been written yet.
     bool engineSettingsDirty = false;
+    // The command line set the camera or the renderer (a capture state, a debug view, a scripted
+    // run): the saved camera and render settings are neither applied nor overwritten, so a run is
+    // reproducible and leaves the user's settings as they were.
+    bool viewSettingsFromCommandLine = false;
     // Written by the render backend each frame: new content whose ray-traced scene (DDGI's) is still
     // building. --wait-for-scene counts no frames until it is done.
     bool rayScenePending = false;
@@ -163,7 +167,7 @@ struct RendererSharedState
     // do not depend on the editor's layout or the window manager. Unset, the panel decides.
     std::optional<RenderExtent> fixedViewportExtent;
     // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
-    // the frame. Not persisted: a debug view left on should not survive a restart.
+    // the frame. The editor's copy is what the engine settings file saves (EngineViewSettings).
     RenderDebugSettings renderDebug;
     // Play mode: the model being driven as a car, if any (VehicleDriveService).
     VehicleDriveState vehicleDrive;
