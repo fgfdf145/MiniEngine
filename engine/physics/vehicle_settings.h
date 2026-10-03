@@ -33,6 +33,18 @@ enum class VehicleDrive : uint32_t
     AllWheel = 2
 };
 
+// What makes the tyres' grip.
+enum class VehicleTyreModel : uint32_t
+{
+    // The physics engine's own: friction curves of slip that its constraint solver clamps the
+    // contact's impulse to (VehicleTyreSettings shapes them).
+    PhysicsEngine = 0,
+    // A brush tyre on a flexible carcass (engine/tyre/tyre_brush.h, after Stocco, Biral & Bertolazzi
+    // 2024), its parameters fitted to VehicleTyreSettings' grip and peak slip angle and to the wheel's
+    // size and tyre rate. Its forces replace the physics engine's tyre friction.
+    Brush = 1
+};
+
 // One wheel: its centre in vehicle space and its tyre's size. In a VehicleWheelLayout the centre is
 // where the model draws the wheel at rest.
 struct VehicleWheelGeometry
@@ -227,6 +239,7 @@ struct VehicleSettings
     // instead of the physics engine's square root of the two.
     VehicleTyreSettings frontTyres;
     VehicleTyreSettings rearTyres;
+    VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
     // The air: the surfaces it acts on, each where it sits from the centre of mass (vehicle axes), as
     // the drag and the downforce it makes per unit of dynamic pressure (coefficient times area, m^2).
     std::vector<VehicleAeroSurface> aeroSurfaces;

@@ -355,7 +355,7 @@ class EditorUiController
     std::shared_ptr<SuspensionRigWindow> m_suspensionRigs;
     VehicleRigStatus m_vehicleRigStatus;
     VehicleDriveStatus m_vehicleStatus;
-    VehicleSettings m_vehicleTuning;
+    VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehiclePhysicsOverlaySettings m_vehicleOverlay;
     bool m_inputMonitorAutoScroll = true;

@@ -2,6 +2,7 @@
 #include "vehicle_suspension.h"
 
 #include <engine/suspension/suspension_corner.h>
+#include <engine/tyre/tyre_brush.h>
 
 // Jolt.h comes first: it sets up the configuration every other Jolt header depends on.
 #include <Jolt/Jolt.h>
@@ -259,6 +260,45 @@ glm::vec3 MultibodyDesignCenter(const VehicleSettings& settings, size_t index)
     return GetVehicleWheelMount(settings, index).center - glm::vec3(0.0f, ComputeRestSuspensionLength(settings, 9.81f), 0.0f);
 }
 
+// The load each axle's wheel carries standing still, from where the centre of mass sits between the axles.
+float StaticWheelLoad(const VehicleSettings& settings, bool front)
+{
+    float frontShare = settings.frontWeightShare;
+    if (!(frontShare > 0.0f && frontShare < 1.0f))
+    {
+        const float com = (settings.chassisCenter + settings.centerOfMassOffset).z;
+        const float frontZ = GetVehicleWheelMount(settings, 0).center.z;
+        const float rearZ = GetVehicleWheelMount(settings, 2).center.z;
+        frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
+    }
+    return 0.5f * std::max(settings.massKg, 1.0f) * 9.81f * (front ? frontShare : 1.0f - frontShare);
+}
+
+// A wheel's brush tyre from its axle's tyre figures: the peak grip at the load it carries standing
+// still (a road tyre's 1.1 without data), the slip angle of the lateral peak (7 degrees without), the
+// share of grip left well past the peak, the wheel's size and the axle's tyre rate.
+tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settings, size_t index)
+{
+    const bool front = index < 2;
+    const VehicleTyreSettings& tyres = front ? settings.frontTyres : settings.rearTyres;
+    const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
+    const VehicleWheelGeometry mount = GetVehicleWheelMount(settings, index);
+    double grip = 1.1;
+    if (tyres.longitudinalGrip > 0.0f && tyres.lateralGrip > 0.0f)
+    {
+        // The bristles share one friction coefficient: the two directions' mean.
+        grip = 0.5 * (tyres.longitudinalGrip + tyres.lateralGrip);
+    }
+    else if (tyres.lateralGrip > 0.0f || tyres.longitudinalGrip > 0.0f)
+    {
+        grip = std::max(tyres.lateralGrip, tyres.longitudinalGrip);
+    }
+    const double peakAngle = (tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 7.0f) * std::numbers::pi / 180.0;
+    const double falloff = tyres.postPeakShare > 0.0f ? tyres.postPeakShare : 0.85f;
+    return tyre::MakeBrushTyreParameters(
+        grip, StaticWheelLoad(settings, front), peakAngle, falloff, std::max(mount.radius, 0.05f), std::max(mount.width, 0.05f), axle.tyreRate);
+}
+
 JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const VehicleSettings& settings)
 {
     JPH::Ref<JPH::VehicleConstraintSettings> vehicle = new JPH::VehicleConstraintSettings();
@@ -489,6 +529,19 @@ struct PhysicsWorld::Impl
         JPH::Vec3 lastAngularVelocity = JPH::Vec3::sZero();
         bool lastVelocityValid = false;
         VehicleSettings settings;
+
+        // The brush tyres (VehicleTyreModel::Brush), one per wheel, stepped inside the physics engine's
+        // step once it has found the ground (ApplyBrushTyres), and what each did in the last step: its
+        // output, the force it put on the body (world space) and the load it worked with.
+        std::vector<tyre::BrushTyre> brushTyres;
+        struct BrushWheel
+        {
+            tyre::BrushTyreOutput out;
+            JPH::Vec3 force = JPH::Vec3::sZero();
+            float load = 0.0f;
+            bool contact = false;
+        };
+        std::array<BrushWheel, kVehicleWheelCount> brushWheels{};
     };
 
     void BuildCorners(Vehicle& vehicle) const
@@ -614,7 +667,11 @@ struct PhysicsWorld::Impl
                 const JPH::Vec3 longitudinal = toBody * wheel.GetContactLongitudinal();
                 const JPH::Vec3 lateral = toBody * wheel.GetContactLateral();
                 const JPH::Vec3 normal = toBody * wheel.GetContactNormal();
-                const JPH::Vec3 force = longitudinal * (wheel.GetLongitudinalLambda() / static_cast<float>(dt)) + lateral * (wheel.GetLateralLambda() / static_cast<float>(dt));
+                JPH::Vec3 force = longitudinal * (wheel.GetLongitudinalLambda() / static_cast<float>(dt)) + lateral * (wheel.GetLateralLambda() / static_cast<float>(dt));
+                if (!vehicle.brushTyres.empty())
+                {
+                    force = toBody * vehicle.brushWheels[index].force;
+                }
                 in.load.force = VehicleToCorner(FromJolt(force));
                 in.contactNormal = VehicleToCorner(FromJolt(normal));
                 cosine = std::max(0.1f, normal.GetY());
@@ -906,6 +963,9 @@ struct PhysicsWorld::Impl
         float holdTorque = 0.0f;
         float wheelSpeed = 0.0f;
         int driven = 0;
+        float worstSlip = 0.0f;
+        bool brush = false;
+        const float carSpeed = std::abs((vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity()).GetZ());
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             const bool front = index < 2;
@@ -919,11 +979,27 @@ struct PhysicsWorld::Impl
             wheelSpeed += std::abs(wheel.angularVelocity);
             if (wheel.inContact)
             {
-                holdTorque += wheel.longitudinalPeakFriction * std::max(wheel.suspensionForce, 0.0f) * wheel.radius;
+                float hold = wheel.longitudinalPeakFriction * std::max(wheel.suspensionForce, 0.0f);
+                if (wheel.brushTyre)
+                {
+                    // The brush tyre shares one friction circle between the two directions: what
+                    // cornering takes is not there for the drive.
+                    hold = std::sqrt(std::max(hold * hold - wheel.lateralForce * wheel.lateralForce, 0.0f));
+                    brush = true;
+                    worstSlip = std::max(worstSlip, (std::abs(wheel.angularVelocity) * wheel.radius - carSpeed) / std::max(carSpeed, 3.0f));
+                }
+                holdTorque += hold * wheel.radius;
             }
         }
         const float overall = ratio * controller.GetDifferentials()[0].mDifferentialRatio;
-        const float engineSide = holdTorque * vehicle.tractionControlGrip / overall;
+        float engineSide = holdTorque * vehicle.tractionControlGrip / overall;
+        if (brush)
+        {
+            // And past the slip where the brush tyre's drive peaks the clutch lets go further: traction
+            // control watching the wheels spin up, as the game's does (SLIP_RATIO_LIMIT).
+            constexpr float kSlipLimit = 0.1f;
+            engineSide *= std::clamp(2.0f - worstSlip / kSlipLimit, 0.2f, 1.0f);
+        }
         const float engineSpeed = controller.GetEngine().GetCurrentRPM() * 2.0f * std::numbers::pi_v<float> / 60.0f;
         const float gap = std::abs(engineSpeed - wheelSpeed / static_cast<float>(std::max(driven, 1)) * overall);
         transmission.mClutchStrength = std::clamp(engineSide / std::max(gap, 1.0f), 0.05f, vehicle.defaultClutchStrength);
@@ -942,7 +1018,8 @@ struct PhysicsWorld::Impl
             return;
         }
         constexpr float kPreloadTorque = 40.0f; // Nm, holds them together even when coasting
-        const float driveTorque = controller.GetEngine().GetTorque(1.0f) * std::abs(controller.GetTransmission().GetCurrentRatio());
+        // The clutch pack's lock follows the torque the engine sends through it.
+        const float driveTorque = controller.GetEngine().GetTorque(std::abs(controller.GetForwardInput())) * std::abs(controller.GetTransmission().GetCurrentRatio());
         for (const JPH::VehicleDifferentialSettings& differential : controller.GetDifferentials())
         {
             if (differential.mLeftWheel < 0 || differential.mRightWheel < 0)
@@ -959,6 +1036,64 @@ struct PhysicsWorld::Impl
             const float torque = std::clamp(stiffness * (left->GetAngularVelocity() - right->GetAngularVelocity()), -limit, limit);
             left->ApplyTorque(-torque, kFixedStepSeconds);
             right->ApplyTorque(torque, kFixedStepSeconds);
+        }
+    }
+
+    // The brush tyres, called by the vehicle constraint once it has found the ground and before the
+    // controller turns the engine and brakes the wheels. Each tyre reads the wheel's motion over the
+    // ground in the contact frame, the load the suspension carried in the last step and the camber to
+    // the road, steps its carcass, and puts the road's force and aligning moment on the body at the
+    // contact and the force's moment about the axle on the wheel's spin. The physics engine's own tyre
+    // friction is off (its impulse limits are zero).
+    void ApplyBrushTyres(Vehicle& vehicle, JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context)
+    {
+        const float dt = context.mDeltaTime;
+        if (vehicle.brushTyres.empty() || dt <= 0.0f)
+        {
+            return;
+        }
+        JPH::Body& body = *constraint.GetVehicleBody();
+        JPH::BodyInterface& bodies = context.mPhysicsSystem->GetBodyInterfaceNoLock();
+        const JPH::Quat rotation = body.GetRotation();
+        const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+        for (size_t index = 0; index < vehicle.brushTyres.size() && index < wheels.size(); ++index)
+        {
+            auto& wheel = *static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
+            Vehicle::BrushWheel& state = vehicle.brushWheels[index];
+            tyre::BrushTyreInput in;
+            in.wheelSpeed = wheel.GetAngularVelocity();
+            if (!wheel.HasContact())
+            {
+                state = {};
+                state.out = vehicle.brushTyres[index].Step(in, dt);
+                continue;
+            }
+            const JPH::Vec3 normal = wheel.GetContactNormal();
+            const JPH::Vec3 longitudinal = wheel.GetContactLongitudinal();
+            const JPH::Vec3 left = -wheel.GetContactLateral();
+            const JPH::RVec3 position = wheel.GetContactPosition();
+            const JPH::Vec3 velocity = body.GetPointVelocity(position) - wheel.GetContactPointVelocity();
+            in.forwardVelocity = velocity.Dot(longitudinal);
+            in.lateralVelocity = velocity.Dot(left);
+            in.yawRate = body.GetAngularVelocity().Dot(normal);
+            in.load = std::max(wheel.GetSuspensionLambda() / dt, 0.0f);
+            // Camber to the road from the wheel's axle (its right, steered): positive top right.
+            JPH::Vec3 forward, up, right;
+            constraint.GetWheelLocalBasis(&wheel, forward, up, right);
+            in.camber = std::asin(std::clamp(static_cast<double>(-(rotation * right).Dot(normal)), -1.0, 1.0));
+            {
+                JPH::BodyLockRead lock(context.mPhysicsSystem->GetBodyLockInterfaceNoLock(), wheel.GetContactBodyID());
+                in.frictionScale = lock.Succeeded() ? lock.GetBody().GetFriction() : 1.0f;
+            }
+            const tyre::BrushTyreOutput out = vehicle.brushTyres[index].Step(in, dt);
+            const JPH::Vec3 force = longitudinal * static_cast<float>(out.Fx) + left * static_cast<float>(out.Fy);
+            bodies.AddForce(body.GetID(), force, position, JPH::EActivation::DontActivate);
+            bodies.AddTorque(body.GetID(), normal * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
+            wheel.ApplyTorque(static_cast<float>(-out.Fx * out.effectiveRadius + out.rollingResistanceTorque), dt);
+            state.out = out;
+            state.force = force;
+            state.load = static_cast<float>(in.load);
+            state.contact = true;
         }
     }
 
@@ -1137,6 +1272,28 @@ struct PhysicsWorld::Impl
                 const JPH::WheelSettingsWV& tyre = *wheelWV.GetSettings();
                 state.longitudinalPeakFriction = peakOf(tyre.mLongitudinalFriction, wheelWV.mLongitudinalSlip, wheelWV.mCombinedLongitudinalFriction);
                 state.lateralPeakFriction = peakOf(tyre.mLateralFriction, JPH::RadiansToDegrees(wheelWV.mLateralSlip), wheelWV.mCombinedLateralFriction);
+            }
+            if (index < vehicle.brushTyres.size())
+            {
+                // The brush tyre's forces and slips replace the physics engine's (contactLateral is the right).
+                const Vehicle::BrushWheel& brush = vehicle.brushWheels[index];
+                const tyre::BrushTyreState& tyreState = vehicle.brushTyres[index].State();
+                state.brushTyre = true;
+                state.carcassDeflection = glm::vec3(static_cast<float>(tyreState.carcass[0]), static_cast<float>(tyreState.carcass[1]), static_cast<float>(tyreState.carcass[2]));
+                if (state.inContact && brush.contact)
+                {
+                    const float load = std::max(brush.load, 1.0f);
+                    state.longitudinalForce = static_cast<float>(brush.out.Fx);
+                    state.lateralForce = static_cast<float>(-brush.out.Fy);
+                    state.aligningTorque = static_cast<float>(brush.out.Mz);
+                    state.slidingShare = static_cast<float>(brush.out.slidingShare);
+                    state.slipRatio = static_cast<float>(brush.out.slipRatio);
+                    state.slipAngleDegrees = static_cast<float>(brush.out.slipAngle * 180.0 / std::numbers::pi);
+                    state.longitudinalFriction = static_cast<float>(std::abs(brush.out.Fx)) / load;
+                    state.lateralFriction = static_cast<float>(std::abs(brush.out.Fy)) / load;
+                    state.longitudinalPeakFriction = static_cast<float>(brush.out.peakFriction);
+                    state.lateralPeakFriction = static_cast<float>(brush.out.peakFriction);
+                }
             }
             snapshot.wheels.push_back(state);
         }
@@ -1359,6 +1516,27 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     vehicle.weightNewtons = std::max(settings.massKg, 1.0f) * 9.81f;
     vehicle.settings = settings;
     impl.BuildCorners(vehicle);
+    if (settings.tyreModel == VehicleTyreModel::Brush)
+    {
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
+        {
+            vehicle.brushTyres.emplace_back(BuildBrushTyreParameters(settings, index));
+        }
+        // The physics engine's tyre friction off: the brush tyres push instead.
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        controller->SetTireMaxImpulseCallback(
+            [](JPH::uint, float& outLongitudinalImpulse, float& outLateralImpulse, float, float, float, float, float, float)
+            {
+                outLongitudinalImpulse = 0.0f;
+                outLateralImpulse = 0.0f;
+            });
+        const VehicleId id = static_cast<VehicleId>(impl.vehicles.size());
+        vehicle.constraint->SetPostCollideCallback(
+            [&impl, id](JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context)
+            {
+                impl.ApplyBrushTyres(impl.vehicles[id], constraint, context);
+            });
+    }
 
     vehicle.current = impl.Capture(vehicle);
     vehicle.previous = vehicle.current;
@@ -1388,6 +1566,11 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.controls = {};
     vehicle.direction = 1.0f;
     vehicle.filteredLoadValid = false;
+    for (tyre::BrushTyre& tyre : vehicle.brushTyres)
+    {
+        tyre.Reset();
+    }
+    vehicle.brushWheels = {};
     m_impl->BuildCorners(vehicle);
     vehicle.current = m_impl->Capture(vehicle);
     // Nothing has rolled: the capture compared the wheels with the step before the reset.

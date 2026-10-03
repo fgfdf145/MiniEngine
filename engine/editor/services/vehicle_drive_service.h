@@ -135,6 +135,8 @@ struct VehicleDriveState
 
 namespace VehicleDriveService
 {
+// The Vehicle panel's tuning before the user changes it: the defaults, on the brush tyre.
+VehicleSettings DefaultTuning();
 // Drives this model entity as a car: a physics world is built from every other loaded model's
 // triangles (the track) and a ground plane under the lowest of them, and a car fitted to the
 // entity's bounds is placed at its transform. Throws when the entity is not a model.

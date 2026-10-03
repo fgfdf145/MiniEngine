@@ -65,10 +65,11 @@ struct MagicFormulaParameters
     double qSy1 = 0.0, qSy2 = 0.0;
 };
 
-// The tyre's operating point. ISO 8855 axes: x forward along the wheel, z up, slip angle alpha
-// positive when the contact centre moves to the right of the wheel plane (-y), so a positive alpha
-// gives a negative Fy. kappa is -V_sx / |V_cx|. Camber gamma is a rotation about +x: positive with
-// the wheel's top leaning to the right.
+// The tyre's operating point in the ISO (TYDEX W) axes of MF-Tyre files: x forward along the wheel,
+// y left, z up; slip angle alpha = atan(V_cy / |V_cx|), positive when the contact centre moves to
+// the left of the wheel plane, so a positive alpha gives a negative Fy and a positive (aligning) Mz.
+// kappa is -V_sx / |V_cx|. Camber gamma is a rotation about +x: positive with the wheel's top
+// leaning to the right. (Pacejka's Eq. 4.E3 writes tan(alpha) = -V_cy / |V_cx| in his own axes.)
 struct MagicFormulaInput
 {
     double kappa = 0.0;

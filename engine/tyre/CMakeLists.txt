@@ -1,4 +1,6 @@
 add_library(engine_tyre
+    tyre_brush.cpp
+    tyre_brush.h
     tyre_magic_formula.cpp
     tyre_magic_formula.h
     tyre_tir_file.cpp

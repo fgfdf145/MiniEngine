@@ -41,6 +41,43 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     {
         ImGui::TextDisabled("Car's own data: %s", status.carData.c_str());
     }
+    if (!status.wheels.empty() && status.wheels.front().brushTyre)
+    {
+        // The brush tyres at work: each wheel's forces, how much of its patch slides, and how far its
+        // carcass has shifted and twisted against the rim.
+        ImGui::SeparatorText("Brush tyres (flexible carcass)");
+        static constexpr const char* kWheelNames[] = {"FL", "FR", "RL", "RR"};
+        if (ImGui::BeginTable("BrushTyres", 8, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg))
+        {
+            for (const char* column : {"", "Load N", "Fx N", "Fy N", "Mz Nm", "Slide %", "Carcass x/y mm", "Twist deg"})
+            {
+                ImGui::TableSetupColumn(column);
+            }
+            ImGui::TableHeadersRow();
+            for (size_t index = 0; index < status.wheels.size() && index < 4; ++index)
+            {
+                const VehicleWheelState& wheel = status.wheels[index];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(kWheelNames[index]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", wheel.inContact ? wheel.suspensionForce : 0.0f);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", wheel.longitudinalForce);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", -wheel.lateralForce);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", wheel.aligningTorque);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", wheel.slidingShare * 100.0f);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f / %.1f", wheel.carcassDeflection.x * 1000.0f, wheel.carcassDeflection.y * 1000.0f);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f", wheel.carcassDeflection.z * 57.2958f);
+            }
+            ImGui::EndTable();
+        }
+    }
 }
 
 // The fields a user tunes; the geometry is fitted to the model when driving starts.
@@ -51,6 +88,21 @@ void DrawTuning(VehicleSettings& tuning)
     if (ImGui::Combo("Model Front", &front, kFrontLabels, IM_ARRAYSIZE(kFrontLabels)))
     {
         tuning.modelFront = static_cast<VehicleModelFront>(front);
+    }
+
+    int tyreModel = static_cast<int>(tuning.tyreModel);
+    static constexpr const char* kTyreLabels[] = {"Physics engine (slip curves)", "Brush, flexible carcass"};
+    if (ImGui::Combo("Tyre Model", &tyreModel, kTyreLabels, IM_ARRAYSIZE(kTyreLabels)))
+    {
+        tuning.tyreModel = static_cast<VehicleTyreModel>(tyreModel);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "Physics engine: Jolt's friction curves of slip ratio and slip angle, each direction on its own.\n"
+            "Brush: bristles over each rib's contact patch on a carcass that shifts, bends and twists against the rim\n"
+            "(Stocco, Biral & Bertolazzi 2024). Grip is shared between braking and cornering, the force builds over\n"
+            "the carcass's relaxation length, and the aligning moment comes from the patch. Takes effect on the next drive.");
     }
 
     ImGui::Checkbox("Use the Car's Own Data", &tuning.useCarData);
@@ -99,7 +151,7 @@ void DrawTuning(VehicleSettings& tuning)
     ImGui::Checkbox("Limited-slip Differentials", &tuning.limitedSlipDifferentials);
     if (ImGui::Button("Defaults"))
     {
-        tuning = VehicleSettings{};
+        tuning = VehicleDriveService::DefaultTuning();
     }
 }
 }

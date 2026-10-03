@@ -123,6 +123,13 @@ void RestoreCamera(Camera& camera, const Camera& saved)
 namespace VehicleDriveService
 {
 
+VehicleSettings DefaultTuning()
+{
+    VehicleSettings tuning;
+    tuning.tyreModel = VehicleTyreModel::Brush;
+    return tuning;
+}
+
 void Start(RendererSharedState& state, entt::entity entity, const VehicleSettings& tuning)
 {
     IEditorWorld& world = state.GetEditorWorld();

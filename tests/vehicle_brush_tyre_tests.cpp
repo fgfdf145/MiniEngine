@@ -1,0 +1,448 @@
+#include "gtr_car_spec.h"
+
+#include <engine/physics/physics_world.h>
+#include <engine/physics/vehicle_settings.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+// Cars on the brush tyre with a flexible carcass (VehicleTyreModel::Brush): they stand, launch, brake,
+// corner and park on a slope as cars do, and the numbers are printed beside the physics engine's own
+// tyre on the same car.
+using namespace me;
+using me::test::MakeGtrSpec;
+
+namespace
+{
+constexpr float kPi = 3.14159265358979f;
+
+void Require(bool condition, const std::string& message)
+{
+    if (!condition)
+    {
+        throw std::runtime_error(message);
+    }
+}
+
+bool Finite(const glm::vec3& v)
+{
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+// A 400 m square, tilted up towards +Z by `slopeDegrees`.
+void AddGround(PhysicsWorld& world, float slopeDegrees = 0.0f, float friction = PhysicsWorld::kDefaultSurfaceFriction)
+{
+    const float rise = std::tan(slopeDegrees * kPi / 180.0f) * 200.0f;
+    const std::vector<glm::vec3> vertices = {
+        {-200.0f, -rise, -200.0f},
+        {-200.0f, rise, 200.0f},
+        {200.0f, rise, 200.0f},
+        {200.0f, -rise, -200.0f},
+    };
+    Require(world.AddStaticMesh(vertices, std::vector<uint32_t>{0, 1, 2, 0, 2, 3}, friction), "the ground builds");
+}
+
+void Simulate(PhysicsWorld& world, float seconds)
+{
+    constexpr float kFrame = 1.0f / 144.0f;
+    for (float time = 0.0f; time < seconds; time += kFrame)
+    {
+        world.Update(kFrame);
+    }
+}
+
+// The Boxster of the vehicle physics tests: straight springs, its own engine, gearbox and tyre figures.
+VehicleCarSpec MakeBoxsterSpec()
+{
+    VehicleCarSpec spec;
+    spec.massKg = 1460.0f;
+    spec.drive = VehicleDrive::RearWheel;
+    spec.torqueCurve = {{500.0f, 110.0f}, {1000.0f, 200.0f}, {1500.0f, 297.0f}, {2000.0f, 386.0f}, {4500.0f, 386.0f}, {5500.0f, 366.0f}, {6500.0f, 346.0f}, {7500.0f, 267.0f}, {8500.0f, 0.0f}};
+    spec.minRpm = 900.0f;
+    spec.maxRpm = 7500.0f;
+    spec.gearRatios = {3.91f, 2.29f, 1.65f, 1.30f, 1.08f, 0.88f, 0.62f};
+    spec.reverseGearRatio = -3.55f;
+    spec.finalDriveRatio = 3.62f;
+    spec.gearSwitchSeconds = 0.03f;
+    spec.clutchReleaseSeconds = 0.1f;
+    spec.engineInertia = 0.137f;
+    spec.frontTyres = VehicleTyreSettings{1.314f, 1.303f, 0.13f, 7.52f, 0.86f, 1.62f};
+    spec.rearTyres = VehicleTyreSettings{1.294f, 1.271f, 0.128f, 7.27f, 0.86f, 1.97f};
+    spec.maxSteerAngleDegrees = 26.7f;
+    spec.brakeTorquePerWheel = 800.0f;
+    spec.frontBrakeShare = 0.65f;
+    spec.handBrakeTorquePerWheel = 1000.0f;
+    spec.suspensionFrequencyHz = 1.7f;
+    spec.suspensionDamping = 0.7f;
+    spec.antiRollBars = true;
+    spec.limitedSlipDifferentials = true;
+    return spec;
+}
+
+VehicleSettings Boxster(VehicleTyreModel model)
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    tuning.tyreModel = model;
+    return FitVehicleSettingsToBounds(glm::vec3(-0.9f, 0.0f, -2.2f), glm::vec3(0.9f, 1.4f, 2.2f), tuning);
+}
+
+// The GT-R on its multibody suspension with hub masses on tyre springs (see the vehicle physics tests).
+VehicleSettings Gtr(VehicleTyreModel model)
+{
+    const VehicleCarSpec spec = MakeGtrSpec();
+    VehicleWheelLayout layout{};
+    const float frontZ = 2.78f * (1.0f - 0.555f);
+    const float rearZ = frontZ - 2.78f;
+    layout[0] = {glm::vec3(0.8375f, 0.355f, frontZ), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8375f, 0.355f, frontZ), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.84f, 0.355f, rearZ), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.84f, 0.355f, rearZ), 0.355f, 0.33f};
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, spec);
+    tuning.wheelRadius = 0.355f;
+    tuning.tyreModel = model;
+    VehicleSettings settings = FitVehicleSettingsToBounds(glm::vec3(-1.0f, 0.0f, -2.3f), glm::vec3(1.0f, 1.2f, 2.3f), tuning, &layout);
+    settings.centerOfMassOffset = glm::vec3(0.0f, 0.38f - settings.chassisCenter.y, -settings.chassisCenter.z);
+    return settings;
+}
+
+const char* Name(VehicleTyreModel model)
+{
+    return model == VehicleTyreModel::Brush ? "brush" : "physics engine";
+}
+
+float Heading(const glm::quat& rotation)
+{
+    const glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+    return std::atan2(forward.x, forward.z);
+}
+
+// ---- Standing ----
+
+// Dropped onto flat ground, the car settles on its four tyres and then stays put: no creep, no shimmy.
+void TestCarStandsStill(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 3.0f);
+    const glm::vec3 settled = world.GetVehiclePose(id).position;
+    Simulate(world, 5.0f);
+    const glm::vec3 later = world.GetVehiclePose(id).position;
+    const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
+    std::cout << car << " (" << Name(settings.tyreModel) << ") standing: moved " << glm::length(later - settled) * 1000.0f << " mm in 5 s";
+    if (settings.tyreModel == VehicleTyreModel::Brush)
+    {
+        std::cout << ", carcass FL " << wheels[0].carcassDeflection.x * 1000.0f << " / " << wheels[0].carcassDeflection.y * 1000.0f << " mm";
+    }
+    std::cout << '\n';
+    Require(Finite(later), "the car's position stays finite");
+    Require(world.GetVehicleTelemetry(id).wheelsInContact == 4, "all four tyres on the ground");
+    Require(glm::length(later - settled) < 0.01f, std::string(car) + " stands still on flat ground");
+}
+
+// On a 10 degree slope with the hand brake and the brakes on, the car holds; the brush tyre creeps only
+// as fast as its low-speed regularisation lets a steady pull through.
+void TestCarHoldsOnASlope(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world, 10.0f);
+    const float y = std::tan(10.0f * kPi / 180.0f) * 0.0f;
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, y + 0.1f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.brake = 1.0f;
+    controls.handBrake = 1.0f;
+    world.SetVehicleControls(id, controls);
+    Simulate(world, 2.0f);
+    const glm::vec3 start = world.GetVehiclePose(id).position;
+    Simulate(world, 5.0f);
+    const float slid = glm::length(world.GetVehiclePose(id).position - start);
+    std::cout << car << " (" << Name(settings.tyreModel) << ") on a 10 deg slope, braked: slid " << slid * 1000.0f << " mm in 5 s\n";
+    Require(Finite(world.GetVehiclePose(id).position), "the car's position stays finite");
+    Require(slid < 0.05f, std::string(car) + " holds on the slope");
+}
+
+// ---- Driving ----
+
+float TimeTo100(const VehicleSettings& settings, int& gear)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(id, controls);
+    constexpr float kFrame = 1.0f / 144.0f;
+    gear = 0;
+    for (float time = 0.0f; time < 20.0f; time += kFrame)
+    {
+        world.Update(kFrame);
+        const VehicleTelemetry telemetry = world.GetVehicleTelemetry(id);
+        gear = std::max(gear, telemetry.gear);
+        if (telemetry.forwardSpeed >= 100.0f / 3.6f)
+        {
+            return time;
+        }
+    }
+    return 20.0f;
+}
+
+void TestCarLaunches(const char* car, const VehicleSettings& brush, const VehicleSettings& engine)
+{
+    int gear = 0;
+    int engineGear = 0;
+    const float time = TimeTo100(brush, gear);
+    const float engineTime = TimeTo100(engine, engineGear);
+    std::cout << car << " 0-100 km/h: brush " << time << " s (gear " << gear << "), physics engine " << engineTime << " s\n";
+    Require(time > 2.5f && time < 9.0f, std::string(car) + " reaches 100 km/h in a sports car's time on the brush tyre, got " + std::to_string(time));
+    Require(gear >= 3, "it changes up");
+}
+
+struct StopReport
+{
+    float distance = 0.0f;
+    float peakDeceleration = 0.0f;
+    float lockedShare = 0.0f;
+    float drift = 0.0f; // sideways, m
+};
+
+StopReport StopFrom100(const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(id, controls);
+    for (int i = 0; i < 2000 && world.GetVehicleTelemetry(id).forwardSpeed < 100.0f / 3.6f; ++i)
+    {
+        Simulate(world, 0.01f);
+    }
+    controls = {};
+    controls.brake = 1.0f;
+    world.SetVehicleControls(id, controls);
+    StopReport report;
+    const glm::vec3 start = world.GetVehiclePose(id).position;
+    float previous = world.GetVehicleTelemetry(id).forwardSpeed;
+    int samples = 0;
+    int locked = 0;
+    for (float time = 0.0f; time < 10.0f; time += 0.01f)
+    {
+        Simulate(world, 0.01f);
+        const float speed = world.GetVehicleTelemetry(id).forwardSpeed;
+        report.peakDeceleration = std::max(report.peakDeceleration, (previous - speed) / 0.01f);
+        previous = speed;
+        if (speed > 5.0f)
+        {
+            for (const VehicleWheelState& wheel : world.GetVehicleWheels(id))
+            {
+                ++samples;
+                locked += std::abs(wheel.angularVelocity) * wheel.radius < 0.2f * speed ? 1 : 0;
+            }
+        }
+        if (speed < 0.1f)
+        {
+            break;
+        }
+    }
+    const glm::vec3 end = world.GetVehiclePose(id).position;
+    report.distance = std::abs(end.z - start.z);
+    report.drift = std::abs(end.x - start.x);
+    report.lockedShare = samples > 0 ? static_cast<float>(locked) / static_cast<float>(samples) : 0.0f;
+    return report;
+}
+
+void TestCarBrakes(const char* car, const VehicleSettings& brush, const VehicleSettings& engine)
+{
+    const StopReport b = StopFrom100(brush);
+    const StopReport e = StopFrom100(engine);
+    std::cout << car << " 100-0 km/h: brush " << b.distance << " m (peak " << b.peakDeceleration / 9.81f << " g, locked " << b.lockedShare * 100.0f << "%, drift " << b.drift
+              << " m), physics engine " << e.distance << " m (peak " << e.peakDeceleration / 9.81f << " g)\n";
+    Require(b.distance > 25.0f && b.distance < 70.0f, std::string(car) + " stops from 100 km/h in a car's distance on the brush tyre, got " + std::to_string(b.distance));
+    Require(b.drift < 1.0f, "it stops straight");
+}
+
+// Steering held at a share of lock at a steady speed: the cornering acceleration (speed times yaw rate)
+// once settled, and whether it stays on its line or spins.
+struct CornerReport
+{
+    float lateralG = 0.0f;
+    float speed = 0.0f;
+    bool spun = false;
+};
+
+CornerReport Corner(const VehicleSettings& settings, float speed, float steering)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -150.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    for (int i = 0; i < 3000 && world.GetVehicleTelemetry(id).forwardSpeed < speed; ++i)
+    {
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(id, controls);
+        Simulate(world, 0.01f);
+    }
+    CornerReport report;
+    controls.steering = steering;
+    float heading = Heading(world.GetVehiclePose(id).rotation);
+    float sum = 0.0f;
+    int samples = 0;
+    for (float time = 0.0f; time < 6.0f; time += 0.02f)
+    {
+        // Hold the speed with the throttle.
+        const float v = world.GetVehicleTelemetry(id).forwardSpeed;
+        controls.throttle = std::clamp((speed - v) * 0.5f, 0.0f, 1.0f);
+        world.SetVehicleControls(id, controls);
+        Simulate(world, 0.02f);
+        const float next = Heading(world.GetVehiclePose(id).rotation);
+        float turn = next - heading;
+        turn -= 2.0f * kPi * std::round(turn / (2.0f * kPi));
+        heading = next;
+        if (time > 3.0f)
+        {
+            sum += std::abs(world.GetVehicleTelemetry(id).forwardSpeed * turn / 0.02f);
+            ++samples;
+        }
+        if (world.GetVehicleTelemetry(id).forwardSpeed < 0.3f * speed)
+        {
+            report.spun = true;
+        }
+    }
+    report.lateralG = samples > 0 ? sum / static_cast<float>(samples) / 9.81f : 0.0f;
+    report.speed = world.GetVehicleTelemetry(id).forwardSpeed;
+    return report;
+}
+
+void TestCarCorners(const char* car, const VehicleSettings& brush, const VehicleSettings& engine)
+{
+    for (const float steering : {0.1f, 0.3f, 0.6f})
+    {
+        const CornerReport b = Corner(brush, 20.0f, steering);
+        const CornerReport e = Corner(engine, 20.0f, steering);
+        std::cout << car << " at 20 m/s, steering " << steering << ": brush " << b.lateralG << " g" << (b.spun ? " (spun)" : "") << " at " << b.speed << " m/s, physics engine " << e.lateralG
+                  << " g" << (e.spun ? " (spun)" : "") << '\n';
+        Require(std::isfinite(b.lateralG), "finite");
+        Require(b.lateralG < 2.0f, "no more grip than the tyres have");
+    }
+    const CornerReport gentle = Corner(brush, 20.0f, 0.1f);
+    Require(gentle.lateralG > 0.1f && !gentle.spun, std::string(car) + " turns on a little steering");
+}
+
+// Full speed down the straight with the wheel centred: it runs straight, no weave.
+void TestCarRunsStraight(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(id, controls);
+    float worstYaw = 0.0f;
+    for (float time = 0.0f; time < 10.0f; time += 0.05f)
+    {
+        Simulate(world, 0.05f);
+        worstYaw = std::max(worstYaw, std::abs(Heading(world.GetVehiclePose(id).rotation)));
+        if (world.GetVehiclePose(id).position.z > 180.0f)
+        {
+            break;
+        }
+    }
+    const glm::vec3 end = world.GetVehiclePose(id).position;
+    std::cout << car << " flat out straight: " << world.GetVehicleTelemetry(id).forwardSpeed * 3.6f << " km/h, sideways " << end.x << " m, worst heading " << worstYaw * 180.0f / kPi << " deg\n";
+    Require(std::abs(end.x) < 1.0f && worstYaw < 2.0f * kPi / 180.0f, std::string(car) + " runs straight");
+}
+
+// What the physics costs a simulated second, flat out down the straight, on each tyre model.
+void ReportCost(const char* car, const VehicleSettings& brush, const VehicleSettings& engine)
+{
+    const auto measure = [](const VehicleSettings& settings)
+    {
+        PhysicsWorld world;
+        AddGround(world);
+        const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        controls.steering = 0.05f;
+        world.SetVehicleControls(id, controls);
+        const auto start = std::chrono::steady_clock::now();
+        Simulate(world, 5.0f);
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() / 5.0;
+    };
+    const double b = measure(brush);
+    const double e = measure(engine);
+    std::cout << car << " physics per simulated second (1000 steps): brush " << b * 1000.0 << " ms, physics engine " << e * 1000.0 << " ms\n";
+}
+}
+
+int main()
+{
+    struct Car
+    {
+        const char* name;
+        VehicleSettings (*make)(VehicleTyreModel);
+    };
+    const Car cars[] = {{"Boxster", Boxster}, {"GT-R", Gtr}};
+    int failures = 0;
+    const auto run = [&](const std::string& name, const auto& test)
+    {
+        try
+        {
+            test();
+            std::cout << "[pass] " << name << "\n";
+        }
+        catch (const std::exception& e)
+        {
+            ++failures;
+            std::cout << "[FAIL] " << name << ": " << e.what() << "\n";
+        }
+    };
+    for (const Car& car : cars)
+    {
+        const VehicleSettings brush = car.make(VehicleTyreModel::Brush);
+        const VehicleSettings engine = car.make(VehicleTyreModel::PhysicsEngine);
+        const std::string prefix = std::string(car.name) + ": ";
+        run(prefix + "stands still", [&]
+            {
+                TestCarStandsStill(car.name, brush);
+            });
+        run(prefix + "holds on a slope", [&]
+            {
+                TestCarHoldsOnASlope(car.name, brush);
+            });
+        run(prefix + "launches", [&]
+            {
+                TestCarLaunches(car.name, brush, engine);
+            });
+        run(prefix + "brakes", [&]
+            {
+                TestCarBrakes(car.name, brush, engine);
+            });
+        run(prefix + "corners", [&]
+            {
+                TestCarCorners(car.name, brush, engine);
+            });
+        run(prefix + "runs straight", [&]
+            {
+                TestCarRunsStraight(car.name, brush);
+            });
+        run(prefix + "cost", [&]
+            {
+                ReportCost(car.name, brush, engine);
+            });
+    }
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}

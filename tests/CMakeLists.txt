@@ -1662,3 +1662,21 @@ add_test(
 )
 
 set_target_properties(miniengine_tyre_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_vehicle_brush_tyre_tests
+    vehicle_brush_tyre_tests.cpp
+    gtr_car_spec.h
+)
+miniengine_group_target_sources(miniengine_vehicle_brush_tyre_tests)
+
+target_link_libraries(miniengine_vehicle_brush_tyre_tests
+    PRIVATE
+        engine_physics
+)
+
+add_test(
+    NAME miniengine.vehicle_brush_tyre
+    COMMAND miniengine_vehicle_brush_tyre_tests
+)
+
+set_target_properties(miniengine_vehicle_brush_tyre_tests PROPERTIES FOLDER "Tests")

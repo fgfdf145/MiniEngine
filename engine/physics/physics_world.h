@@ -88,6 +88,13 @@ struct VehicleWheelState
     // (m) keeps above where the physics engine touches the ground.
     bool unsprungMass = false;
     float tyreDeflection = 0.0f;
+    // With the brush tyre (VehicleTyreModel::Brush): its aligning moment about the normal (N m), the
+    // share of the load on sliding bristles, and the carcass's shift fore-aft and sideways (m) and
+    // twist (rad) against the rim.
+    bool brushTyre = false;
+    float aligningTorque = 0.0f;
+    float slidingShare = 0.0f;
+    glm::vec3 carcassDeflection{0.0f};
 };
 
 // A car's suspension linkage where the last step left it, in world space, for drawing: the rods and
