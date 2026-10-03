@@ -175,6 +175,7 @@ void CaptureStateService::Write(const std::filesystem::path& path, const Capture
 
     out << YAML::Key << "render_debug" << YAML::Value << YAML::BeginMap;
     out << YAML::Key << "gbuffer_view" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.gbufferView);
+    out << YAML::Key << "tone_mapper" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.toneMapper);
     EmitGroups(out, [&](auto&& visit)
                {
                    VisitRenderDebug(copy.renderDebug, visit);
@@ -231,6 +232,9 @@ CaptureState CaptureStateService::Read(const std::filesystem::path& path)
     uint32_t view = 0;
     ReadField(renderDebug, "gbuffer_view", view);
     state.renderDebug.gbufferView = static_cast<GBufferDebugView>(std::min(view, static_cast<uint32_t>(GBufferDebugView::DdgiProbes)));
+    uint32_t toneMapper = 0;
+    ReadField(renderDebug, "tone_mapper", toneMapper);
+    state.renderDebug.toneMapper = static_cast<ToneMapper>(std::min(toneMapper, static_cast<uint32_t>(ToneMapper::None)));
     ReadGroups(renderDebug, [&](auto&& visit)
                {
                    VisitRenderDebug(state.renderDebug, visit);

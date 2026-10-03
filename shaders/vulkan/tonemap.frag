@@ -29,6 +29,12 @@ const uint GBUFFER_VIEW_RAY_TRACED = 14u;
 const uint GBUFFER_VIEW_DDGI_IRRADIANCE = 15u;
 const uint GBUFFER_VIEW_DDGI_PROBES = 16u;
 
+// Must match kOperator* in engine/renderer/vulkan/tonemap_pass.cpp.
+const uint TONEMAP_OPERATOR_GT7 = 0u;
+const uint TONEMAP_OPERATOR_KHRONOS_REFERENCE = 1u;
+const uint TONEMAP_OPERATOR_PBR_NEUTRAL = 2u;
+const uint TONEMAP_OPERATOR_NONE = 3u;
+
 // Must match TonemapPushConstants in engine/renderer/vulkan/tonemap_pass.cpp.
 layout(push_constant) uniform TonemapConstants
 {
@@ -36,8 +42,8 @@ layout(push_constant) uniform TonemapConstants
     // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
     uint hdrOutput;
     float peakNits;
-    // 1 for Khronos PBR Neutral: the Khronos reference view.
-    uint pbrNeutral;
+    // One of the TONEMAP_OPERATOR_* values below.
+    uint toneOperator;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     vec4 whiteBalance[3];
 }
@@ -146,16 +152,30 @@ void main()
         // operator clamps at zero.
         color = mat3(constants.whiteBalance[0].xyz, constants.whiteBalance[1].xyz, constants.whiteBalance[2].xyz) * color;
 
-        if (constants.pbrNeutral != 0u)
+        if (constants.toneOperator == TONEMAP_OPERATOR_KHRONOS_REFERENCE || constants.toneOperator == TONEMAP_OPERATOR_PBR_NEUTRAL)
         {
-            // The Khronos reference view: the Sample Viewer's operator on the exposed value (its
-            // exposure 1.0 is the engine's exposed 1.0). Display linear; with HDR10 output it is
-            // shown relative to the UI white, as SDR content is.
+            // The Sample Viewer's operator on the exposed value (its exposure 1.0 is the engine's
+            // exposed 1.0). Display linear; with HDR10 output it is shown relative to the UI white,
+            // as SDR content is.
             color = KhronosPbrNeutral(max(color * kExposedPerFrameBufferUnit, vec3(0.0f)));
-            // On an SDR display, also the viewer's encoding: a 2.2 gamma instead of the sRGB curve.
-            if (constants.hdrOutput == 0u)
+            // The Khronos reference view on an SDR display also takes the viewer's encoding: a 2.2
+            // gamma instead of the sRGB curve.
+            if (constants.toneOperator == TONEMAP_OPERATOR_KHRONOS_REFERENCE && constants.hdrOutput == 0u)
             {
                 color = KhronosViewerOutputForSrgbTarget(color);
+            }
+        }
+        else if (constants.toneOperator == TONEMAP_OPERATOR_NONE)
+        {
+            // No curve: the exposed value as display linear, clipped where the display ends. With
+            // HDR10 output, frame-buffer units become nits relative to the UI white, up to the peak.
+            if (constants.hdrOutput != 0u)
+            {
+                color = clamp(color * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits), vec3(0.0f), vec3(constants.peakNits / kUiWhiteNits));
+            }
+            else
+            {
+                color = clamp(color * kExposedPerFrameBufferUnit, vec3(0.0f), vec3(1.0f));
             }
         }
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;

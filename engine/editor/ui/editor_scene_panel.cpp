@@ -284,6 +284,8 @@ void DrawGizmoControls(GizmoSettings& gizmo)
 {
     DrawOperationButton("Combined", kCombinedGizmoOperation, gizmo.operation);
     ImGui::SameLine();
+    DrawOperationButton("Rotate", ImGuizmo::ROTATE, gizmo.operation);
+    ImGui::SameLine();
     DrawOperationButton("Scale", ImGuizmo::SCALE, gizmo.operation);
 
     const bool worldMode = gizmo.mode == ImGuizmo::WORLD;

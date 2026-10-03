@@ -161,6 +161,35 @@ void TestFormatShortcut()
     Require(FormatShortcut(ImGuiKey_F5) == "F5", "F5");
 }
 
+void TestCommandPalette()
+{
+    Require(FuzzyMatchScore("", "Anything") == 0, "an empty query matches everything");
+    Require(FuzzyMatchScore("svas", "Save Scene As").has_value(), "a query matches characters in order");
+    Require(!FuzzyMatchScore("sa", "As").has_value(), "but not out of order");
+    Require(FuzzyMatchScore("SAVE", "save scene").has_value(), "ignoring case");
+    Require(*FuzzyMatchScore("save", "Save Scene") > *FuzzyMatchScore("save", "Snap Above Vertices"), "consecutive matches score higher");
+    Require(*FuzzyMatchScore("ss", "Save Scene") > *FuzzyMatchScore("ss", "Sassy"), "word starts score higher");
+
+    CommandRegistry registry;
+    bool enabled = false;
+    registry.Register(Command{.id = "file.open", .label = "Open Scene", .menuPath = "File/Open Scene..."});
+    registry.Register(Command{.id = "file.save", .label = "Save Scene", .menuPath = "File/Save Scene"});
+    registry.Register(Command{
+        .id = "edit.undo",
+        .label = "Undo",
+        .menuPath = "Edit/Undo",
+        .isEnabled = [&enabled]
+        {
+            return enabled;
+        }});
+    Require(FindPaletteCommands(registry, "").size() == 2, "the palette lists only enabled commands");
+    const std::vector<std::size_t> save = FindPaletteCommands(registry, "save");
+    Require(save.size() == 1 && registry.GetCommands()[save[0]].id == "file.save", "a query narrows the list");
+    Require(FindPaletteCommands(registry, "file").size() == 2, "the menu path matches too");
+    enabled = true;
+    Require(FindPaletteCommands(registry, "undo").size() == 1, "an enabled command is listed");
+}
+
 void TestEditorCommands()
 {
     CommandRegistry registry;
@@ -203,6 +232,11 @@ void TestEditorCommands()
     scene.createLight = [&createdLights](LightType type)
     {
         createdLights.push_back(type);
+    };
+    int steps = 0;
+    scene.stepSimulation = [&steps]
+    {
+        ++steps;
     };
     RegisterEditorCommands(registry, state, window, scene);
 
@@ -249,7 +283,13 @@ void TestEditorCommands()
         }
     }
 
+    // The renderer has no hardware ray tracing yet: the pipelines that need it are disabled.
+    Require(!state.rayTracingSupported, "ray tracing starts unsupported");
+    Require(!Run(registry, "render.pipeline.hybrid") && !Run(registry, "render.ray_tracing"), "no hybrid pipeline or ray tracing without support");
+    Require(!Run(registry, "view.wireframe") && !state.wireframe, "no wireframe without line pipelines");
+
     // Radio groups hold one choice.
+    state.rayTracingSupported = true;
     Run(registry, "render.pipeline.hybrid");
     Require(IsCommandChecked(*registry.Find("render.pipeline.hybrid")), "the chosen pipeline is checked");
     Require(!IsCommandChecked(*registry.Find("render.pipeline.rasterization")), "the other pipelines are not");
@@ -258,19 +298,42 @@ void TestEditorCommands()
     Require(!IsCommandEnabled(*registry.Find("render.ray_tracing")), "and it cannot be turned off there");
 
     state.rayTracingSupported = false;
-    Require(!IsCommandEnabled(*registry.Find("view.debug.bvh")), "no BVH view without ray tracing");
+    Require(!IsCommandEnabled(*registry.Find("render.pipeline.path_tracing")), "no path tracing without ray tracing");
+
+    // Every view the tone mapping pass has is a View command, so the toolbar always shows the
+    // current one.
+    for (uint32_t view = 0; view <= static_cast<uint32_t>(GBufferDebugView::DdgiProbes); ++view)
+    {
+        const std::string id = DebugViewCommandId(static_cast<GBufferDebugView>(view));
+        Require(!id.empty() && registry.Find(id) != nullptr, "every debug view has a command");
+    }
+    Require(Run(registry, "view.debug.emissive") && state.debugView == GBufferDebugView::Emissive, "a debug view command picks its view");
+    Require(IsCommandChecked(*registry.Find("view.debug.emissive")) && !IsCommandChecked(*registry.Find("view.debug.lit")), "and only it is checked");
+    state.gbufferAvailable = false;
+    Require(!IsCommandEnabled(*registry.Find("view.debug.albedo")) && IsCommandEnabled(*registry.Find("view.debug.lit")), "without a G-buffer only the lit view is offered");
+    state.gbufferAvailable = true;
+
+    // Tone mapping is the renderer's, except under the Khronos reference view.
+    Require(Run(registry, "render.tone_mapping.none") && state.toneMapping == ToneMapper::None, "tone mapping commands pick the operator");
+    state.khronosReference = true;
+    Require(!Run(registry, "render.tone_mapping.gt7") && state.toneMapping == ToneMapper::None, "the Khronos reference view keeps its own");
+    state.khronosReference = false;
+
+    Require(Run(registry, "tool.rotate") && state.transformTool == TransformTool::Rotate, "the rotate tool is a choice of its own");
+    Require(Run(registry, "view.gizmos") && !state.gizmos, "gizmos toggle off");
 
     // Play controls.
     Require(!IsCommandEnabled(*registry.Find("scene.step")), "step needs a paused simulation");
     Run(registry, "scene.play");
     Run(registry, "scene.pause");
-    Require(IsCommandChecked(*registry.Find("scene.pause")) && IsCommandEnabled(*registry.Find("scene.step")), "paused: pause is on and step runs");
+    Require(IsCommandChecked(*registry.Find("scene.pause")) && Run(registry, "scene.step") && steps == 1, "paused: pause is on and step runs");
 
     // The scene commands reach the functions they were given; the others do nothing.
     Run(registry, "file.open_scene");
     Run(registry, "file.save_scene");
     Require(opens == 1 && saves == 1, "open and save reach the controller");
-    Require(Run(registry, "file.save_scene_as"), "a command with no function still runs, as a no-op");
+    Require(!Run(registry, "file.save_scene_as"), "a command with no function is disabled");
+    Require(!IsCommandEnabled(*registry.Find("edit.undo")) && !IsCommandEnabled(*registry.Find("render.reload_shaders")), "so are the ones nothing implements yet");
     Require(!IsCommandEnabled(*registry.Find("edit.delete")), "delete needs a selection");
     hasSelection = true;
     Require(Run(registry, "edit.delete") && deletes == 1, "delete runs with a selection");
@@ -317,6 +380,7 @@ int main()
         TestMenuTree();
         TestExecute();
         TestFormatShortcut();
+        TestCommandPalette();
         TestEditorCommands();
         TestWindowStatesSurviveTheSettingsFile();
     }

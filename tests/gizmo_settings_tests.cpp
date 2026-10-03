@@ -140,8 +140,8 @@ int main()
             LoadStoredOperation("translate") == kCombinedGizmoOperation,
             "legacy translate yaml did not upgrade to combined");
         Require(
-            LoadStoredOperation("rotate") == kCombinedGizmoOperation,
-            "legacy rotate yaml did not upgrade to combined");
+            LoadStoredOperation("rotate") == ImGuizmo::ROTATE,
+            "rotate yaml did not load as the rotate-only gizmo");
         Require(
             LoadStoredOperation("scale") == ImGuizmo::SCALE,
             "scale yaml did not remain scale");
@@ -154,6 +154,9 @@ int main()
         Require(
             SaveStoredOperation(ImGuizmo::SCALE, "scale").find("operation: scale") != std::string::npos,
             "scale mode did not serialize canonically");
+        Require(
+            SaveStoredOperation(ImGuizmo::ROTATE, "rotate").find("operation: rotate") != std::string::npos,
+            "rotate-only mode did not serialize canonically");
 
         std::cout << "gizmo settings tests passed\n";
         return 0;

@@ -1016,8 +1016,12 @@ void EditorUiController::DrawViewportPanel(
         }
         DrawViewManipulator(camera, matrices, viewportRect, m_effectiveUiScale);
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-        DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, m_effectiveUiScale);
-        DrawLightGizmos(scene, matrices, viewportRect, m_effectiveUiScale);
+        // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
+        if (m_commandState.gizmos)
+        {
+            DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, m_effectiveUiScale);
+            DrawLightGizmos(scene, matrices, viewportRect, m_effectiveUiScale);
+        }
         std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
         AppendLightProjectedCenters(scene, matrices, viewportRect, m_effectiveUiScale, projectedCenters);
         HandleViewportSelection(scene, projectedCenters, viewportRect, m_effectiveUiScale);

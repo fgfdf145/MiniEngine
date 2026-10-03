@@ -2,8 +2,10 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cctype>
 
 namespace me
 {
@@ -324,6 +326,284 @@ void DrawToolbar(const CommandRegistry& registry, const ToolbarLayout& layout, f
         const float rightWidth = MeasureSection(registry, layout.right, metrics);
         const float rightStart = std::max(windowWidth - padding.x - rightWidth, centerEnd + metrics.groupSpacing);
         DrawSection(registry, layout.right, rightStart, !layout.left.empty() || !layout.center.empty(), metrics);
+    }
+    ImGui::End();
+}
+
+std::optional<int> FuzzyMatchScore(std::string_view query, std::string_view text)
+{
+    constexpr int kMatchScore = 1;
+    constexpr int kConsecutiveBonus = 5;
+    constexpr int kWordStartBonus = 8;
+    constexpr int kMaxGapPenalty = 3;
+    const auto lower = [](char character)
+    {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    };
+    const auto isWordStart = [&text](std::size_t index)
+    {
+        if (index == 0)
+        {
+            return true;
+        }
+        const char previous = text[index - 1];
+        return previous == ' ' || previous == '/' || previous == '.' || previous == '_' || previous == '-';
+    };
+
+    int score = 0;
+    std::size_t next = 0;
+    std::optional<std::size_t> previousMatch;
+    for (const char queryCharacter : query)
+    {
+        // Spaces only separate words: "save as" finds "Save Scene As".
+        if (queryCharacter == ' ')
+        {
+            continue;
+        }
+        const char wanted = lower(queryCharacter);
+        while (next < text.size() && lower(text[next]) != wanted)
+        {
+            ++next;
+        }
+        if (next == text.size())
+        {
+            return std::nullopt;
+        }
+        score += kMatchScore;
+        if (previousMatch.has_value() && *previousMatch + 1 == next)
+        {
+            score += kConsecutiveBonus;
+        }
+        else if (previousMatch.has_value())
+        {
+            score -= std::min(static_cast<int>(next - *previousMatch - 1), kMaxGapPenalty);
+        }
+        if (isWordStart(next))
+        {
+            score += kWordStartBonus;
+        }
+        previousMatch = next;
+        ++next;
+    }
+    return score;
+}
+
+std::vector<std::size_t> FindPaletteCommands(const CommandRegistry& registry, std::string_view query)
+{
+    // A label match beats the same match in the menu path, which also holds the menu's name.
+    constexpr int kMenuPathPenalty = 2;
+    std::vector<std::pair<int, std::size_t>> scored;
+    const std::vector<Command>& commands = registry.GetCommands();
+    for (std::size_t index = 0; index < commands.size(); ++index)
+    {
+        const Command& command = commands[index];
+        if (!IsCommandEnabled(command))
+        {
+            continue;
+        }
+        std::optional<int> score = FuzzyMatchScore(query, command.label);
+        if (const std::optional<int> pathScore = FuzzyMatchScore(query, command.menuPath); pathScore.has_value())
+        {
+            score = std::max(score.value_or(*pathScore - kMenuPathPenalty), *pathScore - kMenuPathPenalty);
+        }
+        if (score.has_value())
+        {
+            scored.emplace_back(*score, index);
+        }
+    }
+    // Equal scores keep registration order, which is menu order.
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& left, const auto& right)
+                     {
+                         return left.first > right.first;
+                     });
+    std::vector<std::size_t> indices;
+    indices.reserve(scored.size());
+    for (const auto& [score, index] : scored)
+    {
+        indices.push_back(index);
+    }
+    return indices;
+}
+
+void CommandPalette::Draw(const CommandRegistry& registry, float uiScale)
+{
+    constexpr const char* kPopupId = "##CommandPalette";
+    constexpr std::size_t kVisibleRows = 12;
+    if (m_openRequested)
+    {
+        m_openRequested = false;
+        m_query.clear();
+        m_selected = 0;
+        m_focusInput = true;
+        ImGui::OpenPopup(kPopupId);
+    }
+
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    const float width = std::min(560.0f * uiScale, mainViewport->WorkSize.x - 32.0f * uiScale);
+    ImGui::SetNextWindowPos(
+        ImVec2(mainViewport->WorkPos.x + mainViewport->WorkSize.x * 0.5f, mainViewport->WorkPos.y + 48.0f * uiScale),
+        ImGuiCond_Always,
+        ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, 0.0f));
+    if (!ImGui::BeginPopup(kPopupId, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings))
+    {
+        return;
+    }
+
+    if (m_focusInput)
+    {
+        ImGui::SetKeyboardFocusHere();
+        m_focusInput = false;
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    const std::string previousQuery = m_query;
+    const bool enterPressed =
+        ImGui::InputTextWithHint("##Query", "Type a command", &m_query, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (m_query != previousQuery)
+    {
+        m_selected = 0;
+    }
+
+    const std::vector<std::size_t> matches = FindPaletteCommands(registry, m_query);
+    bool navigated = false;
+    if (!matches.empty())
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+        {
+            m_selected = (m_selected + 1) % matches.size();
+            navigated = true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+        {
+            m_selected = (m_selected + matches.size() - 1) % matches.size();
+            navigated = true;
+        }
+        m_selected = std::min(m_selected, matches.size() - 1);
+    }
+
+    const Command* chosen = nullptr;
+    if (matches.empty())
+    {
+        ImGui::TextDisabled("No enabled command matches.");
+    }
+    else
+    {
+        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+        const float listHeight = rowHeight * static_cast<float>(std::min(matches.size(), kVisibleRows)) + ImGui::GetStyle().WindowPadding.y;
+        if (ImGui::BeginChild("##Matches", ImVec2(0.0f, listHeight), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav))
+        {
+            const std::vector<Command>& commands = registry.GetCommands();
+            for (std::size_t row = 0; row < matches.size(); ++row)
+            {
+                const Command& command = commands[matches[row]];
+                ImGui::PushID(static_cast<int>(matches[row]));
+                const std::string text = command.icon.empty() ? command.label : command.icon + "  " + command.label;
+                const bool selected = row == m_selected;
+                if (ImGui::Selectable(text.c_str(), selected))
+                {
+                    chosen = &command;
+                }
+                if (selected && navigated)
+                {
+                    ImGui::SetScrollHereY();
+                }
+                // Where it lives and how to reach it without the palette, right-aligned.
+                std::string detail = command.menuPath;
+                if (const std::string shortcut = FormatShortcut(command.shortcut); !shortcut.empty())
+                {
+                    detail = detail.empty() ? shortcut : detail + "   " + shortcut;
+                }
+                if (!detail.empty())
+                {
+                    const float detailWidth = ImGui::CalcTextSize(detail.c_str()).x;
+                    ImGui::SameLine(std::max(ImGui::GetContentRegionMax().x - detailWidth, ImGui::GetCursorPosX()));
+                    ImGui::TextDisabled("%s", detail.c_str());
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        if (enterPressed)
+        {
+            chosen = &registry.GetCommands()[matches[m_selected]];
+        }
+    }
+
+    if (chosen != nullptr || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    if (chosen != nullptr)
+    {
+        registry.Execute(*chosen);
+    }
+}
+
+void DrawKeyboardShortcutsWindow(
+    const CommandRegistry& registry,
+    bool* open,
+    std::span<const std::pair<const char*, const char*>> extraKeys)
+{
+    if (!ImGui::Begin("Keyboard Shortcuts", open))
+    {
+        ImGui::End();
+        return;
+    }
+
+    // One table per top-level menu, in menu order; toolbar-only commands under "Toolbar".
+    std::vector<std::string> groups;
+    const auto groupOf = [](const Command& command)
+    {
+        const std::size_t slash = command.menuPath.find('/');
+        return slash == std::string::npos ? std::string("Toolbar") : command.menuPath.substr(0, slash);
+    };
+    for (const Command& command : registry.GetCommands())
+    {
+        if (command.shortcut != 0 && std::find(groups.begin(), groups.end(), groupOf(command)) == groups.end())
+        {
+            groups.push_back(groupOf(command));
+        }
+    }
+
+    constexpr ImGuiTableFlags kTableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+    const auto drawRow = [](const char* keys, const char* action, bool enabled)
+    {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::BeginDisabled(!enabled);
+        ImGui::TextUnformatted(keys);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(action);
+        ImGui::EndDisabled();
+    };
+    for (const std::string& group : groups)
+    {
+        ImGui::SeparatorText(group.c_str());
+        if (ImGui::BeginTable(group.c_str(), 2, kTableFlags))
+        {
+            for (const Command& command : registry.GetCommands())
+            {
+                if (command.shortcut != 0 && groupOf(command) == group)
+                {
+                    // Disabled commands are listed greyed out: their keys do nothing yet.
+                    drawRow(FormatShortcut(command.shortcut).c_str(), command.label.c_str(), IsCommandEnabled(command));
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (!extraKeys.empty())
+    {
+        ImGui::SeparatorText("Viewport");
+        if (ImGui::BeginTable("##ExtraKeys", 2, kTableFlags))
+        {
+            for (const auto& [keys, action] : extraKeys)
+            {
+                drawRow(keys, action, true);
+            }
+            ImGui::EndTable();
+        }
     }
     ImGui::End();
 }
