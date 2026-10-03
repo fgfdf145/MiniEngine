@@ -521,6 +521,8 @@ VulkanRenderer::VulkanRenderer(
 
 VulkanRenderer::~VulkanRenderer()
 {
+    // Its last frames are read back from the device about to be torn down.
+    StopVideoRecording();
     // Joins the workers before anything they might still be preparing for is torn down.
     m_texturePreparation.reset();
 
@@ -528,6 +530,7 @@ VulkanRenderer::~VulkanRenderer()
     {
         vkDeviceWaitIdle(m_device->GetHandle());
     }
+    m_videoReadback.reset();
 
     DestroyDescriptorResources();
     m_forwardPipelines.reset();
@@ -593,6 +596,8 @@ void VulkanRenderer::DrawFrame()
     {
         CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
+    // AcquireNextImage waited on this slot's fence: the video frame its last use copied is ready.
+    SubmitVideoFrame(m_commandContext->GetCurrentFrame());
 
     UpdateAutoExposure(m_commandContext->GetCurrentFrame());
     UpdateViewportMatrices(FromVkExtent(m_sceneTargets->GetExtent()));
@@ -1086,6 +1091,26 @@ void VulkanRenderer::DrawFrame()
     frame.physicalSky = environmentMode != EnvironmentMode::None;
     frame.groundPlane = environmentMode == EnvironmentMode::Atmosphere && environment.atmosphere.groundPlane;
 
+    // A recording takes the tone mapped image the viewport shows, without the editor's overlays,
+    // when its video wants a frame for this moment. Frames of another size than the recording's
+    // (the targets not yet resized to the size it fixed) are left out.
+    const double videoFrameTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    VideoRecorder* const videoRecorder = ActiveVideoRecorder();
+    const VkExtent2D videoExtent = m_sceneTargets->GetExtent();
+    const bool recordVideoFrame =
+        videoRecorder != nullptr &&
+        videoExtent.width == videoRecorder->GetSettings().width &&
+        videoExtent.height == videoRecorder->GetSettings().height &&
+        VulkanVideoReadback::SupportsFormat(m_sceneTargets->GetFormat(RenderTargetId::SceneLdr)) &&
+        videoRecorder->ClaimFrameAt(videoFrameTime);
+    if (recordVideoFrame && !m_videoReadback)
+    {
+        m_videoReadback = std::make_unique<VulkanVideoReadback>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    }
+
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
                                               // The tracker holds one layout per target, but a target has one
@@ -1159,6 +1184,21 @@ void VulkanRenderer::DrawFrame()
 
                                               RecordEditorLayer(commandBuffer, imageIndex);
                                               m_gpuTimer->Mark(commandBuffer, "ImGui");
+
+                                              if (recordVideoFrame)
+                                              {
+                                                  // SceneLdr is indexed by swapchain image; the ImGui pass left it
+                                                  // shader-read, as CaptureViewport expects to find it.
+                                                  const uint32_t ldrIndex = m_sceneTargets->ResolveIndex(RenderTargetId::SceneLdr, imageIndex, 0);
+                                                  m_videoReadback->RecordCopy(
+                                                      commandBuffer,
+                                                      frame.frameSlot,
+                                                      m_sceneTargets->GetImage(RenderTargetId::SceneLdr, ldrIndex),
+                                                      m_sceneTargets->GetFormat(RenderTargetId::SceneLdr),
+                                                      videoExtent,
+                                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                      videoFrameTime);
+                                              }
                                           });
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
     m_lastRecordedImageIndex = imageIndex;
@@ -1446,6 +1486,52 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
     request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     CaptureImageToPng(request, path);
     LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), State().camera.exposureEv100);
+}
+
+void VulkanRenderer::SubmitVideoFrame(uint32_t frameSlot)
+{
+    if (!m_videoReadback)
+    {
+        return;
+    }
+    std::optional<VulkanVideoReadback::Frame> frame = m_videoReadback->Take(frameSlot);
+    VideoRecorder* const recorder = ActiveVideoRecorder();
+    if (frame && recorder != nullptr && frame->extent.width == recorder->GetSettings().width &&
+        frame->extent.height == recorder->GetSettings().height)
+    {
+        recorder->Submit(std::move(frame->frame));
+    }
+}
+
+void VulkanRenderer::FlushVideoFrames()
+{
+    if (!m_videoReadback || !m_videoReadback->HasPending())
+    {
+        return;
+    }
+    vkDeviceWaitIdle(m_device->GetHandle());
+    // Oldest first: the recorder writes them in the order it is given them.
+    std::vector<VulkanVideoReadback::Frame> frames;
+    for (uint32_t slot = 0; slot < VulkanCommandContext::kMaxFramesInFlight; ++slot)
+    {
+        if (std::optional<VulkanVideoReadback::Frame> frame = m_videoReadback->Take(slot))
+        {
+            frames.push_back(std::move(*frame));
+        }
+    }
+    std::sort(frames.begin(), frames.end(), [](const auto& left, const auto& right)
+              {
+                  return left.frame.timeSeconds < right.frame.timeSeconds;
+              });
+    VideoRecorder* const recorder = ActiveVideoRecorder();
+    for (VulkanVideoReadback::Frame& frame : frames)
+    {
+        if (recorder != nullptr && frame.extent.width == recorder->GetSettings().width &&
+            frame.extent.height == recorder->GetSettings().height)
+        {
+            recorder->Submit(std::move(frame.frame));
+        }
+    }
 }
 
 void VulkanRenderer::DestroyDeviceResources()

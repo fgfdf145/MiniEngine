@@ -176,6 +176,8 @@ add_library(engine_renderer
     vulkan/uniform_buffer.h
     vulkan/upload_batch.cpp
     vulkan/upload_batch.h
+    vulkan/video_readback.cpp
+    vulkan/video_readback.h
     vulkan/viewport_capture.cpp
     vulkan/viewport_capture.h
 )

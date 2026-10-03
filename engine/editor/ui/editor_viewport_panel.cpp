@@ -4,6 +4,7 @@
 
 #include "editor_vehicle_overlay.h"
 
+#include <engine/core/log/log.h>
 #include <engine/logic/editor_world.h>
 #include <engine/logic/world_bounds.h>
 #include <imgui.h>
@@ -13,8 +14,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace me
@@ -131,6 +134,56 @@ void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, d
         const ImVec2 size = ImGui::CalcTextSize(text.c_str());
         drawText(ImVec2(rect.origin.x + rect.size.x - size.x - margin, rect.origin.y + rect.size.y - size.y - margin), text);
     }
+}
+
+// While recording, a blinking red dot, the video's length and size at the top centre; for a few
+// seconds after, where it was saved or why it stopped. Drawn by ImGui over the viewport, so it is
+// not in the video.
+void DrawVideoRecordingIndicator(const ViewportOverlayRect& rect, float uiScale, const VideoRecordingIndicator& recording)
+{
+    constexpr double kMessageSeconds = 6.0;
+    std::string text;
+    ImU32 textColor = IM_COL32(255, 255, 255, 235);
+    if (recording.active)
+    {
+        const int totalSeconds = static_cast<int>(recording.seconds);
+        text = fmt::format(
+            "REC  {:02}:{:02}  {:.1f} MB", totalSeconds / 60, totalSeconds % 60,
+            static_cast<double>(recording.bytes) / (1024.0 * 1024.0));
+        if (recording.droppedFrames > 0)
+        {
+            text += fmt::format("  ({} frames dropped)", recording.droppedFrames);
+        }
+    }
+    else if (!recording.message.empty() &&
+             std::chrono::duration<double>(std::chrono::steady_clock::now() - recording.messageTime).count() < kMessageSeconds)
+    {
+        text = recording.message;
+        textColor = recording.messageIsError ? IM_COL32(255, 120, 110, 255) : IM_COL32(150, 230, 150, 255);
+    }
+    if (text.empty() || rect.drawList == nullptr)
+    {
+        return;
+    }
+
+    ImDrawList* drawList = rect.drawList;
+    const float margin = kOverlayTextMarginPixels * uiScale;
+    const float padding = 6.0f * uiScale;
+    const float dotRadius = recording.active ? 5.0f * uiScale : 0.0f;
+    const float dotSpace = recording.active ? dotRadius * 2.0f + padding : 0.0f;
+    const ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
+    const float width = padding * 2.0f + dotSpace + textSize.x;
+    const ImVec2 min(rect.origin.x + (rect.size.x - width) * 0.5f, rect.origin.y + margin);
+    const ImVec2 max(min.x + width, min.y + textSize.y + padding * 2.0f);
+    drawList->AddRectFilled(min, max, IM_COL32(0, 0, 0, 170), 4.0f * uiScale);
+    if (recording.active)
+    {
+        // On for most of each second, so it reads as recording rather than as a warning.
+        const bool dotOn = std::fmod(ImGui::GetTime(), 1.0) < 0.7;
+        const ImVec2 center(min.x + padding + dotRadius, (min.y + max.y) * 0.5f);
+        drawList->AddCircleFilled(center, dotRadius, dotOn ? IM_COL32(235, 40, 40, 255) : IM_COL32(110, 30, 30, 255));
+    }
+    drawList->AddText(ImVec2(min.x + padding + dotSpace, min.y + padding), textColor, text.c_str());
 }
 
 constexpr std::array<std::pair<size_t, size_t>, 12> kBoundsEdges = {{{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7}, {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
@@ -1007,6 +1060,7 @@ void EditorUiController::DrawViewportPanel(
             DrawVehicleLinkageOverlay(
                 *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleRigStatus.linkage, m_effectiveUiScale);
         }
+        DrawVideoRecordingIndicator(viewportRect, m_effectiveUiScale, m_videoRecording);
         if (fullscreen)
         {
             DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus);

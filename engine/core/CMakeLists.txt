@@ -15,12 +15,19 @@ add_library(engine_core
     uuid/uuid.h
     version/engine_version.cpp
     version/engine_version.h
+    video/mjpeg_avi_writer.cpp
+    video/mjpeg_avi_writer.h
+    video/video_recorder.cpp
+    video/video_recorder.h
 )
 miniengine_group_target_sources(engine_core)
 
 target_include_directories(engine_core
     PUBLIC
         "${PROJECT_SOURCE_DIR}"
+    PRIVATE
+        # video_recorder.cpp's JPEG encoder.
+        "${Stb_INCLUDE_DIR}"
 )
 
 # Fallbacks for EnginePaths, used only when neither a command-line override nor

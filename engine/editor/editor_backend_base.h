@@ -2,6 +2,7 @@
 
 #include "renderer_shared_state.h"
 
+#include <engine/core/video/video_recorder.h>
 #include <engine/renderer/rhi/backend.h>
 
 #include <memory>
@@ -18,6 +19,8 @@ class EditorRenderBackendBase : public IRenderBackend
   public:
     RenderBackendType GetBackendType() const override;
     void HandleEvent(const SDL_Event& event) override;
+    bool StartVideoRecording(const VideoRecordingRequest& request, std::string& error) override;
+    void StopVideoRecording() override;
 
   protected:
     EditorRenderBackendBase(
@@ -30,6 +33,15 @@ class EditorRenderBackendBase : public IRenderBackend
     bool ProcessPendingOperations();
     void ApplyUiActions(const EditorUiFrameResult& uiFrame);
     void CaptureViewportWithState();
+    // The recording the backend reads frames back for, while one runs.
+    VideoRecorder* ActiveVideoRecorder()
+    {
+        return m_videoRecorder.get();
+    }
+    // Hands the recorder every frame the backend still holds; called before the recording stops.
+    virtual void FlushVideoFrames()
+    {
+    }
     void UpdateViewportMatrices(RenderExtent extent);
     EditorUiFrameResult DrawEditorUi(ImTextureID viewportTextureId, RenderExtent viewportExtent);
     bool HasDrawableArea() const;
@@ -48,6 +60,12 @@ class EditorRenderBackendBase : public IRenderBackend
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();
     void SaveEngineSettings();
+    // Tools > Record Viewport: starts a recording to captures/recording_<date>_<time>.avi, or stops
+    // the one running.
+    void ToggleVideoRecordingFromEditor();
+    // Every frame: stops a recording whose file could not be written, and updates what the viewport
+    // shows of the one running.
+    void UpdateVideoRecording();
 
     // The bounds and aspect ratio the Khronos reference view last framed; it reframes when either
     // changes (a scene finishing loading, the viewport resizing) and leaves the camera to the user
@@ -61,6 +79,10 @@ class EditorRenderBackendBase : public IRenderBackend
     };
     void UpdateKhronosReferenceFraming(RenderExtent extent);
     std::optional<KhronosReferenceFraming> m_khronosReferenceFraming;
+
+    std::unique_ptr<VideoRecorder> m_videoRecorder;
+    // The fixed viewport size before the recording fixed it, put back when it stops.
+    std::optional<RenderExtent> m_fixedViewportExtentBeforeRecording;
 
     Window& m_window;
     std::shared_ptr<RendererSharedState> m_sharedState;

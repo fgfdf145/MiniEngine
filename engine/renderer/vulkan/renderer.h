@@ -33,6 +33,7 @@
 #include "texture.h"
 #include "tonemap_pass.h"
 #include "uniform_buffer.h"
+#include "video_readback.h"
 
 #include <engine/editor/editor_backend_base.h>
 #include <engine/asset/texture_preparation.h>
@@ -144,6 +145,7 @@ class VulkanRenderer : public EditorRenderBackendBase
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
     bool WantsKeyboardCapture() const override;
+    void FlushVideoFrames() override;
 
   private:
     void CreateDeviceResources();
@@ -296,6 +298,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::string m_failedEnvironmentMapPath;
     // The swapchain image the last submitted frame drew into, for CaptureViewport.
     std::optional<uint32_t> m_lastRecordedImageIndex;
+    // A video recording's frames on their way back from the GPU; made when the first is wanted.
+    std::unique_ptr<VulkanVideoReadback> m_videoReadback;
+    // Hands the recording the slot's frame once its fence has been waited on, if it holds one.
+    void SubmitVideoFrame(uint32_t frameSlot);
     // What the last drawn frame showed, for CaptureDdgiReference: its unjittered view-projection and
     // camera, pre-exposure, frame slot and debug view, the directional lights as they reached the
     // scene, and its sky, which the reference supports only when uniform.

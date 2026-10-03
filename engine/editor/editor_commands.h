@@ -72,6 +72,9 @@ struct EditorCommandState
     bool khronosReference = false;
     // The command palette (a search over every command's label) opens when this is set.
     bool commandPaletteRequested = false;
+    // The viewport is being recorded to a video (Tools > Record Viewport). The editor UI sets it
+    // from the backend every frame.
+    bool videoRecording = false;
 };
 
 // An editor panel the Window menu shows and hides.
@@ -113,6 +116,7 @@ struct EditorSceneCommands
     std::function<void(LightType)> createLight;
     std::function<void()> openSceneSettings;
     std::function<void()> captureViewport;
+    std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
     std::function<void()> stepSimulation; // Step: one fixed physics step while paused
     std::function<void()> reloadShaders;
     std::function<void()> showShaderLog;

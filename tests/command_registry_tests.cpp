@@ -291,6 +291,11 @@ void TestEditorCommands()
     {
         ++steps;
     };
+    int recordingToggles = 0;
+    scene.toggleVideoRecording = [&recordingToggles]
+    {
+        ++recordingToggles;
+    };
     RegisterEditorCommands(registry, state, window, scene);
 
     const CommandMenuNode& root = registry.GetMenuRoot();
@@ -322,6 +327,23 @@ void TestEditorCommands()
     Require(!IsCommandChecked(fullscreen) && !state.viewportFullscreen, "the viewport starts windowed");
     Require(Run(registry, "view.viewport_fullscreen") && state.viewportFullscreen && IsCommandChecked(fullscreen), "the command turns fullscreen on");
     Require(Run(registry, "view.viewport_fullscreen") && !state.viewportFullscreen, "and off again");
+
+    // Record Viewport toggles a recording the backend runs; it shows checked while one does.
+    const Command& record = *registry.Find("tools.record_viewport");
+    Require(record.shortcut == (ImGuiMod_Shift | ImGuiKey_F12), "Record Viewport is Shift+F12");
+    Require(record.menuPath == "Tools/Record Viewport", "Record Viewport is in the Tools menu");
+    Require(!IsCommandChecked(record), "nothing is recorded at first");
+    Require(Run(registry, "tools.record_viewport") && recordingToggles == 1, "the command asks for a recording");
+    state.videoRecording = true;
+    Require(IsCommandChecked(record), "the command is checked while recording");
+    Require(Run(registry, "tools.record_viewport") && recordingToggles == 2, "and stops it");
+    state.videoRecording = false;
+    {
+        CommandRegistry unbound;
+        EditorCommandState unboundState;
+        RegisterEditorCommands(unbound, unboundState, window);
+        Require(!IsCommandEnabled(*unbound.Find("tools.record_viewport")), "without a backend to record, the command is disabled");
+    }
 
     // View is debug visualization, Render is the pipeline: neither holds the other's commands.
     for (const Command* command : items)

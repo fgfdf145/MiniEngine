@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
+#include <string>
 
 namespace me
 {
@@ -50,6 +51,26 @@ class IRenderBackend
     {
         (void)request;
         throw std::runtime_error("This render backend cannot compare DDGI with a reference");
+    }
+    // Records the viewport to an MJPEG AVI (Tools > Record Viewport, --record). Its size is the
+    // viewport's when it starts, which stays fixed until it stops.
+    struct VideoRecordingRequest
+    {
+        std::filesystem::path path;
+        uint32_t framesPerSecond = 30;
+        // Every frame drawn is one video frame (scripted runs, whose frames step a fixed time); else
+        // the video plays at the speed the frames were shown.
+        bool everyFrame = false;
+    };
+    virtual bool StartVideoRecording(const VideoRecordingRequest& request, std::string& error)
+    {
+        (void)request;
+        error = "This render backend cannot record video";
+        return false;
+    }
+    // Writes the frames still on their way and closes the file. Does nothing when not recording.
+    virtual void StopVideoRecording()
+    {
     }
     // Logs the recent frames' average CPU and per-pass GPU times. For verification runs (--frames).
     virtual void LogFrameTimings() const

@@ -24,6 +24,10 @@ struct EditorApplicationOptions
     uint32_t maxFrames = 0;
     // With --frames: the viewport of the last frame is written here as a PNG.
     std::optional<std::string> capturePath;
+    // --record FILE.avi: a video of the viewport, one frame for every frame drawn from the second that
+    // counts toward --frames, at --record-fps frames a second (30 by default).
+    std::optional<std::filesystem::path> recordPath;
+    uint32_t recordFramesPerSecond = 30;
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;

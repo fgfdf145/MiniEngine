@@ -101,6 +101,10 @@ void EditorUiController::RegisterCommands()
     {
         m_commandActions.captureViewport = true;
     };
+    scene.toggleVideoRecording = [this]
+    {
+        m_commandActions.toggleVideoRecording = true;
+    };
     scene.stepSimulation = [this]
     {
         m_commandActions.stepVehicleDrive = true;
@@ -353,6 +357,7 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
     m_commandState.toneMapping = m_renderDebug.toneMapper;
     m_commandState.khronosReference = m_renderDebug.khronosReference;
     m_commandState.antiAliasing = m_renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
+    m_commandState.videoRecording = m_videoRecording.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
     m_commandState.playState = !m_vehicleStatus.active ? PlayState::Stopped
                                : m_vehicleStatus.paused ? PlayState::Paused

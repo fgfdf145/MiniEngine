@@ -1366,6 +1366,35 @@ add_test(
 
 set_target_properties(miniengine_command_registry_tests PROPERTIES FOLDER "Tests")
 
+# The editor's video recording: the AVI it writes, its pacing and its file splits. engine_core only.
+add_executable(miniengine_video_recorder_tests
+    video_recorder_tests.cpp
+)
+miniengine_group_target_sources(miniengine_video_recorder_tests)
+
+target_link_libraries(miniengine_video_recorder_tests
+    PRIVATE
+        engine_core
+)
+# stb_image decodes the frames back.
+target_include_directories(miniengine_video_recorder_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_video_recorder_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_video_recorder_tests>
+            $<TARGET_FILE_DIR:miniengine_video_recorder_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.video_recorder
+    COMMAND miniengine_video_recorder_tests
+)
+
+set_target_properties(miniengine_video_recorder_tests PROPERTIES FOLDER "Tests")
+
 # Drives ModelImportService's import, paste and delete against a scratch asset tree. Those live in
 # engine_editor, so this target links it; none of the renderer code runs.
 add_executable(miniengine_asset_file_operations_tests

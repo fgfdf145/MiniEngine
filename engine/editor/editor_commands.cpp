@@ -325,6 +325,15 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
         });
     registry.AddSeparator("Tools");
     AddBound(registry, "tools.capture_viewport", "Capture Viewport", "Tools/Capture Viewport", ICON_FA_CAMERA, ImGuiKey_F12, scene.captureViewport);
+    // Checked while recording; the same command stops it.
+    Add(
+        registry, "tools.record_viewport", "Record Viewport", "Tools/Record Viewport", ICON_FA_VIDEO, ImGuiMod_Shift | ImGuiKey_F12,
+        scene.toggleVideoRecording,
+        [&state]
+        {
+            return state.videoRecording;
+        },
+        IfBound(scene.toggleVideoRecording));
     // Shaders are compiled with the build, not by the editor, so there is no log or cache to show.
     AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_FA_FILE_LINES, 0, scene.showShaderLog);
     registry.AddSeparator("Tools");
@@ -417,6 +426,7 @@ ToolbarLayout BuildEditorToolbarLayout()
     };
     layout.center = {
         {ToolbarItem::Button("scene.play"), ToolbarItem::Button("scene.pause"), ToolbarItem::Button("scene.step")},
+        {ToolbarItem::Button("tools.record_viewport")},
     };
     layout.right = {
         {ToolbarItem::Dropdown(

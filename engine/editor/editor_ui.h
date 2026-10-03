@@ -20,6 +20,7 @@
 #include <imgui.h>
 
 #include <array>
+#include <chrono>
 #include <deque>
 #include <future>
 #include <memory>
@@ -33,6 +34,22 @@ namespace me
 
 class IEditorWorld;
 class SuspensionRigWindow;
+
+// What the viewport shows of a video recording (Tools > Record Viewport).
+struct VideoRecordingIndicator
+{
+    bool active = false;
+    // The video's length so far, its files' size and the frames left out while the encoders were
+    // behind.
+    double seconds = 0.0;
+    uint64_t bytes = 0;
+    uint64_t droppedFrames = 0;
+    // How the last recording ended (where it was saved, or why it stopped), shown for a few seconds
+    // from messageTime.
+    std::string message;
+    bool messageIsError = false;
+    std::chrono::steady_clock::time_point messageTime{};
+};
 
 struct EditorUiActions
 {
@@ -89,6 +106,8 @@ struct EditorUiActions
     bool createSceneEntity = false;
     bool deleteSelectedSceneEntity = false;
     bool captureViewport = false; // written as a PNG under ProjectRoot()/captures
+    // Starts recording the viewport to an AVI under ProjectRoot()/captures, or stops.
+    bool toggleVideoRecording = false;
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
@@ -175,6 +194,11 @@ class EditorUiController
     void SetVehicleRigStatus(VehicleRigStatus status)
     {
         m_vehicleRigStatus = std::move(status);
+    }
+    // Whether the viewport is being recorded, for Tools > Record Viewport and the viewport's REC sign.
+    void SetVideoRecordingStatus(VideoRecordingIndicator status)
+    {
+        m_videoRecording = std::move(status);
     }
 
   private:
@@ -360,6 +384,7 @@ class EditorUiController
     std::shared_ptr<SuspensionRigWindow> m_suspensionRigs;
     VehicleRigStatus m_vehicleRigStatus;
     VehicleDriveStatus m_vehicleStatus;
+    VideoRecordingIndicator m_videoRecording;
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehiclePhysicsOverlaySettings m_vehicleOverlay;

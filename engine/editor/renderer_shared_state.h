@@ -148,6 +148,8 @@ struct RendererSharedState
     // "Preparing textures: 12 of 72"; empty when nothing is pending. Written by the render backend.
     std::string sceneUploadStatus;
     std::string lastEngineSettingsError;
+    // The viewport recording, as the editor backend last saw it.
+    VideoRecordingIndicator videoRecording;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;

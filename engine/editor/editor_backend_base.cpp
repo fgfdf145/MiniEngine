@@ -370,6 +370,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         CaptureViewportWithState();
     }
+    if (actions.toggleVideoRecording)
+    {
+        ToggleVideoRecordingFromEditor();
+    }
+    UpdateVideoRecording();
     if (const auto& savePath = actions.selectedSceneSavePath)
     {
         RunUiAction(sceneError, fmt::format("save scene '{}'", *savePath), [&]
@@ -403,10 +408,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     }
 }
 
-// The viewport as it is on screen, before this frame records, to
-// captures/viewport_<local date>_<time>.png, with what it takes to render it again beside it:
-// viewport_<...>.scene.yaml and viewport_<...>.state.yaml, replayed with miniengine_app --state.
-void EditorRenderBackendBase::CaptureViewportWithState()
+namespace
+{
+// ProjectRoot()/captures/<prefix>_<local date>_<time><extension>.
+std::filesystem::path BuildCapturePath(const char* prefix, const char* extension)
 {
     SDL_DateTime now{};
     SDL_Time ticks = 0;
@@ -414,11 +419,25 @@ void EditorRenderBackendBase::CaptureViewportWithState()
     {
         now = SDL_DateTime{};
     }
-    char name[64];
+    char name[96];
     std::snprintf(
-        name, sizeof(name), "viewport_%04d%02d%02d_%02d%02d%02d.png",
-        now.year, now.month, now.day, now.hour, now.minute, now.second);
-    const std::filesystem::path path = EnginePaths::ProjectRoot() / "captures" / name;
+        name, sizeof(name), "%s_%04d%02d%02d_%02d%02d%02d%s",
+        prefix, now.year, now.month, now.day, now.hour, now.minute, now.second, extension);
+    return EnginePaths::ProjectRoot() / "captures" / name;
+}
+
+std::string FormatMegabytes(uint64_t bytes)
+{
+    return fmt::format("{:.1f} MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+}
+}
+
+// The viewport as it is on screen, before this frame records, to
+// captures/viewport_<local date>_<time>.png, with what it takes to render it again beside it:
+// viewport_<...>.scene.yaml and viewport_<...>.state.yaml, replayed with miniengine_app --state.
+void EditorRenderBackendBase::CaptureViewportWithState()
+{
+    const std::filesystem::path path = BuildCapturePath("viewport", ".png");
     try
     {
         std::filesystem::create_directories(path.parent_path());
@@ -443,6 +462,129 @@ void EditorRenderBackendBase::CaptureViewportWithState()
     {
         LOG_ERROR("Failed to capture the viewport to '{}': {}", path.string(), error.what());
     }
+}
+
+bool EditorRenderBackendBase::StartVideoRecording(const VideoRecordingRequest& request, std::string& error)
+{
+    if (m_videoRecorder)
+    {
+        error = "A recording is already running";
+        return false;
+    }
+    // The size the scene renders at now, kept until the recording stops: a video has one size, so
+    // the viewport panel shows the scene stretched while it is resized.
+    const RenderExtent extent = State().fixedViewportExtent.value_or(State().requestedViewportExtent);
+    if (!extent.IsValid())
+    {
+        error = "The viewport has no size yet";
+        return false;
+    }
+    VideoRecordingSettings settings;
+    settings.path = request.path;
+    settings.width = extent.width;
+    settings.height = extent.height;
+    settings.framesPerSecond = request.framesPerSecond;
+    settings.pacing = request.everyFrame ? VideoPacing::EveryFrame : VideoPacing::RealTime;
+    try
+    {
+        std::filesystem::create_directories(request.path.parent_path());
+    }
+    catch (const std::exception& exception)
+    {
+        error = exception.what();
+        return false;
+    }
+    auto recorder = std::make_unique<VideoRecorder>();
+    if (!recorder->Start(settings, error))
+    {
+        return false;
+    }
+    m_videoRecorder = std::move(recorder);
+    m_fixedViewportExtentBeforeRecording = State().fixedViewportExtent;
+    State().fixedViewportExtent = extent;
+    State().videoRecording = {};
+    LOG_INFO(
+        "Recording the viewport to '{}' at {}x{}, {} frames a second",
+        request.path.string(), extent.width, extent.height, request.framesPerSecond);
+    return true;
+}
+
+void EditorRenderBackendBase::StopVideoRecording()
+{
+    if (!m_videoRecorder)
+    {
+        return;
+    }
+    try
+    {
+        FlushVideoFrames();
+    }
+    catch (const std::exception& error)
+    {
+        LOG_ERROR("Failed to read the last frames of the recording back: {}", error.what());
+    }
+    const std::filesystem::path path = m_videoRecorder->GetSettings().path;
+    const VideoRecordingStatus status = m_videoRecorder->Stop();
+    m_videoRecorder.reset();
+    State().fixedViewportExtent = m_fixedViewportExtentBeforeRecording;
+    m_fixedViewportExtentBeforeRecording.reset();
+
+    VideoRecordingIndicator& indicator = State().videoRecording;
+    indicator = {};
+    indicator.messageTime = std::chrono::steady_clock::now();
+    if (!status.error.empty())
+    {
+        indicator.messageIsError = true;
+        indicator.message = fmt::format("Recording stopped: {}", status.error);
+        LOG_ERROR("The recording to '{}' stopped: {}", path.string(), status.error);
+        return;
+    }
+    const std::string files = status.files.size() > 1 ? fmt::format(" in {} files", status.files.size()) : std::string{};
+    indicator.message = fmt::format(
+        "Saved {} ({:.1f} s, {}{})", path.filename().string(), status.videoSeconds, FormatMegabytes(status.bytesWritten), files);
+    LOG_INFO(
+        "Recorded {:.1f} s ({} frames, {} dropped while encoding) to '{}', {}{}",
+        status.videoSeconds, status.framesWritten, status.framesDropped, path.string(), FormatMegabytes(status.bytesWritten), files);
+}
+
+void EditorRenderBackendBase::ToggleVideoRecordingFromEditor()
+{
+    if (m_videoRecorder)
+    {
+        StopVideoRecording();
+        return;
+    }
+    VideoRecordingRequest request;
+    request.path = BuildCapturePath("recording", ".avi");
+    std::string error;
+    if (!StartVideoRecording(request, error))
+    {
+        VideoRecordingIndicator& indicator = State().videoRecording;
+        indicator = {};
+        indicator.messageTime = std::chrono::steady_clock::now();
+        indicator.messageIsError = true;
+        indicator.message = fmt::format("Cannot record: {}", error);
+        LOG_ERROR("Failed to start recording to '{}': {}", request.path.string(), error);
+    }
+}
+
+void EditorRenderBackendBase::UpdateVideoRecording()
+{
+    if (!m_videoRecorder)
+    {
+        return;
+    }
+    const VideoRecordingStatus status = m_videoRecorder->GetStatus();
+    if (!status.error.empty())
+    {
+        StopVideoRecording();
+        return;
+    }
+    VideoRecordingIndicator& indicator = State().videoRecording;
+    indicator.active = true;
+    indicator.seconds = status.videoSeconds;
+    indicator.bytes = status.bytesWritten;
+    indicator.droppedFrames = status.framesDropped;
 }
 
 void EditorRenderBackendBase::UpdateKhronosReferenceFraming(RenderExtent extent)
@@ -512,6 +654,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
 
     State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
+    State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

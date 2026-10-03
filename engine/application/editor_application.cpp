@@ -184,6 +184,25 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--record")
+        {
+            options.recordPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--record-fps")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            uint32_t number = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), number).ptr != value.data() + value.size() ||
+                number == 0 || number > 240)
+            {
+                throw std::runtime_error("--record-fps requires an integer from 1 to 240");
+            }
+            options.recordFramesPerSecond = number;
+            continue;
+        }
+
         if (argument == "--wait-for-scene")
         {
             options.waitForScene = true;
@@ -376,6 +395,7 @@ int EditorApplication::Run()
         SceneIoService::StartAsyncSceneLoad(*sharedState, *startupScenePath);
     }
     uint32_t renderedFrameCount = 0;
+    bool recordingStarted = false;
 
     // Keeps the frame coming while a window edge is dragged, so the area the drag exposes is drawn
     // instead of left unpainted until the mouse is released. The handler is removed before the
@@ -406,6 +426,21 @@ int EditorApplication::Run()
                              !sharedState->pendingModelLoads.empty() || !sharedState->sceneUploadStatus.empty() ||
                              sharedState->rayScenePending;
         const bool waiting = m_options.waitForScene && loading;
+        // The recording starts once a frame counts, with the frame after it: the viewport has its
+        // size only once a frame has been drawn.
+        if (m_options.recordPath.has_value() && !waiting && !recordingStarted)
+        {
+            recordingStarted = true;
+            IRenderBackend::VideoRecordingRequest request;
+            request.path = *m_options.recordPath;
+            request.framesPerSecond = m_options.recordFramesPerSecond;
+            request.everyFrame = true;
+            std::string error;
+            if (!renderer->StartVideoRecording(request, error))
+            {
+                throw std::runtime_error("Cannot record to '" + m_options.recordPath->string() + "': " + error);
+            }
+        }
         // The camera moves only on the frames that count, so it starts from where it was placed.
         if (!waiting)
         {
@@ -421,6 +456,8 @@ int EditorApplication::Run()
         }
     }
 
+    // Also when the window was closed before the last frame: the file is finished either way.
+    renderer->StopVideoRecording();
     if (m_options.maxFrames > 0)
     {
         renderer->LogFrameTimings();
