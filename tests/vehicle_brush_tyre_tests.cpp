@@ -204,7 +204,8 @@ void TestCarLaunches(const char* car, const VehicleSettings& brush, const Vehicl
     const float engineTime = TimeTo100(engine, engineGear);
     std::cout << car << " 0-100 km/h: brush " << time << " s (gear " << gear << "), physics engine " << engineTime << " s\n";
     Require(time > 2.5f && time < 9.0f, std::string(car) + " reaches 100 km/h in a sports car's time on the brush tyre, got " + std::to_string(time));
-    Require(gear >= 3, "it changes up");
+    // Up at least once: the GT-R's second runs on to 137 km/h, so 100 km/h comes in second.
+    Require(gear >= 2, "it changes up");
 }
 
 struct StopReport

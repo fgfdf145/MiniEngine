@@ -409,14 +409,13 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     {
         controller->mTransmission.mClutchReleaseTime = settings.clutchReleaseSeconds;
     }
-    if (settings.shiftUpRpm > 0.0f)
-    {
-        controller->mTransmission.mShiftUpRPM = settings.shiftUpRpm;
-    }
-    if (settings.shiftDownRpm > 0.0f)
-    {
-        controller->mTransmission.mShiftDownRPM = settings.shiftDownRpm;
-    }
+    // The vehicle's own automatic gearbox picks the gear and works the clutch (UpdateAutomaticGearbox):
+    // the physics engine's shifts by the engine's revs, which flare while the clutch slips and never
+    // fall below the idle. Its shift points only draw the rev counter.
+    const VehicleShiftPoints shiftPoints = ComputeVehicleShiftPoints(settings);
+    controller->mTransmission.mMode = JPH::ETransmissionMode::Manual;
+    controller->mTransmission.mShiftUpRPM = shiftPoints.upFull;
+    controller->mTransmission.mShiftDownRPM = shiftPoints.downClosed;
 
     const float limitedSlipRatio = settings.limitedSlipDifferentials ? 1.4f : FLT_MAX;
     auto addDifferential = [&](int leftWheel, int rightWheel, float torqueRatio)
@@ -466,6 +465,11 @@ struct PhysicsWorld::Impl
         // The air acting on the car: where, and how much drag and downforce per square metre of dynamic pressure.
         std::vector<VehicleAeroSurface> aeroSurfaces;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
+        // The automatic gearbox, which selects the physics engine's gear and clutch each step (see
+        // UpdateAutomaticGearbox), and the gearbox output's rpm per m/s of the car's speed.
+        VehicleGearbox gearbox;
+        VehicleGearboxState gearboxState;
+        float outputRpmPerSpeed = 0.0f;
         // The brakes: the wheels' settings whose torque is set each step, the torque of each wheel as the
         // fixed front/rear split has it, and (when dynamicBrakeBias) the loads that share the total.
         std::vector<JPH::WheelSettingsWV*> wheelSettings;
@@ -940,6 +944,41 @@ struct PhysicsWorld::Impl
         {
             vehicle.wheelSettings[index]->mMaxBrakeTorque = total * std::min(vehicle.filteredLoad[index] / loadSum, kMaxShareOfTotal);
         }
+    }
+
+    // The automatic gearbox: picks the gear by the car's speed and the throttle and hands the physics
+    // engine the gear and the clutch. While the gears change the engine is cut (the throttle goes
+    // through the clutch) and its revs follow the new gear, as a dual-clutch box blips or cuts them.
+    void ShiftGears(Vehicle& vehicle, VehicleDriverInput& input, float forwardSpeed) const
+    {
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        // The gearbox output turns with the driven wheels; by the car's speed when they turn slower (locked
+        // under the brakes), so the box never picks a gear the engine could not take once they roll again.
+        const JPH::VehicleDifferentialSettings& differential = controller->GetDifferentials().front();
+        float wheelSpeed = 0.0f;
+        int driven = 0;
+        for (const JPH::VehicleDifferentialSettings& each : controller->GetDifferentials())
+        {
+            for (const int index : {each.mLeftWheel, each.mRightWheel})
+            {
+                if (index >= 0)
+                {
+                    wheelSpeed += std::abs(vehicle.constraint->GetWheel(static_cast<JPH::uint>(index))->GetAngularVelocity());
+                    ++driven;
+                }
+            }
+        }
+        const float wheelRpm = wheelSpeed / static_cast<float>(std::max(driven, 1)) * differential.mDifferentialRatio * JPH::VehicleEngine::cAngularVelocityToRPM;
+        const float outputRpm = std::max(std::abs(forwardSpeed) * vehicle.outputRpmPerSpeed, wheelRpm);
+        VehicleGearboxState& state = vehicle.gearboxState;
+        UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds);
+        JPH::VehicleTransmission& transmission = controller->GetTransmission();
+        transmission.Set(state.gear, state.clutch);
+        if (state.revMatch)
+        {
+            controller->GetEngine().SetCurrentRPM(VehicleGearRpm(vehicle.gearbox, state.gear, outputRpm));
+        }
+        input.forward *= state.clutch;
     }
 
     // Traction control by the clutch: it slips once the engine asks the driven wheels for more torque than their
@@ -1593,6 +1632,23 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     vehicle.limitedSlipLock = settings.limitedSlipDifferentials ? std::max(settings.limitedSlipLock, 0.0f) : 0.0f;
     vehicle.drive = settings.drive;
     vehicle.weightNewtons = std::max(settings.massKg, 1.0f) * 9.81f;
+    {
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        const JPH::VehicleTransmission& transmission = controller->GetTransmission();
+        VehicleGearbox& gearbox = vehicle.gearbox;
+        gearbox.forwardRatios.assign(transmission.mGearRatios.begin(), transmission.mGearRatios.end());
+        gearbox.reverseRatio = transmission.mReverseGearRatios.empty() ? 0.0f : std::abs(transmission.mReverseGearRatios[0]);
+        gearbox.shiftPoints = ComputeVehicleShiftPoints(settings);
+        gearbox.idleRpm = controller->GetEngine().mMinRPM;
+        gearbox.switchSeconds = transmission.mSwitchTime;
+        gearbox.releaseSeconds = transmission.mClutchReleaseTime;
+        gearbox.latencySeconds = transmission.mSwitchLatency;
+        // The driven wheels' radius and the final drive turn the car's speed into the gearbox output's.
+        const JPH::VehicleDifferentialSettings& differential = controller->GetDifferentials().front();
+        const float radius = static_cast<const JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mLeftWheel)])->GetSettings()->mRadius;
+        vehicle.outputRpmPerSpeed = differential.mDifferentialRatio / std::max(radius, 0.01f) * JPH::VehicleEngine::cAngularVelocityToRPM;
+        controller->GetTransmission().Set(vehicle.gearboxState.gear, vehicle.gearboxState.clutch);
+    }
     vehicle.settings = settings;
     impl.BuildCorners(vehicle);
     if (settings.tyreModel == VehicleTyreModel::Brush)
@@ -1767,7 +1823,8 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
-            const VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
+            VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
+            impl.ShiftGears(vehicle, input, localVelocity.GetZ());
             impl.ApplyAerodynamics(vehicle);
             impl.ApplySurfaceRollingResistance(vehicle);
             impl.DistributeBrakeTorque(vehicle);

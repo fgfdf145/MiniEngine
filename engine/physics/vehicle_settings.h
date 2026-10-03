@@ -217,8 +217,9 @@ struct VehicleSettings
     // physics engine's when empty. Sorted by rpm.
     std::vector<glm::vec2> torqueCurve;
     // The gearbox: forward ratios first gear up, the reverse ratio (negative), and the final drive
-    // ratio; the physics engine's own five-speed when empty. The shift points are in rpm, or the
-    // engine's when 0.
+    // ratio; the physics engine's own five-speed when empty. The automatic gearbox changes up at
+    // shiftUpRpm on full throttle and down at shiftDownRpm on a closed one, in between by the
+    // throttle (see ComputeVehicleShiftPoints); both come from the engine's rev range when 0.
     std::vector<float> gearRatios;
     float reverseGearRatio = 0.0f;
     float finalDriveRatio = 0.0f;
@@ -488,4 +489,60 @@ struct VehicleDriverInput
 // calls; `forwardSpeed` is the car's velocity along its forward axis in metres per second. The hand
 // brake cuts the throttle.
 VehicleDriverInput ResolveVehicleDriverInput(const VehicleControls& controls, float forwardSpeed, float& direction);
+
+// Where an automatic gearbox changes gear, in engine rpm: up at upLight on a light throttle and at
+// upFull on a full one, down at downClosed off the throttle and at downFull (the kickdown) on a
+// full one; the throttle blends between them.
+struct VehicleShiftPoints
+{
+    float upLight = 0.0f;
+    float upFull = 0.0f;
+    float downClosed = 0.0f;
+    float downFull = 0.0f;
+};
+
+// The shift points from the settings' shiftUpRpm and shiftDownRpm, or from the engine's rev range
+// where those are 0. Every point is above the idle, so the gearbox changes down before the engine
+// would have to turn slower than it can.
+VehicleShiftPoints ComputeVehicleShiftPoints(const VehicleSettings& settings);
+
+// An automatic gearbox: its ratios, shift points and timing.
+struct VehicleGearbox
+{
+    std::vector<float> forwardRatios; // first gear up
+    float reverseRatio = 0.0f;        // its size
+    VehicleShiftPoints shiftPoints;
+    float idleRpm = 1000.0f;
+    float switchSeconds = 0.5f;  // the clutch is open while the gears change
+    float releaseSeconds = 0.3f; // then it bites over this long
+    float latencySeconds = 0.5f; // and the box waits this long before another change
+};
+
+// The gearbox's state, kept by the caller between steps. `gear` is 1 and up forward, -1 reverse;
+// `clutch` is the clutch's friction from 0 (open) to 1, which the caller hands to the physics with
+// the gear and by which it scales the throttle (the engine is cut while the clutch is open).
+// `revMatch` is set while the gears change: the engine then follows the new gear's speed.
+struct VehicleGearboxState
+{
+    int gear = 1;
+    float clutch = 1.0f;
+    float switchLeft = 0.0f;
+    float releaseLeft = 0.0f;
+    float latencyLeft = 0.0f;
+    bool idling = false;
+    bool revMatch = false;
+};
+
+// The engine rpm the gearbox's output turns it at in `gear`; 0 in a gear the box does not have.
+// `outputRpm` is the gearbox's output speed before the gear: the wheels' speed times the final drive.
+float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm);
+
+// One step of the automatic gearbox. It decides by the speed the car travels at (`outputRpm`, from the
+// car's speed over the ground rather than the engine's own revs, which flare while the clutch slips
+// and cannot fall below the idle), changing up or down as many gears as the throttle's shift points
+// ask for, and keeps the gears out of hunting: it only changes up when the next gear stays above the
+// point it would change down at, and the other way round. `forward` is the driver's signed throttle:
+// its sign selects drive or reverse. Off the throttle and below the idle in gear, the clutch opens so
+// the car rolls to a stop rather than the engine pushing it.
+void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds);
 }

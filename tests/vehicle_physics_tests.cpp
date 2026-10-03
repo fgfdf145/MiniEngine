@@ -123,6 +123,109 @@ void TestDriverInputBrakesBeforeReversing()
     Require(input.forward == 0.0f && input.handBrake == 1.0f, "the hand brake cuts the throttle");
 }
 
+// The GT-R's gearbox as the vehicle builds it: idle 2100 rpm, limiter 7000, six gears.
+VehicleGearbox GtrGearbox()
+{
+    VehicleSettings settings = ApplyCarSpec(VehicleSettings{}, MakeGtrSpec());
+    VehicleGearbox gearbox;
+    gearbox.forwardRatios = settings.gearRatios;
+    gearbox.reverseRatio = std::abs(settings.reverseGearRatio);
+    gearbox.shiftPoints = ComputeVehicleShiftPoints(settings);
+    gearbox.idleRpm = settings.minRpm;
+    gearbox.switchSeconds = 0.1f;
+    gearbox.releaseSeconds = 0.1f;
+    gearbox.latencySeconds = 0.5f;
+    return gearbox;
+}
+
+// Runs the gearbox at a steady speed and throttle until it has settled.
+void SettleGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm)
+{
+    for (int step = 0; step < 5000; ++step)
+    {
+        UpdateAutomaticGearbox(gearbox, state, forward, outputRpm, 1.0f / 1000.0f);
+    }
+}
+
+// The shift points sit inside the engine's revs: the GT-R idles at 2100 rpm, and the old fixed 30% of the
+// limiter put its change down there, where the engine's revs, held at the idle, never went below it.
+void TestShiftPointsFollowTheRevRange()
+{
+    const VehicleShiftPoints points = ComputeVehicleShiftPoints(ApplyCarSpec(VehicleSettings{}, MakeGtrSpec()));
+    Require(points.downClosed > 2100.0f + 100.0f, "off the throttle it changes down above the idle, " + std::to_string(points.downClosed));
+    Require(points.upLight > points.downClosed && points.upFull > points.upLight && points.upFull < 7000.0f, "a light foot changes up early, a full one under the limiter");
+    Require(points.downFull > points.downClosed && points.downFull < points.upFull, "a full throttle kicks down sooner");
+}
+
+void TestGearboxPicksTheGearBySpeedAndThrottle()
+{
+    const VehicleGearbox gearbox = GtrGearbox();
+    const auto rpmInGear = [&](int gear, float outputRpm)
+    {
+        return VehicleGearRpm(gearbox, gear, outputRpm);
+    };
+
+    // Accelerating hard it holds each gear to the full-throttle point, then changes up one.
+    VehicleGearboxState state;
+    const float output = gearbox.shiftPoints.upFull / gearbox.forwardRatios[0] * 1.02f;
+    SettleGearbox(gearbox, state, 1.0f, output);
+    Require(state.gear == 2 && state.clutch == 1.0f, "full throttle past the point changes up to second, in " + std::to_string(state.gear));
+
+    // The same speed on a light throttle cruises in a higher gear, under the light change-up point.
+    VehicleGearboxState light;
+    SettleGearbox(gearbox, light, 0.2f, output);
+    Require(light.gear > 2, "a light foot changes up early, in " + std::to_string(light.gear));
+    Require(rpmInGear(light.gear, output) < gearbox.shiftPoints.upFull, "and keeps the revs down");
+
+    // Flooring it from a slower cruise kicks down, as far as the lower gear still has room before its change up.
+    VehicleGearboxState cruise;
+    const float slower = 2400.0f;
+    SettleGearbox(gearbox, cruise, 0.2f, slower);
+    const int cruising = cruise.gear;
+    SettleGearbox(gearbox, cruise, 1.0f, slower);
+    Require(cruise.gear < cruising, "flooring it kicks down from " + std::to_string(cruising));
+    Require(rpmInGear(cruise.gear, slower) < gearbox.shiftPoints.upFull, "into a gear below the limiter");
+
+    // Braking to a stop it changes down all the way: in top gear at walking pace the engine would turn below its idle.
+    VehicleGearboxState braking;
+    braking.gear = 6;
+    SettleGearbox(gearbox, braking, 0.0f, 100.0f);
+    Require(braking.gear == 1, "stopping changes down to first, in " + std::to_string(braking.gear));
+    Require(braking.clutch == 0.0f, "with the clutch open so the idling engine does not push the car");
+    SettleGearbox(gearbox, braking, 0.0f, 0.0f);
+    UpdateAutomaticGearbox(gearbox, braking, 1.0f, 0.0f, 1.0f / 1000.0f);
+    Require(braking.gear == 1 && braking.clutch > 0.0f, "the throttle pulls away in first");
+
+    // Reverse throttle selects reverse; forward again selects first.
+    UpdateAutomaticGearbox(gearbox, braking, -0.5f, 0.0f, 1.0f / 1000.0f);
+    Require(braking.gear == -1, "reverse");
+    UpdateAutomaticGearbox(gearbox, braking, 0.5f, 0.0f, 1.0f / 1000.0f);
+    Require(braking.gear == 1, "and back to first");
+}
+
+// Any steady speed and throttle settles in one gear: the box does not change back and forth.
+void TestGearboxDoesNotHunt()
+{
+    const VehicleGearbox gearbox = GtrGearbox();
+    for (float throttle = 0.0f; throttle <= 1.0f; throttle += 0.1f)
+    {
+        for (float output = 200.0f; output < 3000.0f; output += 50.0f)
+        {
+            VehicleGearboxState state;
+            SettleGearbox(gearbox, state, throttle, output);
+            const int settled = state.gear;
+            int changes = 0;
+            for (int step = 0; step < 5000; ++step)
+            {
+                const int before = state.gear;
+                UpdateAutomaticGearbox(gearbox, state, throttle, output, 1.0f / 1000.0f);
+                changes += state.gear != before ? 1 : 0;
+            }
+            Require(changes == 0 && state.gear == settled, "the gear holds at throttle " + std::to_string(throttle) + ", output " + std::to_string(output) + " rpm");
+        }
+    }
+}
+
 void AddGroundMesh(PhysicsWorld& world, float friction = PhysicsWorld::kDefaultSurfaceFriction)
 {
     // A 400 m square facing up (counter-clockwise seen from above), as a triangle mesh like a track's.
@@ -1171,7 +1274,7 @@ void TestCarSpecReplacesWhatItKnows()
     Require(applied.torqueCurve.size() == 9 && applied.torqueCurve.front().x == 500.0f, "the curve, sorted by rpm");
     Require(applied.minRpm == 900.0f && applied.maxRpm == 7500.0f, "the revs");
     Require(applied.gearRatios.size() == 7 && applied.reverseGearRatio == -3.55f && applied.finalDriveRatio == 3.62f, "the gearbox");
-    Require(std::abs(applied.shiftUpRpm - 6600.0f) < 1.0f && std::abs(applied.shiftDownRpm - 2250.0f) < 1.0f, "shifts by the revs");
+    Require(applied.shiftUpRpm == 0.0f && applied.shiftDownRpm == 0.0f, "the shift points follow the revs");
     Require(applied.gearSwitchSeconds == 0.03f && applied.clutchReleaseSeconds == 0.1f && applied.engineInertia == 0.137f,
             "the clutch and the engine's inertia");
     Require(applied.frontTyres.longitudinalGrip == 1.314f && applied.rearTyres.inertia == 1.97f && applied.rearTyres.postPeakShare == 0.86f,
@@ -1247,6 +1350,41 @@ void TestCarOnItsOwnDataAccelerates()
     slowBox.gearSwitchSeconds = 0.5f;
     slowBox.clutchReleaseSeconds = 0.3f;
     Require(TimeToSpeed(ApplyCarSpec(VehicleSettings{}, slowBox), 100.0f / 3.6f, gear) > own + 0.3f, "and so does a slow gear change");
+}
+
+// On the road the GT-R changes up through its gears, changes down as it brakes to a stop and pulls away in
+// first again: with its shift down at its idle the physics engine's box stayed in top and crawled off.
+void TestCarChangesDownAsItStops()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(GtrSettings(false), {glm::vec3(0.0f, 0.0f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    int highest = 0;
+    for (int frame = 0; frame < 144 * 7; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+        highest = std::max(highest, world.GetVehicleTelemetry(car).gear);
+    }
+    Require(highest >= 3, "full throttle changes up, reached gear " + std::to_string(highest));
+
+    controls.throttle = 0.0f;
+    controls.brake = 0.7f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 6.0f);
+    VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+    Require(std::abs(telemetry.forwardSpeed) < 0.3f, "the car brakes to a stop, at " + std::to_string(telemetry.forwardSpeed) + " m/s");
+    Require(telemetry.gear == 1, "stopped in first, gear " + std::to_string(telemetry.gear));
+
+    controls.throttle = 1.0f;
+    controls.brake = 0.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 2.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.forwardSpeed > 30.0f / 3.6f, "and pulls away hard, " + std::to_string(telemetry.forwardSpeed * 3.6f) + " km/h in 2 s");
 }
 
 // Grip is what the tyres can hold: the same car on the same tarmac is quicker on grippy tyres than on hard
@@ -1564,6 +1702,9 @@ int main()
         TestFitSurvivesFlatBounds();
         TestFitKeepsTuning();
         TestDriverInputBrakesBeforeReversing();
+        TestShiftPointsFollowTheRevRange();
+        TestGearboxPicksTheGearBySpeedAndThrottle();
+        TestGearboxDoesNotHunt();
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
         TestGrassCardsStopACarUnlessTheyAreGroundCover();
@@ -1574,6 +1715,7 @@ int main()
         TestBrakeTorqueFollowsTheLoad();
         TestCarSpecReplacesWhatItKnows();
         TestCarOnItsOwnDataAccelerates();
+        TestCarChangesDownAsItStops();
         TestTyreGripSetsAcceleration();
         TestAerodynamicsDragsAndPressesDown();
         TestCarSettlesOnTheGround();
