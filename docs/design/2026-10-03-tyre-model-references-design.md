@@ -75,6 +75,28 @@ TMeasy（Rill）参数少且直观，能处理静止，风格接近 AC 的 `tyre
 
 这条乘用车胎只用来验证实现；GT-R / Boxster 的轮胎参数仍从 AC `tyres.ini` 映射。
 
+### 4.1 第 1 步已完成（2026-10-03）
+
+- `tests/fixtures/tyres/pacejka2006_205_60R15.tir`：Table A3.1 录成标准 `.tir`，对着页面图逐项核过符号。表里没有的系数（rEx、rEy、rHy2、qSy2…）为 0。
+- `engine/tyre`（`engine_tyre`，只依赖标准库）：
+  - `tyre_magic_formula.{h,cpp}`：`EvaluateMagicFormula`，照 4.E1–4.E78 逐式实现，含纯滑移和组合滑移的 Fx、Fy、Mz，以及 Mx、My；不含转向滑移（zeta 全为 1）。
+  - `tyre_tir_file.{h,cpp}`：`.tir` 读取，键名大小写不敏感、不分段，兼容 MF 5.2 的 `LGAY/LGAZ`。
+- `tools/tyre_reference/magic_formula.py`：独立的 Python 转写；`reference_points.py` 输出 C++ 参考点，共 67 组，覆盖 3 档载荷下的纯纵滑/纯侧偏、组合滑移、外倾、低速和倒车。
+- `tests/tyre_tests.cpp`（`miniengine.tyre`）：
+  - 与 Python 对齐到相对 1e-9；
+  - `K_x`/`K_y` 等于曲线在零点的数值斜率，且等于闭式解；
+  - 峰值等于 `D + S_V`；
+  - ISO 符号检查；
+  - 拖距 `t = R0 qDz1 cos'alpha`；
+  - 组合滑移单调变弱；
+  - `M_z` 峰值位置和大小落在合理区间；
+  - 载荷敏感性；零载荷返回零。
+- 实测数值（Fz0 = 4000 N）：`K_x` = 86.0 kN，`K_y` = -803 N/deg，峰值 Fx 4840 N，峰值 Fy -3780 N，拖距 31 mm，`M_z` 峰值约 50 Nm（出现在 4° 附近）。Release 下每次求值约 250 ns，4 轮 x 1000 Hz 每步约 1 us。
+- 变异检查：把 `qDz4 gamma^2` 改成 `qDz4 gamma`，参考点测试会失败。
+- 书中方程的已知问题：`mu_y` 的分母是 `1 + pDy3 gamma^2`，表中 `pDy3` = -11.23，所以 `|mu_y|` 随外倾角增大（6° 时增大 14%），并在 |gamma| ≈ 0.3 rad 处发散。这是照书实现的结果，外倾测试只覆盖到 6°。
+
+还没做：接入车辆（目前仍由 Jolt 的约束钳位出力）、松弛长度、低速处理、与 MFeval 的逐位对齐。
+
 ## 5. 建议的实施顺序
 
 1. 自己的轮胎力，替换 Jolt 的约束钳位：组合滑移 + 载荷敏感 + 外倾，读 `tyres.ini`（解决第 1 节 1–4）。

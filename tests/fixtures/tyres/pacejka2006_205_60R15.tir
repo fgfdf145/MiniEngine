@@ -1,0 +1,146 @@
+[MDI_HEADER]
+FILE_TYPE                = 'tir'
+FILE_VERSION             = 3.0
+FILE_FORMAT              = 'ASCII'
+$-----------------------------------------------------------------------------------------------
+$ Passenger car tyre 205/60R15 91V at 2.2 bar, ISO sign convention.
+$ Source: H.B. Pacejka, Tyre and Vehicle Dynamics, 2nd ed. (2006), Appendix 3, Table A3.1
+$ (Magic Formula part only; the SWIFT dynamic parameters are left out).
+$ The equations these belong to are the book's Eqs. (4.E1-4.E78), "version 2004". They differ
+$ in places from MF-Tyre 6.1/6.2 (for example the camber terms of mu_y and K_y), so this file is
+$ not meant for an MF 6.1 evaluator. Coefficients the table does not list are zero.
+$-----------------------------------------------------------------------------------------------
+[UNITS]
+LENGTH                   = 'meter'
+FORCE                    = 'newton'
+ANGLE                    = 'radians'
+MASS                     = 'kg'
+TIME                     = 'second'
+[MODEL]
+LONGVL                   = 16.67          $ reference velocity V0
+[DIMENSION]
+UNLOADED_RADIUS          = 0.313          $ R0
+[INERTIA]
+MASS                     = 9.3            $ m0
+[VERTICAL]
+FNOMIN                   = 4000           $ Fz0
+[SCALING_COEFFICIENTS]
+LFZO                     = 1
+LCX                      = 1
+LMUX                     = 1
+LEX                      = 1
+LKX                      = 1
+LHX                      = 1
+LVX                      = 1
+LCY                      = 1
+LMUY                     = 1
+LEY                      = 1
+LKY                      = 1
+LKYC                     = 1
+LKZC                     = 1
+LHY                      = 1
+LVY                      = 1
+LTR                      = 1
+LRES                     = 1
+LXAL                     = 1
+LYKA                     = 1
+LVYKA                    = 1
+LS                       = 1
+LMX                      = 1
+LMY                      = 1
+LMUV                     = 0
+[LONGITUDINAL_COEFFICIENTS]
+PCX1                     = 1.685
+PDX1                     = 1.210
+PDX2                     = -0.037
+PEX1                     = 0.344
+PEX2                     = 0.095
+PEX3                     = -0.020
+PEX4                     = 0
+PKX1                     = 21.51
+PKX2                     = -0.163
+PKX3                     = 0.245
+PHX1                     = -0.002
+PHX2                     = 0.002
+PVX1                     = 0
+PVX2                     = 0
+RBX1                     = 12.35
+RBX2                     = -10.77
+RBX3                     = 0
+RCX1                     = 1.092
+RHX1                     = 0.007
+[OVERTURNING_COEFFICIENTS]
+QSX1                     = 0
+QSX2                     = 0
+QSX3                     = 0
+[LATERAL_COEFFICIENTS]
+PCY1                     = 1.193
+PDY1                     = -0.990
+PDY2                     = 0.145
+PDY3                     = -11.23
+PEY1                     = -1.003
+PEY2                     = -0.537
+PEY3                     = -0.083
+PEY4                     = -4.787
+PKY1                     = -14.95
+PKY2                     = 2.130
+PKY3                     = -0.028
+PKY4                     = 2
+PKY5                     = 0
+PKY6                     = -0.92
+PKY7                     = -0.24
+PHY1                     = 0.003
+PHY2                     = -0.001
+PHY3                     = 0
+PVY1                     = 0.045
+PVY2                     = -0.024
+PVY3                     = -0.532
+PVY4                     = 0.039
+RBY1                     = 6.461
+RBY2                     = 4.196
+RBY3                     = -0.015
+RBY4                     = 0
+RCY1                     = 1.081
+RHY1                     = 0.009
+RVY1                     = 0.053
+RVY2                     = -0.073
+RVY3                     = 0.517
+RVY4                     = 35.44
+RVY5                     = 1.9
+RVY6                     = -10.71
+[ROLLING_COEFFICIENTS]
+QSY1                     = 0.01
+QSY3                     = 0
+QSY4                     = 0
+[ALIGNING_COEFFICIENTS]
+QBZ1                     = 8.964
+QBZ2                     = -1.106
+QBZ3                     = -0.842
+QBZ5                     = -0.227
+QBZ6                     = 0
+QBZ9                     = 18.47
+QBZ10                    = 0
+QCZ1                     = 1.180
+QDZ1                     = 0.100
+QDZ2                     = -0.001
+QDZ3                     = 0.007
+QDZ4                     = 13.05
+QDZ6                     = -0.008
+QDZ7                     = 0.000
+QDZ8                     = -0.296
+QDZ9                     = -0.009
+QDZ10                    = 0
+QDZ11                    = 0
+QEZ1                     = -1.609
+QEZ2                     = -0.359
+QEZ3                     = 0
+QEZ4                     = 0.174
+QEZ5                     = -0.896
+QHZ1                     = 0.007
+QHZ2                     = -0.002
+QHZ3                     = 0.147
+QHZ4                     = 0.004
+SSZ1                     = 0.043
+SSZ2                     = 0.001
+SSZ3                     = 0.731
+SSZ4                     = -0.238

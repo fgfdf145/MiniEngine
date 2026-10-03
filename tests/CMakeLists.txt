@@ -1640,3 +1640,25 @@ add_test(
 )
 
 set_target_properties(miniengine_capture_state_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_tyre_tests
+    tyre_tests.cpp
+)
+miniengine_group_target_sources(miniengine_tyre_tests)
+
+target_link_libraries(miniengine_tyre_tests
+    PRIVATE
+        engine_tyre
+)
+
+target_compile_definitions(miniengine_tyre_tests
+    PRIVATE
+        MINIENGINE_TYRE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tyres"
+)
+
+add_test(
+    NAME miniengine.tyre
+    COMMAND miniengine_tyre_tests
+)
+
+set_target_properties(miniengine_tyre_tests PROPERTIES FOLDER "Tests")
