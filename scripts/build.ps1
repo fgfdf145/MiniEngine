@@ -4,7 +4,11 @@ param(
     [string]$Preset = "x64-debug",
     [string]$Target,
     [string]$Config,
-    [int]$Jobs = 0
+    [int]$Jobs = 0,
+    # Logical processors the build may run on, as a mask; 0 means all. Defaults to the
+    # MINIENGINE_BUILD_AFFINITY environment variable, else 0xFF: the i9-14900HX's eight
+    # performance cores (CPUs 0-7, no hyper-threading), leaving the slow efficiency cores out.
+    [long]$Affinity = -1
 )
 
 Set-StrictMode -Version Latest
@@ -57,17 +61,36 @@ function Resolve-ConfigurePreset([string]$BuildPresetName)
 
 $configurePreset = Resolve-ConfigurePreset $Preset
 $buildDir = Join-Path $repoRoot "out\build\$configurePreset"
+if ($Affinity -lt 0)
+{
+    $Affinity = if ($env:MINIENGINE_BUILD_AFFINITY) { [Convert]::ToInt64($env:MINIENGINE_BUILD_AFFINITY, 16) } else { 0xFF }
+}
+$allProcessors = [System.Environment]::ProcessorCount
+if ($Affinity -ne 0)
+{
+    $Affinity = $Affinity -band ((1L -shl $allProcessors) - 1)
+    if ($Affinity -eq 0)
+    {
+        Fail("The affinity mask names none of this machine's $allProcessors logical processors.")
+    }
+    # Child processes (cmake, MSBuild, ninja, the compilers) inherit this process's affinity. MSBuild
+    # would otherwise hand work to nodes left running by an earlier build, which kept theirs.
+    [System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]$Affinity
+    $env:MSBUILDDISABLENODEREUSE = "1"
+}
+$usableProcessors = if ($Affinity -ne 0) { [System.Numerics.BitOperations]::PopCount([uint64]$Affinity) } else { $allProcessors }
 $resolvedJobs = if ($Jobs -gt 0)
 {
     $Jobs
 }
 else
 {
-    [System.Environment]::ProcessorCount
+    $usableProcessors
 }
 
 Write-Info("Preset: $Preset (configure preset: $configurePreset)")
 Write-Info("Build directory: $buildDir")
+Write-Info("Processors: " + $(if ($Affinity -ne 0) { "mask 0x{0:X} ($usableProcessors of $allProcessors)" -f $Affinity } else { "all $allProcessors" }))
 Write-Info("Parallel jobs: $resolvedJobs")
 
 if (-not (Test-Path $buildDir))

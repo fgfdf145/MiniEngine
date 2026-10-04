@@ -15,6 +15,28 @@ die()
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
+# On Windows (Git Bash / MSYS) the PowerShell script does the work: it resolves the configure preset
+# and keeps the build on the performance cores (see its -Affinity).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        ps_args=()
+        if (($# > 0)) && [[ "$1" != -* ]]; then
+            ps_args+=("$1")
+            shift
+        fi
+        while (($# > 0)); do
+            case "$1" in
+                --target) ps_args+=(-Target "$2"); shift 2 ;;
+                --config) ps_args+=(-Config "$2"); shift 2 ;;
+                --jobs|-j) ps_args+=(-Jobs "$2"); shift 2 ;;
+                --affinity) ps_args+=(-Affinity "$2"); shift 2 ;;
+                *) die "Unknown argument: $1" ;;
+            esac
+        done
+        exec pwsh -NoProfile -File "$script_dir/build.ps1" "${ps_args[@]}"
+        ;;
+esac
+
 default_preset()
 {
     local host_system
