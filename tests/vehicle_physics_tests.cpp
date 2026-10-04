@@ -203,6 +203,41 @@ void TestGearboxPicksTheGearBySpeedAndThrottle()
     Require(braking.gear == 1, "and back to first");
 }
 
+// The game's change times each way (CHANGE_UP_TIME, CHANGE_DN_TIME) hold the clutch open for as long, and
+// an upshift cuts the engine for AUTO_CUTOFF_TIME, here longer than the change.
+void TestGearboxChangeTimesAndUpshiftCut()
+{
+    VehicleGearbox gearbox = GtrGearbox();
+    gearbox.switchSeconds = 0.24f;
+    gearbox.switchDownSeconds = 0.30f;
+    gearbox.upshiftCutSeconds = 0.35f;
+    constexpr float kStep = 1.0f / 1000.0f;
+    const auto openSeconds = [&](VehicleGearboxState& state, float outputRpm, int expectedGear, float& cut)
+    {
+        UpdateAutomaticGearbox(gearbox, state, 1.0f, outputRpm, kStep);
+        Require(state.gear == expectedGear, "the change to " + std::to_string(expectedGear) + ", in " + std::to_string(state.gear));
+        cut = state.cutLeft;
+        int steps = 1;
+        while (state.clutch == 0.0f && steps < 2000)
+        {
+            UpdateAutomaticGearbox(gearbox, state, 1.0f, outputRpm, kStep);
+            ++steps;
+        }
+        return steps * kStep;
+    };
+    VehicleGearboxState up;
+    float cut = 0.0f;
+    const float upSeconds = openSeconds(up, gearbox.shiftPoints.upFull / gearbox.forwardRatios[0] * 1.02f, 2, cut);
+    RequireNear(upSeconds, 0.24f, 0.003f, "a change up takes CHANGE_UP_TIME");
+    RequireNear(cut, 0.35f - kStep, 0.002f, "and cuts the engine for AUTO_CUTOFF_TIME");
+
+    VehicleGearboxState down;
+    down.gear = 3;
+    const float downSeconds = openSeconds(down, gearbox.shiftPoints.downFull / gearbox.forwardRatios[2] * 0.9f, 2, cut);
+    RequireNear(downSeconds, 0.30f, 0.003f, "a change down takes CHANGE_DN_TIME");
+    Require(cut == 0.0f, "without a cut");
+}
+
 // Any steady speed and throttle settles in one gear: the box does not change back and forth.
 void TestGearboxDoesNotHunt()
 {
@@ -573,6 +608,63 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     RequireNear(settings.frontTyres.loadExponent, 0.87f, 1e-5f, "the front tyres' load sensitivity, the mean of the two");
     RequireNear(settings.rearTyres.loadExponent, 0.8f, 1e-6f, "the rear's, the one given");
     Require(ApplyCarSpec(VehicleSettings{}, VehicleCarSpec{}).limitedSlipPreload < 0.0f, "no data: the default preload");
+
+    // The gearbox's and clutch's figures, and the electronics: the game's traction control replaces ours.
+    spec.changeDownSeconds = 0.3f;
+    spec.autoCutoffSeconds = 0.24f;
+    spec.clutchMaxTorque = 750.0f;
+    spec.electronics["TRACTION_CONTROL"] = {{"PRESENT", 1.0f}, {"ACTIVE", 1.0f}, {"SLIP_RATIO_LIMIT", 0.12f}, {"MIN_SPEED_KMH", 40.0f}, {"RATE_HZ", 250.0f}};
+    const VehicleSettings withElectronics = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(withElectronics.gearSwitchDownSeconds == 0.3f && withElectronics.upshiftCutSeconds == 0.24f && withElectronics.clutchMaxTorque == 750.0f,
+            "change down time, upshift cut and clutch limit");
+    Require(withElectronics.tractionControlGrip == 0.0f && withElectronics.tcSlipRatioLimit == 0.12f && withElectronics.tcMinSpeedKmh == 40.0f &&
+                withElectronics.tcRateHz == 250.0f,
+            "the game's traction control instead of ours");
+    spec.electronics["TRACTION_CONTROL"]["ACTIVE"] = 0.0f;
+    const VehicleSettings tcOff = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(tcOff.tractionControlGrip == 0.0f && tcOff.tcSlipRatioLimit == 0.0f, "a car whose traction control is off has none");
+}
+
+// The game's traction control on a slippery road (grip 0.5): rolled up gently to 8 m/s, then the
+// throttle floored. Cutting it while a driven wheel spins past its limit holds the spin down; without
+// it the wheels spin up.
+float WorstSpinOnASlipperyRoad(float tcLimit)
+{
+    VehicleSettings tuning;
+    tuning.tractionControlGrip = 0.0f;
+    tuning.tcSlipRatioLimit = tcLimit;
+    tuning.tcRateHz = 250.0f;
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    PhysicsWorld world;
+    AddGroundMesh(world, 0.5f);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, -150.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 0.15f;
+    world.SetVehicleControls(car, controls);
+    for (int frame = 0; frame < 144 * 30 && world.GetVehicleTelemetry(car).forwardSpeed < 8.0f; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+    }
+    Require(world.GetVehicleTelemetry(car).forwardSpeed >= 8.0f, "the car rolls up to speed");
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    float worst = 0.0f;
+    for (int frame = 0; frame < 144 * 2; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+        worst = std::max(worst, world.GetVehicleTelemetry(car).spinSlip);
+    }
+    return worst;
+}
+
+void TestGameTractionControlCutsTheThrottle()
+{
+    const float without = WorstSpinOnASlipperyRoad(0.0f);
+    const float with = WorstSpinOnASlipperyRoad(0.12f);
+    std::cout << "flooring it at 8 m/s on grip 0.5: worst wheelspin " << without << " without traction control, " << with << " with the game's\n";
+    Require(without > 0.5f, "without it the wheels spin up");
+    Require(with < 0.3f && with < 0.5f * without, "with it the spin is held down");
 }
 
 // A wheel turning more than half a turn per physics step (188 rad/s at 60 Hz: a 0.32 m tyre at 216 km/h,
@@ -2206,6 +2298,7 @@ int main()
         TestDriverInputBrakesBeforeReversing();
         TestShiftPointsFollowTheRevRange();
         TestGearboxPicksTheGearBySpeedAndThrottle();
+        TestGearboxChangeTimesAndUpshiftCut();
         TestGearboxDoesNotHunt();
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
@@ -2239,6 +2332,7 @@ int main()
         TestEngineBrakingFromTheData();
         TestTurboSpoolsWithItsLag();
         TestCarDataGivesDifferentialAndTyreSensitivity();
+        TestGameTractionControlCutsTheThrottle();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);
         TestMultibodyCarRestsAtItsDesignPosition(true);

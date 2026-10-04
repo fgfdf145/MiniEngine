@@ -151,6 +151,13 @@ void DrawTuning(VehicleSettings& tuning)
         ImGui::SetTooltip("Anti-lock brakes, for a car whose data has them (its slip limit and rate): a wheel turning\n"
                           "slower than the road by more than the limit has its brake let off until it is back under.");
     }
+    ImGui::Checkbox("Traction Control (car's)", &tuning.useTractionControl);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The traction control a car's data gives (its slip limit, minimum speed and rate): the throttle\n"
+                          "is cut while a driven wheel spins past the limit. A car with that data does not use the\n"
+                          "\"Traction Control (grip)\" below.");
+    }
     DragFloatInRange("Hand Brake Torque (Nm)", &tuning.maxHandBrakeTorque, 0.0f, 10000.0f, "%.0f", 10.0f);
     DragFloatInRange("Spring Frequency (Hz)", &tuning.suspensionFrequencyHz, 0.5f, 5.0f, "%.2f", 0.01f);
     DragFloatInRange("Spring Damping", &tuning.suspensionDamping, 0.0f, 2.0f, "%.2f", 0.01f);

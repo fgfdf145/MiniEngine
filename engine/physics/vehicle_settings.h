@@ -327,6 +327,10 @@ struct VehicleSettings
     // engine's 0.3 s when below 0). A dual-clutch box changes in a few hundredths.
     float gearSwitchSeconds = 0.0f;
     float clutchReleaseSeconds = -1.0f;
+    // A change down's own time (0: gearSwitchSeconds), and how long an upshift cuts the engine for
+    // (the game's AUTO_CUTOFF_TIME; 0: only while the clutch is open).
+    float gearSwitchDownSeconds = 0.0f;
+    float upshiftCutSeconds = 0.0f;
     // Moving off on the throttle the clutch slips to hold the engine near this rpm (full throttle; less
     // throttle, proportionally nearer the idle) until the car catches up with it, as a driver launching
     // does; 0 lets it bite over clutchReleaseSeconds from the idle. See UpdateAutomaticGearbox.
@@ -366,6 +370,17 @@ struct VehicleSettings
     bool useAbs = true;
     float absSlipRatioLimit = 0.0f;
     float absRateHz = 0.0f;
+    // The game's traction control (electronics.ini [TRACTION_CONTROL]): above tcMinSpeedKmh, at tcRateHz,
+    // the throttle is cut while a driven wheel turns faster than the road by more than tcSlipRatioLimit.
+    // A car whose data has electronics uses this instead of tractionControlGrip (which it sets to 0);
+    // a limit of 0 is none. useTractionControl off ignores the car's.
+    bool useTractionControl = true;
+    float tcSlipRatioLimit = 0.0f;
+    float tcMinSpeedKmh = 0.0f;
+    float tcRateHz = 0.0f;
+    // The clutch's torque limit at the engine (Nm; 0 none): the physics engine's clutch is viscous and
+    // would pass any torque its speed gap asks.
+    float clutchMaxTorque = 0.0f;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;
@@ -763,6 +778,8 @@ struct VehicleGearbox
     VehicleShiftPoints shiftPoints;
     float idleRpm = 1000.0f;
     float switchSeconds = 0.5f;  // the clutch is open while the gears change
+    float switchDownSeconds = 0.0f; // a change down's (0: switchSeconds)
+    float upshiftCutSeconds = 0.0f; // a change up cuts the engine this long (0: only while the clutch is open)
     float releaseSeconds = 0.3f; // then it bites over this long
     float latencySeconds = 0.5f; // and the box waits this long before another change
     float launchRpm = 0.0f;      // moving off, the clutch slips around this engine rpm (0: none)
@@ -779,6 +796,8 @@ struct VehicleGearboxState
     float switchLeft = 0.0f;
     float releaseLeft = 0.0f;
     float latencyLeft = 0.0f;
+    // What is left of an upshift's engine cut: the caller shuts the throttle meanwhile.
+    float cutLeft = 0.0f;
     bool idling = false;
     bool revMatch = false;
     // Moving off with the clutch slipping on the engine's revs (gearbox.launchRpm): the caller then keeps

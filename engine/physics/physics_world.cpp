@@ -578,6 +578,10 @@ struct PhysicsWorld::Impl
         // last looked.
         std::array<bool, kVehicleWheelCount> absReleased{};
         float absClock = 0.0f;
+        // The game's traction control (ApplyTractionControl): whether it has the throttle cut, and the time
+        // since it last looked.
+        bool tcCut = false;
+        float tcClock = 0.0f;
         // Each turbo's boost now (SpoolTurbos), and the throttle pedal the engine had in the last step.
         std::vector<float> turboBoost;
         float pedal = 0.0f;
@@ -1022,6 +1026,51 @@ struct PhysicsWorld::Impl
         physicsSystem.GetBodyInterfaceNoLock().AddForce(body.GetID(), relative, transform * ToJolt(c.hubCenter), JPH::EActivation::DontActivate);
     }
 
+    // The game's traction control, after the gearbox: above its minimum speed, at its rate, it looks at
+    // the driven wheels and cuts the throttle while any turns faster than the road by more than the
+    // limit, giving it back once all are under. (Assetto Corsa's electronics.ini [TRACTION_CONTROL].)
+    void ApplyTractionControl(Vehicle& vehicle, VehicleDriverInput& input, float forwardSpeed) const
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        if (!settings.useTractionControl || settings.tcSlipRatioLimit <= 0.0f || input.forward == 0.0f ||
+            std::abs(forwardSpeed) * 3.6f < settings.tcMinSpeedKmh)
+        {
+            vehicle.tcCut = false;
+            vehicle.tcClock = 0.0f;
+            return;
+        }
+        vehicle.tcClock += kFixedStepSeconds;
+        const float period = settings.tcRateHz > 0.0f ? 1.0f / settings.tcRateHz : 0.0f;
+        if (vehicle.tcClock >= period)
+        {
+            vehicle.tcClock = 0.0f;
+            constexpr float kMinRoadSpeed = 1.0f;
+            bool spinning = false;
+            const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+            for (size_t index = 0; index < wheels.size(); ++index)
+            {
+                const bool front = index < 2;
+                const bool driven = vehicle.drive == VehicleDrive::AllWheel || (vehicle.drive == VehicleDrive::FrontWheel) == front;
+                const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+                if (!driven || !wheel.HasContact())
+                {
+                    continue;
+                }
+                const float road = (vehicle.body->GetPointVelocity(wheel.GetContactPosition()) - wheel.GetContactPointVelocity()).Dot(wheel.GetContactLongitudinal());
+                const float tread = wheel.GetAngularVelocity() * wheel.GetSettings()->mRadius;
+                if (std::abs(road) > kMinRoadSpeed && road * tread > 0.0f && (std::abs(tread) - std::abs(road)) / std::abs(road) > settings.tcSlipRatioLimit)
+                {
+                    spinning = true;
+                }
+            }
+            vehicle.tcCut = spinning;
+        }
+        if (vehicle.tcCut)
+        {
+            input.forward = 0.0f;
+        }
+    }
+
     // The anti-lock brakes, after DistributeBrakeTorque: at the data's rate the controller looks at each
     // wheel's slip and lets the brake off a wheel that turns slower than the road by more
     // than the limit, on again once it is back under; between looks the wheels keep what it decided. The
@@ -1147,10 +1196,11 @@ struct PhysicsWorld::Impl
         {
             controller->GetEngine().SetCurrentRPM(VehicleGearRpm(vehicle.gearbox, state.gear, outputRpm));
         }
-        // The engine is cut while a change opens the clutch; launching, the clutch slips on full revs.
+        // The engine is cut while a change opens the clutch, and on an upshift for the data's cut time;
+        // launching, the clutch slips on full revs.
         if (!state.launching)
         {
-            input.forward *= state.clutch;
+            input.forward *= state.cutLeft > 0.0f ? 0.0f : state.clutch;
         }
     }
 
@@ -1160,6 +1210,44 @@ struct PhysicsWorld::Impl
     // clutch on a start. The clutch's torque is its strength times the gap between the engine's speed and the
     // wheels', so the strength is set to the torque allowed over the gap, up to its own.
     void LimitClutchTorque(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
+    {
+        SetClutchStrength(vehicle, controller);
+        CapClutchTorque(vehicle, controller);
+    }
+
+    // The data's clutch torque limit (CLUTCH MAX_TORQUE): the physics engine's clutch passes its
+    // strength times the gap between the engine's speed and the driven wheels' (geared), with no end,
+    // so the strength is held to what passes the limit at the gap now. Explicit, as traction control's.
+    void CapClutchTorque(const Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
+    {
+        const float limit = vehicle.settings.clutchMaxTorque;
+        JPH::VehicleTransmission& transmission = controller.GetTransmission();
+        const float ratio = std::abs(transmission.GetCurrentRatio());
+        if (limit <= 0.0f || ratio < 1e-3f || controller.GetDifferentials().empty())
+        {
+            return;
+        }
+        float wheelSpeed = 0.0f;
+        int driven = 0;
+        for (const JPH::VehicleDifferentialSettings& differential : controller.GetDifferentials())
+        {
+            for (const int index : {differential.mLeftWheel, differential.mRightWheel})
+            {
+                if (index >= 0)
+                {
+                    wheelSpeed += vehicle.constraint->GetWheel(static_cast<JPH::uint>(index))->GetAngularVelocity();
+                    ++driven;
+                }
+            }
+        }
+        const float overall = ratio * controller.GetDifferentials()[0].mDifferentialRatio;
+        const float engineSpeed = controller.GetEngine().GetAngularVelocity();
+        const float gap = std::abs(engineSpeed - std::abs(wheelSpeed) / static_cast<float>(std::max(driven, 1)) * overall);
+        const float friction = std::max(transmission.GetClutchFriction(), 1e-3f);
+        transmission.mClutchStrength = std::min(transmission.mClutchStrength, limit / (friction * std::max(gap, 1e-3f)));
+    }
+
+    void SetClutchStrength(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
     {
         JPH::VehicleTransmission& transmission = controller.GetTransmission();
         const float ratio = std::abs(transmission.GetCurrentRatio());
@@ -2046,6 +2134,8 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         gearbox.shiftPoints = ComputeVehicleShiftPoints(settings);
         gearbox.idleRpm = controller->GetEngine().mMinRPM;
         gearbox.switchSeconds = transmission.mSwitchTime;
+        gearbox.switchDownSeconds = std::max(settings.gearSwitchDownSeconds, 0.0f);
+        gearbox.upshiftCutSeconds = std::max(settings.upshiftCutSeconds, 0.0f);
         gearbox.releaseSeconds = transmission.mClutchReleaseTime;
         gearbox.latencySeconds = transmission.mSwitchLatency;
         // A launch rpm within the engine's range: no higher than 60 % of the way from the idle to the limiter.
@@ -2266,6 +2356,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             VehicleDriverInput input = ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
             impl.ShiftGears(vehicle, input, localVelocity.GetZ());
+            impl.ApplyTractionControl(vehicle, input, localVelocity.GetZ());
             impl.ApplyAerodynamics(vehicle);
             impl.ApplySurfaceRollingResistance(vehicle);
             impl.DistributeBrakeTorque(vehicle);

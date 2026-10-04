@@ -520,6 +520,38 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
             settings.absRateHz = number("RATE_HZ");
         }
     }
+    // A car whose data has its electronics has the game's traction control or none, not ours.
+    if (!spec.electronics.empty())
+    {
+        settings.tractionControlGrip = 0.0f;
+        settings.tcSlipRatioLimit = 0.0f;
+        if (const auto tc = spec.electronics.find("TRACTION_CONTROL"); tc != spec.electronics.end())
+        {
+            const auto number = [&](const char* key)
+            {
+                const auto found = tc->second.find(key);
+                return found != tc->second.end() ? found->second : 0.0f;
+            };
+            if (number("PRESENT") > 0.0f && number("ACTIVE") > 0.0f && number("SLIP_RATIO_LIMIT") > 0.0f)
+            {
+                settings.tcSlipRatioLimit = number("SLIP_RATIO_LIMIT");
+                settings.tcMinSpeedKmh = std::max(number("MIN_SPEED_KMH"), 0.0f);
+                settings.tcRateHz = number("RATE_HZ");
+            }
+        }
+    }
+    if (spec.changeDownSeconds.has_value() && *spec.changeDownSeconds > 0.0f)
+    {
+        settings.gearSwitchDownSeconds = *spec.changeDownSeconds;
+    }
+    if (spec.autoCutoffSeconds.has_value() && *spec.autoCutoffSeconds > 0.0f)
+    {
+        settings.upshiftCutSeconds = *spec.autoCutoffSeconds;
+    }
+    if (spec.clutchMaxTorque.has_value() && *spec.clutchMaxTorque > 0.0f)
+    {
+        settings.clutchMaxTorque = *spec.clutchMaxTorque;
+    }
     if (spec.suspensionFrequencyHz.has_value() && *spec.suspensionFrequencyHz > 0.0f)
     {
         settings.suspensionFrequencyHz = *spec.suspensionFrequencyHz;
@@ -707,11 +739,14 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     {
         return VehicleGearRpm(gearbox, gear, outputRpm);
     };
-    const auto startChange = [&](bool underLoad)
+    const auto startChange = [&](bool underLoad, bool up = false)
     {
-        // Under load the clutch opens while the gears change, then bites; between gears with no
-        // torque through them (from rest, or rolling below the idle) the box just selects it.
-        state.switchLeft = underLoad ? gearbox.switchSeconds : 0.0f;
+        // Under load the clutch opens while the gears change (a change down has its own time), then
+        // bites; between gears with no torque through them (from rest, or rolling below the idle) the
+        // box just selects it. A change up under load also cuts the engine for the cut time.
+        const float switchSeconds = !up && gearbox.switchDownSeconds > 0.0f ? gearbox.switchDownSeconds : gearbox.switchSeconds;
+        state.switchLeft = underLoad ? switchSeconds : 0.0f;
+        state.cutLeft = underLoad && up ? gearbox.upshiftCutSeconds : 0.0f;
         state.releaseLeft = gearbox.releaseSeconds;
         state.latencyLeft = gearbox.latencySeconds;
         state.launching = false;
@@ -764,10 +799,11 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
         }
         if (target != state.gear)
         {
+            const bool up = target > state.gear;
             state.gear = target;
             if (!state.idling)
             {
-                startChange(true);
+                startChange(true, up);
             }
         }
     }
@@ -779,6 +815,7 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     {
         state.idling = true;
         state.switchLeft = 0.0f;
+        state.cutLeft = 0.0f;
         state.releaseLeft = 0.0f;
         state.latencyLeft = 0.0f;
         state.clutch = 0.0f;
@@ -817,6 +854,7 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     }
 
     state.revMatch = state.switchLeft > 0.0f;
+    state.cutLeft = std::max(state.cutLeft - deltaSeconds, 0.0f);
     if (state.switchLeft > 0.0f)
     {
         state.switchLeft = std::max(state.switchLeft - deltaSeconds, 0.0f);
