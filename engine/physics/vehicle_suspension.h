@@ -10,7 +10,6 @@
 
 #include <glm/glm.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -37,20 +36,8 @@ struct VehicleCornerSetup
 };
 
 // `staticLoad` is the wheel's share of the car's weight (N): the spring's preload, so the car
-// rests at the design position, unless the axle has a rod length (Assetto Corsa's ROD_LENGTH): the
-// spring is then compressed by it at the design position and the car rests where its load is.
+// rests at the design position.
 VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wheelIndex, double staticLoad);
-
-// Where the bump stop comes on (m of compression from the design position): BUMPSTOP_UP, or earlier
-// where the packers bring it on (PACKER_RANGE - ROD_LENGTH, at least 1 mm) for an independent axle with both.
-inline float VehicleBumpStopTravel(const VehicleSuspensionAxle& axle)
-{
-    if (axle.packerRange > 0.0f && axle.rodLength.has_value() && axle.type != VehicleSuspensionType::SolidAxle)
-    {
-        return std::max(std::min(axle.bumpStopTravel, axle.packerRange - *axle.rodLength), 0.001f);
-    }
-    return axle.bumpStopTravel;
-}
 
 // The wheel's force unit with its friction (none when the setup has none).
 suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup);

@@ -821,7 +821,7 @@ struct PhysicsWorld::Impl
     // with m_z = m_hub |dW/dz|^2 (W the wheel centre, P the contact point), F_t the tyre's vertical
     // force (rate and damping on its deflection, pushing only), G the springs, damper and stops, and f
     // the specific force (acceleration less gravity) of the body where the hub rides. It is stepped
-    // linearly implicit (the trapezoidal rule on the slopes), with hard stops at full bump and droop.
+    // linearly implicit (backward Euler on the slopes), with hard stops at full bump and droop.
     //
     // The physics engine's body is the whole car (hubs included). It receives the tyre's force through
     // its spring, set by the preload to exactly the force the hub took, and the hub's motion relative
@@ -895,13 +895,8 @@ struct PhysicsWorld::Impl
         const double force = tyre * perTravel + out.loadTravelForce + out.strutTravelForce + arb + inertia;
         const double stiffness = out.strutTravelStiffness - c.antiRollBarRate + tyreSlope * perTravel;
         const double damping = out.strutTravelDamping + tyreRateSlope * perTravel;
-        // The trapezoidal rule on the slopes: second order and without backward Euler's numerical damping
-        // (which took some 15 % off a lightly damped wheel hop's peak at the 1 ms step); stable for any step,
-        // and at 1 ms the stiffest hub mode (tyre, spring and bump stop together) is far from where its
-        // lack of L-stability would show (omega dt about 0.1).
-        const double change = dt * (force + 0.5 * dt * stiffness * v) / (mass - 0.5 * dt * damping - 0.25 * dt * dt * stiffness);
-        double rate = v + change;
-        double next = z + dt * (v + 0.5 * change);
+        double rate = v + dt * (force + dt * stiffness * v) / (mass - dt * damping - dt * dt * stiffness);
+        double next = z + dt * rate;
         if (next > c.bumpTravel)
         {
             next = c.bumpTravel;

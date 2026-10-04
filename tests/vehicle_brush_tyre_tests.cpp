@@ -473,20 +473,8 @@ void TestSurfacesGripAsTheGroundDoes(const char* car, VehicleSettings (*make)(Ve
     std::cout << car << " braking on wet asphalt: " << wetSlow << " g at 9 m/s, " << wetFast << " g at 30 m/s\n";
     Require(wetFast < 0.85f * wetSlow, "wet asphalt grips less at speed");
 
-    // Coasting on the capped grass a single run swings by a few hundredths of a g with a tenth of a m/s more
-    // or less run-up (measured 2026-10-04: 0.02 to 0.06 g over asphalt between 14.8 and 15.2 m/s), so the
-    // drag is the mean of three runs.
-    const auto coast = [&](const SurfaceGrip& surface)
-    {
-        float sum = 0.0f;
-        for (const float speed : {14.8f, 15.0f, 15.2f})
-        {
-            sum += DecelerationOn(brush, surface, speed, false, 2.0f);
-        }
-        return sum / 3.0f;
-    };
-    const float coastDry = coast(Grip(1.0f));
-    const float coastGrass = coast(grass);
+    const float coastDry = DecelerationOn(brush, Grip(1.0f), 15.0f, false, 2.0f);
+    const float coastGrass = DecelerationOn(brush, grass, 15.0f, false, 2.0f);
     std::cout << car << " coasting from 15 m/s: asphalt " << coastDry << " g, grass " << coastGrass << " g\n";
     Require(coastGrass - coastDry > 0.03f, "grass drags a coasting car");
 }

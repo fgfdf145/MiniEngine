@@ -100,9 +100,3 @@
    量级与 semi-implicit 1 ms 相同。
 4. 回归测试：`suspension_tests` 的 `TestGameHubSchemeAtTheGameStep` 锁定当前游戏格式的表现
    （8 Hz 以下 < 4%，跳动峰 -8% ~ -20%，一阶收敛）。若改用梯形法，需同步收紧该测试。
-
-## 6. 改为梯形法（2026-10-04 稍后）
-
-按第 5 节结论，`StepUnsprungCorner` 和台架的游戏格式已改为梯形法（缓冲块刚度核对：最硬模态 ωΔt ≈ 0.09）。
-轻阻尼测试车：车轮跳动峰误差 −13% → −0.4%，轮毂位移 ≤ 3%，剩余的车身误差（≤ 7%）来自耦合滞后、一阶收敛。
-见 `2026-10-04-rod-length-packers-hub-step-design.md` 第 4 节。

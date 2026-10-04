@@ -127,16 +127,6 @@ struct VehicleSuspensionAxle
     float bumpStopRate = 0.0f;         // N/m
     float bumpStopTravel = 0.0f;       // compression from the design position where it starts, m
     float reboundStopTravel = 0.0f;    // extension from the design position to full droop, m
-    // Assetto Corsa's ROD_LENGTH (m): the spring is compressed by it at the design position, so its force
-    // is wheelRate (travel + rodLength) and the car rests rodLength - load / wheelRate below the design
-    // position instead of at it (nullopt: the spring carries the static load at the design position).
-    std::optional<float> rodLength;
-    // PACKER_RANGE (m): the spring's travel from unloaded to the packers, which bring the bump stop on at
-    // packerRange - rodLength of compression from the design position when that is before bumpStopTravel
-    // (our reading, see docs/design/2026-10-04-rod-length-packers-hub-step-design.md); 0: none.
-    float packerRange = 0.0f;
-    // RIM_OFFSET (m): kept, not modelled (which way the game moves the wheel by it is unclear).
-    float rimOffset = 0.0f;
     float dampBump = 0.0f;             // N s/m below the fast threshold
     float dampFastBump = 0.0f;
     float dampFastBumpThreshold = 0.0f; // m/s

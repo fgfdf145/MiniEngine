@@ -1134,7 +1134,6 @@ std::map<std::string, std::string> BoxsterDataFiles()
          "[BASIC]\r\nWHEELBASE=2.475\r\nCG_LOCATION=0.455\r\n[ARB]\r\nFRONT=30000\r\nREAR=16000\r\n[FRONT]\r\nTYPE=STRUT\r\nHUB_MASS=70\r\nSPRING_RATE=30760\r\n"
          "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\nBASEY=-0.105\r\nTRACK=1.515\r\nSTATIC_CAMBER=-1.6\r\nTOE_OUT=-0.00030\r\nBUMP_STOP_RATE=72000\r\nBUMPSTOP_UP=0.080\r\n"
          "BUMPSTOP_DN=0.080\r\nDAMP_FAST_BUMP=1934\r\nDAMP_FAST_BUMPTHRESHOLD=0.080\r\nDAMP_FAST_REBOUND=2601\r\nDAMP_FAST_REBOUNDTHRESHOLD=0.130\r\n"
-         "ROD_LENGTH=0.090 ; push rod length in meters. positive raises ride height\r\nPACKER_RANGE=0.150\r\nRIM_OFFSET=0.020\r\n"
          "STRUT_CAR=0.28497, 0.40218, -0.08294\r\nSTRUT_TYRE=0.10784, -0.16402, 0.01798\r\nWBCAR_BOTTOM_FRONT=0.43800, -0.16775, 0.26073\r\n"
          "WBCAR_BOTTOM_REAR=0.41057, -0.15672, -0.01280\r\nWBTYRE_BOTTOM=0.10784, -0.16402, 0.01798\r\nWBCAR_STEER=0.48843, -0.09289, 0.10865\r\n"
          "WBTYRE_STEER=0.09707, -0.08479, 0.14781\r\n"
@@ -1623,9 +1622,6 @@ void ImportWritesTheCarsOwnData()
                 "the wheel rate, dampers and bump stops");
         RequireNear(spec.frontSuspension->staticCamberDegrees, -1.6f, 1e-5f, "the static camber");
         RequireNear(spec.frontSuspension->toeOutRodLength, -0.0003f, 1e-7f, "the toe rod");
-        Require(spec.frontSuspension->rodLength == 0.09f && spec.frontSuspension->packerRange == 0.15f && spec.frontSuspension->rimOffset == 0.02f,
-                "the rod length, packer range and rim offset survive");
-        Require(!spec.rearSuspension->rodLength.has_value() && spec.rearSuspension->packerRange == 0.0f, "an axle without them has none");
         Require(spec.frontSuspension->antiRollBarRate == 30000.0f && spec.rearSuspension->antiRollBarRate == 16000.0f, "the anti-roll bars");
         RequireNear(spec.frontSuspension->centerOfMassAboveWheel, 0.105f, 1e-5f, "BASEY -0.105: the centre of mass above the wheel centre");
         Require(spec.wheelbase.has_value() && *spec.wheelbase == 2.475f && spec.frontWeightShare.has_value(), "the wheelbase and weight split");
