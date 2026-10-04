@@ -1,10 +1,17 @@
 #include "ac_car_data.h"
 
+#include "kn5_reader.h"
+
+#include <engine/core/log/log.h>
+
+#include <glm/gtc/type_ptr.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <numbers>
 
@@ -153,10 +160,36 @@ std::optional<std::vector<float>> ParseNumberList(const std::string& text, size_
     return numbers.size() == count ? std::optional<std::vector<float>>(numbers) : std::nullopt;
 }
 
+// A curve named by a LUT key: a lut file of the archive, or written inline as "(|x=y|x=y|)".
 std::vector<glm::vec2> LutPoints(const AcdArchive::Files& files, const std::string& fileName)
 {
     std::vector<glm::vec2> points;
-    if (const std::string* text = FindFile(files, ToLowerAscii(Trim(fileName))))
+    const std::string name = Trim(fileName);
+    if (!name.empty() && name.front() == '(')
+    {
+        size_t position = 1;
+        while (position < name.size())
+        {
+            const size_t end = std::min(name.find('|', position), name.find(')', position));
+            const std::string pair = name.substr(position, end == std::string::npos ? std::string::npos : end - position);
+            if (const size_t equals = pair.find('='); equals != std::string::npos)
+            {
+                const std::optional<float> x = ParseNumber(pair.substr(0, equals));
+                const std::optional<float> y = ParseNumber(pair.substr(equals + 1));
+                if (x.has_value() && y.has_value())
+                {
+                    points.emplace_back(*x, *y);
+                }
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            position = end + 1;
+        }
+        return points;
+    }
+    if (const std::string* text = FindFile(files, ToLowerAscii(name)))
     {
         for (const auto& [x, y] : AcCarData::ParseLut(*text))
         {
@@ -164,6 +197,36 @@ std::vector<glm::vec2> LutPoints(const AcdArchive::Files& files, const std::stri
         }
     }
     return points;
+}
+
+// The [CONTROLLER_n] sections of a controllers file (ctrl_4ws.ini, ctrl_awd2.ini, ctrl_ers_0.ini, ...), in
+// order, each with its curve; none when the file is missing.
+std::vector<VehicleController> ReadControllers(const AcdArchive::Files& files, const std::string& fileName)
+{
+    std::vector<VehicleController> controllers;
+    if (FindFile(files, fileName) == nullptr)
+    {
+        return controllers;
+    }
+    const AcCarData::Ini ini = ParseFile(files, fileName);
+    const IniView view(&ini);
+    for (int index = 0; index < 32; ++index)
+    {
+        const std::string section = "CONTROLLER_" + std::to_string(index);
+        if (!view.HasSection(section))
+        {
+            break;
+        }
+        VehicleController controller;
+        controller.input = Trim(view.Text(section, "INPUT").value_or(""));
+        controller.combinator = Trim(view.Text(section, "COMBINATOR").value_or(""));
+        controller.curve = LutPoints(files, view.Text(section, "LUT").value_or(""));
+        controller.filter = view.Number(section, "FILTER").value_or(0.0f);
+        controller.upLimit = view.Number(section, "UP_LIMIT").value_or(0.0f);
+        controller.downLimit = view.Number(section, "DOWN_LIMIT").value_or(0.0f);
+        controllers.push_back(std::move(controller));
+    }
+    return controllers;
 }
 
 // The weight on the front axle, as a fraction of the car's.
@@ -252,6 +315,29 @@ void ReadDrivetrain(const AcdArchive::Files& files, VehicleCarSpec& spec)
         else if (upper.rfind("AWD", 0) == 0)
         {
             spec.drive = VehicleDrive::AllWheel;
+            // AWD has a centre differential ([AWD]), AWD2 a coupling to the front ([AWD2]); a car may carry
+            // both sections, its TYPE says which it drives on.
+            const bool coupling = upper == "AWD2";
+            const std::string section = coupling ? "AWD2" : "AWD";
+            if (drivetrain.HasSection(section))
+            {
+                VehicleAllWheelDrive awd;
+                awd.coupling = coupling;
+                awd.frontShare = drivetrain.Number(section, "FRONT_SHARE").value_or(0.5f);
+                awd.frontDiffPower = drivetrain.Number(section, "FRONT_DIFF_POWER").value_or(0.0f);
+                awd.frontDiffCoast = drivetrain.Number(section, "FRONT_DIFF_COAST").value_or(0.0f);
+                awd.frontDiffPreload = drivetrain.Number(section, "FRONT_DIFF_PRELOAD").value_or(0.0f);
+                awd.centreDiffPower = drivetrain.Number(section, "CENTRE_DIFF_POWER").value_or(0.0f);
+                awd.centreDiffCoast = drivetrain.Number(section, "CENTRE_DIFF_COAST").value_or(0.0f);
+                awd.centreDiffPreload = drivetrain.Number(section, "CENTRE_DIFF_PRELOAD").value_or(0.0f);
+                awd.rearDiffPower = drivetrain.Number(section, "REAR_DIFF_POWER").value_or(0.0f);
+                awd.rearDiffCoast = drivetrain.Number(section, "REAR_DIFF_COAST").value_or(0.0f);
+                awd.rearDiffPreload = drivetrain.Number(section, "REAR_DIFF_PRELOAD").value_or(0.0f);
+                awd.centreRampTorque = drivetrain.Number(section, "CENTRE_RAMP_TORQUE").value_or(0.0f);
+                awd.centreMaxTorque = drivetrain.Number(section, "CENTRE_MAX_TORQUE").value_or(0.0f);
+                awd.centreControllers = ReadControllers(files, coupling ? "ctrl_awd2.ini" : "ctrl_awd_center_lock.ini");
+                spec.allWheelDrive = std::move(awd);
+            }
         }
     }
 
@@ -741,28 +827,39 @@ void ReadErs(const AcdArchive::Files& files, VehicleCarSpec& spec)
             break;
         }
         const AcCarData::Ini profileIni = ParseFile(files, fileName);
-        const IniView profileView(&profileIni);
         VehicleErsProfile profile;
-        profile.name = Trim(profileView.Text("HEADER", "NAME").value_or(""));
-        for (int controllerIndex = 0; controllerIndex < 32; ++controllerIndex)
-        {
-            const std::string section = "CONTROLLER_" + std::to_string(controllerIndex);
-            if (!profileView.HasSection(section))
-            {
-                break;
-            }
-            VehicleErsController controller;
-            controller.input = Trim(profileView.Text(section, "INPUT").value_or(""));
-            controller.combinator = Trim(profileView.Text(section, "COMBINATOR").value_or(""));
-            controller.curve = LutPoints(files, profileView.Text(section, "LUT").value_or(""));
-            controller.filter = profileView.Number(section, "FILTER").value_or(0.0f);
-            controller.upLimit = profileView.Number(section, "UP_LIMIT").value_or(0.0f);
-            controller.downLimit = profileView.Number(section, "DOWN_LIMIT").value_or(0.0f);
-            profile.controllers.push_back(std::move(controller));
-        }
+        profile.name = Trim(IniView(&profileIni).Text("HEADER", "NAME").value_or(""));
+        profile.controllers = ReadControllers(files, fileName);
         out.profiles.push_back(std::move(profile));
     }
     spec.ers = std::move(out);
+}
+
+// colliders.ini: the body's boxes, centred from the centre of mass in the game's car axes (x left, y up,
+// z forward, as the vehicle's), with their full sizes.
+void ReadColliders(const AcdArchive::Files& files, VehicleCarSpec& spec)
+{
+    const AcCarData::Ini ini = ParseFile(files, "colliders.ini");
+    const IniView colliders(&ini);
+    for (int index = 0; index < 64; ++index)
+    {
+        const std::string section = "COLLIDER_" + std::to_string(index);
+        if (!colliders.HasSection(section))
+        {
+            break;
+        }
+        const std::optional<std::vector<float>> center = ParseNumberList(colliders.Text(section, "CENTRE").value_or(""), 3);
+        const std::optional<std::vector<float>> size = ParseNumberList(colliders.Text(section, "SIZE").value_or(""), 3);
+        if (!center.has_value() || !size.has_value())
+        {
+            continue;
+        }
+        VehicleColliderBox box;
+        box.center = glm::vec3((*center)[0], (*center)[1], (*center)[2]);
+        box.size = glm::abs(glm::vec3((*size)[0], (*size)[1], (*size)[2]));
+        box.groundEnabled = colliders.Number(section, "GROUND_ENABLE").value_or(1.0f) != 0.0f;
+        spec.colliders.push_back(box);
+    }
 }
 
 void ReadElectronics(const AcdArchive::Files& files, VehicleCarSpec& spec)
@@ -990,6 +1087,8 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
     ReadAero(files, spec);
     ReadElectronics(files, spec);
     ReadErs(files, spec);
+    ReadColliders(files, spec);
+    spec.rearSteerControllers = ReadControllers(files, "ctrl_4ws.ini");
     return spec;
 }
 
@@ -1031,7 +1130,40 @@ std::optional<VehicleCarSpec> ReadCarFolder(const std::filesystem::path& carFold
         }
         return std::nullopt;
     }
-    return BuildSpec(files);
+    VehicleCarSpec spec = BuildSpec(files);
+    // The body's shell (collider.kn5): its points in the model's frame, the dummies' transforms applied as
+    // the car's kn5 has them. A shell that will not read leaves the car without one.
+    const std::filesystem::path collider = carFolder / "collider.kn5";
+    if (std::filesystem::is_regular_file(collider, ec))
+    {
+        try
+        {
+            const Kn5Model model = Kn5Reader::Load(collider);
+            const std::function<void(const Kn5Node&, const glm::mat4&)> collect = [&](const Kn5Node& node, const glm::mat4& parent)
+            {
+                const glm::mat4 transform = node.HasGeometry() ? parent : parent * glm::make_mat4(node.matrix.data());
+                for (const Kn5Vertex& vertex : node.vertices)
+                {
+                    const glm::vec3 point = glm::vec3(transform * glm::vec4(vertex.position[0], vertex.position[1], vertex.position[2], 1.0f));
+                    if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z))
+                    {
+                        spec.colliderHull.push_back(point);
+                    }
+                }
+                for (const Kn5Node& child : node.children)
+                {
+                    collect(child, transform);
+                }
+            };
+            collect(model.root, glm::mat4(1.0f));
+        }
+        catch (const std::exception& error)
+        {
+            spec.colliderHull.clear();
+            LOG_WARN("'{}': the body's collider was not read: {}", collider.string(), error.what());
+        }
+    }
+    return spec;
 }
 }
 }

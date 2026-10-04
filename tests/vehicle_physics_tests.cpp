@@ -1725,6 +1725,225 @@ void TestDrivenWheelsKeepNearTheGround()
     Require(open.meanGap > held.meanGap * 5.0f, "an open differential does not, " + std::to_string(open.meanGap));
 }
 
+// The Skyline R34's ctrl_4ws.ini (Super HICAS): the steering wheel's angle, scaled up past an oversteer
+// factor of 1.2 and down from 130 km/h.
+std::vector<VehicleController> MakeR34RearSteer()
+{
+    VehicleController steer{"STEER_DEG", "ADD", {{-90.0f, -0.0015f}, {-25.0f, -0.0010f}, {-10.0f, 0.0f}, {0.0f, 0.0f}, {10.0f, 0.0f}, {25.0f, 0.0010f}, {90.0f, 0.0015f}}, 0.99f, 1.0f, -1.0f};
+    VehicleController oversteer{"OVERSTEER_FACTOR", "MULT", {{-1.6f, -2.0f}, {-1.2f, 1.0f}, {0.0f, 1.0f}, {1.2f, 1.0f}, {1.5f, 2.0f}}, 0.99f, 1.0f, -1.0f};
+    VehicleController speed{"SPEED_KMH", "MULT", {{0.0f, 1.0f}, {130.0f, 1.0f}, {150.0f, 0.2f}}, 0.99f, 1.0f, -1.0f};
+    return {steer, oversteer, speed};
+}
+
+void TestControllersCouplingAndBodyParts()
+{
+    // The R34's rear steering: 0.0015 rad at 90 degrees of steering wheel, a fifth of it at 150 km/h.
+    const std::vector<VehicleController> hicas = MakeR34RearSteer();
+    std::vector<float> filtered;
+    VehicleControllerInputs inputs;
+    inputs.steerDegrees = 90.0f;
+    inputs.speedKmh = 100.0f;
+    RequireNear(EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f), 0.0015f, 1e-7f, "0.0015 at 90 degrees");
+    inputs.speedKmh = 150.0f;
+    filtered.clear();
+    RequireNear(EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f), 0.0003f, 1e-7f, "a fifth of it at 150 km/h");
+    inputs.speedKmh = 100.0f;
+    inputs.steerDegrees = 50.0f;
+    filtered.clear();
+    RequireNear(EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f), 0.0010f + 0.0005f * 25.0f / 65.0f, 1e-7f, "read between the curve's points");
+    inputs.oversteerFactor = 1.5f;
+    filtered.clear();
+    RequireNear(EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f), 2.0f * (0.0010f + 0.0005f * 25.0f / 65.0f), 1e-7f, "doubled once the rear slides");
+    Require(ComputeRearSteerAngle(0.0015f) == -0.0015f, "with the steering's sign it turns the rear against the front");
+    Require(ReadVehicleControllerInput(inputs, "NOT_A_CHANNEL") == 0.0f, "an unknown input reads 0");
+
+    // The filter: 0.99 a step at the game's 333 Hz is a time constant of 0.3 s. From straight ahead, 0.3 s
+    // of 90 degrees reaches 1 - 1/e of the way.
+    inputs = {};
+    inputs.speedKmh = 100.0f;
+    filtered.clear();
+    EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f);
+    inputs.steerDegrees = 90.0f;
+    const float tau = -1.0f / (333.0f * std::log(0.99f));
+    float value = 0.0f;
+    const int steps = static_cast<int>(std::round(tau / 0.001f));
+    for (int step = 0; step < steps; ++step)
+    {
+        value = EvaluateVehicleControllers(hicas, inputs, filtered, 0.001f);
+    }
+    RequireNear(value, 0.0015f * (1.0f - std::exp(-1.0f)), 0.0015f * 0.01f, "a time constant of 0.3 s");
+
+    // ADD and MULT in order, each controller's limits held after it.
+    const std::vector<VehicleController> limited = {{"GAS", "ADD", {{0.0f, 0.0f}, {1.0f, 10.0f}}, 0.0f, 4.0f, 0.0f}, {"GEAR", "MULT", {{0.0f, 3.0f}, {6.0f, 3.0f}}, 0.0f, 100.0f, 0.0f}};
+    inputs = {};
+    inputs.gas = 1.0f;
+    filtered.clear();
+    RequireNear(EvaluateVehicleControllers(limited, inputs, filtered, 0.0f), 12.0f, 1e-5f, "10 held to 4, then times 3");
+
+    // The centre coupling: 100 Nm per rad/s of shaft slip, at most 1000 Nm, the shafts final-drive times the
+    // wheels.
+    RequireNear(ComputeCentreCouplingTorque(100.0f, 1000.0f, 3.545f, 11.0f, 10.0f), 354.5f, 1e-2f, "354.5 Nm for 1 rad/s at the wheels");
+    RequireNear(ComputeCentreCouplingTorque(100.0f, 1000.0f, 3.545f, 20.0f, 10.0f), 1000.0f, 1e-3f, "held at its limit");
+    RequireNear(ComputeCentreCouplingTorque(100.0f, 1000.0f, 3.545f, 10.0f, 10.5f), -177.25f, 1e-2f, "and back when the front turns faster");
+
+    // The body: the boxes from the centre of mass, the shell's low points raised to the boxes' top.
+    VehicleSettings body;
+    body.chassisCenter = glm::vec3(0.0f, 0.8f, 0.1f);
+    body.centerOfMassOffset = glm::vec3(0.0f, -0.3f, -0.1f); // centre of mass (0, 0.5, 0)
+    body.carColliders = {{glm::vec3(0.0f, -0.23f, -0.9f), glm::vec3(1.75f, 0.15f, 3.0f), true}, {glm::vec3(0.0f, -0.38f, 1.8f), glm::vec3(1.57f, 0.15f, 0.35f), true}};
+    body.chassisHull = {{1.0f, 0.1f, 2.0f}, {-1.0f, 1.3f, -2.0f}};
+    const VehicleChassisParts parts = BuildChassisParts(body);
+    Require(parts.boxes.size() == 2 && parts.hull.size() == 2, "two boxes and the shell");
+    RequireNear(parts.boxes[0].center.y, 0.27f, 1e-5f, "a box centred from the centre of mass");
+    RequireNear(parts.boxes[0].halfExtents.z, 1.5f, 1e-5f, "half its size");
+    RequireNear(parts.hull[0].y, 0.5f - 0.23f + 0.075f, 1e-5f, "the shell's floor raised to the highest box top");
+    RequireNear(parts.hull[1].y, 1.3f, 1e-6f, "its roof kept");
+    Require(BuildChassisParts(VehicleSettings{}).boxes.empty(), "no boxes, no parts");
+}
+
+// A coupled four-wheel drive (the R34's AWD2: 100 Nm per rad/s, 1000 Nm) launching with its rear tyres
+// slipping: the coupling passes torque and the front tyres drive, where on rear drive alone they only roll.
+void TestCentreCouplingDrivesTheFront()
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    tuning.tractionControlGrip = 0.0f;
+    const auto launch = [&](const VehicleSettings& car, float& meanFrontForce, float& meanCoupling)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId id = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, car), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(id, controls);
+        meanFrontForce = 0.0f;
+        meanCoupling = 0.0f;
+        const int frames = 2 * 60;
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            world.Update(1.0f / 60.0f);
+            const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
+            meanFrontForce += 0.5f * (wheels[0].longitudinalForce + wheels[1].longitudinalForce) / frames;
+            meanCoupling += world.GetVehicleTelemetry(id).centreCouplingTorque / frames;
+        }
+        return world.GetVehicleTelemetry(id).forwardSpeed;
+    };
+    float rearFront = 0.0f;
+    float rearCoupling = 0.0f;
+    const float rearSpeed = launch(tuning, rearFront, rearCoupling);
+    VehicleSettings coupled = tuning;
+    coupled.drive = VehicleDrive::AllWheel;
+    coupled.centreDrive = VehicleCentreDrive::Coupling;
+    coupled.centreCouplingRampTorque = 100.0f;
+    coupled.centreCouplingMaxTorque = 1000.0f;
+    coupled.axleDifferentials = {VehicleAxleDifferential{0.03f, 0.0f}, VehicleAxleDifferential{0.6f, 10.0f}};
+    float coupledFront = 0.0f;
+    float coupledCoupling = 0.0f;
+    const float coupledSpeed = launch(coupled, coupledFront, coupledCoupling);
+    std::cout << "launch for 2 s: rear drive " << rearSpeed << " m/s, front tyres " << rearFront << " N; coupled AWD " << coupledSpeed << " m/s, front tyres "
+              << coupledFront << " N, coupling " << coupledCoupling << " Nm\n";
+    Require(rearCoupling == 0.0f && rearFront < 50.0f, "on rear drive the front tyres only roll");
+    Require(coupledCoupling > 50.0f, "the coupling passes torque while the rear slips, " + std::to_string(coupledCoupling));
+    Require(coupledFront > 300.0f, "and the front tyres drive, " + std::to_string(coupledFront));
+    Require(coupledSpeed > rearSpeed, "the coupled car gets away faster");
+}
+
+// The R34's Super HICAS: steering right at 60 km/h turns the rear wheels a fraction of a degree left,
+// against the front, and the car turns in a little harder for it.
+void TestRearSteerTurnsAgainstTheFrontAtSpeed()
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    const auto corner = [&](const VehicleSettings& car, float& rearSteerDegrees, float& yawRate)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId id = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, car), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 0.6f;
+        world.SetVehicleControls(id, controls);
+        while (world.GetVehicleTelemetry(id).forwardSpeed < 60.0f / 3.6f)
+        {
+            world.Update(1.0f / 60.0f);
+        }
+        controls.throttle = 0.15f;
+        controls.steering = 0.1f;
+        world.SetVehicleControls(id, controls);
+        glm::quat before = world.GetVehiclePose(id).rotation;
+        for (int frame = 0; frame < 90; ++frame)
+        {
+            before = world.GetVehiclePose(id).rotation;
+            world.Update(1.0f / 60.0f);
+        }
+        const glm::quat after = world.GetVehiclePose(id).rotation;
+        yawRate = std::abs(glm::eulerAngles(glm::conjugate(before) * after).y) * 60.0f;
+        rearSteerDegrees = world.GetVehicleTelemetry(id).rearSteerDegrees;
+    };
+    float plainSteer = 0.0f;
+    float plainYaw = 0.0f;
+    corner(tuning, plainSteer, plainYaw);
+    VehicleSettings hicas = tuning;
+    hicas.rearSteerControllers = MakeR34RearSteer();
+    hicas.steeringWheelLockDegrees = 450.0f;
+    float hicasSteer = 0.0f;
+    float hicasYaw = 0.0f;
+    corner(hicas, hicasSteer, hicasYaw);
+    // 45 degrees of steering wheel: 0.0010 + 0.0005 * 20 / 65 rad, against the front (left of a right turn).
+    const float expected = -(0.0010f + 0.0005f * 20.0f / 65.0f) * 180.0f / 3.14159265f;
+    std::cout << "rear steer at 60 km/h, 45 deg of steering wheel: " << hicasSteer << " deg (expected " << expected << "), yaw rate " << hicasYaw << " rad/s against "
+              << plainYaw << " without\n";
+    Require(plainSteer == 0.0f, "no controllers, no rear steer");
+    RequireNear(hicasSteer, expected, std::abs(expected) * 0.3f, "the rear wheels turn against the front");
+    Require(hicasYaw > plainYaw, "and the car turns in harder");
+}
+
+// The car's own body: its boxes and its shell make the collision shape, the shell's floor raised to the
+// boxes' top so that only the boxes can meet the ground; at ride height the boxes clear it, and the car
+// settles where it would on the plain chassis box.
+void TestCarBodyIsItsBoxesAndShell()
+{
+    VehicleSettings tuning;
+    tuning.carColliders = {{glm::vec3(0.0f, -0.23f, -0.9f), glm::vec3(1.75f, 0.15f, 3.0f), true}, {glm::vec3(0.0f, -0.26f, 1.1f), glm::vec3(1.75f, 0.15f, 1.0f), true}};
+    for (const float x : {kCarMin.x, kCarMax.x})
+    {
+        for (const float y : {kCarMin.y, kCarMax.y})
+        {
+            for (const float z : {kCarMin.z, kCarMax.z})
+            {
+                tuning.chassisHull.emplace_back(x, y, z);
+            }
+        }
+    }
+    const auto build = [&](const VehicleSettings& car, std::pair<glm::vec3, glm::vec3>& bounds, glm::vec3& centreOfMass)
+    {
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleSettings fitted = FitVehicleSettingsToBounds(kCarMin, kCarMax, car);
+        centreOfMass = fitted.chassisCenter + fitted.centerOfMassOffset;
+        const VehicleId id = world.AddVehicle(fitted, {glm::vec3(0.0f, 0.3f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        bounds = world.GetVehicleBodyBounds(id);
+        Simulate(world, 2.0f);
+        const PhysicsPose pose = world.GetVehiclePose(id);
+        return (pose.position + pose.rotation * centreOfMass).y;
+    };
+    std::pair<glm::vec3, glm::vec3> plainBounds;
+    std::pair<glm::vec3, glm::vec3> ownBounds;
+    std::pair<glm::vec3, glm::vec3> floorBounds;
+    glm::vec3 com(0.0f);
+    const float plainRest = build(VehicleSettings{}, plainBounds, com);
+    const float ownRest = build(tuning, ownBounds, com);
+    VehicleSettings floorOnly = tuning;
+    floorOnly.chassisHull.clear();
+    build(floorOnly, floorBounds, com);
+    std::cout << "body bounds: boxes and shell y " << ownBounds.first.y << ".." << ownBounds.second.y << ", boxes alone up to " << floorBounds.second.y
+              << "; centre of mass at rest " << ownRest << " m (plain box " << plainRest << ")\n";
+    RequireNear(ownBounds.first.y, com.y - 0.26f - 0.075f, 0.005f, "the lowest box's floor is the body's lowest point");
+    RequireNear(ownBounds.second.y, kCarMax.y, 0.005f, "the shell's roof its highest");
+    RequireNear(ownBounds.first.z, std::min(kCarMin.z, com.z - 0.9f - 1.5f), 0.005f, "the longer of the shell and the floor box its tail");
+    RequireNear(floorBounds.second.y, com.y - 0.23f + 0.075f, 0.005f, "the boxes alone reach their own tops");
+    RequireNear(ownRest, plainRest, 0.01f, "at ride height the boxes clear the ground");
+}
+
 void TestDegenerateMeshIsRejected()
 {
     PhysicsWorld world;
@@ -1757,6 +1976,10 @@ int main()
         TestBrakeTorqueFollowsTheLoad();
         TestCarSpecReplacesWhatItKnows();
         TestErsAddsToTheEngineCurve();
+        TestControllersCouplingAndBodyParts();
+        TestCentreCouplingDrivesTheFront();
+        TestRearSteerTurnsAgainstTheFrontAtSpeed();
+        TestCarBodyIsItsBoxesAndShell();
         TestCarOnItsOwnDataAccelerates();
         TestCarChangesDownAsItStops();
         TestTyreGripSetsAcceleration();

@@ -16,9 +16,11 @@
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
@@ -439,8 +441,23 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         addDifferential(0, 1, 1.0f);
         break;
     case VehicleDrive::AllWheel:
-        addDifferential(0, 1, 0.5f);
-        addDifferential(2, 3, 0.5f);
+        if (settings.centreDrive == VehicleCentreDrive::Coupling)
+        {
+            // The engine drives the rear; the front gets what the centre coupling passes (ApplyCentreCoupling).
+            addDifferential(2, 3, 1.0f);
+        }
+        else
+        {
+            const float front = std::clamp(settings.frontTorqueShare, 0.0f, 1.0f);
+            if (front > 0.0f)
+            {
+                addDifferential(0, 1, front);
+            }
+            if (front < 1.0f)
+            {
+                addDifferential(2, 3, 1.0f - front);
+            }
+        }
         break;
     case VehicleDrive::RearWheel:
     default:
@@ -483,6 +500,17 @@ struct PhysicsWorld::Impl
         // The share of the drive torque a limited-slip differential can move between the wheels, see
         // CoupleDifferentialWheels; 0 for an open one.
         float limitedSlipLock = 0.0f;
+        // A four-wheel drive's centre coupling: the torque it passed in the last step (Nm at the transfer case,
+        // rear to front positive), see ApplyCentreCoupling.
+        float centreCouplingTorque = 0.0f;
+        // Rear-wheel steering (settings.rearSteerControllers): each controller's filtered value, the rear
+        // wheels' angle (radians, with the front positive), the rear wheels' forward axes before it, and the
+        // body's velocity a step ago for the lateral acceleration it reads. See ApplyRearSteer.
+        std::vector<float> rearSteerFiltered;
+        float rearSteerAngle = 0.0f;
+        std::array<JPH::Vec3, 2> rearWheelForward{};
+        JPH::Vec3 controllerLastVelocity = JPH::Vec3::sZero();
+        bool controllerLastVelocityValid = false;
         // The clutch's own strength, which traction control lowers while it slips it.
         float defaultClutchStrength = 10.0f;
         float weightNewtons = 0.0f;
@@ -1002,6 +1030,8 @@ struct PhysicsWorld::Impl
         float worstSlip = 0.0f;
         bool brush = false;
         const float carSpeed = std::abs((vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity()).GetZ());
+        // A coupled four-wheel drive holds on all four tyres, but the engine turns with the rear alone.
+        const bool coupled = vehicle.drive == VehicleDrive::AllWheel && vehicle.settings.centreDrive == VehicleCentreDrive::Coupling;
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             const bool front = index < 2;
@@ -1011,8 +1041,11 @@ struct PhysicsWorld::Impl
             {
                 continue;
             }
-            ++driven;
-            wheelSpeed += std::abs(wheel.angularVelocity);
+            if (!(coupled && front))
+            {
+                ++driven;
+                wheelSpeed += std::abs(wheel.angularVelocity);
+            }
             if (wheel.inContact)
             {
                 float hold = wheel.longitudinalPeakFriction * std::max(wheel.suspensionForce, 0.0f);
@@ -1047,6 +1080,10 @@ struct PhysicsWorld::Impl
     // goes where the grip is. The physics engine's own gives all the torque to the slower wheel once the gap
     // passes a ratio: that wheel then spins up past the other and they take turns, each spinning several times
     // the ground's speed in turn.
+    //
+    // Each axle's pack locks with the torque through its differential: the engine's share for one it drives,
+    // and for the front of a coupled four-wheel drive what the centre coupling passed. A four-wheel drive's
+    // data may give each axle its own lock and preload (settings.axleDifferentials).
     void CoupleDifferentialWheels(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
     {
         if (vehicle.limitedSlipLock <= 0.0f)
@@ -1056,15 +1093,36 @@ struct PhysicsWorld::Impl
         constexpr float kPreloadTorque = 40.0f; // Nm, holds them together even when coasting
         // The clutch pack's lock follows the torque the engine sends through it.
         const float driveTorque = controller.GetEngine().GetTorque(std::abs(controller.GetForwardInput())) * std::abs(controller.GetTransmission().GetCurrentRatio());
-        for (const JPH::VehicleDifferentialSettings& differential : controller.GetDifferentials())
+        const float finalDrive = controller.GetDifferentials().empty() ? 1.0f : controller.GetDifferentials()[0].mDifferentialRatio;
+        const bool coupled = vehicle.drive == VehicleDrive::AllWheel && vehicle.settings.centreDrive == VehicleCentreDrive::Coupling;
+        for (int axle = 0; axle < 2; ++axle)
         {
-            if (differential.mLeftWheel < 0 || differential.mRightWheel < 0)
+            const int leftIndex = 2 * axle;
+            float axleTorque = 0.0f; // through this axle's differential, at the wheels
+            bool hasDifferential = false;
+            for (const JPH::VehicleDifferentialSettings& differential : controller.GetDifferentials())
+            {
+                if (differential.mLeftWheel == leftIndex && differential.mRightWheel == leftIndex + 1)
+                {
+                    axleTorque += driveTorque * differential.mDifferentialRatio * differential.mEngineTorqueRatio;
+                    hasDifferential = true;
+                }
+            }
+            if (coupled && axle == 0)
+            {
+                axleTorque = std::abs(vehicle.centreCouplingTorque) * finalDrive;
+                hasDifferential = true;
+            }
+            if (!hasDifferential)
             {
                 continue;
             }
-            auto* left = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mLeftWheel)]);
-            auto* right = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mRightWheel)]);
-            const float limit = kPreloadTorque + vehicle.limitedSlipLock * driveTorque * differential.mDifferentialRatio * differential.mEngineTorqueRatio * 0.5f;
+            const VehicleAxleDifferential& own = vehicle.settings.axleDifferentials[static_cast<size_t>(axle)];
+            const float lock = own.lock >= 0.0f ? own.lock : vehicle.limitedSlipLock;
+            const float preload = std::max(own.preload, kPreloadTorque);
+            auto* left = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex)]);
+            auto* right = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex + 1)]);
+            const float limit = preload + lock * axleTorque * 0.5f;
             // Stiff enough that a wheel is pulled to the other's speed within a few steps, and no stiffer than
             // the step can integrate.
             const float inertia = 0.5f * (left->GetSettings()->mInertia + right->GetSettings()->mInertia);
@@ -1072,6 +1130,97 @@ struct PhysicsWorld::Impl
             const float torque = std::clamp(stiffness * (left->GetAngularVelocity() - right->GetAngularVelocity()), -limit, limit);
             left->ApplyTorque(-torque, kFixedStepSeconds);
             right->ApplyTorque(torque, kFixedStepSeconds);
+        }
+    }
+
+    // A coupled four-wheel drive's centre (Assetto Corsa's AWD2): a viscous coupling at the transfer case
+    // between the driven rear and the front, passing ComputeCentreCouplingTorque on the axles' mean wheel
+    // speeds. At the wheels the front axle gains the shaft torque times the final drive and the rear loses
+    // as much, half to each wheel (the axles' packs then share it out). The coupling acts as a damper on
+    // the axles' speed difference, applied explicitly: its rate is held to what one step takes without
+    // overshooting, 1 / (dt (1/(2 I_f) + 1/(2 I_r))).
+    void ApplyCentreCoupling(Vehicle& vehicle, const JPH::WheeledVehicleController& controller)
+    {
+        vehicle.centreCouplingTorque = 0.0f;
+        const VehicleSettings& settings = vehicle.settings;
+        if (vehicle.drive != VehicleDrive::AllWheel || settings.centreDrive != VehicleCentreDrive::Coupling || controller.GetDifferentials().empty())
+        {
+            return;
+        }
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        auto* frontLeft = static_cast<JPH::WheelWV*>(wheels[0]);
+        auto* frontRight = static_cast<JPH::WheelWV*>(wheels[1]);
+        auto* rearLeft = static_cast<JPH::WheelWV*>(wheels[2]);
+        auto* rearRight = static_cast<JPH::WheelWV*>(wheels[3]);
+        const float finalDrive = controller.GetDifferentials()[0].mDifferentialRatio;
+        const float frontSpeed = 0.5f * (frontLeft->GetAngularVelocity() + frontRight->GetAngularVelocity());
+        const float rearSpeed = 0.5f * (rearLeft->GetAngularVelocity() + rearRight->GetAngularVelocity());
+        const float frontInertia = 0.5f * (frontLeft->GetSettings()->mInertia + frontRight->GetSettings()->mInertia);
+        const float rearInertia = 0.5f * (rearLeft->GetSettings()->mInertia + rearRight->GetSettings()->mInertia);
+        // The coupling's rate at the wheels (Nm per rad/s of the axles' mean speed difference), and the most the
+        // step integrates.
+        const float rate = settings.centreCouplingRampTorque * finalDrive * finalDrive;
+        const float stableRate = 1.0f / (kFixedStepSeconds * (0.5f / std::max(frontInertia, 0.01f) + 0.5f / std::max(rearInertia, 0.01f)));
+        const float ramp = rate > stableRate ? settings.centreCouplingRampTorque * stableRate / rate : settings.centreCouplingRampTorque;
+        const float shaftTorque = ComputeCentreCouplingTorque(ramp, settings.centreCouplingMaxTorque, finalDrive, rearSpeed, frontSpeed);
+        const float wheelTorque = 0.5f * shaftTorque * finalDrive;
+        frontLeft->ApplyTorque(wheelTorque, kFixedStepSeconds);
+        frontRight->ApplyTorque(wheelTorque, kFixedStepSeconds);
+        rearLeft->ApplyTorque(-wheelTorque, kFixedStepSeconds);
+        rearRight->ApplyTorque(-wheelTorque, kFixedStepSeconds);
+        vehicle.centreCouplingTorque = shaftTorque;
+    }
+
+    // Rear-wheel steering (settings.rearSteerControllers, Assetto Corsa's ctrl_4ws.ini): the controllers read
+    // the driver and the car, their output gives the rear wheels' angle (ComputeRearSteerAngle), and the
+    // rear wheels' forward axes are turned by it about the body's vertical. A multibody suspension has just
+    // set those axes (UpdateCorners); a car on straight springs keeps its own from the start. The angle
+    // does not go through the linkage: it is a fraction of a degree.
+    void ApplyRearSteer(Vehicle& vehicle, const VehicleDriverInput& input)
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        if (settings.rearSteerControllers.empty() || vehicle.wheelSettings.size() < kVehicleWheelCount)
+        {
+            vehicle.rearSteerAngle = 0.0f;
+            return;
+        }
+        const JPH::Quat toBody = vehicle.body->GetRotation().Conjugated();
+        const JPH::Vec3 velocity = toBody * vehicle.body->GetLinearVelocity();
+        VehicleControllerInputs inputs;
+        const float lock = settings.steeringWheelLockDegrees > 0.0f ? settings.steeringWheelLockDegrees : 450.0f;
+        inputs.steerDegrees = std::clamp(input.right, -1.0f, 1.0f) * lock;
+        inputs.speedKmh = std::abs(velocity.GetZ()) * 3.6f;
+        inputs.gas = std::max(input.forward, 0.0f);
+        inputs.brake = std::clamp(input.brake, 0.0f, 1.0f);
+        const auto* controller = static_cast<const JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        inputs.gear = static_cast<float>(controller->GetTransmission().GetCurrentGear());
+        if (vehicle.controllerLastVelocityValid)
+        {
+            const JPH::Vec3 acceleration = toBody * ((vehicle.body->GetLinearVelocity() - vehicle.controllerLastVelocity) / kFixedStepSeconds);
+            inputs.lateralG = acceleration.GetX() / 9.81f;
+        }
+        vehicle.controllerLastVelocity = vehicle.body->GetLinearVelocity();
+        vehicle.controllerLastVelocityValid = true;
+        if (vehicle.current.wheels.size() >= kVehicleWheelCount)
+        {
+            const auto slip = [&](size_t index)
+            {
+                return std::abs(vehicle.current.wheels[index].slipAngleDegrees);
+            };
+            inputs.slipAngleFrontAverage = 0.5f * (slip(0) + slip(1));
+            inputs.slipAngleFrontMax = std::max(slip(0), slip(1));
+            inputs.slipAngleRearAverage = 0.5f * (slip(2) + slip(3));
+            inputs.slipAngleRearMax = std::max(slip(2), slip(3));
+            inputs.oversteerFactor = inputs.slipAngleRearAverage - inputs.slipAngleFrontAverage;
+        }
+        vehicle.rearSteerAngle = ComputeRearSteerAngle(EvaluateVehicleControllers(settings.rearSteerControllers, inputs, vehicle.rearSteerFiltered, kFixedStepSeconds));
+        // Right is a turn about -Y in the vehicle's frame (+X left, +Z forward).
+        const JPH::Quat turn = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), -vehicle.rearSteerAngle);
+        for (size_t side = 0; side < 2; ++side)
+        {
+            JPH::WheelSettingsWV& wheel = *vehicle.wheelSettings[2 + side];
+            const JPH::Vec3 base = vehicle.corners.empty() ? vehicle.rearWheelForward[side] : wheel.mWheelForward;
+            wheel.mWheelForward = turn * base;
         }
     }
 
@@ -1559,12 +1708,49 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
 {
     Impl& impl = *m_impl;
 
-    // The box sits where the settings put it in vehicle space; the centre of mass is moved from the
-    // box's centre by the offset.
-    const JPH::Vec3 halfExtents = JPH::Vec3::sMax(ToJolt(settings.chassisHalfExtents), JPH::Vec3::sReplicate(0.05f));
-    const JPH::RefConst<JPH::Shape> box = new JPH::BoxShape(halfExtents, std::min(0.05f, halfExtents.ReduceMin() * 0.5f));
-    const JPH::RotatedTranslatedShapeSettings placedBox(ToJolt(settings.chassisCenter), JPH::Quat::sIdentity(), box);
-    const JPH::OffsetCenterOfMassShapeSettings chassisShape(ToJolt(settings.centerOfMassOffset), placedBox.Create().Get());
+    // The box sits where the settings put it in vehicle space, or the car's own body does (its boxes and
+    // shell, BuildChassisParts); the centre of mass is moved from the shape's own to where the settings put
+    // it, chassisCenter + centerOfMassOffset.
+    JPH::RefConst<JPH::Shape> chassis;
+    JPH::Vec3 centerOfMassOffset = ToJolt(settings.centerOfMassOffset);
+    const VehicleChassisParts parts = BuildChassisParts(settings);
+    if (!parts.boxes.empty())
+    {
+        JPH::StaticCompoundShapeSettings compound;
+        for (const VehicleChassisBox& part : parts.boxes)
+        {
+            const JPH::Vec3 half = JPH::Vec3::sMax(ToJolt(part.halfExtents), JPH::Vec3::sReplicate(0.01f));
+            compound.AddShape(ToJolt(part.center), JPH::Quat::sIdentity(), new JPH::BoxShape(half, std::min(0.02f, half.ReduceMin() * 0.5f)));
+        }
+        if (parts.hull.size() >= 4)
+        {
+            JPH::Array<JPH::Vec3> points;
+            points.reserve(parts.hull.size());
+            for (const glm::vec3& point : parts.hull)
+            {
+                points.push_back(ToJolt(point));
+            }
+            const JPH::ConvexHullShapeSettings hull(points, 0.01f);
+            if (const JPH::ShapeSettings::ShapeResult made = hull.Create(); made.IsValid())
+            {
+                compound.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), made.Get());
+            }
+        }
+        const JPH::ShapeSettings::ShapeResult made = compound.Create();
+        if (made.HasError())
+        {
+            throw std::runtime_error(std::string("PhysicsWorld: failed to build the vehicle's body: ") + made.GetError().c_str());
+        }
+        chassis = made.Get();
+        centerOfMassOffset = ToJolt(settings.chassisCenter + settings.centerOfMassOffset) - chassis->GetCenterOfMass();
+    }
+    else
+    {
+        const JPH::Vec3 halfExtents = JPH::Vec3::sMax(ToJolt(settings.chassisHalfExtents), JPH::Vec3::sReplicate(0.05f));
+        const JPH::RefConst<JPH::Shape> box = new JPH::BoxShape(halfExtents, std::min(0.05f, halfExtents.ReduceMin() * 0.5f));
+        chassis = JPH::RotatedTranslatedShapeSettings(ToJolt(settings.chassisCenter), JPH::Quat::sIdentity(), box).Create().Get();
+    }
+    const JPH::OffsetCenterOfMassShapeSettings chassisShape(centerOfMassOffset, chassis);
     const JPH::ShapeSettings::ShapeResult shape = chassisShape.Create();
     if (shape.HasError())
     {
@@ -1625,6 +1811,11 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         auto* wheelSettings = const_cast<JPH::WheelSettingsWV*>(static_cast<const JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(index)])->GetSettings());
         vehicle.wheelSettings.push_back(wheelSettings);
         vehicle.staticBrakeTorque[index] = wheelSettings->mMaxBrakeTorque;
+        if (index >= 2)
+        {
+            // The rear wheels' own forward axes, which rear-wheel steering turns from (ApplyRearSteer).
+            vehicle.rearWheelForward[index - 2] = wheelSettings->mWheelForward;
+        }
     }
     vehicle.dynamicBrakeBias = settings.dynamicBrakeBias;
     vehicle.tractionControlGrip = std::max(settings.tractionControlGrip, 0.0f);
@@ -1786,6 +1977,16 @@ std::vector<VehicleWheelState> PhysicsWorld::GetVehicleWheels(VehicleId id) cons
     return wheels;
 }
 
+std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetVehicleBodyBounds(VehicleId id) const
+{
+    const Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
+    const JPH::Shape& shape = *vehicle.body->GetShape();
+    // The shape's local bounds are about its centre of mass; the body's origin is vehicle space's.
+    const JPH::AABox bounds = shape.GetLocalBounds();
+    const JPH::Vec3 centre = shape.GetCenterOfMass();
+    return {FromJolt(bounds.mMin + centre), FromJolt(bounds.mMax + centre)};
+}
+
 VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
 {
     const Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
@@ -1800,6 +2001,8 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     {
         telemetry.wheelsInContact += wheel->HasContact() ? 1u : 0u;
     }
+    telemetry.centreCouplingTorque = vehicle.centreCouplingTorque;
+    telemetry.rearSteerDegrees = vehicle.rearSteerAngle * 180.0f / std::numbers::pi_v<float>;
     return telemetry;
 }
 
@@ -1834,9 +2037,11 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
                 bodies.ActivateBody(vehicle.body->GetID());
             }
             auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+            impl.ApplyCentreCoupling(vehicle, *controller);
             impl.CoupleDifferentialWheels(vehicle, *controller);
             impl.LimitClutchTorque(vehicle, *controller);
             impl.UpdateCorners(vehicle, input.right);
+            impl.ApplyRearSteer(vehicle, input);
             controller->SetDriverInput(input.forward, input.right, input.brake, input.handBrake);
         }
 

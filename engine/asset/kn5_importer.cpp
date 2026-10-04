@@ -88,6 +88,21 @@ Json PointsToJson(const std::vector<glm::vec2>& points)
     return out;
 }
 
+Json ControllersToJson(const std::vector<VehicleController>& controllers)
+{
+    Json out = Json::array();
+    for (const VehicleController& controller : controllers)
+    {
+        out.push_back(Json{{"input", controller.input},
+                           {"combinator", controller.combinator},
+                           {"curve", PointsToJson(controller.curve)},
+                           {"filter", Round(controller.filter, 6)},
+                           {"upLimit", Round(controller.upLimit, 4)},
+                           {"downLimit", Round(controller.downLimit, 4)}});
+    }
+    return out;
+}
+
 Json NumbersToJson(const std::vector<float>& numbers)
 {
     Json out = Json::array();
@@ -343,17 +358,7 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
         Json profiles = Json::array();
         for (const VehicleErsProfile& profile : ers.profiles)
         {
-            Json controllers = Json::array();
-            for (const VehicleErsController& controller : profile.controllers)
-            {
-                controllers.push_back(Json{{"input", controller.input},
-                                           {"combinator", controller.combinator},
-                                           {"curve", PointsToJson(controller.curve)},
-                                           {"filter", Round(controller.filter, 6)},
-                                           {"upLimit", Round(controller.upLimit, 4)},
-                                           {"downLimit", Round(controller.downLimit, 4)}});
-            }
-            profiles.push_back(Json{{"name", profile.name}, {"controllers", std::move(controllers)}});
+            profiles.push_back(Json{{"name", profile.name}, {"controllers", ControllersToJson(profile.controllers)}});
         }
         out["ers"] = Json{{"torqueCurve", PointsToJson(ers.torqueCurve)},
                           {"coastCurve", PointsToJson(ers.coastCurve)},
@@ -366,6 +371,48 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
                           {"heatTorquePercent", Round(ers.heatTorquePercent, 4)},
                           {"defaultProfile", ers.defaultProfile},
                           {"profiles", std::move(profiles)}};
+    }
+    if (spec.allWheelDrive.has_value())
+    {
+        const VehicleAllWheelDrive& awd = *spec.allWheelDrive;
+        out["allWheelDrive"] = Json{{"coupling", awd.coupling},
+                                    {"frontShare", Round(awd.frontShare, 4)},
+                                    {"frontDiffPower", Round(awd.frontDiffPower, 4)},
+                                    {"frontDiffCoast", Round(awd.frontDiffCoast, 4)},
+                                    {"frontDiffPreload", Round(awd.frontDiffPreload, 2)},
+                                    {"centreDiffPower", Round(awd.centreDiffPower, 4)},
+                                    {"centreDiffCoast", Round(awd.centreDiffCoast, 4)},
+                                    {"centreDiffPreload", Round(awd.centreDiffPreload, 2)},
+                                    {"rearDiffPower", Round(awd.rearDiffPower, 4)},
+                                    {"rearDiffCoast", Round(awd.rearDiffCoast, 4)},
+                                    {"rearDiffPreload", Round(awd.rearDiffPreload, 2)},
+                                    {"centreRampTorque", Round(awd.centreRampTorque, 2)},
+                                    {"centreMaxTorque", Round(awd.centreMaxTorque, 2)},
+                                    {"centreControllers", ControllersToJson(awd.centreControllers)}};
+    }
+    if (!spec.rearSteerControllers.empty())
+    {
+        out["rearSteerControllers"] = ControllersToJson(spec.rearSteerControllers);
+    }
+    if (!spec.colliders.empty())
+    {
+        Json colliders = Json::array();
+        for (const VehicleColliderBox& box : spec.colliders)
+        {
+            colliders.push_back(Json{{"center", Json::array({Round(box.center.x, 4), Round(box.center.y, 4), Round(box.center.z, 4)})},
+                                     {"size", Json::array({Round(box.size.x, 4), Round(box.size.y, 4), Round(box.size.z, 4)})},
+                                     {"groundEnabled", box.groundEnabled}});
+        }
+        out["colliders"] = std::move(colliders);
+    }
+    if (!spec.colliderHull.empty())
+    {
+        Json hull = Json::array();
+        for (const glm::vec3& point : spec.colliderHull)
+        {
+            hull.push_back(Json::array({Round(point.x, 4), Round(point.y, 4), Round(point.z, 4)}));
+        }
+        out["colliderHull"] = std::move(hull);
     }
     put("coastRpm", spec.coastRpm);
     put("coastTorque", spec.coastTorque);

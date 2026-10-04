@@ -2167,6 +2167,30 @@ std::vector<glm::vec2> VehiclePoints(const tinygltf::Value& object, const char* 
     return points;
 }
 
+// A list of controllers as the kn5 import writes them.
+std::vector<VehicleController> VehicleControllers(const tinygltf::Value& object, const char* key)
+{
+    std::vector<VehicleController> controllers;
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsArray())
+    {
+        return controllers;
+    }
+    const tinygltf::Value& list = object.Get(key);
+    for (size_t index = 0; index < list.ArrayLen(); ++index)
+    {
+        const tinygltf::Value& value = list.Get(static_cast<int>(index));
+        VehicleController controller;
+        controller.input = VehicleText(value, "input");
+        controller.combinator = VehicleText(value, "combinator");
+        controller.curve = VehiclePoints(value, "curve");
+        controller.filter = VehicleNumber(value, "filter").value_or(0.0f);
+        controller.upLimit = VehicleNumber(value, "upLimit").value_or(0.0f);
+        controller.downLimit = VehicleNumber(value, "downLimit").value_or(0.0f);
+        controllers.push_back(std::move(controller));
+    }
+    return controllers;
+}
+
 std::vector<float> VehicleNumbers(const tinygltf::Value& object, const char* key)
 {
     std::vector<float> numbers;
@@ -2479,28 +2503,62 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
                 const tinygltf::Value& profileValue = profiles.Get(static_cast<int>(index));
                 VehicleErsProfile profile;
                 profile.name = VehicleText(profileValue, "name");
-                if (profileValue.Has("controllers") && profileValue.Get("controllers").IsArray())
-                {
-                    const tinygltf::Value& controllers = profileValue.Get("controllers");
-                    for (size_t controllerIndex = 0; controllerIndex < controllers.ArrayLen(); ++controllerIndex)
-                    {
-                        const tinygltf::Value& controllerValue = controllers.Get(static_cast<int>(controllerIndex));
-                        VehicleErsController controller;
-                        controller.input = VehicleText(controllerValue, "input");
-                        controller.combinator = VehicleText(controllerValue, "combinator");
-                        controller.curve = VehiclePoints(controllerValue, "curve");
-                        controller.filter = VehicleNumber(controllerValue, "filter").value_or(0.0f);
-                        controller.upLimit = VehicleNumber(controllerValue, "upLimit").value_or(0.0f);
-                        controller.downLimit = VehicleNumber(controllerValue, "downLimit").value_or(0.0f);
-                        profile.controllers.push_back(std::move(controller));
-                    }
-                }
+                profile.controllers = VehicleControllers(profileValue, "controllers");
                 ers.profiles.push_back(std::move(profile));
             }
         }
         if (!ers.torqueCurve.empty())
         {
             spec.ers = std::move(ers);
+        }
+    }
+    if (extension.Has("allWheelDrive") && extension.Get("allWheelDrive").IsObject())
+    {
+        const tinygltf::Value& value = extension.Get("allWheelDrive");
+        VehicleAllWheelDrive awd;
+        awd.coupling = VehicleFlag(value, "coupling").value_or(false);
+        awd.frontShare = VehicleNumber(value, "frontShare").value_or(0.5f);
+        awd.frontDiffPower = VehicleNumber(value, "frontDiffPower").value_or(0.0f);
+        awd.frontDiffCoast = VehicleNumber(value, "frontDiffCoast").value_or(0.0f);
+        awd.frontDiffPreload = VehicleNumber(value, "frontDiffPreload").value_or(0.0f);
+        awd.centreDiffPower = VehicleNumber(value, "centreDiffPower").value_or(0.0f);
+        awd.centreDiffCoast = VehicleNumber(value, "centreDiffCoast").value_or(0.0f);
+        awd.centreDiffPreload = VehicleNumber(value, "centreDiffPreload").value_or(0.0f);
+        awd.rearDiffPower = VehicleNumber(value, "rearDiffPower").value_or(0.0f);
+        awd.rearDiffCoast = VehicleNumber(value, "rearDiffCoast").value_or(0.0f);
+        awd.rearDiffPreload = VehicleNumber(value, "rearDiffPreload").value_or(0.0f);
+        awd.centreRampTorque = VehicleNumber(value, "centreRampTorque").value_or(0.0f);
+        awd.centreMaxTorque = VehicleNumber(value, "centreMaxTorque").value_or(0.0f);
+        awd.centreControllers = VehicleControllers(value, "centreControllers");
+        spec.allWheelDrive = std::move(awd);
+    }
+    spec.rearSteerControllers = VehicleControllers(extension, "rearSteerControllers");
+    if (extension.Has("colliders") && extension.Get("colliders").IsArray())
+    {
+        const tinygltf::Value& colliders = extension.Get("colliders");
+        for (size_t index = 0; index < colliders.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& value = colliders.Get(static_cast<int>(index));
+            const std::vector<float> center = VehicleNumbers(value, "center");
+            const std::vector<float> size = VehicleNumbers(value, "size");
+            if (center.size() == 3 && size.size() == 3)
+            {
+                spec.colliders.push_back(VehicleColliderBox{glm::vec3(center[0], center[1], center[2]), glm::vec3(size[0], size[1], size[2]),
+                                                            VehicleFlag(value, "groundEnabled").value_or(true)});
+            }
+        }
+    }
+    if (extension.Has("colliderHull") && extension.Get("colliderHull").IsArray())
+    {
+        const tinygltf::Value& hull = extension.Get("colliderHull");
+        for (size_t index = 0; index < hull.ArrayLen(); ++index)
+        {
+            const tinygltf::Value& point = hull.Get(static_cast<int>(index));
+            if (point.IsArray() && point.ArrayLen() == 3 && point.Get(0).IsNumber() && point.Get(1).IsNumber() && point.Get(2).IsNumber())
+            {
+                spec.colliderHull.emplace_back(static_cast<float>(point.Get(0).GetNumberAsDouble()), static_cast<float>(point.Get(1).GetNumberAsDouble()),
+                                               static_cast<float>(point.Get(2).GetNumberAsDouble()));
+            }
         }
     }
     spec.coastRpm = VehicleNumber(extension, "coastRpm");

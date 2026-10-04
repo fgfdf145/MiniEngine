@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <string_view>
+#include <utility>
 
 namespace me
 {
@@ -163,6 +166,93 @@ VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec)
         }
     }
     return fuelled;
+}
+
+float ReadVehicleControllerInput(const VehicleControllerInputs& inputs, const std::string& name)
+{
+    static constexpr std::pair<std::string_view, float VehicleControllerInputs::*> kInputs[] = {
+        {"STEER_DEG", &VehicleControllerInputs::steerDegrees},
+        {"SPEED_KMH", &VehicleControllerInputs::speedKmh},
+        {"GAS", &VehicleControllerInputs::gas},
+        {"BRAKE", &VehicleControllerInputs::brake},
+        {"LATG", &VehicleControllerInputs::lateralG},
+        {"GEAR", &VehicleControllerInputs::gear},
+        {"SLIPANGLE_FRONT_AVERAGE", &VehicleControllerInputs::slipAngleFrontAverage},
+        {"SLIPANGLE_FRONT_MAX", &VehicleControllerInputs::slipAngleFrontMax},
+        {"SLIPANGLE_REAR_AVERAGE", &VehicleControllerInputs::slipAngleRearAverage},
+        {"SLIPANGLE_REAR_MAX", &VehicleControllerInputs::slipAngleRearMax},
+        {"OVERSTEER_FACTOR", &VehicleControllerInputs::oversteerFactor}};
+    for (const auto& [key, member] : kInputs)
+    {
+        if (name == key)
+        {
+            return inputs.*member;
+        }
+    }
+    return 0.0f;
+}
+
+float EvaluateVehicleControllers(const std::vector<VehicleController>& controllers, const VehicleControllerInputs& inputs, std::vector<float>& filtered, float dt)
+{
+    // The game steps its physics at 333 Hz; a FILTER is its factor per step there.
+    constexpr float kGameStepsPerSecond = 333.0f;
+    const bool fresh = filtered.size() != controllers.size();
+    if (fresh)
+    {
+        filtered.assign(controllers.size(), 0.0f);
+    }
+    float value = 0.0f;
+    for (size_t index = 0; index < controllers.size(); ++index)
+    {
+        const VehicleController& controller = controllers[index];
+        float x = EvaluateCurve(controller.curve, ReadVehicleControllerInput(inputs, controller.input));
+        if (!fresh && dt > 0.0f && controller.filter > 0.0f && controller.filter < 1.0f)
+        {
+            const float a = std::pow(controller.filter, dt * kGameStepsPerSecond);
+            x = a * filtered[index] + (1.0f - a) * x;
+        }
+        filtered[index] = x;
+        value = controller.combinator == "MULT" ? value * x : value + x;
+        if (controller.upLimit > controller.downLimit)
+        {
+            value = std::clamp(value, controller.downLimit, controller.upLimit);
+        }
+    }
+    return value;
+}
+
+float ComputeCentreCouplingTorque(float rampTorque, float maxTorque, float finalDrive, float rearWheelSpeed, float frontWheelSpeed)
+{
+    const float shaftSlip = std::max(finalDrive, 0.0f) * (rearWheelSpeed - frontWheelSpeed);
+    const float limit = std::max(maxTorque, 0.0f);
+    return std::clamp(std::max(rampTorque, 0.0f) * shaftSlip, -limit, limit);
+}
+
+VehicleChassisParts BuildChassisParts(const VehicleSettings& settings)
+{
+    VehicleChassisParts parts;
+    if (settings.carColliders.empty())
+    {
+        return parts;
+    }
+    const glm::vec3 centerOfMass = settings.chassisCenter + settings.centerOfMassOffset;
+    float groundTop = -std::numeric_limits<float>::max();
+    for (const VehicleColliderBox& box : settings.carColliders)
+    {
+        const glm::vec3 half = glm::max(glm::abs(box.size) * 0.5f, glm::vec3(0.01f));
+        parts.boxes.push_back(VehicleChassisBox{centerOfMass + box.center, half});
+        if (box.groundEnabled)
+        {
+            groundTop = std::max(groundTop, centerOfMass.y + box.center.y + half.y);
+        }
+    }
+    parts.hull.reserve(settings.chassisHull.size());
+    for (glm::vec3 point : settings.chassisHull)
+    {
+        point.y = std::max(point.y, groundTop);
+        parts.hull.push_back(point);
+    }
+    return parts;
 }
 
 std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b)
@@ -353,6 +443,42 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         {
             settings.limitedSlipLock = std::clamp(*spec.differentialPower, 0.05f, 1.0f);
         }
+    }
+    // A car's drive says how its four wheels share the torque; one without four-wheel-drive figures
+    // leaves the tuning's centre and axles alone only when it says nothing about its drive.
+    if (spec.drive.has_value())
+    {
+        settings.centreDrive = VehicleCentreDrive::Differential;
+        settings.frontTorqueShare = 0.5f;
+        settings.centreCouplingRampTorque = 0.0f;
+        settings.centreCouplingMaxTorque = 0.0f;
+        settings.axleDifferentials = {};
+        if (*spec.drive == VehicleDrive::AllWheel && spec.allWheelDrive.has_value())
+        {
+            const VehicleAllWheelDrive& awd = *spec.allWheelDrive;
+            if (awd.coupling && awd.centreRampTorque > 0.0f && awd.centreMaxTorque > 0.0f)
+            {
+                settings.centreDrive = VehicleCentreDrive::Coupling;
+                settings.centreCouplingRampTorque = awd.centreRampTorque;
+                settings.centreCouplingMaxTorque = awd.centreMaxTorque;
+            }
+            else if (!awd.coupling)
+            {
+                settings.frontTorqueShare = std::clamp(awd.frontShare, 0.0f, 1.0f);
+            }
+            settings.axleDifferentials[0] = VehicleAxleDifferential{std::clamp(awd.frontDiffPower, 0.0f, 1.0f), std::max(awd.frontDiffPreload, 0.0f)};
+            settings.axleDifferentials[1] = VehicleAxleDifferential{std::clamp(awd.rearDiffPower, 0.0f, 1.0f), std::max(awd.rearDiffPreload, 0.0f)};
+        }
+    }
+    // A car's own data (its mass says it has some) brings its rear steering and its body, or none.
+    if (spec.massKg.has_value())
+    {
+        settings.rearSteerControllers = spec.rearSteerControllers;
+        settings.carColliders = spec.colliders;
+    }
+    if (spec.steeringWheelLockDegrees.has_value() && *spec.steeringWheelLockDegrees > 0.0f)
+    {
+        settings.steeringWheelLockDegrees = *spec.steeringWheelLockDegrees;
     }
     // The linkage only when both axles have one: half a multibody car would not drive.
     if (spec.frontSuspension.has_value() && spec.rearSuspension.has_value() && spec.frontSuspension->type != VehicleSuspensionType::None && spec.rearSuspension->type != VehicleSuspensionType::None)

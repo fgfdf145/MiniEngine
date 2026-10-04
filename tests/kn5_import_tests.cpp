@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <iostream>
 #include <limits>
@@ -1458,6 +1459,111 @@ void LiveAxleDataBecomesASolidAxle()
             "the solid axle survives the glTF");
 }
 
+// The Skyline R34's drive, rear steering and body, as its data.acd has them (shortened), on the Boxster's
+// other files: ATTESA as AWD2 (with the [AWD] section it does not drive on), Super HICAS with inline curves,
+// three floor boxes, and a centre controller with a lut file as the AWD2 cars that have one carry it.
+std::map<std::string, std::string> R34DataFiles()
+{
+    std::map<std::string, std::string> files = BoxsterDataFiles();
+    files["drivetrain.ini"] =
+        "[TRACTION]\r\nTYPE=AWD2 ; Wheel drive\r\n[GEARS]\r\nCOUNT=6\r\nGEAR_R=-3.280\r\nGEAR_1=3.827\r\nGEAR_2=2.360\r\nGEAR_3=1.685\r\nGEAR_4=1.312\r\n"
+        "GEAR_5=1.00\r\nGEAR_6=0.793\r\nFINAL=3.545\r\n[DIFFERENTIAL]\r\nPOWER=0.50\r\nCOAST=0.50\r\nPRELOAD=0\r\n"
+        "[AWD]\r\nFRONT_SHARE=1\r\nFRONT_DIFF_POWER=0.06\r\nCENTRE_DIFF_PRELOAD=1\r\nREAR_DIFF_POWER=0.525\r\n"
+        "[AWD2]\r\nFRONT_DIFF_POWER=0.03\r\nFRONT_DIFF_COAST=0.03\r\nFRONT_DIFF_PRELOAD=0\r\nCENTRE_RAMP_TORQUE=100.0\r\nCENTRE_MAX_TORQUE=1000.0\r\n"
+        "REAR_DIFF_POWER=0.60\r\nREAR_DIFF_COAST=0.50\r\nREAR_DIFF_PRELOAD=10\r\n";
+    files["ctrl_4ws.ini"] =
+        "[CONTROLLER_0]\r\nINPUT=STEER_DEG  ; OVERSTEER_FACTOR REAR_SPEED_RATIO\r\nCOMBINATOR=ADD\r\nLUT=(|-90=-0.0015|-25=-0.0010|-10=0.0|0=0|10=0.0|25=0.0010|90=0.0015|)\r\n"
+        "FILTER=0.99\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n"
+        "[CONTROLLER_1]\r\nINPUT=OVERSTEER_FACTOR\r\nCOMBINATOR=MULT\r\nLUT=(|-1.6=-2|-1.2=1|0=1|1.2=1|1.5=2|)\r\nFILTER=0.99\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n"
+        "[CONTROLLER_2]\r\nINPUT=SPEED_KMH\r\nCOMBINATOR=MULT\r\nLUT=(|0=1|130=1|150=0.2|)\r\nFILTER=0.99\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n";
+    files["colliders.ini"] = "[COLLIDER_0]\r\nCENTRE=0 ,-0.23 ,-0.9\r\nSIZE=1.75 ,0.15 ,3.0\r\nGROUND_ENABLE=1\r\n"
+                             "[COLLIDER_1]\r\nCENTRE=0 ,-0.26 ,1.1\r\nSIZE=1.75 ,0.15 ,1.0\r\nGROUND_ENABLE=1\r\n"
+                             "[COLLIDER_2]\r\nCENTRE=0 ,-0.38 ,1.8\r\nSIZE=1.57 ,0.15 ,0.35\r\nGROUND_ENABLE=0\r\n";
+    files["ctrl_awd2.ini"] = "[CONTROLLER_0]\r\nINPUT=GEAR\r\nCOMBINATOR=ADD\r\nLUT=gear_start.lut\r\nFILTER=0.99\r\nUP_LIMIT=1000000\r\nDOWN_LIMIT=0.0\r\n";
+    files["gear_start.lut"] = "0|0\r\n1|550\r\n2|450\r\n";
+    return files;
+}
+
+void FourWheelDriveRearSteerAndBodyBecomeASpec()
+{
+    const VehicleCarSpec spec = AcCarData::BuildSpec(R34DataFiles());
+    Require(spec.drive == VehicleDrive::AllWheel && spec.allWheelDrive.has_value(), "four-wheel drive");
+    const VehicleAllWheelDrive& awd = *spec.allWheelDrive;
+    Require(awd.coupling, "a coupling, as TYPE=AWD2 says");
+    Require(awd.centreRampTorque == 100.0f && awd.centreMaxTorque == 1000.0f, "its ramp and limit from [AWD2]");
+    Require(awd.frontDiffPower == 0.03f && awd.frontDiffCoast == 0.03f && awd.frontDiffPreload == 0.0f, "the front differential from [AWD2], not [AWD]");
+    Require(awd.rearDiffPower == 0.6f && awd.rearDiffCoast == 0.5f && awd.rearDiffPreload == 10.0f, "the rear differential");
+    Require(awd.centreControllers.size() == 1 && awd.centreControllers[0].curve.size() == 3 && awd.centreControllers[0].curve[1] == glm::vec2(1.0f, 550.0f) &&
+                awd.centreControllers[0].upLimit == 1000000.0f,
+            "the centre's controller with its lut file");
+
+    Require(spec.rearSteerControllers.size() == 3, "three rear steering controllers");
+    const VehicleController& steer = spec.rearSteerControllers[0];
+    Require(steer.input == "STEER_DEG" && steer.combinator == "ADD" && steer.filter == 0.99f && steer.upLimit == 1.0f && steer.downLimit == -1.0f,
+            "the first reads the steering wheel");
+    Require(steer.curve.size() == 7 && steer.curve.front() == glm::vec2(-90.0f, -0.0015f) && steer.curve[5] == glm::vec2(25.0f, 0.0010f), "its inline curve");
+    Require(spec.rearSteerControllers[1].input == "OVERSTEER_FACTOR" && spec.rearSteerControllers[1].combinator == "MULT" &&
+                spec.rearSteerControllers[1].curve.size() == 5,
+            "the second the oversteer");
+    Require(spec.rearSteerControllers[2].curve.size() == 3 && spec.rearSteerControllers[2].curve[2] == glm::vec2(150.0f, 0.2f), "the third the speed");
+
+    Require(spec.colliders.size() == 3, "three boxes");
+    Require(spec.colliders[0].center == glm::vec3(0.0f, -0.23f, -0.9f) && spec.colliders[0].size == glm::vec3(1.75f, 0.15f, 3.0f) && spec.colliders[0].groundEnabled,
+            "the floor box");
+    Require(spec.colliders[2].size == glm::vec3(1.57f, 0.15f, 0.35f) && !spec.colliders[2].groundEnabled, "and one kept off the ground");
+
+    // A plain AWD reads its centre differential's share from [AWD]; a rear-drive car has none of it.
+    std::map<std::string, std::string> awdFiles = R34DataFiles();
+    awdFiles["drivetrain.ini"] = "[TRACTION]\r\nTYPE=AWD\r\n[AWD]\r\nFRONT_SHARE=0.35\r\nCENTRE_DIFF_POWER=0.2\r\n";
+    const VehicleCarSpec centre = AcCarData::BuildSpec(awdFiles);
+    Require(centre.allWheelDrive.has_value() && !centre.allWheelDrive->coupling && centre.allWheelDrive->frontShare == 0.35f &&
+                centre.allWheelDrive->centreDiffPower == 0.2f && centre.allWheelDrive->centreControllers.empty(),
+            "a centre differential's share");
+    Require(!AcCarData::BuildSpec(BoxsterDataFiles()).allWheelDrive.has_value(), "a rear-drive car has no four-wheel-drive figures");
+}
+
+// The R34's figures through the import and back, with its collider.kn5 (here the fixture car's own kn5).
+void ImportWritesFourWheelDriveRearSteerAndBody()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    const std::filesystem::path carFolder = kn5.parent_path();
+    WriteFile(carFolder / "data.acd", BuildAcd("ks_fixture", 42, R34DataFiles()));
+    WriteFile(carFolder / "collider.kn5", BuildCarKn5(6));
+    size_t shellPoints = 0;
+    std::function<void(const Kn5Node&)> count = [&](const Kn5Node& node)
+    {
+        shellPoints += node.vertices.size();
+        for (const Kn5Node& child : node.children)
+        {
+            count(child);
+        }
+    };
+    count(Kn5Reader::Load(carFolder / "collider.kn5").root);
+
+    const VehicleCarSpec expected = AcCarData::BuildSpec(R34DataFiles());
+    const std::optional<VehicleCarSpec> folder = AcCarData::ReadCarFolder(carFolder);
+    Require(folder.has_value() && folder->colliderHull.size() == shellPoints && shellPoints > 0, "the car's folder gives the shell's points");
+
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "r34");
+    const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+    Require(model.carSpec.has_value(), "the model carries the figures");
+    const VehicleCarSpec& spec = *model.carSpec;
+    Require(spec.allWheelDrive.has_value() && spec.allWheelDrive->coupling && spec.allWheelDrive->centreRampTorque == 100.0f &&
+                spec.allWheelDrive->centreMaxTorque == 1000.0f && spec.allWheelDrive->rearDiffPreload == 10.0f && spec.allWheelDrive->frontDiffPower == 0.03f,
+            "the four-wheel drive survives the glTF");
+    Require(spec.allWheelDrive->centreControllers.size() == 1 && spec.allWheelDrive->centreControllers[0].upLimit == 1000000.0f, "with its centre's controller");
+    Require(spec.rearSteerControllers.size() == 3 && spec.rearSteerControllers[0].curve == expected.rearSteerControllers[0].curve &&
+                spec.rearSteerControllers[1].combinator == "MULT" && spec.rearSteerControllers[2].filter == 0.99f,
+            "the rear steering survives");
+    Require(spec.colliders == expected.colliders, "the boxes survive");
+    Require(spec.colliderHull.size() == shellPoints, "the shell survives");
+    for (size_t index = 0; index < shellPoints; ++index)
+    {
+        RequireNear(glm::length(spec.colliderHull[index] - folder->colliderHull[index]), 0.0f, 1e-4f, "each of its points");
+    }
+}
+
 void ImportWritesTheCarsOwnData()
 {
     ScopedDirectory scope;
@@ -1626,6 +1732,8 @@ int main()
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();
         ImportWritesTheCarsOwnData();
+        FourWheelDriveRearSteerAndBodyBecomeASpec();
+        ImportWritesFourWheelDriveRearSteerAndBody();
         LiveAxleDataBecomesASolidAxle();
         EveryInstalledCarDecrypts();
 

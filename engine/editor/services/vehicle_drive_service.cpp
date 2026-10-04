@@ -176,6 +176,12 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     {
         fitTuning = ApplyCarSpec(tuning, *modelData->carSpec);
         session->carData = DescribeCarSpec(*modelData->carSpec);
+        // The body's shell is in the model's frame: scaled and turned into vehicle space as the bounds are.
+        fitTuning.chassisHull.clear();
+        for (const glm::vec3& point : modelData->carSpec->colliderHull)
+        {
+            fitTuning.chassisHull.push_back(modelToVehicle * (point * session->scale));
+        }
     }
     fitTuning.modelFront = modelFront;
     if (rig != nullptr || (modelData && modelData->steeringWheel.has_value()))

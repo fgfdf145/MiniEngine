@@ -167,6 +167,50 @@ struct VehicleAeroSurface
     float downforceArea = 0.0f;
 };
 
+// One of Assetto Corsa's controllers ([CONTROLLER_n] of ctrl_4ws.ini, ctrl_awd2.ini, ctrl_ers_N.ini):
+// a telemetry channel (STEER_DEG, SPEED_KMH, GAS, GEAR, SLIPRATIO_MAX, ...) read through its curve,
+// combined with the value so far (ADD or MULT), filtered and kept within its limits. See
+// EvaluateVehicleControllers.
+struct VehicleController
+{
+    std::string input;
+    std::string combinator;
+    std::vector<glm::vec2> curve;
+    float filter = 0.0f;
+    float upLimit = 0.0f;
+    float downLimit = 0.0f;
+};
+
+// A box of a car's body (Assetto Corsa's colliders.ini [COLLIDER_n]): its centre from the centre of mass
+// in the vehicle's frame (+X left, +Y up, +Z forward), its full size, and whether the game lets it meet
+// the ground (kept; every box collides here).
+struct VehicleColliderBox
+{
+    glm::vec3 center{0.0f};
+    glm::vec3 size{0.0f};
+    bool groundEnabled = true;
+
+    bool operator==(const VehicleColliderBox&) const = default;
+};
+
+// How the engine's torque reaches the front axle of a four-wheel-drive car.
+enum class VehicleCentreDrive
+{
+    // A centre differential: the front gets frontTorqueShare of the engine's torque.
+    Differential,
+    // Rear drive with a coupling at the transfer case (Assetto Corsa's AWD2, Nissan's ATTESA): the front gets
+    // what the coupling passes, min(rampTorque * slip, maxTorque) on the shaft speeds' difference.
+    Coupling,
+};
+
+// One axle's differential as a clutch-pack limited slip: the share of the drive torque through it that
+// locks it (below 0: the car's limitedSlipLock) and its preload (Nm, below 0: the default).
+struct VehicleAxleDifferential
+{
+    float lock = -1.0f;
+    float preload = -1.0f;
+};
+
 // How a hybrid's motor torque (VehicleSettings::ersTorqueCurve) reaches the drivetrain.
 enum class VehicleErsDelivery
 {
@@ -189,6 +233,12 @@ struct VehicleSettings
     // The centre of mass relative to chassisCenter. A car's sits low; a box's centre would roll it
     // over in the first corner.
     glm::vec3 centerOfMassOffset{0.0f, -0.35f, 0.0f};
+    // The car's own body, replacing the box when there are carColliders: the boxes (from the centre of
+    // mass, vehicle axes) and the shell's points in vehicle space (Assetto Corsa's collider.kn5, set by
+    // whoever knows the model's frame), raised to the boxes' tops so that only the boxes meet the
+    // ground. See BuildChassisParts.
+    std::vector<VehicleColliderBox> carColliders;
+    std::vector<glm::vec3> chassisHull;
     // How the car's own data places its mass (ApplyCarSpec); 0 leaves FitVehicleSettingsToBounds to
     // guess from the model's size. The front axle's share of the weight, the centre of mass's height
     // above the ground (m), and the box (width, height, length, m) whose uniform inertia the body takes
@@ -220,6 +270,12 @@ struct VehicleSettings
     float suspensionDamping = 0.5f;
 
     float maxSteerAngleDegrees = 35.0f;
+    // The steering wheel's turn at full lock (degrees), for controllers reading STEER_DEG; 0: 450.
+    float steeringWheelLockDegrees = 0.0f;
+    // Rear-wheel steering (Assetto Corsa's ctrl_4ws.ini): the controllers give the rear wheels' angle in
+    // radians, opposite to the front when it has the steering's sign (see EvaluateVehicleControllers and
+    // ComputeRearSteerAngle). Empty: the rear wheels do not steer.
+    std::vector<VehicleController> rearSteerControllers;
     float maxEngineTorque = 500.0f; // Nm
     float minRpm = 1000.0f;
     float maxRpm = 7000.0f;
@@ -276,6 +332,15 @@ struct VehicleSettings
     // How much of the drive torque a limited-slip differential can move from the wheel that spins to the one
     // that grips: 0 is open, 1 nearly locked.
     float limitedSlipLock = 0.4f;
+    // Four-wheel drive (drive AllWheel): a centre differential sending frontTorqueShare to the front, or a
+    // coupling at the transfer case passing min(rampTorque * shaft slip, maxTorque) (Nm per rad/s, Nm, at the
+    // shaft) from the driven rear to the front. Each axle's differential (front, rear) may have its own
+    // lock and preload.
+    VehicleCentreDrive centreDrive = VehicleCentreDrive::Differential;
+    float frontTorqueShare = 0.5f;
+    float centreCouplingRampTorque = 0.0f;
+    float centreCouplingMaxTorque = 0.0f;
+    std::array<VehicleAxleDifferential, 2> axleDifferentials{};
     // Traction control: the clutch slips once the engine asks the driven wheels for more torque than their
     // tyres can hold, this share of their peak grip on the load they carry (1 is the limit, less stays short of
     // it). 0 is off. Without it a car at full throttle in a low gear spins its tyres several times over.
@@ -362,24 +427,33 @@ struct VehicleTurbo
     float lagDown = 0.0f;
 };
 
-// One controller of an ERS profile (Assetto Corsa's ctrl_ers_N.ini, [CONTROLLER_n]): a telemetry
-// channel (GAS, GEAR, SLIPRATIO_MAX, ...) read through its curve, combined with the deployment so far
-// (ADD or MULT), filtered and kept within its limits.
-struct VehicleErsController
+// A four-wheel drive's figures (Assetto Corsa's drivetrain.ini [AWD] for TYPE=AWD, [AWD2] for TYPE=AWD2):
+// the front, centre and rear differentials' lock under power and on the overrun (0 to 1) and preload (Nm),
+// a centre differential's front share, a centre coupling's ramp (Nm per rad/s) and limit (Nm), and the
+// controllers that drive the centre (ctrl_awd2.ini, ctrl_awd_center_lock.ini: kept, not run).
+struct VehicleAllWheelDrive
 {
-    std::string input;
-    std::string combinator;
-    std::vector<glm::vec2> curve;
-    float filter = 0.0f;
-    float upLimit = 0.0f;
-    float downLimit = 0.0f;
+    bool coupling = false; // AWD2
+    float frontShare = 0.5f;
+    float frontDiffPower = 0.0f;
+    float frontDiffCoast = 0.0f;
+    float frontDiffPreload = 0.0f;
+    float centreDiffPower = 0.0f;
+    float centreDiffCoast = 0.0f;
+    float centreDiffPreload = 0.0f;
+    float rearDiffPower = 0.0f;
+    float rearDiffCoast = 0.0f;
+    float rearDiffPreload = 0.0f;
+    float centreRampTorque = 0.0f;
+    float centreMaxTorque = 0.0f;
+    std::vector<VehicleController> centreControllers;
 };
 
 // A deployment profile the driver picks (ctrl_ers_N.ini): its name and its controllers in order.
 struct VehicleErsProfile
 {
     std::string name;
-    std::vector<VehicleErsController> controllers;
+    std::vector<VehicleController> controllers;
 };
 
 // A hybrid's energy recovery system (Assetto Corsa's ers.ini): the kinetic motor's torque at full
@@ -433,6 +507,13 @@ struct VehicleCarSpec
     std::vector<VehicleTurbo> turbos;
     // A hybrid's ERS; torqueCurve above is the engine's alone. ApplyCarSpec adds the motor's torque.
     std::optional<VehicleErs> ers;
+    // A four-wheel drive's differentials and centre (drive AllWheel), the rear-wheel steering's controllers,
+    // and the body's collision boxes (from the centre of mass) and shell (collider.kn5's points in the
+    // model's own frame).
+    std::optional<VehicleAllWheelDrive> allWheelDrive;
+    std::vector<VehicleController> rearSteerControllers;
+    std::vector<VehicleColliderBox> colliders;
+    std::vector<glm::vec3> colliderHull;
     // Engine braking at a reference rpm, with the throttle closed.
     std::optional<float> coastRpm;
     std::optional<float> coastTorque;
@@ -498,6 +579,67 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
 // Two torque curves (rpm, Nm) added: a point at every rpm either has, each curve read linearly between
 // its points and held at its end values outside them. Both sorted by rpm; so is the result.
 std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b);
+
+// What a car's controllers read, in Assetto Corsa's units: the steering wheel (degrees, right positive),
+// speed (km/h), pedals (0 to 1), lateral acceleration (g, left positive), the gear, the axles' slip
+// angles (degrees: average of the two wheels' magnitudes, and the larger magnitude) and the oversteer
+// factor (rear average less front average, degrees: our reading of the game's, which is undocumented).
+struct VehicleControllerInputs
+{
+    float steerDegrees = 0.0f;
+    float speedKmh = 0.0f;
+    float gas = 0.0f;
+    float brake = 0.0f;
+    float lateralG = 0.0f;
+    float gear = 0.0f;
+    float slipAngleFrontAverage = 0.0f;
+    float slipAngleFrontMax = 0.0f;
+    float slipAngleRearAverage = 0.0f;
+    float slipAngleRearMax = 0.0f;
+    float oversteerFactor = 0.0f;
+};
+
+// A controller input by its name (STEER_DEG, SPEED_KMH, GAS, BRAKE, LATG, GEAR, SLIPANGLE_FRONT_AVERAGE,
+// ..., OVERSTEER_FACTOR); 0 for one it does not know.
+float ReadVehicleControllerInput(const VehicleControllerInputs& inputs, const std::string& name);
+
+// Assetto Corsa's controller chain (as gro-ove's ac-torque-helper, acController.jsx, has it): from 0, each
+// controller reads its input through its curve, adds it (ADD) or multiplies by it (MULT), and the value is
+// kept within that controller's limits. Each controller's curve value is low-passed by its FILTER, a
+// per-step factor at the game's 333 Hz, here a = FILTER^(dt * 333) (our reading: the reference applies
+// none). `filtered` holds each controller's last value (resized to fit; empty starts them unfiltered);
+// dt <= 0 skips the filter.
+float EvaluateVehicleControllers(const std::vector<VehicleController>& controllers, const VehicleControllerInputs& inputs,
+                                 std::vector<float>& filtered, float dt);
+
+// The torque (Nm, at the transfer case) a centre coupling passes from the rear to the front:
+// rampTorque times the shafts' speed difference, finalDrive * (rearWheelSpeed - frontWheelSpeed) (wheel
+// speeds in rad/s, axle averages), held within maxTorque either way.
+float ComputeCentreCouplingTorque(float rampTorque, float maxTorque, float finalDrive, float rearWheelSpeed, float frontWheelSpeed);
+
+// The rear wheels' steer angle (radians, right positive as the steering is) from the rear steering
+// controllers' output (radians): an output with the steering's sign turns the rear against the front
+// (our reading of the game's: the Porsche 991's turns them against the front at low speed and with
+// it above 80 km/h, as the real car does).
+inline float ComputeRearSteerAngle(float controllerOutput)
+{
+    return -controllerOutput;
+}
+
+// The body's collision parts in vehicle space: the car's boxes placed from the centre of mass
+// (chassisCenter + centerOfMassOffset), and the shell's points with any below the ground-touching boxes'
+// highest top raised to it. No boxes: no parts (the body is the chassis box).
+struct VehicleChassisBox
+{
+    glm::vec3 center{0.0f};
+    glm::vec3 halfExtents{0.0f};
+};
+struct VehicleChassisParts
+{
+    std::vector<VehicleChassisBox> boxes;
+    std::vector<glm::vec3> hull;
+};
+VehicleChassisParts BuildChassisParts(const VehicleSettings& settings);
 
 // The brake torque per wheel (Nm) that stops the car as hard as its tyres allow, a little short of
 // locking them: 75% of the grip on the car's weight (66% with dynamicBrakeBias), over the wheel radius,

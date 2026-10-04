@@ -10,6 +10,7 @@
 #include <memory>
 #include <span>
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -129,6 +130,10 @@ struct VehicleTelemetry
     float engineRpm = 0.0f;
     int gear = 0; // negative reverse, 0 neutral, then the forward gears from 1
     uint32_t wheelsInContact = 0;
+    // A coupled four-wheel drive's centre coupling in the last step (Nm at the transfer case, rear to front
+    // positive), and the rear wheels' steer angle (degrees, right positive) for a car with rear steering.
+    float centreCouplingTorque = 0.0f;
+    float rearSteerDegrees = 0.0f;
 };
 
 // A Jolt Physics world holding static collision geometry and wheeled vehicles, all in world space
@@ -192,6 +197,8 @@ class PhysicsWorld
     std::vector<VehicleWheelState> GetVehicleWheels(VehicleId vehicle) const;
     VehicleLinkage GetVehicleLinkage(VehicleId vehicle) const;
     VehicleTelemetry GetVehicleTelemetry(VehicleId vehicle) const;
+    // The body's collision shape's bounds in vehicle space (the chassis box, or the car's boxes and shell).
+    std::pair<glm::vec3, glm::vec3> GetVehicleBodyBounds(VehicleId vehicle) const;
 
     // Returns how many fixed steps ran. With a wall-clock budget (seconds, 0 for none) the steps stop
     // once that much real time has gone and the backlog is dropped as for a capped frame: a world too
