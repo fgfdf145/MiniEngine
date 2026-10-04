@@ -2457,6 +2457,52 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
             spec.turbos.push_back(turbo);
         }
     }
+    if (extension.Has("ers") && extension.Get("ers").IsObject())
+    {
+        const tinygltf::Value& value = extension.Get("ers");
+        VehicleErs ers;
+        ers.torqueCurve = VehiclePoints(value, "torqueCurve");
+        ers.coastCurve = VehiclePoints(value, "coastCurve");
+        ers.chargeK = VehicleNumber(value, "chargeK").value_or(0.0f);
+        ers.dischargeSeconds = VehicleNumber(value, "dischargeSeconds").value_or(0.0f);
+        ers.maxKjPerLap = VehicleNumber(value, "maxKjPerLap").value_or(0.0f);
+        ers.hasButtonOverride = VehicleFlag(value, "hasButtonOverride").value_or(false);
+        ers.brakeRearCorrection = VehicleNumber(value, "brakeRearCorrection").value_or(0.0f);
+        ers.heatChargeK = VehicleNumber(value, "heatChargeK").value_or(0.0f);
+        ers.heatTorquePercent = VehicleNumber(value, "heatTorquePercent").value_or(0.0f);
+        ers.defaultProfile = static_cast<int>(VehicleNumber(value, "defaultProfile").value_or(0.0f));
+        if (value.Has("profiles") && value.Get("profiles").IsArray())
+        {
+            const tinygltf::Value& profiles = value.Get("profiles");
+            for (size_t index = 0; index < profiles.ArrayLen(); ++index)
+            {
+                const tinygltf::Value& profileValue = profiles.Get(static_cast<int>(index));
+                VehicleErsProfile profile;
+                profile.name = VehicleText(profileValue, "name");
+                if (profileValue.Has("controllers") && profileValue.Get("controllers").IsArray())
+                {
+                    const tinygltf::Value& controllers = profileValue.Get("controllers");
+                    for (size_t controllerIndex = 0; controllerIndex < controllers.ArrayLen(); ++controllerIndex)
+                    {
+                        const tinygltf::Value& controllerValue = controllers.Get(static_cast<int>(controllerIndex));
+                        VehicleErsController controller;
+                        controller.input = VehicleText(controllerValue, "input");
+                        controller.combinator = VehicleText(controllerValue, "combinator");
+                        controller.curve = VehiclePoints(controllerValue, "curve");
+                        controller.filter = VehicleNumber(controllerValue, "filter").value_or(0.0f);
+                        controller.upLimit = VehicleNumber(controllerValue, "upLimit").value_or(0.0f);
+                        controller.downLimit = VehicleNumber(controllerValue, "downLimit").value_or(0.0f);
+                        profile.controllers.push_back(std::move(controller));
+                    }
+                }
+                ers.profiles.push_back(std::move(profile));
+            }
+        }
+        if (!ers.torqueCurve.empty())
+        {
+            spec.ers = std::move(ers);
+        }
+    }
     spec.coastRpm = VehicleNumber(extension, "coastRpm");
     spec.coastTorque = VehicleNumber(extension, "coastTorque");
     spec.changeUpSeconds = VehicleNumber(extension, "changeUpSeconds");

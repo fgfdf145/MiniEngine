@@ -712,6 +712,59 @@ void ReadAero(const AcdArchive::Files& files, VehicleCarSpec& spec)
     }
 }
 
+// ers.ini: the kinetic motor's curves and figures, the heat recovery's, and every ctrl_ers_N.ini
+// profile with its controllers' curves. Nothing without a torque curve.
+void ReadErs(const AcdArchive::Files& files, VehicleCarSpec& spec)
+{
+    const AcCarData::Ini ersIni = ParseFile(files, "ers.ini");
+    const IniView ers(&ersIni);
+    VehicleErs out;
+    out.torqueCurve = LutPoints(files, ers.Text("KINETIC", "TORQUE_CURVE").value_or(""));
+    if (out.torqueCurve.empty())
+    {
+        return;
+    }
+    out.coastCurve = LutPoints(files, ers.Text("KINETIC", "COAST_CURVE").value_or(""));
+    out.chargeK = ers.Number("KINETIC", "CHARGE_K").value_or(0.0f);
+    out.dischargeSeconds = ers.Number("KINETIC", "DISCHARGE_TIME").value_or(0.0f) / 1000.0f;
+    out.maxKjPerLap = ers.Number("KINETIC", "MAX_KJ_PER_LAP").value_or(0.0f);
+    out.hasButtonOverride = ers.Number("KINETIC", "HAS_BUTTON_OVERRIDE").value_or(0.0f) != 0.0f;
+    out.brakeRearCorrection = ers.Number("KINETIC", "BRAKE_REAR_CORRECTION").value_or(0.0f);
+    out.defaultProfile = static_cast<int>(ers.Number("KINETIC", "DEFAULT_CONTROLLER").value_or(0.0f));
+    out.heatChargeK = ers.Number("HEAT", "CHARGE_K").value_or(0.0f);
+    out.heatTorquePercent = ers.Number("HEAT", "TORQUE_PERC").value_or(0.0f);
+    for (int index = 0; index < 16; ++index)
+    {
+        const std::string fileName = "ctrl_ers_" + std::to_string(index) + ".ini";
+        if (FindFile(files, fileName) == nullptr)
+        {
+            break;
+        }
+        const AcCarData::Ini profileIni = ParseFile(files, fileName);
+        const IniView profileView(&profileIni);
+        VehicleErsProfile profile;
+        profile.name = Trim(profileView.Text("HEADER", "NAME").value_or(""));
+        for (int controllerIndex = 0; controllerIndex < 32; ++controllerIndex)
+        {
+            const std::string section = "CONTROLLER_" + std::to_string(controllerIndex);
+            if (!profileView.HasSection(section))
+            {
+                break;
+            }
+            VehicleErsController controller;
+            controller.input = Trim(profileView.Text(section, "INPUT").value_or(""));
+            controller.combinator = Trim(profileView.Text(section, "COMBINATOR").value_or(""));
+            controller.curve = LutPoints(files, profileView.Text(section, "LUT").value_or(""));
+            controller.filter = profileView.Number(section, "FILTER").value_or(0.0f);
+            controller.upLimit = profileView.Number(section, "UP_LIMIT").value_or(0.0f);
+            controller.downLimit = profileView.Number(section, "DOWN_LIMIT").value_or(0.0f);
+            profile.controllers.push_back(std::move(controller));
+        }
+        out.profiles.push_back(std::move(profile));
+    }
+    spec.ers = std::move(out);
+}
+
 void ReadElectronics(const AcdArchive::Files& files, VehicleCarSpec& spec)
 {
     for (const auto& [section, keys] : ParseFile(files, "electronics.ini"))
@@ -762,6 +815,16 @@ std::string DescribeCarSpec(const VehicleCarSpec& spec)
             peak = std::max(peak, point.y);
         }
         std::snprintf(buffer, sizeof(buffer), "%.0f Nm", peak);
+        append(buffer);
+    }
+    if (spec.ers.has_value())
+    {
+        float peak = 0.0f;
+        for (const glm::vec2& point : spec.ers->torqueCurve)
+        {
+            peak = std::max(peak, point.y);
+        }
+        std::snprintf(buffer, sizeof(buffer), "ERS %.0f Nm", peak);
         append(buffer);
     }
     if (spec.maxRpm.has_value())
@@ -872,14 +935,17 @@ std::vector<std::pair<float, float>> ParseLut(const std::string& text)
 
 float TurboBoost(float rpm, float maxBoost, float wastegate, float referenceRpm, float gamma)
 {
+    // As gro-ove's ac-torque-helper (src/acTurbo.jsx, calculateMultipler) has the game: the maximum
+    // boost scaled by the revs, then cut at the wastegate. A turbo whose maximum is above its wastegate
+    // so reaches the wastegate's level below the reference rpm.
     float level = std::max(maxBoost, 0.0f);
-    if (wastegate > 0.0f)
-    {
-        level = std::min(level, wastegate);
-    }
     if (referenceRpm > 0.0f)
     {
         level *= std::clamp(std::pow(std::max(rpm, 0.0f) / referenceRpm, std::max(gamma, 0.0f)), 0.0f, 1.0f);
+    }
+    if (wastegate > 0.0f)
+    {
+        level = std::min(level, wastegate);
     }
     return level;
 }
@@ -923,6 +989,7 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
     ReadTyres(files, spec);
     ReadAero(files, spec);
     ReadElectronics(files, spec);
+    ReadErs(files, spec);
     return spec;
 }
 

@@ -165,6 +165,29 @@ VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec)
     return fuelled;
 }
 
+std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b)
+{
+    std::vector<float> rpms;
+    rpms.reserve(a.size() + b.size());
+    for (const glm::vec2& point : a)
+    {
+        rpms.push_back(point.x);
+    }
+    for (const glm::vec2& point : b)
+    {
+        rpms.push_back(point.x);
+    }
+    std::sort(rpms.begin(), rpms.end());
+    rpms.erase(std::unique(rpms.begin(), rpms.end()), rpms.end());
+    std::vector<glm::vec2> sum;
+    sum.reserve(rpms.size());
+    for (const float rpm : rpms)
+    {
+        sum.emplace_back(rpm, EvaluateCurve(a, rpm) + EvaluateCurve(b, rpm));
+    }
+    return sum;
+}
+
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& dryspec)
 {
     const VehicleCarSpec spec = WithStartingFuel(dryspec);
@@ -210,14 +233,21 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
 
     if (spec.torqueCurve.size() >= 2)
     {
+        const auto byRpm = [](const glm::vec2& a, const glm::vec2& b)
+        {
+            return a.x < b.x;
+        };
         settings.torqueCurve = spec.torqueCurve;
-        std::sort(
-            settings.torqueCurve.begin(),
-            settings.torqueCurve.end(),
-            [](const glm::vec2& a, const glm::vec2& b)
-            {
-                return a.x < b.x;
-            });
+        std::sort(settings.torqueCurve.begin(), settings.torqueCurve.end(), byRpm);
+        settings.ersTorqueCurve.clear();
+        settings.ersDelivery = VehicleErsDelivery::None;
+        if (spec.ers.has_value() && spec.ers->torqueCurve.size() >= 2)
+        {
+            settings.ersTorqueCurve = spec.ers->torqueCurve;
+            std::sort(settings.ersTorqueCurve.begin(), settings.ersTorqueCurve.end(), byRpm);
+            settings.ersDelivery = VehicleErsDelivery::AddedToEngine;
+            settings.torqueCurve = AddTorqueCurves(settings.torqueCurve, settings.ersTorqueCurve);
+        }
         float peak = 0.0f;
         for (const glm::vec2& point : settings.torqueCurve)
         {

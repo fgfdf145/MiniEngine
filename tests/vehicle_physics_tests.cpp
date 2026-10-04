@@ -1303,6 +1303,48 @@ void TestCarSpecReplacesWhatItKnows()
     Require(ignored.massKg == tuning.massKg && ignored.maxRpm == tuning.maxRpm && ignored.torqueCurve.empty(), "nonsense is ignored");
 }
 
+void TestErsAddsToTheEngineCurve()
+{
+    // Two curves add at every rpm either has, each read between its points and held past its ends.
+    const std::vector<glm::vec2> sum = AddTorqueCurves({{1000.0f, 100.0f}, {3000.0f, 300.0f}}, {{0.0f, 50.0f}, {2000.0f, 50.0f}, {4000.0f, 0.0f}});
+    Require(sum.size() == 5, "a point at every rpm of either");
+    Require(sum[0] == glm::vec2(0.0f, 150.0f) && sum[1] == glm::vec2(1000.0f, 150.0f), "the first held below its start");
+    RequireNear(sum[2].y, 200.0f + 50.0f, 1e-4f, "both read at 2000 rpm");
+    RequireNear(sum[3].y, 300.0f + 25.0f, 1e-4f, "the second between its points");
+    Require(sum[4] == glm::vec2(4000.0f, 300.0f), "the first held past its end");
+
+    // A hybrid (the McLaren P1's figures): the motor's 260 Nm folds into the engine's curve, kept
+    // apart too for a run-time ERS.
+    VehicleCarSpec spec;
+    spec.torqueCurve = {{1000.0f, 370.0f}, {4000.0f, 619.0f}, {8000.0f, 547.0f}, {9000.0f, 0.0f}};
+    VehicleErs ers;
+    ers.torqueCurve = {{0.0f, 260.0f}, {4000.0f, 260.0f}, {8000.0f, 178.0f}, {8300.0f, 0.0f}};
+    spec.ers = ers;
+    const VehicleSettings hybrid = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(hybrid.ersDelivery == VehicleErsDelivery::AddedToEngine && hybrid.ersTorqueCurve.size() == 4, "the motor's curve, delivered with the engine's");
+    RequireNear(hybrid.maxEngineTorque, 619.0f + 260.0f, 1e-3f, "the peak is the engine's and the motor's");
+    bool sawPeak = false;
+    for (const glm::vec2& point : hybrid.torqueCurve)
+    {
+        if (point.x == 4000.0f)
+        {
+            RequireNear(point.y, 879.0f, 1e-3f, "879 Nm at 4000 rpm");
+            sawPeak = true;
+        }
+        if (point.x == 9000.0f)
+        {
+            RequireNear(point.y, 0.0f, 1e-3f, "the motor stops past its curve");
+        }
+    }
+    Require(sawPeak, "the engine's points are kept");
+
+    // A car without one clears what an earlier hybrid left in the tuning.
+    VehicleCarSpec plain;
+    plain.torqueCurve = spec.torqueCurve;
+    const VehicleSettings after = ApplyCarSpec(hybrid, plain);
+    Require(after.ersDelivery == VehicleErsDelivery::None && after.ersTorqueCurve.empty() && after.maxEngineTorque == 619.0f, "no ERS, none delivered");
+}
+
 // The time a car takes to reach a speed from rest on flat tarmac at full throttle, and the highest gear it
 // used on the way; `limit` when it does not get there.
 float TimeToSpeed(const VehicleSettings& tuning, float metresPerSecond, int& gearReached, float limit = 15.0f)
@@ -1714,6 +1756,7 @@ int main()
         TestAutomaticBrakesDoNotLockTheWheels();
         TestBrakeTorqueFollowsTheLoad();
         TestCarSpecReplacesWhatItKnows();
+        TestErsAddsToTheEngineCurve();
         TestCarOnItsOwnDataAccelerates();
         TestCarChangesDownAsItStops();
         TestTyreGripSetsAcceleration();

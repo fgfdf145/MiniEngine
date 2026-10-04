@@ -337,6 +337,36 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
         }
         out["turbos"] = std::move(turbos);
     }
+    if (spec.ers.has_value())
+    {
+        const VehicleErs& ers = *spec.ers;
+        Json profiles = Json::array();
+        for (const VehicleErsProfile& profile : ers.profiles)
+        {
+            Json controllers = Json::array();
+            for (const VehicleErsController& controller : profile.controllers)
+            {
+                controllers.push_back(Json{{"input", controller.input},
+                                           {"combinator", controller.combinator},
+                                           {"curve", PointsToJson(controller.curve)},
+                                           {"filter", Round(controller.filter, 6)},
+                                           {"upLimit", Round(controller.upLimit, 4)},
+                                           {"downLimit", Round(controller.downLimit, 4)}});
+            }
+            profiles.push_back(Json{{"name", profile.name}, {"controllers", std::move(controllers)}});
+        }
+        out["ers"] = Json{{"torqueCurve", PointsToJson(ers.torqueCurve)},
+                          {"coastCurve", PointsToJson(ers.coastCurve)},
+                          {"chargeK", Round(ers.chargeK, 8)},
+                          {"dischargeSeconds", Round(ers.dischargeSeconds, 4)},
+                          {"maxKjPerLap", Round(ers.maxKjPerLap, 2)},
+                          {"hasButtonOverride", ers.hasButtonOverride},
+                          {"brakeRearCorrection", Round(ers.brakeRearCorrection, 4)},
+                          {"heatChargeK", Round(ers.heatChargeK, 8)},
+                          {"heatTorquePercent", Round(ers.heatTorquePercent, 4)},
+                          {"defaultProfile", ers.defaultProfile},
+                          {"profiles", std::move(profiles)}};
+    }
     put("coastRpm", spec.coastRpm);
     put("coastTorque", spec.coastTorque);
     put("changeUpSeconds", spec.changeUpSeconds);

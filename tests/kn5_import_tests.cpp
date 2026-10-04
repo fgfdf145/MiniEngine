@@ -1109,6 +1109,19 @@ std::map<std::string, std::string> BoxsterDataFiles()
          "[COAST_REF]\r\nRPM=7500\r\nTORQUE=90\r\n\r\n"
          "[TURBO_0]\r\nLAG_DN=0.996\r\nLAG_UP=0.99\r\nMAX_BOOST=1.2\r\nWASTEGATE=1.1\r\nREFERENCE_RPM=1900\r\nGAMMA=2\r\n"},
         {"power.lut", "0|50\r\n500|110\r\n1000|135\r\n1500|176\r\n1900|184\r\n2000|184\r\n4500|183\r\n6500|165\r\n7500|127\r\n8500|0\r\n"},
+        // A hybrid's ERS (the McLaren P1's ers.ini, shortened), borrowed so the import carries one.
+        {"ers.ini",
+         "[HEADER]\r\nVERSION=1\r\n[KINETIC]\r\nCHARGE_K=0.00014 ; charge\r\nTORQUE_CURVE=kers_torque.lut ; Nm/RPM\r\nCOAST_CURVE=kers_torque_coast.lut\r\n"
+         "DISCHARGE_TIME=87000 ; ms\r\nHAS_BUTTON_OVERRIDE=1\r\nMAX_KJ_PER_LAP=10000000\r\nDEFAULT_CONTROLLER=0\r\nBRAKE_REAR_CORRECTION=1\r\n"
+         "[HEAT]\r\nCHARGE_K=0.002\r\nTORQUE_PERC=10\r\n"},
+        {"kers_torque.lut", "0|260\r\n4000|260\r\n6000|214\r\n8000|178\r\n8300|0\r\n"},
+        {"kers_torque_coast.lut", "0|0\r\n9000|0\r\n"},
+        {"ctrl_ers_0.ini",
+         "[HEADER]\r\nNAME=Race\r\n[CONTROLLER_0]\r\nCOMBINATOR=ADD ; mode\r\nINPUT=GAS\r\nLUT=kers_gas.lut\r\nFILTER=0.96\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n"
+         "[CONTROLLER_1]\r\nCOMBINATOR=MULT\r\nINPUT=GEAR\r\nLUT=kers_gear.lut\r\nFILTER=0.96\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n"},
+        {"ctrl_ers_1.ini", "[HEADER]\r\nNAME=Charging\r\n[CONTROLLER_0]\r\nCOMBINATOR=ADD\r\nINPUT=GAS\r\nLUT=kers_gas.lut\r\nUP_LIMIT=1\r\nDOWN_LIMIT=0\r\n"},
+        {"kers_gas.lut", "0|0\r\n1|1\r\n"},
+        {"kers_gear.lut", "0|0\r\n1|0.5\r\n2|1\r\n"},
         {"drivetrain.ini",
          "[TRACTION]\r\nTYPE=RWD ; wheel drive\r\n\r\n[GEARS]\r\nCOUNT=7\r\nGEAR_R=-3.55\r\nGEAR_1=3.91\r\nGEAR_2=2.29\r\nGEAR_3=1.65\r\nGEAR_4=1.30\r\n"
          "GEAR_5=1.08\r\nGEAR_6=0.88\r\nGEAR_7=0.62\r\nFINAL=3.62\r\n\r\n[DIFFERENTIAL]\r\nPOWER=0.25\r\nCOAST=0.40\r\nPRELOAD=5\r\n\r\n"
@@ -1251,7 +1264,7 @@ void CarDataBecomesASpec()
     RequireNear(*spec.handBrakeTorquePerWheel, 1000.0f, 1e-3f, "the hand brake over two wheels");
     Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "a locking differential and anti-roll bars");
     // Torque is the file's times one plus the boost: 184 Nm at 2000 rpm, where the turbo is at its
-    // wastegate's 1.1, is 386.4; at 500 rpm it has hardly begun (1.1 * (500 / 1900)^2 = 0.076).
+    // wastegate's 1.1, is 386.4; at 500 rpm it has hardly begun (1.2 * (500 / 1900)^2 = 0.083).
     Require(spec.torqueCurve.size() == 10, "a point for each of the file's");
     float peak = 0.0f;
     for (const glm::vec2& point : spec.torqueCurve)
@@ -1263,10 +1276,40 @@ void CarDataBecomesASpec()
         }
         if (point.x == 500.0f)
         {
-            RequireNear(point.y, 110.0f * (1.0f + 1.1f * (500.0f / 1900.0f) * (500.0f / 1900.0f)), 0.05f, "no boost yet at 500 rpm");
+            RequireNear(point.y, 110.0f * (1.0f + 1.2f * (500.0f / 1900.0f) * (500.0f / 1900.0f)), 0.05f, "no boost yet at 500 rpm");
         }
     }
     RequireNear(peak, 386.4f, 0.1f, "the peak");
+    // At 1500 rpm the turbo's maximum scaled by the revs, 1.2 * (1500 / 1900)^2 = 0.748, is below its
+    // wastegate's 1.1: that is the boost (the wastegate's 1.1 scaled instead would give 0.686).
+    for (const glm::vec2& point : spec.torqueCurve)
+    {
+        if (point.x == 1500.0f)
+        {
+            RequireNear(point.y, 176.0f * (1.0f + 1.2f * (1500.0f / 1900.0f) * (1500.0f / 1900.0f)), 0.05f, "boost below the wastegate");
+        }
+    }
+    // A turbo whose maximum is far above its wastegate (the Skyline R34's: 1.2 against 0.4, reference
+    // 3400 rpm, gamma 2) is at its wastegate from 1963 rpm, well below the reference.
+    RequireNear(AcCarData::TurboBoost(2500.0f, 1.2f, 0.4f, 3400.0f, 2.0f), 0.4f, 1e-6f, "at the wastegate below the reference");
+    RequireNear(AcCarData::TurboBoost(1500.0f, 1.2f, 0.4f, 3400.0f, 2.0f), 1.2f * (1500.0f / 3400.0f) * (1500.0f / 3400.0f), 1e-6f, "and scaled below that");
+    RequireNear(AcCarData::TurboBoost(5000.0f, 1.2f, 0.0f, 3400.0f, 2.0f), 1.2f, 1e-6f, "no wastegate: the maximum");
+    RequireNear(AcCarData::TurboBoost(0.0f, 1.2f, 0.4f, 3400.0f, 2.0f), 0.0f, 1e-6f, "nothing at standstill");
+
+    // The ERS: its curves and figures, and both profiles with their controllers. The torque curve above
+    // stays the engine's.
+    Require(spec.ers.has_value(), "the ERS");
+    Require(spec.ers->torqueCurve.size() == 5 && spec.ers->torqueCurve[1] == glm::vec2(4000.0f, 260.0f), "its torque curve");
+    Require(spec.ers->coastCurve.size() == 2, "its coast curve");
+    Require(spec.ers->chargeK == 0.00014f && spec.ers->dischargeSeconds == 87.0f && spec.ers->maxKjPerLap == 10000000.0f, "its battery");
+    Require(spec.ers->hasButtonOverride && spec.ers->brakeRearCorrection == 1.0f && spec.ers->defaultProfile == 0, "its options");
+    Require(spec.ers->heatChargeK == 0.002f && spec.ers->heatTorquePercent == 10.0f, "the heat recovery");
+    Require(spec.ers->profiles.size() == 2 && spec.ers->profiles[0].name == "Race" && spec.ers->profiles[1].name == "Charging", "both profiles");
+    Require(spec.ers->profiles[0].controllers.size() == 2 && spec.ers->profiles[0].controllers[1].input == "GEAR" &&
+                spec.ers->profiles[0].controllers[1].combinator == "MULT" && spec.ers->profiles[0].controllers[1].curve.size() == 3 &&
+                spec.ers->profiles[0].controllers[0].downLimit == -1.0f && spec.ers->profiles[0].controllers[0].filter == 0.96f,
+            "with their controllers");
+    Require(!AcCarData::BuildSpec({{"engine.ini", "[ENGINE_DATA]\r\nLIMITER=7000\r\n"}}).ers.has_value(), "no ers.ini, no ERS");
     // The springs' natural frequency on one wheel's sprung mass: sqrt(30760 / (1460 * 0.455 / 2 - 70)) / 2pi
     // = 1.7 Hz at the front, 1.6 at the back; the dampers about 0.7 of critical.
     Require(*spec.suspensionFrequencyHz > 1.5f && *spec.suspensionFrequencyHz < 1.9f, "the springs' frequency");
@@ -1476,6 +1519,15 @@ void ImportWritesTheCarsOwnData()
         Require(spec.turbos.size() == 1 && spec.turbos[0].gamma == 2.0f && spec.coastTorque == 90.0f, "the turbo and engine braking survive");
         Require(spec.downshiftClutchProfile.size() == 2 && spec.differentialPreload == 5.0f, "the profiles and the differential survive");
         Require(spec.electronics.at("TRACTION_CONTROL").at("MIN_SPEED_KMH") == 30.0f, "the driver aids survive");
+        Require(spec.ers.has_value() && spec.ers->torqueCurve == expected.ers->torqueCurve && spec.ers->coastCurve.size() == 2, "the ERS survives");
+        Require(spec.ers->chargeK == expected.ers->chargeK && spec.ers->dischargeSeconds == 87.0f && spec.ers->maxKjPerLap == 10000000.0f &&
+                    spec.ers->hasButtonOverride && spec.ers->heatTorquePercent == 10.0f,
+                "with its figures");
+        Require(spec.ers->profiles.size() == 2 && spec.ers->profiles[0].controllers.size() == 2 &&
+                    spec.ers->profiles[0].controllers[1].curve == expected.ers->profiles[0].controllers[1].curve &&
+                    spec.ers->profiles[1].name == "Charging",
+                "and its profiles");
+        Require(report.carData.find("ERS 260 Nm") != std::string::npos, "the report names the ERS: " + report.carData);
     }
 
     // An archive that will not decrypt (here, one made for another folder) does not stop the import.

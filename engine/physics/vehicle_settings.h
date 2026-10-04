@@ -167,6 +167,16 @@ struct VehicleAeroSurface
     float downforceArea = 0.0f;
 };
 
+// How a hybrid's motor torque (VehicleSettings::ersTorqueCurve) reaches the drivetrain.
+enum class VehicleErsDelivery
+{
+    None,
+    // Folded into torqueCurve at full deployment: the battery never runs out and the deployment
+    // profiles are ignored. The only mode so far; a run-time ERS (battery, profiles, recovery) would
+    // keep torqueCurve the engine's and add ersTorqueCurve, scaled, every step.
+    AddedToEngine,
+};
+
 struct VehicleSettings
 {
     float massKg = 1400.0f;
@@ -214,8 +224,13 @@ struct VehicleSettings
     float minRpm = 1000.0f;
     float maxRpm = 7000.0f;
     // The engine's torque by rpm, in Nm (its peak is maxEngineTorque); the default shape of the
-    // physics engine's when empty. Sorted by rpm.
+    // physics engine's when empty. Sorted by rpm. With ersDelivery AddedToEngine it holds the ERS
+    // motor's torque too.
     std::vector<glm::vec2> torqueCurve;
+    // A hybrid's ERS motor torque at full deployment by rpm (Nm at the crank; empty: none), sorted, and
+    // how it is delivered.
+    std::vector<glm::vec2> ersTorqueCurve;
+    VehicleErsDelivery ersDelivery = VehicleErsDelivery::None;
     // The gearbox: forward ratios first gear up, the reverse ratio (negative), and the final drive
     // ratio; the physics engine's own five-speed when empty. The automatic gearbox changes up at
     // shiftUpRpm on full throttle and down at shiftDownRpm on a closed one, in between by the
@@ -335,7 +350,8 @@ struct VehicleAeroController
     float downLimit = 0.0f;
 };
 
-// A turbocharger: steady boost is `min(maxBoost, wastegate)` reached by (rpm / referenceRpm)^gamma.
+// A turbocharger: steady boost is maxBoost scaled by min(1, (rpm / referenceRpm)^gamma), never past the
+// wastegate (when it has one); several turbos' boosts add (see AcCarData::TurboBoost).
 struct VehicleTurbo
 {
     float maxBoost = 0.0f;
@@ -344,6 +360,45 @@ struct VehicleTurbo
     float gamma = 1.0f;
     float lagUp = 0.0f;
     float lagDown = 0.0f;
+};
+
+// One controller of an ERS profile (Assetto Corsa's ctrl_ers_N.ini, [CONTROLLER_n]): a telemetry
+// channel (GAS, GEAR, SLIPRATIO_MAX, ...) read through its curve, combined with the deployment so far
+// (ADD or MULT), filtered and kept within its limits.
+struct VehicleErsController
+{
+    std::string input;
+    std::string combinator;
+    std::vector<glm::vec2> curve;
+    float filter = 0.0f;
+    float upLimit = 0.0f;
+    float downLimit = 0.0f;
+};
+
+// A deployment profile the driver picks (ctrl_ers_N.ini): its name and its controllers in order.
+struct VehicleErsProfile
+{
+    std::string name;
+    std::vector<VehicleErsController> controllers;
+};
+
+// A hybrid's energy recovery system (Assetto Corsa's ers.ini): the kinetic motor's torque at full
+// deployment and on the overrun, by rpm (Nm, added to the engine's at the crank), its battery and
+// recovery figures, the heat recovery's, and the deployment profiles. Only torqueCurve is used yet
+// (see VehicleSettings::ersDelivery); the rest is kept for a run-time ERS.
+struct VehicleErs
+{
+    std::vector<glm::vec2> torqueCurve;
+    std::vector<glm::vec2> coastCurve;
+    float chargeK = 0.0f;          // [KINETIC] CHARGE_K: charge per brake torque and speed
+    float dischargeSeconds = 0.0f; // a full battery's time at full deployment (DISCHARGE_TIME, ms)
+    float maxKjPerLap = 0.0f;
+    bool hasButtonOverride = false;
+    float brakeRearCorrection = 0.0f;
+    float heatChargeK = 0.0f;       // [HEAT] CHARGE_K: charge per turbo boost
+    float heatTorquePercent = 0.0f; // [HEAT] TORQUE_PERC: what the heat recovery adds through the motor
+    int defaultProfile = 0;
+    std::vector<VehicleErsProfile> profiles;
 };
 
 // What a car's own data says, in SI units, for the fields it knows (Assetto Corsa's data.acd, read by
@@ -376,6 +431,8 @@ struct VehicleCarSpec
     std::vector<VehicleTyreCompound> tyreCompounds;
     std::optional<int> defaultTyreCompound;
     std::vector<VehicleTurbo> turbos;
+    // A hybrid's ERS; torqueCurve above is the engine's alone. ApplyCarSpec adds the motor's torque.
+    std::optional<VehicleErs> ers;
     // Engine braking at a reference rpm, with the throttle closed.
     std::optional<float> coastRpm;
     std::optional<float> coastTorque;
@@ -435,7 +492,12 @@ VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec);
 bool HasSuspensionGeometry(const VehicleSettings& settings);
 
 // `tuning` with the fields `spec` knows replaced by its figures.
+// A car with an ERS gets its motor's torque curve and, for now, ersDelivery AddedToEngine.
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);
+
+// Two torque curves (rpm, Nm) added: a point at every rpm either has, each curve read linearly between
+// its points and held at its end values outside them. Both sorted by rpm; so is the result.
+std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b);
 
 // The brake torque per wheel (Nm) that stops the car as hard as its tyres allow, a little short of
 // locking them: 75% of the grip on the car's weight (66% with dynamicBrakeBias), over the wheel radius,

@@ -33,8 +33,8 @@ std::vector<std::pair<float, float>> ParseLut(const std::string& text);
 // number, leaves its fields empty.
 VehicleCarSpec BuildSpec(const AcdArchive::Files& files);
 
-// The steady boost of a turbo at an rpm as a fraction of the engine's own torque: its wastegate's
-// level, reached from nothing at zero revs by (rpm / reference)^gamma.
+// The steady boost of a turbo at an rpm as a fraction of the engine's own torque: its maximum boost
+// scaled by min(1, (rpm / reference)^gamma), cut at its wastegate when it has one (0: none).
 float TurboBoost(float rpm, float maxBoost, float wastegate, float referenceRpm, float gamma);
 
 // Reads the car in a folder: its data.acd, or an unpacked data/ folder beside it. nullopt when it has
