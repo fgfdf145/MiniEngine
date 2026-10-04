@@ -501,7 +501,15 @@ BrushTyreParameters MakeBrushTyreParameters(double peakFriction, double referenc
         p.bristleStiffnessY = k;
         const double slip = 0.5 * k * p.width * length * length; // C_kappa = C_alpha here
         p.carcassStiffness = {slip / (0.4 * p.unloadedRadius), cornering / (0.6 * p.unloadedRadius), 1.5 * cornering * p.unloadedRadius * p.unloadedRadius};
-        p.carcassDamping = {p.carcassStiffness[0] * 0.5e-3, p.carcassStiffness[1] * 0.5e-3, p.carcassStiffness[2] * 0.5e-3};
+        // The carcass's damping, as a time constant on its stiffness: 0.5 ms sideways and in twist, so a
+        // step in slip still builds its force over the relaxation length, and 10 ms fore and aft. At
+        // 0.5 ms fore and aft a car stopped on its brakes rocked on its tyres' carcasses (the R34 at
+        // 7 Hz, a damping ratio of about 0.05, rolling back and forth for over two seconds); at 10 ms that
+        // mode settles in a cycle or two.
+        constexpr double kCarcassDampingSeconds = 0.5e-3;
+        constexpr double kLongitudinalCarcassDampingSeconds = 10e-3;
+        p.carcassDamping = {p.carcassStiffness[0] * kLongitudinalCarcassDampingSeconds, p.carcassStiffness[1] * kCarcassDampingSeconds,
+                            p.carcassStiffness[2] * kCarcassDampingSeconds};
     };
     double cornering = 3.0 * p.staticFriction * p.referenceLoad / std::tan(angle);
     setStiffness(cornering);

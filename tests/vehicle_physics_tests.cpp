@@ -667,6 +667,45 @@ void TestGameTractionControlCutsTheThrottle()
     Require(with < 0.3f && with < 0.5f * without, "with it the spin is held down");
 }
 
+// Braked to a stop on brush tyres, the car settles: it does not rock back and forth on its tyres'
+// carcasses once it has stopped (it did for over two seconds at 7 Hz with the carcass barely damped
+// fore and aft).
+void TestCarSettlesAfterBrakingToAStop()
+{
+    VehicleSettings tuning;
+    tuning.tyreModel = VehicleTyreModel::Brush;
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, -150.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    for (int frame = 0; frame < 144 * 20 && world.GetVehicleTelemetry(car).forwardSpeed < 15.0f; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+    }
+    controls = {};
+    controls.brake = 0.6f;
+    world.SetVehicleControls(car, controls);
+    for (int frame = 0; frame < 144 * 10 && world.GetVehicleTelemetry(car).forwardSpeed > 0.01f; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+    }
+    // Half a second for the body to rock back on its springs, then the car must stay put.
+    Simulate(world, 0.5f);
+    float most = 0.0f;
+    for (int frame = 0; frame < 144 * 1.5f; ++frame)
+    {
+        world.Update(1.0f / 144.0f);
+        most = std::max(most, std::abs(world.GetVehicleTelemetry(car).forwardSpeed));
+    }
+    std::cout << "braked to a stop: from 0.5 s after it the car moves at most " << most * 1000.0f << " mm/s\n";
+    Require(most < 0.02f, "it stays put once it has settled, " + std::to_string(most) + " m/s");
+}
+
+
 // A wheel turning more than half a turn per physics step (188 rad/s at 60 Hz: a 0.32 m tyre at 216 km/h,
 // or a driven wheel spinning up in the air) has poses that look like it turned the other way, so the roll is
 // followed by angle instead. Frame by frame, the wheel the model draws turns as far as the physics engine's.
@@ -2299,6 +2338,7 @@ int main()
         TestShiftPointsFollowTheRevRange();
         TestGearboxPicksTheGearBySpeedAndThrottle();
         TestGearboxChangeTimesAndUpshiftCut();
+        TestCarSettlesAfterBrakingToAStop();
         TestGearboxDoesNotHunt();
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
