@@ -389,8 +389,8 @@ const char* RigModeName(RigMode mode)
     return "?";
 }
 
-SevenPostRig::SevenPostRig(const CarModel& car, bool friction)
-    : m_car(car)
+SevenPostRig::SevenPostRig(const CarModel& car, bool friction, UnsprungScheme scheme)
+    : m_car(car), m_scheme(scheme)
 {
     for (int i = 0; i < 4; ++i)
     {
@@ -436,6 +436,11 @@ void SevenPostRig::Step(const std::array<double, 4>& pads, const std::array<doub
         }
         m_axles[axle]->Step(in);
     }
+    if (m_scheme == UnsprungScheme::GameLinearlyImplicit)
+    {
+        StepGameScheme(pads, padRates, heaveForce, pitchMoment, rollMoment, dt, travel, travelRate);
+        return;
+    }
     for (int i = 0; i < 4; ++i)
     {
         const CarCorner& corner = m_car.corners[i];
@@ -472,6 +477,87 @@ void SevenPostRig::Step(const std::array<double, 4>& pads, const std::array<doub
     }
 }
 
+void SevenPostRig::StepGameScheme(const std::array<double, 4>& pads, const std::array<double, 4>& padRates, double heaveForce, double pitchMoment, double rollMoment,
+                                  double dt, const std::array<double, 4>& travel, const std::array<double, 4>& travelRate)
+{
+    // The body as the physics engine has it: sprung mass and hubs as one rigid body, the hubs (and
+    // their weight) at their corners. In the rig's coordinates (heave, pitch, roll about the sprung
+    // mass's centre) its mass matrix is the sprung mass's plus each hub's J^T m J, J = (1, x, y).
+    Mat3 massMatrix(0.0);
+    massMatrix[0][0] = m_car.sprungMass;
+    massMatrix[1][1] = m_car.pitchInertia;
+    massMatrix[2][2] = m_car.rollInertia;
+    for (const CarCorner& corner : m_car.corners)
+    {
+        const Vec3 j(1.0, corner.position.x, corner.position.y);
+        massMatrix += corner.hubMass * glm::outerProduct(j, j);
+    }
+    Vec3 generalised(heaveForce - m_car.sprungMass * kGravity, pitchMoment, rollMoment);
+    std::array<double, 4> nextTravelRate{};
+    for (int i = 0; i < 4; ++i)
+    {
+        const CarCorner& corner = m_car.corners[i];
+        const CornerOutput& out = m_axles[i / 2]->Output(i % 2);
+        const double z = travel[i];
+        const double v = travelRate[i];
+        const int other = i ^ 1;
+        const double arb = -corner.antiRollBarRate * (travel[i] - travel[other]);
+
+        // The tyre at the step's start, with its slopes against the travel (the body held) while pressed.
+        const double deflection = m_staticTyreLoad[i] / corner.tyreRate + pads[i] - m_wheel[i];
+        double tyre = 0.0;
+        double tyreSlope = 0.0;
+        double tyreRateSlope = 0.0;
+        if (deflection > 0.0)
+        {
+            tyre = corner.tyreRate * deflection + corner.tyreDamping * (padRates[i] - m_wheelRate[i]);
+            if (tyre > 0.0)
+            {
+                tyreSlope = -corner.tyreRate;
+                tyreRateSlope = -corner.tyreDamping;
+            }
+            else
+            {
+                tyre = 0.0;
+            }
+        }
+
+        // The body's specific force where the hub rides, from the last step's acceleration.
+        const Vec3& p = corner.position;
+        const double bodyAccel = m_heaveAccel + p.x * m_pitchAccel + p.y * m_rollAccel;
+        const double inertia = -corner.hubMass * (bodyAccel + kGravity);
+
+        const double force = tyre + out.strutTravelForce + arb + inertia;
+        const double stiffness = out.strutTravelStiffness - corner.antiRollBarRate + tyreSlope;
+        const double damping = out.strutTravelDamping + tyreRateSlope;
+        const double rate = v + dt * (force + dt * stiffness * v) / (corner.hubMass - dt * damping - dt * dt * stiffness);
+        const double travelAccel = (rate - v) / dt;
+        const double applied = std::max(tyre + tyreSlope * dt * rate + tyreRateSlope * (rate - v), 0.0);
+        m_tyreLoad[i] = applied;
+        m_travel[i] = z + dt * rate;
+        nextTravelRate[i] = rate;
+
+        const double onBody = applied - corner.hubMass * (travelAccel + kGravity);
+        generalised += onBody * Vec3(1.0, p.x, p.y);
+    }
+    const Vec3 accel = glm::inverse(massMatrix) * generalised;
+    m_heaveAccel = accel.x;
+    m_pitchAccel = accel.y;
+    m_rollAccel = accel.z;
+    m_heaveRate += m_heaveAccel * dt;
+    m_pitchRate += m_pitchAccel * dt;
+    m_rollRate += m_rollAccel * dt;
+    m_heave += m_heaveRate * dt;
+    m_pitch += m_pitchRate * dt;
+    m_roll += m_rollRate * dt;
+    for (int i = 0; i < 4; ++i)
+    {
+        const Vec3& p = m_car.corners[i].position;
+        m_wheel[i] = m_heave + p.x * m_pitch + p.y * m_roll + m_travel[i];
+        m_wheelRate[i] = m_heaveRate + p.x * m_pitchRate + p.y * m_rollRate + nextTravelRate[i];
+    }
+}
+
 SineSweep::SineSweep(double startHz, double endHz, int cycleCount)
     : f0(startHz), fE(endHz), cycles(cycleCount)
 {
@@ -500,9 +586,9 @@ double SineSweep::Frequency(double t) const
     return 1.0 / (p - q * t);
 }
 
-SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, double amplitude, double maxVelocity, bool friction, double dt)
+SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, double amplitude, double maxVelocity, bool friction, double dt, UnsprungScheme scheme)
 {
-    SevenPostRig rig(car, friction);
+    SevenPostRig rig(car, friction, scheme);
     SweepResult result;
     result.mode = mode;
     const std::array<double, 4> pattern = RigModePattern(mode);
@@ -645,9 +731,9 @@ SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, 
     return result;
 }
 
-StepResponse RunStep(const CarModel& car, RigMode mode, double height, double seconds, bool friction, double dt)
+StepResponse RunStep(const CarModel& car, RigMode mode, double height, double seconds, bool friction, double dt, UnsprungScheme scheme)
 {
-    SevenPostRig rig(car, friction);
+    SevenPostRig rig(car, friction, scheme);
     const std::array<double, 4> pattern = RigModePattern(mode);
     StepResponse r;
     std::array<double, 4> pads{};
@@ -814,7 +900,7 @@ double RandomRoad::Height(int track, double distance) const
     return z;
 }
 
-RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction, double dt)
+RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction, double dt, UnsprungScheme scheme)
 {
     const RandomRoad randomRoad(phi0, waviness, seed);
     const auto road = [&](int track, double s) {
@@ -827,7 +913,7 @@ RoadResult RunRoad(const CarModel& car, double speed, double phi0, double wavine
     const double baseRear0 = road(0, -(frontX - rearX));
     const double baseRear1 = road(1, -(frontX - rearX));
 
-    SevenPostRig rig(car, friction);
+    SevenPostRig rig(car, friction, scheme);
     RoadResult r;
     std::array<double, 4> pads{};
     std::array<double, 4> previous{};

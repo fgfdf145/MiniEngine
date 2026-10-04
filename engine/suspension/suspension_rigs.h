@@ -159,13 +159,25 @@ const char* RigModeName(RigMode mode);
 // Each pad's share of the input in a mode (FL, FR, RL, RR): +1 or -1.
 std::array<double, 4> RigModePattern(RigMode mode);
 
+// How the rig steps the unsprung masses.
+enum class UnsprungScheme
+{
+    // Semi-implicit Euler for body and hubs together: the reference at a small step.
+    SemiImplicit,
+    // The game's (PhysicsWorld::StepUnsprungCorner): each hub's travel by backward Euler on the
+    // force's slopes, with the tyre, anti-roll bar and the body's acceleration frozen at the step's
+    // start; the body (sprung mass and hubs as one, as the physics engine has it) then takes the
+    // tyres' force and the hubs' relative inertia. For measuring that scheme's error at the game's step.
+    GameLinearlyImplicit,
+};
+
 // The car on the rig: sprung body in heave, pitch and roll; four unsprung masses; tyres as
 // springs (they leave the pad when unloaded); each corner's suspension through SuspensionCorner.
-// Semi-implicit Euler at the step it is given.
+// Semi-implicit Euler at the step it is given, or the game's scheme.
 class SevenPostRig
 {
 public:
-    explicit SevenPostRig(const CarModel& car, bool friction = true);
+    explicit SevenPostRig(const CarModel& car, bool friction = true, UnsprungScheme scheme = UnsprungScheme::SemiImplicit);
 
     // Pads' heights and rates (m, m/s) and the loaders' heave force (N, up), pitch moment (Nm, nose
     // up) and roll moment (Nm, right side down).
@@ -222,7 +234,11 @@ public:
     }
 
 private:
+    void StepGameScheme(const std::array<double, 4>& pads, const std::array<double, 4>& padRates, double heaveForce, double pitchMoment, double rollMoment, double dt,
+                        const std::array<double, 4>& travel, const std::array<double, 4>& travelRate);
+
     CarModel m_car;
+    UnsprungScheme m_scheme = UnsprungScheme::SemiImplicit;
     std::array<std::unique_ptr<AxleSuspension>, 2> m_axles;
     std::array<double, 4> m_staticTyreLoad{};
     double m_heave = 0.0;
@@ -282,7 +298,8 @@ struct SweepResult
 };
 
 // Sine sweep in one mode: the pads move by `amplitude` (m) but no faster than `maxVelocity` (m/s).
-SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, double amplitude, double maxVelocity, bool friction = true, double dt = 1e-3);
+SweepResult RunSweep(const CarModel& car, RigMode mode, const SineSweep& sweep, double amplitude, double maxVelocity, bool friction = true, double dt = 1e-3,
+                     UnsprungScheme scheme = UnsprungScheme::SemiImplicit);
 
 struct StepResponse
 {
@@ -294,7 +311,8 @@ struct StepResponse
     double settlingTime = 0.0;      // s, to within 2%
 };
 
-StepResponse RunStep(const CarModel& car, RigMode mode, double height, double seconds = 2.0, bool friction = true, double dt = 1e-3);
+StepResponse RunStep(const CarModel& car, RigMode mode, double height, double seconds = 2.0, bool friction = true, double dt = 1e-3,
+                     UnsprungScheme scheme = UnsprungScheme::SemiImplicit);
 
 struct AeroPoint
 {
@@ -341,5 +359,6 @@ struct RoadResult
     double liftOffSeconds = 0.0;       // time any tyre was off its pad
 };
 
-RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction = true, double dt = 1e-3);
+RoadResult RunRoad(const CarModel& car, double speed, double phi0, double waviness, double seconds, std::uint32_t seed, bool friction = true, double dt = 1e-3,
+                   UnsprungScheme scheme = UnsprungScheme::SemiImplicit);
 }
