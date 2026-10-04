@@ -167,7 +167,8 @@ enum class UnsprungScheme
     // The game's (PhysicsWorld::StepUnsprungCorner): each hub's travel by the trapezoidal rule on the
     // force's slopes, with the tyre, anti-roll bar and the body's acceleration frozen at the step's
     // start; the body (sprung mass and hubs as one, as the physics engine has it) then takes the
-    // tyres' force and the hubs' relative inertia. For measuring that scheme's error at the game's step.
+    // tyres' mean force over the step and the hubs' relative inertia. For measuring that scheme's error
+    // at the game's step.
     GameLinearlyImplicit,
 };
 
