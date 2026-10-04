@@ -19,7 +19,8 @@ namespace me
 
 // One wheel of a car with a multibody suspension (VehicleSettings::frontSuspension/rearSuspension),
 // ready for engine/suspension. The corner's frame is the suspension library's: x forward, y left,
-// z up, metres, from the wheel centre at the design position (where the car rests).
+// z up, metres, from the wheel centre at the design position (where the car rests, or with a rod
+// length the hardpoints' reference, VehicleRestTravel from the rest).
 struct VehicleCornerSetup
 {
     suspension::SuspensionDefinition definition;
@@ -36,8 +37,24 @@ struct VehicleCornerSetup
 };
 
 // `staticLoad` is the wheel's share of the car's weight (N): the spring's preload, so the car
-// rests at the design position.
+// rests at the design position, unless the axle has a rod length (Assetto Corsa's ROD_LENGTH): the
+// spring is then compressed by it at the design position and the car rests where its load is.
 VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wheelIndex, double staticLoad);
+
+// Whether an axle's springs follow its rod length (an independent axle with ROD_LENGTH in its data).
+inline bool HasRodLength(const VehicleSuspensionAxle& axle)
+{
+    return axle.rodLength.has_value() && axle.type != VehicleSuspensionType::None && axle.type != VehicleSuspensionType::SolidAxle;
+}
+
+// Where a wheel rests (m of travel from the design position, bump positive) under `springLoad` (N, its
+// share of the weight less its hub's): where wheelRate (z + L) + progressiveRate (z + L)^2 / 2 carries
+// it with a rod length L, the design position without one.
+double VehicleRestTravel(const VehicleSuspensionAxle& axle, double springLoad);
+
+// How far the wheel centre has moved from the design position at its rest travel (vehicle space): the
+// design position is where the model draws the wheel less this.
+glm::vec3 VehicleRestWheelOffset(const VehicleSettings& settings, size_t wheelIndex, double springLoad);
 
 // The wheel's force unit with its friction (none when the setup has none).
 suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup);

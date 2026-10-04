@@ -184,17 +184,32 @@ public:
     // up) and roll moment (Nm, right side down).
     void Step(const std::array<double, 4>& pads, const std::array<double, 4>& padRates, double heaveForce, double pitchMoment, double rollMoment, double dt);
 
+    // The body's displacement from where it rests on the rig (a car whose springs do not carry it at the
+    // design position settles first, see the constructor); RestHeave/RestPitch/RestRoll are that rest
+    // against the design position.
     double Heave() const
     {
-        return m_heave;
+        return m_heave - m_restHeave;
     }
     double Pitch() const
     {
-        return m_pitch; // rad, nose up
+        return m_pitch - m_restPitch; // rad, nose up
     }
     double Roll() const
     {
-        return m_roll; // rad, right side down
+        return m_roll - m_restRoll; // rad, right side down
+    }
+    double RestHeave() const
+    {
+        return m_restHeave;
+    }
+    double RestPitch() const
+    {
+        return m_restPitch;
+    }
+    double RestRoll() const
+    {
+        return m_restRoll;
     }
     double HeaveAcceleration() const
     {
@@ -251,6 +266,9 @@ private:
     double m_heaveAccel = 0.0;
     double m_pitchAccel = 0.0;
     double m_rollAccel = 0.0;
+    double m_restHeave = 0.0;
+    double m_restPitch = 0.0;
+    double m_restRoll = 0.0;
     std::array<double, 4> m_wheel{};
     std::array<double, 4> m_wheelRate{};
     std::array<double, 4> m_travel{};

@@ -2325,6 +2325,7 @@ std::optional<VehicleSuspensionAxle> VehicleSuspension(const tinygltf::Value& ob
     out.bumpStopRate = VehicleNumber(axle, "bumpStopRate").value_or(0.0f);
     out.bumpStopTravel = VehicleNumber(axle, "bumpStopTravel").value_or(0.0f);
     out.reboundStopTravel = VehicleNumber(axle, "reboundStopTravel").value_or(0.0f);
+    out.rodLength = VehicleNumber(axle, "rodLength");
     out.dampBump = VehicleNumber(axle, "dampBump").value_or(0.0f);
     out.dampFastBump = VehicleNumber(axle, "dampFastBump").value_or(0.0f);
     out.dampFastBumpThreshold = VehicleNumber(axle, "dampFastBumpThreshold").value_or(0.0f);

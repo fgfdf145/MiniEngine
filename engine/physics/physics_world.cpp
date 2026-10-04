@@ -322,10 +322,36 @@ constexpr float kTyreCarrierStiffness = 100.0f;
 // A hub moving slower than this (m/s) has settled.
 constexpr double kHubSettledRate = 5e-4;
 
-// Where the wheel's centre is at the design position: where the model draws it at rest.
-glm::vec3 MultibodyDesignCenter(const VehicleSettings& settings, size_t index)
+// Where the wheel's centre is when the car rests: where the model draws it.
+glm::vec3 MultibodyRestCenter(const VehicleSettings& settings, size_t index)
 {
     return GetVehicleWheelMount(settings, index).center - glm::vec3(0.0f, ComputeRestSuspensionLength(settings, 9.81f), 0.0f);
+}
+
+// What a wheel's spring carries at rest: its share of the weight by where the centre of mass sits
+// between the axles, less its hub's own weight (which goes straight to the tyre) when it has one.
+double MultibodySpringLoad(const VehicleSettings& settings, size_t index)
+{
+    const glm::vec3 com = settings.chassisCenter + settings.centerOfMassOffset;
+    const float frontZ = MultibodyRestCenter(settings, 0).z;
+    const float rearZ = MultibodyRestCenter(settings, 2).z;
+    const float frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com.z - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
+    const bool front = index < 2;
+    const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
+    double load = 0.5 * std::max(settings.massKg, 1.0f) * 9.81 * (front ? frontShare : 1.0f - frontShare);
+    if (HasUnsprungMass(axle))
+    {
+        load -= axle.hubMass * 9.81;
+    }
+    return load;
+}
+
+// Where the wheel's centre is at the design position (travel 0, the hardpoints' reference): where the
+// model draws it, less how far a rod length's springs (Assetto Corsa's ROD_LENGTH) move it from there to
+// where the car rests. Without a rod length the car rests at the design position.
+glm::vec3 MultibodyDesignCenter(const VehicleSettings& settings, size_t index)
+{
+    return MultibodyRestCenter(settings, index) - VehicleRestWheelOffset(settings, index, MultibodySpringLoad(settings, index));
 }
 
 // The load each axle's wheel carries standing still, from where the centre of mass sits between the axles.
@@ -678,28 +704,21 @@ struct PhysicsWorld::Impl
         {
             return;
         }
-        // Each wheel's static load from where the centre of mass sits between the axles.
-        const glm::vec3 com = settings.chassisCenter + settings.centerOfMassOffset;
-        const float frontZ = MultibodyDesignCenter(settings, 0).z;
-        const float rearZ = MultibodyDesignCenter(settings, 2).z;
-        const float frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com.z - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
-        const float weight = std::max(settings.massKg, 1.0f) * 9.81f;
         std::array<VehicleCornerSetup, kVehicleWheelCount> setups{};
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             const bool front = index < 2;
             const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
             const bool unsprung = HasUnsprungMass(axle);
-            double load = 0.5 * weight * (front ? frontShare : 1.0f - frontShare);
-            if (unsprung)
-            {
-                // The spring holds the body; the hub's own weight goes straight to the tyre.
-                load -= axle.hubMass * 9.81;
-            }
+            // Each wheel's static load from where the centre of mass sits between the axles; the spring
+            // holds the body, the hub's own weight goes straight to the tyre.
+            const double load = MultibodySpringLoad(settings, index);
             setups[index] = BuildVehicleCorner(settings, index, load);
             const VehicleCornerSetup& setup = setups[index];
             Vehicle::Corner corner;
             corner.designCenter = MultibodyDesignCenter(settings, index);
+            // The wheel starts where the car rests (the design position, or with a rod length its rest travel).
+            corner.travel = VehicleRestTravel(axle, load);
             corner.designLength = MultibodyDesignLength(settings);
             corner.antiRollBarRate = setup.antiRollBarRate;
             corner.front = front;
@@ -709,7 +728,7 @@ struct PhysicsWorld::Impl
             corner.tyreDamping = std::max(axle.tyreDamping, 0.0f);
             corner.bumpTravel = setup.bumpTravel;
             corner.droopTravel = setup.droopTravel;
-            corner.hubCenter = corner.designCenter;
+            corner.hubCenter = MultibodyRestCenter(settings, index);
             if (axle.type == VehicleSuspensionType::SolidAxle)
             {
                 corner.designContactHeight = -std::max(GetVehicleWheelMount(settings, index).radius, 0.05f);

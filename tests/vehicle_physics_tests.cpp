@@ -4,6 +4,7 @@
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
+#include <engine/physics/vehicle_suspension.h>
 #include <engine/physics/vehicle_wheel_motion.h>
 
 #include <glm/glm.hpp>
@@ -1462,6 +1463,60 @@ void TestCarDataPlacesTheCentreOfMass()
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "and all of the weight");
 }
 
+// With Assetto Corsa's ROD_LENGTH the springs carry the car rodLength less than at the hardpoints' design
+// position, so each wheel rests load / rate - rodLength of travel from it (the GT-R given 60 mm in front
+// and 10 mm behind: front drooped, rear compressed). The car still rests where its model draws its wheels,
+// with the body as it was: the design position is placed that far from them instead.
+std::pair<std::vector<VehicleWheelState>, PhysicsPose> GtrAtRest(const VehicleCarSpec& spec, VehicleWheelLayout& layout, VehicleSettings& settings)
+{
+    layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    settings = FitVehicleSettingsToBounds(glm::vec3(-1.031f, -0.066f, -2.401f), glm::vec3(1.031f, 1.357f, 2.453f), ApplyCarSpec(VehicleSettings{}, spec), &layout);
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls hold;
+    hold.brake = 1.0f;
+    world.SetVehicleControls(car, hold);
+    Simulate(world, 3.0f);
+    return {world.GetVehicleWheels(car), world.GetVehiclePose(car)};
+}
+
+void TestRodLengthRestsWhereTheModelDrawsTheWheels()
+{
+    VehicleCarSpec plain = MakeGtrSpec();
+    plain.wheelbase = 2.78f;
+    plain.frontWeightShare = 0.555f;
+    VehicleCarSpec rods = plain;
+    rods.frontSuspension->rodLength = 0.06f;
+    rods.rearSuspension->rodLength = 0.01f;
+    VehicleWheelLayout layout{};
+    VehicleSettings plainSettings;
+    VehicleSettings settings;
+    const auto [plainWheels, plainPose] = GtrAtRest(plain, layout, plainSettings);
+    const auto [wheels, pose] = GtrAtRest(rods, layout, settings);
+    const glm::quat toBody = glm::conjugate(pose.rotation);
+    for (size_t index = 0; index < 4; ++index)
+    {
+        const VehicleSuspensionAxle& axle = index < 2 ? settings.frontSuspension : settings.rearSuspension;
+        const double springLoad = wheels[index].suspensionForce - axle.hubMass * 9.81;
+        const double expected = VehicleRestTravel(axle, springLoad);
+        const glm::vec3 center = toBody * (wheels[index].pose.position - pose.position);
+        std::cout << "GT-R with rod lengths, wheel " << index << ": travel " << wheels[index].travel * 1000.0f << " mm (springs give " << expected * 1000.0
+                  << "), " << glm::length(center - layout[index].center) * 1000.0f << " mm from the model's wheel; camber " << wheels[index].camberDegrees
+                  << " deg (" << plainWheels[index].camberDegrees << " at the design position)\n";
+        RequireNear(wheels[index].travel, static_cast<float>(expected), 0.003f, "the wheel rests where its springs carry it");
+        Require(std::abs(expected) > 0.005, "away from the design position");
+        RequireNear(glm::length(center - layout[index].center), 0.0f, 0.003f, "where the model draws it");
+    }
+    Require(wheels[0].travel < 0.0f && wheels[2].travel > 0.0f, "the front drooped by its long rod, the rear compressed");
+    RequireNear(pose.position.y, plainPose.position.y, 0.003f, "the body at the same height");
+    RequireNear(glm::dot(pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+                glm::dot(plainPose.rotation * glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f)), 0.001f, "and the same attitude");
+}
+
 // The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
 // mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
 // twice adds nothing, and the car at rest carries it.
@@ -2505,6 +2560,7 @@ int main()
         TestUnsprungWheelsHangInTheAirAndLand();
         TestUnsprungCarTakesABump();
         TestCarDataPlacesTheCentreOfMass();
+        TestRodLengthRestsWhereTheModelDrawsTheWheels();
         TestStartingFuelMovesTheMass();
         TestLiveAxleCarRestsAndCorners();
         TestLiveAxleTorqueReactionLoadsTheLeftRear();

@@ -130,6 +130,12 @@ struct VehicleSuspensionAxle
     float bumpStopRate = 0.0f;         // N/m
     float bumpStopTravel = 0.0f;       // compression from the design position where it starts, m
     float reboundStopTravel = 0.0f;    // extension from the design position to full droop, m
+    // Assetto Corsa's ROD_LENGTH (m): the spring is compressed by it at the design position, so its force
+    // is wheelRate (travel + rodLength) and the car rests load / wheelRate - rodLength of travel from the
+    // design position rather than at it (nullopt: the spring carries the static load at the design
+    // position). The car rests where its model draws its wheels; the hardpoints' design position is that
+    // rest less the travel (VehicleRestTravel). Independent axles only.
+    std::optional<float> rodLength;
     float dampBump = 0.0f;             // N s/m below the fast threshold
     float dampFastBump = 0.0f;
     float dampFastBumpThreshold = 0.0f; // m/s
