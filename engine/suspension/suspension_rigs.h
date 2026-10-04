@@ -164,7 +164,7 @@ enum class UnsprungScheme
 {
     // Semi-implicit Euler for body and hubs together: the reference at a small step.
     SemiImplicit,
-    // The game's (PhysicsWorld::StepUnsprungCorner): each hub's travel by backward Euler on the
+    // The game's (PhysicsWorld::StepUnsprungCorner): each hub's travel by the trapezoidal rule on the
     // force's slopes, with the tyre, anti-roll bar and the body's acceleration frozen at the step's
     // start; the body (sprung mass and hubs as one, as the physics engine has it) then takes the
     // tyres' force and the hubs' relative inertia. For measuring that scheme's error at the game's step.

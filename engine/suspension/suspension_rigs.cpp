@@ -530,11 +530,13 @@ void SevenPostRig::StepGameScheme(const std::array<double, 4>& pads, const std::
         const double force = tyre + out.strutTravelForce + arb + inertia;
         const double stiffness = out.strutTravelStiffness - corner.antiRollBarRate + tyreSlope;
         const double damping = out.strutTravelDamping + tyreRateSlope;
-        const double rate = v + dt * (force + dt * stiffness * v) / (corner.hubMass - dt * damping - dt * dt * stiffness);
-        const double travelAccel = (rate - v) / dt;
-        const double applied = std::max(tyre + tyreSlope * dt * rate + tyreRateSlope * (rate - v), 0.0);
+        const double change = dt * (force + 0.5 * dt * stiffness * v) / (corner.hubMass - 0.5 * dt * damping - 0.25 * dt * dt * stiffness);
+        const double rate = v + change;
+        const double moved = dt * (v + 0.5 * change);
+        const double travelAccel = change / dt;
+        const double applied = std::max(tyre + tyreSlope * moved + tyreRateSlope * change, 0.0);
         m_tyreLoad[i] = applied;
-        m_travel[i] = z + dt * rate;
+        m_travel[i] = z + moved;
         nextTravelRate[i] = rate;
 
         const double onBody = applied - corner.hubMass * (travelAccel + kGravity);
