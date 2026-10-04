@@ -41,6 +41,7 @@ struct SdlGamepadSlot
     GamepadFeedback lastFeedback;
     Clock::time_point lastSendTime{};
     bool reportedSendFailure = false;
+    bool reportedFirstSend = false;
 };
 
 std::array<SdlGamepadSlot, kMaxGamepads>& GetSdlGamepadSlots()
@@ -255,6 +256,13 @@ void SendPlatformGamepadFeedback(size_t playerIndex, const GamepadFeedback& feed
         slot.lastFeedback = feedback;
         slot.lastSendTime = now;
         return;
+    }
+
+    if (!slot.reportedFirstSend && !feedback.IsIdle())
+    {
+        slot.reportedFirstSend = true;
+        LOG_INFO("Gamepad {} feedback started ({}): motors {:.2f}/{:.2f}, triggers L{} R{}", playerIndex, IsDualSense(slot.type) ? "DualSense effects" : "rumble only",
+                 feedback.lowFrequencyMotor, feedback.highFrequencyMotor, static_cast<int>(feedback.leftTrigger.mode), static_cast<int>(feedback.rightTrigger.mode));
     }
 
     if (SendToGamepad(slot, feedback))

@@ -9,12 +9,12 @@ namespace me
 namespace
 {
 // The engine's rumble: a floor while it runs, then up with the revs, and a little more under load.
-constexpr float kIdleRumble = 0.16f;
-constexpr float kRevRumble = 0.34f;
-constexpr float kLoadRumble = 0.14f;
+constexpr float kIdleRumble = 0.05f;
+constexpr float kRevRumble = 0.10f;
+constexpr float kLoadRumble = 0.04f;
 // Near the limiter the small motor buzzes.
 constexpr float kLimiterRevs = 0.96f;
-constexpr float kLimiterBuzz = 0.3f;
+constexpr float kLimiterBuzz = 0.12f;
 // The revs settle on the rumble over about this long.
 constexpr float kRevsFilterSeconds = 0.06f;
 
