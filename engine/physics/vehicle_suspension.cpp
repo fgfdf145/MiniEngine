@@ -110,14 +110,26 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
         }
     }
 
-    // Springs at the wheel: preload for the static load, the rate rising by the progressive rate.
+    // Springs at the wheel, the rate rising by the progressive rate. Preloaded for the static load at the
+    // design position, or (with Assetto Corsa's ROD_LENGTH) compressed by the rod's length there:
+    // F = k (z + L) + kp (z + L)^2 / 2 = k L + kp L^2 / 2 + (k + kp L) z + kp z^2 / 2 for travel z.
     suspension::StrutUnitSettings& unit = setup.unit;
-    unit.springPreload = staticLoad;
+    const double rate = std::max(axle.wheelRate, 1.0f);
     unit.springPushesOnly = true;
-    unit.coilSpring = suspension::Curve::Polynomial(std::max(axle.wheelRate, 1.0f), 0.5 * axle.progressiveRate, 0.0);
+    if (axle.rodLength.has_value() && axle.type != VehicleSuspensionType::SolidAxle)
+    {
+        const double rod = *axle.rodLength;
+        unit.springPreload = rate * rod + 0.5 * axle.progressiveRate * rod * rod;
+        unit.coilSpring = suspension::Curve::Polynomial(rate + axle.progressiveRate * rod, 0.5 * axle.progressiveRate, 0.0);
+    }
+    else
+    {
+        unit.springPreload = staticLoad;
+        unit.coilSpring = suspension::Curve::Polynomial(rate, 0.5 * axle.progressiveRate, 0.0);
+    }
     if (axle.bumpStopRate > 0.0f && axle.bumpStopTravel > 0.0f)
     {
-        unit.bumpStop = suspension::Curve::Stop(axle.bumpStopTravel, axle.bumpStopRate, 0.0, 1);
+        unit.bumpStop = suspension::Curve::Stop(VehicleBumpStopTravel(axle), axle.bumpStopRate, 0.0, 1);
     }
     // The damper: slow and fast rates each way, the fast one past its threshold (velocity positive
     // in compression).
@@ -264,6 +276,16 @@ suspension::CarModel BuildCarModel(const VehicleCarSpec& dryspec, const std::str
         }
     }
     suspension::BalanceCar(car, *spec.frontWeightShare);
+    // An axle with a rod length keeps the spring the rod compresses, not the one that balances the car at
+    // the design position: the rig settles it where it rests.
+    for (size_t index = 0; index < 4; ++index)
+    {
+        const VehicleSuspensionAxle& axle = index < 2 ? *spec.frontSuspension : *spec.rearSuspension;
+        if (axle.rodLength.has_value() && axle.type != VehicleSuspensionType::SolidAxle)
+        {
+            car.corners[index].unit.springPreload = BuildVehicleCorner(settings, index, 0.0).unit.springPreload;
+        }
+    }
 
     // The body's inertia as a uniform box of the data's size (Assetto Corsa's INERTIA is the box's
     // width, height and length), of the sprung mass.

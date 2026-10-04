@@ -210,6 +210,7 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
         return w;
     };
 
+    std::array<double, 2> restTravel{};
     for (int axle = 0; axle < 2; ++axle)
     {
         const CarCorner& left = car.corners[2 * axle];
@@ -246,9 +247,51 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
                 const std::size_t i1 = i + 1 == b.size() ? i : i + 1;
                 b[i].wheelRate = (b[i1].left.padForce - b[i0].left.padForce) / (b[i1].travel - b[i0].travel);
             }
-            const KcBouncePoint& mid = b[bounceSteps / 2];
-            const KcBouncePoint& lo = b[bounceSteps / 2 - 1];
-            const KcBouncePoint& hi = b[bounceSteps / 2 + 1];
+            // Where the axle rests: the travel at which the pad carries the corner's static load (the design
+            // position for a car balanced there, elsewhere when a rod length preloads the springs). The
+            // summary is taken there, by the same central difference.
+            double rest = 0.0;
+            for (std::size_t i = 0; i + 1 < b.size(); ++i)
+            {
+                const double f0 = b[i].left.padForce - car.staticLoad[2 * axle];
+                const double f1 = b[i + 1].left.padForce - car.staticLoad[2 * axle];
+                if ((f0 <= 0.0 && f1 >= 0.0) || (f0 >= 0.0 && f1 <= 0.0))
+                {
+                    const double t = f1 != f0 ? f0 / (f0 - f1) : 0.0;
+                    rest = (b[i].travel + t * (b[i + 1].travel - b[i].travel)) / 1000.0;
+                    break;
+                }
+            }
+            if (std::abs(rest) < 1e-9)
+            {
+                rest = 0.0;
+            }
+            restTravel[axle] = rest;
+            const double step = 2.0 * bounceRange / bounceSteps;
+            Walk at{MakeAxleSuspension(car, axle)};
+            settle(at, rest - step, rest - step, 0.0);
+            const std::array<CornerOutput, 2> below = settle(at, rest - step, rest - step, 0.0);
+            const std::array<CornerOutput, 2> there = settle(at, rest, rest, 0.0);
+            const std::array<CornerOutput, 2> above = settle(at, rest + step, rest + step, 0.0);
+            KcBouncePoint lo;
+            KcBouncePoint mid;
+            KcBouncePoint hi;
+            for (auto [point, outputs, z] : {std::tuple<KcBouncePoint*, const std::array<CornerOutput, 2>*, double>{&lo, &below, rest - step},
+                                             {&mid, &there, rest},
+                                             {&hi, &above, rest + step}})
+            {
+                const CornerOutput& o = (*outputs)[0];
+                point->travel = z * 1000.0;
+                point->left = wheel(o, PadForce(o, 0.0));
+                point->kingpinInclination = o.geometry.kingpinInclination / kDeg;
+                point->caster = o.geometry.caster / kDeg;
+                point->scrubRadius = o.geometry.scrubRadius * 1000.0;
+                point->casterTrail = o.geometry.casterTrail * 1000.0;
+                point->rollCenterHeight = o.geometry.rollCenterHeight * 1000.0;
+                point->contactPathAngle = o.geometry.contactPathAngle / kDeg;
+                point->centerPathAngle = o.geometry.wheelCenterPathAngle / kDeg;
+            }
+            mid.wheelRate = (hi.left.padForce - lo.left.padForce) / (hi.travel - lo.travel);
             const double dz = (hi.travel - lo.travel) / 1000.0;
             KcAxleSummary& sum = result.axles[axle];
             sum.bumpSteer = (hi.left.toe - lo.left.toe) / dz;
@@ -271,8 +314,8 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
             for (int s = 0; s <= 2 * rollSteps; ++s)
             {
                 const double roll = (-rollRange + rollRange * s / rollSteps) * kDeg;
-                const double zl = -left.position.y * std::sin(roll);
-                const double zr = -right.position.y * std::sin(roll);
+                const double zl = restTravel[axle] - left.position.y * std::sin(roll);
+                const double zr = restTravel[axle] - right.position.y * std::sin(roll);
                 const std::array<CornerOutput, 2> both = settle(walk, zl, zr, 0.0);
                 const CornerOutput& lo = both[0];
                 const CornerOutput& ro = both[1];
@@ -307,22 +350,23 @@ KcResult RunKcRig(const CarModel& car, double bounceRange, double rollRange, dou
     const double totalRoll = result.axles[0].rollStiffness + result.axles[1].rollStiffness;
     result.rollStiffnessFrontShare = totalRoll > 0.0 ? result.axles[0].rollStiffness / totalRoll : 0.0;
 
-    // Steering: the rack across its travel with the wheels at their design height.
+    // Steering: the rack across its travel with the wheels where they rest.
     {
         const CarCorner& left = car.corners[0];
         const CarCorner& right = car.corners[1];
+        const double z = restTravel[0];
         Walk walk{MakeAxleSuspension(car, 0)};
-        const std::array<CornerOutput, 2> straight = settle(walk, 0.0, 0.0, 0.0);
+        const std::array<CornerOutput, 2> straight = settle(walk, z, z, 0.0);
         const double toeL0 = straight[0].geometry.toe / kDeg;
         const double toeR0 = straight[1].geometry.toe / kDeg;
         const double lock = car.rackAtLock * rackFraction;
         const double track = std::abs(left.position.y - right.position.y);
         const int steps = 20;
-        settle(walk, 0.0, 0.0, -lock);
+        settle(walk, z, z, -lock);
         for (int s = 0; s <= 2 * steps; ++s)
         {
             const double rack = -lock + lock * s / steps;
-            const std::array<CornerOutput, 2> both = settle(walk, 0.0, 0.0, rack);
+            const std::array<CornerOutput, 2> both = settle(walk, z, z, rack);
             const CornerOutput& lo = both[0];
             const CornerOutput& ro = both[1];
             KcSteerPoint p;
@@ -406,6 +450,24 @@ SevenPostRig::SevenPostRig(const CarModel& car, bool friction, UnsprungScheme sc
     for (int axle = 0; axle < 2; ++axle)
     {
         m_axles[axle] = MakeAxleSuspension(m_car, axle, friction);
+    }
+    // A car whose springs do not carry it at the design position (a rod length preloads them instead)
+    // settles where it rests before the rig starts: as long as the body still moves, up to 5 s.
+    const std::array<double, 4> zero{};
+    Step(zero, zero, 0.0, 0.0, 0.0, 1e-3);
+    if (std::abs(m_heaveAccel) > 1e-3 || std::abs(m_pitchAccel) > 1e-3 || std::abs(m_rollAccel) > 1e-3)
+    {
+        for (int step = 0; step < 5000; ++step)
+        {
+            Step(zero, zero, 0.0, 0.0, 0.0, 1e-3);
+            if (step > 500 && std::abs(m_heaveRate) < 1e-5 && std::abs(m_pitchRate) < 1e-5 && std::abs(m_rollRate) < 1e-5)
+            {
+                break;
+            }
+        }
+        m_restHeave = m_heave;
+        m_restPitch = m_pitch;
+        m_restRoll = m_roll;
     }
 }
 
@@ -530,11 +592,13 @@ void SevenPostRig::StepGameScheme(const std::array<double, 4>& pads, const std::
         const double force = tyre + out.strutTravelForce + arb + inertia;
         const double stiffness = out.strutTravelStiffness - corner.antiRollBarRate + tyreSlope;
         const double damping = out.strutTravelDamping + tyreRateSlope;
-        const double rate = v + dt * (force + dt * stiffness * v) / (corner.hubMass - dt * damping - dt * dt * stiffness);
-        const double travelAccel = (rate - v) / dt;
-        const double applied = std::max(tyre + tyreSlope * dt * rate + tyreRateSlope * (rate - v), 0.0);
+        const double change = dt * (force + 0.5 * dt * stiffness * v) / (corner.hubMass - 0.5 * dt * damping - 0.25 * dt * dt * stiffness);
+        const double rate = v + change;
+        const double moved = dt * (v + 0.5 * change);
+        const double travelAccel = change / dt;
+        const double applied = std::max(tyre + tyreSlope * moved + tyreRateSlope * change, 0.0);
         m_tyreLoad[i] = applied;
-        m_travel[i] = z + dt * rate;
+        m_travel[i] = z + moved;
         nextTravelRate[i] = rate;
 
         const double onBody = applied - corner.hubMass * (travelAccel + kGravity);

@@ -941,10 +941,10 @@ void TestSevenPostRigRestsAndResonatesWhereItShould()
 void TestGameHubSchemeAtTheGameStep()
 {
     // The game's hub scheme (PhysicsWorld::StepUnsprungCorner) at its 1 ms step against a 50 us
-    // reference, on a lightly damped car whose hubs hop (hub damping ratio about 0.24). Backward
-    // Euler's numerical damping (about omega dt / 2, 0.04 at 12 Hz) takes some 15 % off the wheel hop's
-    // peak; elsewhere it is within a few percent, and the error is first order in the step.
-    // Measured 2026-10-04 (docs/design/2026-10-04-unsprung-corner-integration-notes.md section 5).
+    // reference, on a lightly damped car whose hubs hop (hub damping ratio about 0.24). The trapezoidal
+    // hub step leaves the wheel hop's peak within a few percent (backward Euler's numerical damping took
+    // some 15 % off it); what error is left comes from the coupling frozen at the step's start and is
+    // first order in the step. Measured 2026-10-04 (docs/design/2026-10-04-unsprung-corner-integration-notes.md).
     const CarModel car = RigTestCar(1500.0, 0.0);
     {
         SevenPostRig rig(car, true, UnsprungScheme::GameLinearlyImplicit);
@@ -960,35 +960,48 @@ void TestGameHubSchemeAtTheGameStep()
     const SweepResult game = RunSweep(car, RigMode::Heave, sweep, 0.002, 0.05, true, 1e-3, UnsprungScheme::GameLinearlyImplicit);
     const SweepResult quarter = RunSweep(car, RigMode::Heave, sweep, 0.002, 0.05, true, 2.5e-4, UnsprungScheme::GameLinearlyImplicit);
     Require(game.cycles.size() == reference.cycles.size() && quarter.cycles.size() == reference.cycles.size(), "same sweep cycles");
-    double worst = 0.0;
-    double worstBelowHop = 0.0;
-    double worstQuarter = 0.0;
     double hopWheelError = 0.0;
+    // The load variation's error against its peak over the sweep: in the trough between the body's
+    // resonance and the hop it is a few per cent of the static load, where a relative error means little.
+    double peakLoadVariation = 0.0;
+    for (const SweepCycle& r : reference.cycles)
+    {
+        peakLoadVariation = std::max(peakLoadVariation, r.loadVariation[0]);
+    }
+    struct Errors
+    {
+        double wheel = 0.0;
+        double load = 0.0;
+        double body = 0.0;
+    };
+    Errors game1ms;
+    Errors game250us;
+    const auto track = [&](Errors& e, const SweepCycle& c, const SweepCycle& r)
+    {
+        e.wheel = std::max(e.wheel, std::abs(c.wheelGain[0] / r.wheelGain[0] - 1.0));
+        e.load = std::max(e.load, std::abs(c.loadVariation[0] - r.loadVariation[0]) / peakLoadVariation);
+        e.body = std::max(e.body, std::abs(c.bodyGain / r.bodyGain - 1.0));
+    };
     for (std::size_t i = 0; i < reference.cycles.size(); ++i)
     {
         const SweepCycle& r = reference.cycles[i];
-        const auto error = [&](const SweepCycle& c)
-        {
-            return std::max({std::abs(c.bodyGain / r.bodyGain - 1.0), std::abs(c.loadVariation[0] / r.loadVariation[0] - 1.0),
-                             std::abs(c.wheelGain[0] / r.wheelGain[0] - 1.0)});
-        };
-        worst = std::max(worst, error(game.cycles[i]));
-        worstQuarter = std::max(worstQuarter, error(quarter.cycles[i]));
-        if (r.frequency < 8.0)
-        {
-            worstBelowHop = std::max(worstBelowHop, error(game.cycles[i]));
-        }
+        track(game1ms, game.cycles[i], r);
+        track(game250us, quarter.cycles[i], r);
         if (std::abs(r.frequency - reference.wheelHopFrequency) < 1e-9)
         {
             hopWheelError = game.cycles[i].wheelGain[0] / r.wheelGain[0] - 1.0;
         }
     }
-    std::cout << "  game hub scheme: worst gain error " << 100.0 * worst << " % at 1 ms (" << 100.0 * worstBelowHop << " % below 8 Hz), "
-              << 100.0 * worstQuarter << " % at 0.25 ms; wheel at the hop " << 100.0 * hopWheelError << " %\n";
-    Require(worstBelowHop < 0.04, "the game scheme within 4 % of the reference below the wheel hop");
-    Require(hopWheelError < -0.08 && hopWheelError > -0.2, "backward Euler damps the wheel hop's peak by about 15 %");
-    Require(worst < 0.2, "the game scheme within 20 % of the reference anywhere");
-    Require(worstQuarter < 0.4 * worst, "the game scheme converges at first order");
+    std::cout << "  game hub scheme at 1 ms: wheel " << 100.0 * game1ms.wheel << " %, load " << 100.0 * game1ms.load << " % of its peak, body " << 100.0 * game1ms.body
+              << " %, wheel at the hop " << 100.0 * hopWheelError << " %; body at 0.25 ms " << 100.0 * game250us.body << " %\n";
+    // The hub's own motion: the trapezoidal step leaves it within a few per cent everywhere.
+    Require(game1ms.wheel < 0.04, "the hub's motion within 4 %");
+    Require(std::abs(hopWheelError) < 0.04, "the wheel hop's peak within 4 %");
+    Require(game1ms.load < 0.04, "the tyre's load within 4 % of its peak variation");
+    // The body: the coupling frozen at the step's start (its acceleration a step late) takes a few per cent,
+    // first order in the step.
+    Require(game1ms.body < 0.08, "the body within 8 %");
+    Require(game250us.body < 0.4 * game1ms.body, "converging at first order");
 }
 
 void TestKcRigMeasuresTheSpringsAndTheLinkage()

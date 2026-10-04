@@ -4,6 +4,7 @@
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
+#include <engine/physics/vehicle_suspension.h>
 #include <engine/physics/vehicle_wheel_motion.h>
 
 #include <glm/glm.hpp>
@@ -1113,6 +1114,74 @@ void TestCarDataPlacesTheCentreOfMass()
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "and all of the weight");
 }
 
+// Assetto Corsa's ROD_LENGTH compresses the spring by its length at the design position (F = k (z + L)), so
+// the car rests L - load / k below the design position rather than at it; PACKER_RANGE brings the bump stop
+// on at PACKER_RANGE - ROD_LENGTH when that is before BUMPSTOP_UP.
+void TestRodLengthSetsTheRideHeight()
+{
+    VehicleCarSpec spec = MakeGtrSpec();
+    spec.wheelbase = 2.78f;
+    spec.frontWeightShare = 0.555f;
+    spec.inertiaBox = glm::vec3(1.8f, 1.35f, 4.8f);
+    spec.frontSuspension->centerOfMassAboveWheel = 0.075f;
+    spec.rearSuspension->centerOfMassAboveWheel = 0.075f;
+
+    // The corner's unit: the rod's preload, the bump stop where the packers bring it on.
+    VehicleCarSpec rodded = spec;
+    rodded.frontSuspension->rodLength = 0.03f;
+    rodded.frontSuspension->packerRange = 0.06f;
+    rodded.rearSuspension->rodLength = 0.01f;
+    const VehicleSettings roddedSettings = ApplyCarSpec(VehicleSettings{}, rodded);
+    const VehicleCornerSetup front = BuildVehicleCorner(roddedSettings, 0, 1234.0);
+    RequireNear(static_cast<float>(front.unit.springPreload), 153000.0f * 0.03f, 1e-2f, "the spring compressed by the rod at the design position");
+    RequireNear(VehicleBumpStopTravel(*rodded.frontSuspension), 0.03f, 1e-6f, "the packers bring the bump stop on at 0.06 - 0.03");
+    RequireNear(VehicleBumpStopTravel(*rodded.rearSuspension), 0.06f, 1e-6f, "no packer range: BUMPSTOP_UP");
+    RequireNear(static_cast<float>(BuildVehicleCorner(ApplyCarSpec(VehicleSettings{}, spec), 0, 1234.0).unit.springPreload), 1234.0f, 1e-3f,
+                "without a rod the spring carries the static load at the design position");
+    VehicleSuspensionAxle late = *rodded.frontSuspension;
+    late.packerRange = 0.2f;
+    RequireNear(VehicleBumpStopTravel(late), 0.055f, 1e-6f, "packers past BUMPSTOP_UP leave it there");
+    // A progressive spring: F = k (z + L) + kp (z + L)^2 / 2.
+    VehicleCarSpec progressive = rodded;
+    progressive.frontSuspension->progressiveRate = 200000.0f;
+    const VehicleCornerSetup bent = BuildVehicleCorner(ApplyCarSpec(VehicleSettings{}, progressive), 0, 0.0);
+    RequireNear(static_cast<float>(bent.unit.springPreload), 153000.0f * 0.03f + 0.5f * 200000.0f * 0.03f * 0.03f, 1e-2f, "a progressive spring's preload");
+    RequireNear(static_cast<float>(bent.unit.coilSpring.Value(0.01)), (153000.0f + 200000.0f * 0.03f) * 0.01f + 0.5f * 200000.0f * 0.01f * 0.01f, 1e-2f,
+                "and its rate from there");
+
+    // The car at rest: each wheel where its spring carries its load, z = load / k - L.
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    const auto rest = [&](const VehicleCarSpec& car)
+    {
+        const VehicleSettings settings =
+            FitVehicleSettingsToBounds(glm::vec3(-1.031f, -0.066f, -2.401f), glm::vec3(1.031f, 1.357f, 2.453f), ApplyCarSpec(VehicleSettings{}, car), &layout);
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.05f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        VehicleControls hold;
+        hold.brake = 1.0f;
+        world.SetVehicleControls(id, hold);
+        Simulate(world, 4.0f);
+        return world.GetVehicleWheels(id);
+    };
+    const std::vector<VehicleWheelState> plain = rest(spec);
+    const std::vector<VehicleWheelState> withRod = rest(rodded);
+    const float frontExpected = withRod[0].springForce / 153000.0f - 0.03f;
+    const float rearExpected = withRod[2].springForce / 125000.0f - 0.01f;
+    std::cout << "GT-R at rest: travel front " << plain[0].travel * 1000.0f << " mm, rear " << plain[2].travel * 1000.0f << " mm without rods; with rods front "
+              << withRod[0].travel * 1000.0f << " mm (expected " << frontExpected * 1000.0f << "), rear " << withRod[2].travel * 1000.0f << " mm (expected "
+              << rearExpected * 1000.0f << ")\n";
+    RequireNear(plain[0].travel, 0.0f, 0.002f, "without a rod the front rests at the design position");
+    RequireNear(plain[2].travel, 0.0f, 0.002f, "and the rear");
+    RequireNear(withRod[0].travel, frontExpected, 0.002f, "with one the front rests where its spring carries its load");
+    RequireNear(withRod[2].travel, rearExpected, 0.002f, "and the rear");
+    Require(withRod[0].travel < -0.002f && withRod[2].travel > 0.002f, "a long rod raises a corner, a short one lowers it");
+}
+
 // The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
 // mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
 // twice adds nothing, and the car at rest carries it.
@@ -2119,6 +2188,7 @@ int main()
         TestUnsprungCarTakesABump();
         TestCarDataPlacesTheCentreOfMass();
         TestStartingFuelMovesTheMass();
+        TestRodLengthSetsTheRideHeight();
         TestLiveAxleCarRestsAndCorners();
         TestLiveAxleTorqueReactionLoadsTheLeftRear();
         TestMultibodyCarCornersOnItsLinkage(false);
