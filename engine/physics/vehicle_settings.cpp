@@ -386,6 +386,11 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     {
         settings.engineInertia = *spec.engineInertia;
     }
+    if (spec.coastRpm.has_value() && *spec.coastRpm > 0.0f && spec.coastTorque.has_value() && *spec.coastTorque > 0.0f)
+    {
+        settings.engineCoastRpm = *spec.coastRpm;
+        settings.engineCoastTorque = *spec.coastTorque;
+    }
     if (!spec.aeroWings.empty())
     {
         // The air's drag and downforce come from the car's wings at their base angle; the body's own

@@ -308,6 +308,11 @@ struct VehicleSettings
     // The engine's moment of inertia, kg m^2 (the physics engine's 0.5 when 0). It steals torque from
     // the wheels while the revs climb, most in the low gears.
     float engineInertia = 0.0f;
+    // Engine braking: the torque the closed-throttle engine drags with at engineCoastRpm, taken as
+    // proportional to the rpm and to the throttle left closed (Assetto Corsa's COAST_REF). 0 leaves
+    // the physics engine's own drag of 0.2 of its speed per second.
+    float engineCoastTorque = 0.0f;
+    float engineCoastRpm = 0.0f;
     // How hard the clutch drags the wheels along with the engine, torque per rad/s of difference (the
     // physics engine's 10 when 0).
     float clutchStrength = 0.0f;
@@ -352,8 +357,9 @@ struct VehicleSettings
     // The body's linear damping, a fraction of its speed lost each second: the physics engine's 0.05, a
     // stand-in for air drag that a car with its own aerodynamics sets to 0.
     float linearDamping = 0.05f;
-    // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free.
-    float maxPitchRollDegrees = 60.0f;
+    // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free, so a
+    // car tipped far enough rolls over.
+    float maxPitchRollDegrees = 180.0f;
 
     // The multibody suspension, used when both axles have a type: the hardpoints then decide where
     // each wheel goes and how it leans, the rates replace suspensionFrequencyHz / suspensionDamping

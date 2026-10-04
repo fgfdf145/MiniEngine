@@ -395,6 +395,10 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         wheel->mSuspensionSpring.mMode = JPH::ESpringMode::StiffnessAndDamping;
         wheel->mSuspensionSpring.mStiffness = quarterMass * omega * omega;
         wheel->mSuspensionSpring.mDamping = 2.0f * std::max(settings.suspensionDamping, 0.0f) * quarterMass * omega;
+        // The physics engine's wheels lose 0.2 of their spin each second, a drag of 0.2 I w at the
+        // axle: on the R34 some 330 N at 100 km/h, as much as its air drag, and rising with the speed.
+        // The tyres have their own rolling resistance.
+        wheel->mAngularDamping = 0.0f;
         wheel->mRadius = std::max(mount.radius, 0.01f);
         wheel->mWidth = std::max(mount.width, 0.01f);
         wheel->mMaxSteerAngle = front ? JPH::DegreesToRadians(std::clamp(settings.maxSteerAngleDegrees, 0.0f, 89.0f)) : 0.0f;
@@ -445,6 +449,11 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     if (settings.engineInertia > 0.0f)
     {
         controller->mEngine.mInertia = settings.engineInertia;
+    }
+    if (settings.engineCoastTorque > 0.0f)
+    {
+        // The data's engine braking (ApplyEngineCoast) instead of the physics engine's drag.
+        controller->mEngine.mAngularDamping = 0.0f;
     }
     if (settings.torqueCurve.size() >= 2 && settings.maxEngineTorque > 0.0f)
     {
@@ -1369,6 +1378,23 @@ struct PhysicsWorld::Impl
         }
     }
 
+    // Engine braking, which the physics engine's engine lacks (its torque is the throttle's share of the
+    // curve, nothing with the throttle shut): Assetto Corsa's COAST_REF torque at its rpm, in proportion
+    // to the rpm (its NON_LINEARITY not read) and to the throttle left closed, against the engine's
+    // turning before the step couples it to the wheels through the clutch.
+    void ApplyEngineCoast(const Vehicle& vehicle, JPH::WheeledVehicleController& controller, float forward) const
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        if (settings.engineCoastTorque <= 0.0f || settings.engineCoastRpm <= 0.0f)
+        {
+            return;
+        }
+        JPH::VehicleEngine& engine = controller.GetEngine();
+        const float closed = 1.0f - std::clamp(std::abs(forward), 0.0f, 1.0f);
+        const float torque = settings.engineCoastTorque * engine.GetCurrentRPM() / settings.engineCoastRpm * closed;
+        engine.ApplyTorque(-torque, kFixedStepSeconds);
+    }
+
     // Soft ground's rolling resistance on the physics engine's tyres (the brush tyre has its own): a
     // moment against each wheel's roll of the surface's coefficient times the wheel's load and radius.
     void ApplySurfaceRollingResistance(Vehicle& vehicle)
@@ -1850,6 +1876,9 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         bodySettings.mMassPropertiesOverride.ScaleToMass(std::max(settings.massKg, 1.0f));
     }
     bodySettings.mLinearDamping = std::max(settings.linearDamping, 0.0f);
+    // The physics engine would also take 0.05 of the body's turning each second, a yaw and roll damping
+    // no car has: the tyres, dampers and air do that.
+    bodySettings.mAngularDamping = 0.0f;
     // A fast car against a thin wall would otherwise pass through it between two steps.
     bodySettings.mMotionQuality = JPH::EMotionQuality::LinearCast;
 
@@ -2143,6 +2172,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.UpdateCorners(vehicle, input.right);
             impl.ApplyRearSteer(vehicle, input);
             controller->SetDriverInput(input.forward, input.right, input.brake, input.handBrake);
+            impl.ApplyEngineCoast(vehicle, *controller, input.forward);
         }
 
         const JPH::EPhysicsUpdateError error =

@@ -481,6 +481,42 @@ void TestWheelStateReportsTyrePhysics()
     }
 }
 
+// Engine braking comes from the car's data (Assetto Corsa's COAST_REF). Revved up in the air in its one
+// gear and the throttle shut, the car's driven wheels slow only by what the engine takes back through
+// the clutch: an engine dragging 300 Nm at 5000 rpm takes far more than the physics engine's own small
+// drag on its revs. The wheels themselves no longer lose spin of their own.
+float WheelSpinLostOnTheCoast(float coastTorque)
+{
+    PhysicsWorld world;
+    VehicleSettings tuning;
+    tuning.gearRatios = {1.0f};
+    tuning.finalDriveRatio = 1.0f;
+    tuning.tractionControlGrip = 0.0f;
+    tuning.engineCoastTorque = coastTorque;
+    tuning.engineCoastRpm = 5000.0f;
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 100000.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 1.0f);
+    const float revved = world.GetVehicleWheels(car)[2].angularVelocity;
+    const float undriven = world.GetVehicleWheels(car)[0].angularVelocity;
+    world.SetVehicleControls(car, VehicleControls{});
+    Simulate(world, 2.0f);
+    RequireNear(world.GetVehicleWheels(car)[0].angularVelocity, undriven, 1e-3f, "an undriven wheel in the air keeps its spin");
+    return revved - world.GetVehicleWheels(car)[2].angularVelocity;
+}
+
+void TestEngineBrakingFromTheData()
+{
+    const float plain = WheelSpinLostOnTheCoast(0.0f);
+    const float coasting = WheelSpinLostOnTheCoast(300.0f);
+    std::cout << "throttle shut for 2 s in the air: the driven wheels lose " << plain << " rad/s on the physics engine's drag, " << coasting
+              << " with 300 Nm of engine braking\n";
+    Require(coasting > 2.0f * plain && coasting > 20.0f, "the data's engine braking slows the wheels");
+}
+
 // A wheel turning more than half a turn per physics step (188 rad/s at 60 Hz: a 0.32 m tyre at 216 km/h,
 // or a driven wheel spinning up in the air) has poses that look like it turned the other way, so the roll is
 // followed by angle instead. Frame by frame, the wheel the model draws turns as far as the physics engine's.
@@ -2114,6 +2150,7 @@ int main()
         TestSpringsSettleAtTheRestLength();
         TestWheelStateReportsTyrePhysics();
         TestFastWheelsRollTheRightWay();
+        TestEngineBrakingFromTheData();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);
         TestMultibodyCarRestsAtItsDesignPosition(true);
