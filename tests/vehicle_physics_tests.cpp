@@ -517,6 +517,64 @@ void TestEngineBrakingFromTheData()
     Require(coasting > 2.0f * plain && coasting > 20.0f, "the data's engine braking slows the wheels");
 }
 
+// A turbo's boost as the game has it: (throttle * rpm / reference)^gamma of the maximum, held to the
+// wastegate. In the car it follows that level with the game's lag, a share kept each of the game's 333 Hz
+// steps: LAG_UP 0.9988 builds it with a time constant of 2.5 s, LAG_DN 0.995 lets it go in 0.6 s.
+void TestTurboSpoolsWithItsLag()
+{
+    const VehicleTurbo r34{1.2f, 0.4f, 3400.0f, 2.0f, 0.9988f, 0.995f};
+    RequireNear(VehicleTurboBoost(r34, 5000.0f, 1.0f), 0.4f, 1e-6f, "full throttle: the wastegate");
+    RequireNear(VehicleTurboBoost(r34, 3000.0f, 0.5f), 1.2f * std::pow(0.5f * 3000.0f / 3400.0f, 2.0f), 1e-5f, "half throttle scales the revs before gamma");
+    RequireNear(VehicleTurboBoost(r34, 5000.0f, 0.0f), 0.0f, 1e-6f, "throttle shut: none");
+
+    VehicleSettings tuning;
+    tuning.gearRatios = {1.0f};
+    tuning.finalDriveRatio = 1.0f;
+    tuning.tractionControlGrip = 0.0f;
+    tuning.maxEngineTorque = 300.0f;
+    tuning.torqueCurve = {{1000.0f, 300.0f}, {7000.0f, 300.0f}};
+    tuning.turbos = {VehicleTurbo{1.0f, 0.5f, 1000.0f, 1.0f, 0.9988f, 0.995f}};
+    RequireNear(VehicleTurboTorqueScale(tuning, 4000.0f, 0.0f), 1.0f / 1.5f, 1e-5f, "no boost yet: the curve's torque without its boost");
+    RequireNear(VehicleTurboTorqueScale(tuning, 4000.0f, 0.5f), 1.0f, 1e-5f, "full boost: the curve's");
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    PhysicsWorld world;
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 100000.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 2.5f);
+    const float built = world.GetVehicleTelemetry(car).turboBoost;
+    world.SetVehicleControls(car, VehicleControls{});
+    Simulate(world, 0.6f);
+    const float fallen = world.GetVehicleTelemetry(car).turboBoost;
+    std::cout << "turbo: " << built << " of 0.5 after 2.5 s at full throttle, " << fallen << " left 0.6 s after lifting\n";
+    RequireNear(built, 0.5f * (1.0f - std::exp(-1.0f)), 0.03f, "builds with a 2.5 s time constant");
+    RequireNear(fallen, built * std::exp(-1.0f), 0.02f, "and falls with a 0.6 s one");
+}
+
+// The car's data for its differential's lock on the overrun and preload, and its tyres' load sensitivity
+// (the starting compound's LS_EXPX and LS_EXPY, their mean, or the one given).
+void TestCarDataGivesDifferentialAndTyreSensitivity()
+{
+    VehicleCarSpec spec;
+    spec.limitedSlipDifferentials = true;
+    spec.differentialPower = 0.5f;
+    spec.differentialCoast = 0.3f;
+    spec.differentialPreload = 10.0f;
+    VehicleTyreCompound compound;
+    compound.front.values = {{"LS_EXPX", 0.9f}, {"LS_EXPY", 0.84f}};
+    compound.rear.values = {{"LS_EXPY", 0.8f}};
+    spec.tyreCompounds = {compound};
+    spec.defaultTyreCompound = 0;
+    const VehicleSettings settings = ApplyCarSpec(VehicleSettings{}, spec);
+    RequireNear(settings.limitedSlipLock, 0.5f, 1e-6f, "the lock under power");
+    RequireNear(settings.limitedSlipCoast, 0.3f, 1e-6f, "on the overrun");
+    RequireNear(settings.limitedSlipPreload, 10.0f, 1e-6f, "and the preload");
+    RequireNear(settings.frontTyres.loadExponent, 0.87f, 1e-5f, "the front tyres' load sensitivity, the mean of the two");
+    RequireNear(settings.rearTyres.loadExponent, 0.8f, 1e-6f, "the rear's, the one given");
+    Require(ApplyCarSpec(VehicleSettings{}, VehicleCarSpec{}).limitedSlipPreload < 0.0f, "no data: the default preload");
+}
+
 // A wheel turning more than half a turn per physics step (188 rad/s at 60 Hz: a 0.32 m tyre at 216 km/h,
 // or a driven wheel spinning up in the air) has poses that look like it turned the other way, so the roll is
 // followed by angle instead. Frame by frame, the wheel the model draws turns as far as the physics engine's.
@@ -2179,6 +2237,8 @@ int main()
         TestWheelStateReportsTyrePhysics();
         TestFastWheelsRollTheRightWay();
         TestEngineBrakingFromTheData();
+        TestTurboSpoolsWithItsLag();
+        TestCarDataGivesDifferentialAndTyreSensitivity();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);
         TestMultibodyCarRestsAtItsDesignPosition(true);

@@ -134,6 +134,8 @@ struct VehicleTelemetry
     // positive), and the rear wheels' steer angle (degrees, right positive) for a car with rear steering.
     float centreCouplingTorque = 0.0f;
     float rearSteerDegrees = 0.0f;
+    // The turbos' boost together now (the torque is the engine's times one plus it); 0 without turbos.
+    float turboBoost = 0.0f;
     // The most any wheel on the ground turns slower than the road under it (the slip ratio's braking
     // side as a magnitude: 1 is locked) and faster than it (wheelspin), in the last step. Both are 0
     // below about 2 m/s, where a ratio against a crawling road says nothing.

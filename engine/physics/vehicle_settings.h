@@ -74,6 +74,9 @@ struct VehicleTyreSettings
     float postPeakShare = 0.0f;
     // The wheel's moment of inertia with its tyre, kg m^2.
     float inertia = 0.0f;
+    // The brush tyre's load sensitivity: its friction scales as (load / static load)^(loadExponent - 1),
+    // so the peak force grows as the load to this power (0 keeps the brush tyre's 0.9).
+    float loadExponent = 0.0f;
 
     bool operator==(const VehicleTyreSettings&) const = default;
 };
@@ -203,12 +206,14 @@ enum class VehicleCentreDrive
     Coupling,
 };
 
-// One axle's differential as a clutch-pack limited slip: the share of the drive torque through it that
-// locks it (below 0: the car's limitedSlipLock) and its preload (Nm, below 0: the default).
+// One axle's differential as a clutch-pack limited slip: the share of the torque through it that locks
+// it under power (below 0: the car's limitedSlipLock) and on the overrun, the engine braking (below 0:
+// the car's limitedSlipCoast), and its preload (Nm, below 0: the car's limitedSlipPreload).
 struct VehicleAxleDifferential
 {
     float lock = -1.0f;
     float preload = -1.0f;
+    float coast = -1.0f;
 };
 
 // How a hybrid's motor torque (VehicleSettings::ersTorqueCurve) reaches the drivetrain.
@@ -220,6 +225,24 @@ enum class VehicleErsDelivery
     // keep torqueCurve the engine's and add ersTorqueCurve, scaled, every step.
     AddedToEngine,
 };
+
+// A turbocharger: steady boost is maxBoost scaled by min(1, (throttle * rpm / referenceRpm)^gamma),
+// never past the wastegate (when it has one); several turbos' boosts add, and the torque is
+// the curve's times one plus the boost (VehicleTurboBoost). The boost follows its steady level as the
+// game's does, keeping lagUp (rising) or lagDown (falling) of its distance from it each of the game's
+// 333 Hz steps; 0 follows at once.
+struct VehicleTurbo
+{
+    float maxBoost = 0.0f;
+    float wastegate = 0.0f;
+    float referenceRpm = 0.0f;
+    float gamma = 1.0f;
+    float lagUp = 0.0f;
+    float lagDown = 0.0f;
+};
+
+// A turbo's steady boost at these revs and this much throttle (0 to 1).
+float VehicleTurboBoost(const VehicleTurbo& turbo, float rpm, float throttle);
 
 struct VehicleSettings
 {
@@ -283,6 +306,9 @@ struct VehicleSettings
     // physics engine's when empty. Sorted by rpm. With ersDelivery AddedToEngine it holds the ERS
     // motor's torque too.
     std::vector<glm::vec2> torqueCurve;
+    // The turbos, whose full steady boost torqueCurve already has: at run time their boost builds and
+    // falls with lag, and the engine makes the curve's torque scaled by (1 + boost) / (1 + full boost).
+    std::vector<VehicleTurbo> turbos;
     // A hybrid's ERS motor torque at full deployment by rpm (Nm at the crank; empty: none), sorted, and
     // how it is delivered.
     std::vector<glm::vec2> ersTorqueCurve;
@@ -347,6 +373,11 @@ struct VehicleSettings
     // How much of the drive torque a limited-slip differential can move from the wheel that spins to the one
     // that grips: 0 is open, 1 nearly locked.
     float limitedSlipLock = 0.4f;
+    // The same on the overrun, when the engine brakes the wheels (below 0: limitedSlipLock), and the
+    // torque the clutch pack holds the wheels together with when nothing goes through it (Nm; below 0,
+    // 40 Nm for a car without data).
+    float limitedSlipCoast = -1.0f;
+    float limitedSlipPreload = -1.0f;
     // Four-wheel drive (drive AllWheel): a centre differential sending frontTorqueShare to the front, or a
     // coupling at the transfer case passing min(rampTorque * shaft slip, maxTorque) (Nm per rad/s, Nm, at the
     // shaft) from the driven rear to the front. Each axle's differential (front, rear) may have its own
@@ -431,17 +462,6 @@ struct VehicleAeroController
     float downLimit = 0.0f;
 };
 
-// A turbocharger: steady boost is maxBoost scaled by min(1, (rpm / referenceRpm)^gamma), never past the
-// wastegate (when it has one); several turbos' boosts add (see AcCarData::TurboBoost).
-struct VehicleTurbo
-{
-    float maxBoost = 0.0f;
-    float wastegate = 0.0f;
-    float referenceRpm = 0.0f;
-    float gamma = 1.0f;
-    float lagUp = 0.0f;
-    float lagDown = 0.0f;
-};
 
 // A four-wheel drive's figures (Assetto Corsa's drivetrain.ini [AWD] for TYPE=AWD, [AWD2] for TYPE=AWD2):
 // the front, centre and rear differentials' lock under power and on the overrun (0 to 1) and preload (Nm),
@@ -599,6 +619,11 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
 // Two torque curves (rpm, Nm) added: a point at every rpm either has, each curve read linearly between
 // its points and held at its end values outside them. Both sorted by rpm; so is the result.
 std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b);
+
+// What the engine's torque at these revs is of the curve's (which has the turbos' full boost) when
+// the turbos together give `boost`: (1 + boost) / (1 + full boost) on the engine's part, a hybrid's
+// motor torque left as it is. 1 without turbos.
+float VehicleTurboTorqueScale(const VehicleSettings& settings, float rpm, float boost);
 
 // What a car's controllers read, in Assetto Corsa's units: the steering wheel (degrees, right positive),
 // speed (km/h), pedals (0 to 1), lateral acceleration (g, left positive), the gear, the axles' slip

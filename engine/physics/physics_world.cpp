@@ -362,8 +362,14 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     }
     const double peakAngle = (tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 7.0f) * std::numbers::pi / 180.0;
     const double falloff = tyres.postPeakShare > 0.0f ? tyres.postPeakShare : 0.85f;
-    return tyre::MakeBrushTyreParameters(
+    tyre::BrushTyreParameters parameters = tyre::MakeBrushTyreParameters(
         grip, StaticWheelLoad(settings, front), peakAngle, falloff, std::max(mount.radius, 0.05f), std::max(mount.width, 0.05f), axle.tyreRate);
+    // The data's load sensitivity; the bristles are fitted at the static load, where it changes nothing.
+    if (tyres.loadExponent > 0.0f)
+    {
+        parameters.loadExponent = tyres.loadExponent;
+    }
+    return parameters;
 }
 
 JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const VehicleSettings& settings)
@@ -572,6 +578,9 @@ struct PhysicsWorld::Impl
         // last looked.
         std::array<bool, kVehicleWheelCount> absReleased{};
         float absClock = 0.0f;
+        // Each turbo's boost now (SpoolTurbos), and the throttle pedal the engine had in the last step.
+        std::vector<float> turboBoost;
+        float pedal = 0.0f;
         std::array<float, kVehicleWheelCount> filteredLoad{};
         bool dynamicBrakeBias = false;
         bool filteredLoadValid = false;
@@ -1219,16 +1228,25 @@ struct PhysicsWorld::Impl
     //
     // Each axle's pack locks with the torque through its differential: the engine's share for one it drives,
     // and for the front of a coupled four-wheel drive what the centre coupling passed. A four-wheel drive's
-    // data may give each axle its own lock and preload (settings.axleDifferentials).
+    // data may give each axle its own lock and preload (settings.axleDifferentials). The engine's torque is
+    // what it makes less its braking (EngineCoastTorque), through the clutch as far as it grips: driving, the
+    // pack locks by the power share, on the overrun by the coast share (Assetto Corsa's POWER and COAST).
     void CoupleDifferentialWheels(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
     {
         if (vehicle.limitedSlipLock <= 0.0f)
         {
             return;
         }
-        constexpr float kPreloadTorque = 40.0f; // Nm, holds them together even when coasting
-        // The clutch pack's lock follows the torque the engine sends through it.
-        const float driveTorque = controller.GetEngine().GetTorque(std::abs(controller.GetForwardInput())) * std::abs(controller.GetTransmission().GetCurrentRatio());
+        // Holds the wheels together even when coasting, for a car whose data gives no preload.
+        constexpr float kDefaultPreloadTorque = 40.0f;
+        const VehicleSettings& settings = vehicle.settings;
+        const JPH::VehicleEngine& engine = controller.GetEngine();
+        const JPH::VehicleTransmission& transmission = controller.GetTransmission();
+        const float engineTorque = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(settings, engine.GetCurrentRPM(), vehicle.pedal);
+        const bool overrun = engineTorque < 0.0f;
+        const float driveTorque = std::abs(engineTorque) * transmission.GetClutchFriction() * std::abs(transmission.GetCurrentRatio());
+        const float carCoast = settings.limitedSlipCoast >= 0.0f ? settings.limitedSlipCoast : vehicle.limitedSlipLock;
+        const float carPreload = settings.limitedSlipPreload >= 0.0f ? settings.limitedSlipPreload : kDefaultPreloadTorque;
         const float finalDrive = controller.GetDifferentials().empty() ? 1.0f : controller.GetDifferentials()[0].mDifferentialRatio;
         const bool coupled = vehicle.drive == VehicleDrive::AllWheel && vehicle.settings.centreDrive == VehicleCentreDrive::Coupling;
         for (int axle = 0; axle < 2; ++axle)
@@ -1254,8 +1272,10 @@ struct PhysicsWorld::Impl
                 continue;
             }
             const VehicleAxleDifferential& own = vehicle.settings.axleDifferentials[static_cast<size_t>(axle)];
-            const float lock = own.lock >= 0.0f ? own.lock : vehicle.limitedSlipLock;
-            const float preload = std::max(own.preload, kPreloadTorque);
+            const float power = own.lock >= 0.0f ? own.lock : vehicle.limitedSlipLock;
+            const float coast = own.coast >= 0.0f ? own.coast : carCoast;
+            const float lock = overrun ? coast : power;
+            const float preload = own.preload >= 0.0f ? own.preload : carPreload;
             auto* left = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex)]);
             auto* right = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex + 1)]);
             const float limit = preload + lock * axleTorque * 0.5f;
@@ -1425,21 +1445,58 @@ struct PhysicsWorld::Impl
         }
     }
 
+    // The turbos' boost follows the steady level the revs and throttle ask of each, by the game's lag (a
+    // share of the distance kept each of its 333 Hz steps, here per our step), and the throttle the
+    // physics engine's engine gets is scaled so its torque is the curve's (which has the full boost) times
+    // (1 + boost) / (1 + full boost). The physics engine's torque is linear in that input.
+    float SpoolTurbos(Vehicle& vehicle, const JPH::WheeledVehicleController& controller, float forward) const
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        if (settings.turbos.empty())
+        {
+            return forward;
+        }
+        constexpr float kGameStepsPerSecond = 333.0f;
+        vehicle.turboBoost.resize(settings.turbos.size(), 0.0f);
+        const float rpm = controller.GetEngine().GetCurrentRPM();
+        const float throttle = std::abs(forward);
+        float boost = 0.0f;
+        for (size_t index = 0; index < settings.turbos.size(); ++index)
+        {
+            const VehicleTurbo& turbo = settings.turbos[index];
+            float& now = vehicle.turboBoost[index];
+            const float target = VehicleTurboBoost(turbo, rpm, throttle);
+            const float lag = std::clamp(target > now ? turbo.lagUp : turbo.lagDown, 0.0f, 1.0f);
+            const float kept = lag > 0.0f ? std::pow(lag, kGameStepsPerSecond * kFixedStepSeconds) : 0.0f;
+            now = target + (now - target) * kept;
+            boost += now;
+        }
+        return std::clamp(forward * VehicleTurboTorqueScale(settings, rpm, boost), -1.0f, 1.0f);
+    }
+
     // Engine braking, which the physics engine's engine lacks (its torque is the throttle's share of the
     // curve, nothing with the throttle shut): Assetto Corsa's COAST_REF torque at its rpm, in proportion
     // to the rpm (its NON_LINEARITY not read) and to the throttle left closed, against the engine's
     // turning before the step couples it to the wheels through the clutch.
-    void ApplyEngineCoast(const Vehicle& vehicle, JPH::WheeledVehicleController& controller, float forward) const
+    static float EngineCoastTorque(const VehicleSettings& settings, float rpm, float pedal)
     {
-        const VehicleSettings& settings = vehicle.settings;
         if (settings.engineCoastTorque <= 0.0f || settings.engineCoastRpm <= 0.0f)
         {
-            return;
+            return 0.0f;
         }
+        const float closed = 1.0f - std::clamp(std::abs(pedal), 0.0f, 1.0f);
+        return settings.engineCoastTorque * rpm / settings.engineCoastRpm * closed;
+    }
+
+    void ApplyEngineCoast(Vehicle& vehicle, JPH::WheeledVehicleController& controller, float forward) const
+    {
+        vehicle.pedal = forward;
         JPH::VehicleEngine& engine = controller.GetEngine();
-        const float closed = 1.0f - std::clamp(std::abs(forward), 0.0f, 1.0f);
-        const float torque = settings.engineCoastTorque * engine.GetCurrentRPM() / settings.engineCoastRpm * closed;
-        engine.ApplyTorque(-torque, kFixedStepSeconds);
+        const float torque = EngineCoastTorque(vehicle.settings, engine.GetCurrentRPM(), forward);
+        if (torque > 0.0f)
+        {
+            engine.ApplyTorque(-torque, kFixedStepSeconds);
+        }
     }
 
     // Soft ground's rolling resistance on the physics engine's tyres (the brush tyre has its own): a
@@ -2055,6 +2112,7 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     controller->SetDriverInput(0.0f, 0.0f, 0.0f, 0.0f);
     vehicle.controls = {};
     vehicle.direction = 1.0f;
+    vehicle.turboBoost.clear();
     vehicle.filteredLoadValid = false;
     for (tyre::BrushTyre& tyre : vehicle.brushTyres)
     {
@@ -2167,6 +2225,10 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     }
     telemetry.centreCouplingTorque = vehicle.centreCouplingTorque;
     telemetry.rearSteerDegrees = vehicle.rearSteerAngle * 180.0f / std::numbers::pi_v<float>;
+    for (const float boost : vehicle.turboBoost)
+    {
+        telemetry.turboBoost += boost;
+    }
     constexpr float kSlipMinSpeed = 2.0f;
     if (std::abs(telemetry.forwardSpeed) >= kSlipMinSpeed)
     {
@@ -2219,7 +2281,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.LimitClutchTorque(vehicle, *controller);
             impl.UpdateCorners(vehicle, input.right);
             impl.ApplyRearSteer(vehicle, input);
-            controller->SetDriverInput(input.forward, input.right, input.brake, input.handBrake);
+            controller->SetDriverInput(impl.SpoolTurbos(vehicle, *controller, input.forward), input.right, input.brake, input.handBrake);
             impl.ApplyEngineCoast(vehicle, *controller, input.forward);
         }
 

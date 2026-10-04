@@ -255,6 +255,52 @@ VehicleChassisParts BuildChassisParts(const VehicleSettings& settings)
     return parts;
 }
 
+float VehicleTurboBoost(const VehicleTurbo& turbo, float rpm, float throttle)
+{
+    // As gro-ove's ac-torque-helper (src/acTurbo.jsx, calculateMultipler) has the game: the maximum
+    // boost scaled by the revs, then cut at the wastegate. A turbo whose maximum is above its wastegate
+    // so reaches the wastegate's level below the reference rpm. The gas pedal multiplies the turbo's
+    // activation before gamma is applied (as Custom Shaders Patch documents the game's, EXT_GAS_CURVE):
+    // with gamma 2, half throttle asks a quarter of the boost.
+    const float gas = std::clamp(throttle, 0.0f, 1.0f);
+    float level = std::max(turbo.maxBoost, 0.0f);
+    if (turbo.referenceRpm > 0.0f)
+    {
+        level *= std::clamp(std::pow(gas * std::max(rpm, 0.0f) / turbo.referenceRpm, std::max(turbo.gamma, 0.0f)), 0.0f, 1.0f);
+    }
+    else
+    {
+        level *= std::pow(gas, std::max(turbo.gamma, 0.0f));
+    }
+    if (turbo.wastegate > 0.0f)
+    {
+        level = std::min(level, turbo.wastegate);
+    }
+    return level;
+}
+
+float VehicleTurboTorqueScale(const VehicleSettings& settings, float rpm, float boost)
+{
+    if (settings.turbos.empty())
+    {
+        return 1.0f;
+    }
+    float full = 0.0f;
+    for (const VehicleTurbo& turbo : settings.turbos)
+    {
+        full += VehicleTurboBoost(turbo, rpm, 1.0f);
+    }
+    const float total = EvaluateCurve(settings.torqueCurve, rpm);
+    if (total <= 0.0f)
+    {
+        return 1.0f;
+    }
+    // A hybrid's motor torque in the curve is not the turbos' to scale.
+    const float motor = settings.ersDelivery == VehicleErsDelivery::AddedToEngine ? EvaluateCurve(settings.ersTorqueCurve, rpm) : 0.0f;
+    const float engine = std::max(total - motor, 0.0f);
+    return (motor + engine * (1.0f + boost) / (1.0f + full)) / total;
+}
+
 std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const std::vector<glm::vec2>& b)
 {
     std::vector<float> rpms;
@@ -329,6 +375,8 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         };
         settings.torqueCurve = spec.torqueCurve;
         std::sort(settings.torqueCurve.begin(), settings.torqueCurve.end(), byRpm);
+        // The curve has their full boost (the import's AcCarData::TurboBoost); they spool at run time.
+        settings.turbos = spec.turbos;
         settings.ersTorqueCurve.clear();
         settings.ersDelivery = VehicleErsDelivery::None;
         if (spec.ers.has_value() && spec.ers->torqueCurve.size() >= 2)
@@ -416,6 +464,32 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     {
         settings.rearTyres = *spec.rearTyres;
     }
+    // How the tyres' grip falls with load, from the compound they start on: the game's LS_EXPX and LS_EXPY
+    // (the peak force grows as the load to that power), their mean for the brush tyre's one coefficient, as
+    // its grip is the mean of DX and DY.
+    if (spec.defaultTyreCompound.has_value() && *spec.defaultTyreCompound >= 0 && static_cast<size_t>(*spec.defaultTyreCompound) < spec.tyreCompounds.size())
+    {
+        const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
+        const auto exponent = [](const VehicleTyreData& tyre)
+        {
+            const auto read = [&](const char* key)
+            {
+                const auto found = tyre.values.find(key);
+                return found != tyre.values.end() ? found->second : 0.0f;
+            };
+            const float x = read("LS_EXPX");
+            const float y = read("LS_EXPY");
+            return x > 0.0f && y > 0.0f ? 0.5f * (x + y) : std::max(x, y);
+        };
+        if (const float front = exponent(compound.front); front > 0.0f)
+        {
+            settings.frontTyres.loadExponent = std::min(front, 1.0f);
+        }
+        if (const float rear = exponent(compound.rear); rear > 0.0f)
+        {
+            settings.rearTyres.loadExponent = std::min(rear, 1.0f);
+        }
+    }
 
     if (spec.maxSteerAngleDegrees.has_value() && *spec.maxSteerAngleDegrees > 0.0f)
     {
@@ -466,6 +540,14 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         {
             settings.limitedSlipLock = std::clamp(*spec.differentialPower, 0.05f, 1.0f);
         }
+        if (spec.differentialCoast.has_value())
+        {
+            settings.limitedSlipCoast = std::clamp(*spec.differentialCoast, 0.0f, 1.0f);
+        }
+        if (spec.differentialPreload.has_value())
+        {
+            settings.limitedSlipPreload = std::max(*spec.differentialPreload, 0.0f);
+        }
     }
     // A car's drive says how its four wheels share the torque; one without four-wheel-drive figures
     // leaves the tuning's centre and axles alone only when it says nothing about its drive.
@@ -489,8 +571,10 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
             {
                 settings.frontTorqueShare = std::clamp(awd.frontShare, 0.0f, 1.0f);
             }
-            settings.axleDifferentials[0] = VehicleAxleDifferential{std::clamp(awd.frontDiffPower, 0.0f, 1.0f), std::max(awd.frontDiffPreload, 0.0f)};
-            settings.axleDifferentials[1] = VehicleAxleDifferential{std::clamp(awd.rearDiffPower, 0.0f, 1.0f), std::max(awd.rearDiffPreload, 0.0f)};
+            settings.axleDifferentials[0] = VehicleAxleDifferential{
+                std::clamp(awd.frontDiffPower, 0.0f, 1.0f), std::max(awd.frontDiffPreload, 0.0f), std::clamp(awd.frontDiffCoast, 0.0f, 1.0f)};
+            settings.axleDifferentials[1] = VehicleAxleDifferential{
+                std::clamp(awd.rearDiffPower, 0.0f, 1.0f), std::max(awd.rearDiffPreload, 0.0f), std::clamp(awd.rearDiffCoast, 0.0f, 1.0f)};
         }
     }
     // A car's own data (its mass says it has some) brings its rear steering and its body, or none.
