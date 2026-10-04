@@ -7,13 +7,15 @@
       "macos": 0.750
     },
     "windows": {
-      "camera": true,
       "asset_manager": true,
+      "camera": true,
+      "graphics_debug": true,
       "input_monitor": false,
       "scene": true,
+      "suspension_rigs": true,
       "theme": false,
-      "viewport": true,
-      "graphics_debug": true
+      "vehicle": true,
+      "viewport": true
     },
     "theme": {
       "colors": {
@@ -80,6 +82,87 @@
         "NavWindowingDimBg": [0.800, 0.800, 0.800, 0.200],
         "ModalWindowDimBg": [0.800, 0.800, 0.800, 0.350]
       }
+    }
+  },
+  "camera": {
+    "fov_degrees": 47,
+    "near_plane": 0.1,
+    "far_plane": 2000,
+    "move_speed": 3.8337624,
+    "mouse_sensitivity": 0.1,
+    "exposure_ev100": 8,
+    "auto_exposure": {
+      "enabled": true,
+      "compensation_ev": 0,
+      "min_ev100": -2,
+      "max_ev100": 18,
+      "low_percentile": 0.6,
+      "high_percentile": 0.95,
+      "adapt_to_brighter_per_second": 3,
+      "adapt_to_darker_per_second": 1.5,
+      "short_term_range_ev": 2.5,
+      "long_term_to_brighter_per_second": 0.05,
+      "long_term_to_darker_per_second": 0.02,
+      "frame_reference_weight": 0.5,
+      "sun_reference_weight": 0.25,
+      "sky_reference_weight": 0.25
+    },
+    "auto_white_balance": {
+      "enabled": false,
+      "degree": 0.3,
+      "adapt_per_second": 0.5,
+      "target_kelvin": 6500
+    }
+  },
+  "render": {
+    "tone_mapper": 0,
+    "forward_only": false,
+    "clustered_lighting": true,
+    "local_light_shadows": true,
+    "shadow_distance": 80,
+    "taa": true,
+    "specular_anti_aliasing": true,
+    "hdr_output": false,
+    "hdr_peak_nits": 1000,
+    "khronos_reference": false,
+    "render_scale": 1,
+    "bloom": {
+      "enabled": true,
+      "strength": 1
+    },
+    "ssr": {
+      "enabled": true,
+      "max_roughness": 0.8,
+      "max_distance": 30
+    },
+    "ao": {
+      "enabled": true,
+      "radius": 1.5,
+      "thickness": 0.25,
+      "slice_count": 2,
+      "step_count": 8,
+      "spatial_filter": true,
+      "temporal_filter": true
+    },
+    "gi": {
+      "enabled": true,
+      "radius": 3,
+      "thickness": 0.5,
+      "slice_count": 2,
+      "step_count": 12,
+      "strength": 1,
+      "spatial_filter": true,
+      "temporal_filter": true
+    },
+    "ddgi": {
+      "enabled": true,
+      "levels": 4,
+      "base_spacing": 1,
+      "probes_per_frame": 2048,
+      "hysteresis": 0.97,
+      "normal_bias": 0.1,
+      "view_bias": 0.2,
+      "probe_view_level": 0
     }
   }
 }
