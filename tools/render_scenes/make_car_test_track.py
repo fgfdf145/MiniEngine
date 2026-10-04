@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Writes the vehicle test track (tests/fixtures/render_scenes/models/car_test_track/) and its test car
-(.../models/car_test_car/).
+"""Writes the vehicle test track (tests/fixtures/render_scenes/models/car_test_track/), its test car
+(.../models/car_test_car/) and a plain asphalt ground (.../models/asphalt_ground/).
 
 Three courses leave one asphalt apron. The car stands on the apron facing +Z, in front of the first.
 
@@ -344,6 +344,14 @@ def build_track():
     return {name: mesh for name, mesh in meshes.items() if mesh.indices}
 
 
+def build_asphalt_ground():
+    """A plain 200 m square of the track's dry asphalt, centred on the origin at y = 0, drawn and colliding:
+    ground for scenes that need nothing else (the suspension rig's)."""
+    ground = Mesh()
+    ground.flat_rect(-100.0, 100.0, -100.0, 100.0)
+    return {"asphalt": ground}
+
+
 def build_car():
     meshes = {name: Mesh() for name in ("body", "cabin", "wheel", "light_front", "light_rear")}
     meshes["body"].box((-0.8, 0.28, -2.2), (0.8, 0.85, 2.2))
@@ -432,6 +440,7 @@ def main():
     track = build_track()
     write_model("car_test_track", track, {n: (SURFACES[n][0], SURFACES[n][1], 0.0) for n in track}, lambda n: SURFACES[n][2], "7c2e5a90-1d43-4b6f-8a17-3e9d0b5c2f41")
     write_model("car_test_car", build_car(), CAR_MATERIALS, None, "a4f81d36-92b7-4c0e-b5d3-6e1f7a28c904")
+    write_model("asphalt_ground", build_asphalt_ground(), {"asphalt": (SURFACES["asphalt"][0], SURFACES["asphalt"][1], 0.0)}, lambda n: SURFACES[n][2], "ac711dfe-e1a7-41db-951e-b95b7f80c4e8")
     for name, mesh in track.items():
         print("{:12s} {:7d} triangles".format(name, len(mesh.indices) // 3))
 

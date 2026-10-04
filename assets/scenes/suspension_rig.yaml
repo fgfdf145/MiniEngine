@@ -1,24 +1,40 @@
-# The Nissan GT-R GT3 on a seven-post rig: four wheel pads and three aero loaders on a base plate.
-# The car is selected, so Window > Suspension Rigs (or the Vehicle panel's button) loads it at once;
-# its Live Rig tab runs the seven-post rig and moves the car, its wheels, the pads ("Wheel pad FL"...)
-# and the loaders ("Aero loader ..."). Driving it from here drops it onto the pads.
-# Needs the car imported from Assetto Corsa's ks_nissan_gtr_gt3 at assets/nissan_gtr_gt3 (not in git:
-# the game's content), run from the repository's root.
+# The Nissan Skyline R34 V-Spec on a seven-post rig: four wheel pads and three aero loaders on a base
+# plate, on an asphalt ground. The car is selected, so Window > Suspension Rigs (or the Vehicle panel's
+# button) loads it at once; its Live Rig tab runs the seven-post rig and moves the car, its wheels, the
+# pads ("Wheel pad FL"...) and the loaders ("Aero loader ..."). Driving it from here drops it onto the
+# pads, and off them onto the asphalt.
+# The pads sit under the car's wheel centres; the car stands with its tyres (radius 0.3266 m, wheel
+# centres 0.326 m up in the model) on the pads' tops at 0.65 m.
+# Needs the car imported from Assetto Corsa at assets/skyline_r34_vspec (not in git: the game's content)
+# and the ground at assets/models/asphalt_ground (tests/fixtures/render_scenes/models/asphalt_ground,
+# from tools/render_scenes/make_car_test_track.py), run from the repository's root.
 scene:
   version: 3
   selected_entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
-  selected_entity: 0
+  selected_entity: 1
 entities:
-  - entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
-    tag: nissan_gtr_gt3
+  - entity_uuid: c6e22e24-b48b-40e1-b7f7-ae1b8a0dae54
+    tag: Asphalt ground
     model:
-      display_name: nissan_gtr_gt3.gltf
-      source_path: assets/nissan_gtr_gt3/nissan_gtr_gt3.gltf
-      source_uuid: 5226e6cc-0904-4320-afe3-50821f29d39c
+      display_name: asphalt_ground.gltf
+      source_path: assets/models/asphalt_ground/asphalt_ground.gltf
+      source_uuid: ac711dfe-e1a7-41db-951e-b95b7f80c4e8
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [0, 0.7131, 0]
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
+    tag: skyline_r34_vspec
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 599c81ca-883d-433f-85d9-9105fabd7f93
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.6506, 0]
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
   - entity_uuid: d934e7e6-98bf-43d5-a71f-d033fe8a18d4
@@ -42,7 +58,7 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [-0.8583, 0.475, -1.432]
+      translation: [-0.74, 0.475, -1.355]
       rotation: [0, 0, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: 19b26680-425d-48fe-b455-924fbbb6da99
@@ -54,7 +70,7 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [0.8583, 0.475, -1.432]
+      translation: [0.74, 0.475, -1.355]
       rotation: [0, 0, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: a6928209-0bad-4bb9-bc0f-63d7794373d9
@@ -66,7 +82,7 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [-0.869, 0.475, 1.3454]
+      translation: [-0.745, 0.475, 1.31]
       rotation: [0, 0, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: 7ba1de52-144f-4031-b367-be8bacc4ce25
@@ -78,7 +94,7 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [0.869, 0.475, 1.3454]
+      translation: [0.745, 0.475, 1.31]
       rotation: [0, 0, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: cb275130-e274-4dc5-a2eb-1752bcef8a64
@@ -137,7 +153,7 @@ lights:
 environment:
   mode: atmosphere
   atmosphere:
-    ground_albedo: [0.25, 0.22, 0.16]
+    ground_albedo: [0.045, 0.045, 0.05]
     ground_plane: true
     seamless_horizon: true
     rayleigh_density_scale: 1
