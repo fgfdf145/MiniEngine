@@ -1697,6 +1697,33 @@ void TestAutomaticBrakesDoNotLockTheWheels()
     Require(oldLocked > 0.5f, "the old 1500 Nm at an even split does lock them (" + std::to_string(oldLocked) + " s)");
 }
 
+// Anti-lock brakes from the car's data: the brakes that locked the wheels above, with an ABS that lets a
+// wheel's brake off past 12 % slip, looking 250 times a second, keep them turning and stop no later.
+void TestAntiLockBrakesKeepTheWheelsTurning()
+{
+    VehicleSettings car = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    car.dynamicBrakeBias = false;
+    car.maxBrakeTorque = 1500.0f;
+    car.frontBrakeShare = 0.5f;
+    float lockedPlain = 0.0f;
+    float distancePlain = 0.0f;
+    BrakeFromSpeed(car, lockedPlain, distancePlain);
+    car.absSlipRatioLimit = 0.12f;
+    car.absRateHz = 250.0f;
+    float lockedAbs = 0.0f;
+    float distanceAbs = 0.0f;
+    BrakeFromSpeed(car, lockedAbs, distanceAbs);
+    std::cout << "25 m/s to rest: " << distancePlain << " m with " << lockedPlain << " s locked, with ABS " << distanceAbs << " m with " << lockedAbs << " s locked\n";
+    Require(lockedPlain > 0.5f, "without ABS the wheels lock");
+    Require(lockedAbs < 0.05f, "with it they keep turning, locked for " + std::to_string(lockedAbs) + " s");
+    Require(distanceAbs <= distancePlain + 0.5f, "and the car stops no later");
+    car.useAbs = false;
+    float lockedOff = 0.0f;
+    float distanceOff = 0.0f;
+    BrakeFromSpeed(car, lockedOff, distanceOff);
+    Require(lockedOff > 0.5f, "switched off, the car's ABS does nothing");
+}
+
 // Full throttle from a standstill for six seconds: how far the rear tyres turn faster than the ground passes
 // under them (their rim speed over the car's, less one, the mean of the two wheels, at over 2 m/s), its mean
 // and peak, and how much the two wheels differ.
@@ -2129,6 +2156,7 @@ int main()
         TestCarScrapingAWallStaysOnTheGround();
         TestDegenerateMeshIsRejected();
         TestAutomaticBrakesDoNotLockTheWheels();
+        TestAntiLockBrakesKeepTheWheelsTurning();
         TestBrakeTorqueFollowsTheLoad();
         TestCarSpecReplacesWhatItKnows();
         TestErsAddsToTheEngineCurve();

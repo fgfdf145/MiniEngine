@@ -433,6 +433,19 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     {
         settings.maxHandBrakeTorque = *spec.handBrakeTorquePerWheel;
     }
+    if (const auto abs = spec.electronics.find("ABS"); abs != spec.electronics.end())
+    {
+        const auto number = [&](const char* key)
+        {
+            const auto found = abs->second.find(key);
+            return found != abs->second.end() ? found->second : 0.0f;
+        };
+        if (number("PRESENT") > 0.0f && number("ACTIVE") > 0.0f && number("SLIP_RATIO_LIMIT") > 0.0f)
+        {
+            settings.absSlipRatioLimit = number("SLIP_RATIO_LIMIT");
+            settings.absRateHz = number("RATE_HZ");
+        }
+    }
     if (spec.suspensionFrequencyHz.has_value() && *spec.suspensionFrequencyHz > 0.0f)
     {
         settings.suspensionFrequencyHz = *spec.suspensionFrequencyHz;

@@ -334,6 +334,12 @@ struct VehicleSettings
     // load each carries at the moment: braking, cornering and bumps move weight between them, and a
     // wheel in the air gets none. frontBrakeShare then only holds until the car's loads are known.
     bool dynamicBrakeBias = true;
+    // Anti-lock brakes (Assetto Corsa's electronics.ini [ABS]): at absRateHz the controller looks at each
+    // wheel and lets its brake off while it turns slower than the road by more than absSlipRatioLimit,
+    // on again once it is back under. A limit of 0 is a car without ABS; useAbs off ignores the car's.
+    bool useAbs = true;
+    float absSlipRatioLimit = 0.0f;
+    float absRateHz = 0.0f;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;
     bool antiRollBars = true;

@@ -46,7 +46,7 @@ name**.
 | revs | `engine.ini` LIMITER, MINIMUM | |
 | gearbox | `drivetrain.ini` GEAR_n, GEAR_R, FINAL | Jolt's gear ratios and the differential ratio; auto shifts at 88% of the limiter up and 30% down |
 | steering | `car.ini` STEER_LOCK / STEER_RATIO | the front wheels' lock (26.7 degrees on the Boxster); the steering wheel turns STEER_LOCK each way |
-| brakes | `brakes.ini` MAX_TORQUE, FRONT_SHARE, HANDBRAKE_TORQUE | the total over four wheels, split by the front's share; the hand brake over the rear two |
+| brakes | `brakes.ini` MAX_TORQUE, FRONT_SHARE, HANDBRAKE_TORQUE | each wheel takes MAX_TORQUE times its axle's share (FRONT_SHARE or the rest), so the four take twice MAX_TORQUE; HANDBRAKE_TORQUE on each rear wheel. (Read as the whole car's torque, road cars could not lock a tyre: corrected 2026-10-05.) |
 | springs | `suspensions.ini` SPRING_RATE, HUB_MASS, CG_LOCATION | natural frequency of one wheel's sprung mass (1.78 Hz on the Boxster); motion ratio ignored |
 | dampers | DAMP_BUMP, DAMP_REBOUND | their mean over critical damping (0.78) |
 | ARB, LSD | `[ARB]`, `[DIFFERENTIAL]` POWER/COAST | on or off; Jolt's locking ratio is fixed |

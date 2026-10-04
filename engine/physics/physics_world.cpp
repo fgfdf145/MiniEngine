@@ -568,6 +568,10 @@ struct PhysicsWorld::Impl
         // fixed front/rear split has it, and (when dynamicBrakeBias) the loads that share the total.
         std::vector<JPH::WheelSettingsWV*> wheelSettings;
         std::array<float, kVehicleWheelCount> staticBrakeTorque{};
+        // The anti-lock brakes (ApplyAntiLock): which wheels' brakes it has let off, and the time since it
+        // last looked.
+        std::array<bool, kVehicleWheelCount> absReleased{};
+        float absClock = 0.0f;
         std::array<float, kVehicleWheelCount> filteredLoad{};
         bool dynamicBrakeBias = false;
         bool filteredLoadValid = false;
@@ -1007,6 +1011,49 @@ struct PhysicsWorld::Impl
         // The hub's motion relative to the body, as a force on the body at the hub.
         const JPH::Vec3 relative = rotation * ToJolt(hubPerTravelVehicle) * static_cast<float>(-c.hubMass * travelAccel);
         physicsSystem.GetBodyInterfaceNoLock().AddForce(body.GetID(), relative, transform * ToJolt(c.hubCenter), JPH::EActivation::DontActivate);
+    }
+
+    // The anti-lock brakes, after DistributeBrakeTorque: at the data's rate the controller looks at each
+    // wheel's slip and lets the brake off a wheel that turns slower than the road by more
+    // than the limit, on again once it is back under; between looks the wheels keep what it decided. The
+    // hand brake is not its business. Under 2 m/s, where a slip ratio says little, it leaves the brakes on.
+    void ApplyAntiLock(Vehicle& vehicle, float brake, float forwardSpeed) const
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        if (!settings.useAbs || settings.absSlipRatioLimit <= 0.0f || brake <= 0.0f)
+        {
+            vehicle.absReleased.fill(false);
+            vehicle.absClock = 0.0f;
+            return;
+        }
+        constexpr float kMinSpeed = 2.0f;
+        vehicle.absClock += kFixedStepSeconds;
+        const float period = settings.absRateHz > 0.0f ? 1.0f / settings.absRateHz : 0.0f;
+        if (vehicle.absClock >= period)
+        {
+            vehicle.absClock = 0.0f;
+            const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+            for (size_t index = 0; index < wheels.size() && index < vehicle.absReleased.size(); ++index)
+            {
+                const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+                bool release = false;
+                if (wheel.HasContact() && std::abs(forwardSpeed) > kMinSpeed)
+                {
+                    // How much slower than the road the tread turns, as a share of the road's speed.
+                    const float road = (vehicle.body->GetPointVelocity(wheel.GetContactPosition()) - wheel.GetContactPointVelocity()).Dot(wheel.GetContactLongitudinal());
+                    const float tread = wheel.GetAngularVelocity() * wheel.GetSettings()->mRadius;
+                    release = std::abs(road) > kMinSpeed && (road - tread) / road > settings.absSlipRatioLimit;
+                }
+                vehicle.absReleased[index] = release;
+            }
+        }
+        for (size_t index = 0; index < vehicle.wheelSettings.size() && index < vehicle.absReleased.size(); ++index)
+        {
+            if (vehicle.absReleased[index])
+            {
+                vehicle.wheelSettings[index]->mMaxBrakeTorque = 0.0f;
+            }
+        }
     }
 
     // Sets each wheel's brake torque for the coming step. Fixed, it is the front/rear split's. Dynamic, the
@@ -2160,6 +2207,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.ApplyAerodynamics(vehicle);
             impl.ApplySurfaceRollingResistance(vehicle);
             impl.DistributeBrakeTorque(vehicle);
+            impl.ApplyAntiLock(vehicle, input.brake, localVelocity.GetZ());
             if (input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f)
             {
                 // A car that came to rest is asleep and would ignore the driver.

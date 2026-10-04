@@ -1260,9 +1260,9 @@ void CarDataBecomesASpec()
     Require(spec.reverseGearRatio == -3.55f && spec.finalDriveRatio == 3.62f, "reverse and the final drive");
     RequireNear(*spec.maxSteerAngleDegrees, 400.0f / 15.0f, 1e-4f, "the front wheels' lock is the steering wheel's over the ratio");
     Require(spec.steeringWheelLockDegrees == 400.0f, "the steering wheel's lock");
-    RequireNear(*spec.brakeTorquePerWheel, 800.0f, 1e-3f, "the brakes' total over four wheels");
+    RequireNear(*spec.brakeTorquePerWheel, 1600.0f, 1e-3f, "each wheel takes MAX_TORQUE times its axle's share: half of it on average");
     Require(spec.frontBrakeShare == 0.65f, "the front's share");
-    RequireNear(*spec.handBrakeTorquePerWheel, 1000.0f, 1e-3f, "the hand brake over two wheels");
+    RequireNear(*spec.handBrakeTorquePerWheel, 2000.0f, 1e-3f, "the hand brake on each rear wheel");
     Require(spec.limitedSlipDifferentials == true && spec.antiRollBars == true, "a locking differential and anti-roll bars");
     // Torque is the file's times one plus the boost: 184 Nm at 2000 rpm, where the turbo is at its
     // wastegate's 1.1, is 386.4; at 500 rpm it has hardly begun (1.2 * (500 / 1900)^2 = 0.083).

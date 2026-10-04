@@ -130,6 +130,8 @@ VehicleSettings DefaultTuning()
 {
     VehicleSettings tuning;
     tuning.tyreModel = VehicleTyreModel::Brush;
+    // The brakes by the car's own front/rear split (and its ABS), as the game has them.
+    tuning.dynamicBrakeBias = false;
     return tuning;
 }
 

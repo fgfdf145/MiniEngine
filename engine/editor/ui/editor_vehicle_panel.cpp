@@ -145,6 +145,12 @@ void DrawTuning(VehicleSettings& tuning)
             "moves weight onto the front, a wheel in the air gets none); the car's own front/rear split is not used.\n"
             "Off, the torque goes by that fixed split.");
     }
+    ImGui::Checkbox("ABS", &tuning.useAbs);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Anti-lock brakes, for a car whose data has them (its slip limit and rate): a wheel turning\n"
+                          "slower than the road by more than the limit has its brake let off until it is back under.");
+    }
     DragFloatInRange("Hand Brake Torque (Nm)", &tuning.maxHandBrakeTorque, 0.0f, 10000.0f, "%.0f", 10.0f);
     DragFloatInRange("Spring Frequency (Hz)", &tuning.suspensionFrequencyHz, 0.5f, 5.0f, "%.2f", 0.01f);
     DragFloatInRange("Spring Damping", &tuning.suspensionDamping, 0.0f, 2.0f, "%.2f", 0.01f);

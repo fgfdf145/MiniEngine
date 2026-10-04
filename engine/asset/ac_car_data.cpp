@@ -421,8 +421,12 @@ void ReadBrakes(const AcdArchive::Files& files, VehicleCarSpec& spec)
     const IniView brakes(&ini);
     if (const std::optional<float> total = brakes.Number("DATA", "MAX_TORQUE"); total.has_value() && *total > 0.0f)
     {
-        // The game's figure is for the whole car.
-        spec.brakeTorquePerWheel = *total / 4.0f;
+        // Each wheel of an axle takes MAX_TORQUE times the axle's share (FRONT_SHARE, or what is left
+        // for the rear), so the four together take twice MAX_TORQUE: an average of half of it per wheel.
+        // Read as the whole car's torque, road cars could brake at 0.5 to 0.7 g and never lock a tyre
+        // (the R34 needed 68 m from 100 km/h); read this way they reach 1.1 to 1.5 g, GT3 cars 1.7 and
+        // Formula 1 cars 3 to 4, as brakes that can lock their tyres do.
+        spec.brakeTorquePerWheel = *total / 2.0f;
     }
     if (const std::optional<float> share = brakes.Number("DATA", "FRONT_SHARE"); share.has_value() && *share > 0.0f && *share < 1.0f)
     {
@@ -430,7 +434,8 @@ void ReadBrakes(const AcdArchive::Files& files, VehicleCarSpec& spec)
     }
     if (const std::optional<float> hand = brakes.Number("DATA", "HANDBRAKE_TORQUE"); hand.has_value() && *hand >= 0.0f)
     {
-        spec.handBrakeTorquePerWheel = *hand / 2.0f;
+        // On each rear wheel, as MAX_TORQUE is read.
+        spec.handBrakeTorquePerWheel = *hand;
     }
 }
 
