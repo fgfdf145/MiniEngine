@@ -206,6 +206,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     std::string& sceneError = State().lastSceneIoError;
 
     State().vehicleDrive.camera = uiFrame.vehicleCamera;
+    State().vehicleDrive.haptics = uiFrame.vehicleHaptics;
     if (actions.stopVehicleDrive)
     {
         VehicleDriveService::Stop(State());

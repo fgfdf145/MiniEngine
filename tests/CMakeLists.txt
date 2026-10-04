@@ -1737,3 +1737,29 @@ add_test(
 )
 
 set_target_properties(miniengine_vehicle_overlay_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_gamepad_feedback_tests
+    gamepad_feedback_tests.cpp
+)
+miniengine_group_target_sources(miniengine_gamepad_feedback_tests)
+
+target_link_libraries(miniengine_gamepad_feedback_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_gamepad_feedback_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_gamepad_feedback_tests>
+            $<TARGET_FILE_DIR:miniengine_gamepad_feedback_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.gamepad_feedback
+    COMMAND miniengine_gamepad_feedback_tests
+)
+
+set_target_properties(miniengine_gamepad_feedback_tests PROPERTIES FOLDER "Tests")

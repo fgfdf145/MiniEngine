@@ -2019,6 +2019,18 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     }
     telemetry.centreCouplingTorque = vehicle.centreCouplingTorque;
     telemetry.rearSteerDegrees = vehicle.rearSteerAngle * 180.0f / std::numbers::pi_v<float>;
+    constexpr float kSlipMinSpeed = 2.0f;
+    if (std::abs(telemetry.forwardSpeed) >= kSlipMinSpeed)
+    {
+        for (const VehicleWheelState& wheel : vehicle.current.wheels)
+        {
+            if (wheel.inContact)
+            {
+                telemetry.lockSlip = std::max(telemetry.lockSlip, -wheel.slipRatio);
+                telemetry.spinSlip = std::max(telemetry.spinSlip, wheel.slipRatio);
+            }
+        }
+    }
     return telemetry;
 }
 

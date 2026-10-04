@@ -5,6 +5,7 @@
 #include <engine/core/input/input.h>
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/editor/services/vehicle_haptics.h>
 #include <engine/logic/world_bounds.h>
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/vehicle_wheel_motion.h>
@@ -205,6 +206,9 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     const VehicleSettings settings = FitVehicleSettingsToBounds(
         glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), fitTuning, rig != nullptr ? &wheelLayout : nullptr);
 
+    session->engineMinRpm = settings.minRpm;
+    session->engineMaxRpm = settings.maxRpm;
+
     glm::vec3 carWorldMin = session->startPose.position;
     glm::vec3 carWorldMax = session->startPose.position;
     ComputeWorldModelBounds(world, entity, carWorldMin, carWorldMax);
@@ -246,6 +250,7 @@ void Stop(RendererSharedState& state)
         return;
     }
 
+    state.input.ClearGamepadFeedback();
     state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
     IEditorWorld& world = state.GetEditorWorld();
     if (world.IsValidEntity(session->entity) && world.Registry().all_of<TransformComponent>(session->entity))
@@ -266,6 +271,7 @@ void Reset(RendererSharedState& state)
     {
         session->physics->ResetVehicle(session->vehicle, session->startPose);
         session->keyboardSteering = 0.0f;
+        session->haptics = VehicleHapticsState{};
     }
 }
 
@@ -285,6 +291,34 @@ void Step(RendererSharedState& state)
     }
 }
 
+// Gives the gamepad its engine rumble, gear thump and trigger effects; frees it while the drive is paused,
+// typed over, or the window is not the one in focus (the pad's axes freeze then, and so would the effects).
+static void UpdateGamepadFeedback(RendererSharedState& state, VehicleDriveSession& session, float deltaSeconds, bool keyboardCaptured)
+{
+    InputState& input = state.input;
+    const int gamepadIndex = input.GetFirstConnectedGamepadIndex();
+    if (gamepadIndex < 0)
+    {
+        return;
+    }
+
+    const uint32_t player = static_cast<uint32_t>(gamepadIndex);
+    if (session.paused || keyboardCaptured || SDL_GetKeyboardFocus() == nullptr)
+    {
+        input.SetGamepadFeedback(player, GamepadFeedback{});
+        return;
+    }
+
+    VehicleHapticsInput haptics;
+    haptics.telemetry = session.physics->GetVehicleTelemetry(session.vehicle);
+    haptics.minRpm = session.engineMinRpm;
+    haptics.maxRpm = session.engineMaxRpm;
+    haptics.rightTrigger = input.GetGamepadAxis(GamepadAxis::RightTrigger, player);
+    haptics.leftTrigger = input.GetGamepadAxis(GamepadAxis::LeftTrigger, player);
+    haptics.adaptiveTriggers = input.GetGamepadType(player) == SDL_GAMEPAD_TYPE_PS5;
+    input.SetGamepadFeedback(player, ComputeVehicleFeedback(state.vehicleDrive.haptics, haptics, session.haptics, deltaSeconds));
+}
+
 bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
 {
     VehicleDriveSession* session = state.vehicleDrive.session.get();
@@ -299,6 +333,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         // Deleted, or the scene was replaced under it: there is nothing left to put back.
         LOG_WARN("Stopped driving '{}': its entity is gone", session->name);
         state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
+        state.input.ClearGamepadFeedback();
         state.vehicleDrive.session.reset();
         return false;
     }
@@ -334,7 +369,9 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
     session->stepRequested = false;
 
-    const PhysicsPose pose = session->physics->GetVehiclePose(session->vehicle);
+    UpdateGamepadFeedback(state, *session, deltaSeconds, keyboardCaptured);
+
+    const PhysicsPose pose =session->physics->GetVehiclePose(session->vehicle);
     PhysicsPose modelPose = pose;
     modelPose.rotation = pose.rotation * session->vehicleToModel;
     world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));

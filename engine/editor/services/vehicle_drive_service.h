@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/asset/model_loader.h>
+#include <engine/editor/services/vehicle_haptics.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/renderer/camera.h>
@@ -135,12 +136,17 @@ struct VehicleDriveSession
     float keyboardSteering = 0.0f;
     bool resetHeld = false;
     VehicleCameraOrbit orbit;
+    // The engine's idle and rev limit, which the gamepad's rumble places the revs between.
+    float engineMinRpm = 1000.0f;
+    float engineMaxRpm = 7000.0f;
+    VehicleHapticsState haptics;
 };
 
 struct VehicleDriveState
 {
     std::unique_ptr<VehicleDriveSession> session;
     VehicleCameraSettings camera;
+    VehicleHapticsSettings haptics;
     std::string lastError;
 };
 

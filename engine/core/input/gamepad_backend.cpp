@@ -1,102 +1,112 @@
 #include "gamepad_backend.h"
 
-#include <algorithm>
-#include <cmath>
+#include <engine/core/log/log.h>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#include <Xinput.h>
-#endif
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 
 namespace me
 {
 
 namespace
 {
-#ifdef _WIN32
-float NormalizeSignedThumbAxis(short value, short deadzone)
-{
-    const float maxMagnitude = value < 0 ? 32768.0f : 32767.0f;
-    const float normalized = static_cast<float>(value) / maxMagnitude;
-    const float normalizedDeadzone = static_cast<float>(deadzone) / 32767.0f;
+constexpr size_t kMaxGamepads = 4;
+// The dead zones XInput recommends, as fractions of full travel: the sticks rest off centre and the
+// triggers rest slightly pressed on some pads. Every pad gets them, so an Xbox pad reads as it did
+// through XInput.
+constexpr float kLeftStickDeadZone = 7849.0f / 32767.0f;
+constexpr float kRightStickDeadZone = 8689.0f / 32767.0f;
+constexpr float kTriggerThreshold = 30.0f / 255.0f;
+// The most often feedback goes to a pad, and how long before an unchanged one is sent again.
+constexpr std::chrono::milliseconds kMinSendInterval{8};
+constexpr std::chrono::milliseconds kRefreshInterval{500};
+// A plain rumble stops by itself after this long, so it is renewed rather than left running.
+constexpr Uint32 kRumbleDurationMs = 600;
 
-    if (std::abs(normalized) <= normalizedDeadzone)
-    {
-        return 0.0f;
-    }
+using Clock = std::chrono::steady_clock;
 
-    const float direction = normalized < 0.0f ? -1.0f : 1.0f;
-    const float magnitude = (std::abs(normalized) - normalizedDeadzone) / (1.0f - normalizedDeadzone);
-    return std::clamp(magnitude * direction, -1.0f, 1.0f);
-}
-
-float NormalizeTriggerAxis(unsigned char value)
-{
-    if (value <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
-    {
-        return 0.0f;
-    }
-
-    return std::clamp(
-        static_cast<float>(value - XINPUT_GAMEPAD_TRIGGER_THRESHOLD) /
-            static_cast<float>(255 - XINPUT_GAMEPAD_TRIGGER_THRESHOLD),
-        0.0f,
-        1.0f);
-}
-
-void SetButtonState(
-    PolledGamepadState& gamepad,
-    SDL_GamepadButton button,
-    WORD buttons,
-    WORD mask)
-{
-    const size_t buttonIndex = static_cast<size_t>(button);
-    if (buttonIndex >= gamepad.buttonDown.size())
-    {
-        return;
-    }
-
-    gamepad.buttonDown[buttonIndex] = (buttons & mask) != 0;
-}
-#else
 struct SdlGamepadSlot
 {
     bool assigned = false;
     SDL_JoystickID joystickId = 0;
     SDL_Gamepad* handle = nullptr;
+    SDL_GamepadType type = SDL_GAMEPAD_TYPE_UNKNOWN;
     uint32_t packetNumber = 0;
     std::array<bool, PolledGamepadState::kButtonCount> buttonDown{};
     std::array<float, PolledGamepadState::kAxisCount> axisValues{};
+
+    // The last feedback sent and when, so an unchanged one is not sent again.
+    bool feedbackSent = false;
+    GamepadFeedback lastFeedback;
+    Clock::time_point lastSendTime{};
+    bool reportedSendFailure = false;
 };
 
-std::array<SdlGamepadSlot, 4>& GetSdlGamepadSlots()
+std::array<SdlGamepadSlot, kMaxGamepads>& GetSdlGamepadSlots()
 {
-    static std::array<SdlGamepadSlot, 4> slots{};
+    static std::array<SdlGamepadSlot, kMaxGamepads> slots{};
     return slots;
+}
+
+bool IsDualSense(SDL_GamepadType type)
+{
+    return type == SDL_GAMEPAD_TYPE_PS5;
+}
+
+bool SendToGamepad(SdlGamepadSlot& slot, const GamepadFeedback& feedback)
+{
+    if (IsDualSense(slot.type))
+    {
+        const std::array<uint8_t, kDualSenseEffectsSize> effects = EncodeDualSenseEffects(feedback);
+        return SDL_SendGamepadEffect(slot.handle, effects.data(), static_cast<int>(effects.size()));
+    }
+
+    // Any other pad: the two motors, if it has them. A trigger effect has nowhere to go.
+    const auto motor = [](float value)
+    { return static_cast<Uint16>(std::lround(std::clamp(value, 0.0f, 1.0f) * 65535.0f)); };
+    return SDL_RumbleGamepad(slot.handle, motor(feedback.lowFrequencyMotor), motor(feedback.highFrequencyMotor), kRumbleDurationMs);
 }
 
 void ResetSdlGamepadSlot(SdlGamepadSlot& slot)
 {
     if (slot.handle != nullptr)
     {
+        if (slot.feedbackSent && !slot.lastFeedback.IsIdle())
+        {
+            // Closing the pad does not stop what it was told to do.
+            SendToGamepad(slot, GamepadFeedback{});
+        }
         SDL_CloseGamepad(slot.handle);
     }
 
     slot = SdlGamepadSlot{};
 }
 
+float ApplyAxialDeadZone(float normalized, float deadZone)
+{
+    const float magnitude = std::abs(normalized);
+    if (magnitude <= deadZone)
+    {
+        return 0.0f;
+    }
+
+    return std::clamp(std::copysign((magnitude - deadZone) / (1.0f - deadZone), normalized), -1.0f, 1.0f);
+}
+
 float NormalizeSdlGamepadAxis(SDL_GamepadAxis axis, Sint16 value)
 {
     if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
     {
-        return std::clamp(static_cast<float>(std::max<Sint16>(value, 0)) / 32767.0f, 0.0f, 1.0f);
+        const float pressed = std::clamp(static_cast<float>(std::max<Sint16>(value, 0)) / 32767.0f, 0.0f, 1.0f);
+        return pressed <= kTriggerThreshold ? 0.0f : (pressed - kTriggerThreshold) / (1.0f - kTriggerThreshold);
     }
 
     const float maxMagnitude = value < 0 ? 32768.0f : 32767.0f;
     float normalized = maxMagnitude > 0.0f ? static_cast<float>(value) / maxMagnitude : 0.0f;
+
+    const bool left = axis == SDL_GAMEPAD_AXIS_LEFTX || axis == SDL_GAMEPAD_AXIS_LEFTY;
+    normalized = ApplyAxialDeadZone(normalized, left ? kLeftStickDeadZone : kRightStickDeadZone);
 
     if (axis == SDL_GAMEPAD_AXIS_LEFTY || axis == SDL_GAMEPAD_AXIS_RIGHTY)
     {
@@ -105,59 +115,14 @@ float NormalizeSdlGamepadAxis(SDL_GamepadAxis axis, Sint16 value)
 
     return std::clamp(normalized, -1.0f, 1.0f);
 }
-#endif
 }
 
 std::array<PolledGamepadState, 4> PollPlatformGamepads()
 {
     std::array<PolledGamepadState, 4> gamepads{};
 
-#if defined(_WIN32)
-    for (uint32_t playerIndex = 0; playerIndex < gamepads.size(); ++playerIndex)
-    {
-        XINPUT_STATE state{};
-        const DWORD result = XInputGetState(playerIndex, &state);
-        if (result != ERROR_SUCCESS)
-        {
-            continue;
-        }
-
-        PolledGamepadState& gamepad = gamepads[playerIndex];
-        gamepad.connected = true;
-        gamepad.packetNumber = state.dwPacketNumber;
-
-        const XINPUT_GAMEPAD& xinputGamepad = state.Gamepad;
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_SOUTH, xinputGamepad.wButtons, XINPUT_GAMEPAD_A);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_EAST, xinputGamepad.wButtons, XINPUT_GAMEPAD_B);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_WEST, xinputGamepad.wButtons, XINPUT_GAMEPAD_X);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_NORTH, xinputGamepad.wButtons, XINPUT_GAMEPAD_Y);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_BACK, xinputGamepad.wButtons, XINPUT_GAMEPAD_BACK);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_START, xinputGamepad.wButtons, XINPUT_GAMEPAD_START);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_LEFT_STICK, xinputGamepad.wButtons, XINPUT_GAMEPAD_LEFT_THUMB);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_STICK, xinputGamepad.wButtons, XINPUT_GAMEPAD_RIGHT_THUMB);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, xinputGamepad.wButtons, XINPUT_GAMEPAD_LEFT_SHOULDER);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, xinputGamepad.wButtons, XINPUT_GAMEPAD_RIGHT_SHOULDER);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP, xinputGamepad.wButtons, XINPUT_GAMEPAD_DPAD_UP);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN, xinputGamepad.wButtons, XINPUT_GAMEPAD_DPAD_DOWN);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT, xinputGamepad.wButtons, XINPUT_GAMEPAD_DPAD_LEFT);
-        SetButtonState(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, xinputGamepad.wButtons, XINPUT_GAMEPAD_DPAD_RIGHT);
-
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_LEFTX)] =
-            NormalizeSignedThumbAxis(xinputGamepad.sThumbLX, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_LEFTY)] =
-            -NormalizeSignedThumbAxis(xinputGamepad.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_RIGHTX)] =
-            NormalizeSignedThumbAxis(xinputGamepad.sThumbRX, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_RIGHTY)] =
-            -NormalizeSignedThumbAxis(xinputGamepad.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_LEFT_TRIGGER)] =
-            NormalizeTriggerAxis(xinputGamepad.bLeftTrigger);
-        gamepad.axisValues[static_cast<size_t>(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)] =
-            NormalizeTriggerAxis(xinputGamepad.bRightTrigger);
-    }
-#else
-    std::array<SdlGamepadSlot, 4>& slots = GetSdlGamepadSlots();
-    std::array<bool, 4> slotSeen{};
+    std::array<SdlGamepadSlot, kMaxGamepads>& slots = GetSdlGamepadSlots();
+    std::array<bool, kMaxGamepads> slotSeen{};
 
     int connectedGamepadCount = 0;
     SDL_JoystickID* connectedGamepads = SDL_GetGamepads(&connectedGamepadCount);
@@ -208,10 +173,17 @@ std::array<PolledGamepadState, 4> PollPlatformGamepads()
             continue;
         }
 
+        if (slot.type == SDL_GAMEPAD_TYPE_UNKNOWN)
+        {
+            slot.type = SDL_GetGamepadType(slot.handle);
+            LOG_INFO("Gamepad {} connected: {} (type {})", slotIndex, SDL_GetGamepadName(slot.handle), static_cast<int>(slot.type));
+        }
+
         slotSeen[slotIndex] = true;
 
         PolledGamepadState& gamepad = gamepads[slotIndex];
         gamepad.connected = true;
+        gamepad.type = slot.type;
 
         for (size_t buttonIndex = 0; buttonIndex < gamepad.buttonDown.size(); ++buttonIndex)
         {
@@ -247,8 +219,64 @@ std::array<PolledGamepadState, 4> PollPlatformGamepads()
             ResetSdlGamepadSlot(slots[slotIndex]);
         }
     }
-#endif
 
     return gamepads;
+}
+
+void SendPlatformGamepadFeedback(size_t playerIndex, const GamepadFeedback& feedback)
+{
+    std::array<SdlGamepadSlot, kMaxGamepads>& slots = GetSdlGamepadSlots();
+    if (playerIndex >= slots.size() || slots[playerIndex].handle == nullptr)
+    {
+        return;
+    }
+
+    SdlGamepadSlot& slot = slots[playerIndex];
+    const Clock::time_point now = Clock::now();
+    const bool changed = !slot.feedbackSent || slot.lastFeedback != feedback;
+    if (!changed && feedback.IsIdle())
+    {
+        return;
+    }
+    if (slot.feedbackSent)
+    {
+        const Clock::duration sinceSend = now - slot.lastSendTime;
+        // Going quiet is never held back; anything else waits out the minimum interval.
+        const bool goingIdle = changed && feedback.IsIdle();
+        if (changed ? (!goingIdle && sinceSend < kMinSendInterval) : sinceSend < kRefreshInterval)
+        {
+            return;
+        }
+    }
+    else if (feedback.IsIdle())
+    {
+        // Nothing was ever asked of this pad: leave it alone.
+        slot.feedbackSent = true;
+        slot.lastFeedback = feedback;
+        slot.lastSendTime = now;
+        return;
+    }
+
+    if (SendToGamepad(slot, feedback))
+    {
+        slot.reportedSendFailure = false;
+    }
+    else if (!slot.reportedSendFailure)
+    {
+        slot.reportedSendFailure = true;
+        LOG_WARN("Gamepad {} feedback was refused: {}", playerIndex, SDL_GetError());
+    }
+
+    slot.feedbackSent = true;
+    slot.lastFeedback = feedback;
+    slot.lastSendTime = now;
+}
+
+void ReleasePlatformGamepads()
+{
+    for (SdlGamepadSlot& slot : GetSdlGamepadSlots())
+    {
+        ResetSdlGamepadSlot(slot);
+    }
 }
 }

@@ -134,6 +134,7 @@ struct EditorUiFrameResult
     // The Vehicle panel's tuning, which the next drive starts with, and its chase camera.
     VehicleSettings vehicleTuning;
     VehicleCameraSettings vehicleCamera;
+    VehicleHapticsSettings vehicleHaptics;
     // The Suspension Rigs window's settings for the live rig, taken while it runs. Unset when the
     // window has never been opened: the rig then keeps what it has.
     std::optional<VehicleRigExcitation> vehicleRigExcitation;
@@ -387,6 +388,7 @@ class EditorUiController
     VideoRecordingIndicator m_videoRecording;
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
+    VehicleHapticsSettings m_vehicleHaptics;
     VehiclePhysicsOverlaySettings m_vehicleOverlay;
     bool m_inputMonitorAutoScroll = true;
     std::vector<std::string> m_inputMonitorMessages;

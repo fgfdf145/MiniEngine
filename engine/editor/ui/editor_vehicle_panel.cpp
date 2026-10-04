@@ -235,7 +235,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
         ImGui::TextUnformatted("Backspace: reset the car    F5: stop");
         ImGui::TextUnformatted("Hold the right mouse button: look around the car");
-        ImGui::TextDisabled("Gamepad: RT/LT, left stick, A hand brake, Back reset");
+        ImGui::TextDisabled("Gamepad (Xbox or DualSense): RT/LT, left stick, A (Cross) hand brake, Back (Create) reset");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 
@@ -249,6 +249,18 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         DragFloatInRange("Stiffness", &m_vehicleCamera.stiffness, 0.5f, 30.0f, "%.1f", 0.1f);
         DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.5f, 20.0f, "%.1f", 0.1f);
         ImGui::EndDisabled();
+    }
+
+    if (ImGui::CollapsingHeader("Gamepad Feedback", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        VehicleHapticsSettings& haptics = m_vehicleHaptics;
+        ImGui::Checkbox("Engine Rumble and Gear Thump", &haptics.enabled);
+        ImGui::BeginDisabled(!haptics.enabled);
+        DragFloatInRange("Rumble Strength", &haptics.rumbleStrength, 0.0f, 2.0f, "%.2f", 0.01f);
+        DragFloatInRange("Trigger Strength", &haptics.triggerStrength, 0.0f, 2.0f, "%.2f", 0.01f);
+        ImGui::Checkbox("Brake Trigger Shakes When a Wheel Locks", &haptics.brakeLockFeedback);
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("DualSense: the triggers push back (RT accelerator, LT brake) and shake. Other pads: rumble only.");
     }
 
     if (ImGui::CollapsingHeader("Physics Overlay", ImGuiTreeNodeFlags_DefaultOpen))

@@ -1,6 +1,7 @@
 #include "window.h"
 #include "window_platform.h"
 
+#include <engine/core/input/gamepad_backend.h>
 #include <engine/core/log/log.h>
 #include <engine/core/version/engine_version.h>
 
@@ -68,6 +69,8 @@ Window::~Window()
         SDL_DestroyWindow(m_window);
     }
 
+    // Motors and triggers keep doing what they were last told after the program ends.
+    ReleasePlatformGamepads();
     SDL_Quit();
 }
 

@@ -26,6 +26,8 @@ add_library(engine_editor
     services/vehicle_rig_service.cpp
     services/vehicle_rig_service.h
     services/vehicle_drive_service.h
+    services/vehicle_haptics.cpp
+    services/vehicle_haptics.h
     ui/editor_asset_browser_panel.cpp
     ui/editor_dockspace.cpp
     ui/editor_material_graph.cpp

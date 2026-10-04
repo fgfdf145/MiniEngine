@@ -163,6 +163,28 @@ bool InputState::IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex)
            m_gamepads[playerIndex].buttonDown[static_cast<size_t>(buttonIndex)];
 }
 
+SDL_GamepadType InputState::GetGamepadType(uint32_t playerIndex) const
+{
+    return IsValidGamepadPlayerIndex(playerIndex) && m_gamepads[playerIndex].connected ? m_gamepads[playerIndex].type
+                                                                                       : SDL_GAMEPAD_TYPE_UNKNOWN;
+}
+
+void InputState::SetGamepadFeedback(uint32_t playerIndex, const GamepadFeedback& feedback)
+{
+    if (IsValidGamepadPlayerIndex(playerIndex) && m_gamepads[playerIndex].connected)
+    {
+        SendPlatformGamepadFeedback(playerIndex, feedback);
+    }
+}
+
+void InputState::ClearGamepadFeedback()
+{
+    for (uint32_t playerIndex = 0; playerIndex < kMaxGamepads; ++playerIndex)
+    {
+        SetGamepadFeedback(playerIndex, GamepadFeedback{});
+    }
+}
+
 int InputState::GetFirstConnectedGamepadIndex() const
 {
     for (uint32_t playerIndex = 0; playerIndex < kMaxGamepads; ++playerIndex)
@@ -382,6 +404,7 @@ void InputState::PollGamepads()
         }
 
         const bool wasConnected = gamepad.connected;
+        gamepad.type = polledGamepad.type;
         const std::array<float, kGamepadAxisCount>& updatedAxes = polledGamepad.axisValues;
 
         if (!wasConnected)

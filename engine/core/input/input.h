@@ -1,5 +1,7 @@
 #pragma once
 
+#include <engine/core/input/gamepad_feedback.h>
+
 #include <SDL3/SDL.h>
 
 #include <array>
@@ -93,6 +95,13 @@ class InputState
     float GetGamepadAxis(GamepadAxis axis, uint32_t playerIndex = 0) const;
     bool IsGamepadButtonDown(GamepadButton button, uint32_t playerIndex = 0) const;
     int GetFirstConnectedGamepadIndex() const;
+    // What kind of pad is in this slot (SDL_GAMEPAD_TYPE_PS5 for a DualSense); unknown when none.
+    SDL_GamepadType GetGamepadType(uint32_t playerIndex = 0) const;
+    // Makes the pad do `feedback` (rumble, and a DualSense's adaptive triggers) until told otherwise.
+    // It is sent when it changes, so calling this every frame is fine.
+    void SetGamepadFeedback(uint32_t playerIndex, const GamepadFeedback& feedback);
+    // Stops every pad's rumble and frees its triggers.
+    void ClearGamepadFeedback();
 
     bool IsMouseLookActive() const;
     bool IsMousePanActive() const;
@@ -112,6 +121,7 @@ class InputState
     struct GamepadState
     {
         bool connected = false;
+        SDL_GamepadType type = SDL_GAMEPAD_TYPE_UNKNOWN;
         uint32_t packetNumber = 0;
         std::array<bool, kGamepadButtonCount> buttonDown{};
         std::array<float, kGamepadAxisCount> axisValues{};

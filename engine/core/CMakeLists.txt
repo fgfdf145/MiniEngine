@@ -3,6 +3,8 @@ add_library(engine_core
     file/atomic_file.h
     input/gamepad_backend.cpp
     input/gamepad_backend.h
+    input/gamepad_feedback.cpp
+    input/gamepad_feedback.h
     input/input.cpp
     input/input.h
     log/log.cpp
@@ -59,7 +61,6 @@ target_link_libraries(engine_core
 if(WIN32)
     target_link_libraries(engine_core
         PUBLIC
-            Xinput
             # mp4_h264_writer.cpp: Media Foundation's sink writer and H.264 encoder.
             mfplat
             mfreadwrite
