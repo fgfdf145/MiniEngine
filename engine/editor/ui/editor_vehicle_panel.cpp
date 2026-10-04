@@ -246,7 +246,6 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         DragFloatInRange("Distance (m)", &m_vehicleCamera.distance, 2.0f, 30.0f, "%.1f", 0.05f);
         DragFloatInRange("Height (m)", &m_vehicleCamera.height, 0.2f, 15.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Height (m)", &m_vehicleCamera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
-        DragFloatInRange("Stiffness", &m_vehicleCamera.stiffness, 0.5f, 30.0f, "%.1f", 0.1f);
         DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.0f, 20.0f, "%.1f", 0.1f);
         ImGui::EndDisabled();
     }

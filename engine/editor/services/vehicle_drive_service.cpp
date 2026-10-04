@@ -718,13 +718,10 @@ void UpdateChaseCamera(
     glm::vec3 arm = vehiclePose.position + glm::vec3(0.0f, settings.height, 0.0f) - heading * settings.distance - lookAt;
     arm = glm::angleAxis(glm::radians(orbit.pitchDegrees), glm::normalize(glm::cross(up, heading))) * arm;
     arm = glm::angleAxis(glm::radians(orbit.yawDegrees), up) * arm;
-    // Only the arm's swing is smoothed, never the car's travel: the camera rides rigidly with the car's
-    // position so the gap stays the same at any speed (smoothing the world position would let it
-    // trail further behind the faster the car goes), as in Gran Turismo 7.
-    const float follow = deltaSeconds <= 0.0f ? 1.0f : 1.0f - std::exp(-std::max(settings.stiffness, 0.0f) * deltaSeconds);
-    const glm::vec3 currentArm = camera.position - lookAt;
-    const glm::vec3 smoothedArm = glm::length(currentArm) < 1e-4f ? arm : glm::mix(currentArm, arm, follow);
-    camera.position = lookAt + smoothedArm;
+    // Locked to the car, with no smoothing of the car's travel or of its heading: the camera keeps the
+    // same place relative to the body, as in Gran Turismo 7, so a view from the car's side stays on the
+    // side instead of lagging round as the heading changes.
+    camera.position = lookAt + arm;
 
     const glm::vec3 toTarget = target - camera.position;
     if (glm::length(toTarget) > 1e-4f)

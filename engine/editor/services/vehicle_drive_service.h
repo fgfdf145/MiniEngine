@@ -34,8 +34,6 @@ struct VehicleCameraSettings
     float distance = 6.5f;   // metres behind the car
     float height = 2.0f;     // metres above the car's origin
     float lookHeight = 1.0f; // the point above the car's origin the camera looks at
-    // How quickly the camera catches up with the car, per second; higher is stiffer.
-    float stiffness = 6.0f;
     // Holding the right mouse button (or pushing the right stick) swings the camera round the car.
     // Letting go leaves it where it is when this is 0; above 0 it comes back behind the car at this
     // rate per second (higher is quicker).
