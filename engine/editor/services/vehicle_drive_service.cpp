@@ -342,7 +342,8 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         return false;
     }
 
-    const VehicleControls controls = ReadVehicleControls(state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering);
+    const VehicleControls controls = ReadVehicleControls(
+        state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering, state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
     const bool resetDown =
         (!keyboardCaptured && state.input.IsKeyDown(KeyCode(SDL_SCANCODE_BACKSPACE))) ||
         (state.input.GetFirstConnectedGamepadIndex() >= 0 && !keyboardCaptured &&
@@ -466,12 +467,18 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
     world.EditTransform(session->entity) = driven;
 }
 
-VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering)
+VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering,
+                                    bool manualGearbox, VehicleGearButtons* gearButtonsHeld)
 {
     VehicleControls controls;
+    controls.manualGearbox = manualGearbox;
+    VehicleGearButtons gearButtons;
     float steeringTarget = 0.0f;
     if (!keyboardCaptured)
     {
+        gearButtons.up = input.IsKeyDown(KeyCode(SDL_SCANCODE_E));
+        gearButtons.down = input.IsKeyDown(KeyCode(SDL_SCANCODE_Q));
+        gearButtons.neutral = input.IsKeyDown(KeyCode(SDL_SCANCODE_N));
         controls.throttle += IsEitherKeyDown(input, SDL_SCANCODE_W, SDL_SCANCODE_UP) ? 1.0f : 0.0f;
         controls.throttle -= IsEitherKeyDown(input, SDL_SCANCODE_S, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
         steeringTarget += IsEitherKeyDown(input, SDL_SCANCODE_D, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
@@ -489,10 +496,23 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
         const uint32_t player = static_cast<uint32_t>(gamepadIndex);
         controls.throttle += input.GetGamepadAxis(GamepadAxis::RightTrigger, player) - input.GetGamepadAxis(GamepadAxis::LeftTrigger, player);
         controls.steering += ApplyDeadZone(input.GetGamepadAxis(GamepadAxis::LeftX, player), kGamepadStickDeadZone);
-        if (input.IsGamepadButtonDown(GamepadButton::South, player))
+        if (input.IsGamepadButtonDown(GamepadButton::East, player))
         {
             controls.handBrake = 1.0f;
         }
+        gearButtons.up = gearButtons.up || input.IsGamepadButtonDown(GamepadButton::RightShoulder, player);
+        gearButtons.down = gearButtons.down || input.IsGamepadButtonDown(GamepadButton::LeftShoulder, player);
+        gearButtons.neutral = gearButtons.neutral || input.IsGamepadButtonDown(GamepadButton::South, player);
+    }
+
+    if (gearButtonsHeld != nullptr)
+    {
+        if (manualGearbox)
+        {
+            controls.gearShifts = (gearButtons.up && !gearButtonsHeld->up ? 1 : 0) - (gearButtons.down && !gearButtonsHeld->down ? 1 : 0);
+            controls.selectNeutral = gearButtons.neutral && !gearButtonsHeld->neutral;
+        }
+        *gearButtonsHeld = gearButtons;
     }
 
     controls.throttle = std::clamp(controls.throttle, -1.0f, 1.0f);

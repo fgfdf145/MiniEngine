@@ -736,6 +736,13 @@ struct VehicleControls
     float steering = 0.0f; // -1 full left, 1 full right
     float brake = 0.0f;    // 0-1
     float handBrake = 0.0f; // 0-1
+    // A sequential manual gearbox with an automatic clutch instead of the automatic one: the driver
+    // changes gear (gearShifts), the throttle only drives and pulling it back only brakes.
+    bool manualGearbox = false;
+    // Gear changes asked for since the last controls: +1 per change up, -1 per change down.
+    int gearShifts = 0;
+    // Asked for neutral since the last controls (after any gearShifts).
+    bool selectNeutral = false;
 };
 
 // The inputs of Jolt's WheeledVehicleController::SetDriverInput.
@@ -753,6 +760,11 @@ struct VehicleDriverInput
 // calls; `forwardSpeed` is the car's velocity along its forward axis in metres per second. The hand
 // brake cuts the throttle.
 VehicleDriverInput ResolveVehicleDriverInput(const VehicleControls& controls, float forwardSpeed, float& direction);
+
+// The same for the manual gearbox in `gear` (-1 reverse, 0 neutral, 1 and up forward): the throttle
+// drives the way the gear does (negative in reverse, as the automatic's), pulling it back brakes, and
+// the hand brake leaves the throttle alone (the gearbox opens the clutch instead).
+VehicleDriverInput ResolveManualDriverInput(const VehicleControls& controls, int gear);
 
 // Where an automatic gearbox changes gear, in engine rpm: up at upLight on a light throttle and at
 // upFull on a full one, down at downClosed off the throttle and at downFull (the kickdown) on a
@@ -783,6 +795,7 @@ struct VehicleGearbox
     float releaseSeconds = 0.3f; // then it bites over this long
     float latencySeconds = 0.5f; // and the box waits this long before another change
     float launchRpm = 0.0f;      // moving off, the clutch slips around this engine rpm (0: none)
+    float limiterRpm = 0.0f;     // the manual box refuses a change down that would rev past this (0: no guard)
 };
 
 // The gearbox's state, kept by the caller between steps. `gear` is 1 and up forward, -1 reverse;
@@ -825,4 +838,14 @@ float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm);
 // when it passes the point while the wheels lag it (the clutch slipping for traction control).
 void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds,
                             float engineRpm = 0.0f);
+
+// One step of a sequential manual gearbox with an automatic clutch: `shifts` changes up (positive) or
+// down (negative) one gear each, through neutral (0) between first and reverse. It refuses a change down
+// that would rev the engine past gearbox.limiterRpm, and reverse while the car still rolls faster than
+// the idle in it. A change under way opens the clutch, matches the revs and lets the clutch bite as the
+// automatic's does; moving off, rolling below the idle off the throttle and the launch work as there.
+// In neutral, and while `declutch` holds (the hand brake), the clutch is open; let go, it bites again.
+// `neutral` takes it out of gear after the shifts.
+void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm,
+                         float deltaSeconds, float engineRpm = 0.0f, bool declutch = false);
 }

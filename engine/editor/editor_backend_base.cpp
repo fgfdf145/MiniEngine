@@ -207,6 +207,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 
     State().vehicleDrive.camera = uiFrame.vehicleCamera;
     State().vehicleDrive.haptics = uiFrame.vehicleHaptics;
+    State().vehicleDrive.manualGearbox = uiFrame.vehicleManualGearbox;
     if (actions.stopVehicleDrive)
     {
         VehicleDriveService::Stop(State());

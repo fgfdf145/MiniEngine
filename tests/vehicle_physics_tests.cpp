@@ -261,6 +261,59 @@ void TestGearboxDoesNotHunt()
     }
 }
 
+// The manual box changes one gear per press, through neutral to reverse, and refuses what would hurt
+// the engine: a change down onto the limiter, reverse while the car still rolls forward.
+void TestManualGearboxChangesWhenAsked()
+{
+    VehicleGearbox gearbox = GtrGearbox();
+    gearbox.limiterRpm = gearbox.shiftPoints.upFull; // first gear at the test speed revs past it
+    constexpr float kStep = 1.0f / 1000.0f;
+    const auto run = [&](VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm, float engineRpm, bool declutch = false)
+    {
+        UpdateManualGearbox(gearbox, state, shifts, neutral, forward, outputRpm, kStep, engineRpm, declutch);
+        for (int step = 0; step < 1000; ++step)
+        {
+            UpdateManualGearbox(gearbox, state, 0, false, forward, outputRpm, kStep, engineRpm, declutch);
+        }
+    };
+
+    // It holds first past the automatic's change-up point: only the driver changes up.
+    VehicleGearboxState state;
+    const float fast = gearbox.shiftPoints.upFull / gearbox.forwardRatios[0] * 1.02f;
+    run(state, 0, false, 1.0f, fast, VehicleGearRpm(gearbox, 1, fast));
+    Require(state.gear == 1 && state.clutch == 1.0f, "the manual box holds first, in " + std::to_string(state.gear));
+    UpdateManualGearbox(gearbox, state, 1, false, 1.0f, fast, kStep, VehicleGearRpm(gearbox, 1, fast));
+    Require(state.gear == 2 && state.clutch == 0.0f && state.revMatch, "a press changes up with the clutch open");
+    run(state, 0, false, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
+    Require(state.clutch == 1.0f, "and the clutch bites again");
+
+    // Changing down two at that speed would put first past the limiter: it stops at second.
+    run(state, 1, false, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
+    Require(state.gear == 3, "third");
+    run(state, -2, false, 1.0f, fast, VehicleGearRpm(gearbox, 3, fast));
+    Require(state.gear == 2, "a change down onto the limiter is refused, in " + std::to_string(state.gear));
+
+    // Neutral opens the clutch; reverse waits for the car to stop.
+    run(state, 0, true, 0.0f, fast, 1000.0f);
+    Require(state.gear == 0 && state.clutch == 0.0f, "neutral");
+    run(state, -1, false, 0.0f, fast, 1000.0f);
+    Require(state.gear == 0, "no reverse while rolling, in " + std::to_string(state.gear));
+    run(state, -1, false, 0.0f, 0.0f, 1000.0f);
+    Require(state.gear == -1, "reverse once stopped");
+    run(state, -1, false, 0.0f, 0.0f, 1000.0f);
+    Require(state.gear == -1, "and nothing below it");
+    run(state, 2, false, 0.0f, 0.0f, 1000.0f);
+    Require(state.gear == 1, "up through neutral to first");
+    run(state, 0, false, 0.5f, 0.0f, 3000.0f);
+    Require(state.clutch > 0.0f, "the throttle moves off in first");
+
+    // The hand brake declutches; let go, it bites again.
+    run(state, 0, false, 1.0f, 1000.0f, 3000.0f, true);
+    Require(state.clutch == 0.0f, "the hand brake opens the clutch");
+    run(state, 0, false, 1.0f, 1000.0f, 3000.0f);
+    Require(state.clutch == 1.0f, "and it bites when let go");
+}
+
 void AddGroundMesh(PhysicsWorld& world, float friction = PhysicsWorld::kDefaultSurfaceFriction)
 {
     // A 400 m square facing up (counter-clockwise seen from above), as a triangle mesh like a track's.
@@ -353,6 +406,63 @@ void TestCarDrivesSteersAndReverses()
     world.SetVehicleControls(car, controls);
     Simulate(world, 3.0f);
     Require(std::abs(world.GetVehicleTelemetry(car).forwardSpeed) < 0.2f, "the brake stops the car");
+}
+
+void TestCarDrivesOnTheManualGearbox()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    const PhysicsPose start{glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)};
+    const VehicleId car = world.AddVehicle(settings, start);
+    Simulate(world, 1.0f);
+
+    VehicleControls controls;
+    controls.manualGearbox = true;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 4.0f);
+    VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.gear == 1, "the manual box stays in first, in " + std::to_string(telemetry.gear));
+    Require(telemetry.forwardSpeed > 3.0f, "and drives, speed " + std::to_string(telemetry.forwardSpeed));
+
+    controls.gearShifts = 1;
+    world.SetVehicleControls(car, controls);
+    controls.gearShifts = 0;
+    world.SetVehicleControls(car, controls); // a press is counted once, however often the controls come
+    Simulate(world, 1.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.gear == 2, "a change up makes second, in " + std::to_string(telemetry.gear));
+
+    // Pulling back brakes to a stop and does not reverse.
+    controls.throttle = -1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 5.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(std::abs(telemetry.forwardSpeed) < 0.3f, "pulling back stops the car, speed " + std::to_string(telemetry.forwardSpeed));
+    Require(telemetry.gear == 2, "in its gear");
+
+    // Down to reverse, and the throttle backs up.
+    controls.throttle = 0.0f;
+    controls.gearShifts = -3;
+    world.SetVehicleControls(car, controls);
+    controls.gearShifts = 0;
+    Simulate(world, 0.1f);
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 3.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.gear == -1, "three changes down from second make reverse, in " + std::to_string(telemetry.gear));
+    Require(telemetry.forwardSpeed < -1.0f, "the throttle backs up, speed " + std::to_string(telemetry.forwardSpeed));
+
+    // Neutral: the throttle revs the engine and the car rolls.
+    controls.selectNeutral = true;
+    world.SetVehicleControls(car, controls);
+    controls.selectNeutral = false;
+    Simulate(world, 1.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.gear == 0, "neutral, in " + std::to_string(telemetry.gear));
+    Require(telemetry.engineRpm > settings.minRpm + 500.0f, "the engine revs free, " + std::to_string(telemetry.engineRpm));
 }
 
 void TestCarRotatedAtStartDrivesItsOwnWay()
@@ -2340,6 +2450,7 @@ int main()
         TestGearboxChangeTimesAndUpshiftCut();
         TestCarSettlesAfterBrakingToAStop();
         TestGearboxDoesNotHunt();
+        TestManualGearboxChangesWhenAsked();
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
         TestGrassCardsStopACarUnlessTheyAreGroundCover();
@@ -2363,6 +2474,7 @@ int main()
         TestAerodynamicsDragsAndPressesDown();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();
+        TestCarDrivesOnTheManualGearbox();
         TestCarRotatedAtStartDrivesItsOwnWay();
         TestFitUsesTheModelsWheels();
         TestCarSitsOnTheModelsWheels();

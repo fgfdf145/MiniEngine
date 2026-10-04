@@ -244,11 +244,25 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextUnformatted("W/S or Up/Down: throttle, brake and reverse");
+        ImGui::Checkbox("Manual Gearbox", &m_vehicleManualGearbox);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Sequential, with an automatic clutch: you change gear, through neutral between first and reverse.\n"
+                "The throttle only drives and the brake only brakes; reverse goes in once the car has (nearly) stopped,\n"
+                "and a change down that would over-rev the engine is refused. The hand brake opens the clutch.\n"
+                "Off: the automatic picks the gear and pulling back reverses once stopped.");
+        }
+        ImGui::TextUnformatted(m_vehicleManualGearbox ? "W/S or Up/Down: throttle and brake" : "W/S or Up/Down: throttle, brake and reverse");
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
+        if (m_vehicleManualGearbox)
+        {
+            ImGui::TextUnformatted("E/Q: change up/down    N: neutral");
+        }
         ImGui::TextUnformatted("Backspace: reset the car    F5: stop");
         ImGui::TextUnformatted("Hold the right mouse button: look around the car");
-        ImGui::TextDisabled("Gamepad (Xbox or DualSense): RT/LT, left stick, right stick looks around the car, A (Cross) hand brake, Back (Create) reset");
+        ImGui::TextDisabled("Gamepad (DualSense / Xbox): R2/L2 (RT/LT), left stick, right stick looks around the car,");
+        ImGui::TextDisabled("Circle (B) hand brake, R1/L1 (RB/LB) change up/down, Cross (A) neutral, Create (Back) reset");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 

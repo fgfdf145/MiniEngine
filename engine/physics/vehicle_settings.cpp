@@ -700,6 +700,17 @@ VehicleDriverInput ResolveVehicleDriverInput(const VehicleControls& controls, fl
     return input;
 }
 
+VehicleDriverInput ResolveManualDriverInput(const VehicleControls& controls, int gear)
+{
+    VehicleDriverInput input;
+    input.right = std::clamp(controls.steering, -1.0f, 1.0f);
+    input.handBrake = std::clamp(controls.handBrake, 0.0f, 1.0f);
+    const float throttle = std::clamp(controls.throttle, -1.0f, 1.0f);
+    input.brake = std::max(std::clamp(controls.brake, 0.0f, 1.0f), -throttle);
+    input.forward = std::max(throttle, 0.0f) * (gear < 0 ? -1.0f : 1.0f);
+    return input;
+}
+
 VehicleShiftPoints ComputeVehicleShiftPoints(const VehicleSettings& settings)
 {
     // Along the rev range from the idle to the limiter: full throttle changes up just under the
@@ -731,6 +742,103 @@ float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm)
     return std::abs(outputRpm * gearbox.forwardRatios[static_cast<size_t>(gear - 1)]);
 }
 
+namespace
+{
+// Starts a change into the gear the state now holds. Under load the clutch opens while the gears change
+// (a change down has its own time), then bites; between gears with no torque through them (from rest,
+// or rolling below the idle) the box just selects it. A change up under load also cuts the engine for
+// the cut time.
+void StartGearChange(const VehicleGearbox& gearbox, VehicleGearboxState& state, bool underLoad, bool up = false)
+{
+    const float switchSeconds = !up && gearbox.switchDownSeconds > 0.0f ? gearbox.switchDownSeconds : gearbox.switchSeconds;
+    state.switchLeft = underLoad ? switchSeconds : 0.0f;
+    state.cutLeft = underLoad && up ? gearbox.upshiftCutSeconds : 0.0f;
+    state.releaseLeft = gearbox.releaseSeconds;
+    state.latencyLeft = gearbox.latencySeconds;
+    state.launching = false;
+}
+
+// Moving off in a forward gear, a launch rpm slips the clutch on the engine's revs instead.
+void StartLaunch(const VehicleGearbox& gearbox, VehicleGearboxState& state, float engineRpm)
+{
+    if (gearbox.launchRpm > 0.0f && state.gear > 0 && engineRpm > 0.0f)
+    {
+        state.launching = true;
+        state.releaseLeft = 0.0f;
+    }
+}
+
+// The clutch for the gear the box is in: open off the throttle below the idle (or while `declutch`
+// holds it), slipping on a launch, open through a change and biting after it.
+void WorkGearboxClutch(const VehicleGearbox& gearbox, VehicleGearboxState& state, float throttle, float outputRpm, float deltaSeconds,
+                       float engineRpm, bool declutch)
+{
+    // Off the throttle and too slow for the gear to turn the engine at its idle, the clutch opens: the
+    // car rolls to a stop with the engine idling rather than the engine pushing it on.
+    const bool idle = declutch || (throttle <= 0.0f && VehicleGearRpm(gearbox, state.gear, outputRpm) < gearbox.idleRpm);
+    if (idle)
+    {
+        state.idling = true;
+        state.switchLeft = 0.0f;
+        state.cutLeft = 0.0f;
+        state.releaseLeft = 0.0f;
+        state.latencyLeft = 0.0f;
+        state.clutch = 0.0f;
+        state.revMatch = false;
+        state.launching = false;
+        return;
+    }
+    if (state.idling)
+    {
+        state.idling = false;
+        StartGearChange(gearbox, state, false);
+        StartLaunch(gearbox, state, engineRpm);
+    }
+
+    if (state.launching)
+    {
+        // The clutch closes as the engine's revs pass the launch point (throttle-scaled from the idle):
+        // the engine settles where the clutch passes what it makes. The launch is over once the wheels
+        // turn the engine at its own speed.
+        const float gearRpm = VehicleGearRpm(gearbox, state.gear, outputRpm);
+        const float idleRpm = std::max(gearbox.idleRpm, 1.0f);
+        const float launch = idleRpm + (std::max(gearbox.launchRpm, idleRpm) - idleRpm) * throttle;
+        const float low = 0.95f * launch;
+        const float high = 1.15f * launch;
+        const float x = std::clamp((engineRpm - low) / std::max(high - low, 1.0f), 0.0f, 1.0f);
+        state.clutch = x * x * (3.0f - 2.0f * x);
+        state.revMatch = false;
+        state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
+        // Over once the clutch is shut (what slip is left is traction control's) or the wheels turn the
+        // engine at its own speed.
+        if (x >= 1.0f || (gearRpm >= 0.98f * engineRpm && gearRpm >= low))
+        {
+            state.launching = false;
+            state.clutch = 1.0f;
+        }
+        return;
+    }
+
+    state.revMatch = state.switchLeft > 0.0f;
+    state.cutLeft = std::max(state.cutLeft - deltaSeconds, 0.0f);
+    if (state.switchLeft > 0.0f)
+    {
+        state.switchLeft = std::max(state.switchLeft - deltaSeconds, 0.0f);
+        state.clutch = 0.0f;
+    }
+    else if (state.releaseLeft > 0.0f)
+    {
+        state.releaseLeft = std::max(state.releaseLeft - deltaSeconds, 0.0f);
+        state.clutch = gearbox.releaseSeconds > 0.0f ? 1.0f - state.releaseLeft / gearbox.releaseSeconds : 1.0f;
+    }
+    else
+    {
+        state.clutch = 1.0f;
+        state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
+    }
+}
+}
+
 void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm)
 {
     const int top = static_cast<int>(gearbox.forwardRatios.size());
@@ -739,34 +847,13 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     {
         return VehicleGearRpm(gearbox, gear, outputRpm);
     };
-    const auto startChange = [&](bool underLoad, bool up = false)
-    {
-        // Under load the clutch opens while the gears change (a change down has its own time), then
-        // bites; between gears with no torque through them (from rest, or rolling below the idle) the
-        // box just selects it. A change up under load also cuts the engine for the cut time.
-        const float switchSeconds = !up && gearbox.switchDownSeconds > 0.0f ? gearbox.switchDownSeconds : gearbox.switchSeconds;
-        state.switchLeft = underLoad ? switchSeconds : 0.0f;
-        state.cutLeft = underLoad && up ? gearbox.upshiftCutSeconds : 0.0f;
-        state.releaseLeft = gearbox.releaseSeconds;
-        state.latencyLeft = gearbox.latencySeconds;
-        state.launching = false;
-    };
-    // Moving off in a forward gear, a launch rpm slips the clutch on the engine's revs instead.
-    const auto startLaunch = [&]()
-    {
-        if (gearbox.launchRpm > 0.0f && state.gear > 0 && engineRpm > 0.0f)
-        {
-            state.launching = true;
-            state.releaseLeft = 0.0f;
-        }
-    };
 
     // Drive or reverse, as the throttle asks; the caller only asks once the car has stopped.
     if ((forward > 0.0f && state.gear < 0) || (forward < 0.0f && state.gear > 0) || state.gear == 0)
     {
         state.gear = forward < 0.0f ? -1 : 1;
-        startChange(false);
-        startLaunch();
+        StartGearChange(gearbox, state, false);
+        StartLaunch(gearbox, state, engineRpm);
     }
 
     const bool ready = state.idling || (state.switchLeft <= 0.0f && state.releaseLeft <= 0.0f && state.latencyLeft <= 0.0f);
@@ -803,72 +890,68 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
             state.gear = target;
             if (!state.idling)
             {
-                startChange(true, up);
+                StartGearChange(gearbox, state, true, up);
             }
         }
     }
 
-    // Off the throttle and too slow for the gear to turn the engine at its idle, the clutch opens: the
-    // car rolls to a stop with the engine idling rather than the engine pushing it on.
-    const bool idle = throttle <= 0.0f && gearRpm(state.gear) < gearbox.idleRpm;
-    if (idle)
+    WorkGearboxClutch(gearbox, state, throttle, outputRpm, deltaSeconds, engineRpm, false);
+}
+
+void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm,
+                         float deltaSeconds, float engineRpm, bool declutch)
+{
+    const int top = static_cast<int>(gearbox.forwardRatios.size());
+    const float throttle = std::clamp(std::abs(forward), 0.0f, 1.0f);
+    const int lowest = gearbox.reverseRatio > 0.0f ? -1 : 0;
+    for (; shifts != 0; shifts += shifts > 0 ? -1 : 1)
     {
+        const int from = state.gear;
+        const int to = std::clamp(from + (shifts > 0 ? 1 : -1), lowest, top);
+        const float toRpm = VehicleGearRpm(gearbox, to, outputRpm);
+        if (to == from || (to > 0 && to < from && gearbox.limiterRpm > 0.0f && toRpm > gearbox.limiterRpm) ||
+            (to < 0 && toRpm > gearbox.idleRpm))
+        {
+            break; // past the top or reverse, a change down onto the limiter, or reverse while still rolling
+        }
+        state.gear = to;
+        if (to == 0)
+        {
+            continue;
+        }
+        if (state.idling)
+        {
+            // Out of neutral, or with the clutch already open: it bites as it leaves the idle (WorkGearboxClutch).
+            continue;
+        }
+        StartGearChange(gearbox, state, true, to > from);
+    }
+    if (neutral)
+    {
+        state.gear = 0;
+    }
+
+    if (state.gear == 0)
+    {
+        // Neutral: nothing through the clutch; in gear again, it bites (WorkGearboxClutch leaving the idle).
         state.idling = true;
+        state.clutch = 0.0f;
         state.switchLeft = 0.0f;
         state.cutLeft = 0.0f;
         state.releaseLeft = 0.0f;
         state.latencyLeft = 0.0f;
-        state.clutch = 0.0f;
         state.revMatch = false;
         state.launching = false;
         return;
     }
-    if (state.idling)
+    const float gearRpm = VehicleGearRpm(gearbox, state.gear, outputRpm);
+    if (state.idling && !declutch && gearRpm >= gearbox.idleRpm && engineRpm < gearRpm)
     {
+        // Into gear while rolling faster than the engine turns: the revs come up to the gear's over the
+        // change rather than the clutch snatching at them.
         state.idling = false;
-        startChange(false);
-        startLaunch();
+        StartGearChange(gearbox, state, true);
     }
-
-    if (state.launching)
-    {
-        // The clutch closes as the engine's revs pass the launch point (throttle-scaled from the idle):
-        // the engine settles where the clutch passes what it makes. The launch is over once the wheels
-        // turn the engine at its own speed.
-        const float idleRpm = std::max(gearbox.idleRpm, 1.0f);
-        const float launch = idleRpm + (std::max(gearbox.launchRpm, idleRpm) - idleRpm) * throttle;
-        const float low = 0.95f * launch;
-        const float high = 1.15f * launch;
-        const float x = std::clamp((engineRpm - low) / std::max(high - low, 1.0f), 0.0f, 1.0f);
-        state.clutch = x * x * (3.0f - 2.0f * x);
-        state.revMatch = false;
-        state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
-        // Over once the clutch is shut (what slip is left is traction control's) or the wheels turn the
-        // engine at its own speed.
-        if (x >= 1.0f || (gearRpm(state.gear) >= 0.98f * engineRpm && gearRpm(state.gear) >= low))
-        {
-            state.launching = false;
-            state.clutch = 1.0f;
-        }
-        return;
-    }
-
-    state.revMatch = state.switchLeft > 0.0f;
-    state.cutLeft = std::max(state.cutLeft - deltaSeconds, 0.0f);
-    if (state.switchLeft > 0.0f)
-    {
-        state.switchLeft = std::max(state.switchLeft - deltaSeconds, 0.0f);
-        state.clutch = 0.0f;
-    }
-    else if (state.releaseLeft > 0.0f)
-    {
-        state.releaseLeft = std::max(state.releaseLeft - deltaSeconds, 0.0f);
-        state.clutch = gearbox.releaseSeconds > 0.0f ? 1.0f - state.releaseLeft / gearbox.releaseSeconds : 1.0f;
-    }
-    else
-    {
-        state.clutch = 1.0f;
-        state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
-    }
+    WorkGearboxClutch(gearbox, state, throttle, outputRpm, deltaSeconds, engineRpm, declutch);
 }
 }

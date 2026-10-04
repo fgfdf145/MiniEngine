@@ -109,6 +109,14 @@ struct VehicleWheelAnimation
     float steeringWheelLockDegrees = kSteeringWheelLockDegrees;
 };
 
+// The buttons that change gear, as held down.
+struct VehicleGearButtons
+{
+    bool up = false;
+    bool down = false;
+    bool neutral = false;
+};
+
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
 struct VehicleDriveSession
 {
@@ -134,6 +142,8 @@ struct VehicleDriveSession
     // The keyboard's steering, eased towards full lock rather than jumping to it.
     float keyboardSteering = 0.0f;
     bool resetHeld = false;
+    // The gear buttons held in the last frame: a change is made once per press.
+    VehicleGearButtons gearButtonsHeld;
     VehicleCameraOrbit orbit;
     // The engine's idle and rev limit, which the gamepad's rumble places the revs between.
     float engineMinRpm = 1000.0f;
@@ -144,6 +154,8 @@ struct VehicleDriveSession
 struct VehicleDriveState
 {
     std::unique_ptr<VehicleDriveSession> session;
+    // A sequential manual gearbox (the driver changes gear) instead of the automatic.
+    bool manualGearbox = true;
     VehicleCameraSettings camera;
     VehicleHapticsSettings haptics;
     std::string lastError;
@@ -176,9 +188,13 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state);
 void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void()>& action);
 
 // Keyboard: W/S or the arrow keys for throttle and reverse, A/D or left/right to steer, Space for the
-// hand brake. Gamepad: right and left trigger, left stick, South button (A on Xbox).
-// `keyboardSteering` is the eased keyboard steering, carried between frames.
-VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering);
+// hand brake, E/Q to change up/down and N for neutral. Gamepad: right and left trigger, left stick, East
+// button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change up/down and
+// South (Cross) for neutral. With `manualGearbox` the gear buttons change gear, once per press:
+// `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,
+// the eased keyboard steering.
+VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering,
+                                    bool manualGearbox = false, VehicleGearButtons* gearButtonsHeld = nullptr);
 
 // Adds the static collision for every loaded model except `exclude`, in world space. A model with
 // collision meshes of its own (an Assetto Corsa track's physics meshes, each surface at its friction)

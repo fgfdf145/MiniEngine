@@ -327,6 +327,7 @@ EditorUiFrameResult EditorUiController::Draw(
     result.vehicleTuning = m_vehicleTuning;
     result.vehicleCamera = m_vehicleCamera;
     result.vehicleHaptics = m_vehicleHaptics;
+    result.vehicleManualGearbox = m_vehicleManualGearbox;
     return result;
 }
 
