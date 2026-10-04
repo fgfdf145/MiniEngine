@@ -36,9 +36,10 @@ struct VehicleCameraSettings
     float lookHeight = 1.0f; // the point above the car's origin the camera looks at
     // How quickly the camera catches up with the car, per second; higher is stiffer.
     float stiffness = 6.0f;
-    // Holding the right mouse button swings the camera round the car; letting go brings it back
-    // behind it at this rate per second (higher is quicker).
-    float lookRecenterRate = 4.0f;
+    // Holding the right mouse button (or pushing the right stick) swings the camera round the car.
+    // Letting go leaves it where it is when this is 0; above 0 it comes back behind the car at this
+    // rate per second (higher is quicker).
+    float lookRecenterRate = 0.0f;
 };
 
 // How far the driver has looked around the car with the right mouse button, added to the chase
