@@ -457,7 +457,8 @@ void TestWheelStateReportsTyrePhysics()
     RequireNear(load, 1400.0f * 9.81f, 1400.0f * 9.81f * 0.05f, "the four loads carry the car's weight");
 
     // Drive on, then turn right: the tyres push the car towards its right, -X in vehicle space, and
-    // the front wheels run at a slip angle.
+    // the front wheels run at a slip angle. Gently: this tall, softly sprung car on 1.6 g tyres lifts
+    // its inside wheels near the limit.
     VehicleControls controls;
     controls.throttle = 0.6f;
     world.SetVehicleControls(car, controls);
@@ -466,7 +467,7 @@ void TestWheelStateReportsTyrePhysics()
     {
         Require(std::abs(wheel.slipAngleDegrees) < 1.0f, "straight ahead the slip angle is nothing, " + std::to_string(wheel.slipAngleDegrees));
     }
-    controls.steering = 0.5f;
+    controls.steering = 0.1f;
     world.SetVehicleControls(car, controls);
     Simulate(world, 1.0f);
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
@@ -1163,7 +1164,9 @@ void TestStartingFuelMovesTheMass()
 // The AE86 on its own data: struts in front, a live axle behind. It rests on its design position; in a
 // right-hand turn the body rolls onto its left wheels and the rear axle, one rigid beam, keeps both
 // rear wheels upright to the road: against the body their cambers are equal and opposite, the
-// compressed (left) wheel's top leaning in.
+// compressed (left) wheel's top leaning in. The turn is a gentle one: on the default tyres' grip,
+// which does not fall with load, this car (centre of mass 0.54 m up, 0.68 m half-track) lifts its
+// inside wheels and rolls over near the limit.
 void TestLiveAxleCarRestsAndCorners()
 {
     VehicleWheelLayout layout{};
@@ -1199,7 +1202,7 @@ void TestLiveAxleCarRestsAndCorners()
     world.SetVehicleControls(car, controls);
     Simulate(world, 3.0f);
     controls.throttle = 0.3f;
-    controls.steering = 0.3f;
+    controls.steering = 0.15f;
     world.SetVehicleControls(car, controls);
     Simulate(world, 2.0f);
     const PhysicsPose pose = world.GetVehiclePose(car);

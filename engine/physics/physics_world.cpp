@@ -87,6 +87,74 @@ class WheelBodyFilter final : public JPH::BodyFilter
     JPH::BodyID m_vehicle;
 };
 
+// Finds the ground with the wheel's cylinder, which rolls it over kerbs and seams a ray would catch
+// on, but touches it as a thin disc in the wheel's middle plane does. The cylinder alone always
+// touches on one of its two flat edges, the one its tilt to the ground puts lowest: as a wheel's
+// camber to the road crosses zero (a front wheel steered against its caster, or the body rolling)
+// its contact jumps the tyre's width across the tread, and the corner rises or sinks by half the
+// width times the tilt. Steered to lock that rolled the R34 a third of a degree at a standstill.
+// A tyre's patch stays near its middle; the suspension's own geometry already has the wheel's camber.
+class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastCylinder
+{
+  public:
+    explicit VehicleCollisionTesterDisc(JPH::ObjectLayer layer) : VehicleCollisionTesterCastCylinder(layer)
+    {
+    }
+
+    bool Collide(JPH::PhysicsSystem& system, const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction,
+                 const JPH::BodyID& vehicleBody, JPH::Body*& outBody, JPH::SubShapeID& outSubShape, JPH::RVec3& outContactPosition, JPH::Vec3& outContactNormal,
+                 float& outSuspensionLength) const override
+    {
+        if (!VehicleCollisionTesterCastCylinder::Collide(
+                system, constraint, wheelIndex, origin, direction, vehicleBody, outBody, outSubShape, outContactPosition, outContactNormal, outSuspensionLength))
+        {
+            return false;
+        }
+        // The disc against the plane the cylinder found.
+        return TouchPlane(constraint, wheelIndex, origin, direction, outContactPosition, outContactNormal, outSuspensionLength);
+    }
+
+    void PredictContactProperties(JPH::PhysicsSystem&, const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction,
+                                  const JPH::BodyID&, JPH::Body*&, JPH::SubShapeID&, JPH::RVec3& ioContactPosition, JPH::Vec3& ioContactNormal,
+                                  float& ioSuspensionLength) const override
+    {
+        if (!TouchPlane(constraint, wheelIndex, origin, direction, ioContactPosition, ioContactNormal, ioSuspensionLength))
+        {
+            ioSuspensionLength = constraint.GetWheel(wheelIndex)->GetSettings()->mSuspensionMaxLength;
+        }
+    }
+
+  private:
+    // Moves the wheel along its suspension until the disc's lowest point toward the plane (through
+    // `contact`, facing `normal`) lies on it; false when that is past full droop or the plane faces away.
+    static bool TouchPlane(const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction, JPH::RVec3& contact,
+                           JPH::Vec3Arg normal, float& suspensionLength)
+    {
+        const JPH::WheelSettings& settings = *constraint.GetWheel(wheelIndex)->GetSettings();
+        const float along = direction.Dot(normal);
+        if (along > -1.0e-6f)
+        {
+            return false;
+        }
+        // The axle is the wheel transform's Y here (as the cylinder cast has it); the disc's lowest point
+        // is its radius along the plane's inward normal, less its part along the axle.
+        const JPH::RMat44 wheel = constraint.GetWheelWorldTransform(wheelIndex, JPH::Vec3::sAxisY(), JPH::Vec3::sAxisX());
+        const JPH::Vec3 axle = wheel.GetAxisY().Normalized();
+        JPH::Vec3 down = -normal + axle * normal.Dot(axle);
+        const float downLength = down.Length();
+        down = downLength > 1.0e-6f ? down / downLength : -normal;
+        const JPH::RVec3 start = origin + down * settings.mRadius;
+        const float length = JPH::Vec3(contact - start).Dot(normal) / along;
+        if (length > settings.mSuspensionMaxLength)
+        {
+            return false;
+        }
+        suspensionLength = std::max(length, 0.0f);
+        contact = start + direction * length;
+        return true;
+    }
+};
+
 constexpr JPH::uint kMaxBodies = 65536;
 constexpr JPH::uint kBodyMutexCount = 0; // Jolt's default
 constexpr JPH::uint kMaxBodyPairs = 65536;
@@ -1808,8 +1876,9 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
                 ioLateral = Impl::CappedFriction(grip, ioLateral * scale);
             });
     }
-    // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on.
-    vehicle.collisionTester = new JPH::VehicleCollisionTesterCastCylinder(ObjectLayers::kMoving);
+    // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on; they touch
+    // the ground as discs (VehicleCollisionTesterDisc).
+    vehicle.collisionTester = new VehicleCollisionTesterDisc(ObjectLayers::kMoving);
     vehicle.wheelFilter = std::make_unique<WheelBodyFilter>(vehicle.body->GetID());
     vehicle.collisionTester->SetBodyFilter(vehicle.wheelFilter.get());
     vehicle.constraint->SetVehicleCollisionTester(vehicle.collisionTester);
