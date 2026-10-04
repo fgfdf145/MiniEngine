@@ -402,13 +402,17 @@ void ReadDrivetrain(const AcdArchive::Files& files, VehicleCarSpec& spec)
     spec.upshiftClutchProfile = profile("UPSHIFT_PROFILE");
     spec.downshiftClutchProfile = profile("DOWNSHIFT_PROFILE");
 
-    // What the physics engine takes of it: a change is over in the time the file gives, and the clutch
-    // then takes as long as the upshift's profile (or a tenth of a second without one) to bite.
+    spec.autoShiftUpRpm = drivetrain.Number("AUTO_SHIFTER", "UP");
+    spec.autoShiftDownRpm = drivetrain.Number("AUTO_SHIFTER", "DOWN");
+
+    // What the physics engine takes of it: the drive is gone for the change's time, and the clutch bites
+    // as it ends (the engine's revs already matched). An upshift profile's points count from the change's
+    // start, so a profile longer than the change stretches it; one inside it changes nothing.
     if (spec.changeUpSeconds.has_value() && *spec.changeUpSeconds > 0.0f)
     {
-        spec.gearSwitchSeconds = spec.changeUpSeconds;
+        spec.gearSwitchSeconds = std::max(*spec.changeUpSeconds, spec.upshiftClutchProfile.empty() ? 0.0f : spec.upshiftClutchProfile.back());
     }
-    spec.clutchReleaseSeconds = spec.upshiftClutchProfile.empty() ? 0.1f : std::max(spec.upshiftClutchProfile.back(), 0.05f);
+    spec.clutchReleaseSeconds = 0.0f;
 }
 
 void ReadBrakes(const AcdArchive::Files& files, VehicleCarSpec& spec)

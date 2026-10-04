@@ -296,11 +296,15 @@ struct VehicleSettings
     float finalDriveRatio = 0.0f;
     float shiftUpRpm = 0.0f;
     float shiftDownRpm = 0.0f;
-    // How long a gear change takes with no torque (s), and how long the clutch then takes to bite;
-    // the physics engine's half a second and 0.3 s when 0. A dual-clutch box changes in a few
-    // hundredths.
+    // How long a gear change takes with no torque (s, the physics engine's half a second when 0), and how
+    // long the clutch then takes to bite (0 at once, the engine's revs already matched; the physics
+    // engine's 0.3 s when below 0). A dual-clutch box changes in a few hundredths.
     float gearSwitchSeconds = 0.0f;
-    float clutchReleaseSeconds = 0.0f;
+    float clutchReleaseSeconds = -1.0f;
+    // Moving off on the throttle the clutch slips to hold the engine near this rpm (full throttle; less
+    // throttle, proportionally nearer the idle) until the car catches up with it, as a driver launching
+    // does; 0 lets it bite over clutchReleaseSeconds from the idle. See UpdateAutomaticGearbox.
+    float launchRpm = 4000.0f;
     // The engine's moment of inertia, kg m^2 (the physics engine's 0.5 when 0). It steals torque from
     // the wheels while the revs climb, most in the low gears.
     float engineInertia = 0.0f;
@@ -528,6 +532,10 @@ struct VehicleCarSpec
     std::optional<float> autoClutchMaxRpm;
     std::vector<float> upshiftClutchProfile;
     std::vector<float> downshiftClutchProfile;
+    // The game's automatic gearbox's change points ([AUTO_SHIFTER] UP, DOWN, rpm): UP is where ours changes
+    // up on full throttle (ApplyCarSpec); DOWN is kept.
+    std::optional<float> autoShiftUpRpm;
+    std::optional<float> autoShiftDownRpm;
     // The differential's lock under power and on the overrun (0 to 1) and its preload (Nm).
     std::optional<float> differentialPower;
     std::optional<float> differentialCoast;
@@ -720,6 +728,7 @@ struct VehicleGearbox
     float switchSeconds = 0.5f;  // the clutch is open while the gears change
     float releaseSeconds = 0.3f; // then it bites over this long
     float latencySeconds = 0.5f; // and the box waits this long before another change
+    float launchRpm = 0.0f;      // moving off, the clutch slips around this engine rpm (0: none)
 };
 
 // The gearbox's state, kept by the caller between steps. `gear` is 1 and up forward, -1 reverse;
@@ -735,6 +744,9 @@ struct VehicleGearboxState
     float latencyLeft = 0.0f;
     bool idling = false;
     bool revMatch = false;
+    // Moving off with the clutch slipping on the engine's revs (gearbox.launchRpm): the caller then keeps
+    // the throttle whole rather than scaling it by the clutch.
+    bool launching = false;
 };
 
 // The engine rpm the gearbox's output turns it at in `gear`; 0 in a gear the box does not have.
@@ -748,5 +760,13 @@ float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm);
 // point it would change down at, and the other way round. `forward` is the driver's signed throttle:
 // its sign selects drive or reverse. Off the throttle and below the idle in gear, the clutch opens so
 // the car rolls to a stop rather than the engine pushing it.
-void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds);
+//
+// `engineRpm` is the engine's own speed. Moving off on the throttle (from rest, or rolling below the
+// idle) with a launch rpm, the clutch slips on it: open below 95 % of the launch rpm, shut at 115 %, so
+// the engine settles where its torque is what the clutch passes and the car pulls on the engine's
+// torque there rather than at the idle; the launch ends once the wheels turn the engine at its speed
+// (part throttle launches proportionally nearer the idle). The engine's speed also brings an upshift on
+// when it passes the point while the wheels lag it (the clutch slipping for traction control).
+void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds,
+                            float engineRpm = 0.0f);
 }

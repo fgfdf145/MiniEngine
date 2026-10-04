@@ -1325,7 +1325,18 @@ void CarDataBecomesASpec()
     Require(spec.clutchMaxTorque == 700.0f && spec.autoClutchMinRpm == 1200.0f && spec.autoClutchMaxRpm == 1800.0f, "the clutch");
     Require(spec.upshiftClutchProfile.empty() && spec.downshiftClutchProfile.size() == 2 && spec.downshiftClutchProfile[1] == 0.17f,
             "the autoclutch's profiles");
-    Require(spec.clutchReleaseSeconds == 0.1f, "no upshift profile, a tenth of a second to bite");
+    Require(spec.clutchReleaseSeconds == 0.0f, "the clutch bites as the change ends");
+    Require(!spec.autoShiftUpRpm.has_value(), "no [AUTO_SHIFTER], no change point");
+    // An upshift profile's points count from the change's start: one longer than the change stretches it.
+    {
+        std::map<std::string, std::string> files = BoxsterDataFiles();
+        files["drivetrain.ini"] = "[TRACTION]\r\nTYPE=RWD\r\n[GEARBOX]\r\nCHANGE_UP_TIME=240\r\n[AUTOCLUTCH]\r\nUPSHIFT_PROFILE=UP_PROFILE\r\n"
+                                  "[UP_PROFILE]\r\nPOINT_0=20\r\nPOINT_1=200\r\nPOINT_2=300\r\n[AUTO_SHIFTER]\r\nUP=6900\r\nDOWN=3500\r\n";
+        const VehicleCarSpec stretched = AcCarData::BuildSpec(files);
+        RequireNear(*stretched.gearSwitchSeconds, 0.3f, 1e-6f, "a 0.3 s profile stretches a 0.24 s change");
+        Require(stretched.clutchReleaseSeconds == 0.0f, "and the clutch still bites as it ends");
+        Require(stretched.autoShiftUpRpm == 6900.0f && stretched.autoShiftDownRpm == 3500.0f, "the game's automatic gearbox's points");
+    }
     Require(spec.differentialPower == 0.25f && spec.differentialCoast == 0.4f && spec.differentialPreload == 5.0f, "the differential");
 
     // Grip: every compound whole, and the default one's at the load a wheel carries at rest.
@@ -1470,7 +1481,7 @@ std::map<std::string, std::string> R34DataFiles()
         "GEAR_5=1.00\r\nGEAR_6=0.793\r\nFINAL=3.545\r\n[DIFFERENTIAL]\r\nPOWER=0.50\r\nCOAST=0.50\r\nPRELOAD=0\r\n"
         "[AWD]\r\nFRONT_SHARE=1\r\nFRONT_DIFF_POWER=0.06\r\nCENTRE_DIFF_PRELOAD=1\r\nREAR_DIFF_POWER=0.525\r\n"
         "[AWD2]\r\nFRONT_DIFF_POWER=0.03\r\nFRONT_DIFF_COAST=0.03\r\nFRONT_DIFF_PRELOAD=0\r\nCENTRE_RAMP_TORQUE=100.0\r\nCENTRE_MAX_TORQUE=1000.0\r\n"
-        "REAR_DIFF_POWER=0.60\r\nREAR_DIFF_COAST=0.50\r\nREAR_DIFF_PRELOAD=10\r\n";
+        "REAR_DIFF_POWER=0.60\r\nREAR_DIFF_COAST=0.50\r\nREAR_DIFF_PRELOAD=10\r\n[AUTO_SHIFTER]\r\nUP=7900\r\nDOWN=4200\r\n";
     files["ctrl_4ws.ini"] =
         "[CONTROLLER_0]\r\nINPUT=STEER_DEG  ; OVERSTEER_FACTOR REAR_SPEED_RATIO\r\nCOMBINATOR=ADD\r\nLUT=(|-90=-0.0015|-25=-0.0010|-10=0.0|0=0|10=0.0|25=0.0010|90=0.0015|)\r\n"
         "FILTER=0.99\r\nUP_LIMIT=1\r\nDOWN_LIMIT=-1\r\n"
@@ -1557,6 +1568,7 @@ void ImportWritesFourWheelDriveRearSteerAndBody()
                 spec.rearSteerControllers[1].combinator == "MULT" && spec.rearSteerControllers[2].filter == 0.99f,
             "the rear steering survives");
     Require(spec.colliders == expected.colliders, "the boxes survive");
+    Require(spec.autoShiftUpRpm == 7900.0f && spec.autoShiftDownRpm == 4200.0f, "the automatic gearbox's points survive");
     Require(spec.colliderHull.size() == shellPoints, "the shell survives");
     for (size_t index = 0; index < shellPoints; ++index)
     {

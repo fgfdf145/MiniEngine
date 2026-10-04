@@ -364,16 +364,21 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         {
             settings.finalDriveRatio = *spec.finalDriveRatio;
         }
-        // The shift points follow the engine's rev range (ComputeVehicleShiftPoints).
+        // The shift points follow the engine's rev range (ComputeVehicleShiftPoints), changing up on full
+        // throttle where the car's own automatic gearbox does when its data says.
         settings.shiftUpRpm = 0.0f;
         settings.shiftDownRpm = 0.0f;
+        if (spec.autoShiftUpRpm.has_value() && *spec.autoShiftUpRpm > settings.minRpm && *spec.autoShiftUpRpm <= settings.maxRpm)
+        {
+            settings.shiftUpRpm = *spec.autoShiftUpRpm;
+        }
     }
 
     if (spec.gearSwitchSeconds.has_value() && *spec.gearSwitchSeconds > 0.0f)
     {
         settings.gearSwitchSeconds = *spec.gearSwitchSeconds;
     }
-    if (spec.clutchReleaseSeconds.has_value() && *spec.clutchReleaseSeconds > 0.0f)
+    if (spec.clutchReleaseSeconds.has_value() && *spec.clutchReleaseSeconds >= 0.0f)
     {
         settings.clutchReleaseSeconds = *spec.clutchReleaseSeconds;
     }
@@ -592,7 +597,7 @@ float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm)
     return std::abs(outputRpm * gearbox.forwardRatios[static_cast<size_t>(gear - 1)]);
 }
 
-void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds)
+void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm)
 {
     const int top = static_cast<int>(gearbox.forwardRatios.size());
     const float throttle = std::clamp(std::abs(forward), 0.0f, 1.0f);
@@ -607,6 +612,16 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
         state.switchLeft = underLoad ? gearbox.switchSeconds : 0.0f;
         state.releaseLeft = gearbox.releaseSeconds;
         state.latencyLeft = gearbox.latencySeconds;
+        state.launching = false;
+    };
+    // Moving off in a forward gear, a launch rpm slips the clutch on the engine's revs instead.
+    const auto startLaunch = [&]()
+    {
+        if (gearbox.launchRpm > 0.0f && state.gear > 0 && engineRpm > 0.0f)
+        {
+            state.launching = true;
+            state.releaseLeft = 0.0f;
+        }
     };
 
     // Drive or reverse, as the throttle asks; the caller only asks once the car has stopped.
@@ -614,6 +629,7 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     {
         state.gear = forward < 0.0f ? -1 : 1;
         startChange(false);
+        startLaunch();
     }
 
     const bool ready = state.idling || (state.switchLeft <= 0.0f && state.releaseLeft <= 0.0f && state.latencyLeft <= 0.0f);
@@ -623,11 +639,15 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
         const float up = points.upLight + (points.upFull - points.upLight) * throttle;
         const float down = points.downClosed + (points.downFull - points.downClosed) * throttle;
         int target = std::min(state.gear, top);
-        if (gearRpm(target) > up)
+        // The engine may run ahead of the wheels while the clutch slips (traction control): its own
+        // revs bring the first change up on, or it would sit on the limiter while the wheels never
+        // reach the point.
+        const float slipping = !state.launching && target == state.gear ? std::max(engineRpm - gearRpm(target), 0.0f) : 0.0f;
+        if (gearRpm(target) + slipping > up)
         {
             // Up while the engine is past the point, as long as the next gear keeps it clear of the
             // point it would change back down at.
-            while (target < top && gearRpm(target) > up && gearRpm(target + 1) > down * 1.05f)
+            while (target < top && gearRpm(target) + slipping > up && gearRpm(target + 1) > down * 1.05f)
             {
                 ++target;
             }
@@ -661,12 +681,37 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
         state.latencyLeft = 0.0f;
         state.clutch = 0.0f;
         state.revMatch = false;
+        state.launching = false;
         return;
     }
     if (state.idling)
     {
         state.idling = false;
         startChange(false);
+        startLaunch();
+    }
+
+    if (state.launching)
+    {
+        // The clutch closes as the engine's revs pass the launch point (throttle-scaled from the idle):
+        // the engine settles where the clutch passes what it makes. The launch is over once the wheels
+        // turn the engine at its own speed.
+        const float idleRpm = std::max(gearbox.idleRpm, 1.0f);
+        const float launch = idleRpm + (std::max(gearbox.launchRpm, idleRpm) - idleRpm) * throttle;
+        const float low = 0.95f * launch;
+        const float high = 1.15f * launch;
+        const float x = std::clamp((engineRpm - low) / std::max(high - low, 1.0f), 0.0f, 1.0f);
+        state.clutch = x * x * (3.0f - 2.0f * x);
+        state.revMatch = false;
+        state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
+        // Over once the clutch is shut (what slip is left is traction control's) or the wheels turn the
+        // engine at its own speed.
+        if (x >= 1.0f || (gearRpm(state.gear) >= 0.98f * engineRpm && gearRpm(state.gear) >= low))
+        {
+            state.launching = false;
+            state.clutch = 1.0f;
+        }
+        return;
     }
 
     state.revMatch = state.switchLeft > 0.0f;

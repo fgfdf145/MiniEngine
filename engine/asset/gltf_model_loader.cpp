@@ -2569,6 +2569,8 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
     spec.clutchMaxTorque = VehicleNumber(extension, "clutchMaxTorque");
     spec.autoClutchMinRpm = VehicleNumber(extension, "autoClutchMinRpm");
     spec.autoClutchMaxRpm = VehicleNumber(extension, "autoClutchMaxRpm");
+    spec.autoShiftUpRpm = VehicleNumber(extension, "autoShiftUpRpm");
+    spec.autoShiftDownRpm = VehicleNumber(extension, "autoShiftDownRpm");
     spec.upshiftClutchProfile = VehicleNumbers(extension, "upshiftClutchProfile");
     spec.downshiftClutchProfile = VehicleNumbers(extension, "downshiftClutchProfile");
     spec.differentialPower = VehicleNumber(extension, "differentialPower");

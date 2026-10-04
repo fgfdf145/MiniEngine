@@ -407,7 +407,7 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     {
         controller->mTransmission.mSwitchTime = settings.gearSwitchSeconds;
     }
-    if (settings.clutchReleaseSeconds > 0.0f)
+    if (settings.clutchReleaseSeconds >= 0.0f)
     {
         controller->mTransmission.mClutchReleaseTime = settings.clutchReleaseSeconds;
     }
@@ -999,14 +999,18 @@ struct PhysicsWorld::Impl
         const float wheelRpm = wheelSpeed / static_cast<float>(std::max(driven, 1)) * differential.mDifferentialRatio * JPH::VehicleEngine::cAngularVelocityToRPM;
         const float outputRpm = std::max(std::abs(forwardSpeed) * vehicle.outputRpmPerSpeed, wheelRpm);
         VehicleGearboxState& state = vehicle.gearboxState;
-        UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds);
+        UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds, controller->GetEngine().GetCurrentRPM());
         JPH::VehicleTransmission& transmission = controller->GetTransmission();
         transmission.Set(state.gear, state.clutch);
         if (state.revMatch)
         {
             controller->GetEngine().SetCurrentRPM(VehicleGearRpm(vehicle.gearbox, state.gear, outputRpm));
         }
-        input.forward *= state.clutch;
+        // The engine is cut while a change opens the clutch; launching, the clutch slips on full revs.
+        if (!state.launching)
+        {
+            input.forward *= state.clutch;
+        }
     }
 
     // Traction control by the clutch: it slips once the engine asks the driven wheels for more torque than their
@@ -1834,6 +1838,13 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         gearbox.switchSeconds = transmission.mSwitchTime;
         gearbox.releaseSeconds = transmission.mClutchReleaseTime;
         gearbox.latencySeconds = transmission.mSwitchLatency;
+        // A launch rpm within the engine's range: no higher than 60 % of the way from the idle to the limiter.
+        if (settings.launchRpm > 0.0f)
+        {
+            const float lowest = gearbox.idleRpm * 1.2f;
+            const float highest = std::max(gearbox.idleRpm + 0.6f * std::max(settings.maxRpm - gearbox.idleRpm, 0.0f), lowest);
+            gearbox.launchRpm = std::clamp(settings.launchRpm, lowest, highest);
+        }
         // The driven wheels' radius and the final drive turn the car's speed into the gearbox output's.
         const JPH::VehicleDifferentialSettings& differential = controller->GetDifferentials().front();
         const float radius = static_cast<const JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(differential.mLeftWheel)])->GetSettings()->mRadius;

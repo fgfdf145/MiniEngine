@@ -422,6 +422,8 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     put("clutchMaxTorque", spec.clutchMaxTorque);
     put("autoClutchMinRpm", spec.autoClutchMinRpm);
     put("autoClutchMaxRpm", spec.autoClutchMaxRpm);
+    put("autoShiftUpRpm", spec.autoShiftUpRpm);
+    put("autoShiftDownRpm", spec.autoShiftDownRpm);
     if (!spec.upshiftClutchProfile.empty())
     {
         out["upshiftClutchProfile"] = NumbersToJson(spec.upshiftClutchProfile);

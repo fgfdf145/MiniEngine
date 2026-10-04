@@ -1801,6 +1801,123 @@ void TestControllersCouplingAndBodyParts()
     Require(BuildChassisParts(VehicleSettings{}).boxes.empty(), "no boxes, no parts");
 }
 
+// Moving off, the clutch slips on the engine's revs: open below 95 % of the launch rpm, shut at 115 %, the
+// point scaled from the idle by the throttle; the launch is over once the clutch is shut or the wheels turn
+// the engine at its speed. An upshift also comes on the engine's revs when the wheels lag them.
+void TestGearboxLaunchesOnTheEnginesRevs()
+{
+    VehicleGearbox gearbox = GtrGearbox(); // idle 2100 rpm
+    gearbox.launchRpm = 4000.0f;
+    const float dt = 1.0f / 1000.0f;
+    VehicleGearboxState state;
+    SettleGearbox(gearbox, state, 0.0f, 0.0f);
+    Require(state.idling, "at rest the clutch is open");
+    UpdateAutomaticGearbox(gearbox, state, 1.0f, 0.0f, dt, 2100.0f);
+    Require(state.launching && state.gear == 1 && state.clutch == 0.0f, "on the throttle at the idle it launches, the clutch open");
+    UpdateAutomaticGearbox(gearbox, state, 1.0f, 0.0f, dt, 0.95f * 4000.0f);
+    Require(state.clutch == 0.0f, "still open at 95 % of the launch rpm");
+    UpdateAutomaticGearbox(gearbox, state, 1.0f, 0.0f, dt, 4200.0f);
+    RequireNear(state.clutch, 0.5f, 1e-4f, "half shut halfway up the window");
+    Require(state.launching, "still launching");
+    UpdateAutomaticGearbox(gearbox, state, 1.0f, 500.0f, dt, 1.15f * 4000.0f);
+    Require(!state.launching && state.clutch == 1.0f, "shut at 115 %: the launch is over");
+
+    // Half throttle launches halfway between the idle and the launch rpm.
+    VehicleGearboxState gentle;
+    SettleGearbox(gearbox, gentle, 0.0f, 0.0f);
+    UpdateAutomaticGearbox(gearbox, gentle, 0.5f, 0.0f, dt, 2500.0f);
+    const float point = 2100.0f + 0.5f * (4000.0f - 2100.0f);
+    UpdateAutomaticGearbox(gearbox, gentle, 0.5f, 0.0f, dt, 0.5f * (0.95f + 1.15f) * point);
+    RequireNear(gentle.clutch, 0.5f, 1e-4f, "half throttle's window is nearer the idle");
+    // The wheels catching up with the engine end it too.
+    UpdateAutomaticGearbox(gearbox, gentle, 0.5f, 3200.0f / gearbox.forwardRatios[0], dt, 3220.0f);
+    Require(!gentle.launching && gentle.clutch == 1.0f, "the wheels turning the engine at its speed end it");
+    // Off the throttle it stops launching.
+    VehicleGearboxState lifted;
+    SettleGearbox(gearbox, lifted, 0.0f, 0.0f);
+    UpdateAutomaticGearbox(gearbox, lifted, 1.0f, 0.0f, dt, 2100.0f);
+    UpdateAutomaticGearbox(gearbox, lifted, 0.0f, 0.0f, dt, 3000.0f);
+    Require(!lifted.launching && lifted.clutch == 0.0f, "lifting ends it, the clutch open");
+    // Without a launch rpm the clutch bites over its release time, as before.
+    VehicleGearbox plain = GtrGearbox();
+    VehicleGearboxState plainState;
+    SettleGearbox(plain, plainState, 0.0f, 0.0f);
+    UpdateAutomaticGearbox(plain, plainState, 1.0f, 0.0f, dt, 2100.0f);
+    Require(!plainState.launching && plainState.clutch > 0.0f && plainState.clutch < 0.1f, "no launch rpm: the clutch starts to bite");
+
+    // Up on the engine's revs when the wheels lag them (the clutch slipping): first gear's wheels at 6400 rpm,
+    // the engine at the point.
+    VehicleGearboxState lagging;
+    lagging.gear = 1;
+    const float output = 6400.0f / gearbox.forwardRatios[0];
+    for (int step = 0; step < 1000; ++step)
+    {
+        UpdateAutomaticGearbox(gearbox, lagging, 1.0f, output, dt, 6400.0f);
+    }
+    Require(lagging.gear == 1, "below the point it holds first, " + std::to_string(gearbox.shiftPoints.upFull));
+    UpdateAutomaticGearbox(gearbox, lagging, 1.0f, output, dt, gearbox.shiftPoints.upFull + 10.0f);
+    Require(lagging.gear == 2, "the engine past the point changes up though the wheels are below it");
+
+    // The car's own automatic gearbox's point is where it changes up on full throttle.
+    VehicleCarSpec spec = MakeGtrSpec();
+    spec.autoShiftUpRpm = 6800.0f;
+    spec.clutchReleaseSeconds = 0.0f;
+    const VehicleSettings applied = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(applied.shiftUpRpm == 6800.0f && ComputeVehicleShiftPoints(applied).upFull == 6800.0f, "the data's change point");
+    Require(applied.clutchReleaseSeconds == 0.0f, "a clutch that bites at once");
+    spec.autoShiftUpRpm = 9000.0f; // past the limiter
+    Require(ApplyCarSpec(VehicleSettings{}, spec).shiftUpRpm == 0.0f, "a point past the limiter is ignored");
+}
+
+// Launching on the throttle the engine holds near the launch rpm while the clutch slips, and a car whose
+// tyres can take the torque (four-wheel drive, as the R34) gets away faster than from the idle. A rear-drive
+// car that its tyres hold back gains nothing: traction control slips the clutch either way, and the revs
+// take a moment to rise first.
+void TestLaunchHoldsTheRevs()
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    tuning.drive = VehicleDrive::AllWheel;
+    tuning.centreDrive = VehicleCentreDrive::Coupling;
+    tuning.centreCouplingRampTorque = 100.0f;
+    tuning.centreCouplingMaxTorque = 1000.0f;
+    const auto launch = [&](float launchRpm, float& lowRpm, float& highRpm)
+    {
+        VehicleSettings car = tuning;
+        car.launchRpm = launchRpm;
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId id = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, car), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(id, controls);
+        lowRpm = 1e9f;
+        highRpm = 0.0f;
+        float t = 0.0f;
+        while (world.GetVehicleTelemetry(id).forwardSpeed < 60.0f / 3.6f && t < 10.0f)
+        {
+            world.Update(1.0f / 100.0f);
+            t += 1.0f / 100.0f;
+            if (t > 0.3f && t < 0.6f)
+            {
+                lowRpm = std::min(lowRpm, world.GetVehicleTelemetry(id).engineRpm);
+                highRpm = std::max(highRpm, world.GetVehicleTelemetry(id).engineRpm);
+            }
+        }
+        return t;
+    };
+    float idleLow = 0.0f;
+    float idleHigh = 0.0f;
+    float launchLow = 0.0f;
+    float launchHigh = 0.0f;
+    const float fromIdle = launch(0.0f, idleLow, idleHigh);
+    const float launched = launch(4000.0f, launchLow, launchHigh);
+    std::cout << "0-60 km/h from the idle " << fromIdle << " s (" << idleLow << ".." << idleHigh << " rpm), launching at 4000 rpm " << launched << " s (" << launchLow << ".."
+              << launchHigh << " rpm)\n";
+    Require(launchLow > 0.9f * 4000.0f && launchHigh < 1.2f * 4000.0f, "the engine holds near the launch rpm while the clutch slips");
+    Require(launched < fromIdle, "and the car gets away faster");
+}
+
 // A coupled four-wheel drive (the R34's AWD2: 100 Nm per rad/s, 1000 Nm) launching with its rear tyres
 // slipping: the coupling passes torque and the front tyres drive, where on rear drive alone they only roll.
 void TestCentreCouplingDrivesTheFront()
@@ -1977,6 +2094,8 @@ int main()
         TestCarSpecReplacesWhatItKnows();
         TestErsAddsToTheEngineCurve();
         TestControllersCouplingAndBodyParts();
+        TestGearboxLaunchesOnTheEnginesRevs();
+        TestLaunchHoldsTheRevs();
         TestCentreCouplingDrivesTheFront();
         TestRearSteerTurnsAgainstTheFrontAtSpeed();
         TestCarBodyIsItsBoxesAndShell();
