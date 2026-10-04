@@ -943,8 +943,8 @@ void TestGameHubSchemeAtTheGameStep()
     // The game's hub scheme (PhysicsWorld::StepUnsprungCorner) at its 1 ms step against a 50 us
     // reference, on a lightly damped car whose hubs hop (hub damping ratio about 0.24). The trapezoidal
     // hub step leaves the wheel hop's peak within a few percent (backward Euler's numerical damping took
-    // some 15 % off it); what error is left comes from the coupling frozen at the step's start and is
-    // first order in the step. Measured 2026-10-04 (docs/design/2026-10-04-unsprung-corner-integration-notes.md).
+    // some 15 % off it), and the body taking the tyre's mean force over the step keeps it within a few too.
+    // Measured 2026-10-04 (docs/design/2026-10-04-unsprung-corner-integration-notes.md, sections 6 and 7).
     const CarModel car = RigTestCar(1500.0, 0.0);
     {
         SevenPostRig rig(car, true, UnsprungScheme::GameLinearlyImplicit);
@@ -995,13 +995,13 @@ void TestGameHubSchemeAtTheGameStep()
     std::cout << "  game hub scheme at 1 ms: wheel " << 100.0 * game1ms.wheel << " %, load " << 100.0 * game1ms.load << " % of its peak, body " << 100.0 * game1ms.body
               << " %, wheel at the hop " << 100.0 * hopWheelError << " %; body at 0.25 ms " << 100.0 * game250us.body << " %\n";
     // The hub's own motion: the trapezoidal step leaves it within a few per cent everywhere.
-    Require(game1ms.wheel < 0.04, "the hub's motion within 4 %");
-    Require(std::abs(hopWheelError) < 0.04, "the wheel hop's peak within 4 %");
-    Require(game1ms.load < 0.04, "the tyre's load within 4 % of its peak variation");
-    // The body: the coupling frozen at the step's start (its acceleration a step late) takes a few per cent,
-    // first order in the step.
-    Require(game1ms.body < 0.08, "the body within 8 %");
-    Require(game250us.body < 0.4 * game1ms.body, "converging at first order");
+    Require(game1ms.wheel < 0.025, "the hub's motion within 2.5 %");
+    Require(std::abs(hopWheelError) < 0.02, "the wheel hop's peak within 2 %");
+    Require(game1ms.load < 0.02, "the tyre's load within 2 % of its peak variation");
+    // The body takes the tyre's mean force over the step (7 % off with the force at the step's end, which
+    // reached it half a step early); plain semi-implicit Euler at 1 ms is 4.4 % off here.
+    Require(game1ms.body < 0.03, "the body within 3 %");
+    Require(game250us.body < 0.6 * game1ms.body, "converging with the step");
 }
 
 void TestKcRigMeasuresTheSpringsAndTheLinkage()

@@ -534,7 +534,8 @@ void SevenPostRig::StepGameScheme(const std::array<double, 4>& pads, const std::
         const double rate = v + change;
         const double moved = dt * (v + 0.5 * change);
         const double travelAccel = change / dt;
-        const double applied = std::max(tyre + tyreSlope * moved + tyreRateSlope * change, 0.0);
+        // The tyre's mean force over the step, which the body takes over the same step.
+        const double applied = std::max(tyre + 0.5 * (tyreSlope * moved + tyreRateSlope * change), 0.0);
         m_tyreLoad[i] = applied;
         m_travel[i] = z + moved;
         nextTravelRate[i] = rate;
