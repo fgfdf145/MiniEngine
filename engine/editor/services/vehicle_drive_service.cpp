@@ -31,6 +31,8 @@ namespace
 constexpr float kKeyboardSteerSeconds = 0.35f;
 constexpr float kKeyboardCentreSeconds = 0.2f;
 constexpr float kGamepadStickDeadZone = 0.12f;
+// The right stick swings the chase camera round the car this fast at full deflection.
+constexpr float kGamepadOrbitDegreesPerSecond = 180.0f;
 // The ground plane under everything, so a car driven off the edge of the track lands somewhere.
 constexpr float kGroundPlaneHalfSize = 5000.0f;
 constexpr float kGroundPlaneHalfThickness = 0.5f;
@@ -389,15 +391,29 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     if (state.vehicleDrive.camera.follow)
     {
         // Holding the right mouse button looks around the car: dragging right swings the camera to its left side, as if turning the view to the right.
-        const bool lookHeld = state.input.IsMouseLookActive();
-        const float sensitivity = state.camera.mouseSensitivity;
-        UpdateCameraOrbit(
-            session->orbit,
-            lookHeld,
-            lookHeld ? -state.input.GetMouseDeltaX() * sensitivity : 0.0f,
-            lookHeld ? state.input.GetMouseDeltaY() * sensitivity : 0.0f,
-            state.vehicleDrive.camera,
-            deltaSeconds);
+        // The right stick does the same, pushed right like a drag to the right and down like a drag down.
+        float lookYaw = 0.0f;
+        float lookPitch = 0.0f;
+        bool lookHeld = state.input.IsMouseLookActive();
+        if (lookHeld)
+        {
+            lookYaw = -state.input.GetMouseDeltaX() * state.camera.mouseSensitivity;
+            lookPitch = state.input.GetMouseDeltaY() * state.camera.mouseSensitivity;
+        }
+        const int gamepadIndex = state.input.GetFirstConnectedGamepadIndex();
+        if (!keyboardCaptured && gamepadIndex >= 0)
+        {
+            const uint32_t player = static_cast<uint32_t>(gamepadIndex);
+            const float stickX = state.input.GetGamepadAxis(GamepadAxis::RightX, player);
+            const float stickY = state.input.GetGamepadAxis(GamepadAxis::RightY, player);
+            if (stickX != 0.0f || stickY != 0.0f)
+            {
+                lookHeld = true;
+                lookYaw -= stickX * kGamepadOrbitDegreesPerSecond * deltaSeconds;
+                lookPitch += stickY * kGamepadOrbitDegreesPerSecond * deltaSeconds;
+            }
+        }
+        UpdateCameraOrbit(session->orbit, lookHeld, lookYaw, lookPitch, state.vehicleDrive.camera, deltaSeconds);
         UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds, session->orbit);
     }
     return true;

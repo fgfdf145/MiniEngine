@@ -106,13 +106,9 @@ float NormalizeSdlGamepadAxis(SDL_GamepadAxis axis, Sint16 value)
     const float maxMagnitude = value < 0 ? 32768.0f : 32767.0f;
     float normalized = maxMagnitude > 0.0f ? static_cast<float>(value) / maxMagnitude : 0.0f;
 
+    // SDL already reports a stick pushed up as negative, the sign the engine reads (what XInput gave once flipped).
     const bool left = axis == SDL_GAMEPAD_AXIS_LEFTX || axis == SDL_GAMEPAD_AXIS_LEFTY;
     normalized = ApplyAxialDeadZone(normalized, left ? kLeftStickDeadZone : kRightStickDeadZone);
-
-    if (axis == SDL_GAMEPAD_AXIS_LEFTY || axis == SDL_GAMEPAD_AXIS_RIGHTY)
-    {
-        normalized = -normalized;
-    }
 
     return std::clamp(normalized, -1.0f, 1.0f);
 }

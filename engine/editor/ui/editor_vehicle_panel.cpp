@@ -235,7 +235,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
         ImGui::TextUnformatted("Backspace: reset the car    F5: stop");
         ImGui::TextUnformatted("Hold the right mouse button: look around the car");
-        ImGui::TextDisabled("Gamepad (Xbox or DualSense): RT/LT, left stick, A (Cross) hand brake, Back (Create) reset");
+        ImGui::TextDisabled("Gamepad (Xbox or DualSense): RT/LT, left stick, right stick looks around the car, A (Cross) hand brake, Back (Create) reset");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 
