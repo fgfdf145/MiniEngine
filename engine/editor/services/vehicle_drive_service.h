@@ -114,7 +114,6 @@ struct VehicleGearButtons
 {
     bool up = false;
     bool down = false;
-    bool neutral = false;
 };
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
@@ -188,9 +187,9 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state);
 void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void()>& action);
 
 // Keyboard: W/S or the arrow keys for throttle and reverse, A/D or left/right to steer, Space for the
-// hand brake, E/Q to change up/down and N for neutral. Gamepad: right and left trigger, left stick, East
-// button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change up/down and
-// South (Cross) for neutral. With `manualGearbox` the gear buttons change gear, once per press:
+// hand brake, E/Q to change up/down and N (held) for the clutch. Gamepad: right and left trigger, left
+// stick, East button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change
+// up/down and South (Cross, held) for the clutch. With `manualGearbox` the gear buttons change gear, once per press:
 // `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,
 // the eased keyboard steering.
 VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering,

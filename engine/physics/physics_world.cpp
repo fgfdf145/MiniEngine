@@ -571,9 +571,8 @@ struct PhysicsWorld::Impl
         VehicleGearbox gearbox;
         VehicleGearboxState gearboxState;
         float outputRpmPerSpeed = 0.0f;
-        // The manual gearbox's changes asked for (VehicleControls::gearShifts, selectNeutral) and not yet made.
+        // The manual gearbox's changes asked for (VehicleControls::gearShifts) and not yet made.
         int pendingGearShifts = 0;
-        bool pendingNeutral = false;
         // The brakes: the wheels' settings whose torque is set each step, the torque of each wheel as the
         // fixed front/rear split has it, and (when dynamicBrakeBias) the loads that share the total.
         std::vector<JPH::WheelSettingsWV*> wheelSettings;
@@ -1197,15 +1196,14 @@ struct PhysicsWorld::Impl
         const bool manual = vehicle.controls.manualGearbox;
         if (manual)
         {
-            // The driver's changes since the last step; the hand brake declutches, as a driver's left foot would.
-            UpdateManualGearbox(vehicle.gearbox, state, std::exchange(vehicle.pendingGearShifts, 0), std::exchange(vehicle.pendingNeutral, false),
-                                input.forward, outputRpm, kFixedStepSeconds, engineRpm, input.handBrake > 0.0f);
+            // The driver's changes since the last step; the clutch pedal and the hand brake declutch.
+            UpdateManualGearbox(vehicle.gearbox, state, std::exchange(vehicle.pendingGearShifts, 0), input.forward, outputRpm, kFixedStepSeconds,
+                                engineRpm, vehicle.controls.clutchPedal || input.handBrake > 0.0f);
             vehicle.direction = state.gear < 0 ? -1.0f : 1.0f;
         }
         else
         {
             vehicle.pendingGearShifts = 0;
-            vehicle.pendingNeutral = false;
             UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds, engineRpm);
         }
         JPH::VehicleTransmission& transmission = controller->GetTransmission();
@@ -1215,7 +1213,7 @@ struct PhysicsWorld::Impl
             controller->GetEngine().SetCurrentRPM(VehicleGearRpm(vehicle.gearbox, state.gear, outputRpm));
         }
         // The engine is cut while a change opens the clutch, and on an upshift for the data's cut time;
-        // launching, the clutch slips on full revs. The manual box's open clutch (neutral, the hand brake)
+        // launching, the clutch slips on full revs. The manual box's open clutch (neutral, the pedal, the hand brake)
         // leaves the engine free to rev.
         if (!state.launching && !(manual && state.idling))
         {
@@ -2206,7 +2204,6 @@ void PhysicsWorld::SetVehicleControls(VehicleId id, const VehicleControls& contr
     Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
     vehicle.controls = controls;
     vehicle.pendingGearShifts += controls.gearShifts;
-    vehicle.pendingNeutral = vehicle.pendingNeutral || controls.selectNeutral;
 }
 
 void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
@@ -2227,7 +2224,6 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.direction = 1.0f;
     vehicle.gearboxState = {};
     vehicle.pendingGearShifts = 0;
-    vehicle.pendingNeutral = false;
     vehicle.turboBoost.clear();
     vehicle.filteredLoadValid = false;
     for (tyre::BrushTyre& tyre : vehicle.brushTyres)

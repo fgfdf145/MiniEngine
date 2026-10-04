@@ -268,49 +268,49 @@ void TestManualGearboxChangesWhenAsked()
     VehicleGearbox gearbox = GtrGearbox();
     gearbox.limiterRpm = gearbox.shiftPoints.upFull; // first gear at the test speed revs past it
     constexpr float kStep = 1.0f / 1000.0f;
-    const auto run = [&](VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm, float engineRpm, bool declutch = false)
+    const auto run = [&](VehicleGearboxState& state, int shifts, float forward, float outputRpm, float engineRpm, bool declutch = false)
     {
-        UpdateManualGearbox(gearbox, state, shifts, neutral, forward, outputRpm, kStep, engineRpm, declutch);
+        UpdateManualGearbox(gearbox, state, shifts, forward, outputRpm, kStep, engineRpm, declutch);
         for (int step = 0; step < 1000; ++step)
         {
-            UpdateManualGearbox(gearbox, state, 0, false, forward, outputRpm, kStep, engineRpm, declutch);
+            UpdateManualGearbox(gearbox, state, 0, forward, outputRpm, kStep, engineRpm, declutch);
         }
     };
 
     // It holds first past the automatic's change-up point: only the driver changes up.
     VehicleGearboxState state;
     const float fast = gearbox.shiftPoints.upFull / gearbox.forwardRatios[0] * 1.02f;
-    run(state, 0, false, 1.0f, fast, VehicleGearRpm(gearbox, 1, fast));
+    run(state, 0, 1.0f, fast, VehicleGearRpm(gearbox, 1, fast));
     Require(state.gear == 1 && state.clutch == 1.0f, "the manual box holds first, in " + std::to_string(state.gear));
-    UpdateManualGearbox(gearbox, state, 1, false, 1.0f, fast, kStep, VehicleGearRpm(gearbox, 1, fast));
+    UpdateManualGearbox(gearbox, state, 1, 1.0f, fast, kStep, VehicleGearRpm(gearbox, 1, fast));
     Require(state.gear == 2 && state.clutch == 0.0f && state.revMatch, "a press changes up with the clutch open");
-    run(state, 0, false, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
+    run(state, 0, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
     Require(state.clutch == 1.0f, "and the clutch bites again");
 
     // Changing down two at that speed would put first past the limiter: it stops at second.
-    run(state, 1, false, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
+    run(state, 1, 1.0f, fast, VehicleGearRpm(gearbox, 2, fast));
     Require(state.gear == 3, "third");
-    run(state, -2, false, 1.0f, fast, VehicleGearRpm(gearbox, 3, fast));
+    run(state, -2, 1.0f, fast, VehicleGearRpm(gearbox, 3, fast));
     Require(state.gear == 2, "a change down onto the limiter is refused, in " + std::to_string(state.gear));
 
-    // Neutral opens the clutch; reverse waits for the car to stop.
-    run(state, 0, true, 0.0f, fast, 1000.0f);
-    Require(state.gear == 0 && state.clutch == 0.0f, "neutral");
-    run(state, -1, false, 0.0f, fast, 1000.0f);
+    // Slower, down through first to neutral, which opens the clutch; reverse waits for the car to stop.
+    run(state, -2, 0.0f, 300.0f, 1000.0f);
+    Require(state.gear == 0 && state.clutch == 0.0f, "neutral, in " + std::to_string(state.gear));
+    run(state, -1, 0.0f, fast, 1000.0f);
     Require(state.gear == 0, "no reverse while rolling, in " + std::to_string(state.gear));
-    run(state, -1, false, 0.0f, 0.0f, 1000.0f);
+    run(state, -1, 0.0f, 0.0f, 1000.0f);
     Require(state.gear == -1, "reverse once stopped");
-    run(state, -1, false, 0.0f, 0.0f, 1000.0f);
+    run(state, -1, 0.0f, 0.0f, 1000.0f);
     Require(state.gear == -1, "and nothing below it");
-    run(state, 2, false, 0.0f, 0.0f, 1000.0f);
+    run(state, 2, 0.0f, 0.0f, 1000.0f);
     Require(state.gear == 1, "up through neutral to first");
-    run(state, 0, false, 0.5f, 0.0f, 3000.0f);
+    run(state, 0, 0.5f, 0.0f, 3000.0f);
     Require(state.clutch > 0.0f, "the throttle moves off in first");
 
-    // The hand brake declutches; let go, it bites again.
-    run(state, 0, false, 1.0f, 1000.0f, 3000.0f, true);
-    Require(state.clutch == 0.0f, "the hand brake opens the clutch");
-    run(state, 0, false, 1.0f, 1000.0f, 3000.0f);
+    // The clutch pedal (or the hand brake) declutches; let go, it bites again.
+    run(state, 0, 1.0f, 1000.0f, 3000.0f, true);
+    Require(state.gear == 1 && state.clutch == 0.0f, "the pedal opens the clutch, in gear");
+    run(state, 0, 1.0f, 1000.0f, 3000.0f);
     Require(state.clutch == 1.0f, "and it bites when let go");
 }
 
@@ -455,14 +455,27 @@ void TestCarDrivesOnTheManualGearbox()
     Require(telemetry.gear == -1, "three changes down from second make reverse, in " + std::to_string(telemetry.gear));
     Require(telemetry.forwardSpeed < -1.0f, "the throttle backs up, speed " + std::to_string(telemetry.forwardSpeed));
 
-    // Neutral: the throttle revs the engine and the car rolls.
-    controls.selectNeutral = true;
+    // The clutch held: still in reverse, the throttle revs the engine and no longer drives.
+    controls.throttle = 0.0f;
+    controls.brake = 1.0f;
     world.SetVehicleControls(car, controls);
-    controls.selectNeutral = false;
+    Simulate(world, 5.0f);
+    controls.brake = 0.0f;
+    controls.throttle = 1.0f;
+    controls.clutchPedal = true;
+    world.SetVehicleControls(car, controls);
     Simulate(world, 1.0f);
     telemetry = world.GetVehicleTelemetry(car);
-    Require(telemetry.gear == 0, "neutral, in " + std::to_string(telemetry.gear));
+    Require(telemetry.gear == -1, "the clutch keeps the gear, in " + std::to_string(telemetry.gear));
     Require(telemetry.engineRpm > settings.minRpm + 500.0f, "the engine revs free, " + std::to_string(telemetry.engineRpm));
+    Require(std::abs(telemetry.forwardSpeed) < 0.5f, "and the car stays, speed " + std::to_string(telemetry.forwardSpeed));
+
+    // Let go, it bites and the car backs away.
+    controls.clutchPedal = false;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 2.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    Require(telemetry.forwardSpeed < -1.0f, "letting the clutch go drives, speed " + std::to_string(telemetry.forwardSpeed));
 }
 
 void TestCarRotatedAtStartDrivesItsOwnWay()

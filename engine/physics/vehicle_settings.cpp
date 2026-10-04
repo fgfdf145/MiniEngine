@@ -898,7 +898,7 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     WorkGearboxClutch(gearbox, state, throttle, outputRpm, deltaSeconds, engineRpm, false);
 }
 
-void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm,
+void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, float forward, float outputRpm,
                          float deltaSeconds, float engineRpm, bool declutch)
 {
     const int top = static_cast<int>(gearbox.forwardRatios.size());
@@ -926,11 +926,6 @@ void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& sta
         }
         StartGearChange(gearbox, state, true, to > from);
     }
-    if (neutral)
-    {
-        state.gear = 0;
-    }
-
     if (state.gear == 0)
     {
         // Neutral: nothing through the clutch; in gear again, it bites (WorkGearboxClutch leaving the idle).

@@ -741,8 +741,8 @@ struct VehicleControls
     bool manualGearbox = false;
     // Gear changes asked for since the last controls: +1 per change up, -1 per change down.
     int gearShifts = 0;
-    // Asked for neutral since the last controls (after any gearShifts).
-    bool selectNeutral = false;
+    // The clutch pedal, held down: the manual gearbox's clutch is open until it is let go.
+    bool clutchPedal = false;
 };
 
 // The inputs of Jolt's WheeledVehicleController::SetDriverInput.
@@ -844,8 +844,8 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
 // that would rev the engine past gearbox.limiterRpm, and reverse while the car still rolls faster than
 // the idle in it. A change under way opens the clutch, matches the revs and lets the clutch bite as the
 // automatic's does; moving off, rolling below the idle off the throttle and the launch work as there.
-// In neutral, and while `declutch` holds (the hand brake), the clutch is open; let go, it bites again.
-// `neutral` takes it out of gear after the shifts.
-void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, bool neutral, float forward, float outputRpm,
+// In neutral, and while `declutch` holds (the clutch pedal, the hand brake), the clutch is open; let go,
+// it bites again.
+void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, int shifts, float forward, float outputRpm,
                          float deltaSeconds, float engineRpm = 0.0f, bool declutch = false);
 }

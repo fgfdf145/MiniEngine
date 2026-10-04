@@ -478,7 +478,7 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
     {
         gearButtons.up = input.IsKeyDown(KeyCode(SDL_SCANCODE_E));
         gearButtons.down = input.IsKeyDown(KeyCode(SDL_SCANCODE_Q));
-        gearButtons.neutral = input.IsKeyDown(KeyCode(SDL_SCANCODE_N));
+        controls.clutchPedal = manualGearbox && input.IsKeyDown(KeyCode(SDL_SCANCODE_N));
         controls.throttle += IsEitherKeyDown(input, SDL_SCANCODE_W, SDL_SCANCODE_UP) ? 1.0f : 0.0f;
         controls.throttle -= IsEitherKeyDown(input, SDL_SCANCODE_S, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
         steeringTarget += IsEitherKeyDown(input, SDL_SCANCODE_D, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
@@ -502,7 +502,7 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
         }
         gearButtons.up = gearButtons.up || input.IsGamepadButtonDown(GamepadButton::RightShoulder, player);
         gearButtons.down = gearButtons.down || input.IsGamepadButtonDown(GamepadButton::LeftShoulder, player);
-        gearButtons.neutral = gearButtons.neutral || input.IsGamepadButtonDown(GamepadButton::South, player);
+        controls.clutchPedal = controls.clutchPedal || (manualGearbox && input.IsGamepadButtonDown(GamepadButton::South, player));
     }
 
     if (gearButtonsHeld != nullptr)
@@ -510,7 +510,6 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
         if (manualGearbox)
         {
             controls.gearShifts = (gearButtons.up && !gearButtonsHeld->up ? 1 : 0) - (gearButtons.down && !gearButtonsHeld->down ? 1 : 0);
-            controls.selectNeutral = gearButtons.neutral && !gearButtonsHeld->neutral;
         }
         *gearButtonsHeld = gearButtons;
     }
