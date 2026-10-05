@@ -3,13 +3,15 @@
 # the models stand at the origin and line up with each other. Converted from the game's files by the
 # tools in C:\Project\GTASA MAP (tools/engine_bundle.py) and imported to assets/models/gtasa_<region>
 # (not in git). glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
+# The game's water (data/water.dat, with open sea beyond the map) is a sixth model: cars float, fill and
+# sink below it.
 # The Skyline R34 stands on Grove Street facing west, out of the cul-de-sac (needs the car imported from
 # Assetto Corsa at assets/skyline_r34_vspec, not in git). The map collides through the game's own COL
 # models, which the converter writes into each region's glTF.
 scene:
   version: 3
   selected_entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
-  selected_entity: 5
+  selected_entity: 6
 entities:
   - entity_uuid: c42332ab-2274-43e5-9c1e-94e0e483be21
     tag: Los Santos
@@ -65,6 +67,18 @@ entities:
       display_name: gtasa_leveldes.gltf
       source_path: assets/models/gtasa_leveldes/gtasa_leveldes.gltf
       source_uuid: 2be8ca85-bb64-407b-b321-7a6dff5a5298
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 09058514-2ece-4ecc-979d-35a9c1997059
+    tag: Water
+    model:
+      display_name: gtasa_water.gltf
+      source_path: assets/models/gtasa_water/gtasa_water.gltf
+      source_uuid: a4479793-4833-44ab-92fd-10b366d87f0b
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
