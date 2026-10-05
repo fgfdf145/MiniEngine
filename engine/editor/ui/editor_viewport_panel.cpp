@@ -555,7 +555,7 @@ void RefreshViewportMatrices(
         scene.HasSelection() ? scene.GetModelMatrix(scene.GetSelectedEntity()) : glm::mat4(1.0f);
 }
 
-void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const ViewportOverlayRect& viewportRect)
+void HandleViewportShortcuts(IEditorWorld& scene, const ViewportOverlayRect& viewportRect)
 {
     ImGuiIO& io = ImGui::GetIO();
     // Ctrl+R and the like are editor commands (ProcessCommandShortcuts), not these keys.
@@ -572,15 +572,6 @@ void HandleViewportShortcuts(IEditorWorld& scene, Camera& camera, const Viewport
     if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !ImGuizmo::IsUsing())
     {
         gizmo.operation = ToggleGizmoOperation(gizmo.operation);
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
-    {
-        glm::vec3 minBounds{};
-        glm::vec3 maxBounds{};
-        if (ComputeWorldModelBounds(scene, scene.GetSelectedEntity(), minBounds, maxBounds))
-        {
-            camera.FrameBounds(minBounds, maxBounds);
-        }
     }
 }
 
@@ -1124,7 +1115,7 @@ void EditorUiController::DrawViewportPanel(
         // While driving, R puts the car back on its wheels rather than switching the gizmo.
         if (!m_vehicleStatus.active)
         {
-            HandleViewportShortcuts(scene, camera, viewportRect);
+            HandleViewportShortcuts(scene, viewportRect);
         }
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
         if (m_vehicleStatus.active)

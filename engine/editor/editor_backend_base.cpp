@@ -320,6 +320,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                         EntityEditService::CreateSceneLightEntity(State(), light->name, light->type);
                     });
     }
+    if (actions.frameSelectedSceneEntity)
+    {
+        EntityEditService::FrameSelectedEntity(State());
+    }
     if (actions.deleteSelectedSceneEntity)
     {
         RunUiAction(modelError, "delete selected entity", [&]

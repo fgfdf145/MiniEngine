@@ -113,6 +113,21 @@ void Camera::FrameBoundsLikeKhronosViewer(const glm::vec3& minBounds, const glm:
     farPlane = std::max(WorldUnits::kDefaultCameraFarPlaneMeters, distance + radius * 8.0f);
 }
 
+void Camera::FocusOn(const glm::vec3& center, float radius)
+{
+    radius = std::max(radius, WorldUnits::kMinimumFramedRadiusMeters);
+    // The distance at which the sphere just touches the vertical FOV, with a little margin around it.
+    const float halfFovRadians = std::max(glm::radians(fovDegrees) * 0.5f, 0.2f);
+    const float distance = radius / std::sin(halfFovRadians) * 1.1f;
+    position = center - GetForward() * distance;
+
+    if (distance - radius < nearPlane)
+    {
+        nearPlane = std::max(WorldUnits::kUiCameraNearMinMeters, (distance - radius) * 0.5f);
+    }
+    farPlane = std::max(farPlane, distance + radius * 8.0f);
+}
+
 void Camera::FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds)
 {
     const glm::vec3 center = (minBounds + maxBounds) * 0.5f;

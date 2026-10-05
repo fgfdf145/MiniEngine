@@ -105,6 +105,8 @@ struct EditorUiActions
     std::optional<LightCreate> createLightEntity;
     bool createSceneEntity = false;
     bool deleteSelectedSceneEntity = false;
+    // Points the viewport camera at the selected entity.
+    bool frameSelectedSceneEntity = false;
     bool captureViewport = false; // written as a PNG under ProjectRoot()/captures
     // Starts recording the viewport to an AVI under ProjectRoot()/captures, or stops.
     bool toggleVideoRecording = false;

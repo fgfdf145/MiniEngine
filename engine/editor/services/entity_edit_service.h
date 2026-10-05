@@ -21,6 +21,9 @@ void CommitViewportModelPreview(RendererSharedState& state, const std::string& r
 void ClearViewportModelPreview(RendererSharedState& state, bool restoreSelection = true);
 void CreateSceneEntity(RendererSharedState& state);
 void DeleteSelectedSceneEntity(RendererSharedState& state);
+// Points the camera at the selected entity without turning it: at its model's bounds, or at where
+// it is when it has no model (a light, an empty entity).
+void FrameSelectedEntity(RendererSharedState& state);
 void CreateSceneLightEntity(RendererSharedState& state, const std::string& name, LightType type);
 void DeleteSelectedLightEntity(RendererSharedState& state);
 void ApplySelectedModelBaseColorTexture(RendererSharedState& state, const std::string& path);

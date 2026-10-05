@@ -34,6 +34,9 @@ class Camera
     void MoveUp(float amount);
     void Rotate(float deltaYaw, float deltaPitch);
     void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
+    // Moves the camera back along its current view direction until a sphere of `radius` around
+    // `center` fills the view; the camera keeps looking the way it looked.
+    void FocusOn(const glm::vec3& center, float radius);
     // The Khronos glTF Sample Viewer's default view (UserCamera.resetView): vertical FOV 45 degrees,
     // looking down -Z at the box's centre, from the distance at which the larger of its x and y
     // extents fits both the vertical FOV and the horizontal one, which the viewer takes as the

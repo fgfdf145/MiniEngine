@@ -88,6 +88,15 @@ void EditorUiController::RegisterCommands()
     {
         return m_hasSceneSelection;
     };
+    scene.frameSelection = [this]
+    {
+        m_commandActions.frameSelectedSceneEntity = true;
+    };
+    // While a car is driven the camera is the driver's (or chases the car).
+    scene.canFrameSelection = [this]
+    {
+        return m_hasSceneSelection && !m_vehicleStatus.active;
+    };
     scene.createEntity = [this]
     {
         m_commandActions.createSceneEntity = true;

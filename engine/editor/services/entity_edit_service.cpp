@@ -367,6 +367,27 @@ void CreateSceneEntity(RendererSharedState& state)
     LOG_INFO("Created scene entity '{}'", entityData.tagName);
 }
 
+void FrameSelectedEntity(RendererSharedState& state)
+{
+    const IEditorWorld& world = state.GetEditorWorld();
+    if (!world.HasSelection())
+    {
+        return;
+    }
+
+    const entt::entity entity = world.GetSelectedEntity();
+    glm::vec3 minBounds{};
+    glm::vec3 maxBounds{};
+    if (ComputeWorldModelBounds(world, entity, minBounds, maxBounds))
+    {
+        state.camera.FocusOn((minBounds + maxBounds) * 0.5f, glm::length(maxBounds - minBounds) * 0.5f);
+    }
+    else
+    {
+        state.camera.FocusOn(glm::vec3(world.GetModelMatrix(entity)[3]), 0.0f);
+    }
+}
+
 void DeleteSelectedSceneEntity(RendererSharedState& state)
 {
     if (!state.GetEditorWorld().HasSelection())

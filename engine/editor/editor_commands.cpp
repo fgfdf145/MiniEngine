@@ -216,7 +216,7 @@ constexpr DebugViewCommand kDebugViewCommands[] = {
     {GBufferDebugView::DdgiProbes, "ddgi_probes", "DDGI Probes", "", 0, false},
 };
 
-void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state)
+void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
     Add(
         registry, "view.wireframe", "Wireframe", "View/Wireframe", ICON_FA_DRAW_POLYGON, ImGuiMod_Alt | ImGuiKey_W,
@@ -250,6 +250,7 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state)
             command.view == GBufferDebugView::Off ? std::function<bool()>{} : std::function<bool()>(gbufferAvailable));
     }
     registry.AddSeparator("View");
+    AddBound(registry, "view.frame_selected", "Frame Selected", "View/Frame Selected", ICON_FA_BULLSEYE, ImGuiKey_F, scene.frameSelection, scene.canFrameSelection);
     Add(
         registry, "view.viewport_fullscreen", "Fullscreen Viewport", "View/Fullscreen Viewport", ICON_FA_EXPAND, ImGuiKey_F11,
         [&state]
@@ -393,7 +394,7 @@ void RegisterEditorCommands(
     RegisterFileCommands(registry, scene);
     RegisterEditCommands(registry, scene);
     RegisterSceneCommands(registry, state, scene);
-    RegisterViewCommands(registry, state);
+    RegisterViewCommands(registry, state, scene);
     RegisterRenderCommands(registry, state, scene);
     RegisterToolsCommands(registry, state, scene);
     RegisterWindowCommands(registry, window);

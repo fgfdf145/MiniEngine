@@ -291,6 +291,16 @@ void TestEditorCommands()
     {
         ++steps;
     };
+    int frames = 0;
+    bool canFrame = false;
+    scene.frameSelection = [&frames]
+    {
+        ++frames;
+    };
+    scene.canFrameSelection = [&canFrame]
+    {
+        return canFrame;
+    };
     int recordingToggles = 0;
     scene.toggleVideoRecording = [&recordingToggles]
     {
@@ -327,6 +337,13 @@ void TestEditorCommands()
     Require(!IsCommandChecked(fullscreen) && !state.viewportFullscreen, "the viewport starts windowed");
     Require(Run(registry, "view.viewport_fullscreen") && state.viewportFullscreen && IsCommandChecked(fullscreen), "the command turns fullscreen on");
     Require(Run(registry, "view.viewport_fullscreen") && !state.viewportFullscreen, "and off again");
+
+    // F points the viewport camera at the selection, from any panel, while there is one to frame.
+    const Command& frame = *registry.Find("view.frame_selected");
+    Require(frame.shortcut == ImGuiKey_F, "Frame Selected is F");
+    Require(!Run(registry, "view.frame_selected") && frames == 0, "nothing to frame without a selection");
+    canFrame = true;
+    Require(Run(registry, "view.frame_selected") && frames == 1, "the command frames the selection");
 
     // Record Viewport toggles a recording the backend runs; it shows checked while one does.
     const Command& record = *registry.Find("tools.record_viewport");

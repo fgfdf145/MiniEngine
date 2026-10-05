@@ -110,6 +110,9 @@ struct EditorSceneCommands
     std::function<void()> duplicate;
     std::function<void()> deleteSelection;
     std::function<bool()> hasSelection; // enables Delete; empty means always enabled
+    // Frame Selected: points the viewport camera at the selection, enabled as canFrameSelection says.
+    std::function<void()> frameSelection;
+    std::function<bool()> canFrameSelection;
     std::function<void()> openPreferences;
     std::function<void()> clearScene;
     std::function<void()> createEntity;
