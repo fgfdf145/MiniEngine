@@ -209,6 +209,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 
     State().vehicleDrive.camera = uiFrame.vehicleCamera;
     State().vehicleDrive.haptics = uiFrame.vehicleHaptics;
+    State().vehicleDrive.steeringAssist = uiFrame.vehicleSteeringAssist;
     State().vehicleDrive.manualGearbox = uiFrame.vehicleManualGearbox;
     if (actions.stopVehicleDrive)
     {

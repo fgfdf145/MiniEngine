@@ -220,6 +220,9 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 
     session->engineMinRpm = settings.minRpm;
     session->engineMaxRpm = settings.maxRpm;
+    session->maxSteerDegrees = settings.maxSteerAngleDegrees;
+    session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
+    session->frontPeakSlipDegrees = settings.frontTyres.peakSlipAngleDegrees > 0.0f ? settings.frontTyres.peakSlipAngleDegrees : 7.0f;
 
     glm::vec3 carWorldMin = session->startPose.position;
     glm::vec3 carWorldMax = session->startPose.position;
@@ -288,6 +291,7 @@ void Reset(RendererSharedState& state)
     {
         session->physics->ResetVehicle(session->vehicle, session->startPose);
         session->keyboardSteering = 0.0f;
+        session->steeringAssist = VehicleSteeringAssistState{};
         session->haptics = VehicleHapticsState{};
     }
 }
@@ -397,11 +401,25 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     {
         deltaSeconds = 1.0f / 60.0f;
     }
-    const VehicleControls controls = scripted.has_value()
-                                         ? *scripted
-                                         : ReadVehicleControls(
-                                               state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering,
-                                               state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
+    VehicleControls controls = scripted.has_value()
+                                   ? *scripted
+                                   : ReadVehicleControls(
+                                         state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering,
+                                         state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
+    // The steering assist holds still while the simulation does.
+    if (!scripted.has_value())
+    {
+        const VehicleTelemetry telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
+        VehicleSteeringAssistInput assist;
+        assist.request = controls.steering;
+        assist.forwardSpeed = telemetry.forwardSpeed;
+        assist.rightSpeed = telemetry.rightSpeed;
+        assist.maxSteerDegrees = session->maxSteerDegrees;
+        assist.wheelbase = session->wheelbase;
+        assist.peakSlipDegrees = session->frontPeakSlipDegrees;
+        controls.steering = ComputeAssistedSteering(
+            state.vehicleDrive.steeringAssist, assist, session->steeringAssist, session->paused ? 0.0f : deltaSeconds);
+    }
     const bool resetDown =
         (!keyboardCaptured && state.input.IsKeyDown(KeyCode(SDL_SCANCODE_BACKSPACE))) ||
         (state.input.GetFirstConnectedGamepadIndex() >= 0 && !keyboardCaptured &&

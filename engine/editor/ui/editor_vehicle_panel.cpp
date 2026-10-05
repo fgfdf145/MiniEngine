@@ -277,6 +277,35 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 
+    if (ImGui::CollapsingHeader("Steering Assist", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        VehicleSteeringAssistSettings& assist = m_vehicleSteeringAssist;
+        ImGui::Checkbox("Smooth Steering (GT7 style)", &assist.enabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "The stick or keys ask for a share of the lock the car can use at its speed, not of the rack's full lock;\n"
+                "the front wheels follow at a limited rate; and when the car slides, the range centres on where it is\n"
+                "going, so letting go of the stick points the wheels along the slide. Off: the stick drives the rack directly.");
+        }
+        ImGui::BeginDisabled(!assist.enabled);
+        DragFloatInRange("Stick Response Curve", &assist.sensitivity, 0.0f, 1.0f, "%.2f", 0.01f);
+        DragFloatInRange("Steer Time (s)", &assist.steerSeconds, 0.0f, 1.0f, "%.2f", 0.005f);
+        DragFloatInRange("Return Time (s)", &assist.returnSeconds, 0.0f, 1.0f, "%.2f", 0.005f);
+        DragFloatInRange("Smoothing (s)", &assist.smoothingSeconds, 0.0f, 0.3f, "%.3f", 0.001f);
+        ImGui::Checkbox("Speed-Sensitive Lock", &assist.speedSensitive);
+        ImGui::BeginDisabled(!assist.speedSensitive);
+        DragFloatInRange("Corner Grip (g)", &assist.cornerGrip, 0.3f, 3.0f, "%.2f", 0.01f);
+        DragFloatInRange("Full Lock Below (m/s)", &assist.fullLockSpeed, 0.5f, 20.0f, "%.1f", 0.05f);
+        DragFloatInRange("Least Lock Share", &assist.minLockShare, 0.0f, 1.0f, "%.2f", 0.005f);
+        ImGui::EndDisabled();
+        ImGui::Checkbox("Counter-Steer Assist", &assist.counterSteerAssist);
+        ImGui::BeginDisabled(!assist.counterSteerAssist);
+        DragFloatInRange("Slide Dead Zone (deg)", &assist.counterSteerDeadZoneDegrees, 0.0f, 10.0f, "%.1f", 0.05f);
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+    }
+
     if (ImGui::CollapsingHeader("Chase Camera", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::Checkbox("Follow the Car", &m_vehicleCamera.follow);

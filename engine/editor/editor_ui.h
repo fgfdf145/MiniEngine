@@ -136,6 +136,7 @@ struct EditorUiFrameResult
     VehicleSettings vehicleTuning;
     VehicleCameraSettings vehicleCamera;
     VehicleHapticsSettings vehicleHaptics;
+    VehicleSteeringAssistSettings vehicleSteeringAssist;
     bool vehicleManualGearbox = true;
     // The Suspension Rigs window's settings for the live rig, taken while it runs. Unset when the
     // window has never been opened: the rig then keeps what it has.
@@ -391,6 +392,7 @@ class EditorUiController
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehicleHapticsSettings m_vehicleHaptics;
+    VehicleSteeringAssistSettings m_vehicleSteeringAssist;
     bool m_vehicleManualGearbox = true;
     VehiclePhysicsOverlaySettings m_vehicleOverlay;
     bool m_inputMonitorAutoScroll = true;

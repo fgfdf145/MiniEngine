@@ -1789,3 +1789,29 @@ add_test(
 )
 
 set_target_properties(miniengine_gamepad_feedback_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_steering_assist_tests
+    steering_assist_tests.cpp
+)
+miniengine_group_target_sources(miniengine_steering_assist_tests)
+
+target_link_libraries(miniengine_steering_assist_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_steering_assist_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_steering_assist_tests>
+            $<TARGET_FILE_DIR:miniengine_steering_assist_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.steering_assist
+    COMMAND miniengine_steering_assist_tests
+)
+
+set_target_properties(miniengine_steering_assist_tests PROPERTIES FOLDER "Tests")

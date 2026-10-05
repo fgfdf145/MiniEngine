@@ -2,6 +2,7 @@
 
 #include <engine/asset/model_loader.h>
 #include <engine/editor/services/vehicle_haptics.h>
+#include <engine/editor/services/vehicle_steering_assist.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/renderer/camera.h>
@@ -143,6 +144,12 @@ struct VehicleDriveSession
     bool stepRequested = false;
     // The keyboard's steering, eased towards full lock rather than jumping to it.
     float keyboardSteering = 0.0f;
+    // The steering assist's state, and what it needs of the car: the front wheels' full lock (degrees),
+    // the wheelbase (m) and the front tyres' peak slip angle (degrees).
+    VehicleSteeringAssistState steeringAssist;
+    float maxSteerDegrees = 35.0f;
+    float wheelbase = 2.6f;
+    float frontPeakSlipDegrees = 7.0f;
     bool resetHeld = false;
     bool recoverHeld = false;
     // The gear buttons held in the last frame: a change is made once per press.
@@ -169,6 +176,7 @@ struct VehicleDriveState
     std::optional<VehicleControls> scriptedControls;
     VehicleCameraSettings camera;
     VehicleHapticsSettings haptics;
+    VehicleSteeringAssistSettings steeringAssist;
     std::string lastError;
 };
 

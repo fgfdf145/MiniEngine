@@ -2448,6 +2448,7 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     VehicleTelemetry telemetry;
     const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
     telemetry.forwardSpeed = localVelocity.GetZ();
+    telemetry.rightSpeed = -localVelocity.GetX();
     telemetry.engineRpm = controller->GetEngine().GetCurrentRPM();
     telemetry.gear = controller->GetTransmission().GetCurrentGear();
     for (const JPH::Wheel* wheel : vehicle.constraint->GetWheels())

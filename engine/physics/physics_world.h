@@ -128,6 +128,7 @@ struct VehicleLinkage
 struct VehicleTelemetry
 {
     float forwardSpeed = 0.0f; // metres per second along the car's +Z, negative when reversing
+    float rightSpeed = 0.0f;   // metres per second to the car's right (its -X)
     float engineRpm = 0.0f;
     int gear = 0; // negative reverse, 0 neutral, then the forward gears from 1
     uint32_t wheelsInContact = 0;

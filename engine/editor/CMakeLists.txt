@@ -28,6 +28,8 @@ add_library(engine_editor
     services/vehicle_drive_service.h
     services/vehicle_haptics.cpp
     services/vehicle_haptics.h
+    services/vehicle_steering_assist.cpp
+    services/vehicle_steering_assist.h
     services/world_streaming_service.cpp
     services/world_streaming_service.h
     ui/editor_asset_browser_panel.cpp
