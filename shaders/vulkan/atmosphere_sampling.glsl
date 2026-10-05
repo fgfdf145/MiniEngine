@@ -58,7 +58,9 @@ vec3 SunDisk(vec3 direction, vec3 up, float viewHeight)
 }
 
 // The sky-view LUT along a world direction: the light the atmosphere scatters toward the camera
-// before the ray leaves it or meets the ground. The ground's own light is not in it.
+// before the ray leaves it or meets the ground, and above the horizon the night sky's own glow
+// (airglow and starlight), which the sun's and moon's light swamps until night. The ground's own
+// light is not in it.
 vec3 SampleSkyViewLut(vec3 direction, out bool intersectGround)
 {
     vec3 camera = ubo.atmosphereCameraPositionKm.xyz;
@@ -79,7 +81,8 @@ vec3 SampleSkyViewLut(vec3 direction, out bool intersectGround)
 
     intersectGround = RaySphereIntersectNearest(camera, direction, vec3(0.0), BottomRadius()) >= 0.0;
     vec2 uv = SkyViewLutParamsToUv(intersectGround, dot(direction, up), lightViewCos, viewHeight);
-    return textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
+    vec3 luminance = textureLod(atmosphereSkyViewLut, uv, 0.0).rgb;
+    return intersectGround ? luminance : luminance + ubo.nightSky.rgb;
 }
 
 // The direction a seamless horizon reads the sky along for a ray that would meet the ground: its

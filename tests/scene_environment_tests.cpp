@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -71,6 +72,10 @@ SceneEnvironment MakeEnvironment()
     environment.timeOfDay.latitudeDegrees = 42.5f;
     environment.timeOfDay.northDegrees = -30.0f;
     environment.timeOfDay.timeScale = 60.0f;
+    environment.timeOfDay.moonEnabled = false;
+    environment.timeOfDay.moonPhase = 0.25f;
+    environment.timeOfDay.moonBrightness = 2.0f;
+    environment.timeOfDay.nightSkyLuminance = 0.03125f;
     return environment;
 }
 
@@ -357,6 +362,67 @@ void SunDirectionInWorld()
             "an overhead sun shines straight down");
 }
 
+// The moon on the ecliptic, a phase of a turn east of the sun.
+void MoonFollowsPhase()
+{
+    for (const int day : {1, 80, 172, 279})
+    {
+        for (const float hours : {0.0f, 6.5f, 13.0f, 21.25f})
+        {
+            TimeOfDaySettings time = MakeTime(hours, day, 35.7f);
+            time.northDegrees = 25.0f;
+            time.moonPhase = 0.5f;
+            Require(Near(ComputeDirectionToMoon(time), -ComputeDirectionToSun(time), 1e-4f), "the full moon stands opposite the sun");
+            time.moonPhase = 0.0f;
+            Require(Near(ComputeDirectionToMoon(time), ComputeDirectionToSun(time), 1e-4f), "the new moon stands with the sun");
+        }
+    }
+
+    // A first quarter is 90 degrees east of the sun: at the equinox it is due south at sunset.
+    TimeOfDaySettings quarter = MakeTime(18.0f, 80, 35.7f);
+    quarter.moonPhase = 0.25f;
+    const SolarAngles moon = ComputeLunarAngles(quarter);
+    Require(Near(moon.azimuthDegrees, 180.0f, 0.5f), "the first quarter is south at sunset");
+    // At the equinox the sun is at ecliptic longitude 0, so the quarter is at 90: the June
+    // solstice point, declination +23.44, culminating at 90 - latitude + 23.44.
+    Require(Near(moon.elevationDegrees, 90.0f - 35.7f + 23.44f, 0.5f), "as high as the June sun at noon");
+
+    Require(Near(MoonPhaseIlluminanceFraction(0.5f), 1.0f, 1e-6f), "the full moon is the full moon");
+    const float firstQuarter = MoonPhaseIlluminanceFraction(0.25f);
+    Require(firstQuarter > 0.07f && firstQuarter < 0.11f, "a quarter moon gives about a tenth of the light");
+    Require(Near(firstQuarter, MoonPhaseIlluminanceFraction(0.75f), 1e-6f), "both quarters alike");
+    Require(MoonPhaseIlluminanceFraction(0.0f) < 1e-3f, "the new moon gives next to none");
+}
+
+void MoonlightTakesOverAtNight()
+{
+    TimeOfDaySettings time = MakeTime(12.0f, 279, 35.7f);
+    Require(!ComputeMoonlight(time).has_value(), "by day the sun lights the scene");
+    time.hours = 0.0f;
+    const std::optional<SkyLight> night = ComputeMoonlight(time);
+    Require(night.has_value(), "at midnight the moon does");
+    Require(Near(night->directionToLight, ComputeDirectionToMoon(time), 1e-6f), "from where it stands");
+    Require(Near(night->illuminance, kMoonlightColor * kFullMoonIlluminanceLux, 1e-6f), "with the full moon's light");
+    Require(night->directionToLight.y > 0.0f, "the full moon is up at midnight");
+    time.moonBrightness = 3.0f;
+    Require(Near(ComputeMoonlight(time)->illuminance, 3.0f * night->illuminance, 1e-6f), "brightness scales it");
+
+    time.moonEnabled = false;
+    Require(!ComputeMoonlight(time).has_value(), "with the moon off the sun stays");
+    time.moonEnabled = true;
+    time.enabled = false;
+    Require(!ComputeMoonlight(time).has_value(), "and with the clock off");
+
+    // Through dusk the sun keeps the sky until it is past the threshold.
+    time.enabled = true;
+    for (float hours = 16.0f; hours < 22.0f; hours += 0.05f)
+    {
+        time.hours = hours;
+        const bool moonlit = ComputeMoonlight(time).has_value();
+        Require(moonlit == (ComputeSolarAngles(time).elevationDegrees < kMoonTakesOverSunElevationDegrees), "the swap is at the threshold");
+    }
+}
+
 glm::vec3 SunShineDirection(const IEditorWorld& world)
 {
     glm::vec3 direction(0.0f);
@@ -466,6 +532,8 @@ int main()
         SunFollowsNorthernArc();
         TimeOfDayClamps();
         SunDirectionInWorld();
+        MoonFollowsPhase();
+        MoonlightTakesOverAtNight();
         SceneSunFollowsClock();
         StartupSceneHasAtmosphereAndSun();
         NewSceneKeepsOnlySunAndSky();

@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 
 namespace me
@@ -218,6 +219,35 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
         }
         const SolarAngles sun = ComputeSolarAngles(time);
         ImGui::TextDisabled("Sun: elevation %.1f deg, azimuth %.1f deg", sun.elevationDegrees, sun.azimuthDegrees);
+
+        ImGui::Checkbox("Moon", &time.moonEnabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Once the sun is %.0f deg below the horizon the moon lights the scene\nin its place: the sky, the shadows and the disk.", -kMoonTakesOverSunElevationDegrees);
+        }
+        ImGui::BeginDisabled(!time.moonEnabled);
+        static constexpr std::array<const char*, 8> kPhaseNames = {
+            "new", "waxing crescent", "first quarter", "waxing gibbous", "full", "waning gibbous", "last quarter", "waning crescent"};
+        const int phaseIndex = static_cast<int>(std::floor(time.moonPhase * 8.0f + 0.5f)) % 8;
+        DragFloatInRange("Moon phase", &time.moonPhase, 0.0f, 1.0f, kPhaseNames[static_cast<size_t>(std::max(phaseIndex, 0))]);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("0 new, 0.25 first quarter, 0.5 full (up all night), 0.75 last quarter.");
+        }
+        ImGui::DragFloat("Moon brightness", &time.moonBrightness, 0.05f, 0.0f, 100.0f, "%.2fx", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+        const SolarAngles moon = ComputeLunarAngles(time);
+        ImGui::TextDisabled(
+            "Moon: elevation %.1f deg, azimuth %.1f deg, %.0f%% of full%s",
+            moon.elevationDegrees,
+            moon.azimuthDegrees,
+            100.0f * MoonPhaseIlluminanceFraction(time.moonPhase),
+            ComputeMoonlight(time).has_value() ? " (lighting)" : "");
+        ImGui::EndDisabled();
+        ImGui::DragFloat("Night sky (cd/m2)", &time.nightSkyLuminance, 0.0005f, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Airglow and starlight, so a moonless night is not black. The real sky is about 0.0002.");
+        }
         ImGui::EndDisabled();
         if (time.enabled && !SceneHasDirectionalLight(scene))
         {

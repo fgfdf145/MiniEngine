@@ -158,6 +158,20 @@ struct TimeOfDaySettings
     float northDegrees = 0.0f;
     // Scene seconds per real second the clock runs while the editor is open; 0 holds the time.
     float timeScale = 0.0f;
+    // Once the sun has sunk past twilight the moon takes over as the scene's light: it lights the
+    // sky, casts the shadows and shows as the disk (engine/scene/sun_position.h).
+    bool moonEnabled = true;
+    // Days into the lunar month over its length, [0, 1): 0 new, 0.25 first quarter, 0.5 full (up
+    // all night, opposite the sun), 0.75 last quarter. Sets both where the moon stands and how much
+    // of its lit face the scene sees.
+    float moonPhase = 0.5f;
+    // Multiplies the moon's physical illuminance (0.267 lux full, above the air).
+    float moonBrightness = 1.0f;
+    // Luminance of the moonless night sky, cd/m^2: airglow and starlight, added to the sky above the
+    // horizon so it lights the scene when neither sun nor moon does. The real sky is about 0.0002;
+    // the exposure stops at EV100 -2, short of the eye's dark adaptation, so the default is brightened
+    // to what a dark-adapted eye makes of it: a new-moon night reads dark but not black.
+    float nightSkyLuminance = 0.01f;
 
     bool operator==(const TimeOfDaySettings&) const = default;
 };

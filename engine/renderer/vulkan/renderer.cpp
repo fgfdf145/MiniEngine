@@ -11,6 +11,7 @@
 
 #include <engine/logic/editor_world.h>
 #include <engine/scene/scene_components.h>
+#include <engine/scene/sun_position.h>
 #include <imgui.h>
 #include <engine/asset/compressed_texture_cache.h>
 #include <engine/asset/texture_preparation.h>
@@ -643,6 +644,19 @@ void VulkanRenderer::DrawFrame()
     ShadowUniformData shadowData{};
     std::optional<ShadowCascades> shadowCascades;
     const int32_t shadowLightIndex = SelectShadowCasterLight(sceneLights.candidates, lightSelection);
+    const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
+    // At night the moon stands in for the sun: everything below that takes the sun (the shadows, the
+    // sky, the clouds, the fog, the exposure) takes the moon instead.
+    if (shadowLightIndex >= 0)
+    {
+        if (const std::optional<SkyLight> moon = ComputeMoonlight(environment.timeOfDay); moon.has_value())
+        {
+            GpuLightData& light = selectedLights[static_cast<size_t>(shadowLightIndex)];
+            light.directionAndType = glm::vec4(-moon->directionToLight, light.directionAndType.w);
+            const float intensity = std::max({moon->illuminance.r, moon->illuminance.g, moon->illuminance.b});
+            light.colorAndIntensity = intensity > 0.0f ? glm::vec4(moon->illuminance / intensity, intensity) : glm::vec4(0.0f);
+        }
+    }
     // The Khronos reference view draws no shadows, as the Sample Viewer does not; the caster stays
     // the sun for the sky and exposure below.
     if (shadowLightIndex >= 0 && !State().renderDebug.khronosReference)
@@ -702,7 +716,6 @@ void VulkanRenderer::DrawFrame()
         }
     }
 
-    const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
     UpdateEnvironmentMap(environment);
     const EnvironmentMode environmentMode = EffectiveEnvironmentMode(environment);
     const AtmosphereParameters atmosphereParameters = BuildAtmosphereParameters(environment.atmosphere);

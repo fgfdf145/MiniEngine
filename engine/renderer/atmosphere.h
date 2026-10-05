@@ -95,9 +95,12 @@ struct EnvironmentUniformData
     // x ambient scale, y haze distance km, z unused, w the frame's index for the march's jitter.
     // w changes every frame, so the environment probe's CaptureKey leaves it out.
     glm::vec4 cloudParams{0.0f};
+    // rgb: the moonless night sky's luminance, cd/m^2, added to the sky above the horizon
+    // (TimeOfDaySettings::nightSkyLuminance; zero with the clock off).
+    glm::vec4 nightSky{0.0f};
 };
-inline constexpr size_t kEnvironmentUniformVec4Count = 25;
-static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-five vec4s");
+inline constexpr size_t kEnvironmentUniformVec4Count = 26;
+static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-six vec4s");
 
 // mode is the mode the frame renders with, which differs from environment.mode while an HDRI is
 // still loading. hdriSh is the loaded HDRI's unrotated radiance SH, or null. With no sun the illuminance is zero and the sky is black.

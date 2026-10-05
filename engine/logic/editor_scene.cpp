@@ -301,6 +301,10 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         time.latitudeDegrees = timeNode["latitude_degrees"].as<float>(time.latitudeDegrees);
         time.northDegrees = timeNode["north_degrees"].as<float>(time.northDegrees);
         time.timeScale = timeNode["time_scale"].as<float>(time.timeScale);
+        time.moonEnabled = timeNode["moon_enabled"].as<bool>(time.moonEnabled);
+        time.moonPhase = timeNode["moon_phase"].as<float>(time.moonPhase);
+        time.moonBrightness = timeNode["moon_brightness"].as<float>(time.moonBrightness);
+        time.nightSkyLuminance = timeNode["night_sky_luminance"].as<float>(time.nightSkyLuminance);
     }
     return environment;
 }
@@ -364,6 +368,10 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "latitude_degrees" << YAML::Value << time.latitudeDegrees;
     emitter << YAML::Key << "north_degrees" << YAML::Value << time.northDegrees;
     emitter << YAML::Key << "time_scale" << YAML::Value << time.timeScale;
+    emitter << YAML::Key << "moon_enabled" << YAML::Value << time.moonEnabled;
+    emitter << YAML::Key << "moon_phase" << YAML::Value << time.moonPhase;
+    emitter << YAML::Key << "moon_brightness" << YAML::Value << time.moonBrightness;
+    emitter << YAML::Key << "night_sky_luminance" << YAML::Value << time.nightSkyLuminance;
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
 }
