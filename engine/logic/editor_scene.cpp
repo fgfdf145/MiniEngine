@@ -350,6 +350,20 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
     SerializedSceneData sceneData{};
     sceneData.gizmo = ReadGizmoSettings(root["editor"]["gizmo"], sceneData.gizmo);
     sceneData.environment = ReadEnvironment(root["environment"]);
+    if (const YAML::Node streamingNode = root["streaming"]; streamingNode && streamingNode.IsSequence())
+    {
+        for (const YAML::Node& worldNode : streamingNode)
+        {
+            SceneStreamingWorld world;
+            world.manifest = worldNode["manifest"].as<std::string>(world.manifest);
+            world.loadRadius = std::max(worldNode["load_radius"].as<float>(world.loadRadius), 1.0f);
+            world.unloadRadius = std::max(worldNode["unload_radius"].as<float>(world.unloadRadius), world.loadRadius);
+            if (!world.manifest.empty())
+            {
+                sceneData.streaming.push_back(world);
+            }
+        }
+    }
 
     const YAML::Node entitiesNode = root["entities"];
     if (entitiesNode && entitiesNode.IsSequence())
@@ -478,6 +492,20 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
 
     EmitEnvironment(emitter, sceneData.environment);
 
+    if (!sceneData.streaming.empty())
+    {
+        emitter << YAML::Key << "streaming" << YAML::Value << YAML::BeginSeq;
+        for (const SceneStreamingWorld& world : sceneData.streaming)
+        {
+            emitter << YAML::BeginMap;
+            emitter << YAML::Key << "manifest" << YAML::Value << world.manifest;
+            emitter << YAML::Key << "load_radius" << YAML::Value << world.loadRadius;
+            emitter << YAML::Key << "unload_radius" << YAML::Value << world.unloadRadius;
+            emitter << YAML::EndMap;
+        }
+        emitter << YAML::EndSeq;
+    }
+
     emitter << YAML::Key << "editor" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "gizmo" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "operation" << YAML::Value << ToString(sceneData.gizmo.operation);
@@ -553,6 +581,7 @@ void EditorScene::SetEnvironment(const SceneEnvironment& environment)
 void EditorScene::CreateTwoCubeTestScene()
 {
     Clear();
+    m_streaming.clear();
 
     SerializedEntityData leftCube{};
     leftCube.tagName = "Cube A";
@@ -573,6 +602,7 @@ void EditorScene::CreateTwoCubeTestScene()
 void EditorScene::CreateEmptyScene()
 {
     Clear();
+    m_streaming.clear();
     AddDefaultSunAndSky();
 }
 
@@ -873,6 +903,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
     Clear();
     m_gizmoSettings = sceneData.gizmo;
     m_environment = sceneData.environment;
+    m_streaming = sceneData.streaming;
 
     for (const SerializedEntityData& entityData : sceneData.entities)
     {
@@ -947,10 +978,33 @@ void EditorScene::EnsureSelection()
         return;
     }
 
-    if (!m_sceneOrder.empty())
+    for (const entt::entity entity : m_sceneOrder)
     {
-        m_selectedEntity = m_sceneOrder.front();
+        if (!m_registry.all_of<StreamedComponent>(entity))
+        {
+            m_selectedEntity = entity;
+            return;
+        }
     }
+}
+
+entt::entity EditorScene::CreateStreamedEntity(const SerializedEntityData& entityData, const StreamedComponent& streamed)
+{
+    const entt::entity previousSelection = m_selectedEntity;
+    const entt::entity entity = CreateEntity(entityData);
+    m_registry.emplace<StreamedComponent>(entity, streamed);
+    m_selectedEntity = previousSelection;
+    return entity;
+}
+
+const std::vector<SceneStreamingWorld>& EditorScene::GetStreamingWorlds() const
+{
+    return m_streaming;
+}
+
+void EditorScene::SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds)
+{
+    m_streaming = std::move(worlds);
 }
 
 entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData)
@@ -994,12 +1048,14 @@ SerializedSceneData EditorScene::CaptureSceneData() const
     SerializedSceneData sceneData{};
     sceneData.gizmo = m_gizmoSettings;
     sceneData.environment = m_environment;
+    sceneData.streaming = m_streaming;
 
     // The on_destroy listener keeps scene order free of stale handles,
-    // so entries can be read without per-entity validity checks.
+    // so entries can be read without per-entity validity checks. Streamed entities are the streaming's
+    // to make again; the scene keeps the manifest they come from.
     for (entt::entity entity : m_sceneOrder)
     {
-        if (!m_registry.all_of<ModelComponent>(entity))
+        if (!m_registry.all_of<ModelComponent>(entity) || m_registry.all_of<StreamedComponent>(entity))
         {
             continue;
         }

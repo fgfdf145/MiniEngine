@@ -2737,7 +2737,9 @@ LoadedModelData BuildLoadedModelData(
         modelData.steeringWheel = wheelScan.steeringWheel;
     }
 
-    if (modelData.submeshes.empty())
+    // A model of collision or water alone (a streamed world's collision, kept loaded while its drawn
+    // cells come and go) draws nothing and is still a model.
+    if (modelData.submeshes.empty() && modelData.collisionMeshes.empty() && modelData.water.indices.empty())
     {
         throw std::runtime_error("glTF scene did not contain renderable triangle mesh data: " + modelPath.string());
     }

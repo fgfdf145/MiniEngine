@@ -4,6 +4,7 @@
 #include "engine_settings.h"
 #include "services/vehicle_drive_service.h"
 #include "services/vehicle_rig_service.h"
+#include "services/world_streaming_service.h"
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
@@ -175,6 +176,8 @@ struct RendererSharedState
     VehicleDriveState vehicleDrive;
     // The selected car on the live seven-post rig, if it is running (VehicleRigService).
     VehicleRigState vehicleRig;
+    // The scene's streamed worlds: which cells show their high detail or LOD (WorldStreamingService).
+    WorldStreamingState worldStreaming;
     std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.

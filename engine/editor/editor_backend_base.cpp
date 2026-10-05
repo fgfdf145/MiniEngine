@@ -7,6 +7,7 @@
 #include "services/scene_renderables.h"
 #include "services/vehicle_drive_service.h"
 #include "services/vehicle_rig_service.h"
+#include "services/world_streaming_service.h"
 
 #include <engine/asset/asset_registry.h>
 #include <engine/asset/kn5_importer.h>
@@ -182,6 +183,7 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 
     renderablesDirty |= EntityEditService::PumpAsyncModelLoad(State());
     renderablesDirty |= SceneIoService::PumpAsyncSceneLoad(State());
+    renderablesDirty |= WorldStreamingService::Tick(State());
     ModelImportService::PumpAsyncImport(State());
 
     State().renderablesDirty = false;

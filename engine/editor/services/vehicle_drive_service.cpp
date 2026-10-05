@@ -649,7 +649,7 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         // fences and foliage still count.
         if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water ||
             submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
-            collidesByItself.count(submesh.entity) != 0)
+            collidesByItself.count(submesh.entity) != 0 || scene.Registry().all_of<StreamedComponent>(submesh.entity))
         {
             continue;
         }

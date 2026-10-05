@@ -418,11 +418,23 @@ void EditorUiController::DrawScenePanel(
             ImGui::Separator();
         }
 
-        const size_t modelCount = scene.Registry().view<const ModelComponent>().size();
+        // Streamed cells come and go with the focus: they are counted, not listed.
+        const size_t streamedCount = scene.Registry().view<const StreamedComponent>().size();
+        const size_t modelCount = scene.Registry().view<const ModelComponent>().size() - streamedCount;
         const size_t lightCount = scene.Registry().view<const LightComponent>().size();
-        ImGui::Text("Models: %u  Lights: %u",
-                    static_cast<unsigned int>(modelCount),
-                    static_cast<unsigned int>(lightCount));
+        if (streamedCount > 0)
+        {
+            ImGui::Text("Models: %u  Lights: %u  Streamed cells: %u",
+                        static_cast<unsigned int>(modelCount),
+                        static_cast<unsigned int>(lightCount),
+                        static_cast<unsigned int>(streamedCount));
+        }
+        else
+        {
+            ImGui::Text("Models: %u  Lights: %u",
+                        static_cast<unsigned int>(modelCount),
+                        static_cast<unsigned int>(lightCount));
+        }
 
         if (ImGui::Button("Add Entity"))
         {
@@ -472,7 +484,7 @@ void EditorUiController::DrawScenePanel(
         }
         for (entt::entity entity : scene.GetSceneOrder())
         {
-            if (!scene.HasModelComponent(entity))
+            if (!scene.HasModelComponent(entity) || scene.Registry().all_of<StreamedComponent>(entity))
             {
                 continue;
             }

@@ -83,6 +83,14 @@ struct SceneEntityIdComponent
     std::string value;
 };
 
+// A model entity that world streaming made (WorldStreamingService): it exists while its cell is
+// wanted, and is never saved, listed in the scene panel or selected.
+struct StreamedComponent
+{
+    std::string cell;
+    bool lod = false;
+};
+
 struct TagComponent
 {
     std::string name = "Cube";

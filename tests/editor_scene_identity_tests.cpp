@@ -99,6 +99,36 @@ int main()
             upgraded.selectedEntityUuid == upgraded.entities[1].entityUuid,
             "legacy selected model index did not upgrade to selected uuid");
 
+        // A streamed world: the scene keeps its manifest and radii, never the cells streaming made, and
+        // a streamed cell takes no selection.
+        std::unique_ptr<IEditorWorld> streamedWorld = CreateEditorWorld();
+        SerializedEntityData kept{};
+        kept.tagName = "Kept";
+        const entt::entity keptEntity = streamedWorld->CreateEntity(kept);
+        streamedWorld->SetSelectedEntity(keptEntity);
+        SceneStreamingWorld streamedSettings;
+        streamedSettings.manifest = "assets/models/world/world.stream.yaml";
+        streamedSettings.loadRadius = 650.0f;
+        streamedSettings.unloadRadius = 950.0f;
+        streamedWorld->SetStreamingWorlds({streamedSettings});
+        SerializedEntityData cell{};
+        cell.tagName = "Cell";
+        const entt::entity cellEntity = streamedWorld->CreateStreamedEntity(cell, StreamedComponent{"la_4_-4", false});
+        Require(streamedWorld->GetSelectedEntity() == keptEntity, "a streamed cell took the selection");
+        Require(streamedWorld->Registry().all_of<StreamedComponent>(cellEntity), "a streamed cell is not tagged");
+        const SerializedSceneData streamedCapture = streamedWorld->CaptureSceneData();
+        Require(streamedCapture.entities.size() == 1u && streamedCapture.entities[0].tagName == "Kept", "a streamed cell was saved");
+        const std::filesystem::path streamedPath =
+            std::filesystem::temp_directory_path() / "miniengine_scene_streaming_test.yaml";
+        SaveEditorSceneDataToFile(streamedCapture, streamedPath.string());
+        const SerializedSceneData streamedLoaded = LoadEditorSceneDataFromFile(streamedPath.string());
+        std::filesystem::remove(streamedPath, removeError);
+        Require(streamedLoaded.streaming.size() == 1u && streamedLoaded.streaming[0] == streamedSettings,
+                "the streamed world did not survive yaml round-trip");
+        Require(restored.streaming.empty(), "a scene without a streamed world gained one");
+        streamedWorld->DestroyEntity(keptEntity);
+        Require(streamedWorld->GetSelectedEntity() != cellEntity, "a streamed cell was selected when the selection went");
+
         std::cout << "scene identity tests passed\n";
         return 0;
     }

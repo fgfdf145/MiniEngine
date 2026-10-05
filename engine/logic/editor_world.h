@@ -3,6 +3,7 @@
 #include <engine/logic/gizmo_settings.h>
 #include <engine/scene/scene_components.h>
 #include <engine/scene/scene_environment.h>
+#include <engine/scene/scene_streaming.h>
 #include <engine/scene/scene_world.h>
 
 #include <imgui.h>
@@ -56,6 +57,7 @@ struct SerializedSceneData
     std::vector<SerializedLightData> lights;
     GizmoSettings gizmo;
     SceneEnvironment environment;
+    std::vector<SceneStreamingWorld> streaming;
     std::string selectedEntityUuid;
     // Legacy v1/v2 model-list index, retained for backward-compatible loads.
     int selectedEntityIndex = 0;
@@ -76,6 +78,8 @@ class IEditorWorld : public ISceneWorld
     virtual void Clear() = 0;
     virtual entt::entity CreateEntity(const SerializedEntityData& entityData) = 0;
     virtual entt::entity CreateLightEntity(const SerializedLightData& lightData) = 0;
+    // A model entity for world streaming: tagged StreamedComponent, and the selection stays as it was.
+    virtual entt::entity CreateStreamedEntity(const SerializedEntityData& entityData, const StreamedComponent& streamed) = 0;
     // Destroys any scene entity (model or light); scene order and selection
     // are kept in sync by the implementation regardless of entity kind.
     virtual void DestroyEntity(entt::entity entity) = 0;
@@ -107,6 +111,8 @@ class IEditorWorld : public ISceneWorld
     virtual SerializedSceneData CaptureSceneData() const = 0;
     virtual const std::string& GetSceneFilePath() const = 0;
     // The scene's sky. Saved with the scene; a scene file without it loads as EnvironmentMode::None.
+    virtual const std::vector<SceneStreamingWorld>& GetStreamingWorlds() const = 0;
+    virtual void SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds) = 0;
     virtual const SceneEnvironment& GetEnvironment() const = 0;
     virtual void SetEnvironment(const SceneEnvironment& environment) = 0;
 

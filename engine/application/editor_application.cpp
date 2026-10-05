@@ -449,7 +449,7 @@ int EditorApplication::Run()
         // Still loading: the scene file, its models, its textures or its ray scene.
         const bool loading = sharedState->asyncSceneLoad.IsActive() || sharedState->asyncLoad.IsActive() ||
                              !sharedState->pendingModelLoads.empty() || !sharedState->sceneUploadStatus.empty() ||
-                             sharedState->rayScenePending;
+                             sharedState->rayScenePending || !sharedState->worldStreaming.settled;
         const bool waiting = m_options.waitForScene && loading;
         if (m_options.driveEntity.has_value() && !driveStarted && !loading)
         {
