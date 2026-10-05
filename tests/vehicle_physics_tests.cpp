@@ -1515,6 +1515,122 @@ void TestUnsprungCarTakesABump()
     }
 }
 
+// Triangles facing up, whichever way round they were listed.
+void AddUpwardMesh(PhysicsWorld& world, const std::vector<glm::vec3>& vertices, std::vector<uint32_t> indices)
+{
+    for (size_t index = 0; index + 2 < indices.size(); index += 3)
+    {
+        const glm::vec3 normal = glm::cross(vertices[indices[index + 1]] - vertices[indices[index]], vertices[indices[index + 2]] - vertices[indices[index]]);
+        if (normal.y < 0.0f)
+        {
+            std::swap(indices[index + 1], indices[index + 2]);
+        }
+    }
+    Require(world.AddStaticMesh(vertices, indices), "the mesh builds");
+}
+
+// The GT-R with an Assetto Corsa body as the R34 has one (colliders.ini, GROUND_ENABLE): a floor box and a
+// splitter box 6 cm off the road, 0.8 m ahead of the front axle.
+VehicleSettings GtrWithSplitter()
+{
+    VehicleSettings settings = GtrSettings();
+    const float centreOfMassY = (settings.chassisCenter + settings.centerOfMassOffset).y;
+    const float centreOfMassZ = (settings.chassisCenter + settings.centerOfMassOffset).z;
+    settings.carColliders = {
+        {glm::vec3(0.0f, 0.16f + 0.075f - centreOfMassY, -centreOfMassZ), glm::vec3(1.75f, 0.15f, 3.4f), true},
+        {glm::vec3(0.0f, 0.06f + 0.075f - centreOfMassY, settings.frontAxleZ + 0.8f - centreOfMassZ), glm::vec3(1.57f, 0.15f, 0.35f), true},
+    };
+    return settings;
+}
+
+// Drives a car straight up +Z from z = -60 at `kmh` across whatever is around z = 0 and reports the worst
+// one-frame loss of speed (km/h) and the fastest the body rose (m/s).
+struct Crossing
+{
+    float startKmh = 0.0f;
+    float worstFrameLossKmh = 0.0f;
+    float fastestRise = 0.0f;
+    float endKmh = 0.0f;
+};
+
+Crossing CrossAtSpeed(PhysicsWorld& world, VehicleId car, float kmh)
+{
+    world.ResetVehicle(car, {glm::vec3(0.0f, 0.0f, -60.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    constexpr float kFrame = 1.0f / 60.0f;
+    VehicleControls controls;
+    Crossing crossing;
+    float lastKmh = 0.0f;
+    float lastY = world.GetVehiclePose(car).position.y;
+    for (float time = 0.0f; time < 30.0f && world.GetVehiclePose(car).position.z < 12.0f; time += kFrame)
+    {
+        const float speed = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+        controls.throttle = speed < kmh ? 1.0f : 0.0f;
+        world.SetVehicleControls(car, controls);
+        world.Update(kFrame);
+        const PhysicsPose pose = world.GetVehiclePose(car);
+        const float now = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+        const float rise = (pose.position.y - lastY) / kFrame;
+        lastY = pose.position.y;
+        if (pose.position.z > -8.0f)
+        {
+            if (crossing.startKmh == 0.0f)
+            {
+                crossing.startKmh = now;
+            }
+            else
+            {
+                crossing.worstFrameLossKmh = std::max(crossing.worstFrameLossKmh, lastKmh - now);
+                crossing.fastestRise = std::max(crossing.fastestRise, rise);
+            }
+        }
+        lastKmh = now;
+    }
+    crossing.endKmh = lastKmh;
+    return crossing;
+}
+
+// San Andreas's roads have vertices standing out of them: a tent 21 cm high, rising over 5 m and falling
+// over 20. A splitter corner passing over its peak caught the edges round it, which pushed the body
+// back and up: 7 km/h gone in a frame and the front wheels thrown off the road. The splitter now scrapes
+// over it.
+void TestSplitterRidesOverARoadSpike()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    // Los Santos's triangles round (807.46, 12.59, 1323.2), from the road's height and the lane's middle:
+    // the peak sits on a ridge across the lane, 5 m up from one side and 20 m down to the other.
+    const std::vector<glm::vec3> tent = {
+        {0.8f, 0.21f, 0.0f},   {-7.19f, 0.0f, 0.0f}, {9.96f, 0.0f, 0.0f}, {14.96f, 0.0f, -5.0f},
+        {-12.19f, 0.0f, -5.0f}, {-7.19f, 0.0f, 20.0f}, {1.83f, 0.0f, 20.0f}, {9.96f, 0.0f, 20.0f},
+    };
+    AddUpwardMesh(world, tent, {4, 3, 1, 2, 0, 3, 2, 7, 0, 0, 1, 3, 0, 5, 1, 5, 0, 6, 6, 0, 7});
+    const VehicleId car = world.AddVehicle(GtrWithSplitter(), {glm::vec3(0.0f, 0.0f, -60.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    const Crossing crossing = CrossAtSpeed(world, car, 60.0f);
+    std::cout << "GT-R with a splitter over a 21 cm road spike at " << crossing.startKmh << " km/h: worst frame lost " << crossing.worstFrameLossKmh
+              << " km/h, body rose at up to " << crossing.fastestRise << " m/s\n";
+    Require(crossing.startKmh > 55.0f, "the car reaches the spike at speed");
+    Require(crossing.worstFrameLossKmh < 2.0f, "the splitter does not catch on the spike");
+    Require(crossing.fastestRise < 1.5f, "the spike does not throw the car");
+}
+
+// A kerb top with no riser (the map's pavements), 15 cm up: more than the wheels' bump travel and tyre
+// take, so the wheel meets the physics engine's hard stop on the kerb's edge. Along the edge's normal,
+// leaning back, that stop threw the car up at several metres a second; now the car is lifted onto it.
+void TestWheelMountsATallKerbWithoutLeaping()
+{
+    PhysicsWorld world;
+    AddUpwardMesh(world, {{-50.0f, 0.0f, -300.0f}, {50.0f, 0.0f, -300.0f}, {50.0f, 0.0f, 0.0f}, {-50.0f, 0.0f, 0.0f}}, {0, 1, 2, 0, 2, 3});
+    AddUpwardMesh(world, {{-50.0f, 0.15f, 0.0f}, {50.0f, 0.15f, 0.0f}, {50.0f, 0.15f, 100.0f}, {-50.0f, 0.15f, 100.0f}}, {0, 1, 2, 0, 2, 3});
+    const VehicleId car = world.AddVehicle(GtrSettings(), {glm::vec3(0.0f, 0.0f, -60.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    const Crossing crossing = CrossAtSpeed(world, car, 60.0f);
+    std::cout << "GT-R onto a 15 cm kerb with no riser at " << crossing.startKmh << " km/h: worst frame lost " << crossing.worstFrameLossKmh
+              << " km/h, body rose at up to " << crossing.fastestRise << " m/s, " << crossing.endKmh << " km/h after\n";
+    Require(crossing.startKmh > 55.0f, "the car reaches the kerb at speed");
+    Require(crossing.fastestRise < 3.0f, "the kerb does not throw the car");
+    Require(crossing.endKmh > 45.0f, "the car drives on over the kerb");
+}
+
 // The GT-R as the editor drives it: its data through ApplyCarSpec, then fitted to its model's bounds and
 // wheel nodes (vehicle space). The centre of mass is the data's, not the model's middle: 55.5 % of the
 // weight on the front axle (CG_LOCATION) and 0.43 m up (tyre radius 0.355 - BASEY -0.075); at rest
@@ -2720,6 +2836,8 @@ int main()
         TestUnsprungCarStandsOnItsTyres();
         TestUnsprungWheelsHangInTheAirAndLand();
         TestUnsprungCarTakesABump();
+        TestSplitterRidesOverARoadSpike();
+        TestWheelMountsATallKerbWithoutLeaping();
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();
         TestDriveForceLoadsTheLinkageAtTheWheelCentre();

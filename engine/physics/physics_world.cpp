@@ -16,6 +16,8 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -91,6 +93,44 @@ class WheelBodyFilter final : public JPH::BodyFilter
     JPH::BodyID m_vehicle;
 };
 
+// A car's body meets the ground's edges and corners, not only its faces: a splitter a few centimetres
+// up (Assetto Corsa's R34 has 6 cm) runs into the rim of a kerb top whose riser the map leaves out, or
+// into a vertex standing out of the road (San Andreas has them, 20 cm). Pushed out along the edge,
+// sideways to the surface, the body stops dead and is thrown up. Against walkable ground the body only
+// keeps contacts along the face's own normal, from above or below: it rides over the kerb or the bump
+// as a scraping splitter does. Walls (the steep body) still stop it.
+class GroundEdgeContactFilter final : public JPH::ContactListener
+{
+  public:
+    JPH::ValidateResult OnContactValidate(const JPH::Body& body1, const JPH::Body& body2, JPH::RVec3Arg baseOffset, const JPH::CollideShapeResult& result) override
+    {
+        const bool firstIsGround = body1.IsStatic() && body1.GetUserData() != kWheelsIgnoreBody;
+        const bool secondIsGround = body2.IsStatic() && body2.GetUserData() != kWheelsIgnoreBody;
+        if (firstIsGround == secondIsGround || !(firstIsGround ? body2 : body1).IsDynamic())
+        {
+            return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+        }
+        const JPH::Vec3 axis = result.mPenetrationAxis;
+        const float length = axis.Length();
+        if (!(length > 1e-12f))
+        {
+            return JPH::ValidateResult::AcceptContact;
+        }
+        // The penetration axis moves body 2 out of body 1: on the car it is the axis when the car is
+        // body 2, and the reverse when it is body 1.
+        const JPH::Vec3 push = (firstIsGround ? axis : -axis) / length;
+        const JPH::Body& ground = firstIsGround ? body1 : body2;
+        const JPH::SubShapeID& triangle = firstIsGround ? result.mSubShapeID1 : result.mSubShapeID2;
+        const JPH::RVec3 point = baseOffset + (firstIsGround ? result.mContactPointOn1 : result.mContactPointOn2);
+        const JPH::Vec3 face = ground.GetWorldSpaceSurfaceNormal(triangle, point);
+        return std::abs(push.Dot(face)) >= kMinFaceAlignment ? JPH::ValidateResult::AcceptContact : JPH::ValidateResult::RejectContact;
+    }
+
+  private:
+    // Within 25 degrees of the face's normal (or its reverse): a face contact, not an edge's.
+    static constexpr float kMinFaceAlignment = 0.9f;
+};
+
 // Finds the ground with the wheel's cylinder, which rolls it over kerbs and seams a ray would catch
 // on, but touches it as a thin disc in the wheel's middle plane does. The cylinder alone always
 // touches on one of its two flat edges, the one its tilt to the ground puts lowest: as a wheel's
@@ -115,7 +155,24 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
             return false;
         }
         // The disc against the plane the cylinder found.
-        return TouchPlane(constraint, wheelIndex, origin, direction, outContactPosition, outContactNormal, outSuspensionLength);
+        if (!TouchPlane(constraint, wheelIndex, origin, direction, outContactPosition, outContactNormal, outSuspensionLength))
+        {
+            return false;
+        }
+        // Past the hard stop (a kerb taller than the travel and the tyre take) the physics engine stops
+        // the wheel rigidly along the contact's normal. On a kerb's edge that normal leans back as far
+        // as 50 degrees, and the stop turned the car's speed into a leap: 9 m/s up at 60 km/h. The
+        // ground's own face is pushed along instead, so the stop lifts the car onto the kerb without
+        // throwing it. Within the travel the edge's normal stays: the tyre climbs it and is slowed.
+        if (outSuspensionLength < constraint.GetWheel(wheelIndex)->GetSettings()->mSuspensionMinLength && outBody != nullptr)
+        {
+            const JPH::Vec3 face = outBody->GetWorldSpaceSurfaceNormal(outSubShape, outContactPosition);
+            if (face.Dot(direction) < 0.0f)
+            {
+                outContactNormal = face;
+            }
+        }
+        return true;
     }
 
     void PredictContactProperties(JPH::PhysicsSystem&, const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction,
@@ -603,6 +660,7 @@ float FloodedShare(float floodSeconds)
 
 struct PhysicsWorld::Impl
 {
+    GroundEdgeContactFilter groundEdgeFilter;
     struct Vehicle
     {
         JPH::Body* body = nullptr;
@@ -1788,6 +1846,7 @@ struct PhysicsWorld::Impl
             *objectVsBroadPhase,
             *objectLayerPairs);
         physicsSystem.SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+        physicsSystem.SetContactListener(&groundEdgeFilter);
     }
 
     ~Impl()
