@@ -280,25 +280,35 @@ void VulkanBuffer::UploadDeviceLocal(
     VkBuffer& buffer,
     VulkanPooledMemory& memory)
 {
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    CreateBuffer(
-        size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        stagingBuffer,
-        stagingMemory);
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-
-    void* data = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, size, 0, &data), "Failed to map staging buffer memory");
-    std::memcpy(data, source, static_cast<size_t>(size));
-    vkUnmapMemory(m_device, stagingMemory);
-
-    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory);
-
     VkBufferCopy copyRegion{};
     copyRegion.size = size;
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    if (uploadBatch.CanStage())
+    {
+        // The batch's shared staging chunks: one allocation per resource cost a scene of tens of
+        // thousands of submeshes a third of a millisecond each.
+        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(source, size);
+        stagingBuffer = slice.buffer;
+        copyRegion.srcOffset = slice.offset;
+    }
+    else
+    {
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        CreateBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory);
+        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
+
+        void* data = nullptr;
+        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, size, 0, &data), "Failed to map staging buffer memory");
+        std::memcpy(data, source, static_cast<size_t>(size));
+        vkUnmapMemory(m_device, stagingMemory);
+    }
+
+    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory);
     vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer, 1, &copyRegion);
 }
 

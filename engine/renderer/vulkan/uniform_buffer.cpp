@@ -215,9 +215,7 @@ VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint3
         throw std::runtime_error("Descriptor set material index is out of range");
     }
 
-    const size_t descriptorIndex =
-        static_cast<size_t>(imageIndex) * m_materialBindings.size() + materialIndex;
-    return m_descriptorSets[descriptorIndex];
+    return m_descriptorSets[materialIndex];
 }
 
 void VulkanUniformBuffer::Update(
@@ -611,7 +609,8 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // samplers and six storage buffers (previous models, sky SH, lights, clusters, materials, shadow
     // tiles) for set 0 and thirteen samplers per material set for
     // set 1. That is why neither its name nor its failure message belongs to either half.
-    const uint32_t materialSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
+    // Material sets name textures alone, which every frame shares, so there is one per material.
+    const uint32_t materialSetCount = static_cast<uint32_t>(m_materialBindings.size());
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
                                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 18},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
@@ -640,9 +639,11 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         vkAllocateDescriptorSets(m_device, &frameAllocateInfo, m_frameDescriptorSets.data()),
         "Failed to allocate frame descriptor sets");
 
-    // Set 1: one material descriptor set per swapchain image per material, allocated from the
-    // material set layout.
-    const uint32_t descriptorSetCount = imageCount * static_cast<uint32_t>(m_materialBindings.size());
+    // Set 1: one material descriptor set per material, allocated from the material set layout. It names
+    // the material's textures and nothing per frame, and is written once here and never again, so the
+    // frames in flight share it (one per swapchain image made a streamed map's every change rewrite four
+    // identical copies of each).
+    const uint32_t descriptorSetCount = static_cast<uint32_t>(m_materialBindings.size());
     std::vector<VkDescriptorSetLayout> layouts(descriptorSetCount, m_materialSetLayout);
     VkDescriptorSetAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -836,12 +837,11 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
 
-        for (uint32_t materialIndex = 0; materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
+        for (uint32_t materialIndex = 0; i == 0 && materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
         {
             const MaterialTextureBinding& materialBinding = m_materialBindings[materialIndex];
 
-            const size_t descriptorIndex =
-                static_cast<size_t>(i) * m_materialBindings.size() + materialIndex;
+            const size_t descriptorIndex = materialIndex;
 
             const std::array<TextureDescriptorBinding, kMaterialTextureBindingCount> textureBindings = {
                 materialBinding.baseColor,

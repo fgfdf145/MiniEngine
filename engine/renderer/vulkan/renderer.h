@@ -63,7 +63,9 @@ struct RenderSubmesh
     entt::entity entity = entt::null;
     // The CPU geometry, shared with the model cache: the ray scene builds its hierarchy from it.
     std::shared_ptr<const MeshData> mesh;
-    std::unique_ptr<VulkanBuffer> buffer;
+    // Shared: an upload keeps the buffers of meshes that were already on the GPU (UploadSceneResources),
+    // so adding or removing one model leaves every other model's geometry where it is.
+    std::shared_ptr<VulkanBuffer> buffer;
     uint32_t materialBindingIndex = 0;
     GpuMaterialData material;
     GpuTextureTransforms textureTransforms;

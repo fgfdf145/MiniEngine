@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <future>
+#include <mutex>
 #include <memory>
 #include <span>
 #include <unordered_map>
@@ -99,6 +100,14 @@ class VulkanRayScene
         std::shared_ptr<const MeshBvh> bvh;
     };
     using BuiltMeshes = std::unordered_map<const MeshData*, BuiltMesh>;
+    // Shared by every build, running or not: a change of content starts its build at once instead of
+    // waiting for the last one (a streamed map changes every few seconds, and the wait was the most of a
+    // change's cost), and each build still finds the hierarchies any other has made.
+    struct BuildCache
+    {
+        std::mutex mutex;
+        BuiltMeshes meshes;
+    };
 
     // The worker's result: every mesh concatenated, and each submesh's mesh index.
     struct Build
@@ -107,7 +116,6 @@ class VulkanRayScene
         std::vector<uint32_t> submeshMeshes;
         // Per submesh, 1 for a Blend material, which rays pass through.
         std::vector<uint8_t> blend;
-        BuiltMeshes built;
     };
 
     Buffer CreateBuffer(VkDeviceSize size) const;
@@ -143,8 +151,12 @@ class VulkanRayScene
 
     std::vector<RaySceneSubmesh> m_submeshes;
     // Hierarchies already built, by mesh, kept while any content uses them.
-    BuiltMeshes m_built;
+    std::shared_ptr<BuildCache> m_buildCache = std::make_shared<BuildCache>();
     std::future<Build> m_pendingBuild;
+    // Builds for content that was replaced before they finished, left to finish on their own (a
+    // std::async future waits in its destructor); dropped once done.
+    std::vector<std::future<Build>> m_staleBuilds;
+    void DropFinishedStaleBuilds();
     // The installed build's mesh ranges and each submesh's mesh; the per-frame top level starts from
     // them.
     RayScene m_scene;

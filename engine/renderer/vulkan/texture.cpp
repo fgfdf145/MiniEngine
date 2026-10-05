@@ -179,19 +179,29 @@ void VulkanTexture::UploadTexels(
     VkSamplerAddressMode addressModeV)
 {
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    CreateBuffer(
-        byteCount,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        stagingBuffer,
-        stagingMemory);
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
+    VkDeviceSize stagingOffset = 0;
+    if (uploadBatch.CanStage())
+    {
+        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(texels, byteCount);
+        stagingBuffer = slice.buffer;
+        stagingOffset = slice.offset;
+    }
+    else
+    {
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        CreateBuffer(
+            byteCount,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory);
+        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
 
-    void* mappedData = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, byteCount, 0, &mappedData), "Failed to map texture staging buffer");
-    std::memcpy(mappedData, texels, static_cast<size_t>(byteCount));
-    vkUnmapMemory(m_device, stagingMemory);
+        void* mappedData = nullptr;
+        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, byteCount, 0, &mappedData), "Failed to map texture staging buffer");
+        std::memcpy(mappedData, texels, static_cast<size_t>(byteCount));
+        vkUnmapMemory(m_device, stagingMemory);
+    }
 
     const bool canGenerateMips = FormatSupportsLinearBlit(vkFormat);
     m_mipLevels = canGenerateMips && generateMips
@@ -218,7 +228,7 @@ void VulkanTexture::UploadTexels(
     // level 0, but GenerateMipmaps()'s blit chain expects every level to already be in that
     // layout (it reads each source level back out of TRANSFER_DST_OPTIMAL).
     TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, m_mipLevels);
-    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, width, height);
+    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, width, height, stagingOffset);
 
     if (m_mipLevels > 1)
     {
@@ -247,36 +257,50 @@ void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, Vu
         totalSize += static_cast<VkDeviceSize>(level.blocks.size());
     }
 
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    CreateBuffer(
-        totalSize,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        stagingBuffer,
-        stagingMemory);
-    uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-
+    std::vector<uint8_t> levelBytes;
+    levelBytes.reserve(static_cast<size_t>(totalSize));
     std::vector<VkBufferImageCopy> regions;
     regions.reserve(texture.levels.size());
-    void* mappedData = nullptr;
-    CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, totalSize, 0, &mappedData), "Failed to map compressed texture staging buffer");
-    VkDeviceSize offset = 0;
     for (uint32_t levelIndex = 0; levelIndex < static_cast<uint32_t>(texture.levels.size()); ++levelIndex)
     {
         const CompressedTextureLevel& level = texture.levels[levelIndex];
-        std::memcpy(static_cast<uint8_t*>(mappedData) + offset, level.blocks.data(), level.blocks.size());
-
         // The extent is the level's pixel size, which a partial edge block may exceed; Vulkan
         // accepts that for block formats when the extent reaches the edge of the level.
         VkBufferImageCopy region{};
-        region.bufferOffset = offset;
+        region.bufferOffset = static_cast<VkDeviceSize>(levelBytes.size());
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, levelIndex, 0, 1};
         region.imageExtent = {level.width, level.height, 1};
         regions.push_back(region);
-        offset += static_cast<VkDeviceSize>(level.blocks.size());
+        levelBytes.insert(levelBytes.end(), level.blocks.begin(), level.blocks.end());
     }
-    vkUnmapMemory(m_device, stagingMemory);
+
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceSize stagingOffset = 0;
+    if (uploadBatch.CanStage())
+    {
+        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(levelBytes.data(), totalSize);
+        stagingBuffer = slice.buffer;
+        stagingOffset = slice.offset;
+    }
+    else
+    {
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+        CreateBuffer(
+            totalSize,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            stagingBuffer,
+            stagingMemory);
+        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
+        void* mappedData = nullptr;
+        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, totalSize, 0, &mappedData), "Failed to map compressed texture staging buffer");
+        std::memcpy(mappedData, levelBytes.data(), levelBytes.size());
+        vkUnmapMemory(m_device, stagingMemory);
+    }
+    for (VkBufferImageCopy& region : regions)
+    {
+        region.bufferOffset += stagingOffset;
+    }
 
     const VkFormat vkFormat = ToVkFormat(texture.format);
     m_mipLevels = static_cast<uint32_t>(texture.levels.size());
@@ -529,9 +553,10 @@ void VulkanTexture::TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage
         &barrier);
 }
 
-void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) const
+void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, VkDeviceSize bufferOffset) const
 {
     VkBufferImageCopy region{};
+    region.bufferOffset = bufferOffset;
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.mipLevel = 0;
     region.imageSubresource.baseArrayLayer = 0;

@@ -22,6 +22,9 @@ class VulkanUploadBatch
 {
   public:
     VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
+    // With the physical device the batch can also stage (Stage), out of a few large mapped chunks
+    // instead of one allocation per resource.
+    VulkanUploadBatch(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
     ~VulkanUploadBatch();
 
     VulkanUploadBatch(const VulkanUploadBatch&) = delete;
@@ -33,6 +36,20 @@ class VulkanUploadBatch
     // Takes ownership. Track a staging buffer as soon as it exists, before anything else that can
     // throw, so a later failure in the same upload cannot leak it. Either handle may be null.
     void TrackStagingResource(VkBuffer buffer, VkDeviceMemory memory);
+
+    // Where Stage put the bytes: copy from (buffer, offset) in a command recorded into this batch.
+    struct StagingSlice
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+    };
+    bool CanStage() const;
+    // Copies size bytes into the batch's staging memory, which lives until the next Flush(). Chunks of
+    // kStagingChunkBytes (or one as large as a bigger request) are made as needed and mapped once.
+    StagingSlice Stage(const void* data, VkDeviceSize size, VkDeviceSize alignment = 16);
+    // Bytes staged since the last Flush(): callers flush on this rather than on a count of resources.
+    VkDeviceSize StagedBytes() const;
+    static constexpr VkDeviceSize kStagingChunkBytes = VkDeviceSize{32} << 20;
 
     // Submits everything recorded so far, waits for the GPU to finish, frees the staging
     // buffers tracked since the last Flush(), and re-arms the batch for more recording.
@@ -47,6 +64,18 @@ class VulkanUploadBatch
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_stagingResources;
+    struct StagingChunk
+    {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        unsigned char* mapped = nullptr;
+        VkDeviceSize size = 0;
+        VkDeviceSize used = 0;
+    };
+    void ReleaseStagingChunks();
+    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    std::vector<StagingChunk> m_stagingChunks;
+    VkDeviceSize m_stagedBytes = 0;
     bool m_hasCommands = false;
 };
 }

@@ -1,5 +1,9 @@
 #include "upload_batch.h"
 
+#include <algorithm>
+#include <cstring>
+#include <stdexcept>
+
 namespace me
 {
 
@@ -22,8 +26,98 @@ VulkanUploadBatch::VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFami
     BeginRecording();
 }
 
+VulkanUploadBatch::VulkanUploadBatch(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue)
+    : VulkanUploadBatch(device, graphicsQueueFamily, graphicsQueue)
+{
+    m_physicalDevice = physicalDevice;
+}
+
+bool VulkanUploadBatch::CanStage() const
+{
+    return m_physicalDevice != VK_NULL_HANDLE;
+}
+
+VkDeviceSize VulkanUploadBatch::StagedBytes() const
+{
+    return m_stagedBytes;
+}
+
+VulkanUploadBatch::StagingSlice VulkanUploadBatch::Stage(const void* data, VkDeviceSize size, VkDeviceSize alignment)
+{
+    if (!CanStage())
+    {
+        throw std::logic_error("VulkanUploadBatch::Stage needs the batch made with a physical device");
+    }
+    const VkDeviceSize mask = std::max<VkDeviceSize>(alignment, 1) - 1;
+    StagingChunk* chunk = m_stagingChunks.empty() ? nullptr : &m_stagingChunks.back();
+    VkDeviceSize offset = chunk != nullptr ? (chunk->used + mask) & ~mask : 0;
+    if (chunk == nullptr || offset + size > chunk->size)
+    {
+        StagingChunk created;
+        created.size = std::max(kStagingChunkBytes, size);
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = created.size;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &created.buffer), "Failed to create a staging chunk");
+        // Tracked before anything else can throw, as TrackStagingResource asks.
+        m_stagingChunks.push_back(created);
+        StagingChunk& added = m_stagingChunks.back();
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(m_device, added.buffer, &requirements);
+        VkPhysicalDeviceMemoryProperties properties{};
+        vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &properties);
+        constexpr VkMemoryPropertyFlags kWanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        uint32_t typeIndex = UINT32_MAX;
+        for (uint32_t index = 0; index < properties.memoryTypeCount; ++index)
+        {
+            if ((requirements.memoryTypeBits & (1u << index)) != 0 && (properties.memoryTypes[index].propertyFlags & kWanted) == kWanted)
+            {
+                typeIndex = index;
+                break;
+            }
+        }
+        if (typeIndex == UINT32_MAX)
+        {
+            throw std::runtime_error("No host-visible memory for staging");
+        }
+        VkMemoryAllocateInfo allocateInfo{};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = requirements.size;
+        allocateInfo.memoryTypeIndex = typeIndex;
+        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &added.memory), "Failed to allocate a staging chunk");
+        CheckVulkan(vkBindBufferMemory(m_device, added.buffer, added.memory, 0), "Failed to bind a staging chunk");
+        void* mapped = nullptr;
+        CheckVulkan(vkMapMemory(m_device, added.memory, 0, added.size, 0, &mapped), "Failed to map a staging chunk");
+        added.mapped = static_cast<unsigned char*>(mapped);
+        chunk = &added;
+        offset = 0;
+    }
+    std::memcpy(chunk->mapped + offset, data, static_cast<size_t>(size));
+    chunk->used = offset + size;
+    m_stagedBytes += size;
+    return StagingSlice{chunk->buffer, offset};
+}
+
+void VulkanUploadBatch::ReleaseStagingChunks()
+{
+    for (const StagingChunk& chunk : m_stagingChunks)
+    {
+        if (chunk.mapped != nullptr)
+        {
+            vkUnmapMemory(m_device, chunk.memory);
+        }
+        vkDestroyBuffer(m_device, chunk.buffer, nullptr);
+        vkFreeMemory(m_device, chunk.memory, nullptr);
+    }
+    m_stagingChunks.clear();
+    m_stagedBytes = 0;
+}
+
 VulkanUploadBatch::~VulkanUploadBatch()
 {
+    ReleaseStagingChunks();
     // Only reached with resources still tracked when an upload was abandoned without a final
     // Flush(). Their copies were recorded but never submitted, so nothing on the GPU reads them.
     for (const auto& [stagingBuffer, stagingMemory] : m_stagingResources)
@@ -59,7 +153,7 @@ void VulkanUploadBatch::BeginRecording()
 
 void VulkanUploadBatch::Flush()
 {
-    if (!m_hasCommands && m_stagingResources.empty())
+    if (!m_hasCommands && m_stagingResources.empty() && m_stagingChunks.empty())
     {
         return;
     }
@@ -83,6 +177,7 @@ void VulkanUploadBatch::Flush()
         vkFreeMemory(m_device, stagingMemory, nullptr);
     }
     m_stagingResources.clear();
+    ReleaseStagingChunks();
     m_hasCommands = false;
 
     CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset upload batch command pool");

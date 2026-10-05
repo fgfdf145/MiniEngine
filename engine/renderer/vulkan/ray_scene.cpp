@@ -87,21 +87,26 @@ VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device,
 
 VulkanRayScene::~VulkanRayScene()
 {
-    // The worker holds nothing of ours but its result.
+    // The workers hold nothing of ours but their results and the shared cache.
     if (m_pendingBuild.valid())
     {
         m_pendingBuild.wait();
+    }
+    for (std::future<Build>& stale : m_staleBuilds)
+    {
+        stale.wait();
     }
     DestroyHandles();
 }
 
 void VulkanRayScene::SetContent(std::vector<RaySceneSubmesh> submeshes)
 {
-    // A build still running is for content that no longer exists; its meshes are worth keeping.
+    // A build still running is for content that no longer exists. It finishes on its own and puts what
+    // it built in the shared cache; nothing waits for it.
+    DropFinishedStaleBuilds();
     if (m_pendingBuild.valid())
     {
-        Build stale = m_pendingBuild.get();
-        m_built.merge(stale.built);
+        m_staleBuilds.push_back(std::move(m_pendingBuild));
     }
     m_ready = false;
     m_submeshes = std::move(submeshes);
@@ -161,7 +166,7 @@ void VulkanRayScene::SetContent(std::vector<RaySceneSubmesh> submeshes)
     }
     m_pendingBuild = std::async(
         std::launch::async,
-        [meshes = std::move(meshes), blend = std::move(blend), previous = std::move(m_built)]() mutable
+        [meshes = std::move(meshes), blend = std::move(blend), cache = m_buildCache]() mutable
         {
             const auto start = std::chrono::steady_clock::now();
             Build build;
@@ -181,8 +186,9 @@ void VulkanRayScene::SetContent(std::vector<RaySceneSubmesh> submeshes)
                     continue;
                 }
                 distinct.push_back(mesh);
-                const auto cached = previous.find(key);
-                bvhs.push_back(cached != previous.end() && cached->second.mesh.lock() == mesh ? cached->second.bvh : nullptr);
+                std::lock_guard lock(cache->mutex);
+                const auto cached = cache->meshes.find(key);
+                bvhs.push_back(cached != cache->meshes.end() && cached->second.mesh.lock() == mesh ? cached->second.bvh : nullptr);
             }
 
             std::atomic<size_t> next{0};
@@ -220,7 +226,19 @@ void VulkanRayScene::SetContent(std::vector<RaySceneSubmesh> submeshes)
             for (size_t index = 0; index < distinct.size(); ++index)
             {
                 AppendMesh(build.scene, *bvhs[index]);
-                build.built.emplace(distinct[index].get(), BuiltMesh{distinct[index], bvhs[index]});
+            }
+            {
+                // Into the cache for the builds after this one; hierarchies of meshes nobody holds any
+                // more go, as their address may come back as another mesh's.
+                std::lock_guard lock(cache->mutex);
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    cache->meshes[distinct[index].get()] = BuiltMesh{distinct[index], bvhs[index]};
+                }
+                std::erase_if(cache->meshes, [](const auto& entry)
+                              {
+                                  return entry.second.mesh.expired();
+                              });
             }
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             LOG_INFO(
@@ -241,7 +259,7 @@ bool VulkanRayScene::HasFinishedBuild() const
 void VulkanRayScene::InstallBuild()
 {
     Build build = m_pendingBuild.get();
-    m_built = std::move(build.built);
+    DropFinishedStaleBuilds();
     m_submeshMeshes = std::move(build.submeshMeshes);
     m_installedBlend = std::move(build.blend);
     m_scene = std::move(build.scene);
@@ -365,6 +383,14 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer)
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0, 1, &barrier, 0, nullptr, 0, nullptr);
+}
+
+void VulkanRayScene::DropFinishedStaleBuilds()
+{
+    std::erase_if(m_staleBuilds, [](std::future<Build>& stale)
+                  {
+                      return stale.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+                  });
 }
 
 bool VulkanRayScene::IsReady() const

@@ -1487,11 +1487,13 @@ void VulkanRenderer::LogFrameTimings() const
         return samples.empty() ? 0.0 : sum / static_cast<double>(samples.size());
     };
     LOG_INFO(
-        "Frame timings over the last {} frames: CPU {:.2f} ms recording, {:.2f} ms waiting on the GPU; GPU {:.2f} ms",
+        "Frame timings over the last {} frames: CPU {:.2f} ms recording, {:.2f} ms waiting on the GPU; GPU {:.2f} ms; "
+        "slowest frame {:.1f} ms of CPU",
         m_cpuFrameMs.size(),
         average(m_cpuFrameMs),
         average(m_cpuWaitMs),
-        m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0);
+        m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0,
+        m_cpuFrameMs.empty() ? 0.0 : *std::max_element(m_cpuFrameMs.begin(), m_cpuFrameMs.end()));
     for (const CpuStageTimer::Stage& stage : m_cpuStages.GetStages())
     {
         LOG_INFO("  CPU {:<20} {:7.3f} ms", stage.name, stage.averageMs);
@@ -2017,6 +2019,7 @@ void VulkanRenderer::SyncSceneTargets()
 
 void VulkanRenderer::UploadSceneResources()
 {
+    const auto uploadStart = std::chrono::steady_clock::now();
     // Live textures are reused by cache key rather than uploaded again, which keeps peak memory at
     // one copy of an unchanged texture set. They are only looked up here: nothing leaves
     // m_textures until ApplyRenderContent commits, so a throw anywhere below (running out of GPU
@@ -2042,19 +2045,20 @@ void VulkanRenderer::UploadSceneResources()
     // upload (command pool, submit, vkQueueWaitIdle), which serializes hundreds of GPU
     // round-trips in a row for models with many submeshes/textures (e.g. Sponza: 405 submeshes,
     // up to ~170 unique textures). Flushing periodically bounds how much staging memory is held
-    // at once while still cutting the number of GPU stalls by roughly two orders of magnitude.
-    constexpr size_t kResourcesPerUploadFlush = 64;
+    // at once while still cutting the number of GPU stalls by roughly two orders of magnitude. The
+    // batch stages out of its own few chunks, and flushes once this much is staged: a count of
+    // resources flushed a streamed cell's thousand small buffers sixteen times, each a queue wait.
+    constexpr VkDeviceSize kStagedBytesPerUploadFlush = VkDeviceSize{64} << 20;
     VulkanUploadBatch uploadBatch(
+        m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
         m_device->GetGraphicsQueue());
-    size_t resourcesSinceFlush = 0;
     auto flushUploadBatchIfNeeded = [&]()
     {
-        if (++resourcesSinceFlush >= kResourcesPerUploadFlush)
+        if (uploadBatch.StagedBytes() >= kStagedBytesPerUploadFlush)
         {
             uploadBatch.Flush();
-            resourcesSinceFlush = 0;
         }
     };
 
@@ -2177,15 +2181,35 @@ void VulkanRenderer::UploadSceneResources()
         defaultLayerIndex, defaultLayerIndex,
         defaultLayerIndex, defaultLayerIndex});
 
+    // The geometry already on the GPU, by the CPU mesh it came from: a mesh the model cache still holds
+    // is the same data, so its buffers carry over instead of being uploaded again.
+    std::unordered_map<const MeshData*, std::shared_ptr<VulkanBuffer>> liveBuffers;
+    liveBuffers.reserve(m_renderSubmeshes.size());
+    for (const RenderSubmesh& live : m_renderSubmeshes)
+    {
+        if (live.mesh && live.buffer)
+        {
+            liveBuffers.emplace(live.mesh.get(), live.buffer);
+        }
+    }
+    size_t newBufferCount = 0;
     for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
     {
         RenderSubmesh renderSubmesh{};
         renderSubmesh.entity = cpuRenderSubmesh.entity;
         renderSubmesh.mesh = cpuRenderSubmesh.mesh;
-        renderSubmesh.buffer = std::make_unique<VulkanBuffer>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            *cpuRenderSubmesh.mesh, uploadBatch);
-        flushUploadBatchIfNeeded();
+        if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get()); live != liveBuffers.end())
+        {
+            renderSubmesh.buffer = live->second;
+        }
+        else
+        {
+            renderSubmesh.buffer = std::make_shared<VulkanBuffer>(
+                m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                *cpuRenderSubmesh.mesh, uploadBatch);
+            ++newBufferCount;
+            flushUploadBatchIfNeeded();
+        }
         renderSubmesh.material = cpuRenderSubmesh.material;
         renderSubmesh.textureTransforms = BuildGpuTextureTransforms(cpuRenderSubmesh.textureTransforms);
         renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
@@ -2244,7 +2268,7 @@ void VulkanRenderer::UploadSceneResources()
         newRenderSubmeshes.push_back(std::move(renderSubmesh));
     }
     uploadBatch.Flush();
-    LOG_INFO("Uploaded {} submesh buffers and {} textures", newRenderSubmeshes.size(), newTextures.size());
+    const double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
     const TextureUploadStats& stats = m_textureUploadStats;
     if (stats.fromCache + stats.compressedNow + stats.uncompressed + stats.floatTextures > 0)
     {
@@ -2257,11 +2281,21 @@ void VulkanRenderer::UploadSceneResources()
             stats.floatTextures);
     }
 
+    const size_t submeshCount = newRenderSubmeshes.size();
+    const size_t textureCount = newTextures.size();
+    const auto applyStart = std::chrono::steady_clock::now();
     ApplyRenderContent(
         std::move(newTextures),
         std::move(newCacheKeys),
         std::move(newMaterialTextureSlots),
         std::move(newRenderSubmeshes));
+    LOG_INFO(
+        "Uploaded {} submeshes ({} new buffers) and {} textures in {:.0f} ms, then {:.0f} ms for descriptors and the ray scene",
+        submeshCount,
+        newBufferCount,
+        textureCount,
+        uploadMs,
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - applyStart).count());
 }
 
 void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
@@ -2334,7 +2368,9 @@ void VulkanRenderer::PumpSceneUpload()
 {
     // A few per frame: each upload copies megabytes and waits for the queue, and the frame loop
     // should keep its pace while a large scene streams in.
-    constexpr size_t kStagedTexturesPerFrame = 4;
+    // Small map textures by the thousand (a streamed cell brings hundreds) are a memcpy into the batch's
+    // staging and a pooled image each; four a frame held a cell back for seconds.
+    constexpr size_t kStagedTexturesPerFrame = 64;
     std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerFrame);
 
     // Results of a change that was abandoned are dropped; a later change prepares what it needs
@@ -2344,6 +2380,7 @@ void VulkanRenderer::PumpSceneUpload()
         try
         {
             VulkanUploadBatch uploadBatch(
+                m_device->GetPhysicalDevice(),
                 m_device->GetHandle(),
                 m_device->GetQueueFamilies().graphicsFamily.value(),
                 m_device->GetGraphicsQueue());
