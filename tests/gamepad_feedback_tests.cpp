@@ -70,7 +70,8 @@ VehicleHapticsInput Driving(int gear, float rpm)
 
 void EngineRumbleFollowsTheRevs()
 {
-    const VehicleHapticsSettings settings;
+    VehicleHapticsSettings settings;
+    settings.rumbleStrength = 1.0f;
     VehicleHapticsState state;
     GamepadFeedback idle;
     GamepadFeedback high;
@@ -92,7 +93,8 @@ void EngineRumbleFollowsTheRevs()
 
 void GearChangesThump()
 {
-    const VehicleHapticsSettings settings;
+    VehicleHapticsSettings settings;
+    settings.rumbleStrength = 1.0f;
     VehicleHapticsState state;
     GamepadFeedback steady;
     for (int frame = 0; frame < 30; ++frame)
@@ -164,6 +166,7 @@ void SwitchesTurnEffectsOff()
     Require(noTriggers.rightTrigger.mode == TriggerEffect::Mode::Off && noTriggers.leftTrigger.mode == TriggerEffect::Mode::Off, "a trigger strength of 0 frees the triggers");
 
     settings.triggerStrength = 1.0f;
+    settings.rumbleStrength = 1.0f;
     input.adaptiveTriggers = false;
     const GamepadFeedback plainPad = ComputeVehicleFeedback(settings, input, state, 1.0f / 60.0f);
     Require(plainPad.rightTrigger.mode == TriggerEffect::Mode::Off && plainPad.lowFrequencyMotor > 0.0f, "a pad without adaptive triggers gets the rumble alone");

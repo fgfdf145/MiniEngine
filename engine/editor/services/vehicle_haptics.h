@@ -10,8 +10,8 @@ namespace me
 struct VehicleHapticsSettings
 {
     bool enabled = true;
-    // The engine's low rumble and the gearbox's thump: a scale on the motors (0 is off).
-    float rumbleStrength = 1.0f;
+    // The engine's low rumble and the gearbox's thump: a scale on the motors (0 is off, the default).
+    float rumbleStrength = 0.0f;
     // The adaptive triggers' resistance and vibration (a DualSense): a scale on their strengths (0 is off).
     float triggerStrength = 1.0f;
     // The brake trigger shakes while a wheel locks, as an ABS pulses the pedal.
