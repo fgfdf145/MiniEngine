@@ -88,6 +88,7 @@ class AssetManager
     void DrawEntryContextMenu(const Entry& entry, int index, AssetManagerResult& result);
     void DrawBatchContextMenu(AssetManagerResult& result);
     void DrawPreviewPanel(AssetManagerResult& result);
+    void DrawPreviewDetails(AssetManagerResult& result);
     void DrawDeleteConfirmModal(AssetManagerResult& result);
     void BuildPendingDeleteWarnings();
 
@@ -101,6 +102,7 @@ class AssetManager
     static AssetType ClassifyPath(const std::filesystem::path& p);
     static const char* TypeTag(AssetType t);
     static const char* ShortTag(AssetType t);
+    static const char* TypeIcon(AssetType t);
     static void PushTypeColor(AssetType t);
     static unsigned int TypeColorU32(AssetType t);
 
@@ -109,6 +111,11 @@ class AssetManager
     std::vector<Entry> m_entries;
     std::unordered_set<int> m_selectedIndices;
     int m_anchorIdx = -1; // anchor for shift-range, also the focused preview item
+
+    // Layout that follows the window: tiles stretch to fill each row, and the preview
+    // panel under the list is as tall as what it showed last frame (capped at half the window).
+    float m_tileWidth = 0.0f;
+    float m_previewContentHeight = 0.0f;
 
     // The focused entry's uuid, recomputed only when the focus moves or the
     // entry list is rebuilt. GetOrCreateUuid takes the global registry mutex

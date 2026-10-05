@@ -8,10 +8,12 @@
 
 #include <engine/core/text/ascii.h>
 
+#include <IconsFontAwesome6.h>
 #include <imgui.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -89,10 +91,16 @@ float UiScale()
     return ImGui::GetStyle().FontScaleMain;
 }
 
-// Square tile layout (Unreal-style content browser), sized at UI scale 1.
-float TileWidth()
+// Square tile layout (Unreal-style content browser), sized at UI scale 1. Tiles are at least
+// this wide; the list stretches them so each row fills the window.
+float MinTileWidth()
 {
     return 96.0f * UiScale();
+}
+
+float TileIconSize()
+{
+    return 44.0f * UiScale();
 }
 
 float TileIconHeight()
@@ -103,6 +111,27 @@ float TileIconHeight()
 float TileHeight()
 {
     return 100.0f * UiScale(); // icon area + ~2 lines of label
+}
+
+// Whether an item `width` wide still fits on the current line after the last item.
+bool FitsOnLine(float width, float rightEdge)
+{
+    return ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + width <= rightEdge;
+}
+
+float ButtonWidth(const char* label)
+{
+    return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+// A toolbar button that moves to the next line when the window is too narrow for it.
+bool WrappingButton(const char* label, float rightEdge, bool first)
+{
+    if (!first && FitsOnLine(ButtonWidth(label), rightEdge))
+    {
+        ImGui::SameLine();
+    }
+    return ImGui::Button(label);
 }
 }
 
@@ -325,6 +354,25 @@ void AssetManager::PushTypeColor(AssetType t)
     }
 }
 
+const char* AssetManager::TypeIcon(AssetType t)
+{
+    switch (t)
+    {
+    case AssetType::Dir:
+        return ICON_FA_FOLDER;
+    case AssetType::Model:
+        return ICON_FA_CUBE;
+    case AssetType::Material:
+        return ICON_FA_PALETTE;
+    case AssetType::Scene:
+        return ICON_FA_MOUNTAIN_SUN;
+    case AssetType::Texture:
+        return ICON_FA_IMAGE;
+    default:
+        return ICON_FA_FILE;
+    }
+}
+
 const char* AssetManager::ShortTag(AssetType t)
 {
     switch (t)
@@ -368,31 +416,26 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
 
 void AssetManager::DrawToolbar(AssetManagerResult& result)
 {
-    if (ImGui::Button("Import Model"))
+    const float rightEdge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    if (WrappingButton(ICON_FA_FILE_IMPORT " Import Model", rightEdge, true))
     {
         result.wantsImportModel = true;
     }
 
-    ImGui::SameLine();
-
-    if (ImGui::Button("Refresh"))
+    if (WrappingButton(ICON_FA_ROTATE " Refresh", rightEdge, false))
     {
         // Also pick up files changed outside the editor (new/copied/moved assets).
         AssetRegistry::RescanAssetTree();
         m_needsScan = true;
     }
 
-    ImGui::SameLine();
-
-    if (ImGui::Button("New Folder"))
+    if (WrappingButton(ICON_FA_FOLDER_PLUS " New Folder", rightEdge, false))
     {
         CreateNewFolder();
     }
 
-    ImGui::SameLine();
-
     // Navigate to root shortcut
-    if (ImGui::Button("Assets Root"))
+    if (WrappingButton(ICON_FA_HOUSE " Assets Root", rightEdge, false))
     {
         NavigateTo(m_root);
     }
@@ -414,18 +457,26 @@ void AssetManager::DrawBreadcrumb()
     }
     std::reverse(segments.begin(), segments.end());
 
+    // A deep path wraps onto further lines instead of running off the window's right edge.
+    const float rightEdge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const ImGuiStyle& style = ImGui::GetStyle();
     for (size_t i = 0; i < segments.size(); ++i)
     {
-        if (i > 0)
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled(">");
-            ImGui::SameLine();
-        }
-
         const std::string label = segments[i].filename().string().empty()
                                       ? "assets"
                                       : segments[i].filename().string();
+
+        if (i > 0)
+        {
+            const float labelWidth = ImGui::CalcTextSize(label.c_str()).x + style.FramePadding.x * 2.0f;
+            const float separatorWidth = ImGui::CalcTextSize(">").x;
+            if (FitsOnLine(separatorWidth + style.ItemSpacing.x + labelWidth, rightEdge))
+            {
+                ImGui::SameLine();
+            }
+            ImGui::TextDisabled(">");
+            ImGui::SameLine();
+        }
 
         const bool isCurrent = (i + 1 == segments.size());
         if (isCurrent)
@@ -447,16 +498,27 @@ void AssetManager::DrawBreadcrumb()
 
 void AssetManager::DrawEntryList(AssetManagerResult& result)
 {
-    const float previewPanelHeight = 100.0f * UiScale();
-    const float listHeight = std::max(
-        ImGui::GetContentRegionAvail().y - previewPanelHeight - ImGui::GetStyle().ItemSpacing.y,
-        60.0f * UiScale());
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float available = ImGui::GetContentRegionAvail().y;
+    // The preview panel below takes what it needed last frame, but never more than half the
+    // space, so a long multi-selection summary scrolls rather than squeezing the list away.
+    const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    const float previewHeight = std::clamp(
+        m_previewContentHeight > 0.0f ? m_previewContentHeight : 100.0f * UiScale(),
+        lineHeight,
+        std::max(available * 0.5f, lineHeight));
+    // Below the list: item spacing, the separator line and its spacing, then the preview.
+    const float listHeight = std::max(available - previewHeight - style.ItemSpacing.y * 2.0f - 1.0f, 60.0f * UiScale());
     if (ImGui::BeginChild("##asset_list", ImVec2(0.0f, listHeight), false))
     {
-        const ImGuiStyle& style = ImGui::GetStyle();
+        // As many minimum-width tiles as fit, then stretched to share the row.
+        const float rowWidth = ImGui::GetContentRegionAvail().x;
         const int columns = std::max(
             1,
-            static_cast<int>((ImGui::GetContentRegionAvail().x + style.ItemSpacing.x) / (TileWidth() + style.ItemSpacing.x)));
+            static_cast<int>((rowWidth + style.ItemSpacing.x) / (MinTileWidth() + style.ItemSpacing.x)));
+        m_tileWidth = std::max(
+            (rowWidth - style.ItemSpacing.x * static_cast<float>(columns - 1)) / static_cast<float>(columns),
+            TileIconSize());
 
         if (m_entries.empty())
         {
@@ -465,9 +527,11 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
 
         for (int i = 0; i < static_cast<int>(m_entries.size()); ++i)
         {
-            if (i % columns != 0)
+            // Each column at its own offset: a selectable pads its tile's group by half the item
+            // spacing, so plain SameLine() would push every column a few pixels further right.
+            if (const int column = i % columns; column != 0)
             {
-                ImGui::SameLine();
+                ImGui::SameLine(static_cast<float>(column) * (m_tileWidth + style.ItemSpacing.x));
             }
             DrawEntryTile(m_entries[static_cast<size_t>(i)], i, result);
         }
@@ -513,7 +577,7 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     if (!isRenaming)
     {
         if (ImGui::Selectable("##tile", isSelected, ImGuiSelectableFlags_AllowDoubleClick,
-                              ImVec2(TileWidth(), TileHeight())))
+                              ImVec2(m_tileWidth, TileHeight())))
         {
             // ".." always navigates, never participates in multi-select
             if (entry.name == "..")
@@ -615,13 +679,13 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     else
     {
         // Icon area stays; the label line becomes an inline rename field.
-        ImGui::Dummy(ImVec2(TileWidth(), TileIconHeight()));
+        ImGui::Dummy(ImVec2(m_tileWidth, TileIconHeight()));
         if (m_renameFocusPending)
         {
             ImGui::SetKeyboardFocusHere();
             m_renameFocusPending = false;
         }
-        ImGui::SetNextItemWidth(TileWidth());
+        ImGui::SetNextItemWidth(m_tileWidth);
         const bool committed = ImGui::InputText("##rename", m_renameBuffer, sizeof(m_renameBuffer),
                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
         if (committed)
@@ -646,27 +710,26 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     const ImU32 typeCol = TypeColorU32(entry.type);
 
     const float s = UiScale();
-    const ImVec2 iconMin(tileMin.x + 16.0f * s, tileMin.y + 8.0f * s);
-    const ImVec2 iconMax(tileMin.x + TileWidth() - 16.0f * s, tileMin.y + TileIconHeight() - 6.0f * s);
 
-    if (entry.isDir)
+    // The type's icon in its colour, centred in the icon area; ".." gets an up arrow. Files
+    // also carry their short tag under the icon.
+    const char* icon = (entry.name == "..") ? ICON_FA_ARROW_TURN_UP : TypeIcon(entry.type);
+    const float iconSize = std::min(TileIconSize(), m_tileWidth - 8.0f * s);
+    ImFont* font = ImGui::GetFont();
+    const ImVec2 iconExtent = font->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, icon);
+    const float iconCentreY = tileMin.y + TileIconHeight() * (entry.isDir ? 0.5f : 0.42f);
+    drawList->AddText(font, iconSize,
+                      ImVec2(tileMin.x + (m_tileWidth - iconExtent.x) * 0.5f, iconCentreY - iconExtent.y * 0.5f),
+                      typeCol, icon);
+    if (!entry.isDir)
     {
-        // Folder glyph: tab + body
-        const float tabWidth = (iconMax.x - iconMin.x) * 0.45f;
-        drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + tabWidth, iconMin.y + 10.0f * s), typeCol, 3.0f * s);
-        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f * s), iconMax, typeCol, 4.0f * s);
-        drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 6.0f * s), ImVec2(iconMax.x, iconMin.y + 14.0f * s),
-                                IM_COL32(255, 255, 255, 40), 4.0f * s);
-    }
-    else
-    {
-        drawList->AddRectFilled(iconMin, iconMax, IM_COL32(52, 54, 60, 255), 4.0f * s);
-        drawList->AddRect(iconMin, iconMax, typeCol, 4.0f * s, 0, 2.0f * s);
         const char* tag = ShortTag(entry.type);
-        const ImVec2 tagSize = ImGui::CalcTextSize(tag);
-        drawList->AddText(ImVec2((iconMin.x + iconMax.x - tagSize.x) * 0.5f,
-                                 (iconMin.y + iconMax.y - tagSize.y) * 0.5f),
-                          typeCol, tag);
+        const float tagFontSize = ImGui::GetFontSize() * 0.75f;
+        const ImVec2 tagSize = font->CalcTextSizeA(tagFontSize, FLT_MAX, 0.0f, tag);
+        drawList->AddText(font, tagFontSize,
+                          ImVec2(tileMin.x + (m_tileWidth - tagSize.x) * 0.5f,
+                                 tileMin.y + TileIconHeight() - tagSize.y - 2.0f * s),
+                          ImGui::GetColorU32(ImGuiCol_TextDisabled), tag);
     }
 
     if (!isRenaming)
@@ -674,12 +737,12 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
         // Name label: wrapped to the tile width, clipped to two lines,
         // centered when it fits on one line
         const float labelTop = tileMin.y + TileIconHeight();
-        const float wrapWidth = TileWidth() - 6.0f * s;
+        const float wrapWidth = m_tileWidth - 6.0f * s;
         const ImVec2 textSize = ImGui::CalcTextSize(entry.name.c_str(), nullptr, false, wrapWidth);
         const float textX = (textSize.x < wrapWidth)
-                                ? tileMin.x + (TileWidth() - textSize.x) * 0.5f
+                                ? tileMin.x + (m_tileWidth - textSize.x) * 0.5f
                                 : tileMin.x + 3.0f * s;
-        const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + TileWidth(), tileMin.y + TileHeight());
+        const ImVec4 clipRect(tileMin.x, labelTop, tileMin.x + m_tileWidth, tileMin.y + TileHeight());
         drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(textX, labelTop),
                           ImGui::GetColorU32(ImGuiCol_Text), entry.name.c_str(), nullptr,
                           wrapWidth, &clipRect);
@@ -693,6 +756,19 @@ void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
 {
     ImGui::Separator();
 
+    // Takes the rest of the window; DrawEntryList sized itself to leave what this needed last frame.
+    if (ImGui::BeginChild("##asset_preview", ImVec2(0.0f, 0.0f), false))
+    {
+        ImGui::PushTextWrapPos(0.0f);
+        DrawPreviewDetails(result);
+        ImGui::PopTextWrapPos();
+        m_previewContentHeight = ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y;
+    }
+    ImGui::EndChild();
+}
+
+void AssetManager::DrawPreviewDetails(AssetManagerResult& result)
+{
     if (m_selectedIndices.empty())
     {
         ImGui::TextDisabled("No file selected");
@@ -754,7 +830,7 @@ void AssetManager::DrawPreviewPanel(AssetManagerResult& result)
     const Entry& entry = m_entries[static_cast<size_t>(focusIdx)];
 
     PushTypeColor(entry.type);
-    ImGui::TextUnformatted(entry.name.c_str());
+    ImGui::Text("%s %s", TypeIcon(entry.type), entry.name.c_str());
     ImGui::PopStyleColor();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", TypeTag(entry.type));

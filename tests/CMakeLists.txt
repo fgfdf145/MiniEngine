@@ -1841,3 +1841,30 @@ add_test(
 )
 
 set_target_properties(miniengine_steering_assist_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_asset_browser_window_tests
+    asset_browser_window_tests.cpp
+)
+miniengine_group_target_sources(miniengine_asset_browser_window_tests)
+
+target_link_libraries(miniengine_asset_browser_window_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_asset_browser_window_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_asset_browser_window_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_asset_browser_window_tests>
+            $<TARGET_FILE_DIR:miniengine_asset_browser_window_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.asset_browser_window
+    COMMAND miniengine_asset_browser_window_tests
+)
+
+set_target_properties(miniengine_asset_browser_window_tests PROPERTIES FOLDER "Tests")

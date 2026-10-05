@@ -52,6 +52,7 @@ target_include_directories(engine_asset
     PRIVATE
         "${Stb_INCLUDE_DIR}"
         "${MINIENGINE_TINYGLTF_INCLUDE_DIR}"
+        "${PROJECT_SOURCE_DIR}/third_party/IconFontCppHeaders"
 )
 
 target_link_libraries(engine_asset
