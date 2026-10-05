@@ -1517,6 +1517,41 @@ void TestRodLengthRestsWhereTheModelDrawsTheWheels()
                 glm::dot(plainPose.rotation * glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f)), 0.001f, "and the same attitude");
 }
 
+// The road's drive force on a rear wheel of the GT-R: with the brakes off its moment about the spin axis
+// goes up the half shaft, so it loads the linkage by its work along the wheel centre's path (anti-squat);
+// with the brakes holding it the knuckle takes it, and the work is along the contact point's path
+// (anti-lift). The brakes hold no more than their torque.
+void TestDriveForceLoadsTheLinkageAtTheWheelCentre()
+{
+    const VehicleSettings settings = GtrSettings();
+    const VehicleCornerSetup setup = BuildVehicleCorner(settings, 2, 3000.0);
+    suspension::SuspensionCorner corner(setup.definition, MakeVehicleCornerUnit(setup), suspension::SuspensionCorner::kWheelTravel);
+    suspension::CornerInput in;
+    in.travel = 0.02;
+    corner.Step(in);
+    const suspension::CornerOutput first = corner.Output();
+    in.load.force = suspension::Vec3(2500.0, 0.0, 0.0); // forward, driving
+    const auto loadOn = [&](double brakeTorque) {
+        in.load.moment = KnuckleSpinMomentRelief(first.geometry, in.load.force, brakeTorque);
+        return corner.Step(in).loadTravelForce;
+    };
+    const double driven = loadOn(0.0);
+    const double braked = loadOn(1e5);
+    const double halfHeld = loadOn(0.5 * 2500.0 * settings.wheelRadius);
+    // Only the force in the wheel's plane has a moment about the spin axis; its part along the axis (toe
+    // and camber) turns the knuckle about other axes, which the bearings hold.
+    const suspension::Vec3 spin = first.geometry.spinAxis;
+    const suspension::Vec3 alongAxis = glm::dot(in.load.force, spin) * spin;
+    const double atCentre = glm::dot(in.load.force - alongAxis, first.wheelCenterPerTravel) + glm::dot(alongAxis, first.contactPerTravel);
+    const double atContact = glm::dot(in.load.force, first.contactPerTravel);
+    std::cout << "GT-R rear, 2.5 kN of drive at 20 mm bump: linkage load " << driven << " N (wheel centre path " << atCentre << "), braked " << braked << " N (contact path "
+              << atContact << "), brakes holding half " << halfHeld << " N\n";
+    RequireNear(static_cast<float>(driven), static_cast<float>(atCentre), 1.0f, "drive loads the linkage along the wheel centre's path");
+    RequireNear(static_cast<float>(braked), static_cast<float>(atContact), 1.0f, "held by the brakes, along the contact point's path");
+    Require(std::abs(atCentre - atContact) > 20.0, "the two paths differ on this linkage");
+    RequireNear(static_cast<float>(halfHeld), static_cast<float>(0.5 * (driven + braked)), 0.05f * static_cast<float>(std::abs(driven - braked)), "brakes holding half the moment");
+}
+
 // The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
 // mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
 // twice adds nothing, and the car at rest carries it.
@@ -2561,6 +2596,7 @@ int main()
         TestUnsprungCarTakesABump();
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();
+        TestDriveForceLoadsTheLinkageAtTheWheelCentre();
         TestStartingFuelMovesTheMass();
         TestLiveAxleCarRestsAndCorners();
         TestLiveAxleTorqueReactionLoadsTheLeftRear();

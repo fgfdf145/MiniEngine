@@ -59,6 +59,14 @@ glm::vec3 VehicleRestWheelOffset(const VehicleSettings& settings, size_t wheelIn
 // The wheel's force unit with its friction (none when the setup has none).
 suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup);
 
+// The moment (corner frame) to add to a road force acting at an independent wheel's contact point
+// (`geometry` the wheel's pose) for what its knuckle takes about the spin axis. The force's moment about
+// that axis reaches the knuckle only through the brakes, whose callipers sit on it, up to `brakeTorque`
+// (N m); the rest turns the wheel or goes up the half shaft to the differential on the body. Drive and
+// engine braking then load the linkage as if the force acted at the wheel centre (that path sets the
+// anti-squat), the brakes as if at the contact point (anti-dive).
+suspension::Vec3 KnuckleSpinMomentRelief(const suspension::KinematicOutputs& geometry, const suspension::Vec3& force, double brakeTorque);
+
 // A solid axle's links and layout (the axle's type is SolidAxle), with the wheels' tyre radius.
 suspension::SolidAxleDefinition BuildSolidAxle(const VehicleSuspensionAxle& axle, double tyreRadius);
 

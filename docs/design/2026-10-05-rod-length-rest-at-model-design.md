@@ -43,6 +43,6 @@ AC 的 R34 后悬 `STATIC_CAMBER=+1.0`。统计已装 AC 车：前轮 167 负 9 
 - 约 0.95 g：侧倾都约 3.15°，车头下沉 0.27° / 0.65°，内侧后轮载荷 671 N / 302 N；外侧后轮碰到缓冲块（数据本身只留 22 mm）。
 - 0.68 g 刹车点头 1.21° / 1.15°，100–0 km/h 35.5 m / 35.6 m。
 
-K&C（静止处）：前后侧倾中心 1 / 124 mm，抗点头 0.1 %，后 anti-squat −58 %（待查：驱动力应走轮心轨迹）。
+K&C（静止处）：前后侧倾中心 1 / 124 mm，抗点头 0.1 %，后 anti-squat −58 %（驱动力走轮心轨迹已实现，见 `2026-10-05-bumpstop-zero-and-drive-reaction-design.md`）。
 
 R34 资产已补 `rodLength`（备份 `out/backup/skyline_r34_vspec.gltf.before-rod-length.backup`），新导入的车自动带上。

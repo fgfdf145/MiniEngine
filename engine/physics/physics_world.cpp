@@ -787,6 +787,7 @@ struct PhysicsWorld::Impl
         const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
         const JPH::Quat toBody = vehicle.body->GetRotation().Conjugated();
         const double rack = vehicle.rackAtLock * std::clamp(static_cast<double>(steering), -1.0, 1.0);
+        const auto* controller = static_cast<const JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
 
         std::array<double, kVehicleWheelCount> travel{};
         for (size_t index = 0; index < vehicle.corners.size(); ++index)
@@ -820,6 +821,7 @@ struct PhysicsWorld::Impl
                 in.load.force = VehicleToCorner(FromJolt(force));
                 in.contactNormal = VehicleToCorner(FromJolt(normal));
                 cosine = std::max(0.1f, normal.GetY());
+                in.load.moment = KnuckleSpinMoment(vehicle, *controller, index, in.load.force);
             }
             cosines[index] = cosine;
         }
@@ -893,6 +895,22 @@ struct PhysicsWorld::Impl
         vehicle.lastLinearVelocity = vehicle.body->GetLinearVelocity();
         vehicle.lastAngularVelocity = vehicle.body->GetAngularVelocity();
         vehicle.lastVelocityValid = true;
+    }
+
+    // What a wheel's knuckle does not take of its road force's moment about the spin axis
+    // (KnuckleSpinMomentRelief): an independent wheel's brakes hold up to their torque, a solid axle
+    // carries its differential in its housing and takes it all. The linkage's pose is the last step's,
+    // as the force is.
+    suspension::Vec3 KnuckleSpinMoment(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller, size_t index, const suspension::Vec3& force) const
+    {
+        const suspension::AxleSuspension& axle = *vehicle.axles[index / 2];
+        if (axle.Solid() != nullptr)
+        {
+            return suspension::Vec3(0.0);
+        }
+        const JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
+        const double brakes = controller.GetBrakeInput() * settings.mMaxBrakeTorque + controller.GetHandBrakeInput() * settings.mMaxHandBrakeTorque;
+        return KnuckleSpinMomentRelief(axle.Output(static_cast<int>(index % 2)).geometry, force, brakes);
     }
 
     // A driven solid axle's propshaft torque reaction (Assetto Corsa's TORQUE_REACTION, a signed share

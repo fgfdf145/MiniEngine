@@ -203,6 +203,14 @@ suspension::StrutUnit MakeVehicleCornerUnit(const VehicleCornerSetup& setup)
     return suspension::StrutUnit(setup.unit, std::make_unique<suspension::NoFriction>());
 }
 
+suspension::Vec3 KnuckleSpinMomentRelief(const suspension::KinematicOutputs& geometry, const suspension::Vec3& force, double brakeTorque)
+{
+    const suspension::Vec3 spin = geometry.spinAxis;
+    const double moment = glm::dot(glm::cross(geometry.contactPoint - geometry.wheelCenter, force), spin);
+    const double brakes = std::max(brakeTorque, 0.0);
+    return (std::clamp(moment, -brakes, brakes) - moment) * spin;
+}
+
 suspension::SolidAxleDefinition BuildSolidAxle(const VehicleSuspensionAxle& axle, double tyreRadius)
 {
     suspension::SolidAxleDefinition def;
