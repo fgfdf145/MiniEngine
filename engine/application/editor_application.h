@@ -59,6 +59,12 @@ struct EditorApplicationOptions
     // --wait-for-scene: --frames counts only frames drawn once the scene has loaded, its textures are
     // prepared and its ray scene is built, so a large scene is not captured half loaded.
     bool waitForScene = false;
+    // --drive TAG: once the scene has loaded, drives the model entity with this name, as Play would.
+    // --drive-controls THROTTLE,STEERING: holds these controls (-1 to 1) instead of reading the
+    // keyboard and gamepad, a fixed 1/60 s of simulation a frame, logging the car's pose every
+    // simulated second: a headless test drive (VehicleDriveState::scriptedControls).
+    std::optional<std::string> driveEntity;
+    std::optional<std::array<float, 2>> driveControls;
     EnginePaths::Overrides paths;
 };
 

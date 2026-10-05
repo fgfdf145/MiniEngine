@@ -143,6 +143,10 @@ struct VehicleDriveSession
     bool resetHeld = false;
     // The gear buttons held in the last frame: a change is made once per press.
     VehicleGearButtons gearButtonsHeld;
+    // Under scripted controls: the simulated time so far, and when the pose is next logged.
+    float scriptedSeconds = 0.0f;
+    float nextScriptedLogSeconds = 0.0f;
+    double scriptedPhysicsMs = 0.0; // wall time spent stepping since the last log
     VehicleCameraOrbit orbit;
     // The engine's idle and rev limit, which the gamepad's rumble places the revs between.
     float engineMinRpm = 1000.0f;
@@ -155,6 +159,10 @@ struct VehicleDriveState
     std::unique_ptr<VehicleDriveSession> session;
     // A sequential manual gearbox (the driver changes gear) instead of the automatic.
     bool manualGearbox = true;
+    // A test drive without a driver (--drive-controls): the car takes these controls instead of the
+    // keyboard's and gamepad's, advances a fixed 1/60 s a frame however long the frame took, and logs
+    // its pose once a simulated second.
+    std::optional<VehicleControls> scriptedControls;
     VehicleCameraSettings camera;
     VehicleHapticsSettings haptics;
     std::string lastError;

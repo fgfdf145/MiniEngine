@@ -342,8 +342,16 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         return false;
     }
 
-    const VehicleControls controls = ReadVehicleControls(
-        state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering, state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
+    const std::optional<VehicleControls>& scripted = state.vehicleDrive.scriptedControls;
+    if (scripted.has_value())
+    {
+        deltaSeconds = 1.0f / 60.0f;
+    }
+    const VehicleControls controls = scripted.has_value()
+                                         ? *scripted
+                                         : ReadVehicleControls(
+                                               state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering,
+                                               state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
     const bool resetDown =
         (!keyboardCaptured && state.input.IsKeyDown(KeyCode(SDL_SCANCODE_BACKSPACE))) ||
         (state.input.GetFirstConnectedGamepadIndex() >= 0 && !keyboardCaptured &&
@@ -360,7 +368,10 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         // At most this long on physics a frame, so a world too slow for real time slows down rather
         // than the frame rate.
         constexpr float kPhysicsBudgetSeconds = 0.025f;
-        const int steps = session->physics->Update(deltaSeconds, kPhysicsBudgetSeconds);
+        // A scripted drive runs every step, so it is the same however slowly the frames come.
+        const auto stepStart = std::chrono::steady_clock::now();
+        const int steps = session->physics->Update(deltaSeconds, scripted.has_value() ? 0.0f : kPhysicsBudgetSeconds);
+        session->scriptedPhysicsMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stepStart).count();
         if (deltaSeconds > 0.0f)
         {
             const float share = std::min(steps * PhysicsWorld::kFixedStepSeconds / deltaSeconds, 1.0f);
@@ -376,7 +387,30 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
 
     UpdateGamepadFeedback(state, *session, deltaSeconds, keyboardCaptured);
 
-    const PhysicsPose pose =session->physics->GetVehiclePose(session->vehicle);
+    const PhysicsPose pose = session->physics->GetVehiclePose(session->vehicle);
+    if (scripted.has_value() && !session->paused)
+    {
+        if (session->scriptedSeconds >= session->nextScriptedLogSeconds)
+        {
+            const VehicleTelemetry telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
+            const glm::vec3 up = pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+            LOG_INFO(
+                "Test drive {:.0f} s: at ({:.2f}, {:.2f}, {:.2f}), {:.1f} km/h, gear {}, {} wheels on the ground, tilted {:.1f} deg, "
+                "{:.0f} ms of physics for the last second",
+                session->scriptedSeconds,
+                pose.position.x,
+                pose.position.y,
+                pose.position.z,
+                telemetry.forwardSpeed * 3.6f,
+                telemetry.gear,
+                telemetry.wheelsInContact,
+                glm::degrees(std::acos(std::clamp(up.y, -1.0f, 1.0f))),
+                session->scriptedPhysicsMs);
+            session->nextScriptedLogSeconds += 1.0f;
+            session->scriptedPhysicsMs = 0.0;
+        }
+        session->scriptedSeconds += deltaSeconds;
+    }
     PhysicsPose modelPose = pose;
     modelPose.rotation = pose.rotation * session->vehicleToModel;
     world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));

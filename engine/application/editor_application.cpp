@@ -5,6 +5,7 @@
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/capture_state.h>
 #include <engine/editor/services/scene_io_service.h>
+#include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/renderer/rhi/factory.h>
 #include <engine/platform/window/window.h>
 
@@ -12,6 +13,7 @@
 #include <entt/entt.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <iostream>
@@ -153,6 +155,18 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--camera")
         {
             options.camera = ParseFloatList<5>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
+        if (argument == "--drive")
+        {
+            options.driveEntity = ReadRequiredArgument(i, argc, argv, argument);
+            continue;
+        }
+
+        if (argument == "--drive-controls")
+        {
+            options.driveControls = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
             continue;
         }
 
@@ -396,6 +410,14 @@ int EditorApplication::Run()
     }
     uint32_t renderedFrameCount = 0;
     bool recordingStarted = false;
+    bool driveStarted = false;
+    if (m_options.driveControls.has_value())
+    {
+        VehicleControls controls;
+        controls.throttle = std::clamp((*m_options.driveControls)[0], -1.0f, 1.0f);
+        controls.steering = std::clamp((*m_options.driveControls)[1], -1.0f, 1.0f);
+        sharedState->vehicleDrive.scriptedControls = controls;
+    }
 
     // Keeps the frame coming while a window edge is dragged, so the area the drag exposes is drawn
     // instead of left unpainted until the mouse is released. The handler is removed before the
@@ -426,6 +448,26 @@ int EditorApplication::Run()
                              !sharedState->pendingModelLoads.empty() || !sharedState->sceneUploadStatus.empty() ||
                              sharedState->rayScenePending;
         const bool waiting = m_options.waitForScene && loading;
+        if (m_options.driveEntity.has_value() && !driveStarted && !loading)
+        {
+            driveStarted = true;
+            const IEditorWorld& world = sharedState->GetEditorWorld();
+            const std::vector<entt::entity>& order = world.GetSceneOrder();
+            const auto found = std::find_if(order.begin(), order.end(), [&](entt::entity entity)
+                                            {
+                                                return world.GetTag(entity).name == *m_options.driveEntity;
+                                            });
+            if (found == order.end())
+            {
+                std::string names;
+                for (const entt::entity entity : order)
+                {
+                    names += (names.empty() ? "'" : ", '") + world.GetTag(entity).name + "'";
+                }
+                throw std::runtime_error("--drive: the scene has no entity named '" + *m_options.driveEntity + "' (it has " + names + ")");
+            }
+            VehicleDriveService::Start(*sharedState, *found, VehicleDriveService::DefaultTuning());
+        }
         // The recording starts once a frame counts, with the frame after it: the viewport has its
         // size only once a frame has been drawn.
         if (m_options.recordPath.has_value() && !waiting && !recordingStarted)
