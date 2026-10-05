@@ -17,6 +17,8 @@ enum class VulkanTextureFormat
     LinearData
 };
 
+// An image and its view, without a sampler: callers pair the view with one from VulkanSamplerCache,
+// so a scene with thousands of textures stays far below the device's sampler limit.
 class VulkanTexture
 {
   public:
@@ -45,8 +47,8 @@ class VulkanTexture
         VulkanUploadBatch& uploadBatch);
     // An equirectangular environment map: R32G32B32A32_SFLOAT when the device filters that format
     // linearly, else packed to R16G16B16A16_SFLOAT (values clamp at 65504). One mip level: the map
-    // is magnified, never minified, and a mip chain would seam where the longitude wraps. Repeats
-    // in u, clamps in v.
+    // is magnified, never minified, and a mip chain would seam where the longitude wraps. Sample it
+    // with a sampler that repeats in u and clamps in v.
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
@@ -66,7 +68,6 @@ class VulkanTexture
     VulkanTexture& operator=(const VulkanTexture&) = delete;
 
     VkImageView GetImageView() const;
-    VkSampler GetSampler() const;
 
   private:
     // Shared by the destructor and the constructors' unwind path. Skips null handles.
@@ -75,10 +76,10 @@ class VulkanTexture
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
     // Uploads level 0 from tightly packed texels and builds the mip chain with linear blits when the
     // format supports them, else keeps a single level. Shared by the RGBA8 and half-float paths.
-    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch, bool generateMips = true, VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch, bool generateMips = true);
     void UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch);
     // Shared by both upload paths once the image holds every level in shader read layout.
-    void CreateViewAndSampler(VkFormat vkFormat, VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    void CreateView(VkFormat vkFormat);
     static VkFormat ToVkFormat(CompressedTextureFormat format);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;
@@ -94,7 +95,6 @@ class VulkanTexture
     VkImage m_image = VK_NULL_HANDLE;
     VulkanPooledMemory m_memory;
     VkImageView m_imageView = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
     VulkanTextureFormat m_textureFormat = VulkanTextureFormat::SrgbColor;
     uint32_t m_mipLevels = 1;
 };

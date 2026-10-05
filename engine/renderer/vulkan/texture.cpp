@@ -109,8 +109,7 @@ VulkanTexture::VulkanTexture(
                 height,
                 VK_FORMAT_R32G32B32A32_SFLOAT,
                 uploadBatch,
-                false,
-                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                false);
         }
         else
         {
@@ -122,8 +121,7 @@ VulkanTexture::VulkanTexture(
                 height,
                 VK_FORMAT_R16G16B16A16_SFLOAT,
                 uploadBatch,
-                false,
-                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                false);
         }
     }
     catch (...)
@@ -175,8 +173,7 @@ void VulkanTexture::UploadTexels(
     uint32_t height,
     VkFormat vkFormat,
     VulkanUploadBatch& uploadBatch,
-    bool generateMips,
-    VkSamplerAddressMode addressModeV)
+    bool generateMips)
 {
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceSize stagingOffset = 0;
@@ -239,7 +236,7 @@ void VulkanTexture::UploadTexels(
         TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     }
 
-    CreateViewAndSampler(vkFormat, addressModeV);
+    CreateView(vkFormat);
 }
 
 void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch)
@@ -325,7 +322,7 @@ void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, Vu
         regions.data());
     TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, m_mipLevels);
 
-    CreateViewAndSampler(vkFormat);
+    CreateView(vkFormat);
 }
 
 VkFormat VulkanTexture::ToVkFormat(CompressedTextureFormat format)
@@ -342,7 +339,7 @@ VkFormat VulkanTexture::ToVkFormat(CompressedTextureFormat format)
     throw std::runtime_error("Unknown compressed texture format");
 }
 
-void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat, VkSamplerAddressMode addressModeV)
+void VulkanTexture::CreateView(VkFormat vkFormat)
 {
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -355,32 +352,6 @@ void VulkanTexture::CreateViewAndSampler(VkFormat vkFormat, VkSamplerAddressMode
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
     CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_imageView), "Failed to create texture image view");
-
-    VkPhysicalDeviceFeatures supportedFeatures{};
-    vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
-    VkPhysicalDeviceProperties physicalDeviceProperties{};
-    vkGetPhysicalDeviceProperties(m_physicalDevice, &physicalDeviceProperties);
-
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = addressModeV;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.anisotropyEnable = supportedFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
-    samplerInfo.maxAnisotropy = supportedFeatures.samplerAnisotropy
-                                    ? std::min(16.0f, physicalDeviceProperties.limits.maxSamplerAnisotropy)
-                                    : 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(m_mipLevels);
-    samplerInfo.mipLodBias = 0.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create texture sampler");
 }
 
 VkFormat VulkanTexture::GetVkFormat() const
@@ -397,11 +368,6 @@ VulkanTexture::~VulkanTexture()
 
 void VulkanTexture::DestroyHandles()
 {
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
     if (m_imageView != VK_NULL_HANDLE)
     {
         vkDestroyImageView(m_device, m_imageView, nullptr);
@@ -418,11 +384,6 @@ void VulkanTexture::DestroyHandles()
 VkImageView VulkanTexture::GetImageView() const
 {
     return m_imageView;
-}
-
-VkSampler VulkanTexture::GetSampler() const
-{
-    return m_sampler;
 }
 
 void VulkanTexture::CreateBuffer(

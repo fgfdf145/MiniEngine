@@ -1622,6 +1622,15 @@ void VulkanRenderer::DestroyDeviceResources()
     m_frameSetLayout.reset();
 }
 
+// The sampler of the float textures (the environment map and the DFG and LTC tables): linear with
+// mips, repeating in u for the longitude wrap and clamping in v at the poles.
+VkSampler VulkanRenderer::EquirectangularSampler() const
+{
+    TextureSampler sampler;
+    sampler.wrapT = TextureWrap::ClampToEdge;
+    return m_samplerCache->Get(sampler);
+}
+
 EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
 {
     EnvironmentDescriptorBindings bindings{};
@@ -1633,9 +1642,10 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.cloudShadow = m_atmosphere->GetCloudShadowBinding();
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
-    bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetSampler()};
-    bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetSampler()};
-    bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetSampler()};
+    const VkSampler floatTableSampler = EquirectangularSampler();
+    bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), floatTableSampler};
+    bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), floatTableSampler};
+    bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), floatTableSampler};
     bindings.transmission = m_transmissionImage->GetSampledBinding();
     bindings.scatterLight = m_scatterPass->GetLightBinding();
     bindings.scatterDepth = m_scatterPass->GetDepthBinding();
@@ -1643,7 +1653,7 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.ddgiVisibility = m_ddgi->GetVisibilityBinding();
     bindings.ddgiProbeStates = m_ddgi->GetProbeStateBuffer();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
-    bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), environmentMap.GetSampler()};
+    bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), floatTableSampler};
     return bindings;
 }
 
@@ -1751,7 +1761,7 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                 m_commandContext->WaitForAllFrames();
                 if (m_uniformBuffer)
                 {
-                    m_uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), texture->GetSampler()});
+                    m_uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), EquirectangularSampler()});
                 }
                 if (m_environmentProbe)
                 {

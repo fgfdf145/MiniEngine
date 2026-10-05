@@ -168,6 +168,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CreateDeviceResources();
     void DestroyDeviceResources();
     EnvironmentDescriptorBindings BuildEnvironmentBindings() const;
+    VkSampler EquirectangularSampler() const;
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
     void UpdateEnvironmentMap(const SceneEnvironment& environment);
