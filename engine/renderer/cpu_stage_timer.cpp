@@ -1,5 +1,7 @@
 #include "cpu_stage_timer.h"
 
+#include <algorithm>
+
 namespace me
 {
 
@@ -44,6 +46,23 @@ std::vector<CpuStageTimer::Stage> CpuStageTimer::GetStages() const
         }
         stages.push_back(Stage{samples.name, samples.ms.empty() ? 0.0 : sum / static_cast<double>(samples.ms.size())});
     }
+    return stages;
+}
+
+std::vector<CpuStageTimer::Stage> CpuStageTimer::GetCurrentFrame() const
+{
+    std::vector<Stage> stages;
+    for (const Samples& samples : m_stages)
+    {
+        if (samples.touched)
+        {
+            stages.push_back(Stage{samples.name, samples.frameMs});
+        }
+    }
+    std::sort(stages.begin(), stages.end(), [](const Stage& a, const Stage& b)
+              {
+                  return a.averageMs > b.averageMs;
+              });
     return stages;
 }
 

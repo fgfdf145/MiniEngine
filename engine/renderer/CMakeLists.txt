@@ -105,6 +105,10 @@ add_library(engine_renderer
     vulkan/atmosphere.h
     vulkan/buffer.cpp
     vulkan/buffer.h
+    vulkan/descriptor_pool_list.cpp
+    vulkan/descriptor_pool_list.h
+    vulkan/material_set_cache.cpp
+    vulkan/material_set_cache.h
     vulkan/memory_pool.cpp
     vulkan/memory_pool.h
     vulkan/command.cpp

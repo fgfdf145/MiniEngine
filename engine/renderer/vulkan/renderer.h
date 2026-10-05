@@ -32,6 +32,7 @@
 #include "taa_pass.h"
 #include "texture.h"
 #include "tonemap_pass.h"
+#include "material_set_cache.h"
 #include "uniform_buffer.h"
 #include "video_readback.h"
 
@@ -58,15 +59,30 @@ namespace me
 class Window;
 struct ImageCaptureRequest;
 
-struct RenderSubmesh
+// A CPU submesh as the GPU draws it. Made once per CpuRenderSubmesh revision and shared from one content
+// upload to the next while that revision is still in the scene, so a change costs what changed.
+struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
 {
     entt::entity entity = entt::null;
+    // The CpuRenderSubmesh revision this was made from.
+    uint64_t revision = 0;
     // The CPU geometry, shared with the model cache: the ray scene builds its hierarchy from it.
     std::shared_ptr<const MeshData> mesh;
     // Shared: an upload keeps the buffers of meshes that were already on the GPU (UploadSceneResources),
     // so adding or removing one model leaves every other model's geometry where it is.
     std::shared_ptr<VulkanBuffer> buffer;
-    uint32_t materialBindingIndex = 0;
+    // Set 1, from VulkanMaterialSetCache, and the textures it names by cache key (built-in defaults
+    // left out): an upload that keeps this submesh keeps those textures.
+    VkDescriptorSet materialSet = VK_NULL_HANDLE;
+    std::vector<std::string> textureKeys;
+    // The base colour and emission the ray scene averages for this submesh's ray material.
+    TextureDescriptorBinding rayBaseColor;
+    TextureDescriptorBinding rayEmissive;
+    // The draw slot (firstInstance) holding this submesh's material, texture transforms, previous model
+    // matrix and ray material, from the commit that first draws it until the one that drops it. Set at
+    // commit, hence mutable: everything else is fixed once made.
+    static constexpr uint32_t kNoDrawSlot = UINT32_MAX;
+    mutable uint32_t drawSlot = kNoDrawSlot;
     GpuMaterialData material;
     GpuTextureTransforms textureTransforms;
     bool doubleSided = false;
@@ -75,8 +91,9 @@ struct RenderSubmesh
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
-    // Assigned in ApplyRenderContent: the entity and this submesh's position among that entity's
-    // submeshes, which is what MotionHistory finds last frame's model matrix by.
+    // The entity and this submesh's position among that entity's submeshes, which is what
+    // MotionHistory finds last frame's model matrix by. A revision keeps its position: replacing an
+    // entity's submeshes gives them all new revisions.
     MotionKey motionKey;
 };
 
@@ -116,17 +133,14 @@ struct MaterialTextureSlots
     MaterialTextureSamplers samplers{};
 };
 
-// One texture of a content upload in progress: either created by that upload, or a live texture
-// it reuses, named by its index in VulkanRenderer::m_textures. Reuse is by index rather than by
-// taking ownership, so the live list stays intact until the whole upload has succeeded.
-struct PendingTexture
+// A texture on the GPU, by cache key, and how many live render submeshes name it. The built-in
+// defaults are permanent; any other texture goes at the first commit that leaves it unreferenced.
+struct StoredTexture
 {
-    static constexpr size_t kNotReused = static_cast<size_t>(-1);
-
-    std::unique_ptr<VulkanTexture> created;
-    size_t reusedIndex = kNotReused;
+    std::unique_ptr<VulkanTexture> texture;
+    uint32_t references = 0;
+    bool permanent = false;
 };
-
 class VulkanRenderer : public EditorRenderBackendBase
 {
   public:
@@ -189,11 +203,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // After a failed upload the previous content may still name entities the change deleted.
     // Drawing one would read a destroyed entity's transform, so those submeshes are dropped.
     void DropSubmeshesOfRemovedEntities();
-    void ApplyRenderContent(
-        std::vector<PendingTexture> newTextures,
-        std::vector<std::string> newTextureCacheKeys,
-        std::vector<MaterialTextureSlots> newMaterialTextureSlots,
-        std::vector<RenderSubmesh> newRenderSubmeshes);
+    void ApplyRenderContent(std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes, size_t keptSubmeshCount);
+    // Destroys the stored textures no live submesh names (after the material sets that named them).
+    void DropUnreferencedTextures();
     // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh. Submeshes
     // whose bounding sphere is outside the frustum of viewProjection get no draw item.
     std::vector<VulkanDrawItem> BuildDrawItems(
@@ -223,15 +235,23 @@ class VulkanRenderer : public EditorRenderBackendBase
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
-    std::vector<RenderSubmesh> m_renderSubmeshes;
-    std::vector<std::unique_ptr<VulkanTexture>> m_textures;
-    // Parallel to m_textures: the cache key ("path|srgb" or "__id__|linear") for each slot. A
-    // rebuild looks live textures up by it and reuses them instead of uploading them again.
-    std::vector<std::string> m_textureCacheKeys;
+    std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
+    // m_renderSubmeshes by revision, for the next upload to keep.
+    std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;
+    std::unique_ptr<VulkanMaterialSetCache> m_materialSets;
+    // Draw slots: freed ones are handed out again first, and the watermark is how many the per-draw
+    // buffers must hold.
+    uint32_t AcquireDrawSlot();
+    void ReleaseDrawSlot(uint32_t slot);
+    std::vector<uint32_t> m_freeDrawSlots;
+    uint32_t m_drawSlotWatermark = 0;
+    // Every texture the content draws with, by cache key ("path|color", "__id__|linear"), counted by
+    // the submeshes that name it, so a change of content touches only the textures it adds or drops.
+    std::unordered_map<std::string, StoredTexture> m_textureStore;
     // Prepares texture files on worker threads; see RequestSceneUpload and PumpSceneUpload.
     std::unique_ptr<TexturePreparationQueue> m_texturePreparation;
     // Textures prepared and uploaded for a change that has not committed yet, by cache key. The
-    // commit moves the ones it uses into m_textures and releases the rest.
+    // upload moves the ones it uses into m_textureStore.
     std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_stagedTextures;
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
@@ -248,7 +268,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     // Counted as textures upload, logged and reset when a change commits.
     TextureUploadStats m_textureUploadStats;
-    std::vector<MaterialTextureSlots> m_materialTextureSlots;
     // Device-lifetime resources: the shader-fixed frame and material set layouts and the pipeline
     // cache all outlive every swapchain, viewport and scene reload (see CreateDeviceResources).
     std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;

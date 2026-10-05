@@ -317,16 +317,14 @@ class VulkanUniformBuffer
         VkDevice device,
         uint32_t imageCount,
         VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout materialSetLayout,
-        const std::vector<MaterialTextureBinding>& materialBindings,
         TextureDescriptorBinding shadowMap,
         TextureDescriptorBinding localShadowAtlas,
         EnvironmentDescriptorBindings environment,
-        // One per draw slot, in slot order: binding 12 holds them and binding 2 gets as many
-        // previous-model slots, so the two can never disagree about how many draws there are.
-        std::span<const GpuMaterialData> drawMaterials,
-        // Parallel to drawMaterials: set 0 binding 17.
-        std::span<const GpuTextureTransforms> drawTextureTransforms);
+        // Draw slots (a draw's firstInstance): binding 12 holds a material, binding 17 texture
+        // transforms and binding 2 a previous model matrix for each, so the three can never disagree
+        // about how many draws there are. A slot keeps what WriteDrawSlot put in it, so a change of
+        // content writes only its new draws.
+        uint32_t drawCapacity);
     ~VulkanUniformBuffer();
 
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
@@ -339,7 +337,10 @@ class VulkanUniformBuffer
     // Points set 0 bindings 19 and 20 of every frame set at the scatter pre-pass's recreated images,
     // under the same condition.
     void SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth);
-    VkDescriptorSet GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const;
+    uint32_t GetDrawCapacity() const;
+    // A draw's material and texture transforms, read by the GPU from the next frame recorded. The
+    // caller has waited for every frame that may still read the slot's previous draw.
+    void WriteDrawSlot(uint32_t slot, const GpuMaterialData& material, const GpuTextureTransforms& transforms);
     void Update(
         uint32_t imageIndex,
         const ViewportMatrices& matrices,
@@ -350,7 +351,9 @@ class VulkanUniformBuffer
         const LightUpload& lights,
         const ShadowUniformData& shadow,
         const glm::mat4& prevViewProj,
+        // Each draw's previous model matrix, written to its draw slot (prevModelSlots, parallel).
         std::span<const glm::mat4> prevModels,
+        std::span<const uint32_t> prevModelSlots,
         const EnvironmentUniformData& environment,
         const glm::mat4& viewProjNoJitter,
         bool specularAntiAliasing,
@@ -375,12 +378,10 @@ class VulkanUniformBuffer
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    std::vector<MaterialTextureBinding> m_materialBindings;
     TextureDescriptorBinding m_shadowMap;
     TextureDescriptorBinding m_localShadowAtlas;
     EnvironmentDescriptorBindings m_environment;
     VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_buffers;
     std::vector<VkDeviceMemory> m_memories;
@@ -396,12 +397,10 @@ class VulkanUniformBuffer
     VkBuffer m_materialBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_materialMemory = VK_NULL_HANDLE;
     void* m_mappedMaterialBuffer = nullptr;
-    std::vector<GpuMaterialData> m_drawMaterials;
     // Set 0 binding 17: every draw's texture transforms, like the materials written once.
     VkBuffer m_textureTransformBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_textureTransformMemory = VK_NULL_HANDLE;
     void* m_mappedTextureTransformBuffer = nullptr;
-    std::vector<GpuTextureTransforms> m_drawTextureTransforms;
     // Set 0 binding 10: every light the shader evaluates, kMaxSceneLights slots per image.
     std::vector<VkBuffer> m_lightBuffers;
     std::vector<VkDeviceMemory> m_lightMemories;
@@ -415,7 +414,6 @@ class VulkanUniformBuffer
     std::vector<VkDeviceMemory> m_shadowTileMemories;
     std::vector<void*> m_mappedShadowTileBuffers;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
-    std::vector<VkDescriptorSet> m_descriptorSets;
     uint32_t m_imageCount = 0;
 };
 }

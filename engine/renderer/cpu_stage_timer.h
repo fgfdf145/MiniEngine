@@ -30,6 +30,9 @@ class CpuStageTimer
 
     // In the order the stages were first marked.
     std::vector<Stage> GetStages() const;
+    // This frame's stages so far (averageMs holds this frame's time), the slowest first: what a slow
+    // frame is logged with.
+    std::vector<Stage> GetCurrentFrame() const;
 
   private:
     struct Samples

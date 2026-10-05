@@ -38,6 +38,10 @@ const ISceneWorld& RendererWorld::GetSceneWorld() const
 
 void RendererWorld::SetRenderSubmeshes(std::vector<CpuRenderSubmesh> renderSubmeshes)
 {
+    for (CpuRenderSubmesh& submesh : renderSubmeshes)
+    {
+        submesh.revision = m_nextRevision++;
+    }
     m_renderSubmeshes = std::move(renderSubmeshes);
 }
 
@@ -53,6 +57,10 @@ void RendererWorld::ReplaceEntityRenderSubmeshes(
             return submesh.entity == entity;
         });
     const size_t insertionIndex = static_cast<size_t>(std::distance(m_renderSubmeshes.begin(), first));
+    for (CpuRenderSubmesh& submesh : renderSubmeshes)
+    {
+        submesh.revision = m_nextRevision++;
+    }
     std::erase_if(
         m_renderSubmeshes,
         [entity](const CpuRenderSubmesh& submesh)

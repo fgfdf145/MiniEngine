@@ -152,20 +152,6 @@ CollectedSceneLights CollectSceneLights(const IEditorWorld& world, const Rendere
     return collected;
 }
 
-// Every submesh's material in submesh order, which is the draw slot order: BuildDrawItems passes the
-// submesh index as each draw's firstInstance.
-// Every submesh's texture transforms in draw slot order, beside CollectDrawMaterials.
-std::vector<GpuTextureTransforms> CollectDrawTextureTransforms(const std::vector<RenderSubmesh>& renderSubmeshes)
-{
-    std::vector<GpuTextureTransforms> transforms;
-    transforms.reserve(renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : renderSubmeshes)
-    {
-        transforms.push_back(renderSubmesh.textureTransforms);
-    }
-    return transforms;
-}
-
 GpuTextureTransforms BuildGpuTextureTransforms(const MaterialTextureTransforms& transforms)
 {
     static_assert(kGpuTextureTransformSlots == kMaterialTextureSlotCount, "one GPU transform per material texture slot");
@@ -175,17 +161,6 @@ GpuTextureTransforms BuildGpuTextureTransforms(const MaterialTextureTransforms& 
         ComputeTextureTransformRows(transforms[slot], &gpu.rows[slot * 8], &gpu.rows[slot * 8 + 4]);
     }
     return gpu;
-}
-
-std::vector<GpuMaterialData> CollectDrawMaterials(const std::vector<RenderSubmesh>& renderSubmeshes)
-{
-    std::vector<GpuMaterialData> materials;
-    materials.reserve(renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : renderSubmeshes)
-    {
-        materials.push_back(renderSubmesh.material);
-    }
-    return materials;
 }
 
 TextureData CreateSolidTexture(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha)
@@ -554,9 +529,11 @@ VulkanRenderer::~VulkanRenderer()
     m_gbufferDescriptors.reset();
     m_sceneTargets.reset();
     m_imguiLayer.reset();
-    m_textures.clear();
+    m_textureStore.clear();
     m_stagedTextures.clear();
     m_renderSubmeshes.clear();
+    m_liveSubmeshes.clear();
+    m_materialSets.reset();
     m_samplerCache.reset();
     DestroyDeviceResources();
     m_device.reset();
@@ -575,13 +552,17 @@ void VulkanRenderer::DrawFrame()
     }
     m_cpuStages.Mark("Tick");
 
-    if (ProcessPendingOperations())
+    const bool contentChanged = ProcessPendingOperations();
+    m_cpuStages.Mark("PendingOperations");
+    if (contentChanged)
     {
         RequestSceneUpload();
+        m_cpuStages.Mark("RequestUpload");
     }
     // Every frame: stages textures the workers finished, and commits a pending change once its
     // last texture is ready.
     PumpSceneUpload();
+    m_cpuStages.Mark("PumpUpload");
 
     EditorWorld().FlushDirtyTransforms();
     m_cpuStages.Mark("SceneUpdates");
@@ -691,12 +672,15 @@ void VulkanRenderer::DrawFrame()
     // the draw items.
     std::vector<glm::mat4> models;
     std::vector<MotionKey> motionKeys;
+    std::vector<uint32_t> drawSlots;
     models.reserve(m_renderSubmeshes.size());
     motionKeys.reserve(m_renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    drawSlots.reserve(m_renderSubmeshes.size());
+    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal));
-        motionKeys.push_back(renderSubmesh.motionKey);
+        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
+        motionKeys.push_back(renderSubmesh->motionKey);
+        drawSlots.push_back(renderSubmesh->drawSlot);
     }
     m_cpuStages.Mark("Models");
     const std::vector<ShadowDrawItem> shadowDrawItems = BuildShadowDrawItems(imageIndex, models);
@@ -968,6 +952,7 @@ void VulkanRenderer::DrawFrame()
         shadowData,
         motion.previousViewProjection,
         motion.previousModels,
+        drawSlots,
         environmentData,
         viewProjection,
         // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
@@ -1254,6 +1239,21 @@ void VulkanRenderer::DrawFrame()
         push(m_cpuFrameMs, frameMs - waitMs);
         push(m_cpuWaitMs, waitMs);
         ++m_cpuFrameCursor;
+        // A frame the CPU held up for two at 60 Hz says where the time went.
+        constexpr double kSlowFrameMs = 33.0;
+        if (frameMs - waitMs > kSlowFrameMs)
+        {
+            std::string stages;
+            for (const CpuStageTimer::Stage& stage : m_cpuStages.GetCurrentFrame())
+            {
+                if (stage.averageMs < 1.0)
+                {
+                    break;
+                }
+                stages += (stages.empty() ? "" : ", ") + stage.name + " " + std::to_string(static_cast<int>(stage.averageMs + 0.5)) + " ms";
+            }
+            LOG_WARN("Slow frame: {:.0f} ms of CPU ({})", frameMs - waitMs, stages);
+        }
     }
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
@@ -1388,6 +1388,7 @@ void VulkanRenderer::CreateDeviceResources()
     // compilation.
     m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_device->GetHandle());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
+    m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_device->GetHandle(), m_materialSetLayout->GetHandle());
 
     VkPipelineCacheCreateInfo cacheInfo{};
     cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -1599,6 +1600,10 @@ void VulkanRenderer::DestroyDeviceResources()
         vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
         m_pipelineCache = VK_NULL_HANDLE;
     }
+    // The cached material sets come from pools made against the layout; content that named them is gone.
+    m_renderSubmeshes.clear();
+    m_liveSubmeshes.clear();
+    m_materialSets.reset();
     m_materialSetLayout.reset();
     m_frameSetLayout.reset();
 }
@@ -1916,35 +1921,44 @@ IScenePass* VulkanRenderer::FindScenePass(ScenePassId id) const
 
 void VulkanRenderer::CreateDescriptorResources()
 {
-    if (m_textures.empty())
-    {
-        throw std::runtime_error("Cannot create descriptor resources without at least one texture");
-    }
-    if (m_materialTextureSlots.empty())
-    {
-        throw std::runtime_error("Cannot create descriptor resources without at least one material texture binding");
-    }
-
     m_uniformBuffer = std::make_unique<VulkanUniformBuffer>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         m_frameSetLayout->GetHandle(),
-        m_materialSetLayout->GetHandle(),
-        BuildMaterialTextureBindings(ViewTextures(m_textures), m_materialTextureSlots, *m_samplerCache),
         m_shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(),
-        CollectDrawMaterials(m_renderSubmeshes),
-        CollectDrawTextureTransforms(m_renderSubmeshes));
+        m_drawSlotWatermark);
+    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
+    {
+        m_uniformBuffer->WriteDrawSlot(renderSubmesh->drawSlot, renderSubmesh->material, renderSubmesh->textureTransforms);
+    }
+}
+
+uint32_t VulkanRenderer::AcquireDrawSlot()
+{
+    if (!m_freeDrawSlots.empty())
+    {
+        const uint32_t slot = m_freeDrawSlots.back();
+        m_freeDrawSlots.pop_back();
+        return slot;
+    }
+    return m_drawSlotWatermark++;
+}
+
+void VulkanRenderer::ReleaseDrawSlot(uint32_t slot)
+{
+    if (slot != RenderSubmesh::kNoDrawSlot)
+    {
+        m_freeDrawSlots.push_back(slot);
+    }
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
 {
     m_uniformBuffer.reset();
-    // m_textureCacheKeys is deliberately not cleared here: it stays index-paired with m_textures,
-    // which survives this teardown, and wiping it makes the next UploadSceneResources upload every
-    // live texture again instead of reusing it.
+    // m_textureStore survives this teardown: the next upload reuses every live texture.
 }
 
 void VulkanRenderer::RecreateSwapchain()
@@ -2020,25 +2034,17 @@ void VulkanRenderer::SyncSceneTargets()
 void VulkanRenderer::UploadSceneResources()
 {
     const auto uploadStart = std::chrono::steady_clock::now();
-    // Live textures are reused by cache key rather than uploaded again, which keeps peak memory at
-    // one copy of an unchanged texture set. They are only looked up here: nothing leaves
-    // m_textures until ApplyRenderContent commits, so a throw anywhere below (running out of GPU
-    // memory, typically) unwinds this upload's own new resources and leaves every live texture
-    // exactly where the current descriptor sets expect it.
-    std::unordered_map<std::string, size_t> liveTextureByKey;
-    for (size_t i = 0; i < m_textures.size() && i < m_textureCacheKeys.size(); ++i)
-    {
-        if (m_textures[i] && !m_textureCacheKeys[i].empty())
-        {
-            liveTextureByKey.emplace(m_textureCacheKeys[i], i);
-        }
-    }
-
-    std::vector<PendingTexture> newTextures;
-    std::vector<std::string> newCacheKeys;
-    std::vector<MaterialTextureSlots> newMaterialTextureSlots;
-    std::vector<RenderSubmesh> newRenderSubmeshes;
+    // Textures stay in m_textureStore by cache key; a submesh the GPU already has keeps its own, so
+    // only new submeshes look textures up. A throw anywhere below (running out of GPU memory,
+    // typically) drops what this upload added and leaves every live texture where the content's
+    // material sets expect it.
+    std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes;
+    // The cache keys of the textures the submesh being made uses, for the next upload that keeps it.
+    std::vector<std::string>* recordedTextureKeys = nullptr;
+    // The textures the new submeshes' material sets are written from (the defaults first), by index.
+    std::vector<const VulkanTexture*> textureViews;
     std::unordered_map<std::string, uint32_t> keyToIndex;
+    std::vector<std::string> addedTextureKeys;
 
     // Batch every texture and submesh-buffer upload below into a handful of submit+wait
     // rounds instead of one per resource: VulkanTexture/VulkanBuffer used to each own their
@@ -2065,39 +2071,33 @@ void VulkanRenderer::UploadSceneResources()
     // Material texture files are uploaded block-compressed whenever the device allows it.
     const bool compressTextures = m_device->SupportsBlockCompression();
 
-    // Appends a reference to the live texture with this key, if there is one, and returns its new
-    // index. The live texture stays in m_textures; ApplyRenderContent moves it across on commit.
-    auto reuseLiveTexture = [&](const std::string& key) -> std::optional<uint32_t>
+    auto indexOf = [&](const std::string& key, const VulkanTexture* texture) -> uint32_t
     {
-        const auto liveIt = liveTextureByKey.find(key);
-        if (liveIt == liveTextureByKey.end())
-        {
-            return std::nullopt;
-        }
-        const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-        newTextures.push_back(PendingTexture{nullptr, liveIt->second});
-        newCacheKeys.push_back(key);
-        keyToIndex.emplace(key, idx);
-        return idx;
+        const uint32_t index = static_cast<uint32_t>(textureViews.size());
+        textureViews.push_back(texture);
+        keyToIndex.emplace(key, index);
+        return index;
+    };
+    auto store = [&](const std::string& key, std::unique_ptr<VulkanTexture> texture, bool permanent) -> const VulkanTexture*
+    {
+        StoredTexture& entry = m_textureStore[key];
+        entry.texture = std::move(texture);
+        entry.permanent = permanent;
+        addedTextureKeys.push_back(key);
+        return entry.texture.get();
     };
 
-    // Acquire a built-in texture by cache key: reuse the live one when there is one, else upload.
+    // A built-in texture by cache key: the stored one, else made now and kept for good.
     auto acquireDefault = [&](const std::string& id, const TextureData& data, VulkanTextureFormat fmt) -> uint32_t
     {
         const std::string key = id + (fmt == VulkanTextureFormat::SrgbColor ? "|srgb" : "|linear");
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
             return it->second;
-        if (const std::optional<uint32_t> reused = reuseLiveTexture(key))
-            return *reused;
-
-        const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-        newTextures.push_back(PendingTexture{std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
-            data, uploadBatch, fmt)});
-        newCacheKeys.push_back(key);
-        keyToIndex.emplace(key, idx);
+        if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
+            return indexOf(key, stored->second.texture.get());
+        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), data, uploadBatch, fmt);
         flushUploadBatchIfNeeded();
-        return idx;
+        return indexOf(key, store(key, std::move(texture), true));
     };
 
     auto loadTextureIndex = [&](const std::string& texturePath, TextureUsage usage, uint32_t fallbackIndex) -> uint32_t
@@ -2106,27 +2106,33 @@ void VulkanRenderer::UploadSceneResources()
             return fallbackIndex;
 
         const std::string key = BuildTextureCacheKey(texturePath, usage);
+        // The workers could not decode it and logged why; the default stands in, as it always has.
+        if (m_failedTextureKeys.count(key) != 0)
+            return fallbackIndex;
         if (auto it = keyToIndex.find(key); it != keyToIndex.end())
+        {
+            if (recordedTextureKeys != nullptr)
+                recordedTextureKeys->push_back(key);
             return it->second;
+        }
 
-        // Live hit: reuse the existing GPU texture, with no disk I/O, no upload and no extra memory.
-        if (const std::optional<uint32_t> reused = reuseLiveTexture(key))
-            return *reused;
+        // Stored: on the GPU already, for another submesh.
+        if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
+        {
+            if (recordedTextureKeys != nullptr)
+                recordedTextureKeys->push_back(key);
+            return indexOf(key, stored->second.texture.get());
+        }
 
         // Staged: prepared by the workers and already uploaded, waiting for this commit.
         if (auto stagedIt = m_stagedTextures.find(key); stagedIt != m_stagedTextures.end())
         {
-            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(PendingTexture{std::move(stagedIt->second)});
+            std::unique_ptr<VulkanTexture> texture = std::move(stagedIt->second);
             m_stagedTextures.erase(stagedIt);
-            newCacheKeys.push_back(key);
-            keyToIndex.emplace(key, idx);
-            return idx;
+            if (recordedTextureKeys != nullptr)
+                recordedTextureKeys->push_back(key);
+            return indexOf(key, store(key, std::move(texture), false));
         }
-
-        // The workers could not decode it and logged why; the default stands in, as it always has.
-        if (m_failedTextureKeys.count(key) != 0)
-            return fallbackIndex;
 
         // Miss: prepare and upload here. Only the startup upload, or a texture the preparation
         // queue somehow never saw, gets this far, so correctness never depends on the queue. A
@@ -2135,15 +2141,14 @@ void VulkanRenderer::UploadSceneResources()
         // the problem and still leave no room for the geometry that follows.
         try
         {
-            const uint32_t idx = static_cast<uint32_t>(newTextures.size());
-            newTextures.push_back(PendingTexture{UploadPreparedTexture(
+            std::unique_ptr<VulkanTexture> texture = UploadPreparedTexture(
                 PrepareTexture(texturePath, usage, compressTextures, TextureCacheDirectory()),
                 usage,
-                uploadBatch)});
-            newCacheKeys.push_back(key);
-            keyToIndex.emplace(key, idx);
+                uploadBatch);
             flushUploadBatchIfNeeded();
-            return idx;
+            if (recordedTextureKeys != nullptr)
+                recordedTextureKeys->push_back(key);
+            return indexOf(key, store(key, std::move(texture), false));
         }
         catch (const std::exception& error)
         {
@@ -2156,118 +2161,173 @@ void VulkanRenderer::UploadSceneResources()
         }
     };
 
-    const uint32_t defaultBaseColorIndex = acquireDefault("__default_base_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
-    const uint32_t defaultNormalIndex = acquireDefault("__default_normal__", CreateFlatNormalTexture(), VulkanTextureFormat::LinearData);
-    const uint32_t defaultMetallicIndex = acquireDefault("__default_metallic__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultRoughnessIndex = acquireDefault("__default_roughness__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultOcclusionIndex = acquireDefault("__default_occlusion__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    const uint32_t defaultEmissiveIndex = acquireDefault("__default_emissive__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
-    const uint32_t defaultBlendMaskIndex = acquireDefault("__default_blend_mask__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    // The layer maps multiply their factors, so white leaves the factors alone; the anisotropy map
-    // is a direction, and (1, 0.5) is +X, the tangent, at full strength.
-    const uint32_t defaultLayerIndex = acquireDefault("__default_layer__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
-    // White in sRGB, for the colour maps among the layers (sheen colour, specular colour).
-    const uint32_t defaultSheenColorIndex = acquireDefault("__default_sheen_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
-    const uint32_t defaultAnisotropyIndex = acquireDefault("__default_anisotropy__", CreateSolidTexture(255, 128, 255, 255), VulkanTextureFormat::LinearData);
-
-    const uint32_t defaultMaterialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
-    newMaterialTextureSlots.push_back(MaterialTextureSlots{
-        defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
-        defaultOcclusionIndex, defaultEmissiveIndex,
-        defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
-        defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
-        defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex,
-        defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex,
-        defaultLayerIndex, defaultLayerIndex,
-        defaultLayerIndex, defaultLayerIndex});
-
-    // The geometry already on the GPU, by the CPU mesh it came from: a mesh the model cache still holds
-    // is the same data, so its buffers carry over instead of being uploaded again.
-    std::unordered_map<const MeshData*, std::shared_ptr<VulkanBuffer>> liveBuffers;
-    liveBuffers.reserve(m_renderSubmeshes.size());
-    for (const RenderSubmesh& live : m_renderSubmeshes)
+    // Everything this upload made goes again if it fails: its material sets, and the textures it
+    // stored, which no live submesh names yet.
+    const auto dropAdded = [&]()
     {
-        if (live.mesh && live.buffer)
+        recordedTextureKeys = nullptr;
+        m_materialSets->AbandonPending();
+        for (const std::string& key : addedTextureKeys)
         {
-            liveBuffers.emplace(live.mesh.get(), live.buffer);
+            if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references == 0)
+            {
+                m_textureStore.erase(entry);
+            }
         }
-    }
+    };
+
+    std::vector<std::shared_ptr<RenderSubmesh>> madeSubmeshes;
+    std::vector<MaterialTextureSlots> madeSlots;
+    std::unordered_map<entt::entity, uint32_t> nextSubmeshOrdinal;
     size_t newBufferCount = 0;
-    for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
+    size_t keptSubmeshCount = 0;
+    try
     {
-        RenderSubmesh renderSubmesh{};
-        renderSubmesh.entity = cpuRenderSubmesh.entity;
-        renderSubmesh.mesh = cpuRenderSubmesh.mesh;
-        if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get()); live != liveBuffers.end())
-        {
-            renderSubmesh.buffer = live->second;
-        }
-        else
-        {
-            renderSubmesh.buffer = std::make_shared<VulkanBuffer>(
-                m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                *cpuRenderSubmesh.mesh, uploadBatch);
-            ++newBufferCount;
-            flushUploadBatchIfNeeded();
-        }
-        renderSubmesh.material = cpuRenderSubmesh.material;
-        renderSubmesh.textureTransforms = BuildGpuTextureTransforms(cpuRenderSubmesh.textureTransforms);
-        renderSubmesh.doubleSided = cpuRenderSubmesh.doubleSided;
-        renderSubmesh.alphaMode = cpuRenderSubmesh.alphaMode;
-        renderSubmesh.decal = cpuRenderSubmesh.decal;
-        renderSubmesh.localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
-        renderSubmesh.localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
-        renderSubmesh.name = cpuRenderSubmesh.name;
+        const uint32_t defaultBaseColorIndex = acquireDefault("__default_base_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+        const uint32_t defaultNormalIndex = acquireDefault("__default_normal__", CreateFlatNormalTexture(), VulkanTextureFormat::LinearData);
+        const uint32_t defaultMetallicIndex = acquireDefault("__default_metallic__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+        const uint32_t defaultRoughnessIndex = acquireDefault("__default_roughness__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+        const uint32_t defaultOcclusionIndex = acquireDefault("__default_occlusion__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+        const uint32_t defaultEmissiveIndex = acquireDefault("__default_emissive__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+        const uint32_t defaultBlendMaskIndex = acquireDefault("__default_blend_mask__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+        // The layer maps multiply their factors, so white leaves the factors alone; the anisotropy map
+        // is a direction, and (1, 0.5) is +X, the tangent, at full strength.
+        const uint32_t defaultLayerIndex = acquireDefault("__default_layer__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::LinearData);
+        // White in sRGB, for the colour maps among the layers (sheen colour, specular colour).
+        const uint32_t defaultSheenColorIndex = acquireDefault("__default_sheen_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
+        const uint32_t defaultAnisotropyIndex = acquireDefault("__default_anisotropy__", CreateSolidTexture(255, 128, 255, 255), VulkanTextureFormat::LinearData);
 
-        if (!cpuRenderSubmesh.hasTexCoords)
+        const MaterialTextureSlots defaultSlots{
+            defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
+            defaultOcclusionIndex, defaultEmissiveIndex,
+            defaultBaseColorIndex, defaultNormalIndex, defaultMetallicIndex, defaultRoughnessIndex,
+            defaultOcclusionIndex, defaultEmissiveIndex, defaultBlendMaskIndex,
+            defaultLayerIndex, defaultLayerIndex, defaultSheenColorIndex, defaultLayerIndex, defaultAnisotropyIndex,
+            defaultLayerIndex, defaultSheenColorIndex, defaultNormalIndex,
+            defaultLayerIndex, defaultLayerIndex,
+            defaultLayerIndex, defaultLayerIndex};
+
+        // The geometry already on the GPU, by the CPU mesh it came from: a mesh the model cache still
+        // holds is the same data, so its buffers carry over. Gathered on the first new submesh.
+        std::unordered_map<const MeshData*, std::shared_ptr<VulkanBuffer>> liveBuffers;
+        bool liveBuffersGathered = false;
+        for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
         {
-            renderSubmesh.materialBindingIndex = defaultMaterialBindingIndex;
+            const uint32_t ordinal = nextSubmeshOrdinal[cpuRenderSubmesh.entity]++;
+
+            // Kept: a submesh the GPU already has, with its textures, material set and draw slot.
+            if (const auto live = m_liveSubmeshes.find(cpuRenderSubmesh.revision); live != m_liveSubmeshes.end())
+            {
+                newRenderSubmeshes.push_back(live->second);
+                ++keptSubmeshCount;
+                continue;
+            }
+
+            if (!liveBuffersGathered)
+            {
+                liveBuffers.reserve(m_renderSubmeshes.size());
+                for (const std::shared_ptr<const RenderSubmesh>& live : m_renderSubmeshes)
+                {
+                    if (live->mesh && live->buffer)
+                    {
+                        liveBuffers.emplace(live->mesh.get(), live->buffer);
+                    }
+                }
+                liveBuffersGathered = true;
+            }
+
+            auto renderSubmesh = std::make_shared<RenderSubmesh>();
+            renderSubmesh->entity = cpuRenderSubmesh.entity;
+            renderSubmesh->revision = cpuRenderSubmesh.revision;
+            renderSubmesh->motionKey = MotionKey{static_cast<uint32_t>(entt::to_integral(cpuRenderSubmesh.entity)), ordinal};
+            renderSubmesh->mesh = cpuRenderSubmesh.mesh;
+            if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get()); live != liveBuffers.end())
+            {
+                renderSubmesh->buffer = live->second;
+            }
+            else
+            {
+                renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                    *cpuRenderSubmesh.mesh, uploadBatch);
+                liveBuffers.emplace(cpuRenderSubmesh.mesh.get(), renderSubmesh->buffer);
+                ++newBufferCount;
+                flushUploadBatchIfNeeded();
+            }
+            renderSubmesh->material = cpuRenderSubmesh.material;
+            renderSubmesh->textureTransforms = BuildGpuTextureTransforms(cpuRenderSubmesh.textureTransforms);
+            renderSubmesh->doubleSided = cpuRenderSubmesh.doubleSided;
+            renderSubmesh->alphaMode = cpuRenderSubmesh.alphaMode;
+            renderSubmesh->decal = cpuRenderSubmesh.decal;
+            renderSubmesh->localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
+            renderSubmesh->localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
+            renderSubmesh->name = cpuRenderSubmesh.name;
+
+            MaterialTextureSlots slots = defaultSlots;
+            if (cpuRenderSubmesh.hasTexCoords)
+            {
+                recordedTextureKeys = &renderSubmesh->textureKeys;
+                slots.samplers = cpuRenderSubmesh.textureSamplers;
+                slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, TextureUsage::Color, defaultBaseColorIndex);
+                slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, TextureUsage::Normal, defaultNormalIndex);
+                slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, TextureUsage::Data, defaultMetallicIndex);
+                slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, TextureUsage::Data, defaultRoughnessIndex);
+                slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, TextureUsage::Data, defaultOcclusionIndex);
+                slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, TextureUsage::Color, defaultEmissiveIndex);
+                slots.secondaryBaseColor = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor, TextureUsage::Color, slots.baseColor);
+                slots.secondaryNormal = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal, TextureUsage::Normal, slots.normal);
+                slots.secondaryMetallic = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic, TextureUsage::Data, slots.metallic);
+                slots.secondaryRoughness = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness, TextureUsage::Data, slots.roughness);
+                slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, TextureUsage::Data, slots.occlusion);
+                slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, TextureUsage::Color, slots.emissive);
+                slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, TextureUsage::Data, defaultBlendMaskIndex);
+                slots.clearcoat = loadTextureIndex(cpuRenderSubmesh.textures.clearcoat, TextureUsage::Data, defaultLayerIndex);
+                slots.clearcoatRoughness = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatRoughness, TextureUsage::Data, defaultLayerIndex);
+                slots.sheenColor = loadTextureIndex(cpuRenderSubmesh.textures.sheenColor, TextureUsage::Color, defaultSheenColorIndex);
+                slots.sheenRoughness = loadTextureIndex(cpuRenderSubmesh.textures.sheenRoughness, TextureUsage::Data, defaultLayerIndex);
+                slots.anisotropy = loadTextureIndex(cpuRenderSubmesh.textures.anisotropy, TextureUsage::Data, defaultAnisotropyIndex);
+                slots.specular = loadTextureIndex(cpuRenderSubmesh.textures.specular, TextureUsage::Data, defaultLayerIndex);
+                slots.specularColor = loadTextureIndex(cpuRenderSubmesh.textures.specularColor, TextureUsage::Color, defaultSheenColorIndex);
+                slots.clearcoatNormal = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatNormal, TextureUsage::Normal, defaultNormalIndex);
+                slots.iridescence = loadTextureIndex(cpuRenderSubmesh.textures.iridescence, TextureUsage::Data, defaultLayerIndex);
+                slots.iridescenceThickness =
+                    loadTextureIndex(cpuRenderSubmesh.textures.iridescenceThickness, TextureUsage::Data, defaultLayerIndex);
+                slots.transmission = loadTextureIndex(cpuRenderSubmesh.textures.transmission, TextureUsage::Data, defaultLayerIndex);
+                slots.thickness = loadTextureIndex(cpuRenderSubmesh.textures.thickness, TextureUsage::Data, defaultLayerIndex);
+                slots.diffuseTransmission = loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmission, TextureUsage::Data, defaultLayerIndex);
+                slots.diffuseTransmissionColor =
+                    loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmissionColor, TextureUsage::Color, defaultSheenColorIndex);
+                slots.detailMask = loadTextureIndex(cpuRenderSubmesh.textures.detailMask, TextureUsage::Data, defaultLayerIndex);
+                for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
+                {
+                    slots.detailLayers[layer] = loadTextureIndex(cpuRenderSubmesh.textures.detailLayers[layer], TextureUsage::Data, defaultLayerIndex);
+                }
+                recordedTextureKeys = nullptr;
+            }
+            // One reference per texture, however many slots name it.
+            std::sort(renderSubmesh->textureKeys.begin(), renderSubmesh->textureKeys.end());
+            renderSubmesh->textureKeys.erase(
+                std::unique(renderSubmesh->textureKeys.begin(), renderSubmesh->textureKeys.end()), renderSubmesh->textureKeys.end());
+            madeSubmeshes.push_back(renderSubmesh);
+            madeSlots.push_back(slots);
             newRenderSubmeshes.push_back(std::move(renderSubmesh));
-            continue;
         }
 
-        MaterialTextureSlots slots = newMaterialTextureSlots[defaultMaterialBindingIndex];
-        slots.samplers = cpuRenderSubmesh.textureSamplers;
-        slots.baseColor = loadTextureIndex(cpuRenderSubmesh.textures.baseColor, TextureUsage::Color, defaultBaseColorIndex);
-        slots.normal = loadTextureIndex(cpuRenderSubmesh.textures.normal, TextureUsage::Normal, defaultNormalIndex);
-        slots.metallic = loadTextureIndex(cpuRenderSubmesh.textures.metallic, TextureUsage::Data, defaultMetallicIndex);
-        slots.roughness = loadTextureIndex(cpuRenderSubmesh.textures.roughness, TextureUsage::Data, defaultRoughnessIndex);
-        slots.occlusion = loadTextureIndex(cpuRenderSubmesh.textures.occlusion, TextureUsage::Data, defaultOcclusionIndex);
-        slots.emissive = loadTextureIndex(cpuRenderSubmesh.textures.emissive, TextureUsage::Color, defaultEmissiveIndex);
-        slots.secondaryBaseColor = loadTextureIndex(cpuRenderSubmesh.textures.secondaryBaseColor, TextureUsage::Color, slots.baseColor);
-        slots.secondaryNormal = loadTextureIndex(cpuRenderSubmesh.textures.secondaryNormal, TextureUsage::Normal, slots.normal);
-        slots.secondaryMetallic = loadTextureIndex(cpuRenderSubmesh.textures.secondaryMetallic, TextureUsage::Data, slots.metallic);
-        slots.secondaryRoughness = loadTextureIndex(cpuRenderSubmesh.textures.secondaryRoughness, TextureUsage::Data, slots.roughness);
-        slots.secondaryOcclusion = loadTextureIndex(cpuRenderSubmesh.textures.secondaryOcclusion, TextureUsage::Data, slots.occlusion);
-        slots.secondaryEmissive = loadTextureIndex(cpuRenderSubmesh.textures.secondaryEmissive, TextureUsage::Color, slots.emissive);
-        slots.blendMask = loadTextureIndex(cpuRenderSubmesh.textures.blendMask, TextureUsage::Data, defaultBlendMaskIndex);
-        slots.clearcoat = loadTextureIndex(cpuRenderSubmesh.textures.clearcoat, TextureUsage::Data, defaultLayerIndex);
-        slots.clearcoatRoughness = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatRoughness, TextureUsage::Data, defaultLayerIndex);
-        slots.sheenColor = loadTextureIndex(cpuRenderSubmesh.textures.sheenColor, TextureUsage::Color, defaultSheenColorIndex);
-        slots.sheenRoughness = loadTextureIndex(cpuRenderSubmesh.textures.sheenRoughness, TextureUsage::Data, defaultLayerIndex);
-        slots.anisotropy = loadTextureIndex(cpuRenderSubmesh.textures.anisotropy, TextureUsage::Data, defaultAnisotropyIndex);
-        slots.specular = loadTextureIndex(cpuRenderSubmesh.textures.specular, TextureUsage::Data, defaultLayerIndex);
-        slots.specularColor = loadTextureIndex(cpuRenderSubmesh.textures.specularColor, TextureUsage::Color, defaultSheenColorIndex);
-        slots.clearcoatNormal = loadTextureIndex(cpuRenderSubmesh.textures.clearcoatNormal, TextureUsage::Normal, defaultNormalIndex);
-        slots.iridescence = loadTextureIndex(cpuRenderSubmesh.textures.iridescence, TextureUsage::Data, defaultLayerIndex);
-        slots.iridescenceThickness =
-            loadTextureIndex(cpuRenderSubmesh.textures.iridescenceThickness, TextureUsage::Data, defaultLayerIndex);
-        slots.transmission = loadTextureIndex(cpuRenderSubmesh.textures.transmission, TextureUsage::Data, defaultLayerIndex);
-        slots.thickness = loadTextureIndex(cpuRenderSubmesh.textures.thickness, TextureUsage::Data, defaultLayerIndex);
-        slots.diffuseTransmission = loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmission, TextureUsage::Data, defaultLayerIndex);
-        slots.diffuseTransmissionColor =
-            loadTextureIndex(cpuRenderSubmesh.textures.diffuseTransmissionColor, TextureUsage::Color, defaultSheenColorIndex);
-        slots.detailMask = loadTextureIndex(cpuRenderSubmesh.textures.detailMask, TextureUsage::Data, defaultLayerIndex);
-        for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
+        // The new submeshes' material sets: kept where another submesh already has the same textures.
+        const std::vector<MaterialTextureBinding> bindings = BuildMaterialTextureBindings(textureViews, madeSlots, *m_samplerCache);
+        for (size_t index = 0; index < madeSubmeshes.size(); ++index)
         {
-            slots.detailLayers[layer] = loadTextureIndex(cpuRenderSubmesh.textures.detailLayers[layer], TextureUsage::Data, defaultLayerIndex);
+            madeSubmeshes[index]->materialSet = m_materialSets->Acquire(bindings[index]);
+            madeSubmeshes[index]->rayBaseColor = bindings[index].baseColor;
+            madeSubmeshes[index]->rayEmissive = bindings[index].emissive;
         }
-
-        renderSubmesh.materialBindingIndex = static_cast<uint32_t>(newMaterialTextureSlots.size());
-        newMaterialTextureSlots.push_back(slots);
-        newRenderSubmeshes.push_back(std::move(renderSubmesh));
+        uploadBatch.Flush();
     }
-    uploadBatch.Flush();
+    catch (...)
+    {
+        dropAdded();
+        throw;
+    }
     const double uploadMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
     const TextureUploadStats& stats = m_textureUploadStats;
     if (stats.fromCache + stats.compressedNow + stats.uncompressed + stats.floatTextures > 0)
@@ -2282,20 +2342,32 @@ void VulkanRenderer::UploadSceneResources()
     }
 
     const size_t submeshCount = newRenderSubmeshes.size();
-    const size_t textureCount = newTextures.size();
     const auto applyStart = std::chrono::steady_clock::now();
-    ApplyRenderContent(
-        std::move(newTextures),
-        std::move(newCacheKeys),
-        std::move(newMaterialTextureSlots),
-        std::move(newRenderSubmeshes));
+    try
+    {
+        ApplyRenderContent(std::move(newRenderSubmeshes), keptSubmeshCount);
+    }
+    catch (...)
+    {
+        dropAdded();
+        throw;
+    }
     LOG_INFO(
-        "Uploaded {} submeshes ({} new buffers) and {} textures in {:.0f} ms, then {:.0f} ms for descriptors and the ray scene",
+        "Uploaded {} submeshes ({} kept, {} new buffers, {} textures stored) in {:.0f} ms, then {:.0f} ms for descriptors and the ray scene",
         submeshCount,
+        keptSubmeshCount,
         newBufferCount,
-        textureCount,
+        m_textureStore.size(),
         uploadMs,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - applyStart).count());
+}
+
+void VulkanRenderer::DropUnreferencedTextures()
+{
+    std::erase_if(m_textureStore, [](const auto& entry)
+                  {
+                      return entry.second.references == 0 && !entry.second.permanent;
+                  });
 }
 
 void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
@@ -2336,10 +2408,10 @@ void VulkanRenderer::RequestSceneUpload()
     // entity the change deleted right away.
     DropSubmeshesOfRemovedEntities();
 
-    const std::unordered_set<std::string> liveKeys(m_textureCacheKeys.begin(), m_textureCacheKeys.end());
     for (const CpuRenderSubmesh& submesh : State().rendererWorld.GetRenderSubmeshes())
     {
-        if (!submesh.hasTexCoords)
+        // A submesh the GPU already draws has every texture it names.
+        if (!submesh.hasTexCoords || m_liveSubmeshes.count(submesh.revision) != 0)
         {
             continue;
         }
@@ -2350,7 +2422,7 @@ void VulkanRenderer::RequestSceneUpload()
                                        return;
                                    }
                                    std::string key = BuildTextureCacheKey(path, usage);
-                                   if (liveKeys.count(key) != 0 || m_stagedTextures.count(key) != 0 ||
+                                   if (m_textureStore.count(key) != 0 || m_stagedTextures.count(key) != 0 ||
                                        m_failedTextureKeys.count(key) != 0)
                                    {
                                        return;
@@ -2408,10 +2480,12 @@ void VulkanRenderer::PumpSceneUpload()
         }
     }
 
+    m_cpuStages.Mark("StageTextures");
     if (m_sceneUploadPending && m_texturePreparation->IsIdle())
     {
         m_sceneUploadPending = false;
         UploadSceneResourcesOrKeepPrevious();
+        m_cpuStages.Mark("CommitContent");
     }
 
     if (m_sceneUploadPending)
@@ -2475,9 +2549,9 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
 void VulkanRenderer::DropSubmeshesOfRemovedEntities()
 {
     const ISceneWorld& sceneWorld = State().rendererWorld.GetSceneWorld();
-    const auto isRemoved = [&sceneWorld](const RenderSubmesh& renderSubmesh)
+    const auto isRemoved = [&sceneWorld](const std::shared_ptr<const RenderSubmesh>& renderSubmesh)
     {
-        return !sceneWorld.IsValidEntity(renderSubmesh.entity);
+        return !sceneWorld.IsValidEntity(renderSubmesh->entity);
     };
     if (std::none_of(m_renderSubmeshes.begin(), m_renderSubmeshes.end(), isRemoved))
     {
@@ -2488,99 +2562,194 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities()
     // a subset of the list the uniform buffer was sized for, so its motion slots still cover it;
     // material binding indices and motion keys are per submesh and stay valid.
     m_commandContext->WaitForAllFrames();
+    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
+    {
+        if (isRemoved(renderSubmesh) && renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot)
+        {
+            ReleaseDrawSlot(renderSubmesh->drawSlot);
+            renderSubmesh->drawSlot = RenderSubmesh::kNoDrawSlot;
+            for (const std::string& key : renderSubmesh->textureKeys)
+            {
+                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0)
+                {
+                    --entry->second.references;
+                }
+            }
+            m_materialSets->Release(renderSubmesh->materialSet);
+        }
+    }
     std::erase_if(m_renderSubmeshes, isRemoved);
+    std::erase_if(m_liveSubmeshes, [&isRemoved](const auto& entry)
+                  {
+                      return isRemoved(entry.second);
+                  });
 }
 
-void VulkanRenderer::ApplyRenderContent(
-    std::vector<PendingTexture> newTextures,
-    std::vector<std::string> newTextureCacheKeys,
-    std::vector<MaterialTextureSlots> newMaterialTextureSlots,
-    std::vector<RenderSubmesh> newRenderSubmeshes)
+void VulkanRenderer::ApplyRenderContent(std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes, size_t keptSubmeshCount)
 {
-    // Everything before the uniform buffer swap may throw and must leave the renderer untouched;
-    // everything after it only moves ownership.
-    std::vector<const VulkanTexture*> textureViews;
-    textureViews.reserve(newTextures.size());
-    for (const PendingTexture& texture : newTextures)
+    // Up to the ray scene's content everything may throw and leaves the old content drawable;
+    // afterwards nothing does. A change costs what it adds and drops: kept draws keep their slots,
+    // textures, material sets and ray materials.
+    if (m_swapchain && m_renderPass && !m_scenePasses.empty())
     {
-        textureViews.push_back(texture.created ? texture.created.get() : m_textures.at(texture.reusedIndex).get());
-    }
-
-    // A submesh's motion key is its entity and its position among that entity's submeshes, so a
-    // reload that reorders the list still finds each draw's own history.
-    std::unordered_map<uint32_t, uint32_t> nextSubmeshOrdinal;
-    for (RenderSubmesh& renderSubmesh : newRenderSubmeshes)
-    {
-        const uint32_t entity = static_cast<uint32_t>(entt::to_integral(renderSubmesh.entity));
-        renderSubmesh.motionKey = MotionKey{entity, nextSubmeshOrdinal[entity]++};
-    }
-
-    std::unique_ptr<VulkanUniformBuffer> newUniformBuffer;
-    std::vector<RaySceneSubmesh> raySubmeshes;
-
-    if (m_swapchain && m_renderPass && !m_scenePasses.empty() && !newTextures.empty() && !newMaterialTextureSlots.empty())
-    {
-        const std::vector<MaterialTextureBinding> materialBindings =
-            BuildMaterialTextureBindings(textureViews, newMaterialTextureSlots, *m_samplerCache);
-        raySubmeshes.reserve(newRenderSubmeshes.size());
-        for (const RenderSubmesh& renderSubmesh : newRenderSubmeshes)
-        {
-            const MaterialTextureBinding& binding = materialBindings.at(renderSubmesh.materialBindingIndex);
-            raySubmeshes.push_back(RaySceneSubmesh{
-                renderSubmesh.mesh,
-                renderSubmesh.material,
-                renderSubmesh.alphaMode,
-                renderSubmesh.doubleSided,
-                binding.baseColor,
-                binding.emissive});
-        }
-        // Only the descriptor sets are rebuilt for a new texture set. The pipelines are built
-        // against the renderer's fixed frame and material set layouts and the forward pass's
-        // render pass, none of which a content reload touches, so they are left alone.
-        newUniformBuffer = std::make_unique<VulkanUniformBuffer>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
-            materialBindings,
-            m_shadowPass->GetSampledBinding(),
-            m_localShadowPass->GetSampledBinding(),
-            BuildEnvironmentBindings(),
-            CollectDrawMaterials(newRenderSubmeshes),
-            CollectDrawTextureTransforms(newRenderSubmeshes));
-        // Wait only for our in-flight render frames to finish before destroying old resources.
-        // vkWaitForFences is more targeted than vkDeviceWaitIdle: it doesn't stall the
-        // present or transfer queues, and the new UBO above is built while the GPU may still
-        // be executing the previous frame (overlapping CPU and GPU work).
+        // Slots are written and descriptor sets freed below, which the frames in flight may still
+        // read. The upload has just flushed and waited for its copies, so this costs next to nothing.
         m_commandContext->WaitForAllFrames();
-        m_uniformBuffer = std::move(newUniformBuffer);
-        // After the wait: it rewrites descriptor sets the frames in flight bound.
-        m_rayScene->SetContent(std::move(raySubmeshes));
+
+        // Draws new to this content, and the old content's draws it drops (every kept one is in both).
+        std::unordered_set<const RenderSubmesh*> kept;
+        kept.reserve(keptSubmeshCount);
+        std::vector<const RenderSubmesh*> placed;
+        for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
+        {
+            if (renderSubmesh->drawSlot == RenderSubmesh::kNoDrawSlot)
+            {
+                placed.push_back(renderSubmesh.get());
+            }
+            else
+            {
+                kept.insert(renderSubmesh.get());
+            }
+        }
+        std::vector<const RenderSubmesh*> dropped;
+        std::vector<uint32_t> releasedSlots;
+        for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
+        {
+            if (renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot && kept.count(renderSubmesh.get()) == 0)
+            {
+                dropped.push_back(renderSubmesh.get());
+                releasedSlots.push_back(renderSubmesh->drawSlot);
+            }
+        }
+
+        // New draws take free slots, never one the old content still draws from: the dropped ones go
+        // back only once this commit can no longer fail.
+        for (const RenderSubmesh* renderSubmesh : placed)
+        {
+            renderSubmesh->drawSlot = AcquireDrawSlot();
+        }
+        try
+        {
+            if (!m_uniformBuffer || m_uniformBuffer->GetDrawCapacity() < m_drawSlotWatermark)
+            {
+                // More draws than the per-draw buffers hold: larger ones, with every draw of the old
+                // content and the new written in, so either can be drawn from them.
+                const uint32_t capacity = std::max({m_drawSlotWatermark, m_uniformBuffer ? m_uniformBuffer->GetDrawCapacity() * 3 / 2 : 0u, 256u});
+                auto grown = std::make_unique<VulkanUniformBuffer>(
+                    m_device->GetPhysicalDevice(),
+                    m_device->GetHandle(),
+                    static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+                    m_frameSetLayout->GetHandle(),
+                    m_shadowPass->GetSampledBinding(),
+                    m_localShadowPass->GetSampledBinding(),
+                    BuildEnvironmentBindings(),
+                    capacity);
+                for (const auto* list : {&m_renderSubmeshes, &newRenderSubmeshes})
+                {
+                    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : *list)
+                    {
+                        if (renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot)
+                        {
+                            grown->WriteDrawSlot(renderSubmesh->drawSlot, renderSubmesh->material, renderSubmesh->textureTransforms);
+                        }
+                    }
+                }
+                m_uniformBuffer = std::move(grown);
+            }
+            else
+            {
+                // Free slots, which no draw of the old content reads.
+                for (const RenderSubmesh* renderSubmesh : placed)
+                {
+                    m_uniformBuffer->WriteDrawSlot(renderSubmesh->drawSlot, renderSubmesh->material, renderSubmesh->textureTransforms);
+                }
+            }
+
+            // The ray scene: every draw's mesh and slot, and the ray materials of the slots that change
+            // hands.
+            std::vector<RaySceneSubmesh> raySubmeshes;
+            raySubmeshes.reserve(newRenderSubmeshes.size());
+            for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
+            {
+                raySubmeshes.push_back(RaySceneSubmesh{renderSubmesh->mesh, renderSubmesh->alphaMode == MaterialAlphaMode::Blend, renderSubmesh->drawSlot});
+            }
+            std::vector<RayMaterialSource> placedMaterials;
+            placedMaterials.reserve(placed.size());
+            for (const RenderSubmesh* renderSubmesh : placed)
+            {
+                placedMaterials.push_back(RayMaterialSource{
+                    renderSubmesh->drawSlot,
+                    renderSubmesh->material,
+                    renderSubmesh->alphaMode,
+                    renderSubmesh->doubleSided,
+                    renderSubmesh->rayBaseColor,
+                    renderSubmesh->rayEmissive});
+            }
+            // Where every draw is now, for the worker's top level.
+            std::vector<glm::mat4> rayModels;
+            rayModels.reserve(newRenderSubmeshes.size());
+            for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
+            {
+                rayModels.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
+            }
+            m_rayScene->SetContent(
+                std::move(raySubmeshes), std::move(rayModels), m_uniformBuffer->GetDrawCapacity(), placedMaterials, releasedSlots);
+        }
+        catch (...)
+        {
+            for (const RenderSubmesh* renderSubmesh : placed)
+            {
+                ReleaseDrawSlot(renderSubmesh->drawSlot);
+                renderSubmesh->drawSlot = RenderSubmesh::kNoDrawSlot;
+            }
+            throw;
+        }
+
+        // References: the new draws take theirs on their textures and material sets, the dropped ones
+        // give theirs back with their slots.
+        for (const RenderSubmesh* renderSubmesh : placed)
+        {
+            for (const std::string& key : renderSubmesh->textureKeys)
+            {
+                ++m_textureStore.at(key).references;
+            }
+            m_materialSets->Retain(renderSubmesh->materialSet);
+        }
+        for (const RenderSubmesh* renderSubmesh : dropped)
+        {
+            ReleaseDrawSlot(renderSubmesh->drawSlot);
+            renderSubmesh->drawSlot = RenderSubmesh::kNoDrawSlot;
+            for (const std::string& key : renderSubmesh->textureKeys)
+            {
+                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0)
+                {
+                    --entry->second.references;
+                }
+            }
+            m_materialSets->Release(renderSubmesh->materialSet);
+            m_liveSubmeshes.erase(renderSubmesh->revision);
+        }
+        for (const RenderSubmesh* renderSubmesh : placed)
+        {
+            m_liveSubmeshes.emplace(renderSubmesh->revision, renderSubmesh->shared_from_this());
+        }
+        // The material sets no draw names any more go, before the textures they name are destroyed.
+        m_materialSets->FreeUnreferenced();
     }
 
-    // Commit. Reused textures move across from the live list; whatever is left behind in it is no
-    // longer referenced and is destroyed at the end of this function, after the wait above and
-    // after the old descriptor sets went with the old uniform buffer. Destroying it earlier would
-    // free image views the GPU may still sample (validation reports it as
-    // vkDestroySampler-while-in-use).
-    std::vector<std::unique_ptr<VulkanTexture>> textures;
-    textures.reserve(newTextures.size());
-    for (PendingTexture& texture : newTextures)
-    {
-        textures.push_back(texture.created ? std::move(texture.created) : std::move(m_textures.at(texture.reusedIndex)));
-    }
-    std::vector<std::unique_ptr<VulkanTexture>> retiredTextures = std::move(m_textures);
-
-    m_textures = std::move(textures);
-    m_textureCacheKeys = std::move(newTextureCacheKeys);
-    m_materialTextureSlots = std::move(newMaterialTextureSlots);
+    // The textures no draw names any more, now that the material sets that named them are gone and the
+    // frames that sampled them have finished.
+    DropUnreferencedTextures();
+    const bool newWorld = keptSubmeshCount * 2 < newRenderSubmeshes.size();
     m_renderSubmeshes = std::move(newRenderSubmeshes);
     // New content may be a different world (a scene that finished loading in the background while
     // the startup scene was on screen). The long-term exposure restarts its warm-up, so it catches
     // up at the short-term rates instead of keeping the old world's light for minutes; the view
-    // itself does not snap.
-    m_autoExposureState.meteredSeconds = 0.0f;
+    // itself does not snap. A streamed world's cells coming and going is the same world.
+    if (newWorld)
+    {
+        m_autoExposureState.meteredSeconds = 0.0f;
+    }
 }
 
 std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
@@ -2596,7 +2765,7 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
 
     for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
-        const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
+        const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
         const glm::mat4& model = models[submeshIndex];
         const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
         const float worldRadius =
@@ -2623,12 +2792,12 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
             renderSubmesh.buffer->GetVertexHandle(),
             renderSubmesh.buffer->GetIndexHandle(),
             renderSubmesh.buffer->GetIndexCount(),
-            m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex),
+            renderSubmesh.materialSet,
             drawConstants,
             pipelineKey,
-            // The slot is the submesh index, which is also where DrawFrame put this submesh's
-            // previous model matrix.
-            static_cast<uint32_t>(submeshIndex),
+            // The draw slot, where this submesh's material, texture transforms and previous model
+            // matrix are.
+            renderSubmesh.drawSlot,
             forwardShaded,
             transmissive,
             MaterialScatters(renderSubmesh.material),
@@ -2650,7 +2819,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
     items.reserve(m_renderSubmeshes.size());
     for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
-        const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
+        const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
         // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
         // wrong more often than none, so they cast none.
         // Transmissive surfaces let most light through; they cast none either.
@@ -2674,7 +2843,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                       glm::length(glm::vec3(item.model[1])),
                       glm::length(glm::vec3(item.model[2]))});
         item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
-        item.materialDescriptorSet = m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex);
+        item.materialDescriptorSet = renderSubmesh.materialSet;
         std::memcpy(item.material.baseColorFactor, renderSubmesh.material.baseColorFactor, sizeof(item.material.baseColorFactor));
         std::memcpy(item.material.nodeGraphFactors, renderSubmesh.material.nodeGraphFactors, sizeof(item.material.nodeGraphFactors));
         item.material.alphaCutoff = renderSubmesh.material.alphaCutoff;

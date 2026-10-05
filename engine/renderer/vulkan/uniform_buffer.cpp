@@ -15,35 +15,20 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     VkDevice device,
     uint32_t imageCount,
     VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout materialSetLayout,
-    const std::vector<MaterialTextureBinding>& materialBindings,
     TextureDescriptorBinding shadowMap,
     TextureDescriptorBinding localShadowAtlas,
     EnvironmentDescriptorBindings environment,
-    std::span<const GpuMaterialData> drawMaterials,
-    std::span<const GpuTextureTransforms> drawTextureTransforms)
+    uint32_t drawCapacity)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_materialBindings(materialBindings),
       m_shadowMap(shadowMap),
       m_localShadowAtlas(localShadowAtlas),
       m_environment(environment),
       m_frameSetLayout(frameSetLayout),
-      m_materialSetLayout(materialSetLayout),
       // A zero-sized storage buffer is invalid, and a scene with no submeshes still binds set 0.
-      m_motionSlotCount(std::max(static_cast<uint32_t>(drawMaterials.size()), 1u)),
-      // A zero-sized storage buffer is invalid, so a scene with no draws still gets one record.
-      m_drawMaterials(drawMaterials.empty() ? std::vector<GpuMaterialData>(1) : std::vector<GpuMaterialData>(drawMaterials.begin(), drawMaterials.end())),
-      m_drawTextureTransforms(
-          drawTextureTransforms.empty() ? std::vector<GpuTextureTransforms>(1)
-                                        : std::vector<GpuTextureTransforms>(drawTextureTransforms.begin(), drawTextureTransforms.end())),
+      m_motionSlotCount(std::max(drawCapacity, 1u)),
       m_imageCount(imageCount)
 {
-    if (m_materialBindings.empty())
-    {
-        throw std::runtime_error("Uniform buffer requires at least one material binding");
-    }
-
     // A content upload builds this object while the previous one is still live, so running out of
     // memory here is a recoverable failure; release whatever was created before rethrowing.
     try
@@ -150,8 +135,7 @@ void VulkanUniformBuffer::DestroyHandles()
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
         m_descriptorPool = VK_NULL_HANDLE;
     }
-    // m_frameSetLayout and m_materialSetLayout are owned by VulkanFrameDescriptorSetLayout and
-    // VulkanMaterialDescriptorSetLayout respectively, not by this buffer.
+    // m_frameSetLayout is owned by VulkanFrameDescriptorSetLayout, not by this buffer.
 }
 
 void VulkanUniformBuffer::SetEnvironmentMap(TextureDescriptorBinding environmentMap)
@@ -204,20 +188,6 @@ VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) 
     return m_frameDescriptorSets[imageIndex];
 }
 
-VkDescriptorSet VulkanUniformBuffer::GetDescriptorSet(uint32_t imageIndex, uint32_t materialIndex) const
-{
-    if (imageIndex >= m_imageCount)
-    {
-        throw std::runtime_error("Descriptor set image index is out of range");
-    }
-    if (materialIndex >= m_materialBindings.size())
-    {
-        throw std::runtime_error("Descriptor set material index is out of range");
-    }
-
-    return m_descriptorSets[materialIndex];
-}
-
 void VulkanUniformBuffer::Update(
     uint32_t imageIndex,
     const ViewportMatrices& matrices,
@@ -229,6 +199,7 @@ void VulkanUniformBuffer::Update(
     const ShadowUniformData& shadow,
     const glm::mat4& prevViewProj,
     std::span<const glm::mat4> prevModels,
+    std::span<const uint32_t> prevModelSlots,
     const EnvironmentUniformData& environment,
     const glm::mat4& viewProjNoJitter,
     bool specularAntiAliasing,
@@ -237,9 +208,16 @@ void VulkanUniformBuffer::Update(
 {
     // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
     // robustness feature is enabled to catch it, so a mismatch is refused here instead.
-    if (prevModels.size() > m_motionSlotCount)
+    if (prevModels.size() != prevModelSlots.size())
     {
-        throw std::runtime_error("More previous model matrices than motion slots");
+        throw std::runtime_error("Every previous model matrix needs its draw slot");
+    }
+    for (const uint32_t slot : prevModelSlots)
+    {
+        if (slot >= m_motionSlotCount)
+        {
+            throw std::runtime_error("A draw slot lies past the motion slots");
+        }
     }
 
     CameraUniformData data{};
@@ -304,7 +282,11 @@ void VulkanUniformBuffer::Update(
     data.ddgi = ddgi;
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
-    std::memcpy(m_mappedMotionBuffers[imageIndex], prevModels.data(), prevModels.size_bytes());
+    auto* motion = static_cast<glm::mat4*>(m_mappedMotionBuffers[imageIndex]);
+    for (size_t index = 0; index < prevModels.size(); ++index)
+    {
+        motion[prevModelSlots[index]] = prevModels[index];
+    }
 }
 
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
@@ -562,17 +544,33 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
     }
 
-    const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_drawMaterials.size();
+    // Every slot starts as a default material with identity transforms; WriteDrawSlot fills the ones
+    // drawn.
+    const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_motionSlotCount;
     CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
-    std::memcpy(m_mappedMaterialBuffer, m_drawMaterials.data(), static_cast<size_t>(materialBytes));
-
-    if (m_drawTextureTransforms.size() != m_drawMaterials.size())
-    {
-        throw std::runtime_error("Every draw needs its texture transforms");
-    }
-    const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_drawTextureTransforms.size();
+    const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_motionSlotCount;
     CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformMemory, m_mappedTextureTransformBuffer);
-    std::memcpy(m_mappedTextureTransformBuffer, m_drawTextureTransforms.data(), static_cast<size_t>(transformBytes));
+    const GpuMaterialData defaultMaterial{};
+    const GpuTextureTransforms defaultTransforms{};
+    for (uint32_t slot = 0; slot < m_motionSlotCount; ++slot)
+    {
+        WriteDrawSlot(slot, defaultMaterial, defaultTransforms);
+    }
+}
+
+uint32_t VulkanUniformBuffer::GetDrawCapacity() const
+{
+    return m_motionSlotCount;
+}
+
+void VulkanUniformBuffer::WriteDrawSlot(uint32_t slot, const GpuMaterialData& material, const GpuTextureTransforms& transforms)
+{
+    if (slot >= m_motionSlotCount)
+    {
+        throw std::runtime_error("A draw slot lies past the draw capacity");
+    }
+    std::memcpy(static_cast<GpuMaterialData*>(m_mappedMaterialBuffer) + slot, &material, sizeof(material));
+    std::memcpy(static_cast<GpuTextureTransforms*>(m_mappedTextureTransformBuffer) + slot, &transforms, sizeof(transforms));
 }
 
 void VulkanUniformBuffer::CreateMappedBuffer(
@@ -605,21 +603,17 @@ void VulkanUniformBuffer::CreateMappedBuffer(
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
-    // One pool serves both sets the split produced: imageCount uniform buffers, shadow map
-    // samplers and six storage buffers (previous models, sky SH, lights, clusters, materials, shadow
-    // tiles) for set 0 and thirteen samplers per material set for
-    // set 1. That is why neither its name nor its failure message belongs to either half.
-    // Material sets name textures alone, which every frame shares, so there is one per material.
-    const uint32_t materialSetCount = static_cast<uint32_t>(m_materialBindings.size());
+    // Set 0 alone, one per swapchain image: its uniform buffer, image samplers and storage buffers (the
+    // material sets, set 1, live in VulkanMaterialSetCache).
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSetCount * kMaterialTextureBindingCount + imageCount * 18},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 18},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = materialSetCount + imageCount;
+    poolInfo.maxSets = imageCount;
 
     CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create descriptor pool");
 }
@@ -638,21 +632,6 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
     CheckVulkan(
         vkAllocateDescriptorSets(m_device, &frameAllocateInfo, m_frameDescriptorSets.data()),
         "Failed to allocate frame descriptor sets");
-
-    // Set 1: one material descriptor set per material, allocated from the material set layout. It names
-    // the material's textures and nothing per frame, and is written once here and never again, so the
-    // frames in flight share it (one per swapchain image made a streamed map's every change rewrite four
-    // identical copies of each).
-    const uint32_t descriptorSetCount = static_cast<uint32_t>(m_materialBindings.size());
-    std::vector<VkDescriptorSetLayout> layouts(descriptorSetCount, m_materialSetLayout);
-    VkDescriptorSetAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = m_descriptorPool;
-    allocateInfo.descriptorSetCount = descriptorSetCount;
-    allocateInfo.pSetLayouts = layouts.data();
-
-    m_descriptorSets.resize(descriptorSetCount);
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate material descriptor sets");
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
@@ -836,68 +815,6 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
-
-        for (uint32_t materialIndex = 0; i == 0 && materialIndex < static_cast<uint32_t>(m_materialBindings.size()); ++materialIndex)
-        {
-            const MaterialTextureBinding& materialBinding = m_materialBindings[materialIndex];
-
-            const size_t descriptorIndex = materialIndex;
-
-            const std::array<TextureDescriptorBinding, kMaterialTextureBindingCount> textureBindings = {
-                materialBinding.baseColor,
-                materialBinding.normal,
-                materialBinding.metallic,
-                materialBinding.roughness,
-                materialBinding.occlusion,
-                materialBinding.emissive,
-                materialBinding.secondaryBaseColor,
-                materialBinding.secondaryNormal,
-                materialBinding.secondaryMetallic,
-                materialBinding.secondaryRoughness,
-                materialBinding.secondaryOcclusion,
-                materialBinding.secondaryEmissive,
-                materialBinding.blendMask,
-                materialBinding.clearcoat,
-                materialBinding.clearcoatRoughness,
-                materialBinding.sheenColor,
-                materialBinding.sheenRoughness,
-                materialBinding.anisotropy,
-                materialBinding.specular,
-                materialBinding.specularColor,
-                materialBinding.clearcoatNormal,
-                materialBinding.iridescence,
-                materialBinding.iridescenceThickness,
-                materialBinding.transmission,
-                materialBinding.thickness,
-                materialBinding.diffuseTransmission,
-                materialBinding.diffuseTransmissionColor,
-                materialBinding.detailMask,
-                materialBinding.detailLayers[0],
-                materialBinding.detailLayers[1],
-                materialBinding.detailLayers[2],
-                materialBinding.detailLayers[3]};
-
-            std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
-            for (size_t textureBindingIndex = 0; textureBindingIndex < textureBindings.size(); ++textureBindingIndex)
-            {
-                imageInfos[textureBindingIndex].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfos[textureBindingIndex].imageView = textureBindings[textureBindingIndex].imageView;
-                imageInfos[textureBindingIndex].sampler = textureBindings[textureBindingIndex].sampler;
-            }
-
-            std::array<VkWriteDescriptorSet, kMaterialTextureBindingCount> descriptorWrites{};
-            for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(descriptorWrites.size()); ++bindingIndex)
-            {
-                descriptorWrites[bindingIndex].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                descriptorWrites[bindingIndex].dstSet = m_descriptorSets[descriptorIndex];
-                descriptorWrites[bindingIndex].dstBinding = bindingIndex;
-                descriptorWrites[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                descriptorWrites[bindingIndex].descriptorCount = 1;
-                descriptorWrites[bindingIndex].pImageInfo = &imageInfos[bindingIndex];
-            }
-
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-        }
     }
 }
 

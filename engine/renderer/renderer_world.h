@@ -53,6 +53,10 @@ struct MaterialTexturePaths
 struct CpuRenderSubmesh
 {
     entt::entity entity = entt::null;
+    // Unique to this submesh as set: SetRenderSubmeshes and ReplaceEntityRenderSubmeshes number every
+    // submesh they are given, and nothing changes one afterwards, so a render backend that saw this
+    // revision before can keep what it made of it.
+    uint64_t revision = 0;
     // Shared with the model cache rather than copied out of it: a scene like Sponza has
     // hundreds of submeshes, nothing here mutates the geometry, and the entry this aliases
     // keeps the whole cached model alive for as long as any submesh references it.
@@ -119,6 +123,7 @@ class RendererWorld
   private:
     ISceneWorld* m_sceneWorld = nullptr;
     std::vector<CpuRenderSubmesh> m_renderSubmeshes;
+    uint64_t m_nextRevision = 1;
     std::vector<CpuModelLight> m_modelLights;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_submeshLocalTransforms;
 };
