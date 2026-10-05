@@ -51,7 +51,7 @@ streaming:
 
 ### 渲染端增量上传
 
-`UploadSceneResources` 以前每次变更都重建全部 submesh 缓冲。现在 `RenderSubmesh::buffer` 是共享指针，按 CPU mesh 指针复用已在 GPU 上的缓冲；贴图本来就按 key 复用。描述符集与光追场景仍按变更重建（规模随已载入内容而不是全图）。
+`UploadSceneResources` 以前每次变更都重建全部 submesh 缓冲。现在 `RenderSubmesh::buffer` 是共享指针，按 CPU mesh 指针复用已在 GPU 上的缓冲；贴图本来就按 key 复用。描述符集、逐绘制数据和光追场景后来也改成了增量的，见文末"实现补充"。
 
 ## 验收
 
