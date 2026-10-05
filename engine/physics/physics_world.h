@@ -211,6 +211,9 @@ class PhysicsWorld
     // A car at this pose (its vehicle space's origin), at rest.
     VehicleId AddVehicle(const VehicleSettings& settings, const PhysicsPose& pose);
     void SetVehicleControls(VehicleId vehicle, const VehicleControls& controls);
+    // Recuts a car's brush tyres into this many ribs (0 for the tyre's own count) while it drives; their
+    // carcasses start again from rest. Nothing for a car on the physics engine's tyres.
+    void SetVehicleBrushTyreRibs(VehicleId vehicle, int ribs);
     // Puts the car at the pose, stopped, as it was when added.
     void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
     // The height of the first static surface (track, ground, walls) straight below `from`, within

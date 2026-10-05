@@ -361,6 +361,9 @@ struct VehicleSettings
     VehicleTyreSettings frontTyres;
     VehicleTyreSettings rearTyres;
     VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
+    // How many ribs the brush tyre is cut into across its tread (0 keeps the brush tyre's own 10; at most
+    // tyre::kBrushMaxRibs). Its cost grows about in step with them.
+    int brushTyreRibs = 0;
     // The air: the surfaces it acts on, each where it sits from the centre of mass (vehicle axes), as
     // the drag and the downforce it makes per unit of dynamic pressure (coefficient times area, m^2).
     std::vector<VehicleAeroSurface> aeroSurfaces;

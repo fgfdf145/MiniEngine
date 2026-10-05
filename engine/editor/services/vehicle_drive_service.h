@@ -198,6 +198,8 @@ void Reset(RendererSharedState& state);
 // that has rolled over or got stuck on its side.
 void Recover(RendererSharedState& state);
 void SetPaused(RendererSharedState& state, bool paused);
+// The driven car's brush tyres recut into this many ribs (0 for the tyre's own count), at once.
+void SetBrushTyreRibs(RendererSharedState& state, int ribs);
 // While paused: advances the simulation by one fixed step.
 void Step(RendererSharedState& state);
 

@@ -230,6 +230,13 @@ void TestOverlayDrawsTheBrushPatch()
     Require(sliding > 0.0f, "cornering hard, some bristles slide");
     Require(fy * outer.carcassDeflection.y > 0.0f, "the carcass is pushed the way the road pushes the tyre");
 
+    // Recut into more ribs while driving (the Vehicle panel's Brush Ribs): the patch shows them at once.
+    world.SetVehicleBrushTyreRibs(car, 24);
+    Simulate(world, 0.2f);
+    const VehicleWheelState recut = world.GetVehicleWheels(car)[0];
+    Require(recut.brushRibCount == 24, "recut into 24 ribs, got " + std::to_string(recut.brushRibCount));
+    Require(std::abs(recut.lateralForce) > 0.5f * std::abs(outer.lateralForce), "still cornering on the recut tyres");
+
     // From above and a little behind the tyre, looking down at its patch.
     const glm::vec3 target = outer.contactPosition;
     const glm::vec3 eye = target + outer.contactNormal * 0.9f - outer.contactLongitudinal * 0.35f - outer.contactLateral * 0.1f;

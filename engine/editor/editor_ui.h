@@ -121,6 +121,8 @@ struct EditorUiActions
     bool stepVehicleDrive = false;
     bool resetVehicle = false;
     bool recoverVehicle = false; // back on its wheels where it is
+    // The brush tyre's rib count changed in the tuning: the car being driven takes it at once.
+    std::optional<int> brushTyreRibs;
     // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
     bool startVehicleRig = false;
     bool stopVehicleRig = false;

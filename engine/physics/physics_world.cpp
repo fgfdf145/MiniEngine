@@ -456,6 +456,10 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     {
         parameters.loadExponent = tyres.loadExponent;
     }
+    if (settings.brushTyreRibs > 0)
+    {
+        parameters.ribs = std::clamp(settings.brushTyreRibs, 1, tyre::kBrushMaxRibs);
+    }
     return parameters;
 }
 
@@ -2366,6 +2370,16 @@ void PhysicsWorld::SetVehicleControls(VehicleId id, const VehicleControls& contr
     Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
     vehicle.controls = controls;
     vehicle.pendingGearShifts += controls.gearShifts;
+}
+
+void PhysicsWorld::SetVehicleBrushTyreRibs(VehicleId id, int ribs)
+{
+    Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
+    vehicle.settings.brushTyreRibs = std::max(ribs, 0);
+    for (size_t index = 0; index < vehicle.brushTyres.size(); ++index)
+    {
+        vehicle.brushTyres[index] = tyre::BrushTyre(BuildBrushTyreParameters(vehicle.settings, index));
+    }
 }
 
 void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)

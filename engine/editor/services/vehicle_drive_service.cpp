@@ -341,6 +341,14 @@ void SetPaused(RendererSharedState& state, bool paused)
     }
 }
 
+void SetBrushTyreRibs(RendererSharedState& state, int ribs)
+{
+    if (VehicleDriveSession* session = state.vehicleDrive.session.get())
+    {
+        session->physics->SetVehicleBrushTyreRibs(session->vehicle, ribs);
+    }
+}
+
 void Step(RendererSharedState& state)
 {
     if (VehicleDriveSession* session = state.vehicleDrive.session.get(); session != nullptr && session->paused)

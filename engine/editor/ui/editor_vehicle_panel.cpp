@@ -2,6 +2,7 @@
 #include "editor_ui_internal.h"
 
 #include <engine/logic/editor_world.h>
+#include <engine/tyre/tyre_brush.h>
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
 
@@ -90,9 +91,11 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     }
 }
 
-// The fields a user tunes; the geometry is fitted to the model when driving starts.
-void DrawTuning(VehicleSettings& tuning)
+// The fields a user tunes; the geometry is fitted to the model when driving starts. True when the
+// brush tyre's rib count changed, which a car being driven takes at once.
+bool DrawTuning(VehicleSettings& tuning)
 {
+    bool ribsChanged = false;
     int front = static_cast<int>(tuning.modelFront);
     static constexpr const char* kFrontLabels[] = {"-Z (Assetto Corsa import)", "+Z (glTF convention)"};
     if (ImGui::Combo("Model Front", &front, kFrontLabels, IM_ARRAYSIZE(kFrontLabels)))
@@ -113,6 +116,22 @@ void DrawTuning(VehicleSettings& tuning)
             "Brush: bristles over each rib's contact patch on a carcass that shifts, bends and twists against the rim\n"
             "(Stocco, Biral & Bertolazzi 2024). Grip is shared between braking and cornering, the force builds over\n"
             "the carcass's relaxation length, and the aligning moment comes from the patch. Takes effect on the next drive.");
+    }
+    ImGui::BeginDisabled(tuning.tyreModel != VehicleTyreModel::Brush);
+    int ribs = tuning.brushTyreRibs > 0 ? tuning.brushTyreRibs : tyre::BrushTyreParameters{}.ribs;
+    if (DragIntInRange("Brush Ribs", &ribs, 1, tyre::kBrushMaxRibs))
+    {
+        tuning.brushTyreRibs = ribs;
+        ribsChanged = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            "How many ribs each brush tyre is cut into across its tread, each a row of bristles over its own contact\n"
+            "length. More follow camber and the pressure across the tread more finely; the tyres' cost grows about in\n"
+            "step (10 ribs is about 0.15 s of physics per simulated second for one car in Release). Applies at once,\n"
+            "also while driving.");
     }
 
     ImGui::Checkbox("Use the Car's Own Data", &tuning.useCarData);
@@ -175,7 +194,9 @@ void DrawTuning(VehicleSettings& tuning)
     if (ImGui::Button("Defaults"))
     {
         tuning = VehicleDriveService::DefaultTuning();
+        ribsChanged = true;
     }
+    return ribsChanged;
 }
 }
 
@@ -399,7 +420,10 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         {
             ImGui::TextDisabled("Changes apply the next time driving starts.");
         }
-        DrawTuning(m_vehicleTuning);
+        if (DrawTuning(m_vehicleTuning) && status.active)
+        {
+            result.actions.brushTyreRibs = m_vehicleTuning.brushTyreRibs;
+        }
     }
 
     ImGui::End();
