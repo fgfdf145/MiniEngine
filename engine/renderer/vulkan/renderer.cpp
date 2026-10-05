@@ -1660,12 +1660,7 @@ void VulkanRenderer::UpdateMinimapTexture()
         m_minimapPath = path;
         if (!path.empty())
         {
-            std::filesystem::path file(path);
-            std::error_code ec;
-            if (file.is_relative() && !std::filesystem::exists(file, ec))
-            {
-                file = EnginePaths::ProjectRoot() / file;
-            }
+            const std::filesystem::path file = EnginePaths::ResolveProjectPath(path);
             try
             {
                 VulkanUploadBatch uploadBatch(

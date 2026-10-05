@@ -373,16 +373,19 @@ ResolvedAssetReference ResolveReference(const std::string& uuid, const std::stri
         }
     }
 
-    // 2) The stored path still exists: adopt it (registering it on the fly).
+    // 2) The stored path still exists: adopt it (registering it on the fly). A relative one is
+    // relative to the project root, not to wherever the editor was started from.
     if (!storedPath.empty())
     {
+        const std::filesystem::path storedFile = EnginePaths::ResolveProjectPath(storedPath);
         std::error_code ec;
-        if (std::filesystem::is_regular_file(storedPath, ec) && !ec)
+        if (std::filesystem::is_regular_file(storedFile, ec) && !ec)
         {
+            result.path = storedFile.string();
             result.resolved = true;
-            const std::string key = NormalizeKey(storedPath);
-            result.uuid = (AssetRegistry::IsRegistrableAsset(storedPath) && IsUnderRootLocked(key))
-                              ? RegisterFileLocked(storedPath)
+            const std::string key = NormalizeKey(storedFile);
+            result.uuid = (AssetRegistry::IsRegistrableAsset(storedFile) && IsUnderRootLocked(key))
+                              ? RegisterFileLocked(storedFile)
                               : std::string{};
             return result;
         }

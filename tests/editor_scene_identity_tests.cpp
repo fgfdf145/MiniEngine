@@ -1,3 +1,4 @@
+#include <engine/core/paths/engine_paths.h>
 #include <engine/logic/editor_world.h>
 
 #include <filesystem>
@@ -132,6 +133,13 @@ int main()
                 "the streamed world did not survive yaml round-trip");
         Require(restored.streaming.empty(), "a scene without a streamed world gained one");
         Require(streamedLoaded.minimap == minimap, "the minimap did not survive yaml round-trip");
+        // Scene and manifest paths are relative to the project root, whatever the working directory.
+        Require(EnginePaths::ResolveProjectPath("assets/maps/../maps/radar.png") ==
+                    (EnginePaths::ProjectRoot() / "assets/maps/radar.png").lexically_normal(),
+                "a relative path did not resolve against the project root");
+        const std::filesystem::path absolutePath = std::filesystem::temp_directory_path() / "radar.png";
+        Require(EnginePaths::ResolveProjectPath(absolutePath) == absolutePath, "an absolute path was changed");
+        Require(EnginePaths::ResolveProjectPath("").empty(), "an empty path resolved to something");
         Require(!restored.minimap.IsValid(), "a scene without a minimap gained one");
         streamedWorld->DestroyEntity(keptEntity);
         Require(streamedWorld->GetSelectedEntity() != cellEntity, "a streamed cell was selected when the selection went");

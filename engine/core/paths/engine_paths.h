@@ -32,6 +32,11 @@ void Initialize(const Overrides& overrides);
 // directly under it. Environment: MINIENGINE_PROJECT_DIR.
 const std::filesystem::path& ProjectRoot();
 
+// A path as a scene or a manifest writes it: relative ones are relative to ProjectRoot(), never to
+// the working directory, so the editor finds them wherever it was started from. Absolute paths and
+// empty ones come back as they are.
+std::filesystem::path ResolveProjectPath(const std::filesystem::path& path);
+
 // Asset tree scanned by the asset registry and the asset browser.
 // Environment: MINIENGINE_ASSETS_DIR. Defaults to ProjectRoot() / "assets".
 const std::filesystem::path& AssetsRoot();

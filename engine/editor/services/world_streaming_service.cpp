@@ -43,17 +43,6 @@ constexpr int kMaxSwapsPerFrame = 16;
 // A cell that shows nothing yet (the first fill) never waits.
 constexpr float kSwapBatchSeconds = 0.5f;
 
-std::filesystem::path ResolveManifest(const std::string& manifest)
-{
-    const std::filesystem::path path(manifest);
-    std::error_code ec;
-    if (path.is_relative() && !std::filesystem::exists(path, ec))
-    {
-        return EnginePaths::ProjectRoot() / path;
-    }
-    return path;
-}
-
 glm::vec3 ReadVec3(const YAML::Node& node)
 {
     if (!node || !node.IsSequence() || node.size() != 3)
@@ -65,10 +54,11 @@ glm::vec3 ReadVec3(const YAML::Node& node)
 
 std::vector<StreamedCell> ReadCells(const SceneStreamingWorld& world)
 {
-    const std::filesystem::path manifestPath = ResolveManifest(world.manifest);
+    const std::filesystem::path manifestPath = EnginePaths::ResolveProjectPath(world.manifest);
     const YAML::Node root = YAML::LoadFile(manifestPath.string());
-    // Cell models are written as the manifest's own path is: next to it, in the same form.
-    const std::filesystem::path base = std::filesystem::path(world.manifest).parent_path();
+    // Cell models are written relative to the manifest. They are loaded from there, wherever the
+    // editor was started from, so they are kept resolved, not in the manifest's project-relative form.
+    const std::filesystem::path base = manifestPath.parent_path();
     const auto modelPath = [&base](const YAML::Node& node) -> std::string
     {
         return node ? (base / node.as<std::string>()).lexically_normal().generic_string() : std::string{};

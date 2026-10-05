@@ -107,6 +107,15 @@ const std::filesystem::path& ProjectRoot()
     return Roots().project;
 }
 
+std::filesystem::path ResolveProjectPath(const std::filesystem::path& path)
+{
+    if (path.empty() || !path.is_relative())
+    {
+        return path;
+    }
+    return (ProjectRoot() / path).lexically_normal();
+}
+
 const std::filesystem::path& AssetsRoot()
 {
     return Roots().assets;
