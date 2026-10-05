@@ -284,14 +284,26 @@ constexpr const char* kOutOfMemoryReport =
 // per swapchain image and would change the key every frame.
 uint64_t HashShadowCasters(std::span<const ShadowDrawItem> items)
 {
+    // Eight bytes a step: a byte at a time took milliseconds over a map's tens of thousands of casters.
     uint64_t hash = 14695981039346656037ull;
-    const auto mix = [&hash](const void* data, size_t size)
+    const auto mixWord = [&hash](uint64_t word)
+    {
+        hash ^= word + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+        hash *= 0xff51afd7ed558ccdull;
+    };
+    const auto mix = [&mixWord](const void* data, size_t size)
     {
         const auto* bytes = static_cast<const unsigned char*>(data);
-        for (size_t index = 0; index < size; ++index)
+        size_t index = 0;
+        for (; index + sizeof(uint64_t) <= size; index += sizeof(uint64_t))
         {
-            hash = (hash ^ bytes[index]) * 1099511628211ull;
+            uint64_t word = 0;
+            std::memcpy(&word, bytes + index, sizeof(word));
+            mixWord(word);
         }
+        uint64_t tail = 0;
+        std::memcpy(&tail, bytes + index, size - index);
+        mixWord(tail ^ (static_cast<uint64_t>(size) << 56));
     };
     for (const ShadowDrawItem& item : items)
     {
@@ -555,11 +567,13 @@ void VulkanRenderer::DrawFrame()
 {
     const FrameStallReporter stallReporter;
     const auto frameStart = std::chrono::steady_clock::now();
+    m_cpuStages.BeginFrame();
 
     if (!TickSharedFrame())
     {
         return;
     }
+    m_cpuStages.Mark("Tick");
 
     if (ProcessPendingOperations())
     {
@@ -570,6 +584,7 @@ void VulkanRenderer::DrawFrame()
     PumpSceneUpload();
 
     EditorWorld().FlushDirtyTransforms();
+    m_cpuStages.Mark("SceneUpdates");
 
     // A swapchain that no longer matches the window is rebuilt before drawing rather than after a
     // present reports it: drawing into the old size first leaves the newly exposed area unpainted
@@ -586,6 +601,7 @@ void VulkanRenderer::DrawFrame()
     const auto waitStart = std::chrono::steady_clock::now();
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
     const double waitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+    m_cpuStages.Mark("Acquire");
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
         RecreateSwapchain();
@@ -620,6 +636,7 @@ void VulkanRenderer::DrawFrame()
         State().renderablesDirty = false;
     }
     ImGui::Render();
+    m_cpuStages.Mark("EditorUi");
 
     const CollectedSceneLights sceneLights =
         State().editorWorld ? CollectSceneLights(*State().editorWorld, State().rendererWorld) : CollectedSceneLights{};
@@ -669,9 +686,24 @@ void VulkanRenderer::DrawFrame()
     // The casters, built here because which cascades the map keeps depends on them. The shader
     // samples the cascades as the map holds them, which for one Plan left waiting is its previous
     // matrix.
-    const std::vector<ShadowDrawItem> shadowDrawItems = BuildShadowDrawItems(imageIndex);
+    m_cpuStages.Mark("Lights");
+    // Every draw's model matrix, once, for the shadow casters, the motion vectors, the ray scene and
+    // the draw items.
+    std::vector<glm::mat4> models;
+    std::vector<MotionKey> motionKeys;
+    models.reserve(m_renderSubmeshes.size());
+    motionKeys.reserve(m_renderSubmeshes.size());
+    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    {
+        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal));
+        motionKeys.push_back(renderSubmesh.motionKey);
+    }
+    m_cpuStages.Mark("Models");
+    const std::vector<ShadowDrawItem> shadowDrawItems = BuildShadowDrawItems(imageIndex, models);
+    m_cpuStages.Mark("ShadowDrawItems");
     const std::optional<ShadowCascadePlan> shadowPlan =
         m_shadowPass->Plan(shadowCascades.has_value() ? &*shadowCascades : nullptr, HashShadowCasters(shadowDrawItems));
+    m_cpuStages.Mark("ShadowPlan");
     if (shadowPlan.has_value())
     {
         for (uint32_t cascade = 0; cascade < kShadowCascadeCount; ++cascade)
@@ -757,17 +789,10 @@ void VulkanRenderer::DrawFrame()
         m_whiteBalanceReferences.skyIlluminanceRgb = averageRadiance * glm::pi<float>();
     }
 
-    std::vector<glm::mat4> models;
-    std::vector<MotionKey> motionKeys;
-    models.reserve(m_renderSubmeshes.size());
-    motionKeys.reserve(m_renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
-    {
-        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal));
-        motionKeys.push_back(renderSubmesh.motionKey);
-    }
+    m_cpuStages.Mark("Environment");
     const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
     const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
+    m_cpuStages.Mark("Motion");
 
     // The ray scene: a finished hierarchy build replaces the buffers every frame slot's set names,
     // then this frame's instances go into this slot's.
@@ -782,6 +807,7 @@ void VulkanRenderer::DrawFrame()
     const std::span<const uint8_t> ddgiMoving = m_ddgiMovingInstances.Update(models);
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, ddgiMoving);
     State().rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
+    m_cpuStages.Mark("RayInstances");
 
     // The lighting the probes hold, so they blend faster for a second after it changes: every
     // directional light as it reaches the scene, and the sky's mode, ambient and HDRI.
@@ -843,6 +869,7 @@ void VulkanRenderer::DrawFrame()
             std::clamp(ddgiSettings.viewBias, 0.0f, 1.0f));
     }
     m_ddgi->SetSchedule(m_commandContext->GetCurrentFrame(), ddgiSchedule);
+    m_cpuStages.Mark("DdgiSchedule");
 
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
@@ -947,6 +974,7 @@ void VulkanRenderer::DrawFrame()
         State().renderDebug.specularAntiAliasing && !State().renderDebug.khronosReference,
         preExposure,
         ddgiData);
+    m_cpuStages.Mark("Uniforms");
     // Culled against the jittered projection, the one the GPU rasterises with.
     std::vector<VulkanDrawItem> drawItems =
         BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view);
@@ -967,6 +995,7 @@ void VulkanRenderer::DrawFrame()
         drawItems.erase(decals, drawItems.end());
     }
 
+    m_cpuStages.Mark("DrawItems");
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
     frame.frameSlot = m_commandContext->GetCurrentFrame();
@@ -1111,6 +1140,7 @@ void VulkanRenderer::DrawFrame()
             static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
 
+    m_cpuStages.Mark("FrameSetup");
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
                                               // The tracker holds one layout per target, but a target has one
@@ -1137,9 +1167,11 @@ void VulkanRenderer::DrawFrame()
                                                   shadowDrawItems,
                                                   shadowPlan.has_value() ? &*shadowPlan : nullptr,
                                                   m_gpuTimer.get());
+                                              m_cpuStages.Mark("RecordShadows");
                                               // The same, for the local lights' atlas.
                                               m_localShadowPass->Record(commandBuffer, shadowDrawItems, localShadowTiles);
                                               m_gpuTimer->Mark(commandBuffer, "LocalShadows");
+                                              m_cpuStages.Mark("RecordLocalShadows");
 
                                               // Ahead of the scene passes, whose fragment shaders sample the
                                               // LUTs; it orders itself with its own barriers (see
@@ -1172,7 +1204,9 @@ void VulkanRenderer::DrawFrame()
                                                   ddgiHysteresis);
                                               m_gpuTimer->Mark(commandBuffer, "Ddgi");
 
+                                              m_cpuStages.Mark("RecordPrePasses");
                                               RecordScenePasses(commandBuffer, frame, passOrder);
+                                              m_cpuStages.Mark("RecordScenePasses");
 
                                               // ImGui samples the tone mapped image in the editor pass, which is
                                               // not an IScenePass because it writes the swapchain rather than a
@@ -1200,7 +1234,9 @@ void VulkanRenderer::DrawFrame()
                                                       videoFrameTime);
                                               }
                                           });
+    m_cpuStages.Mark("RecordRest");
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
+    m_cpuStages.Mark("Submit");
     m_lastRecordedImageIndex = imageIndex;
     {
         const double frameMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
@@ -1221,6 +1257,7 @@ void VulkanRenderer::DrawFrame()
     }
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
+    m_cpuStages.Mark("Present");
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
         RecreateSwapchain();
@@ -1455,6 +1492,10 @@ void VulkanRenderer::LogFrameTimings() const
         average(m_cpuFrameMs),
         average(m_cpuWaitMs),
         m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0);
+    for (const CpuStageTimer::Stage& stage : m_cpuStages.GetStages())
+    {
+        LOG_INFO("  CPU {:<20} {:7.3f} ms", stage.name, stage.averageMs);
+    }
     if (m_gpuTimer)
     {
         for (const VulkanGpuTimer::Section& section : m_gpuTimer->GetSections())
@@ -2566,12 +2607,13 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
     return ordered;
 }
 
-std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex) const
+std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
 {
     std::vector<ShadowDrawItem> items;
     items.reserve(m_renderSubmeshes.size());
-    for (const RenderSubmesh& renderSubmesh : m_renderSubmeshes)
+    for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
+        const RenderSubmesh& renderSubmesh = m_renderSubmeshes[submeshIndex];
         // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
         // wrong more often than none, so they cast none.
         // Transmissive surfaces let most light through; they cast none either.
@@ -2586,7 +2628,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
         item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
         item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
         item.indexCount = renderSubmesh.buffer->GetIndexCount();
-        item.model = State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
+        item.model = models[submeshIndex];
         item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
         // The largest axis scale keeps the sphere enclosing under non-uniform scale.
         item.worldBoundsRadius =
@@ -2596,7 +2638,9 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                       glm::length(glm::vec3(item.model[2]))});
         item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
         item.materialDescriptorSet = m_uniformBuffer->GetDescriptorSet(imageIndex, renderSubmesh.materialBindingIndex);
-        item.material = renderSubmesh.material;
+        std::memcpy(item.material.baseColorFactor, renderSubmesh.material.baseColorFactor, sizeof(item.material.baseColorFactor));
+        std::memcpy(item.material.nodeGraphFactors, renderSubmesh.material.nodeGraphFactors, sizeof(item.material.nodeGraphFactors));
+        item.material.alphaCutoff = renderSubmesh.material.alphaCutoff;
         // The alpha test samples the base colour where the main passes do.
         std::memcpy(item.baseColorTransform, &renderSubmesh.textureTransforms.rows[0], sizeof(item.baseColorTransform));
         items.push_back(item);

@@ -148,6 +148,10 @@ class VulkanRayScene
     // The installed build's mesh ranges and each submesh's mesh; the per-frame top level starts from
     // them.
     RayScene m_scene;
+    IncrementalTopLevel m_topLevel;
+    // Bumped whenever the top level changes; a frame slot's buffers hold the generation it last copied.
+    uint64_t m_topLevelGeneration = 1;
+    std::vector<uint64_t> m_slotGenerations;
     std::vector<uint32_t> m_submeshMeshes;
     std::vector<uint8_t> m_installedBlend;
     // How many mesh nodes and triangles the installed build's buffers hold.

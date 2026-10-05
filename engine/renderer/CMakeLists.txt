@@ -18,6 +18,8 @@ add_library(engine_render_core
     volumetric_clouds.h
     camera.cpp
     camera.h
+    cpu_stage_timer.cpp
+    cpu_stage_timer.h
     ddgi_volume.cpp
     ddgi_volume.h
     environment_brdf.cpp

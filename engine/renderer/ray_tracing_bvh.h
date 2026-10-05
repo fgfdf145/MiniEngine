@@ -124,6 +124,42 @@ struct RayInstanceInput
 // vector maps each of them back to its input index.
 std::vector<uint32_t> BuildTopLevel(RayScene& scene, std::span<const RayInstanceInput> inputs);
 
+// The top level kept from frame to frame. Rebuilding it over every instance each frame cost tens of
+// milliseconds on a map (31,000 instances) with nothing moving. A full build holds every instance; one
+// whose input changes afterwards (a driven car's parts) is "moved": its leaf in the full build is
+// skipped, and it goes into a small hierarchy built each frame, which a new root joins to the full
+// build's. More moved instances than MaxMoved, or a different instance count, and the next update
+// builds everything again.
+class IncrementalTopLevel
+{
+  public:
+    static size_t MaxMoved(size_t instanceCount);
+    // Upper bounds of the scene's instances and top-level nodes, for sizing buffers.
+    static size_t MaxInstances(size_t instanceCount);
+    static size_t MaxNodes(size_t instanceCount);
+
+    // Leaves scene.instances and scene.topNodes ready to trace for these inputs. False, touching
+    // nothing, when the inputs are the same as the last call's.
+    bool Update(RayScene& scene, std::span<const RayInstanceInput> inputs);
+    void Reset();
+
+    size_t MovedCount() const;
+    size_t FullBuildCount() const;
+
+  private:
+    void FullBuild(RayScene& scene, std::span<const RayInstanceInput> inputs);
+
+    bool m_valid = false;
+    size_t m_fullBuilds = 0;
+    std::vector<RayInstanceInput> m_built; // the inputs of the full build
+    std::vector<RayInstanceInput> m_last;  // the inputs of the last update
+    std::vector<BvhNode> m_fullNodes;
+    std::vector<RayInstance> m_fullInstances;
+    std::vector<uint32_t> m_slotOfInput; // input -> index in m_fullInstances, or ~0u when left out
+    std::vector<uint8_t> m_moved;
+    std::vector<uint32_t> m_movedList;
+};
+
 struct Ray
 {
     glm::vec3 origin{0.0f};

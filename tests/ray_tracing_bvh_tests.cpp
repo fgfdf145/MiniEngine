@@ -342,6 +342,91 @@ void FilterAndSkip()
 }
 }
 
+// The kept top level traces as a fresh full build does, frame after frame, as some instances move,
+// some stop again, and too many moving at once forces a full build.
+void IncrementalTopLevelMatchesFullBuild()
+{
+    std::mt19937 rng(41u);
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    RayScene incremental;
+    std::vector<MeshBvh> meshes;
+    for (int mesh = 0; mesh < 3; ++mesh)
+    {
+        const Soup soup = RandomSoup(rng, 200);
+        meshes.push_back(BuildMeshBvh(soup.positions, soup.indices));
+        AppendMesh(incremental, meshes.back());
+    }
+    RayScene full = incremental;
+
+    const auto randomModel = [&]()
+    {
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(unit(rng) * 60.0f - 30.0f, unit(rng) * 4.0f - 2.0f, unit(rng) * 60.0f - 30.0f));
+        return glm::rotate(model, unit(rng) * 6.28f, glm::vec3(0.0f, 1.0f, 0.0f));
+    };
+    std::vector<RayInstanceInput> inputs;
+    for (uint32_t instance = 0; instance < 400; ++instance)
+    {
+        inputs.push_back(RayInstanceInput{instance % 3, randomModel(), instance, instance % 17 == 0 ? kRayInstanceSkip : 0u});
+    }
+
+    IncrementalTopLevel topLevel;
+    const auto compare = [&](const std::string& when)
+    {
+        BuildTopLevel(full, inputs);
+        std::uniform_real_distribution<float> place(-34.0f, 34.0f);
+        std::normal_distribution<float> gaussian(0.0f, 1.0f);
+        for (int trial = 0; trial < 1500; ++trial)
+        {
+            Ray ray;
+            ray.origin = glm::vec3(place(rng), place(rng) * 0.1f, place(rng));
+            ray.direction = glm::normalize(glm::vec3(gaussian(rng), gaussian(rng) * 0.2f, gaussian(rng)));
+            RayHit expected;
+            RayHit actual;
+            const bool expectedFound = TraceRay(full, ray, expected);
+            const bool actualFound = TraceRay(incremental, ray, actual);
+            Require(expectedFound == actualFound, when + ": found differs from a full build");
+            if (expectedFound)
+            {
+                Require(std::abs(expected.t - actual.t) <= 1e-4f * std::max(1.0f, expected.t), when + ": t differs from a full build");
+                Require(full.instances[expected.instance].data.z == incremental.instances[actual.instance].data.z,
+                        when + ": a different instance was hit");
+            }
+        }
+    };
+
+    Require(topLevel.Update(incremental, inputs) && topLevel.FullBuildCount() == 1, "the first update builds everything");
+    compare("first build");
+    Require(!topLevel.Update(incremental, inputs), "unchanged inputs change nothing");
+
+    // A car's worth of parts drives about for a few frames.
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        for (uint32_t part = 0; part < 20; ++part)
+        {
+            inputs[part * 7].objectToWorld = randomModel();
+        }
+        inputs[3].flags = frame % 2 == 0 ? kRayInstanceSkip : 0u;
+        Require(topLevel.Update(incremental, inputs), "moved instances change the top level");
+        compare("frame " + std::to_string(frame));
+    }
+    Require(topLevel.FullBuildCount() == 1 && topLevel.MovedCount() == 21, "a few moving instances need no full build");
+
+    // They stop: the scene is as it was left.
+    Require(!topLevel.Update(incremental, inputs), "stopped instances change nothing");
+    compare("stopped");
+
+    // Too many at once: a full build.
+    for (RayInstanceInput& input : inputs)
+    {
+        input.objectToWorld = randomModel();
+    }
+    Require(topLevel.Update(incremental, inputs) && topLevel.FullBuildCount() == 2 && topLevel.MovedCount() == 0,
+            "most instances moving builds everything again");
+    compare("after the full rebuild");
+    Require(incremental.instances.size() <= IncrementalTopLevel::MaxInstances(inputs.size()), "instances stay within the bound");
+    Require(incremental.topNodes.size() <= IncrementalTopLevel::MaxNodes(inputs.size()), "nodes stay within the bound");
+}
+
 int main()
 {
     try
@@ -350,6 +435,7 @@ int main()
         MatchesBruteForce();
         InstancesMatchWorldSpace();
         FilterAndSkip();
+        IncrementalTopLevelMatchesFullBuild();
     }
     catch (const std::exception& error)
     {

@@ -46,6 +46,9 @@ class MotionHistory
 
     bool m_hasHistory = false;
     glm::mat4 m_viewProjection{1.0f};
-    std::unordered_map<uint64_t, glm::mat4> m_models;
+    // Last frame's draws in order. A frame with the same keys in the same order (every frame but one
+    // whose content changed) takes its history from these directly, without hashing every draw.
+    std::vector<uint64_t> m_keys;
+    std::vector<glm::mat4> m_orderedModels;
 };
 }

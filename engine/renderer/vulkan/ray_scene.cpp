@@ -269,9 +269,13 @@ void VulkanRayScene::InstallBuild()
     {
         DestroyBuffer(m_instances[slot]);
         DestroyBuffer(m_topNodes[slot]);
-        m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * instanceCount));
-        m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * 2 * instanceCount));
+        m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * IncrementalTopLevel::MaxInstances(instanceCount)));
+        m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * IncrementalTopLevel::MaxNodes(instanceCount)));
     }
+    // New buffers, and a top level to build for the new meshes.
+    m_topLevel.Reset();
+    m_slotGenerations.assign(m_frameCount, 0);
+    ++m_topLevelGeneration;
     WriteSets();
     m_ready = true;
 }
@@ -293,17 +297,30 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
         const bool skip = blend || (index < skipped.size() && skipped[index] != 0);
         inputs.push_back(RayInstanceInput{m_submeshMeshes[index], models[index], index, skip ? kRayInstanceSkip : 0u});
     }
-    BuildTopLevel(m_scene, inputs);
-    if (m_scene.topNodes.empty())
+    // Rebuilt only where something moved (IncrementalTopLevel), and copied to a frame slot only when the
+    // slot holds an older one.
+    if (m_topLevel.Update(m_scene, inputs))
     {
-        // Nothing to trace: a root leaf holding one instance every ray skips.
-        m_scene.topNodes.push_back(BvhNode{glm::vec3(0.0f), 0u, glm::vec3(0.0f), 1u});
-        RayInstance dummy{};
-        dummy.data.w = kRayInstanceSkip;
-        m_scene.instances.push_back(dummy);
+        if (m_scene.topNodes.empty())
+        {
+            // Nothing to trace: a root leaf holding one instance every ray skips.
+            m_scene.topNodes.push_back(BvhNode{glm::vec3(0.0f), 0u, glm::vec3(0.0f), 1u});
+            RayInstance dummy{};
+            dummy.data.w = kRayInstanceSkip;
+            m_scene.instances.push_back(dummy);
+        }
+        ++m_topLevelGeneration;
+    }
+    if (frameSlot < m_slotGenerations.size() && m_slotGenerations[frameSlot] == m_topLevelGeneration)
+    {
+        return;
     }
     std::memcpy(m_topNodes[frameSlot].mapped, m_scene.topNodes.data(), sizeof(BvhNode) * m_scene.topNodes.size());
     std::memcpy(m_instances[frameSlot].mapped, m_scene.instances.data(), sizeof(RayInstance) * m_scene.instances.size());
+    if (frameSlot < m_slotGenerations.size())
+    {
+        m_slotGenerations[frameSlot] = m_topLevelGeneration;
+    }
 }
 
 void VulkanRayScene::Record(VkCommandBuffer commandBuffer)

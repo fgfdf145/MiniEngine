@@ -37,6 +37,7 @@
 
 #include <engine/editor/editor_backend_base.h>
 #include <engine/asset/texture_preparation.h>
+#include <engine/renderer/cpu_stage_timer.h>
 #include <engine/renderer/taa_jitter.h>
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
@@ -197,7 +198,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         uint32_t imageIndex,
         std::span<const glm::mat4> models,
         const glm::mat4& viewProjection) const;
-    std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex) const;
+    std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         const RenderPassIo& io,
@@ -397,5 +398,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::vector<double> m_cpuFrameMs;
     std::vector<double> m_cpuWaitMs;
     uint32_t m_cpuFrameCursor = 0;
+    // The frame's CPU time by stage, logged with the frame timings.
+    CpuStageTimer m_cpuStages;
 };
 }

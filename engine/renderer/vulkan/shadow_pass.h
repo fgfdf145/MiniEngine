@@ -15,6 +15,15 @@ namespace me
 {
 
 // What the shadow pass needs to draw one caster. Blend materials are not casters.
+// What the alpha test reads of a caster's material: a few floats rather than the whole GpuMaterialData,
+// since a map has tens of thousands of casters a frame.
+struct ShadowAlphaTestMaterial
+{
+    float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    float alphaCutoff = 0.5f;
+};
+
 struct ShadowDrawItem
 {
     VkBuffer vertexBuffer = VK_NULL_HANDLE;
@@ -29,7 +38,7 @@ struct ShadowDrawItem
     // Mask materials run the alpha test and need their material set; opaque ones need neither.
     bool alphaMask = false;
     VkDescriptorSet materialDescriptorSet = VK_NULL_HANDLE;
-    GpuMaterialData material;
+    ShadowAlphaTestMaterial material;
     // The base colour's texture transform rows (GpuTextureTransforms slot 0), for the alpha test.
     float baseColorTransform[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
 };

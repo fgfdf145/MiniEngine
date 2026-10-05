@@ -372,6 +372,164 @@ std::vector<uint32_t> BuildTopLevel(RayScene& scene, std::span<const RayInstance
     return sourceIndices;
 }
 
+namespace
+{
+bool SameInput(const RayInstanceInput& a, const RayInstanceInput& b)
+{
+    return a.mesh == b.mesh && a.material == b.material && a.flags == b.flags &&
+           std::memcmp(&a.objectToWorld, &b.objectToWorld, sizeof(glm::mat4)) == 0;
+}
+}
+
+size_t IncrementalTopLevel::MaxMoved(size_t instanceCount)
+{
+    return std::max<size_t>(64, instanceCount / 16);
+}
+
+size_t IncrementalTopLevel::MaxInstances(size_t instanceCount)
+{
+    return instanceCount + MaxMoved(instanceCount);
+}
+
+size_t IncrementalTopLevel::MaxNodes(size_t instanceCount)
+{
+    // A tree of n leaves has 2n - 1 nodes; two of them and the root joining them.
+    return 2 * instanceCount + 2 * MaxMoved(instanceCount) + 1;
+}
+
+void IncrementalTopLevel::Reset()
+{
+    m_valid = false;
+}
+
+size_t IncrementalTopLevel::MovedCount() const
+{
+    return m_movedList.size();
+}
+
+size_t IncrementalTopLevel::FullBuildCount() const
+{
+    return m_fullBuilds;
+}
+
+void IncrementalTopLevel::FullBuild(RayScene& scene, std::span<const RayInstanceInput> inputs)
+{
+    const std::vector<uint32_t> sources = BuildTopLevel(scene, inputs);
+    m_fullNodes = scene.topNodes;
+    m_fullInstances = scene.instances;
+    m_slotOfInput.assign(inputs.size(), ~0u);
+    for (uint32_t slot = 0; slot < static_cast<uint32_t>(sources.size()); ++slot)
+    {
+        m_slotOfInput[sources[slot]] = slot;
+    }
+    m_built.assign(inputs.begin(), inputs.end());
+    m_last = m_built;
+    m_moved.assign(inputs.size(), 0);
+    m_movedList.clear();
+    m_valid = true;
+    ++m_fullBuilds;
+}
+
+bool IncrementalTopLevel::Update(RayScene& scene, std::span<const RayInstanceInput> inputs)
+{
+    if (!m_valid || inputs.size() != m_built.size())
+    {
+        FullBuild(scene, inputs);
+        return true;
+    }
+
+    bool changed = false;
+    for (uint32_t index = 0; index < static_cast<uint32_t>(inputs.size()); ++index)
+    {
+        if (SameInput(inputs[index], m_last[index]))
+        {
+            continue;
+        }
+        changed = true;
+        if (m_moved[index] == 0 && !SameInput(inputs[index], m_built[index]))
+        {
+            m_moved[index] = 1;
+            m_movedList.push_back(index);
+        }
+    }
+    if (!changed)
+    {
+        return false;
+    }
+    if (m_movedList.size() > MaxMoved(inputs.size()))
+    {
+        FullBuild(scene, inputs);
+        return true;
+    }
+
+    // The moved instances' own hierarchy, as it stands this frame.
+    std::vector<RayInstanceInput> movedInputs;
+    movedInputs.reserve(m_movedList.size());
+    for (uint32_t index : m_movedList)
+    {
+        movedInputs.push_back(inputs[index]);
+    }
+    BuildTopLevel(scene, movedInputs);
+    std::vector<BvhNode> movedNodes = std::move(scene.topNodes);
+    std::vector<RayInstance> movedInstances = std::move(scene.instances);
+
+    // The full build's instances, with the moved ones' old leaves skipped.
+    scene.instances = m_fullInstances;
+    for (uint32_t index : m_movedList)
+    {
+        if (m_slotOfInput[index] != ~0u)
+        {
+            scene.instances[m_slotOfInput[index]].data.w = kRayInstanceSkip;
+        }
+    }
+    const uint32_t movedInstanceBase = static_cast<uint32_t>(scene.instances.size());
+    scene.instances.insert(scene.instances.end(), movedInstances.begin(), movedInstances.end());
+
+    if (movedNodes.empty() || m_fullNodes.empty())
+    {
+        // One side has nothing to trace: the other is the whole tree.
+        scene.topNodes = movedNodes.empty() ? m_fullNodes : movedNodes;
+        if (!movedNodes.empty())
+        {
+            for (BvhNode& node : scene.topNodes)
+            {
+                node.first += node.count > 0 ? movedInstanceBase : 0u;
+            }
+        }
+    }
+    else
+    {
+        // [root][full root][moved root][rest of full][rest of moved]. An inner node's children are a
+        // pair, so moving each tree's non-root nodes by one offset keeps every pair together.
+        const uint32_t fullBase = 3;
+        const uint32_t movedBase = fullBase + static_cast<uint32_t>(m_fullNodes.size()) - 1;
+        const auto place = [](const BvhNode& node, uint32_t childBase, uint32_t leafBase)
+        {
+            BvhNode placed = node;
+            placed.first = node.count > 0 ? node.first + leafBase : childBase + node.first - 1;
+            return placed;
+        };
+        scene.topNodes.resize(1 + m_fullNodes.size() + movedNodes.size());
+        BvhNode& root = scene.topNodes[0];
+        root.boundsMin = glm::min(m_fullNodes[0].boundsMin, movedNodes[0].boundsMin);
+        root.boundsMax = glm::max(m_fullNodes[0].boundsMax, movedNodes[0].boundsMax);
+        root.first = 1;
+        root.count = 0;
+        scene.topNodes[1] = place(m_fullNodes[0], fullBase, 0);
+        scene.topNodes[2] = place(movedNodes[0], movedBase, movedInstanceBase);
+        for (size_t node = 1; node < m_fullNodes.size(); ++node)
+        {
+            scene.topNodes[fullBase + node - 1] = place(m_fullNodes[node], fullBase, 0);
+        }
+        for (size_t node = 1; node < movedNodes.size(); ++node)
+        {
+            scene.topNodes[movedBase + node - 1] = place(movedNodes[node], movedBase, movedInstanceBase);
+        }
+    }
+    m_last.assign(inputs.begin(), inputs.end());
+    return true;
+}
+
 bool IntersectTriangle(const BvhTriangle& triangle, const Ray& ray, float& t, float& u, float& v, bool& frontFace)
 {
     const glm::vec3 e1(triangle.e1);
