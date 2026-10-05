@@ -56,7 +56,15 @@ class EditorRenderBackendBase : public IRenderBackend
     virtual bool WantsKeyboardCapture() const = 0;
 
   private:
-    static void UpdateCameraFromInput(Camera& camera, const InputState& input, float deltaTime, bool blockKeyboardInput);
+    // Right mouse looks around; with Alt held it orbits `orbitPivot` instead, when there is one.
+    static void UpdateCameraFromInput(
+        Camera& camera,
+        const InputState& input,
+        float deltaTime,
+        bool blockKeyboardInput,
+        const std::optional<glm::vec3>& orbitPivot);
+    // The centre of the selected entity's bounds, or where it is when it has none; nothing without a selection.
+    std::optional<glm::vec3> SelectionOrbitPivot();
     void EnsureInitialized(std::optional<std::string> startupModelPath);
     void InitializeEditorScene();
     void SaveEngineSettings();

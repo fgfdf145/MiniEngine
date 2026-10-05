@@ -92,6 +92,21 @@ void Camera::Rotate(float deltaYaw, float deltaPitch)
     pitchDegrees = glm::clamp(pitchDegrees, -89.0f, 89.0f);
 }
 
+void Camera::Orbit(const glm::vec3& pivot, float deltaYaw, float deltaPitch)
+{
+    const float pitchBefore = pitchDegrees;
+    Rotate(deltaYaw, deltaPitch);
+    // The pitch Rotate actually applied, after its clamp, so the position turns no further than the view.
+    const float appliedPitch = pitchDegrees - pitchBefore;
+
+    // A larger yaw turns the view from +X towards +Z, which is a turn about -Y; a larger pitch tilts
+    // it up, a turn about the camera's right axis.
+    const glm::mat4 yawTurn = glm::rotate(glm::mat4(1.0f), glm::radians(-deltaYaw), glm::normalize(worldUp));
+    const glm::mat4 pitchTurn = glm::rotate(glm::mat4(1.0f), glm::radians(appliedPitch), GetRight());
+    const glm::vec3 offset = position - pivot;
+    position = pivot + glm::vec3(pitchTurn * yawTurn * glm::vec4(offset, 0.0f));
+}
+
 void Camera::FrameBoundsLikeKhronosViewer(const glm::vec3& minBounds, const glm::vec3& maxBounds, float aspectRatio)
 {
     fovDegrees = 45.0f;

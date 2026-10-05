@@ -397,9 +397,10 @@ void EditorUiController::DrawHelpWindows(bool fullscreen)
     if (!fullscreen && m_showKeyboardShortcutsWindow)
     {
         // Keys the viewport handles itself, not through a command.
-        static constexpr std::array<std::pair<const char*, const char*>, 5> kViewportKeys = {{
+        static constexpr std::array<std::pair<const char*, const char*>, 6> kViewportKeys = {{
             {"W A S D", "Move the camera"},
             {"Right mouse", "Look around"},
+            {"Alt + Right mouse", "Orbit the selection"},
             {"Middle mouse", "Pan"},
             {"R", "Toggle the combined and scale gizmo"},
             {"Escape", "Leave the fullscreen viewport"},

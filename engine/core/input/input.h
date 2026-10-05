@@ -33,6 +33,8 @@ inline constexpr KeyCode W{SDL_SCANCODE_W};
 inline constexpr KeyCode A{SDL_SCANCODE_A};
 inline constexpr KeyCode S{SDL_SCANCODE_S};
 inline constexpr KeyCode D{SDL_SCANCODE_D};
+inline constexpr KeyCode LeftAlt{SDL_SCANCODE_LALT};
+inline constexpr KeyCode RightAlt{SDL_SCANCODE_RALT};
 }
 
 enum class GamepadButton : int8_t

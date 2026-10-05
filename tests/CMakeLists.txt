@@ -333,6 +333,32 @@ endif()
 
 set_target_properties(miniengine_view_frustum_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_camera_tests
+    camera_tests.cpp
+)
+miniengine_group_target_sources(miniengine_camera_tests)
+
+target_link_libraries(miniengine_camera_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.camera
+    COMMAND miniengine_camera_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_camera_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_camera_tests>
+            $<TARGET_FILE_DIR:miniengine_camera_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_camera_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_motion_history_tests
     motion_history_tests.cpp
 )

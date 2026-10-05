@@ -15,6 +15,7 @@
 #include <engine/asset/model_loader.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
+#include <engine/logic/world_bounds.h>
 #include <engine/platform/window/window.h>
 #include <engine/scene/world_units.h>
 
@@ -126,7 +127,9 @@ bool EditorRenderBackendBase::TickSharedFrame()
     AdvanceTimeOfDay(State().editorWorld.get(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)
     {
-        UpdateCameraFromInput(State().camera, State().input, deltaTime, keyboardCaptured || driving);
+        UpdateCameraFromInput(
+            State().camera, State().input, deltaTime, keyboardCaptured || driving,
+            driving ? std::nullopt : SelectionOrbitPivot());
     }
     State().input.EndFrame();
 
@@ -800,11 +803,29 @@ Window& EditorRenderBackendBase::GetWindow() const
     return m_window;
 }
 
+std::optional<glm::vec3> EditorRenderBackendBase::SelectionOrbitPivot()
+{
+    const IEditorWorld& world = EditorWorld();
+    if (!world.HasSelection())
+    {
+        return std::nullopt;
+    }
+    const entt::entity entity = world.GetSelectedEntity();
+    glm::vec3 minBounds{};
+    glm::vec3 maxBounds{};
+    if (ComputeWorldModelBounds(world, entity, minBounds, maxBounds))
+    {
+        return (minBounds + maxBounds) * 0.5f;
+    }
+    return glm::vec3(world.GetModelMatrix(entity)[3]);
+}
+
 void EditorRenderBackendBase::UpdateCameraFromInput(
     Camera& camera,
     const InputState& input,
     float deltaTime,
-    bool blockKeyboardInput)
+    bool blockKeyboardInput,
+    const std::optional<glm::vec3>& orbitPivot)
 {
     const float moveDistance = camera.moveSpeed * deltaTime;
     const bool mousePanActive = input.IsMousePanActive();
@@ -858,9 +879,17 @@ void EditorRenderBackendBase::UpdateCameraFromInput(
 
     if (input.IsMouseLookActive())
     {
-        camera.Rotate(
-            input.GetMouseDeltaX() * camera.mouseSensitivity,
-            -input.GetMouseDeltaY() * camera.mouseSensitivity);
+        const float deltaYaw = input.GetMouseDeltaX() * camera.mouseSensitivity;
+        const float deltaPitch = -input.GetMouseDeltaY() * camera.mouseSensitivity;
+        const bool altHeld = input.IsKeyDown(KeyCodes::LeftAlt) || input.IsKeyDown(KeyCodes::RightAlt);
+        if (altHeld && orbitPivot.has_value())
+        {
+            camera.Orbit(*orbitPivot, deltaYaw, deltaPitch);
+        }
+        else
+        {
+            camera.Rotate(deltaYaw, deltaPitch);
+        }
     }
 
     if (input.IsMousePanActive())

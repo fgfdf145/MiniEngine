@@ -33,6 +33,9 @@ class Camera
     void MoveRight(float amount);
     void MoveUp(float amount);
     void Rotate(float deltaYaw, float deltaPitch);
+    // Turns the camera as Rotate does and swings its position around `pivot` by the same turn, so
+    // the pivot stays where it is on screen and at the same distance.
+    void Orbit(const glm::vec3& pivot, float deltaYaw, float deltaPitch);
     void FrameBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds);
     // Moves the camera back along its current view direction until a sphere of `radius` around
     // `center` fills the view; the camera keeps looking the way it looked.
