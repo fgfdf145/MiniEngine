@@ -129,6 +129,8 @@ struct ModelSubmeshData
     uint8_t wheelCorner = 0;
     // Under the STEER_HR node: the steering wheel, which turns about LoadedModelData::steeringWheel.
     bool steeringWheel = false;
+    // Drawn by a MINIENGINE_water node: the top of water, which a car goes through rather than stands on.
+    bool water = false;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
     // has no mapping). Empty for a model without variants.
@@ -203,12 +205,23 @@ struct ModelCollisionMesh
     std::vector<uint32_t> indices;
 };
 
+// The top of a body of water: triangles that glTF nodes carrying MINIENGINE_water mark, in the
+// model's space. They are drawn as any mesh is; a physics simulation also makes what goes below them
+// float or sink (PhysicsWorld::AddWaterSurface).
+struct ModelWaterMesh
+{
+    std::vector<glm::vec3> positions;
+    std::vector<uint32_t> indices;
+};
+
 struct LoadedModelData
 {
     std::vector<ModelMaterialData> materials;
     std::vector<ModelSubmeshData> submeshes;
     // When present, a physics simulation collides with these instead of the submeshes.
     std::vector<ModelCollisionMesh> collisionMeshes;
+    // Every MINIENGINE_water node's triangles, merged.
+    ModelWaterMesh water;
     std::vector<ModelLightData> lights;
     // KHR_materials_variants' names, in the glTF's order.
     std::vector<std::string> materialVariants;

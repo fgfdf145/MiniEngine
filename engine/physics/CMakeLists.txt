@@ -9,6 +9,8 @@ add_library(engine_physics
     vehicle_suspension.h
     vehicle_wheel_motion.cpp
     vehicle_wheel_motion.h
+    water_surface.cpp
+    water_surface.h
 )
 miniengine_group_target_sources(engine_physics)
 

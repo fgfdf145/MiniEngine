@@ -141,6 +141,12 @@ struct VehicleTelemetry
     // below about 2 m/s, where a ratio against a crawling road says nothing.
     float lockSlip = 0.0f;
     float spinSlip = 0.0f;
+    // Water (PhysicsWorld::AddWaterSurface): the share of the body's shape below the surface, how far
+    // the car has filled (0 dry, 1 full: it floats while it fills and then sinks), and whether the water
+    // has reached the engine, which then gives no more drive.
+    float submergedShare = 0.0f;
+    float flooded = 0.0f;
+    bool engineDrowned = false;
 };
 
 // A Jolt Physics world holding static collision geometry and wheeled vehicles, all in world space
@@ -192,6 +198,11 @@ class PhysicsWorld
         const glm::vec3& halfExtents,
         const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
         float friction = kDefaultSurfaceFriction);
+    // The top of the world's water, world-space triangles seen from above (WaterSurface). Below it a
+    // car is held up by buoyancy and slowed by drag while it fills, then sinks, and once the water is
+    // over most of it the engine drowns and gives no more drive, as in the games the maps come from.
+    void AddWaterSurface(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices);
+    size_t GetWaterTriangleCount() const;
     size_t GetStaticBodyCount() const;
     size_t GetStaticTriangleCount() const;
 

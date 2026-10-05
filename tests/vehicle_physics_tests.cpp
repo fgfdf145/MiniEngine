@@ -3,6 +3,7 @@
 
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/physics_world.h>
+#include <engine/physics/water_surface.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/physics/vehicle_suspension.h>
 #include <engine/physics/vehicle_wheel_motion.h>
@@ -336,6 +337,68 @@ void Simulate(PhysicsWorld& world, float seconds)
     {
         world.Update(kFrame);
     }
+}
+
+void TestWaterSurfaceHeights()
+{
+    WaterSurface water(10.0f);
+    // A sloping square from x = 0 to 20 (z 0 to 20), 1 m high at x = 0 and 3 m at x = 20, and a pond at
+    // 5 m over part of it.
+    const std::vector<glm::vec3> sea = {{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 20.0f}, {20.0f, 3.0f, 20.0f}, {20.0f, 3.0f, 0.0f}};
+    const std::vector<uint32_t> square = {0, 1, 2, 0, 2, 3};
+    water.Add(sea, square);
+    Require(water.TriangleCount() == 2, "two water triangles");
+    RequireNear(water.HeightAt(10.0f, 5.0f).value_or(-1.0f), 2.0f, 1e-4f, "height inside the square");
+    RequireNear(water.HeightAt(10.0f, 10.0f).value_or(-1.0f), 2.0f, 1e-4f, "height on the shared diagonal");
+    Require(!water.HeightAt(25.0f, 5.0f).has_value(), "no water past the edge");
+    const std::vector<glm::vec3> pond = {{2.0f, 5.0f, 2.0f}, {2.0f, 5.0f, 6.0f}, {6.0f, 5.0f, 6.0f}, {6.0f, 5.0f, 2.0f}};
+    water.Add(pond, square);
+    RequireNear(water.HeightAt(4.0f, 4.0f).value_or(-1.0f), 5.0f, 1e-4f, "the higher surface counts where two overlap");
+    const std::vector<glm::vec3> wall = {{0.0f, 0.0f, 0.0f}, {0.0f, 5.0f, 0.0f}, {0.0f, 5.0f, 5.0f}};
+    const std::vector<uint32_t> one = {0, 1, 2};
+    water.Add(wall, one);
+    Require(water.TriangleCount() == 4, "a vertical triangle has no top and is left out");
+}
+
+// A car that rolls into deep water floats while it fills, then sinks to the bottom, and its engine
+// drowns on the way down.
+void TestCarFloatsThenSinksInWater()
+{
+    PhysicsWorld world;
+    const std::vector<glm::vec3> bottom = {{-200.0f, -12.0f, -200.0f}, {-200.0f, -12.0f, 200.0f}, {200.0f, -12.0f, 200.0f}, {200.0f, -12.0f, -200.0f}};
+    const std::vector<uint32_t> square = {0, 1, 2, 0, 2, 3};
+    Require(world.AddStaticMesh(bottom, square), "the sea bed builds");
+    const std::vector<glm::vec3> surface = {{-200.0f, 0.0f, -200.0f}, {-200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, -200.0f}};
+    world.AddWaterSurface(surface, square);
+    Require(world.GetWaterTriangleCount() == 2, "the water's two triangles");
+
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+
+    Simulate(world, 2.0f);
+    VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+    PhysicsPose pose = world.GetVehiclePose(car);
+    Require(pose.position.y > -2.0f, "the car floats at first, y = " + std::to_string(pose.position.y));
+    Require(telemetry.submergedShare > 0.1f && telemetry.submergedShare < 0.95f,
+            "partly under the surface while it floats, share " + std::to_string(telemetry.submergedShare));
+
+    Simulate(world, 40.0f);
+    telemetry = world.GetVehicleTelemetry(car);
+    pose = world.GetVehiclePose(car);
+    Require(pose.position.y < -10.0f, "it has sunk to the bottom, y = " + std::to_string(pose.position.y));
+    Require(telemetry.flooded > 0.9f, "full of water, " + std::to_string(telemetry.flooded));
+    Require(telemetry.engineDrowned, "and the engine has drowned");
+
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    const glm::vec3 before = world.GetVehiclePose(car).position;
+    Simulate(world, 3.0f);
+    const glm::vec3 after = world.GetVehiclePose(car).position;
+    Require(glm::length(glm::vec2(after.x - before.x, after.z - before.z)) < 1.0f, "a drowned engine drives nowhere");
+
+    world.ResetVehicle(car, {glm::vec3(0.0f, 0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Require(!world.GetVehicleTelemetry(car).engineDrowned, "a reset car is dry again");
 }
 
 void TestCarSettlesOnTheGround()
@@ -2604,6 +2667,8 @@ int main()
         TestCarChangesDownAsItStops();
         TestTyreGripSetsAcceleration();
         TestAerodynamicsDragsAndPressesDown();
+        TestWaterSurfaceHeights();
+        TestCarFloatsThenSinksInWater();
         TestCarSettlesOnTheGround();
         TestCarDrivesSteersAndReverses();
         TestCarDrivesOnTheManualGearbox();

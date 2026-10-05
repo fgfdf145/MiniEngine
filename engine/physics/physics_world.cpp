@@ -1,4 +1,5 @@
 #include "physics_world.h"
+#include "water_surface.h"
 #include "vehicle_suspension.h"
 
 #include <engine/suspension/suspension_corner.h>
@@ -580,6 +581,24 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
 }
 }
 
+namespace
+{
+// A car in water: buoyant at first (air in the cabin and the sills holds it up with about 70% of its
+// shape under), less so as it fills, until it sinks. It fills over some seconds, faster the deeper it
+// sits, and the engine drowns once the water covers more than half of it.
+constexpr float kAfloatBuoyancy = 1.4f;
+constexpr float kSunkBuoyancy = 0.35f;
+constexpr float kFloodSeconds = 10.0f;
+constexpr float kEngineDrownShare = 0.5f;
+constexpr float kWaterLinearDrag = 1.5f;
+constexpr float kWaterAngularDrag = 0.2f;
+
+float FloodedShare(float floodSeconds)
+{
+    return 1.0f - std::exp(-floodSeconds / kFloodSeconds);
+}
+}
+
 struct PhysicsWorld::Impl
 {
     struct Vehicle
@@ -589,6 +608,11 @@ struct PhysicsWorld::Impl
         JPH::Ref<JPH::VehicleCollisionTester> collisionTester;
         std::unique_ptr<WheelBodyFilter> wheelFilter;
         VehicleControls controls;
+        // In water (ApplyWater): the share of the body's shape under the surface, the seconds it has
+        // spent filling (weighted by that share), and whether the engine has drowned.
+        float submergedShare = 0.0f;
+        float floodSeconds = 0.0f;
+        bool engineDrowned = false;
         // The air acting on the car: where, and how much drag and downforce per square metre of dynamic pressure.
         std::vector<VehicleAeroSurface> aeroSurfaces;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
@@ -1672,6 +1696,45 @@ struct PhysicsWorld::Impl
     }
 
     // Drag against the car's velocity and downforce along its down, on each surface where it sits.
+    // Buoyancy and drag where the body is under the water's surface (see AddWaterSurface).
+    void ApplyWater(Vehicle& vehicle, float deltaSeconds)
+    {
+        const JPH::RVec3 centre = vehicle.body->GetCenterOfMassPosition();
+        const std::optional<float> surface = water.HeightAt(static_cast<float>(centre.GetX()), static_cast<float>(centre.GetZ()));
+        if (!surface.has_value())
+        {
+            vehicle.submergedShare = 0.0f;
+            return;
+        }
+        float totalVolume = 0.0f;
+        float submergedVolume = 0.0f;
+        JPH::Vec3 centreOfBuoyancy = JPH::Vec3::sZero();
+        const JPH::RVec3 surfacePoint(centre.GetX(), *surface, centre.GetZ());
+        vehicle.body->GetSubmergedVolume(surfacePoint, JPH::Vec3::sAxisY(), totalVolume, submergedVolume, centreOfBuoyancy);
+        vehicle.submergedShare = totalVolume > 0.0f ? std::clamp(submergedVolume / totalVolume, 0.0f, 1.0f) : 0.0f;
+        if (vehicle.submergedShare <= 0.0f)
+        {
+            return;
+        }
+        vehicle.floodSeconds += deltaSeconds * vehicle.submergedShare;
+        const float buoyancy = kSunkBuoyancy + (kAfloatBuoyancy - kSunkBuoyancy) * (1.0f - FloodedShare(vehicle.floodSeconds));
+        physicsSystem.GetBodyInterfaceNoLock().ActivateBody(vehicle.body->GetID());
+        vehicle.body->ApplyBuoyancyImpulse(
+            totalVolume,
+            submergedVolume,
+            centreOfBuoyancy,
+            buoyancy,
+            kWaterLinearDrag,
+            kWaterAngularDrag,
+            JPH::Vec3::sZero(),
+            physicsSystem.GetGravity(),
+            deltaSeconds);
+        if (vehicle.submergedShare > kEngineDrownShare)
+        {
+            vehicle.engineDrowned = true;
+        }
+    }
+
     void ApplyAerodynamics(const Vehicle& vehicle)
     {
         if (vehicle.aeroSurfaces.empty())
@@ -1890,6 +1953,7 @@ struct PhysicsWorld::Impl
 
     // Declared before the physics system, so they outlive it.
     JPH::TempAllocatorImpl tempAllocator;
+    WaterSurface water;
     JPH::JobSystemThreadPool jobSystem;
     std::unique_ptr<JPH::BroadPhaseLayerInterfaceTable> broadPhaseLayers;
     std::unique_ptr<JPH::ObjectLayerPairFilterTable> objectLayerPairs;
@@ -2268,6 +2332,9 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
         tyre.Reset();
     }
     vehicle.brushWheels = {};
+    vehicle.submergedShare = 0.0f;
+    vehicle.floodSeconds = 0.0f;
+    vehicle.engineDrowned = false;
     m_impl->BuildCorners(vehicle);
     vehicle.current = m_impl->Capture(vehicle);
     // Nothing has rolled: the capture compared the wheels with the step before the reset.
@@ -2373,6 +2440,9 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
         telemetry.wheelsInContact += wheel->HasContact() ? 1u : 0u;
     }
     telemetry.centreCouplingTorque = vehicle.centreCouplingTorque;
+    telemetry.submergedShare = vehicle.submergedShare;
+    telemetry.flooded = FloodedShare(vehicle.floodSeconds);
+    telemetry.engineDrowned = vehicle.engineDrowned;
     telemetry.rearSteerDegrees = vehicle.rearSteerAngle * 180.0f / std::numbers::pi_v<float>;
     for (const float boost : vehicle.turboBoost)
     {
@@ -2391,6 +2461,16 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
         }
     }
     return telemetry;
+}
+
+void PhysicsWorld::AddWaterSurface(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices)
+{
+    m_impl->water.Add(vertices, indices);
+}
+
+size_t PhysicsWorld::GetWaterTriangleCount() const
+{
+    return m_impl->water.TriangleCount();
 }
 
 int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
@@ -2412,10 +2492,18 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         JPH::BodyInterface& bodies = impl.physicsSystem.GetBodyInterface();
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
+            if (!impl.water.Empty())
+            {
+                impl.ApplyWater(vehicle, kFixedStepSeconds);
+            }
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             VehicleDriverInput input = vehicle.controls.manualGearbox
                                            ? ResolveManualDriverInput(vehicle.controls, vehicle.gearboxState.gear)
                                            : ResolveVehicleDriverInput(vehicle.controls, localVelocity.GetZ(), vehicle.direction);
+            if (vehicle.engineDrowned)
+            {
+                input.forward = 0.0f;
+            }
             impl.ShiftGears(vehicle, input, localVelocity.GetZ());
             impl.ApplyTractionControl(vehicle, input, localVelocity.GetZ());
             impl.ApplyAerodynamics(vehicle);

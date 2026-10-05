@@ -1839,6 +1839,54 @@ WheelNodeTag ParseWheelNodeName(const std::string& name)
 }
 
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
+constexpr const char* kWaterExtension = "MINIENGINE_water";
+
+// A MINIENGINE_water node's triangles, in the model's space, added to the model's water surface.
+void AppendWaterMesh(const tinygltf::Model& model, const tinygltf::Mesh& mesh, const glm::mat4& worldTransform, LoadedModelData& modelData)
+{
+    const bool mirrored = glm::determinant(glm::mat3(worldTransform)) < 0.0f;
+    for (const tinygltf::Primitive& primitive : mesh.primitives)
+    {
+        const auto positionIt = primitive.attributes.find("POSITION");
+        if (positionIt == primitive.attributes.end())
+        {
+            continue;
+        }
+        const std::vector<float> positions = ReadAccessorFloatComponents(model, positionIt->second, 3);
+        const size_t vertexCount = positions.size() / 3;
+        std::vector<uint32_t> primitiveIndices;
+        if (primitive.indices >= 0)
+        {
+            primitiveIndices = ReadIndices(model, primitive.indices);
+        }
+        else
+        {
+            primitiveIndices.resize(vertexCount);
+            for (size_t index = 0; index < vertexCount; ++index)
+            {
+                primitiveIndices[index] = static_cast<uint32_t>(index);
+            }
+        }
+        const std::vector<uint32_t> triangles = BuildTriangleIndices(primitiveIndices, primitive.mode >= 0 ? primitive.mode : kGltfModeTriangles);
+        ModelWaterMesh& water = modelData.water;
+        const uint32_t base = static_cast<uint32_t>(water.positions.size());
+        for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            water.positions.emplace_back(
+                worldTransform * glm::vec4(positions[vertexIndex * 3 + 0], positions[vertexIndex * 3 + 1], positions[vertexIndex * 3 + 2], 1.0f));
+        }
+        for (size_t index = 0; index + 2 < triangles.size(); index += 3)
+        {
+            if (triangles[index] >= vertexCount || triangles[index + 1] >= vertexCount || triangles[index + 2] >= vertexCount)
+            {
+                throw std::runtime_error("glTF water primitive index is out of bounds");
+            }
+            water.indices.push_back(base + triangles[index]);
+            water.indices.push_back(base + triangles[index + (mirrored ? 2 : 1)]);
+            water.indices.push_back(base + triangles[index + (mirrored ? 1 : 2)]);
+        }
+    }
+}
 
 // A MINIENGINE_collision node's meshes: their triangles in the model's space, merged into the entry
 // of the node's surface. Nothing here is drawn or counted in the model's bounds.
@@ -2111,6 +2159,14 @@ void TraverseNode(
                     modelData);
             }
             progressTracker.ReportPrimitiveProcessed();
+        }
+        if (node.extensions.count(kWaterExtension) != 0)
+        {
+            AppendWaterMesh(model, mesh, worldTransform, modelData);
+            for (size_t index = firstNewSubmesh; index < modelData.submeshes.size(); ++index)
+            {
+                modelData.submeshes[index].water = true;
+            }
         }
     }
 
@@ -2699,7 +2755,7 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 26> kImplementedExtensions = {
+constexpr std::array<std::string_view, 27> kImplementedExtensions = {
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
@@ -2725,7 +2781,8 @@ constexpr std::array<std::string_view, 26> kImplementedExtensions = {
     "KHR_xmp_json_ld",
     "MINIENGINE_collision",
     "MINIENGINE_materials_detail_layers",
-    "MINIENGINE_vehicle"};
+    "MINIENGINE_vehicle",
+    "MINIENGINE_water"};
 
 bool IsImplementedExtension(const std::string& name)
 {

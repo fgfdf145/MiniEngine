@@ -297,6 +297,7 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         // that needs the forward pass or no lighting cannot be one.
         renderSubmesh.decal = material.decal && material.alphaMode == MaterialAlphaMode::Blend &&
                               (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
+        renderSubmesh.water = submesh.water;
         renderSubmesh.textureSamplers = material.textureSamplers;
         // The mask reads the first UV set, so without one there are no detail layers.
         if (submesh.hasTexCoords && material.detailLayers.IsEnabled())

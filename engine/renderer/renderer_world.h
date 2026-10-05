@@ -68,6 +68,8 @@ struct CpuRenderSubmesh
     // A Blend material drawn as a deferred decal (MaterialPbrSurfaceSettings::decal); never a forward-
     // shaded, unlit or transmissive one.
     bool decal = false;
+    // The top of water (ModelSubmeshData::water): drawn, and never collided with.
+    bool water = false;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;

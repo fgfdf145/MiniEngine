@@ -396,7 +396,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
             const glm::vec3 up = pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
             LOG_INFO(
                 "Test drive {:.0f} s: at ({:.2f}, {:.2f}, {:.2f}), {:.1f} km/h, gear {}, {} wheels on the ground, tilted {:.1f} deg, "
-                "{:.0f} ms of physics for the last second",
+                "{:.0f} ms of physics for the last second{}",
                 session->scriptedSeconds,
                 pose.position.x,
                 pose.position.y,
@@ -405,7 +405,14 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
                 telemetry.gear,
                 telemetry.wheelsInContact,
                 glm::degrees(std::acos(std::clamp(up.y, -1.0f, 1.0f))),
-                session->scriptedPhysicsMs);
+                session->scriptedPhysicsMs,
+                telemetry.submergedShare > 0.0f || telemetry.flooded > 0.0f
+                    ? fmt::format(
+                          "; in water: {:.0f}% under, {:.0f}% full{}",
+                          telemetry.submergedShare * 100.0f,
+                          telemetry.flooded * 100.0f,
+                          telemetry.engineDrowned ? ", engine drowned" : "")
+                    : std::string{});
             session->nextScriptedLogSeconds += 1.0f;
             session->scriptedPhysicsMs = 0.0;
         }
@@ -611,13 +618,36 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
             triangles);
     }
 
+    // Water surfaces, from every model that has any (the drawn surface of a sea or lake).
+    for (const entt::entity entity : scene.Registry().view<const ModelComponent>())
+    {
+        if (entity == exclude)
+        {
+            continue;
+        }
+        const std::shared_ptr<const LoadedModelData> model = ModelCache::Get(scene.GetModel(entity).sourcePath);
+        if (!model || model->water.indices.empty())
+        {
+            continue;
+        }
+        const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+        worldVertices.clear();
+        worldVertices.reserve(model->water.positions.size());
+        for (const glm::vec3& position : model->water.positions)
+        {
+            worldVertices.push_back(glm::vec3(modelMatrix * glm::vec4(position, 1.0f)));
+        }
+        physics.AddWaterSurface(worldVertices, model->water.indices);
+        LOG_INFO("'{}' has {} water triangles: cars float and sink below them", scene.GetTag(entity).name, model->water.indices.size() / 3);
+    }
+
     size_t groundCoverSubmeshes = 0;
     size_t groundCoverTriangles = 0;
     for (const CpuRenderSubmesh& submesh : renderWorld.GetRenderSubmeshes())
     {
-        // Glass, smoke and decals are drawn over surfaces rather than being any; alpha-tested
+        // Glass, smoke, decals and the top of water are drawn over surfaces rather than being any; alpha-tested
         // fences and foliage still count.
-        if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal ||
+        if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water ||
             submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
             collidesByItself.count(submesh.entity) != 0)
         {
