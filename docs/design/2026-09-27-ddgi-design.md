@@ -67,8 +67,9 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
   visibility, the share of rays that escape), visibility 16 x 16 RG16F (mean distance, mean squared
   distance). Irradiance per level is 2880 x 240 texels, visibility 5184 x 432.
 - **Schedule**: the CPU picks at most 2048 probes a frame (settings), first every invalid probe of the
-  finest levels, then round robin with level 0 twice as often as level 1, and so on. An invalid probe
-  is not sampled until it is updated.
+  finest levels, then hot probes (below), then round robin with level 0 twice as often as level 1,
+  and so on. An invalid probe is not sampled until it is updated. Empty probes take one round robin
+  turn in 16 (see Convergence and Updates).
 - **Trace** (`ddgi_trace.comp`): 64 rays per scheduled probe, directions from a spherical Fibonacci
   set turned by a random rotation per frame. A miss returns the sky along the ray (the prefiltered
   cube at a middle mip under a physical sky, plus the Ambient and Hemisphere lights; the uniform
@@ -80,8 +81,9 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
 - **Update** (`ddgi_update.comp`, one workgroup per probe and texture): each texel blends its
   cosine-weighted (irradiance) or power-weighted (visibility) average of the rays with hysteresis
   0.97, and writes its border copies. An invalid probe starts from the next coarser level sampled at
-  its position and uses hysteresis 0.5 once, so a scroll does not fade in from black. When the sun's
-  direction or colour, or the sky, changes between frames, hysteresis drops to 0.85 for a second.
+  its position and uses hysteresis 0.5 once, so a scroll does not fade in from black. A young probe
+  averages its updates (the n-th keeps n / (n + 1)) until that exceeds the hysteresis. A probe whose
+  light changed restarts that average (see Convergence and Updates).
 - **Relocation and classification** (in the update): a probe moves inside its cell (at most 0.45
   spacing) away from the nearest front face it is too close to; with more than 25% back-face hits it
   is inside geometry and moves toward the farthest front face it sees, not through the nearest back
@@ -89,6 +91,64 @@ same probe count, spacing doubled per level, centred on the camera, scrolled tor
   crossing put probes outside the Cornell box, where the sunlit roof lit the ceiling below (step 6
   measured the box 2.1x too bright, 1.2x after). A probe seeing back faces within a spacing is
   inactive, but stays scheduled so a moved object can revive it.
+
+## Convergence and Updates
+
+Added 2026-10-06. Probes converged and followed changes slowly: a moved sun still showed 12% error
+two seconds later and 5.5% after eight (`ddgi_track`, sun turned 30 degrees, view 15 against a run
+converged under the new sun, at 60 fps).
+
+- **Why**: 4 levels of 16 384 probes and 2048 updates a frame put 15 frames between a level 0
+  probe's updates and 120 between a level 3 probe's, and once a level settles four times as many.
+  The hysteresis of 0.97 is per update, so the 76 updates a probe needs to take 90% of a change
+  were 19 s at level 0 and minutes at level 3. The fast hysteresis (0.85 for a second after the
+  lighting changed) gave a level 0 probe four updates. And every ray scene install (each streamed
+  cell, each model that finished loading) cleared every probe to black.
+- **Change detection** (`ddgi_update.comp`): each probe keeps the running mean and mean square of
+  its updates' average luminance (`DdgiProbeState::stats`). An update whose average lies beyond four
+  standard deviations of that spread plus a tenth of the mean, after at least four updates, is a
+  change: it keeps half of what the probe held and the young average starts over, so the next
+  updates keep 2/3, 3/4 and so on. A change is rare by chance: in steady state about 30 a million
+  updates.
+- **Lighting epoch** (`DdgiLightingWatch`, replacing the fast hysteresis): a change in the sun, the sky
+  or their count increments an 8-bit epoch; a probe that updates under another epoch than the one it
+  recorded restarts the same way, whenever its turn comes. The lighting is compared with what it was
+  when the epoch started, to 0.5% (about a third of a degree of the sun), so a sun the time of day
+  moves a little each frame starts a new epoch every so often instead of never.
+- **Feedback and hot probes**: the update writes per scheduled probe whether it changed and whether it
+  is empty, with its coordinate mod 256, into the frame slot's host-visible buffer. The CPU reads it
+  when the slot's fence has signalled (`VulkanDdgi::TakeFeedback`, `DdgiProbeScheduler::ApplyFeedback`).
+  A changed probe is updated in each of the next 4 frames, its six neighbours in the next 2; when a
+  neighbour sees the change too, it passes it on. Hot probes take at most half the budget. A change
+  does not unsettle the level: hot probes cover it.
+- **Empty probes**: a probe that saw no surface within 2.5 spacings for three updates in a row lights
+  no surface (a surface is lit by the corners of its cell, at most sqrt(3) spacings plus the
+  relocation away) and is cold: it takes one round robin turn in 16. Outdoors most probes are empty
+  (84% on `ddgi_track`, open air above the road). Probes inside geometry are not cold: their back-face
+  evidence needs some 30 updates to fade when what buried them moves, and throttled, it darkened
+  surfaces next to them in GTA SA. The settle estimate counts a cold probe as a sixteenth.
+- **New geometry**: a ray scene install no longer clears the probes. It increments a 4-bit geometry
+  epoch; a probe under another epoch judges inside and empty afresh, and the change detection
+  restarts whichever probes the new content changes. A streamed cell away from the camera changes
+  none of them.
+
+Measured on `ddgi_track` (960 x 540, view 15, fixed exposure; mean relative error by luminance against
+a run converged in the same state; two converged runs differ by about 1.6 to 2%). The app's
+`--capture-at F1,F2,...` and `--turn-sun FRAME,PITCH,YAW,ROLL` make these runs.
+
+| Frames after the sun turned | 30 | 60 | 120 | 240 | 480 | 1920 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before | 21.3% | 17.0% | 12.4% | 8.3% | 5.5% | 3.7% |
+| After | 8.2% | 6.9% | 4.2% | 3.4% | 2.5% | 2.1% |
+
+The camera driving at 15 m/s for 120 frames: 20.2% before, 12.7% after; 480 frames: 14.9% and 11.1%.
+From a cold start it is about the same early (30 frames: 13.9% against 12.7%; 120: 6.1% against
+5.6%) and lower later (1920: 0.95% against 1.3%). Frame to frame flicker once settled is 0.6 to 0.8%
+(0.5 to 1.1% before); the GPU cost once settled is the same (0.15 ms on this scene: 512 probes a
+frame). In GTA SA two converged runs of the same build differ by about 5% (which side of a wall
+probes relocate to depends on the order content arrives in), so there it is checked for bias rather
+than speed: the new build's converged images lie within that spread. Throttling probes inside geometry
+as well did not: their surfaces stayed dark.
 
 ## Shading
 
@@ -157,7 +217,8 @@ at each pixel, and a probe overlay drawing each probe as a small sphere of its i
 2. Probe textures, one level, no scrolling: trace, update, diffuse sampling; view 15 and the overlay.
 3. Relocation, classification, visibility weighting.
 4. Cascades and scrolling, the schedule; the track scene with a moving camera.
-5. Specular sky visibility; moving instances; foliage coverage; adaptive hysteresis.
+5. Specular sky visibility; moving instances; foliage coverage; adaptive hysteresis (replaced by the
+   lighting epoch, 2026-10-06).
 6. The path tracer and the comparisons.
 
 ## Not Done: Occlusion Finer Than the Probes

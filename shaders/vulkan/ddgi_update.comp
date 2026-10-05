@@ -17,6 +17,15 @@
 // inside something, or on the wrong side of a single-sided surface (under a floor or a terrain, where
 // it would see the sky past the building's edge and light the rooms above). That evidence is smoothed
 // over updates (offset.w), so the rotating rays do not flip the probe on and off.
+//
+// A probe's light that changes (a door opened, a lamp switched on, new geometry streamed in) restarts
+// its average instead of creeping toward the new value at the hysteresis' 3% an update: the update
+// compares its rays' average luminance with the running mean of the probe's past updates and treats a
+// difference beyond four standard deviations of their spread (and a tenth of the mean) as a change.
+// So does a lighting epoch other than the one the probe recorded (the sun or the sky changed). Either
+// way the update keeps half of what the probe held and the count of averaged updates starts over at 1,
+// so the next ones keep 2/3, 3/4 and so on up to the hysteresis. The CPU learns of it through the
+// feedback buffer and updates the probe and its neighbours again soon (DdgiProbeScheduler).
 
 #include "scene_common.glsl"
 #include "ddgi_common.glsl"
@@ -37,6 +46,11 @@ layout(std430, set = 2, binding = 4) buffer DdgiProbeStatesOut
 {
     DdgiProbeState probeStatesOut[];
 };
+// Per scheduled probe: DDGI_FEEDBACK_* bits and the coordinate mod 256 (this frame slot's buffer).
+layout(std430, set = 2, binding = 5) writeonly buffer DdgiFeedback
+{
+    uint feedback[];
+};
 
 // Must match DdgiUpdateConstants in engine/renderer/vulkan/ddgi.cpp.
 layout(push_constant) uniform DdgiUpdateConstants
@@ -44,6 +58,8 @@ layout(push_constant) uniform DdgiUpdateConstants
     vec4 rotation[3];
     uint scheduledCount;
     float hysteresis;
+    // The lighting epoch (bits 0 to 7) and the geometry epoch (bits 8 to 11).
+    uint epochs;
 }
 constants;
 
@@ -51,11 +67,23 @@ const float PI = 3.14159265359;
 const float DDGI_MISS_DISTANCE = 1e27;
 // The visibility lobe's power: sharp, so a texel's distance is the one straight along it.
 const float VISIBILITY_SHARPNESS = 50.0;
+// A change in the probe's light: its updates' average luminance this far from their running mean, in
+// standard deviations of their spread, plus this share of the mean; and only once this many updates
+// have built the statistics.
+const float CHANGE_SIGMAS = 4.0;
+const float CHANGE_RELATIVE = 0.1;
+const int CHANGE_MIN_UPDATES = 4;
+// Within this many spacings of a surface a probe lights it: the farthest point of the cells it is a
+// corner of is sqrt(3) spacings away, plus its relocation of at most 0.45 spacing along each axis.
+const float EMPTY_DISTANCE = 2.5;
 
 shared vec4 sharedRays[64];
 shared vec3 sharedDirections[64];
 shared vec4 sharedIrradiance[64];
 shared vec2 sharedVisibility[256];
+shared float sharedLuminance[64];
+shared float sharedHysteresis;
+shared bool sharedChanged;
 
 vec3 SphericalFibonacci(float index, float count)
 {
@@ -106,12 +134,16 @@ void main()
     DdgiProbeState state = probeStatesOut[stateIndex];
     bool sameCoordinate = state.coordAndFlags.xyz == coord;
     bool fresh = !sameCoordinate || (state.coordAndFlags.w & DDGI_PROBE_UPDATED) == 0 || (state.coordAndFlags.w & DDGI_PROBE_MOVED) != 0;
+    int flagsIn = state.coordAndFlags.w;
+    uint lightingEpoch = constants.epochs & 0xffu;
+    uint geometryEpoch = (constants.epochs >> 8) & 0xfu;
+    bool newLighting = (uint(flagsIn >> DDGI_PROBE_LIGHTING_EPOCH_SHIFT) & 0xffu) != lightingEpoch;
+    bool newGeometry = (uint(flagsIn >> DDGI_PROBE_GEOMETRY_EPOCH_SHIFT) & 0xfu) != geometryEpoch;
     // A young probe averages its updates (the n-th keeps n / (n + 1) of what it held) until that is
     // more than the hysteresis: what it started from, half the coarser level's light, washes out as
     // 1 / (n + 1) instead of 3% an update. The coarser level leaks light into rooms smaller than its
     // spacing, and at 0.97 alone a probe that scrolled in stayed that bright for hundreds of updates.
-    int updateCount = fresh ? 0 : (state.coordAndFlags.w >> DDGI_PROBE_UPDATE_COUNT_SHIFT) & DDGI_PROBE_UPDATE_COUNT_MAX;
-    float hysteresis = fresh ? 0.0 : min(constants.hysteresis, float(updateCount) / float(updateCount + 1));
+    int updateCount = fresh ? 0 : (flagsIn >> DDGI_PROBE_UPDATE_COUNT_SHIFT) & DDGI_PROBE_UPDATE_COUNT_MAX;
     float maxDistance = 2.0 * DdgiLevelSpacing(level);
 
     if (thread < 64u)
@@ -137,9 +169,7 @@ void main()
             total += weight;
         }
         moments = total > 1e-6 ? moments / total : vec2(maxDistance, maxDistance * maxDistance);
-        ivec3 texel = ivec3(layerOrigin.xy * (DDGI_VISIBILITY_TEXELS + 2) + 1 + visibilityTexel, layerOrigin.z);
-        vec2 previous = imageLoad(visibilityImage, texel).rg;
-        sharedVisibility[thread] = mix(moments, previous, hysteresis);
+        sharedVisibility[thread] = moments;
     }
     // Irradiance: the first 64 invocations, one texel of the 8 x 8 interior.
     if (thread < 64u)
@@ -161,6 +191,59 @@ void main()
             total += weight;
         }
         vec4 value = total > 1e-6 ? sum / total : vec4(0.0);
+        sharedIrradiance[thread] = value;
+        sharedLuminance[thread] = dot(value.rgb, vec3(0.2126, 0.7152, 0.0722));
+    }
+    barrier();
+
+    // Whether the probe's light changed, and the hysteresis this update blends with.
+    vec4 stats = state.stats;
+    if (thread == 0u)
+    {
+        float luminance = 0.0;
+        for (int index = 0; index < 64; ++index)
+        {
+            luminance += sharedLuminance[index];
+        }
+        luminance /= 64.0;
+        float sigma = sqrt(max(stats.y - stats.x * stats.x, 0.0));
+        bool changed = !fresh && (newLighting || (updateCount >= CHANGE_MIN_UPDATES &&
+                                                  abs(luminance - stats.x) > CHANGE_SIGMAS * sigma + CHANGE_RELATIVE * stats.x + 1e-6));
+        if (changed)
+        {
+            updateCount = 1;
+        }
+        float hysteresis = fresh ? 0.0 : min(constants.hysteresis, float(updateCount) / float(updateCount + 1));
+        if (fresh)
+        {
+            stats.xy = vec2(luminance, luminance * luminance);
+        }
+        else if (changed)
+        {
+            // A new mean; the spread relative to it carries over.
+            float relativeVariance = max(stats.y - stats.x * stats.x, 0.0) / max(stats.x * stats.x, 1e-12);
+            stats.xy = vec2(luminance, luminance * luminance * (1.0 + relativeVariance));
+        }
+        else
+        {
+            stats.xy = mix(vec2(luminance, luminance * luminance), stats.xy, hysteresis);
+        }
+        sharedHysteresis = hysteresis;
+        sharedChanged = changed;
+    }
+    barrier();
+    float hysteresis = sharedHysteresis;
+
+    {
+        ivec3 texel = ivec3(layerOrigin.xy * (DDGI_VISIBILITY_TEXELS + 2) + 1 + visibilityTexel, layerOrigin.z);
+        vec2 previous = imageLoad(visibilityImage, texel).rg;
+        sharedVisibility[thread] = mix(sharedVisibility[thread], previous, hysteresis);
+    }
+    if (thread < 64u)
+    {
+        ivec2 irradianceTexel = ivec2(int(thread) % DDGI_IRRADIANCE_TEXELS, int(thread) / DDGI_IRRADIANCE_TEXELS);
+        vec3 direction = TexelDirection(irradianceTexel, DDGI_IRRADIANCE_TEXELS);
+        vec4 value = sharedIrradiance[thread];
         ivec3 texel = ivec3(layerOrigin.xy * (DDGI_IRRADIANCE_TEXELS + 2) + 1 + irradianceTexel, layerOrigin.z);
         vec4 previous = imageLoad(irradianceImage, texel);
         float keep = hysteresis;
@@ -263,13 +346,26 @@ void main()
         }
         offset = clamp(offset, vec3(-0.45 * spacing), vec3(0.45 * spacing));
 
+        // New geometry (the ray scene was rebuilt) judges the probe afresh: what it saw before may be
+        // gone.
+        bool reclassify = !sameCoordinate || newGeometry;
         float backfaceEvidence = inside || closestBack < spacing ? 1.0 : 0.0;
-        float previousEvidence = sameCoordinate ? state.offset.w : backfaceEvidence;
+        float previousEvidence = reclassify ? backfaceEvidence : state.offset.w;
         float evidence = max(backfaceEvidence, 0.9 * previousEvidence);
-        int flags = DDGI_PROBE_UPDATED | (min(updateCount + 1, DDGI_PROBE_UPDATE_COUNT_MAX) << DDGI_PROBE_UPDATE_COUNT_SHIFT);
+        int emptyStreak = reclassify ? 0 : (flagsIn >> DDGI_PROBE_EMPTY_STREAK_SHIFT) & DDGI_PROBE_EMPTY_STREAK_MAX;
+        emptyStreak = min(closestFront, closestBack) < EMPTY_DISTANCE * spacing ? 0 : min(emptyStreak + 1, DDGI_PROBE_EMPTY_STREAK_MAX);
+        int flags = DDGI_PROBE_UPDATED | (min(updateCount + 1, DDGI_PROBE_UPDATE_COUNT_MAX) << DDGI_PROBE_UPDATE_COUNT_SHIFT) |
+                    (int(lightingEpoch) << DDGI_PROBE_LIGHTING_EPOCH_SHIFT) | (int(geometryEpoch) << DDGI_PROBE_GEOMETRY_EPOCH_SHIFT) |
+                    (emptyStreak << DDGI_PROBE_EMPTY_STREAK_SHIFT);
+        uint report = sharedChanged ? DDGI_FEEDBACK_CHANGED : 0u;
         if (evidence > 0.05)
         {
             flags |= DDGI_PROBE_INACTIVE;
+            report |= DDGI_FEEDBACK_INACTIVE;
+        }
+        else if (emptyStreak >= DDGI_PROBE_EMPTY_UPDATES)
+        {
+            report |= DDGI_FEEDBACK_EMPTY;
         }
         if (length(offset - previousOffset) > 0.05 * spacing)
         {
@@ -278,6 +374,9 @@ void main()
         DdgiProbeState updated;
         updated.coordAndFlags = ivec4(coord, flags);
         updated.offset = vec4(offset, evidence);
+        updated.stats = stats;
         probeStatesOut[stateIndex] = updated;
+        uvec3 coordBits = uvec3(coord) & 0xffu;
+        feedback[probe] = report | (coordBits.x << 8) | (coordBits.y << 16) | (coordBits.z << 24);
     }
 }

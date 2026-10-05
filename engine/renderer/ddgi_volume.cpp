@@ -83,7 +83,10 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
             m_levels[level].spacing = levels[level].spacing;
             m_levels[level].held.assign(kDdgiProbesPerLevel, glm::ivec3(0));
             m_levels[level].valid.assign(kDdgiProbesPerLevel, 0u);
+            m_levels[level].cold.assign(kDdgiProbesPerLevel, 0u);
+            m_levels[level].hot.assign(kDdgiProbesPerLevel, 0u);
         }
+        m_hot.clear();
     }
 
     for (size_t level = 0; level < levelCount; ++level)
@@ -98,11 +101,19 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
     std::vector<std::vector<uint8_t>> taken(levelCount, std::vector<uint8_t>(kDdgiProbesPerLevel, 0u));
     const auto take = [&](uint32_t level, uint32_t index, const glm::ivec3& coord)
     {
+        LevelState& state = m_levels[level];
         scheduled.push_back(PackDdgiProbe(level, index));
         ++updated[level];
         taken[level][index] = 1u;
-        m_levels[level].held[index] = coord;
-        m_levels[level].valid[index] = 1u;
+        if (state.valid[index] == 0u || state.held[index] != coord)
+        {
+            // Another place: what the GPU said about the old one does not hold here.
+            state.coldCount -= state.cold[index];
+            state.cold[index] = 0u;
+            state.hot[index] = 0u;
+        }
+        state.held[index] = coord;
+        state.valid[index] = 1u;
     };
 
     // Stale probes first, finest level first.
@@ -120,6 +131,34 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
             }
         }
     }
+
+    // Hot probes next, oldest first, within half the budget; the ones whose updates ran out leave.
+    const size_t hotLimit = std::min<size_t>(budget, scheduled.size() + budget / 2);
+    size_t keep = 0;
+    for (const uint32_t packed : m_hot)
+    {
+        const uint32_t level = packed >> 24;
+        const uint32_t index = packed & 0xffffffu;
+        if (level >= levelCount || m_levels[level].hot[index] == 0u)
+        {
+            continue;
+        }
+        LevelState& state = m_levels[level];
+        if (taken[level][index] == 0u && scheduled.size() < hotLimit)
+        {
+            take(level, index, DdgiSlotCoordinate(DdgiSlotFromIndex(index), levels[level].origin));
+            // take clears it when the slot moved on to another coordinate.
+            if (state.hot[index] > 0u)
+            {
+                --state.hot[index];
+            }
+        }
+        if (state.hot[index] > 0u)
+        {
+            m_hot[keep++] = packed;
+        }
+    }
+    m_hot.resize(keep);
 
     // The rest round robin: level l weighs 2^(count - 1 - l).
     const uint32_t remaining = budget - static_cast<uint32_t>(scheduled.size());
@@ -140,7 +179,11 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
         {
             const uint32_t index = state.cursor;
             state.cursor = (state.cursor + 1) % kDdgiProbesPerLevel;
-            if (taken[level][index] != 0u)
+            if (state.cursor == 0)
+            {
+                ++state.passes;
+            }
+            if (taken[level][index] != 0u || (state.cold[index] != 0u && (state.passes + index) % kDdgiColdRateDivisor != 0u))
             {
                 continue;
             }
@@ -151,10 +194,96 @@ std::vector<uint32_t> DdgiProbeScheduler::Schedule(std::span<const DdgiLevel> le
 
     for (uint32_t level = 0; level < levelCount; ++level)
     {
-        const float updatesPerProbe = static_cast<float>(updated[level]) / static_cast<float>(kDdgiProbesPerLevel);
+        // Per probe that takes every round robin turn: the cold ones count as a fraction.
+        const LevelState& state = m_levels[level];
+        const float population = static_cast<float>(kDdgiProbesPerLevel - state.coldCount) +
+                                 static_cast<float>(state.coldCount) / static_cast<float>(kDdgiColdRateDivisor);
+        const float updatesPerProbe = static_cast<float>(updated[level]) / population;
         m_levels[level].residual *= std::pow(std::clamp(hysteresis, 0.0f, 1.0f), updatesPerProbe);
     }
     return scheduled;
+}
+
+void DdgiProbeScheduler::MakeHot(uint32_t level, uint32_t index, uint8_t updates)
+{
+    LevelState& state = m_levels[level];
+    if (state.hot[index] == 0u)
+    {
+        m_hot.push_back(PackDdgiProbe(level, index));
+    }
+    state.hot[index] = std::max(state.hot[index], updates);
+}
+
+void DdgiProbeScheduler::ApplyFeedback(std::span<const uint32_t> scheduled, std::span<const uint32_t> feedback)
+{
+    const size_t count = std::min(scheduled.size(), feedback.size());
+    for (size_t entry = 0; entry < count; ++entry)
+    {
+        const uint32_t level = scheduled[entry] >> 24;
+        const uint32_t index = scheduled[entry] & 0xffffffu;
+        if (level >= m_levels.size() || index >= kDdgiProbesPerLevel)
+        {
+            continue;
+        }
+        LevelState& state = m_levels[level];
+        const uint32_t report = feedback[entry];
+        if (state.valid[index] == 0u || DdgiFeedbackCoordinate(state.held[index]) != (report & ~0xffu))
+        {
+            continue;
+        }
+        // Only empty probes: a probe inside geometry needs its updates to come back to life when what
+        // buried it moves (its back-face evidence fades over some 30 of them), and throttled, it left
+        // surfaces next to it dark for minutes.
+        const uint8_t cold = (report & kDdgiFeedbackEmpty) != 0u ? 1u : 0u;
+        state.coldCount += cold;
+        state.coldCount -= state.cold[index];
+        state.cold[index] = cold;
+        if ((report & kDdgiFeedbackChanged) != 0u)
+        {
+            // The level keeps its refresh rate: the probes that see the change come back on their
+            // own. (A false alarm, a few in a million updates, would otherwise keep levels unsettled.)
+            MakeHot(level, index, kDdgiHotUpdates);
+            // The change most likely reaches past this probe: a door, a lamp or a building lights a
+            // region. The neighbours look again soon and, when they see it too, pass it on.
+            const glm::ivec3 slot = DdgiSlotFromIndex(index);
+            constexpr std::array<glm::ivec3, 6> kSteps = {
+                glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 1, 0), glm::ivec3(0, -1, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
+            for (const glm::ivec3& step : kSteps)
+            {
+                const glm::ivec3 neighbour = slot + step;
+                // Slots wrap around the toroidal storage; the one across the edge is no neighbour.
+                if (glm::any(glm::lessThan(neighbour, glm::ivec3(0))) || glm::any(glm::greaterThanEqual(neighbour, kDdgiGridSize)))
+                {
+                    continue;
+                }
+                const uint32_t neighbourIndex = DdgiSlotIndex(neighbour);
+                if (state.valid[neighbourIndex] != 0u && state.held[neighbourIndex] - state.held[index] == step)
+                {
+                    MakeHot(level, neighbourIndex, kDdgiNeighbourHotUpdates);
+                }
+            }
+        }
+    }
+}
+
+void DdgiProbeScheduler::GeometryChanged()
+{
+    for (LevelState& state : m_levels)
+    {
+        std::fill(state.cold.begin(), state.cold.end(), uint8_t{0});
+        state.coldCount = 0;
+    }
+    Unsettle();
+}
+
+bool DdgiProbeScheduler::Cold(uint32_t level, uint32_t slotIndex) const
+{
+    return level < m_levels.size() && m_levels[level].cold[slotIndex] != 0u;
+}
+
+bool DdgiProbeScheduler::Hot(uint32_t level, uint32_t slotIndex) const
+{
+    return level < m_levels.size() && m_levels[level].hot[slotIndex] != 0u;
 }
 
 void DdgiProbeScheduler::Unsettle()
@@ -173,6 +302,7 @@ bool DdgiProbeScheduler::Settled(uint32_t level) const
 void DdgiProbeScheduler::Reset()
 {
     m_levels.clear();
+    m_hot.clear();
 }
 
 uint32_t DdgiProbeScheduler::StaleCount(uint32_t level) const
@@ -218,33 +348,36 @@ std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> 
     return m_skipped;
 }
 
-float DdgiAdaptiveHysteresis::Update(std::span<const glm::vec4> lighting, float seconds, float hysteresis)
+bool DdgiLightingWatch::Update(std::span<const glm::vec4> lighting)
 {
-    bool changed = m_hasPrevious && lighting.size() != m_previous.size();
-    for (size_t index = 0; m_hasPrevious && !changed && index < lighting.size(); ++index)
+    bool changed = m_hasReference && lighting.size() != m_reference.size();
+    for (size_t index = 0; m_hasReference && !changed && index < lighting.size(); ++index)
     {
-        const glm::vec4 difference = glm::abs(lighting[index] - m_previous[index]);
-        const glm::vec4 scale = glm::max(glm::max(glm::abs(lighting[index]), glm::abs(m_previous[index])), glm::vec4(1.0f));
-        changed = glm::any(glm::greaterThan(difference, scale * 1e-3f));
+        const glm::vec4 difference = glm::abs(lighting[index] - m_reference[index]);
+        const glm::vec4 scale = glm::max(glm::max(glm::abs(lighting[index]), glm::abs(m_reference[index])), glm::vec4(1.0f));
+        changed = glm::any(glm::greaterThan(difference, scale * kDdgiLightingTolerance));
     }
-    m_previous.assign(lighting.begin(), lighting.end());
-    m_hasPrevious = true;
+    if (changed || !m_hasReference)
+    {
+        m_reference.assign(lighting.begin(), lighting.end());
+        m_hasReference = true;
+    }
     m_changed = changed;
-
     if (changed)
     {
-        m_fastSecondsLeft = kDdgiFastSeconds;
+        m_epoch = (m_epoch + 1u) & 0xffu;
     }
-    else
-    {
-        m_fastSecondsLeft = std::max(m_fastSecondsLeft - std::max(seconds, 0.0f), 0.0f);
-    }
-    return m_fastSecondsLeft > 0.0f ? std::min(hysteresis, kDdgiFastHysteresis) : hysteresis;
+    return changed;
 }
 
-bool DdgiAdaptiveHysteresis::Changed() const
+bool DdgiLightingWatch::Changed() const
 {
     return m_changed;
+}
+
+uint32_t DdgiLightingWatch::Epoch() const
+{
+    return m_epoch;
 }
 
 glm::mat3 DdgiRayRotation(uint32_t frameIndex)

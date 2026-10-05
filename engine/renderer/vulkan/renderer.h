@@ -295,8 +295,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The ray scene instances the probe rays skip while they move.
     DdgiMovingInstances m_ddgiMovingInstances;
     // Faster blending after the lighting changes, timed from the previous frame.
-    DdgiAdaptiveHysteresis m_ddgiHysteresis;
-    std::optional<std::chrono::steady_clock::time_point> m_ddgiLastFrameTime;
+    DdgiLightingWatch m_ddgiLighting;
+    // Counts the ray scene's installs: probes that recorded another judge their surroundings afresh.
+    uint32_t m_ddgiGeometryEpoch = 0;
+    // VulkanDdgi::TakeFeedback's output, kept to reuse the allocations.
+    std::vector<uint32_t> m_ddgiFeedbackSchedule;
+    std::vector<uint32_t> m_ddgiFeedback;
     glm::vec2 m_ddgiLayout{0.0f};
     uint32_t m_ddgiFrameIndex = 0;
     std::unique_ptr<VulkanTexture> m_environmentBrdfLut;

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -24,6 +25,12 @@ struct EditorApplicationOptions
     uint32_t maxFrames = 0;
     // With --frames: the viewport of the last frame is written here as a PNG.
     std::optional<std::string> capturePath;
+    // --capture-at F1,F2,...: also captures the viewport after these counted frames, to the --capture
+    // path with _F before its extension (convergence measurements).
+    std::vector<uint32_t> captureFrames;
+    // --turn-sun FRAME,PITCH,YAW,ROLL: after that counted frame, adds these degrees to every
+    // directional light's rotation (a lighting change for convergence measurements).
+    std::optional<std::array<float, 4>> sunTurn;
     // --record FILE.mp4 (H.264, Windows) or FILE.avi (MJPEG): a video of the viewport, one frame for every frame drawn from the second that
     // counts toward --frames, at --record-fps frames a second (30 by default).
     std::optional<std::filesystem::path> recordPath;

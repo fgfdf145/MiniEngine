@@ -790,16 +790,19 @@ void VulkanRenderer::DrawFrame()
     {
         m_commandContext->WaitForAllFrames();
         m_rayScene->InstallBuild();
-        // The probes hold the old content's light.
-        m_ddgi->Invalidate();
-        m_ddgiScheduler.Reset();
+        // The probes keep the light they hold: most of it still holds (a streamed cell far away
+        // changes nothing here), and each probe whose light the new content changes notices at its
+        // next update and starts its average over (ddgi_update.comp). They judge whether they are
+        // buried or empty afresh.
+        ++m_ddgiGeometryEpoch;
+        m_ddgiScheduler.GeometryChanged();
     }
     const std::span<const uint8_t> ddgiMoving = m_ddgiMovingInstances.Update(models);
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, ddgiMoving);
     State().rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
     m_cpuStages.Mark("RayInstances");
 
-    // The lighting the probes hold, so they blend faster for a second after it changes: every
+    // The lighting the probes hold, so they start their averages over when it changes: every
     // directional light as it reaches the scene, and the sky's mode, ambient and HDRI.
     std::vector<glm::vec4> ddgiLighting;
     for (size_t index = 0; index < selectedLights.size(); ++index)
@@ -812,10 +815,12 @@ void VulkanRenderer::DrawFrame()
     }
     ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
     ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
-    const auto now = std::chrono::steady_clock::now();
-    const float ddgiSeconds = m_ddgiLastFrameTime ? std::chrono::duration<float>(now - *m_ddgiLastFrameTime).count() : 0.0f;
-    m_ddgiLastFrameTime = now;
-    const float ddgiHysteresis = m_ddgiHysteresis.Update(ddgiLighting, ddgiSeconds, std::clamp(State().renderDebug.ddgi.hysteresis, 0.0f, 0.999f));
+    m_ddgiLighting.Update(ddgiLighting);
+    const float ddgiHysteresis = std::clamp(State().renderDebug.ddgi.hysteresis, 0.0f, 0.999f);
+    const uint32_t ddgiLightingEpoch = m_ddgiLighting.Epoch();
+    const uint32_t ddgiGeometryEpoch = m_ddgiGeometryEpoch;
+    // What the probes this frame slot updated last time reported (its fence has signalled).
+    m_ddgi->TakeFeedback(m_commandContext->GetCurrentFrame(), m_ddgiFeedbackSchedule, m_ddgiFeedback);
 
     // DDGI: this frame's levels around the camera and the probes that update. Off in the Khronos
     // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.
@@ -843,7 +848,8 @@ void VulkanRenderer::DrawFrame()
         const uint32_t budget = static_cast<uint32_t>(std::clamp(ddgiSettings.probesPerFrame, 64, static_cast<int>(VulkanDdgi::kMaxProbesPerFrame)));
         // Levels whose probes have converged refresh less (DdgiProbeScheduler); lighting that
         // changed, or instances that move, start them converging over.
-        if (m_ddgiHysteresis.Changed() ||
+        m_ddgiScheduler.ApplyFeedback(m_ddgiFeedbackSchedule, m_ddgiFeedback);
+        if (m_ddgiLighting.Changed() ||
             std::any_of(ddgiMoving.begin(), ddgiMoving.end(), [](uint8_t moving)
                         {
                             return moving != 0u;
@@ -1192,7 +1198,9 @@ void VulkanRenderer::DrawFrame()
                                                   m_rayScene->GetSet(frame.frameSlot),
                                                   frame.frameSlot,
                                                   m_ddgiFrameIndex++,
-                                                  ddgiHysteresis);
+                                                  ddgiHysteresis,
+                                                  ddgiLightingEpoch,
+                                                  ddgiGeometryEpoch);
                                               m_gpuTimer->Mark(commandBuffer, "Ddgi");
 
                                               m_cpuStages.Mark("RecordPrePasses");

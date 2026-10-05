@@ -63,7 +63,7 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
 {
     const ReferenceFrame& frame = m_referenceFrame;
     const std::vector<uint8_t> stateBytes =
-        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), sizeof(glm::ivec4) * 2 * kDdgiProbesPerLevel * kDdgiMaxLevels);
+        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels);
     constexpr int kIrrTile = kDdgiIrradianceTexels + 2;
     constexpr int kVisTile = kDdgiVisibilityTexels + 2;
     const glm::ivec2 irrSize(kIrrTile * kDdgiGridSize.x * kDdgiGridSize.y, kIrrTile * kDdgiGridSize.z);
@@ -145,8 +145,8 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
             const size_t stateIndex = level * kDdgiProbesPerLevel + DdgiSlotIndex(slot);
             glm::ivec4 flags;
             glm::vec4 relocation;
-            std::memcpy(&flags, stateBytes.data() + stateIndex * 32, sizeof(flags));
-            std::memcpy(&relocation, stateBytes.data() + stateIndex * 32 + 16, sizeof(relocation));
+            std::memcpy(&flags, stateBytes.data() + stateIndex * kDdgiProbeStateBytes, sizeof(flags));
+            std::memcpy(&relocation, stateBytes.data() + stateIndex * kDdgiProbeStateBytes + 16, sizeof(relocation));
             const glm::vec3 trilinear3 = glm::mix(1.0f - alpha, alpha, glm::vec3(offset));
             const float trilinear = trilinear3.x * trilinear3.y * trilinear3.z;
             const bool stale = glm::ivec3(flags) != coord || (flags.w & 1) == 0;
@@ -211,7 +211,7 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
     const ReferenceFrame& frame = m_referenceFrame;
     // The finest level's probe records and irradiance tiles.
     const std::vector<uint8_t> stateBytes =
-        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), sizeof(glm::ivec4) * 2 * kDdgiProbesPerLevel);
+        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel);
     ImageCaptureRequest atlasRequest = device;
     atlasRequest.image = m_ddgi->GetIrradianceImage();
     atlasRequest.format = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -231,8 +231,8 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
     {
         glm::ivec4 coordAndFlags;
         glm::vec4 offset;
-        std::memcpy(&coordAndFlags, stateBytes.data() + static_cast<size_t>(index) * 32, sizeof(coordAndFlags));
-        std::memcpy(&offset, stateBytes.data() + static_cast<size_t>(index) * 32 + 16, sizeof(offset));
+        std::memcpy(&coordAndFlags, stateBytes.data() + static_cast<size_t>(index) * kDdgiProbeStateBytes, sizeof(coordAndFlags));
+        std::memcpy(&offset, stateBytes.data() + static_cast<size_t>(index) * kDdgiProbeStateBytes + 16, sizeof(offset));
         const glm::ivec3 slot = DdgiSlotFromIndex(index);
         const glm::ivec3 coord = DdgiSlotCoordinate(slot, frame.ddgiOrigins[0]);
         // Updated for where it is, and active (DDGI_PROBE_UPDATED, DDGI_PROBE_INACTIVE).

@@ -22,18 +22,37 @@ const int DDGI_PROBE_INACTIVE = 2;
 // Relocated by more than a twentieth of the spacing at its last update: its tiles describe the old
 // position, so the next update keeps none of them.
 const int DDGI_PROBE_MOVED = 4;
-// Bits 8 to 15: how many updates the probe has had since it was last fresh (saturating at 255).
+// Bits 8 to 15: how many updates the probe has had since it was last fresh or its light last
+// changed (saturating at 255).
 const int DDGI_PROBE_UPDATE_COUNT_SHIFT = 8;
 const int DDGI_PROBE_UPDATE_COUNT_MAX = 255;
+// Bits 16 to 23: the lighting epoch of its last update (DdgiLightingWatch); bits 24 to 27: the
+// geometry epoch (the ray scene's installs), mod 16; bits 28 to 30: how many updates in a row saw no
+// surface near enough to be lit by it (DDGI_PROBE_EMPTY_UPDATES of them make it empty).
+const int DDGI_PROBE_LIGHTING_EPOCH_SHIFT = 16;
+const int DDGI_PROBE_GEOMETRY_EPOCH_SHIFT = 24;
+const int DDGI_PROBE_EMPTY_STREAK_SHIFT = 28;
+const int DDGI_PROBE_EMPTY_STREAK_MAX = 7;
+const int DDGI_PROBE_EMPTY_UPDATES = 3;
 
 // One probe's record: the world grid coordinate whose data it holds and flags, its relocation offset
-// in metres (xyz) and its smoothed back-face evidence (w, ddgi_update.comp). A probe is sampled only where the coordinate matches the one its slot should
-// hold now: after a scroll, a slot keeps the old place's data until it is updated.
+// in metres (xyz) and its smoothed back-face evidence (w, ddgi_update.comp), and the running mean and
+// mean square of its updates' average luminance (stats.xy), which tell a change in its light from
+// noise. A probe is sampled only where the coordinate matches the one its slot should hold now: after
+// a scroll, a slot keeps the old place's data until it is updated. kDdgiProbeStateBytes in
+// ddgi_volume.h.
 struct DdgiProbeState
 {
     ivec4 coordAndFlags;
     vec4 offset;
+    vec4 stats;
 };
+
+// What the update reports to the CPU per scheduled probe (DdgiProbeScheduler::ApplyFeedback): these
+// bits, and the probe's coordinate mod 256 per axis above bit 8.
+const uint DDGI_FEEDBACK_CHANGED = 1u;
+const uint DDGI_FEEDBACK_EMPTY = 2u;
+const uint DDGI_FEEDBACK_INACTIVE = 4u;
 
 // Set 0 bindings 21 to 23 (VulkanDdgi): one array layer per level, a 10 x 10 (irradiance: rgb
 // irradiance / pi, a sky visibility) or 18 x 18 (visibility: mean distance, mean squared distance)

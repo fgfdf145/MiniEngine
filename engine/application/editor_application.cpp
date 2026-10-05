@@ -171,6 +171,25 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--capture-at")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            size_t start = 0;
+            while (start <= value.size())
+            {
+                const size_t end = std::min(value.find(',', start), value.size());
+                options.captureFrames.push_back(ParsePositiveFrameCount(value.substr(start, end - start)));
+                start = end + 1;
+            }
+            continue;
+        }
+
+        if (argument == "--turn-sun")
+        {
+            options.sunTurn = ParseFloatList<4>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
         if (argument == "--camera-velocity")
         {
             const std::array<float, 3> velocity = ParseFloatList<3>(ReadRequiredArgument(i, argc, argv, argument), argument);
@@ -494,6 +513,29 @@ int EditorApplication::Run()
         if (m_options.maxFrames > 0 && !waiting)
         {
             ++renderedFrameCount;
+            if (m_options.capturePath.has_value() &&
+                std::find(m_options.captureFrames.begin(), m_options.captureFrames.end(), renderedFrameCount) != m_options.captureFrames.end())
+            {
+                const std::filesystem::path path(*m_options.capturePath);
+                renderer->CaptureViewport(path.parent_path() / (path.stem().string() + "_" + std::to_string(renderedFrameCount) + path.extension().string()));
+            }
+            if (m_options.sunTurn.has_value() && renderedFrameCount == static_cast<uint32_t>((*m_options.sunTurn)[0]))
+            {
+                IEditorWorld& world = sharedState->GetEditorWorld();
+                std::vector<entt::entity> suns;
+                world.ForEachLight([&](entt::entity entity, const TagComponent&, const TransformComponent&, const LightComponent& light)
+                                   {
+                                       if (light.type == LightType::Directional)
+                                       {
+                                           suns.push_back(entity);
+                                       }
+                                   });
+                for (const entt::entity sun : suns)
+                {
+                    world.EditTransform(sun).rotationDegrees += glm::vec3((*m_options.sunTurn)[1], (*m_options.sunTurn)[2], (*m_options.sunTurn)[3]);
+                }
+                LOG_INFO("--turn-sun: turned {} directional light(s) after frame {}", suns.size(), renderedFrameCount);
+            }
             if (renderedFrameCount >= m_options.maxFrames)
             {
                 break;

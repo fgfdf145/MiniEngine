@@ -32,6 +32,9 @@ inline constexpr uint32_t kDdgiRaysPerProbe = 64;
 // Octahedral texels per probe, without and with the one-texel border.
 inline constexpr uint32_t kDdgiIrradianceTexels = 8;
 inline constexpr uint32_t kDdgiVisibilityTexels = 16;
+// One probe's record on the GPU (ddgi_common.glsl's DdgiProbeState): coordinate and flags, offset,
+// statistics.
+inline constexpr uint32_t kDdgiProbeStateBytes = 48;
 
 // One level's grid: the world grid coordinate of its minimum corner probe; probe g sits at g * spacing
 // (before relocation).
@@ -66,16 +69,34 @@ inline uint32_t PackDdgiProbe(uint32_t level, uint32_t slotIndex)
     return (level << 24) | slotIndex;
 }
 
+// What ddgi_update.comp reports per updated probe (its feedback buffer): these bits, and the
+// coordinate it updated mod 256 per axis in bits 8 to 31 (DdgiFeedbackCoordinate), so a report that
+// arrives after a scroll gave the slot another coordinate is recognised as stale.
+// CHANGED: its light changed (or the lighting epoch did), and it restarted its average.
+// EMPTY: no surface near enough for it to light, for several updates in a row.
+// INACTIVE: inside geometry.
+inline constexpr uint32_t kDdgiFeedbackChanged = 1u;
+inline constexpr uint32_t kDdgiFeedbackEmpty = 2u;
+inline constexpr uint32_t kDdgiFeedbackInactive = 4u;
+inline uint32_t DdgiFeedbackCoordinate(const glm::ivec3& coord)
+{
+    const glm::uvec3 bits = glm::uvec3(coord) & 0xffu;
+    return (bits.x << 8) | (bits.y << 16) | (bits.z << 24);
+}
+
 // Chooses the probes to update each frame. It mirrors which world coordinate each slot holds, which
 // the GPU also records per probe (a probe's data is used only where its recorded coordinate matches):
 // a slot whose coordinate changed with a scroll, or that was never updated, is stale. Stale probes of
-// the finest levels come first; the rest of the budget goes round robin, each level twice as often as
-// the next coarser one.
+// the finest levels come first; then hot probes, whose light the GPU saw change (ApplyFeedback), and
+// their neighbours, at most half the budget; the rest goes round robin, each level twice as often as
+// the next coarser one. A cold probe, one the GPU found empty (no surface near enough for it to
+// light), takes its round robin turn only once in kDdgiColdRateDivisor passes.
 //
 // A level whose probes have converged refreshes at 1 / kDdgiSettledShareDivisor of its round robin
 // share. It has converged once the updates since it last changed have left less than
 // kDdgiSettledResidual of whatever it held before: each update keeps the hysteresis' share of the old
-// value, so n updates per probe leave hysteresis^n. A scroll, Unsettle or Reset starts it over.
+// value, so n updates per probe leave hysteresis^n (counted per probe that takes every turn: cold
+// ones count as a fraction). A scroll, Unsettle or Reset starts it over.
 class DdgiProbeScheduler
 {
   public:
@@ -95,6 +116,19 @@ class DdgiProbeScheduler
     // the editor).
     uint32_t StaleCount(uint32_t level) const;
 
+    // What the GPU reported for the probes of an earlier Schedule (one feedback value per scheduled
+    // probe, kDdgiFeedback* bits). A changed probe becomes hot for kDdgiHotUpdates updates and its six
+    // neighbours for kDdgiNeighbourHotUpdates; an empty one becomes cold (not one inside geometry: it
+    // needs its updates to come back to life). Reports for slots that have since moved to another
+    // coordinate are ignored.
+    void ApplyFeedback(std::span<const uint32_t> scheduled, std::span<const uint32_t> feedback);
+    // The geometry changed (a new ray scene): what made probes cold may be gone, and the levels
+    // converge over. Unlike Reset, no probe goes stale.
+    void GeometryChanged();
+    // Whether a probe is cold or hot (for tests).
+    bool Cold(uint32_t level, uint32_t slotIndex) const;
+    bool Hot(uint32_t level, uint32_t slotIndex) const;
+
   private:
     struct LevelState
     {
@@ -109,9 +143,24 @@ class DdgiProbeScheduler
         float credit = 0.0f;
         // What remains, per probe on average, of the level's content before its last change.
         float residual = 1.0f;
+        // Per slot index: non-zero when cold; the updates it still has coming as a hot probe.
+        std::vector<uint8_t> cold;
+        std::vector<uint8_t> hot;
+        uint32_t coldCount = 0;
+        // Round robin passes over the level: a cold probe takes the passes where (passes + index) is
+        // a multiple of kDdgiColdRateDivisor.
+        uint32_t passes = 0;
     };
+    void MakeHot(uint32_t level, uint32_t index, uint8_t updates);
+
     std::vector<LevelState> m_levels;
+    // The hot probes (PackDdgiProbe), oldest first.
+    std::vector<uint32_t> m_hot;
 };
+
+inline constexpr uint8_t kDdgiHotUpdates = 4;
+inline constexpr uint8_t kDdgiNeighbourHotUpdates = 2;
+inline constexpr uint32_t kDdgiColdRateDivisor = 16;
 
 inline constexpr float kDdgiSettledResidual = 0.01f;
 inline constexpr float kDdgiSettledShareDivisor = 4.0f;
@@ -138,30 +187,35 @@ class DdgiMovingInstances
     std::vector<uint8_t> m_skipped;
 };
 
-// The hysteresis the probes blend with for kDdgiFastSeconds after the lighting changes.
-inline constexpr float kDdgiFastHysteresis = 0.85f;
-inline constexpr float kDdgiFastSeconds = 1.0f;
-
-// Speeds the probes up when the lighting they hold goes stale (the DDGI design's adaptive
-// hysteresis): at 0.97 a moved sun takes a hundred frames to show in the bounce light. The lighting is
-// whatever values the caller says describe it (the directional lights' directions and colours, the
-// sky's mode and ambient); a change in any of them beyond a relative 1e-3, or in their count, starts
-// kDdgiFastSeconds of kDdgiFastHysteresis.
-class DdgiAdaptiveHysteresis
+// Watches the lighting the probes hold (the DDGI design's lighting epoch): the lighting is whatever
+// values the caller says describe it (the directional lights' directions and colours, the sky's mode
+// and ambient); a difference in any of them beyond a relative kDdgiLightingTolerance from the lighting
+// the epoch started with, or in their count, starts a new epoch. Against the epoch's start rather than
+// the last frame, so a sun the time of day moves a little every frame starts one every so often.
+// Every probe that updates in a later epoch than the one it recorded restarts its average
+// (ddgi_update.comp), whenever its turn comes: at 0.97 an update, a moved sun took a hundred updates
+// per probe to show in the bounce light, and with the round robin's tens of frames between a probe's
+// updates, that was minutes.
+class DdgiLightingWatch
 {
   public:
-    // The hysteresis for this frame: the setting, or kDdgiFastHysteresis while the lighting changed
-    // recently, whichever keeps less. seconds is the time since the previous call.
-    float Update(std::span<const glm::vec4> lighting, float seconds, float hysteresis);
+    // Whether this call started a new epoch (never the first call).
+    bool Update(std::span<const glm::vec4> lighting);
     // Whether the last Update saw the lighting change.
     bool Changed() const;
+    // The epoch, counting changes mod 256 (what the probes record).
+    uint32_t Epoch() const;
 
   private:
-    std::vector<glm::vec4> m_previous;
-    bool m_hasPrevious = false;
+    // The lighting when the epoch started.
+    std::vector<glm::vec4> m_reference;
+    bool m_hasReference = false;
     bool m_changed = false;
-    float m_fastSecondsLeft = 0.0f;
+    uint32_t m_epoch = 0;
 };
+
+// About a third of a degree of the sun's direction, or half a percent of its strength.
+inline constexpr float kDdgiLightingTolerance = 5e-3f;
 
 // A rotation for this frame's probe ray directions: the spherical Fibonacci set turned randomly, so
 // the directions cover the sphere over frames.

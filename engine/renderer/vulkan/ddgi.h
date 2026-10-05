@@ -39,6 +39,12 @@ class VulkanDdgi
     // This frame's schedule (PackDdgiProbe values, at most kMaxProbesPerFrame), into the slot's buffer.
     void SetSchedule(uint32_t frameSlot, std::span<const uint32_t> probes);
 
+    // What the update reported (kDdgiFeedback* values, one per probe) for the schedule this frame
+    // slot recorded last, once its fence has signalled: scheduled gets that schedule, feedback the
+    // reports. Both come back empty when the slot recorded none since the last call. Call before
+    // SetSchedule replaces the slot's schedule.
+    void TakeFeedback(uint32_t frameSlot, std::vector<uint32_t>& scheduled, std::vector<uint32_t>& feedback);
+
     // Clears every probe on the next Record: new content, whose light the old probes do not hold.
     void Invalidate();
 
@@ -48,7 +54,9 @@ class VulkanDdgi
         VkDescriptorSet raySet,
         uint32_t frameSlot,
         uint32_t frameIndex,
-        float hysteresis);
+        float hysteresis,
+        uint32_t lightingEpoch,
+        uint32_t geometryEpoch);
 
     TextureDescriptorBinding GetIrradianceBinding() const;
     TextureDescriptorBinding GetVisibilityBinding() const;
@@ -85,6 +93,11 @@ class VulkanDdgi
     Buffer m_rays;
     std::vector<Buffer> m_schedules;
     std::vector<uint32_t> m_scheduleCounts;
+    // Per frame slot: the update's reports (host visible), a copy of the schedule they answer, and
+    // whether that schedule was recorded since the last TakeFeedback.
+    std::vector<Buffer> m_feedback;
+    std::vector<std::vector<uint32_t>> m_recordedSchedules;
+    std::vector<uint8_t> m_feedbackPending;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_sets;

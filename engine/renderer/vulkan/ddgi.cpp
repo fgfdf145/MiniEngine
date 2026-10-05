@@ -24,7 +24,9 @@ struct DdgiConstants
     uint32_t scheduledCount = 0;
     // The trace reads the frame index here, the update the hysteresis as float bits.
     uint32_t frameIndexOrHysteresis = 0;
-    uint32_t padding[2]{};
+    // The update's lighting epoch (bits 0 to 7) and geometry epoch (bits 8 to 11).
+    uint32_t epochs = 0;
+    uint32_t padding = 0;
 };
 
 void GlobalBarrier(
@@ -59,25 +61,29 @@ VulkanDdgi::VulkanDdgi(
         m_visibility = CreateAtlas(kDdgiVisibilityTexels, kVisibilityFormat);
         m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
         m_states = CreateBuffer(
-            sizeof(glm::ivec4) * 2 * kDdgiProbesPerLevel * kDdgiMaxLevels,
+            static_cast<VkDeviceSize>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             false);
         m_rays = CreateBuffer(sizeof(glm::vec4) * kDdgiRaysPerProbe * kMaxProbesPerFrame, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         for (uint32_t slot = 0; slot < m_frameCount; ++slot)
         {
             m_schedules.push_back(CreateBuffer(sizeof(uint32_t) * kMaxProbesPerFrame, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true));
+            m_feedback.push_back(CreateBuffer(sizeof(uint32_t) * kMaxProbesPerFrame, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true));
         }
         m_scheduleCounts.assign(m_frameCount, 0u);
+        m_recordedSchedules.resize(m_frameCount);
+        m_feedbackPending.assign(m_frameCount, 0u);
 
-        constexpr std::array<VkDescriptorType, 5> kTypes = {
+        constexpr std::array<VkDescriptorType, 6> kTypes = {
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         const std::array<VkDescriptorPoolSize, 2> poolSizes = {
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * m_frameCount},
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * m_frameCount},
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * m_frameCount}};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -93,7 +99,8 @@ VulkanDdgi::VulkanDdgi(
             const VkDescriptorImageInfo irradianceInfo{VK_NULL_HANDLE, m_irradiance.view, VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo visibilityInfo{VK_NULL_HANDLE, m_visibility.view, VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorBufferInfo statesInfo{m_states.buffer, 0, VK_WHOLE_SIZE};
-            std::array<VkWriteDescriptorSet, 5> writes{};
+            const VkDescriptorBufferInfo feedbackInfo{m_feedback[slot].buffer, 0, VK_WHOLE_SIZE};
+            std::array<VkWriteDescriptorSet, 6> writes{};
             for (uint32_t binding = 0; binding < writes.size(); ++binding)
             {
                 writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -107,6 +114,7 @@ VulkanDdgi::VulkanDdgi(
             writes[2].pImageInfo = &irradianceInfo;
             writes[3].pImageInfo = &visibilityInfo;
             writes[4].pBufferInfo = &statesInfo;
+            writes[5].pBufferInfo = &feedbackInfo;
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
 
@@ -134,6 +142,22 @@ void VulkanDdgi::SetSchedule(uint32_t frameSlot, std::span<const uint32_t> probe
         std::memcpy(m_schedules[frameSlot].mapped, probes.data(), sizeof(uint32_t) * count);
     }
     m_scheduleCounts[frameSlot] = static_cast<uint32_t>(count);
+    m_recordedSchedules[frameSlot].assign(probes.begin(), probes.begin() + static_cast<std::ptrdiff_t>(count));
+    m_feedbackPending[frameSlot] = 0u;
+}
+
+void VulkanDdgi::TakeFeedback(uint32_t frameSlot, std::vector<uint32_t>& scheduled, std::vector<uint32_t>& feedback)
+{
+    scheduled.clear();
+    feedback.clear();
+    if (m_feedbackPending[frameSlot] == 0u)
+    {
+        return;
+    }
+    m_feedbackPending[frameSlot] = 0u;
+    scheduled = m_recordedSchedules[frameSlot];
+    const uint32_t* reports = static_cast<const uint32_t*>(m_feedback[frameSlot].mapped);
+    feedback.assign(reports, reports + scheduled.size());
 }
 
 void VulkanDdgi::Invalidate()
@@ -147,7 +171,9 @@ void VulkanDdgi::Record(
     VkDescriptorSet raySet,
     uint32_t frameSlot,
     uint32_t frameIndex,
-    float hysteresis)
+    float hysteresis,
+    uint32_t lightingEpoch,
+    uint32_t geometryEpoch)
 {
     if (!m_cleared)
     {
@@ -223,17 +249,20 @@ void VulkanDdgi::Record(
     GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
 
     std::memcpy(&constants.frameIndexOrHysteresis, &hysteresis, sizeof(hysteresis));
+    constants.epochs = (lightingEpoch & 0xffu) | ((geometryEpoch & 0xfu) << 8);
+    m_feedbackPending[frameSlot] = 1u;
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_updatePipeline);
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     vkCmdDispatch(commandBuffer, count, 1, 1);
 
-    // The new atlases and states before any shading samples them.
+    // The new atlases and states before any shading samples them, and the feedback before the CPU
+    // reads it once the frame's fence signals.
     GlobalBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_WRITE_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT);
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
 }
 
 TextureDescriptorBinding VulkanDdgi::GetIrradianceBinding() const
@@ -363,6 +392,10 @@ void VulkanDdgi::DestroyHandles()
     for (Buffer& schedule : m_schedules)
     {
         buffers.push_back(&schedule);
+    }
+    for (Buffer& feedback : m_feedback)
+    {
+        buffers.push_back(&feedback);
     }
     for (Buffer* buffer : buffers)
     {

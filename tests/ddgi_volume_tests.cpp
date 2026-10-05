@@ -171,18 +171,18 @@ void ConvergedLevelsRefreshLess()
     Require(!scheduler.Settled(0), "a scroll brings new probes, which start the level over");
 }
 
-void HysteresisReportsChanges()
+void LightingWatchReportsChanges()
 {
-    DdgiAdaptiveHysteresis adaptive;
+    DdgiLightingWatch watch;
     std::vector<glm::vec4> lighting = {glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)};
-    adaptive.Update(lighting, 0.1f, 0.97f);
-    adaptive.Update(lighting, 0.1f, 0.97f);
-    Require(!adaptive.Changed(), "still lighting is no change");
+    watch.Update(lighting);
+    watch.Update(lighting);
+    Require(!watch.Changed(), "still lighting is no change");
     lighting[0].x = 0.5f;
-    adaptive.Update(lighting, 0.1f, 0.97f);
-    Require(adaptive.Changed(), "a turned light is");
-    adaptive.Update(lighting, 0.1f, 0.97f);
-    Require(!adaptive.Changed(), "for the frame it turned only");
+    watch.Update(lighting);
+    Require(watch.Changed(), "a turned light is");
+    watch.Update(lighting);
+    Require(!watch.Changed(), "for the frame it turned only");
 }
 
 // With nothing stale, each level is updated twice as often as the next coarser one.
@@ -266,36 +266,146 @@ void MovingInstancesAreSkippedUntilTheySettle()
     Require(skipped.size() == 4 && skipped[2] == 0 && skipped[3] == 0, "new content is traced");
 }
 
-// The probes keep their settled hysteresis while the lighting holds, and drop to the fast one for a
-// second after it changes, the sun's direction or colour or the sky.
-void HysteresisDropsWhenTheLightingChanges()
+// Each change in the lighting starts a new epoch, which the probes compare with the one they
+// recorded; drift within the tolerance does not.
+void LightingEpochCountsChanges()
 {
-    DdgiAdaptiveHysteresis adaptive;
+    DdgiLightingWatch watch;
     std::vector<glm::vec4> lighting = {glm::vec4(0.3f, -0.9f, 0.2f, 0.0f), glm::vec4(1.0f, 0.95f, 0.9f, 120000.0f)};
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "the first frame has nothing to compare with");
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "steady lighting keeps the setting");
+    Require(!watch.Update(lighting) && watch.Epoch() == 0u, "the first frame has nothing to compare with");
+    Require(!watch.Update(lighting) && watch.Epoch() == 0u, "steady lighting keeps the epoch");
 
     lighting[0].x += 0.01f;
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == kDdgiFastHysteresis, "a turning sun speeds the probes up");
-    float elapsed = 0.0f;
-    while (elapsed + 0.1f < kDdgiFastSeconds)
-    {
-        Require(adaptive.Update(lighting, 0.1f, 0.97f) == kDdgiFastHysteresis, "for a second after the change");
-        elapsed += 0.1f;
-    }
-    Require(adaptive.Update(lighting, 0.2f, 0.97f) == 0.97f, "then settles again");
+    Require(watch.Update(lighting) && watch.Epoch() == 1u, "a turning sun starts a new epoch");
+    Require(!watch.Update(lighting) && watch.Epoch() == 1u, "which then holds");
 
     // Tiny drift (the sun's transmittance as the camera climbs a little) is not a change.
     lighting[1].w *= 1.0f + 1e-5f;
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == 0.97f, "drift within the tolerance");
+    Require(!watch.Update(lighting), "drift within the tolerance");
 
-    // The setting wins when it is already faster.
-    lighting[1].y = 0.5f;
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.5f) == 0.5f, "never slower than the setting");
+    // A sun the time of day moves a little each frame adds up to a change.
+    int frames = 0;
+    while (!watch.Update(lighting) && frames < 1000)
+    {
+        lighting[0].z += 1e-4f;
+        ++frames;
+    }
+    Require(watch.Epoch() == 2u && frames > 10 && frames < 100, "slow drift starts an epoch once it adds up");
 
     // A light added or removed changes the lighting too.
     lighting.push_back(glm::vec4(1.0f));
-    Require(adaptive.Update(lighting, 1.0f / 60.0f, 0.97f) == kDdgiFastHysteresis, "a new light");
+    Require(watch.Update(lighting) && watch.Epoch() == 3u, "a new light");
+
+    for (int change = 0; change < 254; ++change)
+    {
+        lighting[0].y += 0.01f;
+        watch.Update(lighting);
+    }
+    Require(watch.Epoch() == 1u, "the epoch wraps at 256, as the probes record it");
+}
+
+// Fills every level so nothing is stale, and returns the last frame's schedule.
+std::vector<uint32_t> Fill(DdgiProbeScheduler& scheduler, std::span<const DdgiLevel> levels)
+{
+    std::vector<uint32_t> scheduled;
+    for (int frame = 0; frame < static_cast<int>(levels.size() * kDdgiProbesPerLevel / 2048 + 2); ++frame)
+    {
+        scheduled = scheduler.Schedule(levels, 2048);
+    }
+    return scheduled;
+}
+
+uint32_t Report(const DdgiLevel& level, uint32_t slotIndex, uint32_t bits)
+{
+    return bits | DdgiFeedbackCoordinate(DdgiSlotCoordinate(DdgiSlotFromIndex(slotIndex), level.origin));
+}
+
+// A probe whose light changed is updated again within the next frames, ahead of the round robin, and
+// so are its neighbours; the change unsettles its level.
+void ChangedProbesComeBackSoon()
+{
+    DdgiProbeScheduler scheduler;
+    const std::vector<DdgiLevel> levels = Levels(glm::vec3(0.0f), 4);
+    Fill(scheduler, levels);
+
+    const glm::ivec3 slot(5, 6, 7);
+    const uint32_t index = DdgiSlotIndex(slot);
+    const uint32_t neighbour = DdgiSlotIndex(slot + glm::ivec3(0, 1, 0));
+    const uint32_t far = DdgiSlotIndex(glm::ivec3(20, 6, 7));
+    const std::vector<uint32_t> scheduled = {PackDdgiProbe(2, index)};
+    scheduler.ApplyFeedback(scheduled, std::vector<uint32_t>{Report(levels[2], index, kDdgiFeedbackChanged)});
+    Require(scheduler.Hot(2, index) && scheduler.Hot(2, neighbour) && !scheduler.Hot(2, far), "the probe and its neighbours are hot");
+
+    uint32_t probeUpdates = 0;
+    uint32_t neighbourUpdates = 0;
+    for (int frame = 0; frame < static_cast<int>(kDdgiHotUpdates); ++frame)
+    {
+        for (const uint32_t packed : scheduler.Schedule(levels, 2048))
+        {
+            probeUpdates += packed == PackDdgiProbe(2, index) ? 1u : 0u;
+            neighbourUpdates += packed == PackDdgiProbe(2, neighbour) ? 1u : 0u;
+        }
+    }
+    Require(probeUpdates == kDdgiHotUpdates, "the changed probe is updated every frame while hot");
+    Require(neighbourUpdates >= kDdgiNeighbourHotUpdates, "its neighbours too, for fewer frames");
+    Require(!scheduler.Hot(2, index) && !scheduler.Hot(2, neighbour), "then they cool down");
+
+    // A report for a coordinate the slot no longer holds (a scroll happened since) is ignored.
+    DdgiProbeScheduler other;
+    Fill(other, levels);
+    const DdgiLevel moved = ComputeDdgiLevel(glm::vec3(300.0f, 0.0f, 0.0f), 4.0f);
+    other.ApplyFeedback(scheduled, std::vector<uint32_t>{Report(moved, index, kDdgiFeedbackChanged)});
+    Require(!other.Hot(2, index), "a stale report");
+}
+
+// Empty and buried probes take a share of the round robin's turns; the budget goes to the others.
+void ColdProbesUpdateLess()
+{
+    DdgiProbeScheduler scheduler;
+    const std::vector<DdgiLevel> levels = Levels(glm::vec3(0.0f), 1);
+    Fill(scheduler, levels);
+    // The upper three quarters of the level are empty air.
+    std::vector<uint32_t> scheduled;
+    std::vector<uint32_t> feedback;
+    for (uint32_t index = 0; index < kDdgiProbesPerLevel; ++index)
+    {
+        const bool empty = DdgiSlotFromIndex(index).y >= kDdgiGridSize.y / 4;
+        scheduled.push_back(PackDdgiProbe(0, index));
+        feedback.push_back(Report(levels[0], index, empty ? kDdgiFeedbackEmpty : 0u));
+    }
+    scheduler.ApplyFeedback(scheduled, feedback);
+    Require(scheduler.Cold(0, DdgiSlotIndex(glm::ivec3(0, kDdgiGridSize.y - 1, 0))) && !scheduler.Cold(0, 0), "empty probes are cold");
+    {
+        DdgiProbeScheduler buried;
+        Fill(buried, levels);
+        buried.ApplyFeedback(std::vector<uint32_t>{PackDdgiProbe(0, 0)}, std::vector<uint32_t>{Report(levels[0], 0, kDdgiFeedbackInactive)});
+        Require(!buried.Cold(0, 0), "a probe inside geometry keeps its turns");
+    }
+
+    std::vector<uint32_t> counts(kDdgiProbesPerLevel, 0u);
+    constexpr int kFrames = 400;
+    for (int frame = 0; frame < kFrames; ++frame)
+    {
+        for (const uint32_t packed : scheduler.Schedule(levels, 1024))
+        {
+            ++counts[packed & 0xffffffu];
+        }
+    }
+    double warm = 0.0;
+    double cold = 0.0;
+    for (uint32_t index = 0; index < kDdgiProbesPerLevel; ++index)
+    {
+        (DdgiSlotFromIndex(index).y >= kDdgiGridSize.y / 4 ? cold : warm) += counts[index];
+    }
+    warm /= kDdgiProbesPerLevel / 4;
+    cold /= kDdgiProbesPerLevel * 3 / 4;
+    Require(std::abs(warm / cold - kDdgiColdRateDivisor) < 1.0, "a cold probe updates kDdgiColdRateDivisor times less often");
+    // 1024 probes a frame over 4096 warm probes and 12288 cold ones at a fraction of the rate.
+    const double perFrame = 1024.0 / (4096.0 + 12288.0 / kDdgiColdRateDivisor);
+    Require(std::abs(warm / kFrames - perFrame) < 0.02, "the budget the cold probes leave goes to the rest");
+
+    scheduler.GeometryChanged();
+    Require(!scheduler.Cold(0, DdgiSlotIndex(glm::ivec3(0, kDdgiGridSize.y - 1, 0))), "new geometry: every probe is looked at again");
 }
 }
 
@@ -309,9 +419,11 @@ int main()
         RoundRobinFavoursFineLevels();
         RotationsAreRotations();
         MovingInstancesAreSkippedUntilTheySettle();
-        HysteresisDropsWhenTheLightingChanges();
+        LightingEpochCountsChanges();
         ConvergedLevelsRefreshLess();
-        HysteresisReportsChanges();
+        LightingWatchReportsChanges();
+        ChangedProbesComeBackSoon();
+        ColdProbesUpdateLess();
     }
     catch (const std::exception& error)
     {
