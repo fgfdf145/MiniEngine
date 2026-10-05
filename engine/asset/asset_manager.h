@@ -8,6 +8,7 @@
 
 namespace me
 {
+class SvgIcon;
 
 struct AssetManagerResult
 {
@@ -103,6 +104,7 @@ class AssetManager
     static const char* TypeTag(AssetType t);
     static const char* ShortTag(AssetType t);
     static const char* TypeIcon(AssetType t);
+    static const SvgIcon* TileIcon(const Entry& entry);
     static void PushTypeColor(AssetType t);
     static unsigned int TypeColorU32(AssetType t);
 

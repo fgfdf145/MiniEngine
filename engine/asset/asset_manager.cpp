@@ -5,6 +5,7 @@
 #include "asset_registry.h"
 #include "material_definition.h"
 #include "model_cache.h"
+#include "svg_icon.h"
 
 #include <engine/core/text/ascii.h>
 
@@ -12,8 +13,8 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
-#include <cfloat>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -24,6 +25,22 @@
 
 namespace me
 {
+
+// The type icons' SVG documents, embedded by engine/asset/CMakeLists.txt.
+extern const unsigned char kAssetIconSvg_folder[];
+extern const std::size_t kAssetIconSvg_folderSize;
+extern const unsigned char kAssetIconSvg_model[];
+extern const std::size_t kAssetIconSvg_modelSize;
+extern const unsigned char kAssetIconSvg_material[];
+extern const std::size_t kAssetIconSvg_materialSize;
+extern const unsigned char kAssetIconSvg_scene[];
+extern const std::size_t kAssetIconSvg_sceneSize;
+extern const unsigned char kAssetIconSvg_texture[];
+extern const std::size_t kAssetIconSvg_textureSize;
+extern const unsigned char kAssetIconSvg_file[];
+extern const std::size_t kAssetIconSvg_fileSize;
+extern const unsigned char kAssetIconSvg_parent_folder[];
+extern const std::size_t kAssetIconSvg_parent_folderSize;
 
 namespace
 {
@@ -352,6 +369,53 @@ void AssetManager::PushTypeColor(AssetType t)
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
         break;
     }
+}
+
+const SvgIcon* AssetManager::TileIcon(const Entry& entry)
+{
+    const auto parse = [](const unsigned char* data, std::size_t size)
+    {
+        return SvgIcon::Parse(std::string_view(reinterpret_cast<const char*>(data), size));
+    };
+    // Parsed once; each keeps the meshes of the sizes it has been drawn at.
+    static const std::array<std::optional<SvgIcon>, 7> icons = {
+        parse(kAssetIconSvg_folder, kAssetIconSvg_folderSize),
+        parse(kAssetIconSvg_model, kAssetIconSvg_modelSize),
+        parse(kAssetIconSvg_material, kAssetIconSvg_materialSize),
+        parse(kAssetIconSvg_scene, kAssetIconSvg_sceneSize),
+        parse(kAssetIconSvg_texture, kAssetIconSvg_textureSize),
+        parse(kAssetIconSvg_file, kAssetIconSvg_fileSize),
+        parse(kAssetIconSvg_parent_folder, kAssetIconSvg_parent_folderSize),
+    };
+    size_t index = 5;
+    if (entry.name == "..")
+    {
+        index = 6;
+    }
+    else
+    {
+        switch (entry.type)
+        {
+        case AssetType::Dir:
+            index = 0;
+            break;
+        case AssetType::Model:
+            index = 1;
+            break;
+        case AssetType::Material:
+            index = 2;
+            break;
+        case AssetType::Scene:
+            index = 3;
+            break;
+        case AssetType::Texture:
+            index = 4;
+            break;
+        default:
+            break;
+        }
+    }
+    return icons[index].has_value() ? &*icons[index] : nullptr;
 }
 
 const char* AssetManager::TypeIcon(AssetType t)
@@ -712,24 +776,28 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
     const float s = UiScale();
 
     // The type's icon in its colour, centred in the icon area; ".." gets an up arrow. Files
-    // also carry their short tag under the icon.
-    const char* icon = (entry.name == "..") ? ICON_FA_ARROW_TURN_UP : TypeIcon(entry.type);
-    const float iconSize = std::min(TileIconSize(), m_tileWidth - 8.0f * s);
-    ImFont* font = ImGui::GetFont();
-    const ImVec2 iconExtent = font->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, icon);
-    const float iconCentreY = tileMin.y + TileIconHeight() * (entry.isDir ? 0.5f : 0.42f);
-    drawList->AddText(font, iconSize,
-                      ImVec2(tileMin.x + (m_tileWidth - iconExtent.x) * 0.5f, iconCentreY - iconExtent.y * 0.5f),
-                      typeCol, icon);
+    // also carry their short tag under the icon, at the text's own size: the font atlas is
+    // baked at that size, and text drawn larger or smaller than it blurs.
+    float iconAreaHeight = TileIconHeight();
     if (!entry.isDir)
     {
         const char* tag = ShortTag(entry.type);
-        const float tagFontSize = ImGui::GetFontSize() * 0.75f;
-        const ImVec2 tagSize = font->CalcTextSizeA(tagFontSize, FLT_MAX, 0.0f, tag);
-        drawList->AddText(font, tagFontSize,
-                          ImVec2(tileMin.x + (m_tileWidth - tagSize.x) * 0.5f,
-                                 tileMin.y + TileIconHeight() - tagSize.y - 2.0f * s),
+        const ImVec2 tagSize = ImGui::CalcTextSize(tag);
+        const float tagTop = tileMin.y + TileIconHeight() - tagSize.y - 2.0f * s;
+        drawList->AddText(ImVec2(std::round(tileMin.x + (m_tileWidth - tagSize.x) * 0.5f), tagTop),
                           ImGui::GetColorU32(ImGuiCol_TextDisabled), tag);
+        iconAreaHeight -= tagSize.y + 2.0f * s;
+    }
+    const float iconHeight = std::min(TileIconSize(), iconAreaHeight - 8.0f * s);
+    if (const SvgIcon* icon = TileIcon(entry); icon != nullptr && iconHeight > 0.0f)
+    {
+        // Vector icons, sharp at any size.
+        const float height = std::min(iconHeight, (m_tileWidth - 8.0f * s) / icon->AspectRatio());
+        const float width = height * icon->AspectRatio();
+        icon->Draw(*drawList,
+                   ImVec2(tileMin.x + (m_tileWidth - width) * 0.5f, tileMin.y + (iconAreaHeight - height) * 0.5f + 2.0f * s),
+                   height,
+                   typeCol);
     }
 
     if (!isRenaming)

@@ -37,6 +37,8 @@
     model_loader.h
     model_post_process.cpp
     model_post_process.h
+    svg_icon.cpp
+    svg_icon.h
     texture_compression.cpp
     texture_compression.h
     texture_loader.cpp
@@ -45,6 +47,27 @@
     texture_preparation.h
 )
 miniengine_group_target_sources(engine_asset)
+
+# The Assets window's type icons (SVG, written by tools/editor_icons/fontawesome_to_svg.py), built
+# into the library so they need no file at run time.
+set(_asset_icon_names folder model material scene texture file parent_folder)
+foreach(_icon IN LISTS _asset_icon_names)
+    set(_icon_svg "${CMAKE_CURRENT_SOURCE_DIR}/icons/${_icon}.svg")
+    set(_icon_source "${CMAKE_CURRENT_BINARY_DIR}/generated/asset_icon_${_icon}_svg.cpp")
+    add_custom_command(
+        OUTPUT "${_icon_source}"
+        COMMAND ${CMAKE_COMMAND}
+            "-DINPUT=${_icon_svg}"
+            "-DOUTPUT=${_icon_source}"
+            "-DSYMBOL=kAssetIconSvg_${_icon}"
+            -P "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
+        DEPENDS "${_icon_svg}" "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
+        COMMENT "Embedding icons/${_icon}.svg"
+        VERBATIM
+    )
+    target_sources(engine_asset PRIVATE "${_icon_source}")
+    source_group("Generated" FILES "${_icon_source}")
+endforeach()
 
 target_include_directories(engine_asset
     PUBLIC
