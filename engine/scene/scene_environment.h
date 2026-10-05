@@ -134,6 +134,34 @@ struct CloudSettings
     bool operator==(const CloudSettings&) const = default;
 };
 
+// The sun placed by the clock (engine/scene/sun_position.h): a day of the year and a local solar
+// time at a latitude turn the scene's sun, its directional light, along the arc it takes across a
+// northern-hemisphere sky, rising in the east and crossing the south at noon. The sun's colour and
+// strength then come from the air it passes through: the atmosphere's transmittance reddens it low
+// and puts it out below the horizon.
+struct TimeOfDaySettings
+{
+    // Off for scenes saved before it existed: the sun keeps its hand-set rotation.
+    // EditorScene::AddDefaultSunAndSky turns it on.
+    bool enabled = false;
+    // Local solar time in hours, [0, 24): 12 is the sun due south, at its highest. With the
+    // defaults below, 14:00 puts the sun 40 degrees up in the south-west, near where the startup
+    // scene's hand-set sun stood (35 degrees up, due south).
+    float hours = 14.0f;
+    // Day of the year, 1 to 365: 80 is the March equinox, 172 the June solstice, 279 early October.
+    int dayOfYear = 279;
+    // Degrees north, clamped to [0, 90]: the trajectory is always a northern-hemisphere one. Tokyo,
+    // for the Japanese cars, is 35.7.
+    float latitudeDegrees = 35.7f;
+    // Where north lies in the world: 0 puts it along -Z (east +X, south +Z, behind the default
+    // camera); positive values turn it about +Y.
+    float northDegrees = 0.0f;
+    // Scene seconds per real second the clock runs while the editor is open; 0 holds the time.
+    float timeScale = 0.0f;
+
+    bool operator==(const TimeOfDaySettings&) const = default;
+};
+
 struct SceneEnvironment
 {
     EnvironmentMode mode = EnvironmentMode::None;
@@ -141,6 +169,7 @@ struct SceneEnvironment
     HdriSettings hdri;
     HeightFogSettings heightFog;
     CloudSettings clouds;
+    TimeOfDaySettings timeOfDay;
 
     bool operator==(const SceneEnvironment&) const = default;
 };

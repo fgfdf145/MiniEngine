@@ -6,6 +6,7 @@
 
 #include <engine/logic/editor_world.h>
 #include <engine/platform/file_dialog/file_dialog.h>
+#include <engine/scene/sun_position.h>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 
 namespace me
 {
@@ -186,6 +188,42 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
     if (ImGui::Combo("Sky", &mode, kModes.data(), static_cast<int>(kModes.size())))
     {
         environment.mode = static_cast<EnvironmentMode>(mode);
+    }
+
+    if (ImGui::CollapsingHeader("Time of day"))
+    {
+        TimeOfDaySettings& time = environment.timeOfDay;
+        ImGui::PushID("TimeOfDay");
+        ImGui::Checkbox("Enabled", &time.enabled);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Turns the sun (the brightest Directional light) along a\nnorthern-hemisphere arc by the clock; its rotation follows.");
+        }
+        ImGui::BeginDisabled(!time.enabled);
+        const int minutes = static_cast<int>(time.hours * 60.0f + 0.5f) % (24 * 60);
+        char clock[16];
+        std::snprintf(clock, sizeof(clock), "%02d:%02d", minutes / 60, minutes % 60);
+        ImGui::SliderFloat("Time (h)", &time.hours, 0.0f, 24.0f, clock, ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderInt("Day of year", &time.dayOfYear, 1, 365, "%d", ImGuiSliderFlags_AlwaysClamp);
+        DragFloatInRange("Latitude N (deg)", &time.latitudeDegrees, 0.0f, 90.0f, "%.1f");
+        DragFloatInRange("North (deg)", &time.northDegrees, -180.0f, 180.0f, "%.1f", 0.5f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Where north lies: 0 is -Z (south +Z, east +X); positive turns it about +Y.");
+        }
+        ImGui::DragFloat("Time scale", &time.timeScale, 1.0f, 0.0f, 86400.0f, "%.0fx", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Scene seconds per real second; 0 holds the clock. 3600 is an hour a second.");
+        }
+        const SolarAngles sun = ComputeSolarAngles(time);
+        ImGui::TextDisabled("Sun: elevation %.1f deg, azimuth %.1f deg", sun.elevationDegrees, sun.azimuthDegrees);
+        ImGui::EndDisabled();
+        if (time.enabled && !SceneHasDirectionalLight(scene))
+        {
+            ImGui::TextDisabled("Add a Directional light: it is the sun.");
+        }
+        ImGui::PopID();
     }
 
     if (environment.mode == EnvironmentMode::Atmosphere)

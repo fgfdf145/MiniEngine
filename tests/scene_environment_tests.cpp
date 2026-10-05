@@ -1,5 +1,9 @@
 #include <engine/logic/editor_world.h>
+#include <engine/scene/sun_position.h>
 
+#include <glm/ext/matrix_transform.hpp>
+
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -61,6 +65,12 @@ SceneEnvironment MakeEnvironment()
     environment.clouds.albedo = 0.875f;
     environment.clouds.ambientScale = 1.5f;
     environment.clouds.hazeDistance = 20000.0f;
+    environment.timeOfDay.enabled = true;
+    environment.timeOfDay.hours = 7.5f;
+    environment.timeOfDay.dayOfYear = 100;
+    environment.timeOfDay.latitudeDegrees = 42.5f;
+    environment.timeOfDay.northDegrees = -30.0f;
+    environment.timeOfDay.timeScale = 60.0f;
     return environment;
 }
 
@@ -209,6 +219,191 @@ void StartupSceneHasAtmosphereAndSun()
     Require(sunIntensity == kDefaultSunIlluminanceLux, "the sun has the default illuminance");
 }
 
+// A scene saved before the time of day existed: no time_of_day node reads as off, so its sun keeps
+// its hand-set rotation.
+void MissingTimeOfDayNodeLoadsAsOff()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->SetEnvironment(MakeEnvironment());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_notime.yaml";
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
+    std::string yaml;
+    {
+        std::ifstream in(path);
+        yaml.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const size_t begin = yaml.find("\n  time_of_day:");
+    const size_t end = yaml.find("\neditor:");
+    Require(begin != std::string::npos && end != std::string::npos && begin < end,
+            "the saved scene has a time_of_day node at the end of the environment node");
+    yaml.erase(begin, end - begin);
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << yaml;
+    }
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::filesystem::remove(path);
+    Require(loaded.environment.clouds == MakeEnvironment().clouds, "the clouds before it still load");
+    Require(loaded.environment.timeOfDay == TimeOfDaySettings{}, "a scene without time_of_day must load with the defaults");
+    Require(!loaded.environment.timeOfDay.enabled, "and the default is off");
+}
+
+bool Near(float a, float b, float tolerance)
+{
+    return std::abs(a - b) <= tolerance;
+}
+
+bool Near(const glm::vec3& a, const glm::vec3& b, float tolerance)
+{
+    return glm::length(a - b) <= tolerance;
+}
+
+TimeOfDaySettings MakeTime(float hours, int day, float latitude)
+{
+    TimeOfDaySettings time{};
+    time.enabled = true;
+    time.hours = hours;
+    time.dayOfYear = day;
+    time.latitudeDegrees = latitude;
+    return time;
+}
+
+// The northern-hemisphere arc: up in the east, highest due south at solar noon, down in the west.
+void SunFollowsNorthernArc()
+{
+    Require(Near(SolarDeclinationDegrees(172), 23.44f, 0.05f), "the June solstice puts the sun 23.44 degrees north");
+    Require(Near(SolarDeclinationDegrees(355), -23.44f, 0.05f), "the December solstice puts it 23.44 degrees south");
+    Require(std::abs(SolarDeclinationDegrees(80)) < 1.0f, "the March equinox has it on the equator");
+
+    for (const int day : {1, 80, 172, 279, 355})
+    {
+        for (const float latitude : {30.0f, 35.7f, 51.5f, 66.0f})
+        {
+            const float declination = SolarDeclinationDegrees(day);
+            const SolarAngles noon = ComputeSolarAngles(MakeTime(12.0f, day, latitude));
+            Require(Near(noon.elevationDegrees, 90.0f - latitude + declination, 0.01f), "solar noon stands at 90 - latitude + declination");
+            Require(Near(noon.azimuthDegrees, 180.0f, 0.01f), "solar noon is due south north of the tropic");
+
+            const SolarAngles morning = ComputeSolarAngles(MakeTime(9.0f, day, latitude));
+            const SolarAngles evening = ComputeSolarAngles(MakeTime(15.0f, day, latitude));
+            Require(morning.azimuthDegrees > 0.0f && morning.azimuthDegrees < 180.0f, "the morning sun is in the east");
+            Require(evening.azimuthDegrees > 180.0f && evening.azimuthDegrees < 360.0f, "the afternoon sun is in the west");
+            Require(Near(morning.elevationDegrees, evening.elevationDegrees, 0.01f), "the arc is symmetric about noon");
+            Require(Near(morning.azimuthDegrees, 360.0f - evening.azimuthDegrees, 0.01f), "mirrored about the meridian");
+            Require(morning.elevationDegrees < noon.elevationDegrees, "and lower than at noon");
+
+            const SolarAngles midnight = ComputeSolarAngles(MakeTime(0.0f, day, latitude));
+            Require(Near(midnight.elevationDegrees, declination - (90.0f - latitude), 0.01f), "midnight is the lower culmination");
+        }
+    }
+
+    // At the equinox the sun rises (near enough) due east at 06:00.
+    const SolarAngles sunrise = ComputeSolarAngles(MakeTime(6.0f, 80, 40.0f));
+    Require(Near(sunrise.elevationDegrees, 0.0f, 1.0f), "at 06:00 on the equinox the sun is on the horizon");
+    Require(Near(sunrise.azimuthDegrees, 90.0f, 1.0f), "in the east");
+
+    Require(ComputeSolarAngles(MakeTime(0.0f, 172, 70.0f)).elevationDegrees > 0.0f, "the June midnight sun above the Arctic circle");
+}
+
+// Out-of-range settings: southern latitudes clamp to the equator, hours wrap.
+void TimeOfDayClamps()
+{
+    const SolarAngles equator = ComputeSolarAngles(MakeTime(10.0f, 200, 0.0f));
+    const SolarAngles south = ComputeSolarAngles(MakeTime(10.0f, 200, -40.0f));
+    Require(equator.elevationDegrees == south.elevationDegrees && equator.azimuthDegrees == south.azimuthDegrees,
+            "a southern latitude clamps to the equator");
+    Require(ClampTimeOfDaySettings(MakeTime(10.0f, 200, 120.0f)).latitudeDegrees == 90.0f, "and past the pole to the pole");
+    Require(Near(ClampTimeOfDaySettings(MakeTime(25.5f, 1, 0.0f)).hours, 1.5f, 1e-5f), "25.5 h wraps to 1.5 h");
+    Require(Near(ClampTimeOfDaySettings(MakeTime(-1.0f, 1, 0.0f)).hours, 23.0f, 1e-5f), "-1 h wraps to 23 h");
+    Require(ClampTimeOfDaySettings(MakeTime(24.0f, 1, 0.0f)).hours == 0.0f, "24 h is midnight");
+    Require(ClampTimeOfDaySettings(MakeTime(12.0f, 400, 0.0f)).dayOfYear == 365, "the day clamps into the year");
+}
+
+// The light's rotation as the renderer builds it (BuildLightRotation): XYZ Euler, shining along -Y.
+glm::vec3 ShineDirection(const glm::vec3& rotationDegrees)
+{
+    glm::mat4 rotation(1.0f);
+    rotation = glm::rotate(rotation, glm::radians(rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
+    rotation = glm::rotate(rotation, glm::radians(rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
+    rotation = glm::rotate(rotation, glm::radians(rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
+    return glm::normalize(glm::vec3(rotation * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f)));
+}
+
+void SunDirectionInWorld()
+{
+    TimeOfDaySettings time = MakeTime(12.0f, 172, 35.7f);
+    const glm::vec3 noon = ComputeDirectionToSun(time);
+    Require(noon.z > 0.0f && Near(noon.x, 0.0f, 1e-5f), "with north along -Z the noon sun is toward +Z, the south");
+    Require(Near(noon.y, std::sin(glm::radians(ComputeSolarAngles(time).elevationDegrees)), 1e-5f), "at its elevation");
+    time.hours = 9.0f;
+    Require(ComputeDirectionToSun(time).x > 0.0f, "the morning sun is toward +X, the east");
+    time.hours = 12.0f;
+    time.northDegrees = 90.0f;
+    // North turned 90 degrees about +Y: -Z goes to -X, so the south is +X.
+    Require(Near(ComputeDirectionToSun(time), glm::vec3(noon.z, noon.y, 0.0f), 1e-5f), "turning north turns the sun with it");
+
+    // Every direction the sun takes round-trips through the light's rotation.
+    for (float hours = 0.0f; hours < 24.0f; hours += 0.75f)
+    {
+        for (const float north : {0.0f, 37.0f, -120.0f})
+        {
+            TimeOfDaySettings sample = MakeTime(hours, 100, 51.5f);
+            sample.northDegrees = north;
+            const glm::vec3 toSun = ComputeDirectionToSun(sample);
+            Require(Near(ShineDirection(DirectionalLightRotationDegrees(toSun)), -toSun, 1e-4f), "the light shines away from the sun");
+        }
+    }
+    Require(Near(ShineDirection(DirectionalLightRotationDegrees(glm::vec3(0.0f, 1.0f, 0.0f))), glm::vec3(0.0f, -1.0f, 0.0f), 1e-5f),
+            "an overhead sun shines straight down");
+}
+
+glm::vec3 SunShineDirection(const IEditorWorld& world)
+{
+    glm::vec3 direction(0.0f);
+    world.ForEachLight(
+        [&](entt::entity, const TagComponent&, const TransformComponent& transform, const LightComponent& light)
+        {
+            if (light.type == LightType::Directional)
+            {
+                direction = ShineDirection(transform.rotationDegrees);
+            }
+        });
+    return direction;
+}
+
+// The startup scene's sun follows the clock, and a change of time turns it.
+void SceneSunFollowsClock()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->CreateTwoCubeTestScene();
+    SceneEnvironment environment = world->GetEnvironment();
+    Require(environment.timeOfDay.enabled, "a new scene's sun follows the clock");
+    Require(Near(SunShineDirection(*world), -ComputeDirectionToSun(environment.timeOfDay), 1e-4f), "the sun stands where the clock puts it");
+    const SolarAngles startup = ComputeSolarAngles(environment.timeOfDay);
+    Require(startup.elevationDegrees > 30.0f && startup.elevationDegrees < 50.0f && startup.azimuthDegrees > 180.0f &&
+                startup.azimuthDegrees < 240.0f,
+            "the startup sun is an afternoon one in the south-west");
+
+    environment.timeOfDay.hours = 8.0f;
+    world->SetEnvironment(environment);
+    Require(Near(SunShineDirection(*world), -ComputeDirectionToSun(environment.timeOfDay), 1e-4f), "setting the time turns the sun");
+
+    // Off, the sun keeps whatever rotation it has.
+    const glm::vec3 before = SunShineDirection(*world);
+    environment.timeOfDay.enabled = false;
+    environment.timeOfDay.hours = 18.0f;
+    world->SetEnvironment(environment);
+    Require(Near(SunShineDirection(*world), before, 1e-6f), "with the clock off the sun stays put");
+
+    // Loading a scene places the sun by its clock.
+    SerializedSceneData data = world->CaptureSceneData();
+    data.environment.timeOfDay.enabled = true;
+    data.environment.timeOfDay.hours = 16.5f;
+    std::unique_ptr<IEditorWorld> other = CreateEditorWorld();
+    other->ApplySceneData(data);
+    Require(Near(SunShineDirection(*other), -ComputeDirectionToSun(data.environment.timeOfDay), 1e-4f), "a loaded scene's sun follows its clock");
+}
+
 int CountLights(const IEditorWorld& world, LightType type)
 {
     int count = 0;
@@ -267,6 +462,11 @@ int main()
         MissingFogNodeLoadsAsOff();
         MissingCloudsNodeLoadsAsOff();
         MissingSeamlessHorizonLoadsAsOff();
+        MissingTimeOfDayNodeLoadsAsOff();
+        SunFollowsNorthernArc();
+        TimeOfDayClamps();
+        SunDirectionInWorld();
+        SceneSunFollowsClock();
         StartupSceneHasAtmosphereAndSun();
         NewSceneKeepsOnlySunAndSky();
         ClearKeepsEnvironmentAndFile();

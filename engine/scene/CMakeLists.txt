@@ -6,6 +6,8 @@ add_library(engine_scene
     scene_minimap.h
     scene_streaming.h
     scene_module.cpp
+    sun_position.cpp
+    sun_position.h
     scene_world.h
     world_units.h
 )

@@ -80,6 +80,9 @@ class EditorScene final : public IEditorWorld
     void EnsureSelection();
     // The startup scene's sun and atmosphere, added to what the scene holds.
     void AddDefaultSunAndSky();
+    // With the time of day on, turns the scene's sun (its brightest directional light, the one the
+    // renderer lights the sky with) to where the clock puts it.
+    void ApplyTimeOfDay();
     void OnEntityDestroyed(entt::registry& registry, entt::entity entity);
     void OnSceneEntityIdDestroyed(entt::registry& registry, entt::entity entity);
     std::string AdoptOrCreateEntityUuid(const std::string& requestedUuid);

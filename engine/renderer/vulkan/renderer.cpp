@@ -713,7 +713,9 @@ void VulkanRenderer::DrawFrame()
         sun = AtmosphereSun{
             -glm::normalize(glm::vec3(sunLight.directionAndType)),
             glm::vec3(sunLight.colorAndIntensity) * sunLight.colorAndIntensity.w};
-        if (environmentMode == EnvironmentMode::Atmosphere)
+        // A sun on the clock passes through the air in every sky mode, so it reddens low and sets
+        // below the horizon with no atmosphere drawn.
+        if (environmentMode == EnvironmentMode::Atmosphere || environment.timeOfDay.enabled)
         {
             // The light's intensity is the illuminance above the atmosphere; the scene receives
             // what gets through to the camera's altitude.

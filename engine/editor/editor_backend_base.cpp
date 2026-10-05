@@ -46,6 +46,24 @@ void RunUiAction(std::string& error, const std::string& what, Action&& action)
         LOG_ERROR("Failed to {}: {}", what, exception.what());
     }
 }
+// Runs the scene's clock by the frame's time; setting the environment turns the sun to match.
+void AdvanceTimeOfDay(IEditorWorld* world, float deltaSeconds)
+{
+    if (world == nullptr)
+    {
+        return;
+    }
+    const TimeOfDaySettings& time = world->GetEnvironment().timeOfDay;
+    if (!time.enabled || !(time.timeScale > 0.0f) || !(deltaSeconds > 0.0f))
+    {
+        return;
+    }
+    SceneEnvironment environment = world->GetEnvironment();
+    // A long hitch (a load, a breakpoint) must not jump the sun across the sky.
+    const float hours = environment.timeOfDay.hours + std::min(deltaSeconds, 0.25f) * time.timeScale / 3600.0f;
+    environment.timeOfDay.hours = std::fmod(hours, 24.0f);
+    world->SetEnvironment(environment);
+}
 }
 
 EditorRenderBackendBase::EditorRenderBackendBase(
@@ -105,6 +123,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const bool keyboardCaptured = WantsKeyboardCapture();
     const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
     VehicleRigService::Tick(State(), deltaTime);
+    AdvanceTimeOfDay(State().editorWorld.get(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)
     {
         UpdateCameraFromInput(State().camera, State().input, deltaTime, keyboardCaptured || driving);

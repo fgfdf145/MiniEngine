@@ -3,6 +3,7 @@
 #include <engine/core/file/atomic_file.h>
 #include <engine/core/log/log.h>
 #include <engine/core/uuid/uuid.h>
+#include <engine/scene/sun_position.h>
 #include <yaml-cpp/yaml.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -288,6 +289,19 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         clouds.ambientScale = cloudNode["ambient_scale"].as<float>(clouds.ambientScale);
         clouds.hazeDistance = cloudNode["haze_distance"].as<float>(clouds.hazeDistance);
     }
+
+    // Scenes saved before the time of day existed have no node and keep their sun where it was.
+    const YAML::Node timeNode = node["time_of_day"];
+    if (timeNode && timeNode.IsMap())
+    {
+        TimeOfDaySettings& time = environment.timeOfDay;
+        time.enabled = timeNode["enabled"].as<bool>(time.enabled);
+        time.hours = timeNode["hours"].as<float>(time.hours);
+        time.dayOfYear = timeNode["day_of_year"].as<int>(time.dayOfYear);
+        time.latitudeDegrees = timeNode["latitude_degrees"].as<float>(time.latitudeDegrees);
+        time.northDegrees = timeNode["north_degrees"].as<float>(time.northDegrees);
+        time.timeScale = timeNode["time_scale"].as<float>(time.timeScale);
+    }
     return environment;
 }
 
@@ -341,6 +355,15 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "albedo" << YAML::Value << clouds.albedo;
     emitter << YAML::Key << "ambient_scale" << YAML::Value << clouds.ambientScale;
     emitter << YAML::Key << "haze_distance" << YAML::Value << clouds.hazeDistance;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "time_of_day" << YAML::Value << YAML::BeginMap;
+    const TimeOfDaySettings& time = environment.timeOfDay;
+    emitter << YAML::Key << "enabled" << YAML::Value << time.enabled;
+    emitter << YAML::Key << "hours" << YAML::Value << time.hours;
+    emitter << YAML::Key << "day_of_year" << YAML::Value << time.dayOfYear;
+    emitter << YAML::Key << "latitude_degrees" << YAML::Value << time.latitudeDegrees;
+    emitter << YAML::Key << "north_degrees" << YAML::Value << time.northDegrees;
+    emitter << YAML::Key << "time_scale" << YAML::Value << time.timeScale;
     emitter << YAML::EndMap;
     emitter << YAML::EndMap;
 }
@@ -599,6 +622,38 @@ const SceneEnvironment& EditorScene::GetEnvironment() const
 void EditorScene::SetEnvironment(const SceneEnvironment& environment)
 {
     m_environment = environment;
+    ApplyTimeOfDay();
+}
+
+void EditorScene::ApplyTimeOfDay()
+{
+    if (!m_environment.timeOfDay.enabled)
+    {
+        return;
+    }
+    entt::entity sun = entt::null;
+    float sunIntensity = 0.0f;
+    const auto lights = m_registry.view<const TransformComponent, const LightComponent>();
+    for (const entt::entity entity : lights)
+    {
+        const LightComponent& light = lights.get<const LightComponent>(entity);
+        if (light.type == LightType::Directional && (sun == entt::null || light.intensity > sunIntensity))
+        {
+            sun = entity;
+            sunIntensity = light.intensity;
+        }
+    }
+    if (sun == entt::null)
+    {
+        return;
+    }
+    TransformComponent& transform = m_registry.get<TransformComponent>(sun);
+    const glm::vec3 rotation = DirectionalLightRotationDegrees(ComputeDirectionToSun(m_environment.timeOfDay));
+    if (transform.rotationDegrees != rotation)
+    {
+        transform.rotationDegrees = rotation;
+        MarkTransformDirty(sun);
+    }
 }
 
 void EditorScene::CreateTwoCubeTestScene()
@@ -653,6 +708,9 @@ void EditorScene::AddDefaultSunAndSky()
     m_environment.heightFog.enabled = true;
     m_environment.clouds.enabled = true;
     m_environment.atmosphere.seamlessHorizon = true;
+    // And a sun that follows the clock, which replaces the rotation above.
+    m_environment.timeOfDay.enabled = true;
+    ApplyTimeOfDay();
 }
 
 void EditorScene::Clear()
@@ -940,6 +998,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
     {
         CreateLightEntity(lightData);
     }
+    ApplyTimeOfDay();
 
     m_selectedEntity = entt::null;
     if (!sceneData.selectedEntityUuid.empty())
