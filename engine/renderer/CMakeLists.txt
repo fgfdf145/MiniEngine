@@ -8,6 +8,8 @@ add_library(engine_render_core
     atmosphere.h
     bloom_chain.cpp
     bloom_chain.h
+    block_suballocator.cpp
+    block_suballocator.h
     glare.cpp
     glare.h
     height_fog.cpp
@@ -101,6 +103,8 @@ add_library(engine_renderer
     vulkan/atmosphere.h
     vulkan/buffer.cpp
     vulkan/buffer.h
+    vulkan/memory_pool.cpp
+    vulkan/memory_pool.h
     vulkan/command.cpp
     vulkan/command.h
     vulkan/compute_pass_util.cpp

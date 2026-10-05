@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "memory_pool.h"
 #include "upload_batch.h"
 
 #include <engine/asset/mesh.h>
@@ -53,6 +54,8 @@ class VulkanBuffer
     // Shared by the destructor and the constructors' unwind path. Skips null handles.
     void DestroyHandles();
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
+    // A device-local buffer bound to a range of VulkanMemoryPool's shared memory.
+    void CreateDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VulkanPooledMemory& memory);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
@@ -64,7 +67,7 @@ class VulkanBuffer
         VkBufferUsageFlags usage,
         VulkanUploadBatch& uploadBatch,
         VkBuffer& buffer,
-        VkDeviceMemory& memory);
+        VulkanPooledMemory& memory);
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -73,10 +76,10 @@ class VulkanBuffer
     uint32_t m_vertexCount = 0;
     uint32_t m_indexCount = 0;
     VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_vertexMemory = VK_NULL_HANDLE;
+    VulkanPooledMemory m_vertexMemory;
     VkBuffer m_indexBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_indexMemory = VK_NULL_HANDLE;
+    VulkanPooledMemory m_indexMemory;
     VkBuffer m_positionBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_positionMemory = VK_NULL_HANDLE;
+    VulkanPooledMemory m_positionMemory;
 };
 }

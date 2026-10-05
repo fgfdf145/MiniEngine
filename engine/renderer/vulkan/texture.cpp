@@ -388,11 +388,7 @@ void VulkanTexture::DestroyHandles()
         vkDestroyImage(m_device, m_image, nullptr);
         m_image = VK_NULL_HANDLE;
     }
-    if (m_memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_memory, nullptr);
-        m_memory = VK_NULL_HANDLE;
-    }
+    VulkanMemoryPool::Free(m_device, m_memory);
 }
 
 VkImageView VulkanTexture::GetImageView() const
@@ -450,7 +446,7 @@ void VulkanTexture::CreateImage(
     VkFormat format,
     VkImageUsageFlags usage,
     VkImage& image,
-    VkDeviceMemory& memory) const
+    VulkanPooledMemory& memory) const
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -471,12 +467,18 @@ void VulkanTexture::CreateImage(
     VkMemoryRequirements memoryRequirements{};
     vkGetImageMemoryRequirements(m_device, image, &memoryRequirements);
 
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate texture image memory");
-    CheckVulkan(vkBindImageMemory(m_device, image, memory, 0), "Failed to bind texture image memory");
+    // The image is the caller's to destroy (it lands in m_image), so only the memory is undone here.
+    memory = VulkanMemoryPool::Allocate(
+        m_physicalDevice, m_device, memoryRequirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::Image);
+    try
+    {
+        CheckVulkan(vkBindImageMemory(m_device, image, memory.memory, memory.offset), "Failed to bind texture image memory");
+    }
+    catch (...)
+    {
+        VulkanMemoryPool::Free(m_device, memory);
+        throw;
+    }
 }
 
 void VulkanTexture::TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t baseMipLevel, uint32_t levelCount) const

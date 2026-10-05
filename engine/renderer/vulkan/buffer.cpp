@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "memory_pool.h"
 
 #include <engine/core/log/log.h>
 
@@ -141,31 +142,19 @@ void VulkanBuffer::DestroyHandles()
         vkDestroyBuffer(m_device, m_positionBuffer, nullptr);
         m_positionBuffer = VK_NULL_HANDLE;
     }
-    if (m_positionMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_positionMemory, nullptr);
-        m_positionMemory = VK_NULL_HANDLE;
-    }
+    VulkanMemoryPool::Free(m_device, m_positionMemory);
     if (m_indexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
         m_indexBuffer = VK_NULL_HANDLE;
     }
-    if (m_indexMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_indexMemory, nullptr);
-        m_indexMemory = VK_NULL_HANDLE;
-    }
+    VulkanMemoryPool::Free(m_device, m_indexMemory);
     if (m_vertexBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
         m_vertexBuffer = VK_NULL_HANDLE;
     }
-    if (m_vertexMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_vertexMemory, nullptr);
-        m_vertexMemory = VK_NULL_HANDLE;
-    }
+    VulkanMemoryPool::Free(m_device, m_vertexMemory);
 }
 
 VkBuffer VulkanBuffer::GetVertexHandle() const
@@ -233,6 +222,38 @@ void VulkanBuffer::CreateBuffer(
     }
 }
 
+void VulkanBuffer::CreateDeviceLocalBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VulkanPooledMemory& memory)
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create Vulkan buffer");
+
+    // As CreateBuffer: both handles come back valid or neither does.
+    try
+    {
+        VkMemoryRequirements memoryRequirements{};
+        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+        memory = VulkanMemoryPool::Allocate(
+            m_physicalDevice, m_device, memoryRequirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::Buffer);
+        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory.memory, memory.offset), "Failed to bind Vulkan buffer memory");
+    }
+    catch (...)
+    {
+        VulkanMemoryPool::Free(m_device, memory);
+        vkDestroyBuffer(m_device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        throw;
+    }
+}
+
 uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
 {
     VkPhysicalDeviceMemoryProperties memoryProperties{};
@@ -257,7 +278,7 @@ void VulkanBuffer::UploadDeviceLocal(
     VkBufferUsageFlags usage,
     VulkanUploadBatch& uploadBatch,
     VkBuffer& buffer,
-    VkDeviceMemory& memory)
+    VulkanPooledMemory& memory)
 {
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
@@ -274,7 +295,7 @@ void VulkanBuffer::UploadDeviceLocal(
     std::memcpy(data, source, static_cast<size_t>(size));
     vkUnmapMemory(m_device, stagingMemory);
 
-    CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, memory);
+    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory);
 
     VkBufferCopy copyRegion{};
     copyRegion.size = size;

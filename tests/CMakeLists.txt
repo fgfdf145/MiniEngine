@@ -281,6 +281,32 @@ endif()
 
 set_target_properties(miniengine_shadow_cascades_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_block_suballocator_tests
+    block_suballocator_tests.cpp
+)
+miniengine_group_target_sources(miniengine_block_suballocator_tests)
+
+target_link_libraries(miniengine_block_suballocator_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.block_suballocator
+    COMMAND miniengine_block_suballocator_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_block_suballocator_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_block_suballocator_tests>
+            $<TARGET_FILE_DIR:miniengine_block_suballocator_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_block_suballocator_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_view_frustum_tests
     view_frustum_tests.cpp
 )
