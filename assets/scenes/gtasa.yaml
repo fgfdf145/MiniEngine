@@ -5,7 +5,7 @@
 # Venturas, the countryside and the sea bed), its water (data/water.dat, with open sea beyond the map;
 # cars float, fill and sink below it), the Skyline R34 on Grove Street facing west, and the sun.
 # In the middle of the Grove Street cul-de-sac (game (2485, -1668), flat road at 12.344 m) stands the
-# seven-post rig of suspension_rig.yaml with a second R34 on its pads: select that car and open
+# seven-post rig of suspension_rig.yaml, turned to face west, with a second R34 on its pads: select that car and open
 # Window > Suspension Rigs for its Live Rig tab. The driven car stays the first R34 in the list.
 # Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py, tools/water.py)
 # and is not in git; the car is imported from Assetto Corsa at assets/skyline_r34_vspec. The minimap is the
@@ -111,7 +111,7 @@ entities:
       base_color_texture_override_uuid: ""
     transform:
       translation: [2485, 12.9946, 1668]
-      rotation: [0, 0, 0]
+      rotation: [0, 90, 0]
       scale: [1, 1, 1]
   - entity_uuid: 46f31bfa-0437-4974-b5ea-c29604331a53
     tag: Rig base plate
@@ -123,7 +123,7 @@ entities:
       base_color_texture_override_uuid: ""
     transform:
       translation: [2485, 12.494, 1668]
-      rotation: [0, 0, 0]
+      rotation: [0, 90, 0]
       scale: [3.2, 0.3, 4.6]
   - entity_uuid: c8b2913c-0e58-410b-a058-e65515667369
     tag: Wheel pad FL
@@ -134,8 +134,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2484.26, 12.819, 1666.645]
-      rotation: [0, 0, 0]
+      translation: [2483.645, 12.819, 1668.74]
+      rotation: [0, 90, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: 514f57b6-509d-4875-8828-2f706ed063d7
     tag: Wheel pad FR
@@ -146,8 +146,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2485.74, 12.819, 1666.645]
-      rotation: [0, 0, 0]
+      translation: [2483.645, 12.819, 1667.26]
+      rotation: [0, 90, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: c5539b8b-7110-493c-b603-beae035e87ab
     tag: Wheel pad RL
@@ -158,8 +158,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2484.255, 12.819, 1669.31]
-      rotation: [0, 0, 0]
+      translation: [2486.31, 12.819, 1668.745]
+      rotation: [0, 90, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: 079e974e-1f74-412c-9892-77a325754bde
     tag: Wheel pad RR
@@ -170,8 +170,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2485.745, 12.819, 1669.31]
-      rotation: [0, 0, 0]
+      translation: [2486.31, 12.819, 1667.255]
+      rotation: [0, 90, 0]
       scale: [0.5, 0.35, 0.6]
   - entity_uuid: c0890aeb-91c9-4b81-8df8-d916fc29f2ee
     tag: Aero loader front left
@@ -182,8 +182,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2484.55, 12.8405, 1667.1]
-      rotation: [0, 0, 0]
+      translation: [2484.1, 12.8405, 1668.45]
+      rotation: [0, 90, 0]
       scale: [0.12, 0.3931, 0.12]
   - entity_uuid: 5927a81b-7a4a-4500-804f-0d5da67c19ad
     tag: Aero loader front right
@@ -194,8 +194,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2485.45, 12.8405, 1667.1]
-      rotation: [0, 0, 0]
+      translation: [2484.1, 12.8405, 1667.55]
+      rotation: [0, 90, 0]
       scale: [0.12, 0.3931, 0.12]
   - entity_uuid: 90ef3410-eaa8-4cce-bf48-235f33d4baff
     tag: Aero loader rear
@@ -206,8 +206,8 @@ entities:
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
-      translation: [2485, 12.8405, 1668.9]
-      rotation: [0, 0, 0]
+      translation: [2485.9, 12.8405, 1668]
+      rotation: [0, 90, 0]
       scale: [0.12, 0.3931, 0.12]
 lights:
   - entity_uuid: 41b8d4af-b0a9-4c60-8804-999f21e90086
