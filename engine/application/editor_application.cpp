@@ -7,6 +7,7 @@
 #include <engine/editor/services/scene_io_service.h>
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/renderer/rhi/factory.h>
+#include <engine/platform/process/process_scheduling.h>
 #include <engine/platform/window/window.h>
 
 #include <ImGuizmo.h>
@@ -317,6 +318,8 @@ EditorApplication::EditorApplication(EditorApplicationOptions options)
 
 int EditorApplication::Run()
 {
+    // Before any thread starts, so the workers inherit it.
+    platform::process::RequestFullSpeedScheduling();
     // Resolve the directory roots before any subsystem touches the filesystem.
     EnginePaths::Initialize(m_options.paths);
     LOG_INFO(

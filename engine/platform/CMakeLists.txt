@@ -3,6 +3,8 @@ add_library(engine_platform
     file_dialog/file_dialog.h
     file_dialog/file_dialog_backend.cpp
     file_dialog/file_dialog_backend.h
+    process/process_scheduling.cpp
+    process/process_scheduling.h
     ui/ui_scale.cpp
     ui/ui_scale.h
     window/window.cpp

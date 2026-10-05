@@ -25,7 +25,10 @@ VulkanSwapchain::VulkanSwapchain(
     const VkPresentModeKHR presentMode = ChoosePresentMode(supportDetails.presentModes);
     const VkExtent2D extent = ChooseExtent(window, supportDetails.capabilities);
 
-    uint32_t imageCount = supportDetails.capabilities.minImageCount + 1;
+    // Two beyond the minimum: with one, mailbox handed back the image the previous frame was still
+    // drawing into, and as much is indexed by swapchain image, every frame waited for the last to
+    // finish, so the CPU and GPU never overlapped.
+    uint32_t imageCount = supportDetails.capabilities.minImageCount + 2;
     if (supportDetails.capabilities.maxImageCount > 0 && imageCount > supportDetails.capabilities.maxImageCount)
     {
         imageCount = supportDetails.capabilities.maxImageCount;
