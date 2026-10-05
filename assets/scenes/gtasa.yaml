@@ -1,24 +1,23 @@
-# San Andreas (GTA SA) as five glTF models, one per region of the game's map: Los Santos, San
-# Fierro, Las Venturas, the countryside and the sea bed. The map's own world coordinates are kept, so
-# the models stand at the origin and line up with each other. Converted from the game's files by the
-# tools in C:\Project\GTASA MAP (tools/engine_bundle.py) and imported to assets/models/gtasa_<region>
-# (not in git). glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
-# The game's water (data/water.dat, with open sea beyond the map) is a sixth model: cars float, fill and
-# sink below it.
-# The Skyline R34 stands on Grove Street facing west, out of the cul-de-sac (needs the car imported from
-# Assetto Corsa at assets/skyline_r34_vspec, not in git). The map collides through the game's own COL
-# models, which the converter writes into each region's glTF.
+# San Andreas (GTA SA), streamed: the drawn map comes in 500 m cells from
+# assets/models/gtasa_stream/gtasa.stream.yaml, high detail within 700 m of the camera (or the car being
+# driven) and the game's own LOD models elsewhere (docs/design/2026-10-05-world-streaming-design.md). What
+# is always loaded: the game's collision (one model per region of the map: Los Santos, San Fierro, Las
+# Venturas, the countryside and the sea bed), its water (data/water.dat, with open sea beyond the map;
+# cars float, fill and sink below it), the Skyline R34 on Grove Street facing west, and the sun.
+# Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py, tools/water.py)
+# and is not in git; the car is imported from Assetto Corsa at assets/skyline_r34_vspec.
+# glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
 scene:
   version: 3
   selected_entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
   selected_entity: 6
 entities:
   - entity_uuid: c42332ab-2274-43e5-9c1e-94e0e483be21
-    tag: Los Santos
+    tag: Los Santos collision
     model:
-      display_name: gtasa_la.gltf
-      source_path: assets/models/gtasa_la/gtasa_la.gltf
-      source_uuid: d356aa55-cdd5-4650-9f79-2e1880faa99e
+      display_name: gtasa_collision_la.gltf
+      source_path: assets/models/gtasa_collision_la/gtasa_collision_la.gltf
+      source_uuid: 5cb00ad1-eb71-455b-b140-eab148c56cca
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -26,11 +25,11 @@ entities:
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
   - entity_uuid: d79de918-377d-45f4-9cae-ece5d04174ed
-    tag: San Fierro
+    tag: San Fierro collision
     model:
-      display_name: gtasa_sf.gltf
-      source_path: assets/models/gtasa_sf/gtasa_sf.gltf
-      source_uuid: af539896-9d7b-48e0-8792-66dc593bbd81
+      display_name: gtasa_collision_sf.gltf
+      source_path: assets/models/gtasa_collision_sf/gtasa_collision_sf.gltf
+      source_uuid: 6e4191e6-ea8b-4425-a769-d2adc1d292d2
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -38,11 +37,11 @@ entities:
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
   - entity_uuid: b05b12ad-1f40-4cb8-b980-c689eb6f6628
-    tag: Las Venturas
+    tag: Las Venturas collision
     model:
-      display_name: gtasa_vegas.gltf
-      source_path: assets/models/gtasa_vegas/gtasa_vegas.gltf
-      source_uuid: 082adee1-5086-4872-b2aa-e8d3a9b76ba8
+      display_name: gtasa_collision_vegas.gltf
+      source_path: assets/models/gtasa_collision_vegas/gtasa_collision_vegas.gltf
+      source_uuid: 55a62433-c0c2-4282-8e06-7dc5419b3c54
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -50,11 +49,11 @@ entities:
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
   - entity_uuid: 28d6cc18-8790-45da-b652-9b083f13ece1
-    tag: Countryside
+    tag: Countryside collision
     model:
-      display_name: gtasa_country.gltf
-      source_path: assets/models/gtasa_country/gtasa_country.gltf
-      source_uuid: 359773c4-d1ae-4c79-9967-35e8f642d747
+      display_name: gtasa_collision_country.gltf
+      source_path: assets/models/gtasa_collision_country/gtasa_collision_country.gltf
+      source_uuid: f64a5c7e-0f6d-43f8-89c3-b1b11f8b9cf9
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -62,11 +61,11 @@ entities:
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
   - entity_uuid: b1d91133-8adc-4e3e-93b7-4ddba92f9d08
-    tag: Sea bed
+    tag: Sea bed collision
     model:
-      display_name: gtasa_leveldes.gltf
-      source_path: assets/models/gtasa_leveldes/gtasa_leveldes.gltf
-      source_uuid: 2be8ca85-bb64-407b-b321-7a6dff5a5298
+      display_name: gtasa_collision_leveldes.gltf
+      source_path: assets/models/gtasa_collision_leveldes/gtasa_collision_leveldes.gltf
+      source_uuid: d6aab501-0b59-4721-8be5-a79e9cf9ed37
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -130,6 +129,10 @@ environment:
     enabled: false
   clouds:
     enabled: false
+streaming:
+  - manifest: assets/models/gtasa_stream/gtasa.stream.yaml
+    load_radius: 700
+    unload_radius: 900
 editor:
   gizmo:
     operation: combined
