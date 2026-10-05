@@ -1,0 +1,111 @@
+# San Andreas (GTA SA) as five glTF models, one per region of the game's map: Los Santos, San
+# Fierro, Las Venturas, the countryside and the sea bed. The map's own world coordinates are kept, so
+# the models stand at the origin and line up with each other. Converted from the game's files by the
+# tools in C:\Project\GTASA MAP (tools/engine_bundle.py) and imported to assets/models/gtasa_<region>
+# (not in git). glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
+scene:
+  version: 3
+  selected_entity_uuid: ""
+  selected_entity: -1
+entities:
+  - entity_uuid: c42332ab-2274-43e5-9c1e-94e0e483be21
+    tag: Los Santos
+    model:
+      display_name: gtasa_la.gltf
+      source_path: assets/models/gtasa_la/gtasa_la.gltf
+      source_uuid: d356aa55-cdd5-4650-9f79-2e1880faa99e
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: d79de918-377d-45f4-9cae-ece5d04174ed
+    tag: San Fierro
+    model:
+      display_name: gtasa_sf.gltf
+      source_path: assets/models/gtasa_sf/gtasa_sf.gltf
+      source_uuid: af539896-9d7b-48e0-8792-66dc593bbd81
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: b05b12ad-1f40-4cb8-b980-c689eb6f6628
+    tag: Las Venturas
+    model:
+      display_name: gtasa_vegas.gltf
+      source_path: assets/models/gtasa_vegas/gtasa_vegas.gltf
+      source_uuid: 082adee1-5086-4872-b2aa-e8d3a9b76ba8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 28d6cc18-8790-45da-b652-9b083f13ece1
+    tag: Countryside
+    model:
+      display_name: gtasa_country.gltf
+      source_path: assets/models/gtasa_country/gtasa_country.gltf
+      source_uuid: 359773c4-d1ae-4c79-9967-35e8f642d747
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: b1d91133-8adc-4e3e-93b7-4ddba92f9d08
+    tag: Sea bed
+    model:
+      display_name: gtasa_leveldes.gltf
+      source_path: assets/models/gtasa_leveldes/gtasa_leveldes.gltf
+      source_uuid: 2be8ca85-bb64-407b-b321-7a6dff5a5298
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 41b8d4af-b0a9-4c60-8804-999f21e90086
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [-65, 150, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+  atmosphere:
+    ground_albedo: [0.045, 0.045, 0.05]
+    ground_plane: false
+    seamless_horizon: true
+    rayleigh_density_scale: 1
+    mie_density_scale: 1
+    mie_anisotropy: 0.8
+    ozone_density_scale: 1
+    aerial_perspective_distance_scale: 1
+    sun_angular_diameter_degrees: 0.545
+  height_fog:
+    enabled: false
+  clouds:
+    enabled: false
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
