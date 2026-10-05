@@ -6,7 +6,7 @@ namespace me::tyre
 {
 
 // The most ribs a brush tyre is cut into.
-inline constexpr int kBrushMaxRibs = 16;
+inline constexpr int kBrushMaxRibs = 32;
 
 // One rib's contact where the last step left it, for drawing the patch: its place across the tread
 // (m, left positive), its contact length, and how far from the leading edge its bristles stick to the

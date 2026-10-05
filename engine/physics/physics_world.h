@@ -107,7 +107,7 @@ struct VehicleWheelState
         float length = 0.0f;
         float stuckLength = 0.0f;
     };
-    static constexpr int kMaxBrushRibs = 16;
+    static constexpr int kMaxBrushRibs = 32;
     float carcassBendingShape = 0.0f;
     bool treadRollingForward = true;
     int brushRibCount = 0;
