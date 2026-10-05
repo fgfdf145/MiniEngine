@@ -111,6 +111,11 @@ int main()
         streamedSettings.loadRadius = 650.0f;
         streamedSettings.unloadRadius = 950.0f;
         streamedWorld->SetStreamingWorlds({streamedSettings});
+        SceneMinimap minimap;
+        minimap.image = "assets/maps/world_radar.png";
+        minimap.worldMin = glm::vec2(-3000.0f, -2500.0f);
+        minimap.worldMax = glm::vec2(3000.0f, 3500.0f);
+        streamedWorld->SetMinimap(minimap);
         SerializedEntityData cell{};
         cell.tagName = "Cell";
         const entt::entity cellEntity = streamedWorld->CreateStreamedEntity(cell, StreamedComponent{"la_4_-4", false});
@@ -126,6 +131,8 @@ int main()
         Require(streamedLoaded.streaming.size() == 1u && streamedLoaded.streaming[0] == streamedSettings,
                 "the streamed world did not survive yaml round-trip");
         Require(restored.streaming.empty(), "a scene without a streamed world gained one");
+        Require(streamedLoaded.minimap == minimap, "the minimap did not survive yaml round-trip");
+        Require(!restored.minimap.IsValid(), "a scene without a minimap gained one");
         streamedWorld->DestroyEntity(keptEntity);
         Require(streamedWorld->GetSelectedEntity() != cellEntity, "a streamed cell was selected when the selection went");
 

@@ -36,6 +36,10 @@ constexpr float kLightSelectionRingRadiusPixels = 14.0f;
 constexpr float kViewCubeSizePixels = 128.0f;
 constexpr float kViewCubeMarginPixels = 16.0f;
 constexpr float kOverlayTextMarginPixels = 12.0f;
+constexpr float kMinimapSizePixels = 220.0f;
+constexpr float kMinimapMarginPixels = 16.0f;
+// How far the minimap reaches from its centre to its edges' midpoints.
+constexpr float kMinimapRadiusMetres = 250.0f;
 
 struct ProjectedEntityCenter
 {
@@ -134,6 +138,86 @@ void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, d
         const ImVec2 size = ImGui::CalcTextSize(text.c_str());
         drawText(ImVec2(rect.origin.x + rect.size.x - size.x - margin, rect.origin.y + rect.size.y - size.y - margin), text);
     }
+}
+
+// The scene's map (SceneMinimap) at the viewport's bottom left, centred on the player and turned so the
+// way they face is up, as a game's radar: an arrow at the centre for the player, N on the border towards
+// north.
+void DrawMinimap(
+    const ViewportOverlayRect& rect,
+    float uiScale,
+    ImTextureID texture,
+    const SceneMinimap& minimap,
+    const glm::vec3& position,
+    const glm::vec3& heading)
+{
+    ImDrawList* drawList = rect.drawList;
+    if (drawList == nullptr || !texture || !minimap.IsValid())
+    {
+        return;
+    }
+    // Never more than 40% of the viewport's smaller side, and not at all in a sliver of a viewport.
+    const float size = std::min(kMinimapSizePixels * uiScale, std::min(rect.size.x, rect.size.y) * 0.4f);
+    if (size < 48.0f)
+    {
+        return;
+    }
+    const float margin = kMinimapMarginPixels * uiScale;
+    const float half = size * 0.5f;
+    const ImVec2 center(rect.origin.x + margin + half, rect.origin.y + rect.size.y - margin - half);
+
+    // Screen up is the heading across the ground, screen right is its right. The picture's u runs with
+    // world X and its v with world Z, so "right" is the heading turned a quarter clockwise in (x, z).
+    glm::vec2 forward(heading.x, heading.z);
+    forward = glm::length(forward) > 1e-4f ? glm::normalize(forward) : glm::vec2(0.0f, -1.0f);
+    const glm::vec2 right(-forward.y, forward.x);
+    const float metresPerPixel = kMinimapRadiusMetres / half;
+    const glm::vec2 focus(position.x, position.z);
+    const glm::vec2 worldSize = minimap.worldMax - minimap.worldMin;
+    // The picture's uv under a point this far right of and below the centre, in pixels.
+    const auto uvAt = [&](float x, float y)
+    {
+        const glm::vec2 world = focus + (right * x - forward * y) * metresPerPixel;
+        const glm::vec2 uv = (world - minimap.worldMin) / worldSize;
+        return ImVec2(uv.x, uv.y);
+    };
+
+    const ImVec2 min(center.x - half, center.y - half);
+    const ImVec2 max(center.x + half, center.y + half);
+    const float border = 2.0f * uiScale;
+    drawList->AddRectFilled(ImVec2(min.x - border, min.y - border), ImVec2(max.x + border, max.y + border), IM_COL32(0, 0, 0, 170));
+    drawList->AddImageQuad(
+        texture,
+        min,
+        ImVec2(max.x, min.y),
+        max,
+        ImVec2(min.x, max.y),
+        uvAt(-half, -half),
+        uvAt(half, -half),
+        uvAt(half, half),
+        uvAt(-half, half));
+    drawList->AddRect(min, max, IM_COL32(255, 255, 255, 90), 0.0f, 0, 1.0f);
+
+    // The player: an arrow pointing up (the way they face), white with a dark outline.
+    const float arrow = 7.0f * uiScale;
+    const ImVec2 tip(center.x, center.y - arrow * 1.3f);
+    const ImVec2 left(center.x - arrow, center.y + arrow);
+    const ImVec2 notch(center.x, center.y + arrow * 0.45f);
+    const ImVec2 rightCorner(center.x + arrow, center.y + arrow);
+    drawList->AddTriangleFilled(tip, left, notch, IM_COL32(255, 255, 255, 255));
+    drawList->AddTriangleFilled(tip, notch, rightCorner, IM_COL32(255, 255, 255, 255));
+    const ImVec2 outline[] = {tip, rightCorner, notch, left};
+    drawList->AddPolyline(outline, 4, IM_COL32(0, 0, 0, 220), ImDrawFlags_Closed, 1.5f * uiScale);
+
+    // North (-Z) on the screen, pushed out to just inside the border.
+    const glm::vec2 north(0.0f, -1.0f);
+    glm::vec2 towardsNorth(glm::dot(north, right), -glm::dot(north, forward));
+    const float badge = 9.0f * uiScale;
+    towardsNorth *= (half - badge - border) / std::max(std::abs(towardsNorth.x), std::abs(towardsNorth.y));
+    const ImVec2 northCenter(center.x + towardsNorth.x, center.y + towardsNorth.y);
+    drawList->AddCircleFilled(northCenter, badge, IM_COL32(20, 20, 20, 220));
+    const ImVec2 textSize = ImGui::CalcTextSize("N");
+    drawList->AddText(ImVec2(northCenter.x - textSize.x * 0.5f, northCenter.y - textSize.y * 0.5f), IM_COL32(255, 255, 255, 255), "N");
 }
 
 // While recording, a blinking red dot, the video's length and size at the top centre; for a few
@@ -1065,6 +1149,21 @@ void EditorUiController::DrawViewportPanel(
                 *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleRigStatus.linkage, m_effectiveUiScale);
         }
         DrawVideoRecordingIndicator(viewportRect, m_effectiveUiScale, m_videoRecording);
+        // Centred on the car while one is driven, else on the camera.
+        if (m_vehicleStatus.active)
+        {
+            DrawMinimap(
+                viewportRect,
+                m_effectiveUiScale,
+                m_minimapTexture,
+                scene.GetMinimap(),
+                m_vehicleStatus.pose.position,
+                m_vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f));
+        }
+        else
+        {
+            DrawMinimap(viewportRect, m_effectiveUiScale, m_minimapTexture, scene.GetMinimap(), camera.position, camera.GetForward());
+        }
         if (fullscreen)
         {
             DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus);

@@ -71,6 +71,8 @@ class EditorScene final : public IEditorWorld
     const std::string& GetSceneFilePath() const override;
     const std::vector<SceneStreamingWorld>& GetStreamingWorlds() const override;
     void SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds) override;
+    const SceneMinimap& GetMinimap() const override;
+    void SetMinimap(SceneMinimap minimap) override;
     const SceneEnvironment& GetEnvironment() const override;
     void SetEnvironment(const SceneEnvironment& environment) override;
 
@@ -89,6 +91,7 @@ class EditorScene final : public IEditorWorld
     GizmoSettings m_gizmoSettings;
     SceneEnvironment m_environment;
     std::vector<SceneStreamingWorld> m_streaming;
+    SceneMinimap m_minimap;
     std::string m_sceneFilePath;
     std::unordered_map<std::string, entt::entity> m_entityByUuid;
     // Declared last: the registry is destroyed first, so its on_destroy

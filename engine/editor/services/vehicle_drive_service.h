@@ -82,6 +82,8 @@ struct VehicleDriveStatus
     // What the car's own data set, in words; empty when the drive uses the tuning alone.
     std::string carData;
     VehicleTelemetry telemetry;
+    // Where the body is (interpolated, as the car is drawn); its +Z is the car's front.
+    PhysicsPose pose;
     // Front left, front right, rear left, rear right, as the last step left them, in world space.
     std::vector<VehicleWheelState> wheels;
     VehicleLinkage linkage;

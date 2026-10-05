@@ -171,6 +171,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
     void UpdateEnvironmentMap(const SceneEnvironment& environment);
+    // Loads the scene's minimap picture when its path changes and hands it to the editor UI.
+    void UpdateMinimapTexture();
+    void ReleaseMinimapTexture();
     void CreateSwapchainResources();
     void CreateScenePasses();
     IScenePass* FindScenePass(ScenePassId id) const;
@@ -305,6 +308,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The loaded HDRI and the scene path it came from; empty until one loads.
     std::unique_ptr<VulkanTexture> m_environmentMap;
     std::string m_environmentMapPath;
+    // The scene's minimap picture (SceneMinimap) as ImGui samples it, and the path it was loaded for;
+    // the texture is null when the scene has none or its file would not load.
+    std::unique_ptr<VulkanTexture> m_minimapTexture;
+    VkDescriptorSet m_minimapBinding = VK_NULL_HANDLE;
+    std::string m_minimapPath;
     // A decode running on a worker thread, and the path it decodes.
     // A decoded HDRI and its SH, prepared together on the worker thread.
     struct PreparedEnvironmentMap

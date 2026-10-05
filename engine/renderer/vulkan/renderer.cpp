@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <future>
 #include <optional>
 #include <stdexcept>
@@ -528,6 +529,8 @@ VulkanRenderer::~VulkanRenderer()
     m_exposurePass = nullptr;
     m_gbufferDescriptors.reset();
     m_sceneTargets.reset();
+    // Its ImGui binding goes before the ImGui backend that made it.
+    ReleaseMinimapTexture();
     m_imguiLayer.reset();
     m_textureStore.clear();
     m_stagedTextures.clear();
@@ -604,6 +607,7 @@ void VulkanRenderer::DrawFrame()
     // ImGui samples the tone mapped image, which is the LDR target and so is indexed by
     // swapchain image: its texture binding is handed out here, before the command buffer that
     // writes it is recorded.
+    UpdateMinimapTexture();
     const EditorUiFrameResult uiFrame = DrawEditorUi(
         m_sceneTargets->GetLdrTextureId(imageIndex),
         FromVkExtent(m_sceneTargets->GetExtent()));
@@ -1642,6 +1646,72 @@ EnvironmentMode VulkanRenderer::EffectiveEnvironmentMode(const SceneEnvironment&
     }
     const bool loaded = m_environmentMap && !environment.hdri.path.empty() && environment.hdri.path == m_environmentMapPath;
     return loaded ? EnvironmentMode::Hdri : EnvironmentMode::None;
+}
+
+void VulkanRenderer::UpdateMinimapTexture()
+{
+    const SceneMinimap& minimap = EditorWorld().GetMinimap();
+    const std::string path = minimap.IsValid() ? minimap.image : std::string{};
+    if (path != m_minimapPath)
+    {
+        ReleaseMinimapTexture();
+        m_minimapPath = path;
+        if (!path.empty())
+        {
+            std::filesystem::path file(path);
+            std::error_code ec;
+            if (file.is_relative() && !std::filesystem::exists(file, ec))
+            {
+                file = EnginePaths::ProjectRoot() / file;
+            }
+            try
+            {
+                VulkanUploadBatch uploadBatch(
+                    m_device->GetHandle(),
+                    m_device->GetQueueFamilies().graphicsFamily.value(),
+                    m_device->GetGraphicsQueue());
+                m_minimapTexture = std::make_unique<VulkanTexture>(
+                    m_device->GetPhysicalDevice(),
+                    m_device->GetHandle(),
+                    file.string(),
+                    uploadBatch);
+                uploadBatch.Flush();
+                // Clamped, not repeated: past the picture's edges the minimap shows the edge's colour
+                // (the sea, on a game's radar map) rather than the far side of the map.
+                TextureSampler sampler;
+                sampler.wrapS = TextureWrap::ClampToEdge;
+                sampler.wrapT = TextureWrap::ClampToEdge;
+                m_minimapBinding = ImGui_ImplVulkan_AddTexture(
+                    m_samplerCache->Get(sampler),
+                    m_minimapTexture->GetImageView(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                LOG_INFO("Minimap: loaded '{}'", file.string());
+            }
+            catch (const std::exception& error)
+            {
+                LOG_WARN("Minimap: could not load '{}': {}", file.string(), error.what());
+                m_minimapTexture.reset();
+            }
+        }
+    }
+    State().editorUi.SetMinimapTexture(
+        m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID{});
+}
+
+void VulkanRenderer::ReleaseMinimapTexture()
+{
+    if (m_minimapBinding == VK_NULL_HANDLE && m_minimapTexture == nullptr)
+    {
+        return;
+    }
+    // Frames in flight may still sample it; a scene change is rare enough to wait for them.
+    vkDeviceWaitIdle(m_device->GetHandle());
+    if (m_minimapBinding != VK_NULL_HANDLE)
+    {
+        ImGui_ImplVulkan_RemoveTexture(m_minimapBinding);
+        m_minimapBinding = VK_NULL_HANDLE;
+    }
+    m_minimapTexture.reset();
 }
 
 void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)

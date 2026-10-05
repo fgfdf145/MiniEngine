@@ -364,6 +364,19 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             }
         }
     }
+    if (const YAML::Node minimapNode = root["minimap"]; minimapNode && minimapNode.IsMap())
+    {
+        SceneMinimap& minimap = sceneData.minimap;
+        minimap.image = minimapNode["image"].as<std::string>(minimap.image);
+        if (const YAML::Node node = minimapNode["world_min"]; node && node.IsSequence() && node.size() == 2)
+        {
+            minimap.worldMin = glm::vec2(node[0].as<float>(), node[1].as<float>());
+        }
+        if (const YAML::Node node = minimapNode["world_max"]; node && node.IsSequence() && node.size() == 2)
+        {
+            minimap.worldMax = glm::vec2(node[0].as<float>(), node[1].as<float>());
+        }
+    }
 
     const YAML::Node entitiesNode = root["entities"];
     if (entitiesNode && entitiesNode.IsSequence())
@@ -506,6 +519,16 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::EndSeq;
     }
 
+    if (!sceneData.minimap.image.empty())
+    {
+        const SceneMinimap& minimap = sceneData.minimap;
+        emitter << YAML::Key << "minimap" << YAML::Value << YAML::BeginMap;
+        emitter << YAML::Key << "image" << YAML::Value << minimap.image;
+        emitter << YAML::Key << "world_min" << YAML::Value << YAML::Flow << YAML::BeginSeq << minimap.worldMin.x << minimap.worldMin.y << YAML::EndSeq;
+        emitter << YAML::Key << "world_max" << YAML::Value << YAML::Flow << YAML::BeginSeq << minimap.worldMax.x << minimap.worldMax.y << YAML::EndSeq;
+        emitter << YAML::EndMap;
+    }
+
     emitter << YAML::Key << "editor" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "gizmo" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "operation" << YAML::Value << ToString(sceneData.gizmo.operation);
@@ -582,6 +605,7 @@ void EditorScene::CreateTwoCubeTestScene()
 {
     Clear();
     m_streaming.clear();
+    m_minimap = {};
 
     SerializedEntityData leftCube{};
     leftCube.tagName = "Cube A";
@@ -603,6 +627,7 @@ void EditorScene::CreateEmptyScene()
 {
     Clear();
     m_streaming.clear();
+    m_minimap = {};
     AddDefaultSunAndSky();
 }
 
@@ -904,6 +929,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
     m_gizmoSettings = sceneData.gizmo;
     m_environment = sceneData.environment;
     m_streaming = sceneData.streaming;
+    m_minimap = sceneData.minimap;
 
     for (const SerializedEntityData& entityData : sceneData.entities)
     {
@@ -1007,6 +1033,16 @@ void EditorScene::SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds)
     m_streaming = std::move(worlds);
 }
 
+const SceneMinimap& EditorScene::GetMinimap() const
+{
+    return m_minimap;
+}
+
+void EditorScene::SetMinimap(SceneMinimap minimap)
+{
+    m_minimap = std::move(minimap);
+}
+
 entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData)
 {
     entt::entity entity = m_registry.create();
@@ -1049,6 +1085,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
     sceneData.gizmo = m_gizmoSettings;
     sceneData.environment = m_environment;
     sceneData.streaming = m_streaming;
+    sceneData.minimap = m_minimap;
 
     // The on_destroy listener keeps scene order free of stale handles,
     // so entries can be read without per-entity validity checks. Streamed entities are the streaming's

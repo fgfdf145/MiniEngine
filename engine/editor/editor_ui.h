@@ -200,6 +200,11 @@ class EditorUiController
         m_vehicleRigStatus = std::move(status);
     }
     // Whether the viewport is being recorded, for Tools > Record Viewport and the viewport's REC sign.
+    // The scene's minimap picture as the backend registered it with ImGui; null when there is none.
+    void SetMinimapTexture(ImTextureID texture)
+    {
+        m_minimapTexture = texture;
+    }
     void SetVideoRecordingStatus(VideoRecordingIndicator status)
     {
         m_videoRecording = std::move(status);
@@ -389,6 +394,7 @@ class EditorUiController
     VehicleRigStatus m_vehicleRigStatus;
     VehicleDriveStatus m_vehicleStatus;
     VideoRecordingIndicator m_videoRecording;
+    ImTextureID m_minimapTexture = ImTextureID{};
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehicleHapticsSettings m_vehicleHaptics;

@@ -3,6 +3,7 @@
 #include <engine/logic/gizmo_settings.h>
 #include <engine/scene/scene_components.h>
 #include <engine/scene/scene_environment.h>
+#include <engine/scene/scene_minimap.h>
 #include <engine/scene/scene_streaming.h>
 #include <engine/scene/scene_world.h>
 
@@ -58,6 +59,7 @@ struct SerializedSceneData
     GizmoSettings gizmo;
     SceneEnvironment environment;
     std::vector<SceneStreamingWorld> streaming;
+    SceneMinimap minimap;
     std::string selectedEntityUuid;
     // Legacy v1/v2 model-list index, retained for backward-compatible loads.
     int selectedEntityIndex = 0;
@@ -113,6 +115,9 @@ class IEditorWorld : public ISceneWorld
     // The scene's sky. Saved with the scene; a scene file without it loads as EnvironmentMode::None.
     virtual const std::vector<SceneStreamingWorld>& GetStreamingWorlds() const = 0;
     virtual void SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds) = 0;
+    // The map the viewport shows at its bottom left; invalid (no image) when the scene has none.
+    virtual const SceneMinimap& GetMinimap() const = 0;
+    virtual void SetMinimap(SceneMinimap minimap) = 0;
     virtual const SceneEnvironment& GetEnvironment() const = 0;
     virtual void SetEnvironment(const SceneEnvironment& environment) = 0;
 

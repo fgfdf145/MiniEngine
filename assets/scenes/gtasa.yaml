@@ -5,7 +5,9 @@
 # Venturas, the countryside and the sea bed), its water (data/water.dat, with open sea beyond the map;
 # cars float, fill and sink below it), the Skyline R34 on Grove Street facing west, and the sun.
 # Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py, tools/water.py)
-# and is not in git; the car is imported from Assetto Corsa at assets/skyline_r34_vspec.
+# and is not in git; the car is imported from Assetto Corsa at assets/skyline_r34_vspec. The minimap is the
+# game's radar map (tools/radar_map.py -> out/radar_map.png, copied to assets/maps/gtasa_radar.png, also not
+# in git): 6 km square, game (-3000, 3000) at its top left.
 # glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
 scene:
   version: 3
@@ -133,6 +135,10 @@ streaming:
   - manifest: assets/models/gtasa_stream/gtasa.stream.yaml
     load_radius: 700
     unload_radius: 900
+minimap:
+  image: assets/maps/gtasa_radar.png
+  world_min: [-3000, -3000]
+  world_max: [3000, 3000]
 editor:
   gizmo:
     operation: combined

@@ -552,6 +552,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.vehicleName = session->name;
         status.carData = session->carData;
         status.telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
+        status.pose = session->physics->GetVehiclePose(session->vehicle);
         status.wheels = session->physics->GetVehicleWheels(session->vehicle);
         status.linkage = session->physics->GetVehicleLinkage(session->vehicle);
         status.staticBodyCount = session->physics->GetStaticBodyCount();
