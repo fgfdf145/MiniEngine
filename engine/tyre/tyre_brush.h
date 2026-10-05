@@ -41,7 +41,7 @@ struct BrushTyreParameters
     // Geometry.
     double unloadedRadius = 0.32; // R0, m
     double width = 0.22;          // tread width, m
-    int ribs = 5;
+    int ribs = 10;
     int segmentsPerRib = 20;
     // R_l of (6): the belt's stiffness shortens the contact length below the plain intersection's.
     double transitionRadius = 0.14; // m

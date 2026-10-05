@@ -215,7 +215,7 @@ void TestOverlayDrawsTheBrushPatch()
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
     const VehicleWheelState& outer = wheels[0];
     Require(outer.brushTyre && outer.inContact, "the outer front tyre is a brush tyre on the ground");
-    Require(outer.brushRibCount == 5, "five ribs");
+    Require(outer.brushRibCount == 10, "ten ribs");
     float sliding = 0.0f;
     for (int rib = 0; rib < outer.brushRibCount; ++rib)
     {
