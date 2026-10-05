@@ -15,7 +15,9 @@
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -2343,6 +2345,19 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
         wheel.spinStep = 0.0f;
     }
     vehicle.previous = vehicle.current;
+}
+
+std::optional<float> PhysicsWorld::FindGroundBelow(const glm::vec3& from, float maxDistance) const
+{
+    const JPH::RRayCast ray{ToJoltPosition(from), JPH::Vec3(0.0f, -maxDistance, 0.0f)};
+    JPH::RayCastResult hit;
+    const JPH::SpecifiedBroadPhaseLayerFilter broadPhaseFilter(BroadPhaseLayers::kStatic);
+    const JPH::SpecifiedObjectLayerFilter objectFilter(ObjectLayers::kStatic);
+    if (!m_impl->physicsSystem.GetNarrowPhaseQuery().CastRay(ray, hit, broadPhaseFilter, objectFilter))
+    {
+        return std::nullopt;
+    }
+    return from.y - hit.mFraction * maxDistance;
 }
 
 PhysicsPose PhysicsWorld::GetVehiclePose(VehicleId id) const

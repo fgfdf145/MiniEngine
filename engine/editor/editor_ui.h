@@ -111,13 +111,14 @@ struct EditorUiActions
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
-    // Play mode (VehicleDriveService): drive the selected model as a car, and stop, pause, step or
-    // reset it.
+    // Play mode (VehicleDriveService): drive the selected model as a car, and stop, pause, step,
+    // reset or recover it.
     bool startVehicleDrive = false;
     bool stopVehicleDrive = false;
     std::optional<bool> pauseVehicleDrive;
     bool stepVehicleDrive = false;
     bool resetVehicle = false;
+    bool recoverVehicle = false; // back on its wheels where it is
     // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
     bool startVehicleRig = false;
     bool stopVehicleRig = false;

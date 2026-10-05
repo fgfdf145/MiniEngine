@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
@@ -31,6 +32,13 @@ namespace
 constexpr float kKeyboardSteerSeconds = 0.35f;
 constexpr float kKeyboardCentreSeconds = 0.2f;
 constexpr float kGamepadStickDeadZone = 0.12f;
+// Recover looks for the ground from this far above the car's origin (over a car on its roof, under
+// most ceilings) down this far, and sets the car down this much above where it started over the ground.
+constexpr float kRecoverRayLift = 1.0f;
+constexpr float kRecoverRayLength = 100.0f;
+constexpr float kRecoverDropHeight = 0.15f;
+// A car placed in the air would otherwise be dropped from as high at every recovery.
+constexpr float kRecoverMaxHeightAboveGround = 1.0f;
 // The right stick swings the chase camera round the car this fast at full deflection.
 constexpr float kGamepadOrbitDegreesPerSecond = 180.0f;
 // The ground plane under everything, so a car driven off the edge of the track lands somewhere.
@@ -224,6 +232,11 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
         glm::vec3(session->startPose.position.x, groundY - kGroundPlaneHalfThickness, session->startPose.position.z),
         glm::vec3(kGroundPlaneHalfSize, kGroundPlaneHalfThickness, kGroundPlaneHalfSize));
     session->vehicle = session->physics->AddVehicle(settings, session->startPose);
+    if (const std::optional<float> ground = session->physics->FindGroundBelow(
+            session->startPose.position + glm::vec3(0.0f, kRecoverRayLift, 0.0f), kRecoverRayLength))
+    {
+        session->startHeightAboveGround = std::clamp(session->startPose.position.y - *ground, 0.0f, kRecoverMaxHeightAboveGround);
+    }
 
     const double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
     if (!session->carData.empty())
@@ -277,6 +290,43 @@ void Reset(RendererSharedState& state)
         session->keyboardSteering = 0.0f;
         session->haptics = VehicleHapticsState{};
     }
+}
+
+void Recover(RendererSharedState& state)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr)
+    {
+        return;
+    }
+    const PhysicsPose current = session->physics->GetVehiclePose(session->vehicle);
+    // The heading on the ground. A car on its nose or tail has none: its roof points where it was going
+    // (nose down) or back (nose up).
+    const glm::vec3 forward = current.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+    glm::vec3 heading(forward.x, 0.0f, forward.z);
+    if (glm::length(heading) < 0.1f)
+    {
+        const glm::vec3 up = current.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+        heading = glm::vec3(up.x, 0.0f, up.z) * (forward.y < 0.0f ? 1.0f : -1.0f);
+    }
+    const float yaw = glm::length(heading) > 1.0e-4f ? std::atan2(heading.x, heading.z) : 0.0f;
+
+    PhysicsPose pose;
+    pose.rotation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    pose.position = current.position;
+    if (const std::optional<float> ground =
+            session->physics->FindGroundBelow(current.position + glm::vec3(0.0f, kRecoverRayLift, 0.0f), kRecoverRayLength))
+    {
+        pose.position.y = *ground + session->startHeightAboveGround + kRecoverDropHeight;
+    }
+    else
+    {
+        pose.position.y += kRecoverRayLift;
+    }
+    session->physics->ResetVehicle(session->vehicle, pose);
+    session->keyboardSteering = 0.0f;
+    session->haptics = VehicleHapticsState{};
+    LOG_INFO("Put '{}' back on its wheels at ({:.1f}, {:.1f}, {:.1f})", session->name, pose.position.x, pose.position.y, pose.position.z);
 }
 
 void SetPaused(RendererSharedState& state, bool paused)
@@ -361,6 +411,16 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         Reset(state);
     }
     session->resetHeld = resetDown;
+    const bool recoverDown =
+        !keyboardCaptured &&
+        (state.input.IsKeyDown(KeyCode(SDL_SCANCODE_R)) ||
+         (state.input.GetFirstConnectedGamepadIndex() >= 0 &&
+          state.input.IsGamepadButtonDown(GamepadButton::North, static_cast<uint32_t>(state.input.GetFirstConnectedGamepadIndex()))));
+    if (recoverDown && !session->recoverHeld && !scripted.has_value())
+    {
+        Recover(state);
+    }
+    session->recoverHeld = recoverDown;
 
     session->physics->SetVehicleControls(session->vehicle, controls);
     if (!session->paused)

@@ -205,6 +205,15 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         {
             result.actions.resetVehicle = true;
         }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_CAR_BURST " Flip Upright"))
+        {
+            result.actions.recoverVehicle = true;
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Puts the car back on its wheels where it is, facing the way it was heading (R / Triangle)");
+        }
         ImGui::Separator();
         DrawTelemetry(status);
     }
@@ -260,10 +269,11 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         {
             ImGui::TextUnformatted("E/Q: change up/down    N (held): clutch");
         }
-        ImGui::TextUnformatted("Backspace: reset the car    F5: stop");
+        ImGui::TextUnformatted("Backspace: reset the car    R: flip upright where it is    F5: stop");
         ImGui::TextUnformatted("Hold the right mouse button: look around the car");
         ImGui::TextDisabled("Gamepad (DualSense / Xbox): R2/L2 (RT/LT), left stick, right stick looks around the car,");
-        ImGui::TextDisabled("Circle (B) hand brake, R1/L1 (RB/LB) change up/down, Cross (A, held) clutch, Create (Back) reset");
+        ImGui::TextDisabled("Circle (B) hand brake, R1/L1 (RB/LB) change up/down, Cross (A, held) clutch,");
+        ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 

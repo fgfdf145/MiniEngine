@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <array>
 #include <utility>
@@ -211,6 +212,9 @@ class PhysicsWorld
     void SetVehicleControls(VehicleId vehicle, const VehicleControls& controls);
     // Puts the car at the pose, stopped, as it was when added.
     void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
+    // The height of the first static surface (track, ground, walls) straight below `from`, within
+    // `maxDistance`; cars are not hit. Empty when there is none.
+    std::optional<float> FindGroundBelow(const glm::vec3& from, float maxDistance) const;
     PhysicsPose GetVehiclePose(VehicleId vehicle) const;
     std::vector<VehicleWheelState> GetVehicleWheels(VehicleId vehicle) const;
     VehicleLinkage GetVehicleLinkage(VehicleId vehicle) const;

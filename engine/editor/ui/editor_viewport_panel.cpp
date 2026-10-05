@@ -1037,7 +1037,11 @@ void EditorUiController::DrawViewportPanel(
             viewportRect.size.x,
             viewportRect.size.y};
         result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
-        HandleViewportShortcuts(scene, camera, viewportRect);
+        // While driving, R puts the car back on its wheels rather than switching the gizmo.
+        if (!m_vehicleStatus.active)
+        {
+            HandleViewportShortcuts(scene, camera, viewportRect);
+        }
         RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
         if (m_vehicleStatus.active)
         {

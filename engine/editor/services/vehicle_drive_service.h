@@ -126,6 +126,9 @@ struct VehicleDriveSession
     TransformComponent startTransform;
     // The vehicle body's pose (vehicle space, +Z forward), not the model's.
     PhysicsPose startPose;
+    // How far the body's origin started above the ground under it: a car put upright where it lies
+    // (Recover) is set down this high, plus a little to drop.
+    float startHeightAboveGround = 0.0f;
     glm::vec3 scale{1.0f};
     // Turns vehicle space into the model's own: the entity's rotation is the body's times this.
     glm::quat vehicleToModel{1.0f, 0.0f, 0.0f, 0.0f};
@@ -141,6 +144,7 @@ struct VehicleDriveSession
     // The keyboard's steering, eased towards full lock rather than jumping to it.
     float keyboardSteering = 0.0f;
     bool resetHeld = false;
+    bool recoverHeld = false;
     // The gear buttons held in the last frame: a change is made once per press.
     VehicleGearButtons gearButtonsHeld;
     // Under scripted controls: the simulated time so far, and when the pose is next logged.
@@ -180,6 +184,9 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 void Stop(RendererSharedState& state);
 // Puts the car back where it started, stopped, and keeps driving.
 void Reset(RendererSharedState& state);
+// Puts the car back on its wheels where it is, facing the way it was heading, stopped: for a car
+// that has rolled over or got stuck on its side.
+void Recover(RendererSharedState& state);
 void SetPaused(RendererSharedState& state, bool paused);
 // While paused: advances the simulation by one fixed step.
 void Step(RendererSharedState& state);

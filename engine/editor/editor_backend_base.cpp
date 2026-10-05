@@ -253,6 +253,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleDriveService::Reset(State());
     }
+    if (actions.recoverVehicle)
+    {
+        VehicleDriveService::Recover(State());
+    }
 
     RunUiAction(modelError, "update viewport model preview", [&]
                 {

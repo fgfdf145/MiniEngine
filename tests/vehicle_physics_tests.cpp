@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -415,6 +416,36 @@ void TestCarSettlesOnTheGround()
     Require(std::abs(pose.position.y) < 0.08f, "the car settles at its ride height, y = " + std::to_string(pose.position.y));
     Require(std::abs(pose.position.x) < 0.05f && std::abs(pose.position.z) < 0.05f, "and stays put");
     Require(world.GetVehicleWheels(car).size() == 4, "four wheels");
+}
+
+// A car on its roof is found the ground under (through itself), and set down upright there drives on.
+void TestCarRecoversFromItsRoof()
+{
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    const glm::quat upsideDown = glm::angleAxis(glm::pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(5.0f, 2.0f, 3.0f), upsideDown});
+    Simulate(world, 2.0f);
+    PhysicsPose pose = world.GetVehiclePose(car);
+    Require((pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f)).y < -0.5f, "the car lies on its roof");
+
+    const std::optional<float> ground = world.FindGroundBelow(pose.position + glm::vec3(0.0f, 1.0f, 0.0f), 100.0f);
+    Require(ground.has_value() && std::abs(*ground) < 1e-3f, "the ray finds the ground through the car, not the car");
+    Require(!world.FindGroundBelow(glm::vec3(500.0f, 1.0f, 0.0f), 100.0f).has_value(), "and nothing off the edge of the world");
+
+    world.ResetVehicle(car, {glm::vec3(pose.position.x, *ground + 0.15f, pose.position.z), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 2.0f);
+    pose = world.GetVehiclePose(car);
+    Require(world.GetVehicleTelemetry(car).wheelsInContact == 4, "set upright, it stands on its four wheels");
+    Require((pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f)).y > 0.99f, "level");
+
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    const float startZ = pose.position.z;
+    Simulate(world, 2.0f);
+    Require(world.GetVehiclePose(car).position.z > startZ + 3.0f, "and drives away");
 }
 
 void TestCarDrivesSteersAndReverses()
@@ -2670,6 +2701,7 @@ int main()
         TestWaterSurfaceHeights();
         TestCarFloatsThenSinksInWater();
         TestCarSettlesOnTheGround();
+        TestCarRecoversFromItsRoof();
         TestCarDrivesSteersAndReverses();
         TestCarDrivesOnTheManualGearbox();
         TestCarRotatedAtStartDrivesItsOwnWay();
