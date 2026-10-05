@@ -3,10 +3,13 @@
 # the models stand at the origin and line up with each other. Converted from the game's files by the
 # tools in C:\Project\GTASA MAP (tools/engine_bundle.py) and imported to assets/models/gtasa_<region>
 # (not in git). glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
+# The Skyline R34 stands on Grove Street facing west, out of the cul-de-sac (needs the car imported from
+# Assetto Corsa at assets/skyline_r34_vspec, not in git). The map collides through the game's own COL
+# models, which the converter writes into each region's glTF.
 scene:
   version: 3
-  selected_entity_uuid: ""
-  selected_entity: -1
+  selected_entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
+  selected_entity: 5
 entities:
   - entity_uuid: c42332ab-2274-43e5-9c1e-94e0e483be21
     tag: Los Santos
@@ -67,6 +70,18 @@ entities:
     transform:
       translation: [0, 0, 0]
       rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
+    tag: Skyline R34
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 45269759-fc52-42b8-ac27-6d1fd5f40397
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [2475, 12.36, 1660]
+      rotation: [0, 90, 0]
       scale: [1, 1, 1]
 lights:
   - entity_uuid: 41b8d4af-b0a9-4c60-8804-999f21e90086
