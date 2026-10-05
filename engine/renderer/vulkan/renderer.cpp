@@ -525,13 +525,14 @@ VulkanRenderer::~VulkanRenderer()
     m_forwardPipelines.reset();
     m_geometryPipelines.reset();
     m_decalPipelines.reset();
+    // Its ImGui binding goes while the ImGui Vulkan backend is still up: DestroySwapchainResources
+    // shuts that backend down.
+    ReleaseMinimapTexture();
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
     m_gbufferDescriptors.reset();
     m_sceneTargets.reset();
-    // Its ImGui binding goes before the ImGui backend that made it.
-    ReleaseMinimapTexture();
     m_imguiLayer.reset();
     m_textureStore.clear();
     m_stagedTextures.clear();
