@@ -470,12 +470,6 @@ void EditorUiController::DrawScenePanel(
 {
     if (ImGui::Begin("Scene", &m_showSceneWindow))
     {
-        // Texture files prepare in the background; the scene on screen changes once they are ready.
-        if (!sceneUploadStatus.empty())
-        {
-            ImGui::TextDisabled("%s", sceneUploadStatus.c_str());
-        }
-
         // Model loads and uploads fail without interrupting the editor, so this line is the only
         // place the user learns that the scene on screen is not the one they asked for.
         if (!lastLoadError.empty())
@@ -502,6 +496,14 @@ void EditorUiController::DrawScenePanel(
             ImGui::Text("Models: %u  Lights: %u",
                         static_cast<unsigned int>(modelCount),
                         static_cast<unsigned int>(lightCount));
+        }
+        // Texture files prepare in the background; the scene on screen changes once they are ready.
+        // The status shares the counts line: a line of its own would come and go with every scene
+        // update and push the whole panel down and back up.
+        if (!sceneUploadStatus.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", sceneUploadStatus.c_str());
         }
 
         if (ImGui::Button("Add Entity"))
