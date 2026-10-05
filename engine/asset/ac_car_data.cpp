@@ -527,6 +527,7 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
     out.bumpStopTravel = number("BUMPSTOP_UP");
     out.reboundStopTravel = number("BUMPSTOP_DN");
     out.rodLength = suspension.Number(axle, "ROD_LENGTH");
+    out.packerRange = suspension.Number(axle, "PACKER_RANGE");
     out.dampBump = number("DAMP_BUMP");
     out.dampFastBump = number("DAMP_FAST_BUMP");
     out.dampFastBumpThreshold = number("DAMP_FAST_BUMPTHRESHOLD");

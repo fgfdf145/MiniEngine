@@ -127,9 +127,9 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
         unit.springPreload = staticLoad;
         unit.coilSpring = suspension::Curve::Polynomial(rate, 0.5 * axle.progressiveRate, 0.0);
     }
-    if (axle.bumpStopRate > 0.0f && axle.bumpStopTravel > 0.0f)
+    if (const std::optional<double> start = VehicleBumpStopStart(axle); axle.bumpStopRate > 0.0f && start.has_value())
     {
-        unit.bumpStop = suspension::Curve::Stop(axle.bumpStopTravel, axle.bumpStopRate, 0.0, 1);
+        unit.bumpStop = suspension::Curve::Stop(*start, axle.bumpStopRate, 0.0, 1);
     }
     // The damper: slow and fast rates each way, the fast one past its threshold (velocity positive
     // in compression).
@@ -162,6 +162,21 @@ VehicleCornerSetup BuildVehicleCorner(const VehicleSettings& settings, size_t wh
     setup.bumpTravel = std::max(static_cast<double>(axle.bumpStopTravel), 0.03) + 0.04;
     setup.droopTravel = axle.reboundStopTravel > 0.0f ? axle.reboundStopTravel : 0.08;
     return setup;
+}
+
+std::optional<double> VehicleBumpStopStart(const VehicleSuspensionAxle& axle)
+{
+    std::optional<double> start;
+    if (axle.bumpStopTravel > 0.0f)
+    {
+        start = axle.bumpStopTravel;
+    }
+    if (HasRodLength(axle) && axle.packerRange.has_value() && *axle.packerRange > 0.0f)
+    {
+        const double packers = static_cast<double>(*axle.packerRange) - *axle.rodLength;
+        start = start.has_value() ? std::min(*start, packers) : packers;
+    }
+    return start;
 }
 
 double VehicleRestTravel(const VehicleSuspensionAxle& axle, double springLoad)

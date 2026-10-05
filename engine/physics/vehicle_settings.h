@@ -136,7 +136,11 @@ struct VehicleSuspensionAxle
     // position). The car rests where its model draws its wheels; the hardpoints' design position is that
     // rest less the travel (VehicleRestTravel). Independent axles only.
     std::optional<float> rodLength;
-    float dampBump = 0.0f;             // N s/m below the fast threshold
+    // Assetto Corsa's PACKER_RANGE (m): how far the spring may compress, rod length included, before the
+    // packers bring the bump stop in. With a rod length the bump stop then starts at
+    // min(bumpStopTravel, packerRange - rodLength) of travel (VehicleBumpStopStart).
+    std::optional<float> packerRange;
+    float dampBump = 0.0f;           // N s/m below the fast threshold
     float dampFastBump = 0.0f;
     float dampFastBumpThreshold = 0.0f; // m/s
     float dampRebound = 0.0f;

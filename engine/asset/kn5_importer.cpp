@@ -183,6 +183,10 @@ Json SuspensionAxleToJson(const VehicleSuspensionAxle& axle)
     {
         out["rodLength"] = number(*axle.rodLength);
     }
+    if (axle.packerRange.has_value())
+    {
+        out["packerRange"] = number(*axle.packerRange);
+    }
     out["dampBump"] = number(axle.dampBump);
     out["dampFastBump"] = number(axle.dampFastBump);
     out["dampFastBumpThreshold"] = number(axle.dampFastBumpThreshold);

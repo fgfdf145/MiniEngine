@@ -19,7 +19,7 @@
 结论：现在的代码（`Curve::Stop(BUMPSTOP_UP)`，硬限位从设计位置量起）与数据的定义一致，不改。
 R34 后轮静止时离上限位块约 22–25 mm，前轮离下垂限位约 30 mm，这是数据本身的结果（按 AC 数据为准的原则不改）。
 
-附带发现（没有实现）：`PACKER_RANGE` 两种读法在 346 个车轴上的对比
+`PACKER_RANGE` 两种读法在 346 个车轴上的对比（按 (a) 实现，见第 4 节）
 
 | 读法 | 静止时离 packer 余量中位数 | 为负（静止就压在 packer 上） | < 10 mm |
 |---|---|---|---|
@@ -27,7 +27,7 @@ R34 后轮静止时离上限位块约 22–25 mm，前轮离下垂限位约 30 m
 | (b) 从全下垂 −DN 起算的行程达到 P 时碰 packer | 30.4 mm | 72 | 108 |
 
 (a) 对几乎所有车都说得通，(b) 不行。按 (a)，R34 前轮静止时离 packer 20 mm、后轮 45.5 mm
-（`2026-10-05-rod-length-rest-at-model-design.md` 当时以“前悬 20 mm 就碰”为由没做的就是这个读法）。是否实现由用户决定。
+（`2026-10-05-rod-length-rest-at-model-design.md` 当时以“前悬 20 mm 就碰”为由没做的就是这个读法）。用户确认按 (a) 实现。
 
 ## 2. 驱动力的反作用走半轴：加速时的悬挂载荷按轮心轨迹
 
@@ -66,3 +66,32 @@ R34 无头测试（满油门，在 40–90 km/h 区间取平均；随后 0.7 刹
 预测来自 K&C 台架：R34 后轮接地点轨迹角 −0.18°，轮心轨迹角 +6.72°（anti-squat −58 %，即这套几何本来就会助长下蹲）；
 每个后轮驱动力 1874 N × (tan 6.72° − tan(−0.18°)) / 45000 N/m = 5.0 mm。前轮轨迹角差 0.92°，0.6 mm。
 测量与预测一致，刹车完全不变。
+
+## 4. PACKER_RANGE（读法 (a)）
+
+packer 是减振器杆上的垫块，作用是让缓冲块提前接触。所以 packer 就是把缓冲块的起点提前，刚度沿用数据里的 `BUMP_STOP_RATE`：
+
+- 缓冲块起点（设计位置起量的行程）= min(`BUMPSTOP_UP`, `PACKER_RANGE` − `ROD_LENGTH`)（`VehicleBumpStopStart`）；
+  只在有 `ROD_LENGTH` 的独立悬挂上读（与弹簧的读法同源），没有 rod length 时不读。
+- 起点可以在设计位置下方；单侧限位曲线（`Curve::Stop`，sign ≠ 0）改为沿自己一侧量重叠量，所以负起点也能正常工作
+  （对原有起点 ≥ 0 的情况结果完全一样）。
+- 硬限位（`BUMPSTOP_UP` + 0.04 m）不变：packer 是橡胶，不是刚性的。
+- 346 个车轴里有 236 个是 packer 先于缓冲块起作用（中位数早 28 mm）。
+
+数据链路：`VehicleSuspensionAxle::packerRange`，读 AC 的 `PACKER_RANGE`，glTF 的 `MINIENGINE_vehicle` 里存为 `packerRange`
+（kn5 导入写出、加载读回）。R34 资产已补上前 0.12、后 0.11（备份 `out/backup/skyline_r34_vspec.gltf.before-packer-range.backup`）。
+
+R34：前轮 packer 在设计位置（0.12 − 0.12），即静止位置上方 20.1 mm，早于 `BUMPSTOP_UP` 的 60 mm；
+后轮 0.11 − 0.015 = 95 mm，晚于 `BUMPSTOP_UP` 的 75 mm，所以后轮不变。
+
+无头测试（同一程序，packer 关 / 开）：
+
+| | packer 关 | packer 开 |
+|---|---|---|
+| 0.7 刹车（0.79 g）俯仰 | −1.397° | −1.265° |
+| 刹车时前轮行程 | +29.8 mm | +23.5 mm |
+| 0.68 g 稳态弯：侧倾 / 外侧前轮行程 | 2.22° / +21.9 mm | 2.21° / +20.8 mm |
+| 0.95 g 稳态弯：侧倾 / 外侧前轮行程 / 俯仰 | 3.08° / +31.9 mm / −0.191° | 2.87° / +25.8 mm / −0.095° |
+| 满油门加速 | 不变 | 不变 |
+
+测试：`TestPackersBringTheBumpStopIn`（起点、提前、负起点、不带 rod length 时不读）、kn5 导入测试中 `PACKER_RANGE` 的往返。

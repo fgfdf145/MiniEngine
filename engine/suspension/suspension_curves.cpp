@@ -152,13 +152,9 @@ double Curve::Evaluate(double x, double& slope) const
         return m_a * x + m_b * x * x + m_c * x * x * x;
     case Kind::Stop:
     {
-        const double sign = x >= 0.0 ? 1.0 : -1.0;
-        if ((m_sign > 0 && x < 0.0) || (m_sign < 0 && x > 0.0))
-        {
-            slope = 0.0;
-            return 0.0;
-        }
-        const double overlap = std::abs(x) - m_a;
+        // A one-sided stop measures its overlap along its own side, so its gap may lie past zero.
+        const double sign = m_sign != 0 ? static_cast<double>(m_sign) : (x >= 0.0 ? 1.0 : -1.0);
+        const double overlap = sign * x - m_a;
         if (overlap <= 0.0)
         {
             slope = 0.0;

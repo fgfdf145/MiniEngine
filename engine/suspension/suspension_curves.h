@@ -21,7 +21,8 @@ public:
     // term: F = slope * x + c * x^3 with c chosen so dF/dx(range) = endSlope. Odd in x.
     static Curve Progressive(double slope, double endSlope, double range);
     // Zero until |x| passes `gap` on the side `sign` (+1 compression only, -1 tension only, 0 both),
-    // then grows as `slope * d + quadratic * d^2` with d the overlap.
+    // then grows as `slope * d + quadratic * d^2` with d the overlap. A one-sided stop's gap may be
+    // negative: it then already presses at x = 0 (sign * x > gap).
     static Curve Stop(double gap, double slope, double quadratic, int sign);
     // Samples (x ascending) joined by a monotone cubic.
     static Curve Table(std::vector<double> x, std::vector<double> f);

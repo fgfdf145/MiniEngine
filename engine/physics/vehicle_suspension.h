@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace me
@@ -46,6 +47,11 @@ inline bool HasRodLength(const VehicleSuspensionAxle& axle)
 {
     return axle.rodLength.has_value() && axle.type != VehicleSuspensionType::None && axle.type != VehicleSuspensionType::SolidAxle;
 }
+
+// Where the bump stop starts (m of travel from the design position, bump positive): BUMPSTOP_UP, or
+// sooner where the packers bring it in, with a rod length when the spring has compressed PACKER_RANGE
+// (rod length included): packerRange - rodLength, which may lie below the design position. nullopt: none.
+std::optional<double> VehicleBumpStopStart(const VehicleSuspensionAxle& axle);
 
 // Where a wheel rests (m of travel from the design position, bump positive) under `springLoad` (N, its
 // share of the weight less its hub's): where wheelRate (z + L) + progressiveRate (z + L)^2 / 2 carries

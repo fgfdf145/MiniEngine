@@ -1132,7 +1132,7 @@ std::map<std::string, std::string> BoxsterDataFiles()
         {"brakes.ini", "[HEADER]\r\nVERSION=1\r\n[DATA]\r\nMAX_TORQUE=3200\r\nFRONT_SHARE=0.65\r\nHANDBRAKE_TORQUE=2000\r\n"},
         {"suspensions.ini",
          "[BASIC]\r\nWHEELBASE=2.475\r\nCG_LOCATION=0.455\r\n[ARB]\r\nFRONT=30000\r\nREAR=16000\r\n[FRONT]\r\nTYPE=STRUT\r\nHUB_MASS=70\r\nSPRING_RATE=30760\r\n"
-         "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\nBASEY=-0.105\r\nTRACK=1.515\r\nSTATIC_CAMBER=-1.6\r\nTOE_OUT=-0.00030\r\nBUMP_STOP_RATE=72000\r\nBUMPSTOP_UP=0.080\r\nROD_LENGTH=0.045\r\n"
+         "DAMP_BUMP=3273\r\nDAMP_REBOUND=5875\r\nBASEY=-0.105\r\nTRACK=1.515\r\nSTATIC_CAMBER=-1.6\r\nTOE_OUT=-0.00030\r\nBUMP_STOP_RATE=72000\r\nBUMPSTOP_UP=0.080\r\nROD_LENGTH=0.045\r\nPACKER_RANGE=0.090\r\n"
          "BUMPSTOP_DN=0.080\r\nDAMP_FAST_BUMP=1934\r\nDAMP_FAST_BUMPTHRESHOLD=0.080\r\nDAMP_FAST_REBOUND=2601\r\nDAMP_FAST_REBOUNDTHRESHOLD=0.130\r\n"
          "STRUT_CAR=0.28497, 0.40218, -0.08294\r\nSTRUT_TYRE=0.10784, -0.16402, 0.01798\r\nWBCAR_BOTTOM_FRONT=0.43800, -0.16775, 0.26073\r\n"
          "WBCAR_BOTTOM_REAR=0.41057, -0.15672, -0.01280\r\nWBTYRE_BOTTOM=0.10784, -0.16402, 0.01798\r\nWBCAR_STEER=0.48843, -0.09289, 0.10865\r\n"
@@ -1624,6 +1624,8 @@ void ImportWritesTheCarsOwnData()
         RequireNear(spec.frontSuspension->toeOutRodLength, -0.0003f, 1e-7f, "the toe rod");
         Require(spec.frontSuspension->rodLength.has_value() && std::abs(*spec.frontSuspension->rodLength - 0.045f) < 1e-6f, "the front's ROD_LENGTH");
         Require(!spec.rearSuspension->rodLength.has_value(), "the rear has none");
+        Require(spec.frontSuspension->packerRange.has_value() && std::abs(*spec.frontSuspension->packerRange - 0.09f) < 1e-6f, "the front's PACKER_RANGE");
+        Require(!spec.rearSuspension->packerRange.has_value(), "the rear has no packers");
         Require(spec.frontSuspension->antiRollBarRate == 30000.0f && spec.rearSuspension->antiRollBarRate == 16000.0f, "the anti-roll bars");
         RequireNear(spec.frontSuspension->centerOfMassAboveWheel, 0.105f, 1e-5f, "BASEY -0.105: the centre of mass above the wheel centre");
         Require(spec.wheelbase.has_value() && *spec.wheelbase == 2.475f && spec.frontWeightShare.has_value(), "the wheelbase and weight split");

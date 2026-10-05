@@ -1552,6 +1552,35 @@ void TestDriveForceLoadsTheLinkageAtTheWheelCentre()
     RequireNear(static_cast<float>(halfHeld), static_cast<float>(0.5 * (driven + braked)), 0.05f * static_cast<float>(std::abs(driven - braked)), "brakes holding half the moment");
 }
 
+// Assetto Corsa's PACKER_RANGE: with a rod length the packers bring the bump stop in once the spring has
+// compressed that far, rod length included, so the stop starts at packerRange - rodLength of travel when
+// that comes before BUMPSTOP_UP; it may lie below the design position, the stop then pressing there.
+// Without a rod length the packers are not read.
+void TestPackersBringTheBumpStopIn()
+{
+    const VehicleSettings base = GtrSettings();
+    const float bumpStop = base.frontSuspension.bumpStopTravel;
+    Require(bumpStop > 0.03f && base.frontSuspension.bumpStopRate > 0.0f, "the GT-R has front bump stops");
+    const auto stopAt = [&](std::optional<float> rod, std::optional<float> packers, double travel) {
+        VehicleSettings settings = base;
+        settings.frontSuspension.rodLength = rod;
+        settings.frontSuspension.packerRange = packers;
+        const std::optional<double> start = VehicleBumpStopStart(settings.frontSuspension);
+        const double force = BuildVehicleCorner(settings, 0, 3000.0).unit.bumpStop.Value(travel);
+        return std::pair<double, double>{start.value_or(-1.0), force};
+    };
+    const double rate = base.frontSuspension.bumpStopRate;
+    RequireNear(static_cast<float>(stopAt(std::nullopt, 0.01f, 0.0).first), bumpStop, 1e-6f, "no rod length: the packers are not read");
+    RequireNear(static_cast<float>(stopAt(0.06f, 0.5f, 0.0).first), bumpStop, 1e-6f, "packers past the bump stop change nothing");
+    const auto [early, earlyForce] = stopAt(0.06f, 0.08f, 0.03);
+    RequireNear(static_cast<float>(early), 0.02f, 1e-6f, "the packers bring the stop in to 20 mm of bump");
+    RequireNear(static_cast<float>(earlyForce), static_cast<float>(rate * 0.01), 1e-3f * static_cast<float>(rate * 0.01), "and it presses from there");
+    const auto [below, belowForce] = stopAt(0.06f, 0.04f, 0.0);
+    RequireNear(static_cast<float>(below), -0.02f, 1e-6f, "packers below the design position");
+    RequireNear(static_cast<float>(belowForce), static_cast<float>(rate * 0.02), 1e-3f * static_cast<float>(rate * 0.02), "press at the design position already");
+    RequireNear(static_cast<float>(stopAt(0.06f, 0.04f, -0.03).second), 0.0f, 1e-6f, "and let go below their start");
+}
+
 // The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
 // mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
 // twice adds nothing, and the car at rest carries it.
@@ -2597,6 +2626,7 @@ int main()
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();
         TestDriveForceLoadsTheLinkageAtTheWheelCentre();
+        TestPackersBringTheBumpStopIn();
         TestStartingFuelMovesTheMass();
         TestLiveAxleCarRestsAndCorners();
         TestLiveAxleTorqueReactionLoadsTheLeftRear();
