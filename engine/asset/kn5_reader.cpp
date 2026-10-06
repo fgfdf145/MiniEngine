@@ -313,7 +313,11 @@ Kn5Model ReadModel(std::istream& stream, size_t size, const std::string& source,
         {
             std::string name = reader.String();
             const float value = reader.F32();
-            reader.Skip(4 * 9); // valueB(2) valueC(3) valueD(4), unused by any shader read here
+            reader.Skip(4 * 2); // valueB(2)
+            std::array<float, 3> vector{};
+            reader.Read(vector.data(), 3 * 4);
+            reader.Skip(4 * 4); // valueD(4)
+            material.vectors[name] = vector;
             material.properties[std::move(name)] = value;
         }
         const std::uint32_t slotCount = reader.Count(12, "texture slots");

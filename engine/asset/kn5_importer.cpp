@@ -50,6 +50,22 @@ constexpr size_t kStubTextureBytes = 128;
 constexpr float kMultilayerMinRoughness = 0.7f;
 // The clear coat's reflectance at normal incidence (KHR_materials_clearcoat: IOR 1.5).
 constexpr float kCoatF0 = 0.04f;
+// The least roughness written: the renderer's floor (deferred_lighting.frag clamps to 0.04).
+constexpr float kMinRoughness = 0.04f;
+// AC's clear-noon light (content/weather/3_clear/colorCurves.ini, HIGH) as a diffuse surface meets
+// it: the sun's luminance 12.6 over a mean N.L of 0.5, the ambient's 4.5 over a mean hemisphere
+// factor of 0.75. A neutral surface (ksDiffuse = ksAmbient = 0.5) gets kAcNeutralLight of it, and
+// the same surface is about kAcNeutralLuminance cd/m^2 in daylight here (120 klx sun at a mean N.L
+// of 0.5, ~20 klx of sky).
+constexpr float kAcSunLight = 12.6f * 0.5f;
+constexpr float kAcAmbientLight = 4.5f * 0.75f;
+constexpr float kAcNeutralLight = 0.5f * (kAcSunLight + kAcAmbientLight);
+constexpr float kAcNeutralLuminance = 25500.0f;
+// The gain, in gamma space, a neutral surface is drawn at: the level Kunos road-car paint has been
+// imported at (its detail colour x2), which reads closest to the game's own skin previews. AC's
+// ratios between materials hold at any level; this one clips the brightest liveries (white, red,
+// yellow) at 1, as the import always has.
+constexpr float kAcNeutralGain = 2.0f;
 // The glTF node extension that marks a mesh as collision only (see ModelCollisionMesh).
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
 // The glTF extension, on the document, that carries a car's own figures (see VehicleCarSpec).
@@ -1009,6 +1025,14 @@ class GltfBuilder
         return m_nodes.size() - 1;
     }
 
+    // A car's materials are converted with AC's light scale (docs/design/
+    // 2026-10-06-ac-light-scale-design.md); a track's are not calibrated against it yet. Call before
+    // AddMaterials.
+    void SetCarLighting(bool car)
+    {
+        m_carLighting = car;
+    }
+
     // A car's own figures, written on the document as MINIENGINE_vehicle.
     void SetVehicle(const VehicleCarSpec& spec)
     {
@@ -1226,7 +1250,7 @@ class GltfBuilder
         return found == m_textureUris.end() ? std::nullopt : TextureIndexForUri(found->second);
     }
 
-    // txDetail's colour when it is one flat colour, doubled and in gamma space (FlatDetailColor). On
+    // txDetail's colour when it is one flat colour, in gamma space (FlatDetailColor). On
     // Kunos road cars this is where the paint lives: the diffuse is a grey panel/AO template shared
     // by every livery and the shader multiplies the one-colour detail map over it.
     std::optional<std::array<float, 3>> DetailColor(const Kn5Model& model, const std::string& textureName)
@@ -1250,16 +1274,17 @@ class GltfBuilder
     }
 
     // The paint on its template, baked: AC multiplies the diffuse by lerp(colour, 1, diffuse alpha)
-    // in gamma space and nothing clamps before the product. A factor cannot carry a doubled colour
-    // above 1 (white, red and yellow liveries) and ignores the alpha mask, so the product is written
-    // as the base colour map, clamped only at the end. keepAlpha keeps the diffuse's alpha for a
-    // material that blends or tests it.
+    // and the whole by the diffuse gain (Kn5Importer::DiffuseGain), in gamma space, and nothing
+    // clamps before the product. A factor cannot carry a product above 1 and ignores the alpha mask,
+    // so the product is written as the base colour map, clamped only at the end. A colour of 1 bakes
+    // the gain alone. keepAlpha keeps the diffuse's alpha for a material that blends or tests it.
     std::optional<std::string> BakePaint(
-        const Kn5Model& model, const std::string& diffuseName, const std::array<float, 3>& color, bool keepAlpha)
+        const Kn5Model& model, const std::string& diffuseName, const std::array<float, 3>& color, float gain, bool keepAlpha)
     {
         const std::string key = ToLowerAscii(diffuseName) + "|" + std::to_string(std::lround(color[0] * 1000.0f)) + "," +
                                 std::to_string(std::lround(color[1] * 1000.0f)) + "," +
-                                std::to_string(std::lround(color[2] * 1000.0f)) + (keepAlpha ? "|a" : "");
+                                std::to_string(std::lround(color[2] * 1000.0f)) + "|" + std::to_string(std::lround(gain * 1000.0f)) +
+                                (keepAlpha ? "|a" : "");
         const auto cached = m_paintCache.find(key);
         if (cached != m_paintCache.end())
         {
@@ -1285,7 +1310,7 @@ class GltfBuilder
             for (size_t channel = 0; channel < 3; ++channel)
             {
                 const float diffuse = static_cast<float>(image->pixels[texel * 4 + channel]) / 255.0f;
-                const float multiplier = color[channel] + (1.0f - color[channel]) * alpha;
+                const float multiplier = (color[channel] + (1.0f - color[channel]) * alpha) * gain;
                 pixels[texel * channels + channel] =
                     static_cast<std::uint8_t>(std::lround(std::clamp(diffuse * multiplier, 0.0f, 1.0f) * 255.0f));
             }
@@ -1294,7 +1319,8 @@ class GltfBuilder
                 pixels[texel * 4 + 3] = image->pixels[texel * 4 + 3];
             }
         }
-        const std::string fileName = UniqueFileName(SafeStem(diffuseName) + "_paint", ".png");
+        const bool paint = color != std::array<float, 3>{1.0f, 1.0f, 1.0f};
+        const std::string fileName = UniqueFileName(SafeStem(diffuseName) + (paint ? "_paint" : "_lit"), ".png");
         WritePng(m_textureDirectory / fileName, image->width, image->height, static_cast<int>(channels), pixels.data());
         m_paintCache[key] = "textures/" + fileName;
         return m_paintCache[key];
@@ -1479,6 +1505,16 @@ class GltfBuilder
         const bool useDetail = material.Property("useDetail", 0.0f) > 0.0f;
         const std::string detailName = material.Texture("txDetail");
         const std::optional<std::array<float, 3>> paint = useDetail ? DetailColor(model, detailName) : std::nullopt;
+        const bool tiledDetail = !multilayer && !paint.has_value() && HasTiledDetail(model, material);
+
+        // How bright AC draws the diffuse (docs/design/2026-10-06-ac-light-scale-design.md), a gain in
+        // gamma space on everything the diffuse term draws: the paint colour, a tiled detail, or the
+        // diffuse itself. Tracks are not calibrated yet: they keep a detail's old x2 and no gain.
+        const float gain = m_carLighting ? Kn5Importer::DiffuseGain(material.Property("ksDiffuse", 0.5f),
+                                                                    material.Property("ksAmbient", 0.5f))
+                                         : 1.0f;
+        const float detailGain = m_carLighting ? gain : 2.0f;
+        const bool keepAlpha = material.alphaBlend || AlphaTestCutsOut(model, material);
 
         Json pbr = Json::object();
         pbr["baseColorFactor"] = Json::array({1.0f, 1.0f, 1.0f, 1.0f});
@@ -1487,14 +1523,14 @@ class GltfBuilder
         std::optional<size_t> baseColor = TextureIndexForKn5(diffuseName);
         if (paint.has_value())
         {
-            // A doubled colour above 1, or a diffuse whose alpha keeps the template somewhere, needs
-            // the product baked; otherwise the colour is the factor.
-            const float brightest = std::max({(*paint)[0], (*paint)[1], (*paint)[2]});
+            // A colour above 1 after the gain, or a diffuse whose alpha keeps the template somewhere,
+            // needs the product baked; otherwise the colour is the factor.
+            const float brightest = std::max({(*paint)[0], (*paint)[1], (*paint)[2]}) * detailGain;
             const std::optional<std::pair<std::uint8_t, std::uint8_t>> alpha = AlphaRange(model, diffuseName);
             std::optional<std::string> baked;
             if (baseColor.has_value() && (brightest > 1.0f || (alpha.has_value() && alpha->second > 0)))
             {
-                baked = BakePaint(model, diffuseName, *paint, material.alphaBlend || AlphaTestCutsOut(model, material));
+                baked = BakePaint(model, diffuseName, *paint, detailGain, keepAlpha);
             }
             if (baked.has_value())
             {
@@ -1502,10 +1538,31 @@ class GltfBuilder
             }
             else
             {
-                pbr["baseColorFactor"] = Json::array({Round(SrgbToLinear(std::min((*paint)[0], 1.0f)), 5),
-                                                      Round(SrgbToLinear(std::min((*paint)[1], 1.0f)), 5),
-                                                      Round(SrgbToLinear(std::min((*paint)[2], 1.0f)), 5),
+                pbr["baseColorFactor"] = Json::array({Round(SrgbToLinear(std::min((*paint)[0] * detailGain, 1.0f)), 5),
+                                                      Round(SrgbToLinear(std::min((*paint)[1] * detailGain, 1.0f)), 5),
+                                                      Round(SrgbToLinear(std::min((*paint)[2] * detailGain, 1.0f)), 5),
                                                       1.0f});
+            }
+        }
+        else if (!tiledDetail && !multilayer && gain != 1.0f)
+        {
+            // The diffuse alone: a gain above 1 on a map has to be baked (a factor stops at 1); below
+            // it, the factor in linear terms, gain^2.2.
+            std::optional<std::string> baked;
+            if (baseColor.has_value() && gain > 1.0f)
+            {
+                baked = BakePaint(model, diffuseName, {1.0f, 1.0f, 1.0f}, gain, keepAlpha);
+            }
+            if (baked.has_value())
+            {
+                baseColor = TextureIndexForUri(*baked);
+            }
+            else
+            {
+                const float level = Round(baseColor.has_value() ? std::pow(std::min(gain, 1.0f), 2.2f)
+                                                                : SrgbToLinear(std::min(gain, 1.0f)),
+                                          5);
+                pbr["baseColorFactor"] = Json::array({level, level, level, 1.0f});
             }
         }
         if (baseColor.has_value())
@@ -1619,9 +1676,9 @@ class GltfBuilder
         {
             AddDetailLayers(material, out);
         }
-        else if (HasTiledDetail(model, material))
+        else if (tiledDetail)
         {
-            AddTiledDetail(model, material, out);
+            AddTiledDetail(model, material, out, detailGain);
         }
 
         if (material.alphaBlend)
@@ -1634,22 +1691,82 @@ class GltfBuilder
             out["alphaCutoff"] = AlphaCutoff(material);
         }
 
-        const float emissive = material.Property("ksEmissive", 0.0f);
-        if (emissive > 0.0f)
+        if (m_carLighting && !material.alphaBlend && fresnelMax > 0.0f)
         {
-            const float level = std::min(emissive, 1.0f);
-            out["emissiveFactor"] = {level, level, level};
+            AddMetalReflector(material, exponent, gain, out);
         }
+        AddEmissive(material, diffuseName, out);
         return out;
     }
 
+    // AC lays the cube map over the lit surface by its Fresnel weight (isAdditive 0 and 2) or adds it
+    // (1), all in gamma space. Where that reflection outweighs the diffuse the surface keeps, it is a
+    // mirror-like metal: the headlight reflectors (ksDiffuse 0.01, the weight at its 0.7 cap a few
+    // degrees off normal) and the mirrors. A dielectric's specular cannot reach that, so it becomes
+    // metal: grey, at the reflection's mean in linear terms, with no colour map (AC's reflection is
+    // the untinted cube map), and as sharp as AC's reflection (its cube-map level of detail is 0).
+    void AddMetalReflector(const Kn5Material& material, float exponent, float gain, Json& out)
+    {
+        const int additive = static_cast<int>(std::lround(material.Property("isAdditive", 0.0f)));
+        const float reflection =
+            Kn5Importer::MeanReflection(material.Property("fresnelC", 0.0f), material.Property("fresnelEXP", 0.0f),
+                                        material.Property("fresnelMaxLevel", 0.0f), additive);
+        if (reflection <= gain)
+        {
+            return;
+        }
+        // The shader's cube-map level, at full gloss: 6 x (1 - EXP / 8) on isAdditive 2, 6 x (1 - EXP / 255)
+        // otherwise. Level 0 is the sharp map.
+        const float level = 6.0f * std::clamp(1.0f - exponent / (additive == 2 ? 8.0f : 255.0f), 0.0f, 1.0f);
+        const float roughness = level <= 0.0f ? kMinRoughness : Kn5Importer::SpecularExponentToRoughness(exponent);
+        const float reflectance = Round(std::pow(std::min(reflection, 1.0f), 2.2f), 4);
+        Json& pbr = out["pbrMetallicRoughness"];
+        pbr["metallicFactor"] = 1.0f;
+        pbr["baseColorFactor"] = Json::array({reflectance, reflectance, reflectance, 1.0f});
+        pbr["roughnessFactor"] = Round(roughness, 4);
+        pbr.erase("baseColorTexture");
+        pbr.erase("metallicRoughnessTexture");
+    }
+
+    // ksEmissive is a colour (the kn5's valueC): AC adds diffuse x ksEmissive to the lit term, in its
+    // light units, in gamma space. A neutral lit surface is kAcNeutralLight of them, drawn at
+    // kAcNeutralGain; made linear, the emission is a white surface's daylight luminance here times
+    // (ksEmissive x kAcNeutralGain / kAcNeutralLight)^2.2.
+    void AddEmissive(const Kn5Material& material, const std::string& diffuseName, Json& out)
+    {
+        std::array<float, 3> color{};
+        const auto vector = material.vectors.find("ksEmissive");
+        if (vector != material.vectors.end())
+        {
+            color = vector->second;
+        }
+        const float scalar = material.Property("ksEmissive", 0.0f);
+        float peak = 0.0f;
+        for (float& channel : color)
+        {
+            channel = std::pow(std::max(std::max(channel, scalar), 0.0f) * kAcNeutralGain / kAcNeutralLight, 2.2f);
+            peak = std::max(peak, channel);
+        }
+        if (peak <= 0.0f)
+        {
+            return;
+        }
+        out["emissiveFactor"] = {Round(color[0] / peak, 4), Round(color[1] / peak, 4), Round(color[2] / peak, 4)};
+        if (const std::optional<size_t> diffuse = TextureIndexForKn5(diffuseName))
+        {
+            out["emissiveTexture"] = {{"index", *diffuse}};
+        }
+        out["extensions"]["KHR_materials_emissive_strength"] = {{"emissiveStrength", Round(peak * kAcNeutralLuminance, 1)}};
+        m_extensionsUsed.insert("KHR_materials_emissive_strength");
+    }
+
     // ksPerPixelMultiMap's tiled detail (docs/design/2026-10-06-multimap-detail-design.md), as one
-    // MINIENGINE_materials_detail_layers layer: AC multiplies the diffuse by the detail, doubled (a
-    // detail map is neutral at mid-grey), where the diffuse's alpha is 0, and leaves it alone where
-    // the alpha is 1. The mask carries 1 - alpha in red for the detail and alpha in green for a
-    // mid-grey layer. The _NMDetail shaders' txNormalDetail, tiled the same way and scaled by
+    // MINIENGINE_materials_detail_layers layer: AC multiplies the diffuse by the detail where the
+    // diffuse's alpha is 0, and leaves it alone where the alpha is 1; the layers' intensity is the
+    // diffuse gain on both. The mask carries 1 - alpha in red for the detail and alpha in green for a
+    // neutral layer. The _NMDetail shaders' txNormalDetail, tiled the same way and scaled by
     // detailNormalBlend, becomes the normal map where the material's own is flat.
-    void AddTiledDetail(const Kn5Model& model, const Kn5Material& material, Json& out)
+    void AddTiledDetail(const Kn5Model& model, const Kn5Material& material, Json& out, float intensity)
     {
         const std::optional<size_t> detail = TextureIndexForKn5(material.Texture("txDetail"));
         const std::optional<DetailMask> mask = BakeDetailMask(model, material.Texture("txDiffuse"));
@@ -1662,12 +1779,14 @@ class GltfBuilder
         layers.push_back(Json{{"texture", {{"index", *detail}}}, {"scale", {tiling, tiling}}});
         if (mask->keepsDiffuse)
         {
-            layers.push_back(Json{{"texture", {{"index", NeutralDetailIndex()}}}, {"scale", {1.0f, 1.0f}}});
+            // Where the diffuse is kept only the gain applies: a white layer at a car's gain, a
+            // mid-grey one under a track's x2.
+            layers.push_back(Json{{"texture", {{"index", NeutralDetailIndex(m_carLighting)}}}, {"scale", {1.0f, 1.0f}}});
         }
         out["extensions"]["MINIENGINE_materials_detail_layers"] = {
             {"maskTexture", {{"index", *TextureIndexForUri(mask->uri)}}},
             {"mapping", "texCoord"},
-            {"intensity", 2.0f},
+            {"intensity", Round(intensity, 5)},
             {"layers", std::move(layers)}};
         m_extensionsUsed.insert("MINIENGINE_materials_detail_layers");
 
@@ -1734,17 +1853,20 @@ class GltfBuilder
         return m_detailMaskCache[key];
     }
 
-    // A one-texel mid-grey map: the detail layer that leaves the diffuse as it is.
-    size_t NeutralDetailIndex()
+    // A one-texel map for the detail layer that leaves the diffuse as it is: white (times the gain)
+    // or mid-grey (times a track's x2).
+    size_t NeutralDetailIndex(bool white)
     {
-        if (m_neutralDetailUri.empty())
+        std::string& uri = white ? m_whiteDetailUri : m_neutralDetailUri;
+        if (uri.empty())
         {
-            const std::string fileName = UniqueFileName("detail_neutral", ".png");
-            const std::array<std::uint8_t, 3> grey{128, 128, 128};
-            WritePng(m_textureDirectory / fileName, 1, 1, 3, grey.data());
-            m_neutralDetailUri = "textures/" + fileName;
+            const std::string fileName = UniqueFileName(white ? "detail_white" : "detail_neutral", ".png");
+            const std::uint8_t level = white ? 255 : 128;
+            const std::array<std::uint8_t, 3> texel{level, level, level};
+            WritePng(m_textureDirectory / fileName, 1, 1, 3, texel.data());
+            uri = "textures/" + fileName;
         }
-        return *TextureIndexForUri(m_neutralDetailUri);
+        return *TextureIndexForUri(uri);
     }
 
     // AC's multilayer surfaces (see docs/design/2026-09-28-detail-layers-design.md): the mask and
@@ -1997,6 +2119,9 @@ class GltfBuilder
     std::unordered_map<std::string, std::optional<std::pair<std::uint8_t, std::uint8_t>>> m_alphaRangeCache;
     std::unordered_map<std::string, std::optional<DetailMask>> m_detailMaskCache;
     std::string m_neutralDetailUri;
+    std::string m_whiteDetailUri;
+    // A car's import: its materials take AC's diffuse gain, metal reflectors (see ConvertMaterial).
+    bool m_carLighting = false;
 };
 
 void CollectNodeNames(const Kn5Node& node, std::vector<std::string>& names)
@@ -2160,13 +2285,33 @@ std::optional<std::array<float, 3>> FlatDetailColor(const std::vector<std::uint8
     {
         return std::nullopt;
     }
-    std::array<float, 3> doubled{};
+    std::array<float, 3> color{};
     for (size_t channel = 0; channel < 3; ++channel)
     {
-        // Doubled in gamma space, unclamped: AC multiplies it into the diffuse first.
-        doubled[channel] = Round(2.0f * (*middle)[channel], 5);
+        color[channel] = Round((*middle)[channel], 5);
     }
-    return doubled;
+    return color;
+}
+
+float DiffuseGain(float ksDiffuse, float ksAmbient)
+{
+    return kAcNeutralGain * std::max(ksDiffuse * kAcSunLight + ksAmbient * kAcAmbientLight, 0.0f) / kAcNeutralLight;
+}
+
+float MeanReflection(float fresnelC, float fresnelExp, float fresnelMax, int isAdditive)
+{
+    // 2 x the integral of F(mu) mu over mu = N.V in (0, 1], by the midpoint rule; F jumps to its
+    // cap within a few degrees for a small exponent, so the steps are fine.
+    const float exponent = isAdditive == 0 ? std::max(fresnelExp, 1.0f) : std::max(fresnelExp, 0.0f);
+    constexpr int kSteps = 4096;
+    double sum = 0.0;
+    for (int step = 0; step < kSteps; ++step)
+    {
+        const float mu = (static_cast<float>(step) + 0.5f) / static_cast<float>(kSteps);
+        const float weight = std::min(fresnelC + std::pow(1.0f - mu, exponent), fresnelMax);
+        sum += 2.0 * std::max(weight, 0.0f) * mu;
+    }
+    return static_cast<float>(sum / kSteps);
 }
 
 std::vector<size_t> RankPaintedMaterials(
@@ -2755,6 +2900,10 @@ Kn5ImportReport ConvertToGltf(
 
     GltfBuilder builder(textureDirectory, options, LoadTrackSurfaces(source.parent_path()));
     Kn5ImportReport& report = builder.Report();
+    // A car is a lone kn5 beside its data (data.acd, or an unpacked data/car.ini).
+    std::error_code carEc;
+    builder.SetCarLighting(!layout && (std::filesystem::exists(source.parent_path() / "data.acd", carEc) ||
+                                       std::filesystem::exists(source.parent_path() / "data" / "car.ini", carEc)));
     // Tracks have no liveries; a car's skin replaces textures in every pass that reads them.
     const std::optional<std::filesystem::path> skin =
         layout ? std::nullopt : ResolveSkinDirectory(sources.front().file, options.skin);

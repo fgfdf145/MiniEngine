@@ -39,6 +39,9 @@ struct Kn5Material
     std::string shader;
     // Scalar shader parameters (ksSpecular, ksSpecularEXP, useDetail, fresnelMaxLevel, ...).
     std::map<std::string, float> properties;
+    // The same parameters' three-component values (valueC), which is where a float3 one keeps its
+    // value: ksEmissive is a colour, and its scalar is 0 on a material that glows.
+    std::map<std::string, std::array<float, 3>> vectors;
     // Slot name (txDiffuse, txNormal, txMaps, txDetail, ...) to texture name.
     std::map<std::string, std::string> textures;
     bool alphaBlend = false;

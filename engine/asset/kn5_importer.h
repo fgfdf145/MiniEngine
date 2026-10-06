@@ -223,9 +223,19 @@ std::vector<size_t> RankPaintedMaterials(
     const std::vector<size_t>& triangles);
 
 // A texture whose colour is one everywhere (every channel within 6 levels), as AC's txDetail
-// paints it: the colour doubled (a detail map is neutral at mid-grey), in gamma space and not
-// clamped, since AC multiplies it into the diffuse before anything clamps. nullopt for a map that
-// varies - a grain or a weave, not a paint colour. The alpha is not looked at.
+// paints it: the colour in gamma space, which AC multiplies into the diffuse as it is. nullopt for
+// a map that varies - a grain or a weave, not a paint colour. The alpha is not looked at.
 std::optional<std::array<float, 3>> FlatDetailColor(const std::vector<std::uint8_t>& rgba, int width, int height);
+
+// How bright AC draws a surface's diffuse (docs/design/2026-10-06-ac-light-scale-design.md):
+// ksDiffuse and ksAmbient weighed by the light each meets under the game's clear-noon weather, as a
+// gain in gamma space; 2 at 0.5 and 0.5, where Kunos' car paint sits and the level its paint has
+// always been imported at.
+float DiffuseGain(float ksDiffuse, float ksAmbient);
+
+// The cosine-weighted mean, over the hemisphere, of the weight AC gives a surface's cube-map
+// reflection: min(fresnelC + (1 - N.V)^fresnelEXP, fresnelMaxLevel), in gamma space. isAdditive 0
+// raises the exponent to at least 1, as the shader does.
+float MeanReflection(float fresnelC, float fresnelExp, float fresnelMax, int isAdditive);
 }
 }

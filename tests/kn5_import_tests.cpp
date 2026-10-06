@@ -306,6 +306,8 @@ struct FixtureMaterial
     bool tested = false;
     std::vector<std::pair<std::string, float>> properties;
     std::vector<std::pair<std::string, std::string>> textures;
+    // Three-component values (valueC), for the parameters that are colours.
+    std::map<std::string, std::array<float, 3>> vectors;
 };
 
 void WriteMaterial(ByteWriter& writer, const FixtureMaterial& material)
@@ -320,7 +322,14 @@ void WriteMaterial(ByteWriter& writer, const FixtureMaterial& material)
     {
         writer.String(name);
         writer.F32(value);
-        for (int unused = 0; unused < 9; ++unused)
+        writer.F32(0.0f); // valueB
+        writer.F32(0.0f);
+        const auto vector = material.vectors.find(name);
+        for (size_t channel = 0; channel < 3; ++channel)
+        {
+            writer.F32(vector == material.vectors.end() ? 0.0f : vector->second[channel]);
+        }
+        for (int unused = 0; unused < 4; ++unused) // valueD
         {
             writer.F32(0.0f);
         }
@@ -643,18 +652,32 @@ void RulesMatchTheConverter()
     RequireNear(Kn5Importer::SpecularExponentToRoughness(2000.0f), 0.17778f, 1e-4f, "a paint's sun exponent");
     RequireNear(Kn5Importer::SpecularExponentToRoughness(1e6f), 0.04f, 1e-6f, "roughness floor");
 
-    // Ceramic Metallic (148,148,148) doubles past white and is not clamped: AC multiplies it into
-    // the template first. Soul Red (126,1,0) stays below 1.
+    // The detail's colour as AC multiplies it, in gamma space: Kunos' shader does not double it.
     std::vector<std::uint8_t> grey(4 * 4, 148);
     const auto white = Kn5Importer::FlatDetailColor(grey, 2, 2);
     Require(white.has_value(), "a flat grey is a colour");
-    RequireNear((*white)[0], 1.16078f, 1e-4f, "a mid-grey detail doubles past white");
+    RequireNear((*white)[0], 0.58039f, 1e-4f, "the detail's own value");
     std::vector<std::uint8_t> red{126, 1, 0, 255, 128, 2, 1, 255};
     const auto soulRed = Kn5Importer::FlatDetailColor(red, 2, 1);
     Require(soulRed.has_value(), "within 6 levels is one colour");
-    RequireNear((*soulRed)[0], 0.99608f, 1e-4f, "red is doubled in gamma space");
+    RequireNear((*soulRed)[0], 0.49804f, 1e-4f, "the middle of the range, in gamma space");
     std::vector<std::uint8_t> pattern{0, 0, 0, 255, 60, 0, 0, 255};
     Require(!Kn5Importer::FlatDetailColor(pattern, 2, 1).has_value(), "a pattern is not a paint colour");
+
+    // AC's diffuse level: 2 at 0.5 / 0.5 (Kunos' paint), the sun term weighing about twice the
+    // ambient one.
+    RequireNear(Kn5Importer::DiffuseGain(0.5f, 0.5f), 2.0f, 1e-5f, "a neutral surface");
+    RequireNear(Kn5Importer::DiffuseGain(0.15f, 0.2f), 0.66977f, 1e-4f, "the R34's leather");
+    RequireNear(Kn5Importer::DiffuseGain(1.0f, 0.0f), 2.60465f, 1e-4f, "the sun term alone");
+    RequireNear(Kn5Importer::DiffuseGain(0.0f, 0.0f), 0.0f, 0.0f, "no diffuse at all");
+    // The mean of AC's reflection weight over the hemisphere, cosine-weighted.
+    RequireNear(Kn5Importer::MeanReflection(0.0f, 1.0f, 1.0f, 1), 1.0f / 3.0f, 1e-4f, "(1 - N.V) averages 1/3");
+    RequireNear(Kn5Importer::MeanReflection(0.0f, 0.5f, 1.0f, 0), 1.0f / 3.0f, 1e-4f,
+                "isAdditive 0 raises an exponent below 1 to 1");
+    // Capped at 0.2 below N.V 0.8: 2 x (0.2 x 0.32 + the integral of (1 - mu) mu from 0.8 to 1).
+    RequireNear(Kn5Importer::MeanReflection(0.0f, 1.0f, 0.2f, 1), 0.16267f, 1e-4f, "fresnelMaxLevel caps it");
+    RequireNear(Kn5Importer::MeanReflection(0.05f, 0.2f, 0.7f, 2), 0.67628f, 1e-3f,
+                "the R34's headlight chrome sits at its cap");
 }
 
 void ConversionReportsProgressToCompletion()
@@ -803,7 +826,8 @@ void ConvertsHierarchyGeometryAndMaterials()
 
     const ModelMaterialData& lamp = model.materials[3];
     Require(lamp.baseColorTexturePath.empty(), "a stub texture is not written");
-    RequireNear(lamp.emissiveColor[0], 1.0f, 0.0f, "ksEmissive clamps to 1");
+    RequireNear(lamp.emissiveColor[0], 1.0f, 0.0f, "a grey ksEmissive is white");
+    RequireNear(lamp.emissiveIntensity, 40955.0f, 60.0f, "ksEmissive 3 is (3 x 2 / 4.84)^2.2 x 25 500 cd/m^2");
 }
 
 void SkinChoiceChangesThePaint()
@@ -1890,6 +1914,133 @@ void ImportsMultiMapDetailAsDetailLayers()
     Require(named("Panel").baseColor[1] < named("Panel").baseColor[0], "tinted by the paint");
 }
 
+// A car's materials at AC's light scale (docs/design/2026-10-06-ac-light-scale-design.md): a kn5
+// beside a data.acd, so the import treats it as a car.
+std::vector<std::uint8_t> BuildLitCarKn5()
+{
+    ByteWriter writer;
+    writer.Raw("sc6969", 6);
+    writer.U32(5);
+    std::vector<std::array<std::uint8_t, 4>> weave;
+    for (int texel = 0; texel < 16; ++texel)
+    {
+        weave.push_back(texel % 2 == 0 ? std::array<std::uint8_t, 4>{90, 90, 90, 255} : std::array<std::uint8_t, 4>{30, 30, 30, 255});
+    }
+    std::vector<std::array<std::uint8_t, 4>> halfAlpha;
+    for (int texel = 0; texel < 16; ++texel)
+    {
+        halfAlpha.push_back({120, 120, 120, static_cast<std::uint8_t>(texel < 8 ? 0 : 255)});
+    }
+    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>> textures{
+        {"trim.dds", DdsFlat(4, {50, 50, 50, 255})},
+        {"atlas.dds", DdsFlat(4, {200, 200, 200, 255})},
+        {"screen.dds", DdsFlat(4, {20, 200, 20, 255})},
+        {"cockpit.dds", DdsBgra(4, 4, halfAlpha)},
+        {"cloth.dds", DdsBgra(4, 4, weave)},
+        {"template.dds", DdsFlat(4, {255, 255, 255, 0})},
+        {"colour.dds", DdsFlat(4, {100, 100, 100, 255})},
+    };
+    writer.U32(static_cast<std::uint32_t>(textures.size()));
+    for (const auto& [name, data] : textures)
+    {
+        writer.U32(1);
+        writer.String(name);
+        writer.Blob(data);
+    }
+    const std::vector<FixtureMaterial> materials{
+        {"Rubber", "ksPerPixel", false, false, {{"ksDiffuse", 0.1f}, {"ksAmbient", 0.1f}}, {{"txDiffuse", "trim.dds"}}},
+        {"Bright", "ksPerPixel", false, false, {{"ksDiffuse", 0.8f}, {"ksAmbient", 0.8f}}, {{"txDiffuse", "trim.dds"}}},
+        {"Chrome", "ksPerPixelReflection", false, false,
+         {{"ksDiffuse", 0.01f}, {"ksAmbient", 0.1f}, {"ksSpecularEXP", 100.0f}, {"fresnelC", 0.05f}, {"fresnelEXP", 0.2f},
+          {"fresnelMaxLevel", 0.7f}, {"isAdditive", 2.0f}},
+         {{"txDiffuse", "atlas.dds"}}},
+        {"Lens", "ksPerPixelReflection", false, false,
+         {{"ksDiffuse", 0.4f}, {"ksAmbient", 0.3f}, {"ksSpecularEXP", 150.0f}, {"fresnelC", 0.07f}, {"fresnelEXP", 2.5f},
+          {"fresnelMaxLevel", 0.4f}},
+         {{"txDiffuse", "atlas.dds"}}},
+        {"Screen", "ksPerPixel", false, false, {{"ksDiffuse", 0.0f}, {"ksAmbient", 0.0f}, {"ksEmissive", 0.0f}},
+         {{"txDiffuse", "screen.dds"}}, {{"ksEmissive", {2.6f, 2.6f, 2.6f}}}},
+        {"Cloth", "ksPerPixelMultiMap_NMDetail", false, false,
+         {{"ksDiffuse", 0.3f}, {"ksAmbient", 0.3f}, {"useDetail", 1.0f}, {"detailUVMultiplier", 20.0f}},
+         {{"txDiffuse", "cockpit.dds"}, {"txDetail", "cloth.dds"}}},
+        {"Paint", "ksPerPixelMultiMap", false, false,
+         {{"ksDiffuse", 0.5f}, {"ksAmbient", 0.5f}, {"useDetail", 1.0f}, {"detailUVMultiplier", 1.0f}},
+         {{"txDiffuse", "template.dds"}, {"txDetail", "colour.dds"}}},
+    };
+    writer.U32(static_cast<std::uint32_t>(materials.size()));
+    for (const FixtureMaterial& material : materials)
+    {
+        WriteMaterial(writer, material);
+    }
+    WriteDummy(writer, "ROOT", static_cast<std::uint32_t>(materials.size()), kIdentity);
+    for (std::uint32_t index = 0; index < materials.size(); ++index)
+    {
+        WriteMesh(writer, "MESH_" + std::to_string(index), index, static_cast<float>(index));
+    }
+    return writer.Bytes();
+}
+
+void CarMaterialsTakeAcsLightScale()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = scope.Path() / "lit_car" / "lit_car.kn5";
+    WriteFile(kn5, BuildLitCarKn5());
+    // Unreadable car data still imports; its presence is what marks the kn5 as a car.
+    WriteFile(kn5.parent_path() / "data.acd", std::vector<std::uint8_t>(16, 0));
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "assets" / "lit_car");
+    const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+    const std::filesystem::path folder = report.gltfPath.parent_path();
+    const auto named = [&model](const std::string& name) -> const ModelMaterialData&
+    {
+        for (const ModelMaterialData& material : model.materials)
+        {
+            if (material.name == name)
+            {
+                return material;
+            }
+        }
+        throw std::runtime_error("no material " + name);
+    };
+    int width = 0;
+    int height = 0;
+
+    const ModelMaterialData& rubber = named("Rubber");
+    RequireNear(rubber.baseColor[0], std::pow(0.4f, 2.2f), 1e-4f, "gain 0.4 is a factor of 0.4^2.2");
+    Require(rubber.baseColorTexturePath.find("trim") != std::string::npos, "the diffuse itself stays the map");
+
+    const ModelMaterialData& bright = named("Bright");
+    RequireNear(bright.baseColor[0], 1.0f, 0.0f, "a gain above 1 is not a factor");
+    Require(bright.baseColorTexturePath.find("_lit") != std::string::npos, "it is baked into the map");
+    const std::vector<std::uint8_t> lit = ReadPngRgba((folder / bright.baseColorTexturePath).string(), width, height);
+    Require(lit[0] == 160, "50 x gain 3.2 is 160, got " + std::to_string(lit[0]));
+
+    const ModelMaterialData& chrome = named("Chrome");
+    RequireNear(chrome.metallicFactor, 1.0f, 0.0f, "a reflector whose reflection outweighs its diffuse is metal");
+    RequireNear(chrome.baseColor[0], std::pow(Kn5Importer::MeanReflection(0.05f, 0.2f, 0.7f, 2), 2.2f), 1e-3f,
+                "grey at AC's mean reflection, made linear");
+    Require(chrome.baseColorTexturePath.empty(), "AC's reflection is not tinted by the diffuse");
+    RequireNear(chrome.roughnessFactor, 0.04f, 1e-6f, "isAdditive 2 at exponent 100 samples the sharp cube map");
+
+    const ModelMaterialData& lens = named("Lens");
+    RequireNear(lens.metallicFactor, 0.0f, 0.0f, "a lens keeps its diffuse: dielectric");
+
+    const ModelMaterialData& screen = named("Screen");
+    Require(screen.emissiveTexturePath.find("screen") != std::string::npos, "the diffuse is what glows");
+    RequireNear(screen.emissiveColor[1], 1.0f, 0.0f, "a grey ksEmissive is white");
+    RequireNear(screen.emissiveIntensity, 29900.0f, 100.0f, "ksEmissive 2.6, from valueC, is (2.6 x 2 / 4.84)^2.2 x 25 500");
+    RequireNear(screen.baseColor[0], 0.0f, 0.0f, "no diffuse at ksDiffuse = ksAmbient = 0");
+
+    const ModelMaterialData& cloth = named("Cloth");
+    RequireNear(cloth.detailLayers.intensity, 1.2f, 1e-4f, "the tiled detail carries the gain");
+    Require(!cloth.detailLayers.layerTexturePaths[1].empty(), "a half-alpha diffuse keeps a neutral layer");
+    const std::vector<std::uint8_t> neutral =
+        ReadPngRgba((folder / cloth.detailLayers.layerTexturePaths[1]).string(), width, height);
+    Require(neutral[0] == 255, "white: where the diffuse is kept, only the gain applies");
+
+    const ModelMaterialData& paint = named("Paint");
+    RequireNear(paint.baseColor[0], 0.57758f, 1e-3f, "the colour 100/255 x gain 2, made linear");
+}
+
 int main()
 {
     try
@@ -1912,6 +2063,7 @@ int main()
         ImportsAWholeTrackLayout();
         ImportsMultilayerSurfacesAsDetailLayers();
         ImportsMultiMapDetailAsDetailLayers();
+        CarMaterialsTakeAcsLightScale();
         AcdKeysMatchTheGame();
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();
