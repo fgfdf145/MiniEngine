@@ -25,6 +25,7 @@ ICONS = {
     "material": "palette",
     "scene": "mountain-sun",
     "texture": "image",
+    "audio": "music",
     "file": "file",
     "parent_folder": "arrow-turn-up",
 }

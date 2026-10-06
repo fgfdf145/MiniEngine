@@ -423,6 +423,12 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
             LoadThemeSettings(uiNode["theme"], settings.editorUi.theme);
         }
         LoadViewSettings(root["camera"], root["render"], settings.view);
+        if (const YAML::Node audioNode = root["audio"]; audioNode && audioNode.IsMap())
+        {
+            settings.audio.masterVolume =
+                std::clamp(ReadFloatOrDefault(audioNode["master_volume"], settings.audio.masterVolume), 0.0f, 1.0f);
+            settings.audio.muted = ReadBoolOrDefault(audioNode["muted"], settings.audio.muted);
+        }
 
         return true;
     }
@@ -497,6 +503,10 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
 
         output << "      }\n";
         output << "    }\n";
+        output << "  },\n";
+        output << "  \"audio\": {\n";
+        output << "    \"master_volume\": " << std::fixed << std::setprecision(3) << settings.audio.masterVolume << ",\n";
+        output << "    \"muted\": " << JsonBool(settings.audio.muted) << "\n";
         output << "  },\n";
         WriteViewSettings(output, settings.view);
         output << "}\n";

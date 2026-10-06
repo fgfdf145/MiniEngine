@@ -50,7 +50,7 @@ miniengine_group_target_sources(engine_asset)
 
 # The Assets window's type icons (SVG, written by tools/editor_icons/fontawesome_to_svg.py), built
 # into the library so they need no file at run time.
-set(_asset_icon_names folder model material scene texture file parent_folder)
+set(_asset_icon_names folder model material scene texture file parent_folder audio)
 foreach(_icon IN LISTS _asset_icon_names)
     set(_icon_svg "${CMAKE_CURRENT_SOURCE_DIR}/icons/${_icon}.svg")
     set(_icon_source "${CMAKE_CURRENT_BINARY_DIR}/generated/asset_icon_${_icon}_svg.cpp")
@@ -86,6 +86,8 @@ target_link_libraries(engine_asset
         imgui::imgui
         yaml-cpp::yaml-cpp
     PRIVATE
+        # The Assets window tells sound files by their extension (audio_file.h).
+        engine_audio
         unofficial::bc7enc-rdo::bc7enc-rdo
         unofficial::tinyexr::tinyexr
         meshoptimizer::meshoptimizer

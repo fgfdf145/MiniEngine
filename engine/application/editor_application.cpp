@@ -1,5 +1,6 @@
 #include "editor_application.h"
 
+#include <engine/audio/audio_engine.h>
 #include <engine/core/log/log.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/renderer_shared_state.h>
@@ -243,6 +244,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--no-audio")
+        {
+            options.audioDisabled = true;
+            continue;
+        }
+
         if (argument == "--no-ddgi")
         {
             options.ddgiDisabled = true;
@@ -416,6 +423,32 @@ int EditorApplication::Run()
         sharedState->camera.pitchDegrees = camera[4];
     }
     sharedState->fixedViewportExtent = viewportSize;
+    if (m_options.audioDisabled)
+    {
+        sharedState->audioStatus = "Off (--no-audio)";
+    }
+    else
+    {
+        // A scripted run stays silent: its sounds go to no device.
+        AudioEngineOptions audioOptions;
+        audioOptions.output = m_options.maxFrames > 0 ? AudioOutput::None : AudioOutput::Device;
+        std::string audioError;
+        sharedState->audio = AudioEngine::Create(audioOptions, audioError);
+        if (sharedState->audio)
+        {
+            const AudioEngine& audio = *sharedState->audio;
+            sharedState->audioStatus = audio.Output() == AudioOutput::None
+                                           ? std::string("None (scripted run)")
+                                           : audio.DeviceName() + ", " + std::to_string(audio.SampleRate()) + " Hz, " +
+                                                 std::to_string(audio.Channels()) + " channels";
+        }
+        else
+        {
+            // The editor works without sound.
+            LOG_WARN("No audio output: {}", audioError);
+            sharedState->audioStatus = "None: " + audioError;
+        }
+    }
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
     Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);

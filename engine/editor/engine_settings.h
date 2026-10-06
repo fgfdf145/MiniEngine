@@ -54,10 +54,26 @@ struct EngineViewSettings
     RenderDebugSettings renderDebug;
 };
 
+// The Preferences window's Audio section.
+struct EngineAudioSettings
+{
+    bool operator==(const EngineAudioSettings&) const = default;
+
+    // Linear gain over every sound, 0 to 1.
+    float masterVolume = 1.0f;
+    bool muted = false;
+
+    float EffectiveVolume() const
+    {
+        return muted ? 0.0f : masterVolume;
+    }
+};
+
 struct EngineSettings
 {
     int version = 1;
     EditorUiSettings editorUi;
+    EngineAudioSettings audio;
     EngineViewSettings view;
 };
 

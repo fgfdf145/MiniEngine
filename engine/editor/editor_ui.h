@@ -95,6 +95,8 @@ struct EditorUiActions
     // KHR_lights_punctual: whether the selected model's own lights shine.
     std::optional<bool> selectedUseModelLights;
     std::optional<std::string> selectedSceneLoadPath;
+    // A sound file the Assets window asked to hear: played, or stopped when it is already playing.
+    std::optional<std::string> previewAudioPath;
     std::optional<std::string> selectedSceneSavePath;
     std::vector<std::string> deleteAssetPaths;
     std::optional<AssetPasteRequest> pastedAsset;
@@ -136,6 +138,8 @@ struct EditorUiFrameResult
     bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
     RenderDebugSettings renderDebug;
+    // The Preferences window's master volume and mute.
+    EngineAudioSettings audio;
     // The Vehicle panel's tuning, which the next drive starts with, and its chase camera.
     VehicleSettings vehicleTuning;
     VehicleCameraSettings vehicleCamera;
@@ -212,6 +216,11 @@ class EditorUiController
     void SetVideoRecordingStatus(VideoRecordingIndicator status)
     {
         m_videoRecording = std::move(status);
+    }
+    // The audio output the Preferences window names: the device, or why there is none.
+    void SetAudioStatus(std::string status)
+    {
+        m_audioStatus = std::move(status);
     }
 
   private:
@@ -385,6 +394,8 @@ class EditorUiController
     std::deque<std::string> m_droppedFiles; // queued by QueueDroppedFile, drained by the asset browser
     bool m_showCameraWindow = true;
     RenderDebugSettings m_renderDebug;
+    EngineAudioSettings m_audio;
+    std::string m_audioStatus;
     bool m_showAssetManagerWindow = false;
     bool m_showInputMonitorWindow = false;
     bool m_showSceneWindow = true;

@@ -186,6 +186,7 @@ EditorUiFrameResult EditorUiController::Draw(
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
     const float previousUiScale = m_uiScale;
+    const EngineAudioSettings previousAudio = m_audio;
     // Every Window-menu window's open state, to save the settings when one opens or closes.
     std::vector<bool> previousOpen;
     for (const EditorPanel& panel : m_panels)
@@ -330,9 +331,11 @@ EditorUiFrameResult EditorUiController::Draw(
     {
         windowToggled = windowToggled || previousOpen[index] != *m_panels[index].visible;
     }
-    result.engineSettingsChanged = themeChanged || std::abs(previousUiScale - m_uiScale) > 0.0001f || windowToggled;
+    result.engineSettingsChanged =
+        themeChanged || std::abs(previousUiScale - m_uiScale) > 0.0001f || windowToggled || previousAudio != m_audio;
 
     result.renderDebug = m_renderDebug;
+    result.audio = m_audio;
     result.vehicleTuning = m_vehicleTuning;
     result.vehicleCamera = m_vehicleCamera;
     result.vehicleHaptics = m_vehicleHaptics;
@@ -525,6 +528,7 @@ std::string EditorUiController::PanelSettingsKey(const EditorPanel& panel)
 void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)
 {
     m_uiScale = platform::ui::ResolveConfiguredUiScale(settings.editorUi.scale);
+    m_audio = settings.audio;
     for (const EditorPanel& panel : m_panels)
     {
         const auto open = settings.editorUi.windows.open.find(PanelSettingsKey(panel));
@@ -553,6 +557,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
 {
     settings.version = 1;
     platform::ui::SetConfiguredUiScaleForCurrentPlatform(settings.editorUi.scale, m_uiScale);
+    settings.audio = m_audio;
     for (const EditorPanel& panel : m_panels)
     {
         settings.editorUi.windows.open[PanelSettingsKey(panel)] = *panel.visible;

@@ -133,7 +133,35 @@ bool EditorRenderBackendBase::TickSharedFrame()
     }
     State().input.EndFrame();
 
+    if (AudioEngine* const audio = State().audio.get())
+    {
+        // Heard from the camera, the car's chase camera included.
+        const Camera& camera = State().camera;
+        audio->SetListener(camera.position, camera.GetForward(), camera.worldUp);
+        audio->Update();
+    }
+
     return HasDrawableArea();
+}
+
+void EditorRenderBackendBase::PreviewAudio(const std::string& path)
+{
+    AudioEngine* const audio = State().audio.get();
+    if (audio == nullptr)
+    {
+        LOG_WARN("Cannot play '{}': there is no audio output ({})", path, State().audioStatus);
+        return;
+    }
+    if (!audio->PreviewPath().empty() && audio->PreviewPath() == std::filesystem::path(path))
+    {
+        audio->StopPreview();
+        return;
+    }
+    std::string error;
+    if (!audio->StartPreview(path, error))
+    {
+        LOG_ERROR("{}", error);
+    }
 }
 
 bool EditorRenderBackendBase::ProcessPendingOperations()
@@ -221,6 +249,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         UpdateViewportMatrices(*State().fixedViewportExtent);
     }
     State().renderDebug = uiFrame.renderDebug;
+    if (AudioEngine* const audio = State().audio.get())
+    {
+        audio->SetMasterVolume(uiFrame.audio.EffectiveVolume());
+    }
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,
         uiFrame.viewportAllowsMouseInteraction);
@@ -228,6 +260,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     const EditorUiActions& actions = uiFrame.actions;
     std::string& modelError = State().lastModelLoadError;
     std::string& sceneError = State().lastSceneIoError;
+
+    if (actions.previewAudioPath.has_value())
+    {
+        PreviewAudio(*actions.previewAudioPath);
+    }
 
     State().vehicleDrive.camera = uiFrame.vehicleCamera;
     State().vehicleDrive.haptics = uiFrame.vehicleHaptics;
@@ -695,6 +732,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
+    State().editorUi.SetAudioStatus(State().audioStatus);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

@@ -9,6 +9,8 @@
 
 #include <engine/core/text/ascii.h>
 
+#include <engine/audio/audio_file.h>
+
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
 
@@ -41,6 +43,8 @@ extern const unsigned char kAssetIconSvg_file[];
 extern const std::size_t kAssetIconSvg_fileSize;
 extern const unsigned char kAssetIconSvg_parent_folder[];
 extern const std::size_t kAssetIconSvg_parent_folderSize;
+extern const unsigned char kAssetIconSvg_audio[];
+extern const std::size_t kAssetIconSvg_audioSize;
 
 namespace
 {
@@ -324,6 +328,8 @@ AssetManager::AssetType AssetManager::ClassifyPath(const std::filesystem::path& 
         return AssetType::Scene;
     if (IsTextureExt(p))
         return AssetType::Texture;
+    if (IsAudioFilePath(p))
+        return AssetType::Audio;
     return AssetType::Other;
 }
 
@@ -341,6 +347,8 @@ const char* AssetManager::TypeTag(AssetType t)
         return "[SCN]";
     case AssetType::Texture:
         return "[TEX]";
+    case AssetType::Audio:
+        return "[SND]";
     default:
         return "[   ]";
     }
@@ -365,6 +373,9 @@ void AssetManager::PushTypeColor(AssetType t)
     case AssetType::Texture:
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.90f, 0.85f, 1.0f));
         break;
+    case AssetType::Audio:
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.55f, 0.70f, 1.0f));
+        break;
     default:
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
         break;
@@ -378,7 +389,7 @@ const SvgIcon* AssetManager::TileIcon(const Entry& entry)
         return SvgIcon::Parse(std::string_view(reinterpret_cast<const char*>(data), size));
     };
     // Parsed once; each keeps the meshes of the sizes it has been drawn at.
-    static const std::array<std::optional<SvgIcon>, 7> icons = {
+    static const std::array<std::optional<SvgIcon>, 8> icons = {
         parse(kAssetIconSvg_folder, kAssetIconSvg_folderSize),
         parse(kAssetIconSvg_model, kAssetIconSvg_modelSize),
         parse(kAssetIconSvg_material, kAssetIconSvg_materialSize),
@@ -386,6 +397,7 @@ const SvgIcon* AssetManager::TileIcon(const Entry& entry)
         parse(kAssetIconSvg_texture, kAssetIconSvg_textureSize),
         parse(kAssetIconSvg_file, kAssetIconSvg_fileSize),
         parse(kAssetIconSvg_parent_folder, kAssetIconSvg_parent_folderSize),
+        parse(kAssetIconSvg_audio, kAssetIconSvg_audioSize),
     };
     size_t index = 5;
     if (entry.name == "..")
@@ -411,6 +423,9 @@ const SvgIcon* AssetManager::TileIcon(const Entry& entry)
         case AssetType::Texture:
             index = 4;
             break;
+        case AssetType::Audio:
+            index = 7;
+            break;
         default:
             break;
         }
@@ -432,6 +447,8 @@ const char* AssetManager::TypeIcon(AssetType t)
         return ICON_FA_MOUNTAIN_SUN;
     case AssetType::Texture:
         return ICON_FA_IMAGE;
+    case AssetType::Audio:
+        return ICON_FA_MUSIC;
     default:
         return ICON_FA_FILE;
     }
@@ -451,6 +468,8 @@ const char* AssetManager::ShortTag(AssetType t)
         return "SCN";
     case AssetType::Texture:
         return "TEX";
+    case AssetType::Audio:
+        return "SND";
     default:
         return "FILE";
     }
@@ -470,6 +489,8 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
         return IM_COL32(128, 255, 153, 255);
     case AssetType::Texture:
         return IM_COL32(102, 230, 217, 255);
+    case AssetType::Audio:
+        return IM_COL32(255, 140, 179, 255);
     default:
         return IM_COL32(153, 153, 158, 255);
     }
@@ -657,6 +678,10 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
             else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.type == AssetType::Scene)
             {
                 result.openScenePath = entry.path.string();
+            }
+            else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.type == AssetType::Audio)
+            {
+                result.previewAudioPath = entry.path.string();
             }
             else
             {
@@ -939,6 +964,15 @@ void AssetManager::DrawPreviewDetails(AssetManagerResult& result)
         {
             result.selectedModelPath = entry.path.string();
         }
+    }
+    if (entry.type == AssetType::Audio)
+    {
+        if (ImGui::SmallButton(ICON_FA_PLAY " Play / Stop"))
+        {
+            result.previewAudioPath = entry.path.string();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("or double-click it");
     }
 }
 

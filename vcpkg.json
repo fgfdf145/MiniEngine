@@ -21,6 +21,7 @@
       "platform": "!(windows & x86)"
     },
     "meshoptimizer",
+    "miniaudio",
     {
       "name": "sdl3",
       "features": [

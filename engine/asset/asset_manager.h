@@ -20,6 +20,7 @@ struct AssetManagerResult
 
     std::optional<std::string> selectedModelPath; // explicit "Load Model" action
     std::optional<std::string> openScenePath;     // a scene double-clicked: open it in the editor
+    std::optional<std::string> previewAudioPath;  // a sound double-clicked: play it, or stop it playing
     std::vector<std::string> batchLoadModelPaths; // "Load N Models": each placed as a new entity
     bool wantsImportModel = false;
     std::vector<std::string> deleteRequests; // one or more paths to delete
@@ -60,6 +61,7 @@ class AssetManager
         Material,
         Scene,
         Texture,
+        Audio,
         Other
     };
 

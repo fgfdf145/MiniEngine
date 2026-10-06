@@ -36,3 +36,9 @@ CMakeLists.txt text eol=crlf
 
 # Reference papers kept with the design docs.
 *.pdf binary
+
+# Audio test fixtures.
+*.ogg binary
+*.flac binary
+*.mp3 binary
+*.wav binary

@@ -1898,3 +1898,36 @@ add_test(
 )
 
 set_target_properties(miniengine_svg_icon_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_audio_engine_tests
+    audio_engine_tests.cpp
+)
+miniengine_group_target_sources(miniengine_audio_engine_tests)
+miniengine_enable_utf8_code_page(miniengine_audio_engine_tests)
+
+target_link_libraries(miniengine_audio_engine_tests
+    PRIVATE
+        engine_audio
+)
+
+# A quarter second of a 440 Hz sine in each compressed format miniaudio decodes for us.
+target_compile_definitions(miniengine_audio_engine_tests
+    PRIVATE
+        MINIENGINE_AUDIO_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/audio"
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_audio_engine_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_audio_engine_tests>
+            $<TARGET_FILE_DIR:miniengine_audio_engine_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.audio_engine
+    COMMAND miniengine_audio_engine_tests
+)
+
+set_target_properties(miniengine_audio_engine_tests PROPERTIES FOLDER "Tests")

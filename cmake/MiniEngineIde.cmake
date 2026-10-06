@@ -3,6 +3,7 @@ include_guard(GLOBAL)
 foreach(_miniengine_engine_target IN ITEMS
     engine_core
     engine_platform
+    engine_audio
     engine_scene
     engine_asset
     engine_logic

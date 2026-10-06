@@ -144,6 +144,8 @@ find_package(draco CONFIG REQUIRED)
 # out: that build loads no KTX2 textures and says so when a model asks for one.
 find_package(Ktx CONFIG)
 find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
+# engine_audio: miniaudio is a single header, its implementation compiled in engine/audio.
+find_path(MINIENGINE_MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h REQUIRED)
 
 if(NOT Vulkan_GLSLC_EXECUTABLE)
     set(_miniengine_glslc_hints "")

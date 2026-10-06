@@ -26,6 +26,7 @@ include(cmake/MiniEngineDependencies.cmake)
 
 add_subdirectory(engine/core)
 add_subdirectory(engine/platform)
+add_subdirectory(engine/audio)
 add_subdirectory(engine/scene)
 add_subdirectory(engine/asset)
 add_subdirectory(engine/logic)

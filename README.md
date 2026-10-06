@@ -10,7 +10,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 
 - 语言标准：C++20。
 - 构建体系：CMake + vcpkg manifest；根目录 [MiniEngine.slnx](MiniEngine.slnx) 是 Visual Studio 的 CMake 包装入口。
-- 当前依赖：SDL3、Vulkan、Dear ImGui、ImGuizmo、EnTT、yaml-cpp、tinygltf、GLM、spdlog、stb、shaderc 和 Jolt Physics（vcpkg `joltphysics`）。
+- 当前依赖：SDL3、Vulkan、Dear ImGui、ImGuizmo、EnTT、yaml-cpp、tinygltf、GLM、spdlog、stb、shaderc、Jolt Physics（vcpkg `joltphysics`）和 miniaudio（vcpkg `miniaudio`，单头文件，在 `engine_audio` 里编译实现）。
 
 ## 2. 已实现功能
 
@@ -23,7 +23,8 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 - Assetto Corsa `.kn5`：导入时转换为 glTF 模型包（`engine/asset/kn5_importer.*`，移植自 [assetto-corsa-gltf](https://github.com/semiloker/assetto-corsa-gltf)，MIT）。保留完整节点层级并把 AC 坐标系（+X 左、+Z 前）转到 glTF；DDS 贴图在 CPU 上解码为 PNG；编辑器导入 `.kn5`（菜单、资产浏览器、拖放）时先弹出 “Import Assetto Corsa Model” 对话框：后台读取模型后列出 `skins/` 下的涂装（带车身漆色色块，首个为默认）与 kn5 内嵌贴图，可选择保留运行时变体、翻转 V，加密文件在此直接提示而不可导入；`--model` 无对话框，取第一个涂装；AC 的 Blinn-Phong 参数映射为金属度-粗糙度（高光指数与强度→粗糙度，`txMaps`→逐像素粗糙度图，纯色 `txDetail`→车漆底色，`fresnelMaxLevel`→`KHR_materials_specular`，`sunSpecular`→`KHR_materials_clearcoat`）；丢弃 `*_BLUR`、`*_DAMAGE` 与 `_HR`/`_LR` 低模孪生等运行时变体；拒绝带 CSP 加密尾标的文件。赛道由多个 kn5 组成时，可直接导入赛道根目录的 `models.ini` / `models_<布局>.ini`（导入 `.kn5` 时对话框也会列出放置它的布局）：每个 `[MODEL_n]` 按 `POSITION`/`ROTATION` 放入同一个 glTF，模型包命名为 `<赛道>` 或 `<赛道>_<布局>`；贴图按名称（不区分大小写）跨模型共享，附加 kn5 引用主 kn5 里的贴图也能解析；读取按需流式进行（先读贴图/材质表，再写贴图，最后读几何），大赛道不会整文件载入内存。导入车辆时还会读取 kn5 旁的 `data.acd`（或解包的 `data/` 文件夹；`engine/asset/acd_archive.*`、`ac_car_data.*`）：质量、驱动方式、扭矩曲线（含涡轮增压）、转速范围、发动机转动惯量、齿轮比与终传比、换挡时间与离合器、方向盘锁止/转向比、刹车总扭矩与前轴比例、手刹、弹簧频率与阻尼比、防倾杆、限滑差速器、轮胎抓地（`tyres.ini`：按静载荷从 DX_REF/DY_REF、FZ0 与载荷敏感指数算出前后轴峰值摩擦，峰值滑移角/滑移率、峰值后衰减、车轮惯量）、空气动力（`aero.ini` 各翼的阻力/下压力面积与位置）写入 glTF 的 `MINIENGINE_vehicle` 扩展；所有轮胎配方（每个数值与磨损/温度曲线）、翼的其余曲线与动态控制器、涡轮迟滞、发动机制动、离合器与自动离合参数、差速器锁止量、ABS/TC/EDL 的数据也完整保留，物理暂未使用；`data.acd` 的密钥由文件夹名推导（文件夹改名则无法解密，导入会照常完成并报告原因）。
 - 渲染：Cook-Torrance PBR（含多次散射能量补偿）、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient、Hemisphere，最多 1024 盏，局部灯按分簇查找）及灯光 gizmo；最亮的方向光投射 4 级级联阴影（CSM，每级 2048²，3×3 双线性 PCF），点光、聚光与面光从 4096² 阴影图集取阴影（每块 512²，共 64 块）。
 - 后台任务：模型和场景使用异步加载状态机，资产导入在后台执行；主线程在逐帧阶段泵送结果并刷新 UI 或 CPU Renderable。
-- 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性和主题等设置。
+- 音频（`engine/audio`，miniaudio 0.11）：`AudioEngine` 封装 miniaudio 的 `ma_engine`（一个混音器、一个听者），读 `.wav`、`.mp3`、`.flac` 与 `.ogg`（Vorbis 经 stb_vorbis）；声音可整段解码（同一文件的样本共享）或边播边解码，可循环、调音量与音高，可放在世界里按反距离衰减、按听者朝向声像定位并带多普勒。听者每帧跟随相机（驾驶时即追车相机）。资产浏览器里双击声音文件或点 “Play / Stop” 试听（一次一个，再点停止）。Preferences 窗口的 Audio 一节调主音量与静音，并显示输出设备；`--frames` 的脚本运行不打开设备，`--no-audio` 完全关闭。设计见 [docs/design/2026-10-06-miniaudio-design.md](docs/design/2026-10-06-miniaudio-design.md)。
+- 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性、主题与音量等设置。
 
 ## 3. 架构与运行流程
 
@@ -36,10 +37,11 @@ miniengine_app
   -> engine_application
 engine_application -> engine_core / engine_platform / engine_renderer
 engine_renderer -> engine_render_core / engine_editor / engine_logic (private)
-engine_editor -> engine_render_core / engine_logic / engine_physics / engine_asset / engine_scene / engine_platform / engine_core
+engine_editor -> engine_render_core / engine_audio / engine_logic / engine_physics / engine_asset / engine_scene / engine_platform / engine_core
 engine_render_core -> engine_core / engine_scene / engine_asset
 engine_logic -> engine_core / engine_scene
-engine_asset -> engine_core / engine_scene
+engine_asset -> engine_core / engine_scene（engine_audio 为 private，只用 audio_file.h 认扩展名）
+engine_audio -> engine_core / glm（miniaudio 为 private）
 engine_platform -> engine_core
 engine_physics -> glm（Jolt::Jolt 为 private）
 ```
@@ -142,6 +144,7 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --capture <file.png> 与 --frames 一起使用，退出前把最后一帧的视口（色调映射后的 LDR 图）保存为 PNG
 --record <file.mp4|file.avi> 把视口录成视频（.mp4 为 H.264，仅 Windows；.avi 为 MJPEG）：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
 --record-fps <n>    --record 的视频帧率，默认 30
+--no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
 --drive <名称>      场景加载完成后像 Play 一样驾驶这个名称的模型实体
 --drive-controls <油门>,<转向>  与 --drive 一起使用：保持这组输入（-1 到 1）代替键盘和手柄，每帧固定推进 1/60 s 仿真，每仿真秒记录一次车的位置、速度、着地轮数和倾角（无人值守的试驾）
 ```

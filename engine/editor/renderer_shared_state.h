@@ -10,6 +10,7 @@
 #include <engine/renderer/render_types.h>
 #include <engine/renderer/renderer_world.h>
 
+#include <engine/audio/audio_engine.h>
 #include <engine/logic/editor_world.h>
 #include <engine/core/input/input.h>
 
@@ -182,5 +183,10 @@ struct RendererSharedState
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.
     float frameDeltaSeconds = 0.0f;
+    // The engine's sound, made by the application; null when there is no audio output (--no-audio,
+    // or no playback device). The listener follows the camera (TickSharedFrame).
+    std::unique_ptr<AudioEngine> audio;
+    // What the Preferences window says of it: the device and format, or why there is none.
+    std::string audioStatus;
 };
 }

@@ -75,6 +75,8 @@ class EditorRenderBackendBase : public IRenderBackend
     // Every frame: stops a recording whose file could not be written, and updates what the viewport
     // shows of the one running.
     void UpdateVideoRecording();
+    // The Assets window's sound preview: plays the file, or stops it when it is the one playing.
+    void PreviewAudio(const std::string& path);
 
     // The bounds and aspect ratio the Khronos reference view last framed; it reframes when either
     // changes (a scene finishing loading, the viewport resizing) and leaves the camera to the user

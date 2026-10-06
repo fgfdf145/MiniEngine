@@ -83,6 +83,7 @@ target_include_directories(engine_editor
 target_link_libraries(engine_editor
     PUBLIC
         engine_render_core
+        engine_audio
         engine_logic
         engine_physics
         engine_asset

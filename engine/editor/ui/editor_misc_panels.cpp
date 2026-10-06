@@ -356,6 +356,16 @@ void EditorUiController::DrawPreferencesWindow()
             m_showThemeWindow = true;
             FocusWindowWhenDrawn("Theme");
         }
+        ImGui::SeparatorText("Audio");
+        float volumePercent = m_audio.masterVolume * 100.0f;
+        ImGui::BeginDisabled(m_audio.muted);
+        if (DragFloatInRange("Master Volume", &volumePercent, 0.0f, 100.0f, "%.0f %%"))
+        {
+            m_audio.masterVolume = volumePercent / 100.0f;
+        }
+        ImGui::EndDisabled();
+        ImGui::Checkbox("Mute", &m_audio.muted);
+        ImGui::TextDisabled("Output: %s", m_audioStatus.empty() ? "None" : m_audioStatus.c_str());
         ImGui::SeparatorText("Rendering");
         ImGui::TextUnformatted("Debug views, tone mapping and the render passes' switches are in");
         ImGui::TextUnformatted("the Graphics Debug window.");

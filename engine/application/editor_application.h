@@ -72,6 +72,9 @@ struct EditorApplicationOptions
     // simulated second: a headless test drive (VehicleDriveState::scriptedControls).
     std::optional<std::string> driveEntity;
     std::optional<std::array<float, 2>> driveControls;
+    // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
+    // are mixed into nothing.
+    bool audioDisabled = false;
     EnginePaths::Overrides paths;
 };
 

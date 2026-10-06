@@ -6,6 +6,7 @@
 
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -73,6 +74,27 @@ void TestWindowStatesSurviveTheSettingsFile()
     Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
     std::filesystem::remove(path);
     Require(loaded.editorUi.windows.open == saved.editorUi.windows.open, "every window's open state comes back");
+}
+
+// The Preferences window's master volume and mute survive the settings file; a file from before
+// they existed plays at full volume.
+void TestAudioSettingsSurviveTheSettingsFile()
+{
+    EngineSettings saved;
+    saved.audio.masterVolume = 0.35f;
+    saved.audio.muted = true;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_audio_settings_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    Require(loaded.audio == saved.audio, "the volume and mute come back");
+    Require(loaded.audio.EffectiveVolume() == 0.0f, "muted is silent whatever the volume");
+
+    std::ofstream(path) << "{ \"version\": 1 }";
+    Require(LoadEngineSettings(path, loaded, error), ("the old settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.audio.masterVolume == 1.0f && !loaded.audio.muted, "without audio settings the volume is full");
 }
 
 // The camera's and the renderer's settings survive the settings file, field for field.
@@ -476,6 +498,7 @@ int main()
         TestEditorCommands();
         TestWindowStatesSurviveTheSettingsFile();
         TestViewSettingsSurviveTheSettingsFile();
+        TestAudioSettingsSurviveTheSettingsFile();
     }
     catch (const std::exception& error)
     {

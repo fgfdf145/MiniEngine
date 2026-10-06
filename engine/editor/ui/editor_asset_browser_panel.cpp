@@ -59,6 +59,10 @@ void EditorUiController::DrawAssetBrowserPanel(EditorUiFrameResult& result)
         {
             result.actions.selectedSceneLoadPath = assetResult.openScenePath;
         }
+        if (assetResult.previewAudioPath.has_value())
+        {
+            result.actions.previewAudioPath = assetResult.previewAudioPath;
+        }
         if (assetResult.selectedModelPath.has_value())
         {
             result.actions.selectedModelPath = assetResult.selectedModelPath;

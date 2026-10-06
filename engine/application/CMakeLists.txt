@@ -15,6 +15,7 @@ target_link_libraries(engine_application
         engine_platform
         engine_renderer
     PRIVATE
+        engine_audio
         engine_logic
         imguizmo::imguizmo
         yaml-cpp::yaml-cpp
