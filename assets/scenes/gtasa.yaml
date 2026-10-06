@@ -94,7 +94,7 @@ entities:
     model:
       display_name: skyline_r34_vspec.gltf
       source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
-      source_uuid: 45269759-fc52-42b8-ac27-6d1fd5f40397
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -106,7 +106,7 @@ entities:
     model:
       display_name: skyline_r34_vspec.gltf
       source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
-      source_uuid: 45269759-fc52-42b8-ac27-6d1fd5f40397
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
