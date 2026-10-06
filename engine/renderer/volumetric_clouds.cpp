@@ -11,6 +11,8 @@ namespace me
 
 namespace
 {
+constexpr float kPi = 3.14159265358979323846f;
+
 float Saturate(float x)
 {
     return std::clamp(x, 0.0f, 1.0f);
@@ -50,6 +52,8 @@ CloudSettings ClampCloudSettings(const CloudSettings& settings)
     clamped.albedo = std::clamp(settings.albedo, 0.0f, 1.0f);
     clamped.ambientScale = std::clamp(settings.ambientScale, 0.0f, 4.0f);
     clamped.hazeDistance = std::clamp(settings.hazeDistance, 1000.0f, 1000000.0f);
+    clamped.diffusion = std::clamp(settings.diffusion, 0.0f, 1.0f);
+    clamped.ambientOcclusion = std::clamp(settings.ambientOcclusion, 0.0f, 1.0f);
     return clamped;
 }
 
@@ -107,6 +111,58 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
         c *= kCloudOctaveAnisotropy;
     }
     return scattering;
+}
+
+float CloudMeanCosine(float forwardG, float backG, float backWeight)
+{
+    return std::clamp(forwardG * (1.0f - backWeight) + backG * backWeight, 0.0f, 0.95f);
+}
+
+glm::vec2 CloudDiffusionParameters(float albedo, float meanCosine)
+{
+    // Similarity with f = g: the forward peak counts as unscattered, the rest scatters
+    // isotropically with albedo' = (1 - g) albedo / (1 - albedo g) over (1 - albedo g) tau.
+    const float similarity = 1.0f - albedo * meanCosine;
+    const float scaledAlbedo = similarity > 0.0f ? (1.0f - meanCosine) * albedo / similarity : 1.0f;
+    const float kappa = std::min(std::sqrt(std::max(3.0f * (1.0f - scaledAlbedo), 0.0f)), kCloudMaxDiffusionDecay);
+    return glm::vec2(kappa, similarity);
+}
+
+float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity)
+{
+    // D phi'' - sigma_a phi = -sigma_s E exp(-tau'), D = 1 / 3, with phi(0) = 2 D phi'(0):
+    // phi = 3 albedo' E / (1 - kappa^2) * (5/3 / (1 + 2 kappa / 3) exp(-kappa tau') - exp(-tau')),
+    // and 3 albedo' = 3 - kappa^2.
+    const float scaled = similarity * lightOpticalDepth;
+    const float amplitude = (3.0f - kappa * kappa) / (1.0f - kappa * kappa);
+    const float boundary = (5.0f / 3.0f) / (1.0f + 2.0f * kappa / 3.0f);
+    const float fluence = amplitude * std::max(boundary * std::exp(-kappa * scaled) - std::exp(-scaled), 0.0f);
+    return fluence / (4.0f * kPi);
+}
+
+float CloudSunScatteringWithDiffusion(
+    float lightOpticalDepth,
+    float forwardG,
+    float backG,
+    float backWeight,
+    float cosTheta,
+    float diffusion,
+    float kappa,
+    float similarity)
+{
+    const float octaves = CloudSunScattering(lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
+    if (diffusion <= 0.0f)
+    {
+        return octaves;
+    }
+    const float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * std::exp(-lightOpticalDepth);
+    const float diffused = single + CloudDiffuseScattering(lightOpticalDepth, kappa, similarity);
+    return octaves + diffusion * std::max(diffused - octaves, 0.0f);
+}
+
+float CloudDiffuseTransmittance(float opticalDepth, float meanCosine)
+{
+    return 1.0f / (1.0f + 0.75f * (1.0f - meanCosine) * std::max(opticalDepth, 0.0f));
 }
 
 glm::vec2 CloudShadowMapCenter(const glm::vec3& cameraPosition)

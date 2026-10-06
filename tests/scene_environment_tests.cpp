@@ -66,6 +66,8 @@ SceneEnvironment MakeEnvironment()
     environment.clouds.albedo = 0.875f;
     environment.clouds.ambientScale = 1.5f;
     environment.clouds.hazeDistance = 20000.0f;
+    environment.clouds.diffusion = 0.375f;
+    environment.clouds.ambientOcclusion = 0.625f;
     environment.timeOfDay.enabled = true;
     environment.timeOfDay.hours = 7.5f;
     environment.timeOfDay.dayOfYear = 100;

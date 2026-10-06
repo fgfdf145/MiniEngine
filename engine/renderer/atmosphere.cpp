@@ -144,6 +144,9 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     data.cloudPhase = glm::vec4(clouds.forwardAnisotropy, clouds.backAnisotropy, clouds.backWeight, clouds.albedo);
     data.cloudParams = glm::vec4(clouds.ambientScale, clouds.hazeDistance * 0.001f, 0.0f, 0.0f);
     data.nightSky = glm::vec4(NightSkyLuminance(environment.timeOfDay), 0.0f);
+    const float meanCosine = CloudMeanCosine(clouds.forwardAnisotropy, clouds.backAnisotropy, clouds.backWeight);
+    const glm::vec2 diffusion = CloudDiffusionParameters(clouds.albedo, meanCosine);
+    data.cloudLighting = glm::vec4(clouds.diffusion, clouds.ambientOcclusion, diffusion.x, meanCosine);
     return data;
 }
 }

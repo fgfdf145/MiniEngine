@@ -324,6 +324,8 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             DragFloatInRange("Albedo", &clouds.albedo, 0.0f, 1.0f, "%.3f");
             DragFloatInRange("Ambient scale", &clouds.ambientScale, 0.0f, 4.0f, "%.2f");
             ImGui::DragFloat("Haze distance (m)", &clouds.hazeDistance, 100.0f, 1000.0f, 1000000.0f, "%.0f", kLog);
+            DragFloatInRange("Diffusion", &clouds.diffusion, 0.0f, 1.0f, "%.2f");
+            DragFloatInRange("Ambient occlusion", &clouds.ambientOcclusion, 0.0f, 1.0f, "%.2f");
             ImGui::PopID();
         }
     }

@@ -1,5 +1,6 @@
 #include <engine/renderer/atmosphere.h>
 #include <engine/renderer/spherical_harmonics.h>
+#include <engine/renderer/volumetric_clouds.h>
 
 #include <glm/glm.hpp>
 
@@ -223,6 +224,8 @@ void PacksClouds()
     clouds.albedo = 0.875f;
     clouds.ambientScale = 2.0f;
     clouds.hazeDistance = 50000.0f;
+    clouds.diffusion = 0.5f;
+    clouds.ambientOcclusion = 0.25f;
 
     const EnvironmentUniformData data =
         BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, environment, p, std::nullopt, glm::vec3(0.0f), nullptr);
@@ -231,6 +234,11 @@ void PacksClouds()
     Require(data.cloudPhase == glm::vec4(0.75f, -0.25f, 0.5f, 0.875f), "the lobes and albedo are packed");
     Require(glm::length(data.cloudParams - glm::vec4(2.0f, 50.0f, 0.0f, 0.0f)) < 1e-4f,
             "ambient and haze are packed; the frame index is the renderer's");
+    // Mean cosine 0.75 * 0.5 - 0.25 * 0.5 = 0.25; similarity 1 - 0.875 * 0.25.
+    const float meanCosine = CloudMeanCosine(0.75f, -0.25f, 0.5f);
+    Require(std::abs(meanCosine - 0.25f) < 1e-6f, "the mean cosine blends the lobes");
+    Require(glm::length(data.cloudLighting - glm::vec4(0.5f, 0.25f, CloudDiffusionParameters(0.875f, 0.25f).x, 0.25f)) < 1e-6f,
+            "diffusion, ambient occlusion, kappa and the mean cosine are packed");
 
     SceneEnvironment off = environment;
     off.clouds.enabled = false;

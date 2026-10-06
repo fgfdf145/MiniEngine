@@ -288,6 +288,8 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         clouds.albedo = cloudNode["albedo"].as<float>(clouds.albedo);
         clouds.ambientScale = cloudNode["ambient_scale"].as<float>(clouds.ambientScale);
         clouds.hazeDistance = cloudNode["haze_distance"].as<float>(clouds.hazeDistance);
+        clouds.diffusion = cloudNode["diffusion"].as<float>(clouds.diffusion);
+        clouds.ambientOcclusion = cloudNode["ambient_occlusion"].as<float>(clouds.ambientOcclusion);
     }
 
     // Scenes saved before the time of day existed have no node and keep their sun where it was.
@@ -359,6 +361,8 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "albedo" << YAML::Value << clouds.albedo;
     emitter << YAML::Key << "ambient_scale" << YAML::Value << clouds.ambientScale;
     emitter << YAML::Key << "haze_distance" << YAML::Value << clouds.hazeDistance;
+    emitter << YAML::Key << "diffusion" << YAML::Value << clouds.diffusion;
+    emitter << YAML::Key << "ambient_occlusion" << YAML::Value << clouds.ambientOcclusion;
     emitter << YAML::EndMap;
     emitter << YAML::Key << "time_of_day" << YAML::Value << YAML::BeginMap;
     const TimeOfDaySettings& time = environment.timeOfDay;

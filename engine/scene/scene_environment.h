@@ -130,6 +130,14 @@ struct CloudSettings
     float ambientScale = 1.0f;
     // Metres over which distant clouds fade into the sky behind them.
     float hazeDistance = 25000.0f;
+    // How much of the diffusion field fills in the sun's light where the octaves have died out
+    // inside thick clouds, [0, 1]: 0 the octaves alone, 1 never darker than diffusion theory.
+    float diffusion = 1.0f;
+    // How much the cloud above and below a point hides the sky and ground light it picks up,
+    // [0, 1]: 0 every point sees the open sky, 1 a two-stream transmittance through the column.
+    // Off by default: measured, it darkens the clouds by under 1 % on average for a third more
+    // march cost (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md).
+    float ambientOcclusion = 0.0f;
 
     bool operator==(const CloudSettings&) const = default;
 };

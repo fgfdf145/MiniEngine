@@ -27,6 +27,13 @@ inline constexpr float kCloudEdgeWidth = 0.2f;
 // The weather map's share of the field; the base shape has the rest.
 inline constexpr float kCloudWeatherShare = 0.55f;
 
+// The vertical marches (detail-free) that measure the cloud above and below a point for its ambient
+// light (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md).
+inline constexpr int kCloudAmbientSteps = 3;
+// The diffusion field's decay per scaled optical depth never reaches 1 (single-scattering albedo
+// 2/3), where the half-space solution's particular term diverges.
+inline constexpr float kCloudMaxDiffusionDecay = 0.95f;
+
 // The cloud shadow map (shaders/vulkan/cloud_shadow.glsl): the clouds' transmittance toward the sun
 // per point of the ground, over a square centred on the camera. 31 m texels: the sun's disk seen
 // from 1.5 km already blurs a shadow edge over 14 m.
@@ -69,6 +76,36 @@ float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta);
 // The sun's light scattered toward the camera per unit of scattering coefficient, after
 // lightOpticalDepth of cloud toward the sun: the octave sum above.
 float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta);
+
+// The dual lobe's mean cosine, held to [0, 0.95]: the anisotropy diffusion theory scales away.
+float CloudMeanCosine(float forwardG, float backG, float backWeight);
+
+// The similarity-scaled medium (f = g): x the diffusion field's decay kappa per scaled optical
+// depth, sqrt(3 (1 - albedo')) held to kCloudMaxDiffusionDecay; y the scale 1 - albedo g from
+// optical depth to scaled optical depth.
+glm::vec2 CloudDiffusionParameters(float albedo, float meanCosine);
+
+// The diffusion field toward the sun (Eddington, half-space lit along the ray, Marshak boundary)
+// as light scattered per steradian per unit of scattering coefficient and of sun illuminance,
+// after lightOpticalDepth of cloud: isotropic, fluence / 4 pi, never negative.
+float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity);
+
+// The sun's light scattered toward the camera: the octaves, raised by diffusion in [0, 1] toward
+// single scattering plus the diffusion field wherever that is brighter, so nothing is counted
+// twice and the octaves alone stand at diffusion 0.
+float CloudSunScatteringWithDiffusion(
+    float lightOpticalDepth,
+    float forwardG,
+    float backG,
+    float backWeight,
+    float cosTheta,
+    float diffusion,
+    float kappa,
+    float similarity);
+
+// Diffuse light through opticalDepth of conservatively scattering cloud (two-stream, Bohren 1987):
+// 1 / (1 + 3/4 (1 - g) tau).
+float CloudDiffuseTransmittance(float opticalDepth, float meanCosine);
 
 // Where origin + t * direction (unit) runs inside the shell between the spheres of radius inner
 // and outer around the planet centre, before it meets the planet of radius planet, clipped to

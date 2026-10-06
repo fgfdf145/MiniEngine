@@ -48,6 +48,8 @@ void ClampsSettings()
     wild.albedo = 1.5f;
     wild.ambientScale = -1.0f;
     wild.hazeDistance = 0.0f;
+    wild.diffusion = 2.0f;
+    wild.ambientOcclusion = -1.0f;
     const CloudSettings clamped = ClampCloudSettings(wild);
     Require(clamped.coverage == 1.0f && clamped.baseAltitude == 100.0f && clamped.thickness == 10000.0f, "coverage and layer clamped");
     Require(clamped.density == 0.001f, "density clamped above zero");
@@ -55,6 +57,7 @@ void ClampsSettings()
     Require(clamped.detailErosion == 0.0f && clamped.forwardAnisotropy == 0.95f && clamped.backAnisotropy == 0.0f, "shape and lobes clamped");
     Require(clamped.backWeight == 1.0f && clamped.albedo == 1.0f && clamped.ambientScale == 0.0f && clamped.hazeDistance == 1000.0f,
             "weights clamped");
+    Require(clamped.diffusion == 1.0f && clamped.ambientOcclusion == 0.0f, "diffusion and ambient occlusion clamped");
     Require(ClampCloudSettings(CloudSettings{}) == CloudSettings{}, "the defaults are inside the ranges");
 }
 
@@ -139,6 +142,62 @@ void SunScatteringOctaves()
     Require(CloudSunScattering(10.0f, 0.8f, -0.3f, 0.3f, 0.2f) > 100.0f * single * std::exp(-10.0f), "multiple scattering lights the core");
 }
 
+void DiffusionField()
+{
+    const float meanCosine = CloudMeanCosine(0.8f, -0.3f, 0.3f);
+    Require(Near(meanCosine, 0.47f, 1e-6f), "the default lobes have a mean cosine of 0.47");
+    Require(CloudMeanCosine(0.0f, -0.9f, 1.0f) == 0.0f && CloudMeanCosine(0.95f, 0.0f, 0.0f) == 0.95f, "the mean cosine is held to [0, 0.95]");
+
+    // Lossless cloud: no decay, and the similarity scale is 1 - g.
+    const glm::vec2 lossless = CloudDiffusionParameters(1.0f, 0.5f);
+    Require(lossless.x == 0.0f && Near(lossless.y, 0.5f, 1e-6f), "a lossless cloud's diffusion field does not decay");
+    const glm::vec2 cloud = CloudDiffusionParameters(0.98f, meanCosine);
+    Require(Near(cloud.x, 0.3335f, 1e-3f), "albedo 0.98 decays by 0.33 per scaled optical depth");
+    Require(CloudDiffusionParameters(0.2f, 0.0f).x == kCloudMaxDiffusionDecay, "the decay stays below 1");
+
+    // A lossless half-space lit along the ray: the fluence is 2 E at the surface (Marshak) and
+    // fills toward 5 E deep inside.
+    const float perSteradian = static_cast<float>(1.0 / (4.0 * kPi));
+    Require(Near(CloudDiffuseScattering(0.0f, 0.0f, 1.0f), 2.0f * perSteradian, 1e-6f), "the surface fluence is 2 E");
+    Require(Near(CloudDiffuseScattering(40.0f, 0.0f, 1.0f), 5.0f * perSteradian, 1e-5f), "the lossless core fills to 5 E");
+
+    // Where both hold, at the lit surface, single scattering plus diffusion stays within a factor
+    // of two of the octaves: two approximations of the same light.
+    for (float cosTheta : {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f})
+    {
+        const float octaves = CloudSunScattering(0.0f, 0.8f, -0.3f, 0.3f, cosTheta);
+        const float diffused = CloudPhase(0.8f, -0.3f, 0.3f, cosTheta) + CloudDiffuseScattering(0.0f, cloud.x, cloud.y);
+        Require(diffused > 0.5f * octaves && diffused < 2.0f * octaves, "the models agree at the lit surface");
+    }
+
+    for (float depth : {0.0f, 0.5f, 1.0f, 3.0f, 10.0f, 20.0f, 60.0f})
+    {
+        const float octaves = CloudSunScattering(depth, 0.8f, -0.3f, 0.3f, 0.2f);
+        Require(CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 0.0f, cloud.x, cloud.y) == octaves,
+                "diffusion 0 leaves the octaves alone");
+        const float half = CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 0.5f, cloud.x, cloud.y);
+        const float full = CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y);
+        Require(half >= octaves && full >= half, "diffusion only ever adds what the octaves miss");
+    }
+    // Ten optical depths in, the octaves are nearly gone; the diffusion field is not.
+    Require(CloudSunScatteringWithDiffusion(10.0f, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y) >
+                20.0f * CloudSunScattering(10.0f, 0.8f, -0.3f, 0.3f, 0.2f),
+            "diffusion lights the core of a thick cloud");
+}
+
+void DiffuseTransmittance()
+{
+    Require(CloudDiffuseTransmittance(0.0f, 0.85f) == 1.0f, "no cloud, no occlusion");
+    Require(Near(CloudDiffuseTransmittance(20.0f, 0.85f), 1.0f / 3.25f, 1e-6f), "a tau 20 water cloud lets about 30 % through");
+    float previous = 1.0f;
+    for (float depth : {0.5f, 2.0f, 10.0f, 50.0f})
+    {
+        const float transmittance = CloudDiffuseTransmittance(depth, 0.47f);
+        Require(transmittance < previous && transmittance > std::exp(-depth), "thicker hides more, but far less than Beer");
+        previous = transmittance;
+    }
+}
+
 void ShellFromTheGround()
 {
     const glm::vec3 camera(0.0f, kPlanet + 0.002f, 0.0f);
@@ -215,6 +274,8 @@ int main()
         FieldBlendsWeatherAndShape();
         PhaseIsNormalized();
         SunScatteringOctaves();
+        DiffusionField();
+        DiffuseTransmittance();
         ShellFromTheGround();
         ShellFromInsideAndAbove();
         ShadowMapProjection();

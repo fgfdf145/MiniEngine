@@ -74,6 +74,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 cloudPhase;                 // x forward g, y back g, z back weight, w single-scattering albedo
     vec4 cloudParams;                // x ambient scale, y haze distance km, w frame index
     vec4 nightSky;                   // rgb moonless night sky luminance cd/m^2, added above the horizon
+    vec4 cloudLighting;              // x diffusion, y ambient occlusion, z diffusion decay kappa, w mean cosine
 
     // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
     mat4 viewProjNoJitter;

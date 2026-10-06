@@ -98,9 +98,12 @@ struct EnvironmentUniformData
     // rgb: the moonless night sky's luminance, cd/m^2, added to the sky above the horizon
     // (TimeOfDaySettings::nightSkyLuminance; zero with the clock off).
     glm::vec4 nightSky{0.0f};
+    // The clouds' diffusion and ambient occlusion (volumetric_clouds.h): x diffusion, y ambient
+    // occlusion, z the diffusion field's decay kappa, w the dual lobe's mean cosine.
+    glm::vec4 cloudLighting{0.0f};
 };
-inline constexpr size_t kEnvironmentUniformVec4Count = 26;
-static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-six vec4s");
+inline constexpr size_t kEnvironmentUniformVec4Count = 27;
+static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-seven vec4s");
 
 // mode is the mode the frame renders with, which differs from environment.mode while an HDRI is
 // still loading. hdriSh is the loaded HDRI's unrotated radiance SH, or null. With no sun the illuminance is zero and the sky is black.

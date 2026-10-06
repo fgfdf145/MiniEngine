@@ -21,6 +21,9 @@ const float CLOUD_MAX_DISTANCE_KM = 120.0;
 // noise's features, which would only alias.
 const float CLOUD_DETAIL_DISTANCE_KM = 30.0;
 const int CLOUD_LIGHT_STEPS = 6;
+// Must match kCloudAmbientSteps and kCloudMaxDiffusionDecay in engine/renderer/volumetric_clouds.h.
+const int CLOUD_AMBIENT_STEPS = 3;
+const float CLOUD_MAX_DIFFUSION_DECAY = 0.95;
 // Must match kCloudEdgeWidth and kCloudWeatherShare in engine/renderer/volumetric_clouds.h.
 const float CLOUD_EDGE_WIDTH = 0.2;
 const float CLOUD_WEATHER_SHARE = 0.55;
@@ -73,6 +76,39 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
         c *= CLOUD_OCTAVE_ANISOTROPY;
     }
     return scattering;
+}
+
+// The diffusion field toward the sun (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md):
+// Eddington's half-space lit along the ray with a Marshak boundary, in the similarity-scaled
+// medium; per steradian per unit of scattering coefficient and of sun illuminance.
+float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity)
+{
+    float scaled = similarity * lightOpticalDepth;
+    float amplitude = (3.0 - kappa * kappa) / (1.0 - kappa * kappa);
+    float boundary = (5.0 / 3.0) / (1.0 + 2.0 * kappa / 3.0);
+    float fluence = amplitude * max(boundary * exp(-kappa * scaled) - exp(-scaled), 0.0);
+    return fluence / (4.0 * ATMOSPHERE_PI);
+}
+
+// The octaves, raised by diffusion toward single scattering plus the diffusion field wherever
+// that is brighter: deep in a thick cloud the octaves die out, the diffusion field does not.
+float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta,
+                                      float diffusion, float kappa, float similarity)
+{
+    float octaves = CloudSunScattering(lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
+    if (diffusion <= 0.0)
+    {
+        return octaves;
+    }
+    float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * exp(-lightOpticalDepth);
+    float diffused = single + CloudDiffuseScattering(lightOpticalDepth, kappa, similarity);
+    return octaves + diffusion * max(diffused - octaves, 0.0);
+}
+
+// Diffuse light through opticalDepth of conservatively scattering cloud (two-stream, Bohren 1987).
+float CloudDiffuseTransmittance(float opticalDepth, float meanCosine)
+{
+    return 1.0 / (1.0 + 0.75 * (1.0 - meanCosine) * max(opticalDepth, 0.0));
 }
 
 bool CloudSphereRoots(vec3 origin, vec3 direction, float radius, out float nearT, out float farT)
@@ -205,6 +241,21 @@ float CloudLightOpticalDepth(vec3 positionKm, vec3 sunDirection, float inner, fl
     return depth;
 }
 
+// Optical depth (detail-free) along a straight run of length from a point: the column of cloud
+// above or below it, for the sky and ground light it lets through.
+float CloudColumnOpticalDepth(vec3 positionKm, vec3 direction, float runLength, float inner, float thickness)
+{
+    float stepLength = runLength / float(CLOUD_AMBIENT_STEPS);
+    float depth = 0.0;
+    for (int step = 0; step < CLOUD_AMBIENT_STEPS; ++step)
+    {
+        vec3 p = positionKm + direction * ((float(step) + 0.5) * stepLength);
+        float heightFraction = (length(p) - inner) / thickness;
+        depth += CloudExtinction(p, heightFraction, 0.0) * stepLength;
+    }
+    return depth;
+}
+
 // The clouds along direction from the camera: rgb the light they send toward it, a the
 // transmittance through them; distanceKm is where they sit, weighted by what each step hides.
 // jitter in [0, 1) offsets the first step; steps grow from minSteps overhead to maxSteps toward
@@ -242,6 +293,11 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
     // A seamless horizon has no ground to bounce light: below is the sky too.
     vec3 groundBelow = SeamlessHorizon() ? skyAbove : ubo.groundAlbedo.rgb * groundIrradiance / ATMOSPHERE_PI;
     float albedo = ubo.cloudPhase.w;
+    float diffusion = ubo.cloudLighting.x;
+    float ambientOcclusion = ubo.cloudLighting.y;
+    float kappa = ubo.cloudLighting.z;
+    float meanCosine = ubo.cloudLighting.w;
+    float similarity = 1.0 - albedo * meanCosine;
 
     vec3 luminance = vec3(0.0);
     float transmittance = 1.0;
@@ -257,8 +313,22 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
         if (extinction > 0.0)
         {
             float lightDepth = CloudLightOpticalDepth(p, sunDirection, inner, thickness, detail);
-            float sunScattering = CloudSunScattering(lightDepth, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z, cosTheta);
-            vec3 ambient = mix(groundBelow, skyAbove, clamp(heightFraction, 0.0, 1.0)) * ubo.cloudParams.x;
+            float sunScattering = CloudSunScatteringWithDiffusion(
+                lightDepth, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z, cosTheta, diffusion, kappa, similarity);
+            // The sky reaches the point through the cloud above it, the ground's light through
+            // the cloud below.
+            float skySeen = 1.0;
+            float groundSeen = 1.0;
+            if (ambientOcclusion > 0.0)
+            {
+                float h = clamp(heightFraction, 0.0, 1.0);
+                vec3 up = p / length(p);
+                float above = CloudColumnOpticalDepth(p, up, (1.0 - h) * thickness, inner, thickness);
+                float below = CloudColumnOpticalDepth(p, -up, h * thickness, inner, thickness);
+                skySeen = mix(1.0, CloudDiffuseTransmittance(above, meanCosine), ambientOcclusion);
+                groundSeen = mix(1.0, CloudDiffuseTransmittance(below, meanCosine), ambientOcclusion);
+            }
+            vec3 ambient = mix(groundBelow * groundSeen, skyAbove * skySeen, clamp(heightFraction, 0.0, 1.0)) * ubo.cloudParams.x;
             float stepTransmittance = exp(-extinction * dt);
             // Hillaire 2016's energy-conserving step: the in-scattering integrated analytically
             // over the step's own extinction, which is sigma_s / sigma_t = albedo.
