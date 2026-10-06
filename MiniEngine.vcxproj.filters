@@ -84,10 +84,10 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="app\**\*.c;app\**\*.cc;app\**\*.cpp;app\**\*.cxx;engine\**\*.c;engine\**\*.cc;engine\**\*.cpp;engine\**\*.cxx;tests\**\*.c;tests\**\*.cc;tests\**\*.cpp;tests\**\*.cxx">
+    <ClCompile Include="app\**\*.c;app\**\*.cc;app\**\*.cpp;app\**\*.cxx;engine\**\*.c;engine\**\*.cc;engine\**\*.cpp;engine\**\*.cxx;tests\**\*.c;tests\**\*.cc;tests\**\*.cpp;tests\**\*.cxx;third_party\imgui_backends\*.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClInclude Include="app\**\*.h;app\**\*.hh;app\**\*.hpp;app\**\*.hxx;app\**\*.inl;engine\**\*.h;engine\**\*.hh;engine\**\*.hpp;engine\**\*.hxx;engine\**\*.inl;tests\**\*.h;tests\**\*.hh;tests\**\*.hpp;tests\**\*.hxx;tests\**\*.inl">
+    <ClInclude Include="app\**\*.h;app\**\*.hh;app\**\*.hpp;app\**\*.hxx;app\**\*.inl;engine\**\*.h;engine\**\*.hh;engine\**\*.hpp;engine\**\*.hxx;engine\**\*.inl;tests\**\*.h;tests\**\*.hh;tests\**\*.hpp;tests\**\*.hxx;tests\**\*.inl;third_party\imgui_backends\*.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

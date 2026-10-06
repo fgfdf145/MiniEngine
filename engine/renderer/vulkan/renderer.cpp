@@ -1,6 +1,6 @@
 ﻿#include "renderer.h"
 
-#include "../imgui/imgui_impl_vulkan.h"
+#include <third_party/imgui_backends/imgui_impl_vulkan.h>
 #include "viewport_capture.h"
 
 #include <engine/renderer/view_frustum.h>

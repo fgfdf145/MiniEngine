@@ -80,3 +80,6 @@ assets/**/*.ktx2
 
 # Python bytecode from tools/ scripts.
 __pycache__/
+
+# Local backups of hand-patched assets (kept on disk, outside the build tree).
+/backups/

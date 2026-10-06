@@ -88,10 +88,6 @@ target_link_libraries(engine_render_core
 # driven from EditorRenderBackendBase, which backends derive from.
 # ----------------------------------------------------------------------------
 add_library(engine_renderer
-    imgui/imgui_impl_sdl3.cpp
-    imgui/imgui_impl_sdl3.h
-    imgui/imgui_impl_vulkan.cpp
-    imgui/imgui_impl_vulkan.h
     rhi/backend.h
     rhi/factory.cpp
     rhi/factory.h
@@ -202,6 +198,17 @@ add_library(engine_renderer
     vulkan/viewport_capture.h
 )
 miniengine_group_target_sources(engine_renderer)
+
+# The ImGui SDL3/Vulkan backends are a vendored, locally patched copy (third_party/imgui_backends).
+# They live outside this directory, so they are added after the source tree grouping above.
+set(_imgui_backend_sources
+    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_sdl3.cpp"
+    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_sdl3.h"
+    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_vulkan.cpp"
+    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_vulkan.h"
+)
+target_sources(engine_renderer PRIVATE ${_imgui_backend_sources})
+source_group(TREE "${PROJECT_SOURCE_DIR}/third_party" PREFIX "third_party" FILES ${_imgui_backend_sources})
 
 # MINIENGINE_SHADER_OUTPUT_DIR is set in MiniEngineBuildOptions.cmake so that
 # engine_core can bake the same value in as the EnginePaths fallback.

@@ -1,7 +1,7 @@
 #include "imgui_layer.h"
 
-#include "../imgui/imgui_impl_sdl3.h"
-#include "../imgui/imgui_impl_vulkan.h"
+#include <third_party/imgui_backends/imgui_impl_sdl3.h>
+#include <third_party/imgui_backends/imgui_impl_vulkan.h>
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/editor/editor_icons.h>
