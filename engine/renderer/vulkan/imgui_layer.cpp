@@ -420,6 +420,25 @@ void VulkanImGuiLayer::DestroyVulkanResources()
         vkDeviceWaitIdle(m_device);
         ImGui_ImplVulkan_Shutdown();
         m_vulkanBackendInitialized = false;
+        RestorePlatformBackend();
+    }
+}
+
+void VulkanImGuiLayer::RestorePlatformBackend()
+{
+    // ImGui_ImplVulkan_Shutdown calls ImGui::DestroyPlatformWindows, which also takes the main
+    // viewport's SDL window ID away. ImGui_ImplSDL3_ProcessEvent then finds no viewport for the
+    // window and drops every mouse and keyboard event, so after a swapchain rebuild (maximize,
+    // fullscreen, resize, HDR) nothing could be clicked. Starting the SDL3 backend again gives the
+    // main viewport its window back.
+    if (ImGui::GetMainViewport()->PlatformHandle != nullptr)
+    {
+        return;
+    }
+    ImGui_ImplSDL3_Shutdown();
+    if (!ImGui_ImplSDL3_InitForVulkan(m_window))
+    {
+        throw std::runtime_error("Failed to initialize ImGui SDL3 backend");
     }
 }
 
