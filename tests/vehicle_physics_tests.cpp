@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -400,6 +401,36 @@ void TestCarFloatsThenSinksInWater()
 
     world.ResetVehicle(car, {glm::vec3(0.0f, 0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Require(!world.GetVehicleTelemetry(car).engineDrowned, "a reset car is dry again");
+}
+
+// A tunnel under the water (III's Porter Tunnel): a car driving down into it from dry land is not in the
+// sea above it, and neither floats nor drowns. One sinking from the surface stays in the water however
+// deep it goes (TestCarFloatsThenSinksInWater).
+void TestCarInATunnelUnderTheWaterStaysDry()
+{
+    PhysicsWorld world;
+    // A road at y = -20 from z = -200 to 200; the water covers it 20 m above, but for a dry band from
+    // z = -40 to -20 where the car starts, whichever way it drives.
+    const std::vector<glm::vec3> road = {{-20.0f, -20.0f, -200.0f}, {-20.0f, -20.0f, 200.0f}, {20.0f, -20.0f, 200.0f}, {20.0f, -20.0f, -200.0f}};
+    const std::vector<uint32_t> square = {0, 1, 2, 0, 2, 3};
+    Require(world.AddStaticMesh(road, square), "the tunnel's road builds");
+    for (const auto& [z0, z1] : {std::pair{-200.0f, -40.0f}, std::pair{-20.0f, 200.0f}})
+    {
+        const std::vector<glm::vec3> surface = {{-200.0f, 0.0f, z0}, {-200.0f, 0.0f, z1}, {200.0f, 0.0f, z1}, {200.0f, 0.0f, z0}};
+        world.AddWaterSurface(surface, square);
+    }
+
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, -19.5f, -30.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    controls.throttle = 0.6f;
+    world.SetVehicleControls(car, controls);
+    Simulate(world, 8.0f);
+    const PhysicsPose pose = world.GetVehiclePose(car);
+    const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+    Require(std::abs(pose.position.z + 30.0f) > 25.0f, "the car has driven in under the water, z = " + std::to_string(pose.position.z));
+    Require(pose.position.y < -18.0f, "on the tunnel's road, y = " + std::to_string(pose.position.y));
+    Require(telemetry.submergedShare == 0.0f && telemetry.flooded == 0.0f && !telemetry.engineDrowned, "and dry");
 }
 
 void TestCarSettlesOnTheGround()
@@ -2892,6 +2923,7 @@ int main()
         TestAerodynamicsDragsAndPressesDown();
         TestWaterSurfaceHeights();
         TestCarFloatsThenSinksInWater();
+        TestCarInATunnelUnderTheWaterStaysDry();
         TestCarSettlesOnTheGround();
         TestCarRecoversFromItsRoof();
         TestCarDrivesSteersAndReverses();

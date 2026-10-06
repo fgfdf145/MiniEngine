@@ -665,6 +665,11 @@ constexpr float kFloodSeconds = 10.0f;
 constexpr float kEngineDrownShare = 0.5f;
 constexpr float kWaterLinearDrag = 1.5f;
 constexpr float kWaterAngularDrag = 0.2f;
+// Tunnels run under the games' water (III's Porter Tunnel, 20 m under the harbour; the water covers whole
+// 32 m blocks over them). As the games do, water more than this far over a car that is not already in it
+// is not its water: the car is in a tunnel, and stays there until it is out from under the water or
+// above its surface.
+constexpr float kTunnelDepth = 3.0f;
 
 float FloodedShare(float floodSeconds)
 {
@@ -687,6 +692,7 @@ struct PhysicsWorld::Impl
         float submergedShare = 0.0f;
         float floodSeconds = 0.0f;
         bool engineDrowned = false;
+        bool underWaterInTunnel = false; // see kTunnelDepth
         // The air acting on the car: where, and how much drag and downforce per square metre of dynamic pressure.
         std::vector<VehicleAeroSurface> aeroSurfaces;
         float direction = 1.0f; // the gearbox's drive or reverse, see ResolveVehicleDriverInput
@@ -1775,7 +1781,15 @@ struct PhysicsWorld::Impl
     {
         const JPH::RVec3 centre = vehicle.body->GetCenterOfMassPosition();
         const std::optional<float> surface = water.HeightAt(static_cast<float>(centre.GetX()), static_cast<float>(centre.GetZ()));
-        if (!surface.has_value())
+        if (!surface.has_value() || static_cast<float>(centre.GetY()) > *surface)
+        {
+            vehicle.underWaterInTunnel = false;
+        }
+        else if (vehicle.submergedShare <= 0.0f && *surface - static_cast<float>(centre.GetY()) > kTunnelDepth)
+        {
+            vehicle.underWaterInTunnel = true;
+        }
+        if (!surface.has_value() || vehicle.underWaterInTunnel)
         {
             vehicle.submergedShare = 0.0f;
             return;
@@ -2455,6 +2469,7 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.submergedShare = 0.0f;
     vehicle.floodSeconds = 0.0f;
     vehicle.engineDrowned = false;
+    vehicle.underWaterInTunnel = false;
     m_impl->BuildCorners(vehicle);
     vehicle.current = m_impl->Capture(vehicle);
     // Nothing has rolled: the capture compared the wheels with the step before the reset.
