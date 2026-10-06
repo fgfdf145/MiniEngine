@@ -1,0 +1,104 @@
+# A GTA 3D-era (III / Vice City / San Andreas) suspension bridge, for joining one part of a map to another.
+# It runs along +X: 660 m long, four lanes (3.5 m each) and two 2.5 m sidewalks. The deck is 20 m above
+# its ends and the towers rise to about 67 m. The road ends in 10 m of flat road at y = 0, the west end at
+# the model's origin and the east end at (660, 0, 0), so the bridge is placed by putting its origin on the
+# end of a road and turning it about Y to face the other side. It has no collision model of its own: what
+# it draws collides, the alpha-tested railings included.
+# The bridge comes from the Blender generator gta_bridge.py (Blender text block of the same name); the
+# car is imported from Assetto Corsa at assets/skyline_r34_vspec (not in git). The Skyline stands on the
+# west end facing east (+X), in the inside lane on the right; the grounds are the asphalt test plane,
+# 2 cm under the road at both ends. Run from the repository's root.
+scene:
+  version: 3
+  selected_entity_uuid: 72e3ffd2-5aa7-45b3-935d-0555b294c415
+  selected_entity: 3
+entities:
+  - entity_uuid: f85a103a-4f78-423c-b84c-843e10f6cad2
+    tag: GTA bridge
+    model:
+      display_name: gta_bridge.gltf
+      source_path: assets/models/gta_bridge/gta_bridge.gltf
+      source_uuid: a26c400c-96e6-4806-9088-0b959d67e2a0
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: b880a672-adca-4172-97a1-fb1c9a52c035
+    tag: West ground
+    model:
+      display_name: asphalt_ground.gltf
+      source_path: assets/models/asphalt_ground/asphalt_ground.gltf
+      source_uuid: ac711dfe-e1a7-41db-951e-b95b7f80c4e8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-100.5, -0.02, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 047d150b-a3ea-4326-881b-d40e17eff6cc
+    tag: East ground
+    model:
+      display_name: asphalt_ground.gltf
+      source_path: assets/models/asphalt_ground/asphalt_ground.gltf
+      source_uuid: ac711dfe-e1a7-41db-951e-b95b7f80c4e8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [760.5, -0.02, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 72e3ffd2-5aa7-45b3-935d-0555b294c415
+    tag: Skyline R34
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-20, 0.0006, 1.75]
+      rotation: [0, -90, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 0aac99af-1dda-4b1f-8151-810bdc8e36c7
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [-50, 150, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+  atmosphere:
+    ground_albedo: [0.045, 0.045, 0.05]
+    ground_plane: true
+    seamless_horizon: true
+    rayleigh_density_scale: 1
+    mie_density_scale: 1
+    mie_anisotropy: 0.8
+    ozone_density_scale: 1
+    aerial_perspective_distance_scale: 1
+    sun_angular_diameter_degrees: 0.545
+  height_fog:
+    enabled: false
+  clouds:
+    enabled: false
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
