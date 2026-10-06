@@ -815,7 +815,7 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     spec.differentialCoast = 0.3f;
     spec.differentialPreload = 10.0f;
     VehicleTyreCompound compound;
-    compound.front.values = {{"LS_EXPX", 0.9f}, {"LS_EXPY", 0.84f}};
+    compound.front.values = {{"LS_EXPX", 0.9f}, {"LS_EXPY", 0.84f}, {"RIM_RADIUS", 0.254f}, {"PRESSURE_STATIC", 28.0f}, {"RELAXATION_LENGTH", 0.0757f}, {"CX_MULT", 1.04f}};
     compound.rear.values = {{"LS_EXPY", 0.8f}};
     spec.tyreCompounds = {compound};
     spec.defaultTyreCompound = 0;
@@ -825,6 +825,12 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     RequireNear(settings.limitedSlipPreload, 10.0f, 1e-6f, "and the preload");
     RequireNear(settings.frontTyres.loadExponent, 0.87f, 1e-5f, "the front tyres' load sensitivity, the mean of the two");
     RequireNear(settings.rearTyres.loadExponent, 0.8f, 1e-6f, "the rear's, the one given");
+    // The brush tyre's build from the same compound: the pressure from psi.
+    RequireNear(settings.frontTyres.rimRadius, 0.254f, 1e-6f, "the rim's radius");
+    RequireNear(settings.frontTyres.inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");
+    RequireNear(settings.frontTyres.relaxationLength, 0.0757f, 1e-6f, "the relaxation length");
+    RequireNear(settings.frontTyres.longitudinalStiffnessRatio, 1.04f, 1e-6f, "the tread's fore-aft stiffness ratio");
+    Require(settings.rearTyres.relaxationLength == 0.0f && settings.rearTyres.inflationPressure == 0.0f, "none given: the brush tyre's defaults");
     Require(ApplyCarSpec(VehicleSettings{}, VehicleCarSpec{}).limitedSlipPreload < 0.0f, "no data: the default preload");
 
     // The gearbox's and clutch's figures, and the electronics: the game's traction control replaces ours.

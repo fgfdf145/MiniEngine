@@ -168,7 +168,7 @@ TMeasy（Rill）参数少且直观，能处理静止，风格接近 AC 的 `tyre
 
 ### 6.4 还没做
 
-- 胎体参数没有用 AC 的 `FLEX` 和 `RELAXATION_LENGTH` 标定；
+- 胎体参数没有用 AC 的 `FLEX` 标定（`RELAXATION_LENGTH` 已在 6.7 用上）；
 - 没做路肩包络（论文的 [73]）；
 - 没做胎温和磨损；
 - 没有用 MF 曲线对刷子轮胎做系统拟合；
@@ -226,3 +226,55 @@ TMeasy（Rill）参数少且直观，能处理静止，风格接近 AC 的 `tyre
   - 胎体中心线（黄色）：按 x_c 平移，并按 `y_c + θ_c (x - x_c) - y_c Ψ/2 (x - x_c)^2` 横向偏移、弯曲和扭转。胎体变形只有几毫米，所以按放大倍数绘制。
 - 数据链：`BrushTyreOutput::ribs`（每根胎肋的位置、接地长度、从前缘起的粘着长度）→ `VehicleWheelState::brushRibs`、`carcassBendingShape`、`treadRollingForward` → `DrawBrushPatch`（`editor_vehicle_overlay.cpp`）。
 - 验证：`miniengine.vehicle_overlay`。GT-R 以 20 m/s 右转（外侧前轮 Fy = −5.6 kN）；断言胎肋长度、粘着长度和胎体侧移方向（与路面对轮胎的力同向，−7.9 mm），并把叠加层软件光栅化后统计绿、红、黄像素。设置 `MINIENGINE_UI_SNAPSHOT_DIR` 时会输出 `brush_contact_patch.png`。
+
+### 6.7 按轮胎数据标定刷子轮胎（2026-10-06）
+
+依据 Svendenius 2007 博士论文（Lund，*Tire Modeling and Friction Estimation*）第 4.3 节和 Svendenius & Wittenmark 2003（*Brush tire model with increased flexibility*）。两份 PDF 在用户桌面（27004.pdf、317.pdf）。
+
+**先核对实现与论文的一致性**（scratchpad 小程序，未入库）：
+- 刚性胎体、抛物线压力下的组合滑移合力（式 4.14、4.17、4.26）和回正力矩 M′z（式 4.33、4.34）：误差 0.00% / ≤0.01%；
+- 317 的非对称压力 `(1−u²)(1+d·u)` 正好是我们 `pressureConvexity = 12`、`pressureShift = d/10` 的特例；与其式 (18) 直接数值积分的误差为 0.00%。317 印出来的闭式解 (19) 有误，在小滑移下退化不到 `2cp·a²σ`。
+
+**发现的差距**：
+- 纵向松弛长度几乎为零：10 ms 的纵向胎体阻尼远大于 `C′x/v`，力直接经阻尼器传到轮辋，第一步就达到稳态的 63%；
+- 胎体刚度写死为 0.6·R0 / 0.4·R0 的经验值，没用 AC 的 `RELAXATION_LENGTH`；
+- 刷毛纵横向刚度相同，没用 AC 的 `CX_MULT`；
+- 接地宽度用的是断面宽，接地长度由写死的过渡半径 0.45·R0 决定。R34 在 4.2 kN 下的平均接地压只有胎压的一半左右。
+
+**改动**：
+- `MakeBrushTyreParameters(const BrushTyreFigures&)`，参数改由一个结构体给出：
+  - 胎面宽 = 断面宽 − 两侧胎肩，每侧胎肩取 0.15 × 断面高（断面高 = `RADIUS − RIM_RADIUS`）；
+  - 参考载荷下接地区平均压强 = 胎压，由此反解 Stocco 式 (6) 的过渡半径 R_l。核对数据：Pacejka (2006) 表 9.1 实测 205/60R15 在 4 kN、2.2 bar 下接地长度 107 mm，本规则给出 108 mm；
+  - 刷毛纵向刚度 = `CX_MULT` × 侧向刚度；
+  - 胎体刚度由松弛长度给出，`K = C′/σ`（论文式 4.82）。C′y 取柔性胎体上的稳态侧偏刚度，迭代 3 轮；纵向胎体平移不改变稳态滑移，所以 C′x 等于刷毛自身的刚度。没有数据时保持原来的 0.6·R0 / 0.4·R0。
+- 纵向阻尼随车速变化：`D_x = min(静止值 10 ms·K_x, 0.1 · C_x / v_胎面)`。行驶时力按松弛长度建立；约 1 m/s 以下回到 10 ms，静止刹车时的前后晃动仍被压住。
+- `ApplyCarSpec` 从起步胎种读取 `RIM_RADIUS`、`PRESSURE_STATIC`（psi → Pa）、`RELAXATION_LENGTH`、`CX_MULT`，写入 `VehicleTyreSettings`。和 `loadExponent` 一样，不需要重新导入车。
+
+**R34 半热熔胎**（Semislicks，默认胎种：28 psi，`CX_MULT` 1.04，松弛长度 0.0757 m），前轮 4.2 kN：
+
+| | 改动前 | 改动后 |
+|---|---|---|
+| 胎面宽 | 245 mm | 223 mm |
+| 接地长度 | 134 mm | 97 mm |
+| 稳态侧偏刚度 | 87.7 kN/rad | 91.9 kN/rad |
+| 小侧偏角下的拖距 | 23.3 mm | 16.8 mm |
+| 侧向峰值角 | 7.75° | 7.50°（数据为 7.53°） |
+| 胎体刚度 x / y | 767 / 448 kN/m | 1377 / 1214 kN/m |
+| 松弛长度 侧向 / 纵向（实测） | 0.160 / ≈0 m | ≈0.07 / ≈0.07 m |
+
+拖距（即回正力矩）变小约 28%，方向盘手感会变轻。这是接地长度缩短的直接结果。
+
+**验证**：
+- `miniengine.tyre` 新增 2 项：
+  - 205/60R15 的接地长度 108 mm，对照 Pacejka 实测 107 mm；
+  - 松弛长度要求 0.0757 m 时，实测侧向 0.068 m、纵向 0.072 m；要求 0.2 m 时，实测 0.182 / 0.186 m；`CX_MULT` 1.04 准确生效。
+- `miniengine.vehicle_physics`：`ApplyCarSpec` 读取 4 个新字段的检查通过。
+- `miniengine.vehicle_brush_tyre`：全部通过，数值和改动前一致（测试车不带这些数据，只受随车速变化的阻尼影响）。每模拟秒物理耗时：Boxster 121 ms，GT-R 152 ms。
+- R34 在 `rolling_road` 场景里无界面试驾，和 main 的 Release 版逐秒对比：
+  - 直线起步：车速逐秒相同（差别在 0.1 km/h 以内），横向漂移从 0.04 m 降到 0.00 m；
+  - 平地全油、转向 0.25：两版都稳定在 0.96 g，新版快约 0.5 km/h；
+  - 起伏路面转弯（油门 0.6、转向 0.15）：新版保持 0.84 g、四轮着地，旧版在 12 s 时跳起并侧倾 17°。
+
+**顺带发现的已有问题**（与本次改动无关，旧版同样存在）：
+- 场景注释说 R34 朝 +Z，但重新导入后的车实际朝 −Z 开，起步就从起伏路面的 30 cm 边沿开下去；
+- 车头调转后直线全油，R34 在 3–8 cm 的起伏上于 65–90 km/h 被抛起 1–2 m 并翻车（旧版 7 s，新版 10 s）。

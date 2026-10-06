@@ -69,6 +69,10 @@ struct BrushTyreParameters
     // deflections the stiffness rises by the bottoming stiffness times the square of the excess.
     std::array<double, 3> carcassStiffness{400000.0, 200000.0, 8000.0};
     std::array<double, 3> carcassDamping{600.0, 600.0, 10.0};
+    // Rolling, the fore-aft damper is held to this share of the tread's slip stiffness over its speed
+    // (D v / C_x): the force then builds over the relaxation length (Svendenius 2007, (4.79)) and not
+    // straight through the damper, while standing still it keeps carcassDamping[0].
+    double rollingDampingShare = 0.1;
     double bendingShape = 3.0;
     std::array<double, 3> bottomingDeflection{0.05, 0.055, 0.12};
     std::array<double, 3> bottomingStiffness{1.0e7, 1.0e7, 1.0e6};
@@ -161,12 +165,32 @@ class BrushTyre
     BrushTyreState m_state;
 };
 
-// Parameters for a road or race tyre from the figures a car's data gives: peak friction at a reference
-// load, the slip angle where the lateral force peaks, the falloff past it, the tyre's radius, width and
-// vertical rate. The bristles' stiffness is set so that a rigid-carcass brush would peak at that angle
-// (tan alpha_sl = 3 mu Fz / C_alpha); the carcass so that its relaxation lengths are about 0.6 R0
-// sideways and 0.4 R0 fore-aft.
-BrushTyreParameters MakeBrushTyreParameters(double peakFriction, double referenceLoad, double peakSlipAngle, double kineticShare,
-                                            double radius, double width, double verticalRate);
+// What a car's data says about a tyre. Each 0 keeps the default named.
+struct BrushTyreFigures
+{
+    double peakFriction = 1.1;
+    double referenceLoad = 4000.0; // N, where the friction and the patch are fitted
+    double peakSlipAngle = 0.0;    // rad, of the lateral force (6 degrees)
+    double kineticShare = 0.0;     // of the grip left well past the peak (0.85)
+    double radius = 0.32;          // unloaded, m
+    double sectionWidth = 0.22;    // m
+    double rimRadius = 0.0;        // m; with it the shoulders come off the section width (none)
+    double verticalRate = 0.0;     // N/m (250000)
+    double inflationPressure = 0.0; // Pa; with it the patch at referenceLoad has the area load / pressure
+    double relaxationLength = 0.0;  // m, both ways (0.6 R0 sideways, 0.4 R0 fore and aft)
+    double longitudinalStiffnessRatio = 0.0; // the bristles' fore-aft stiffness over their sideways one (1)
+};
+
+// Parameters for a road or race tyre from its figures:
+// - the tread is the section width less a shoulder each side of 0.15 of the section height (radius less
+//   rim radius);
+// - the patch's mean pressure at the reference load is the inflation pressure, which sets the belt's
+//   transition radius R_l of (6). Pacejka (2006, Table 9.1) measures a 205/60R15 at 4 kN and 2.2 bar
+//   with a 107 mm patch; this rule gives 108 mm;
+// - the bristles' sideways stiffness puts the steady lateral peak at the angle asked for, their fore-aft
+//   one is that times the ratio;
+// - the carcass's stiffnesses give the relaxation lengths, sigma = C' / K, with C' the slip stiffness
+//   of the tyre on its flexible carcass (Svendenius 2007, (4.82)).
+BrushTyreParameters MakeBrushTyreParameters(const BrushTyreFigures& figures);
 
 }

@@ -447,10 +447,19 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     {
         grip = std::max(tyres.lateralGrip, tyres.longitudinalGrip);
     }
-    const double peakAngle = (tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 7.0f) * std::numbers::pi / 180.0;
-    const double falloff = tyres.postPeakShare > 0.0f ? tyres.postPeakShare : 0.85f;
-    tyre::BrushTyreParameters parameters = tyre::MakeBrushTyreParameters(
-        grip, StaticWheelLoad(settings, front), peakAngle, falloff, std::max(mount.radius, 0.05f), std::max(mount.width, 0.05f), axle.tyreRate);
+    tyre::BrushTyreFigures figures;
+    figures.peakFriction = grip;
+    figures.referenceLoad = StaticWheelLoad(settings, front);
+    figures.peakSlipAngle = (tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 7.0f) * std::numbers::pi / 180.0;
+    figures.kineticShare = tyres.postPeakShare > 0.0f ? tyres.postPeakShare : 0.85f;
+    figures.radius = std::max(mount.radius, 0.05f);
+    figures.sectionWidth = std::max(mount.width, 0.05f);
+    figures.rimRadius = tyres.rimRadius;
+    figures.verticalRate = axle.tyreRate;
+    figures.inflationPressure = tyres.inflationPressure;
+    figures.relaxationLength = tyres.relaxationLength;
+    figures.longitudinalStiffnessRatio = tyres.longitudinalStiffnessRatio;
+    tyre::BrushTyreParameters parameters = tyre::MakeBrushTyreParameters(figures);
     // The data's load sensitivity; the bristles are fitted at the static load, where it changes nothing.
     if (tyres.loadExponent > 0.0f)
     {

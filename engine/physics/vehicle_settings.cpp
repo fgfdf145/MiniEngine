@@ -489,6 +489,22 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         {
             settings.rearTyres.loadExponent = std::min(rear, 1.0f);
         }
+        // The brush tyre's build: RIM_RADIUS, PRESSURE_STATIC (psi), RELAXATION_LENGTH and CX_MULT.
+        const auto build = [](const VehicleTyreData& tyre, VehicleTyreSettings& out)
+        {
+            const auto read = [&](const char* key)
+            {
+                const auto found = tyre.values.find(key);
+                return found != tyre.values.end() ? std::max(found->second, 0.0f) : 0.0f;
+            };
+            constexpr float kPascalsPerPsi = 6894.757f;
+            out.rimRadius = read("RIM_RADIUS");
+            out.inflationPressure = read("PRESSURE_STATIC") * kPascalsPerPsi;
+            out.relaxationLength = read("RELAXATION_LENGTH");
+            out.longitudinalStiffnessRatio = read("CX_MULT");
+        };
+        build(compound.front, settings.frontTyres);
+        build(compound.rear, settings.rearTyres);
     }
 
     if (spec.maxSteerAngleDegrees.has_value() && *spec.maxSteerAngleDegrees > 0.0f)

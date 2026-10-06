@@ -33,6 +33,7 @@ struct Patch
     double effectiveRadius = 0.0;
     double contactLength = 0.0;
     std::array<double, 5> pressure{}; // quartic coefficients c0..c4 of (7)
+    std::array<double, 3> damping{};  // the carcass's dampers this step
 };
 
 struct Forces
@@ -81,6 +82,7 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
     const double sinCamber = std::sin(in.camber);
     const double ribWidth = p.width / patch.ribCount;
     double area = 0.0;
+    double slipStiffness = 0.0; // the stuck tread's dF_x / d(slip), over k_x
     for (int i = 0; i < patch.ribCount; ++i)
     {
         Rib& rib = patch.ribs[i];
@@ -91,9 +93,13 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
         rib.length = ContactLength(p, ribDeflection);
         rib.rollSpeed = in.wheelSpeed * (p.unloadedRadius - std::max(ribDeflection, 0.0) / 3.0); // (23)
         area += rib.width * rib.length;
+        slipStiffness += 0.5 * rib.width * rib.length * rib.length;
         patch.contactLength = std::max(patch.contactLength, rib.length);
     }
     patch.effectiveRadius = p.unloadedRadius - deflection / 3.0;
+    patch.damping = p.carcassDamping;
+    const double treadSpeed = std::hypot(in.wheelSpeed * patch.effectiveRadius, p.lowSpeed);
+    patch.damping[0] = std::min(p.carcassDamping[0], p.rollingDampingShare * p.bristleStiffnessX * slipStiffness / treadSpeed);
     patch.pressureScale = area > 0.0 ? patch.load / area : 0.0;
     const double loadRatio = std::max(patch.load, 1.0) / std::max(p.referenceLoad, 1.0);
     patch.staticFriction = std::max(p.staticFriction * std::pow(loadRatio, p.loadExponent - 1.0) * in.frictionScale, 0.0);
@@ -237,7 +243,7 @@ Residual Balance(const BrushTyreParameters& p, const Patch& patch, const std::ar
     r.forces = TreadForces(p, patch, c, rate);
     for (int k = 0; k < 3; ++k)
     {
-        r.g[k] = CarcassSpring(p, k, c[k]) + p.carcassDamping[k] * rate[k] - r.forces.f[k];
+        r.g[k] = CarcassSpring(p, k, c[k]) + patch.damping[k] * rate[k] - r.forces.f[k];
     }
     return r;
 }
@@ -478,39 +484,72 @@ std::array<double, 2> BrushTyre::BristleSlipStiffness(double load) const
     return {m_p.bristleStiffnessX * sum, m_p.bristleStiffnessY * sum};
 }
 
-BrushTyreParameters MakeBrushTyreParameters(double peakFriction, double referenceLoad, double peakSlipAngle, double kineticShare,
-                                            double radius, double width, double verticalRate)
+BrushTyreParameters MakeBrushTyreParameters(const BrushTyreFigures& figures)
 {
     BrushTyreParameters p;
-    p.unloadedRadius = std::max(radius, 0.05);
-    p.width = std::max(width, 0.05);
-    p.transitionRadius = 0.45 * p.unloadedRadius;
-    p.verticalRate = verticalRate > 0.0 ? verticalRate : 250000.0;
-    p.staticFriction = std::max(peakFriction, 0.05);
-    p.kineticShare = kineticShare > 0.0 ? std::clamp(kineticShare, 0.3, 1.0) : 0.85;
-    p.referenceLoad = std::max(referenceLoad, 100.0);
+    p.unloadedRadius = std::max(figures.radius, 0.05);
+    // The shoulders round off into the sidewalls and carry little: a share of the section height each side.
+    constexpr double kShoulderShare = 0.15;
+    const double sectionHeight = figures.rimRadius > 0.0 ? std::max(p.unloadedRadius - figures.rimRadius, 0.0) : 0.0;
+    p.width = std::max(figures.sectionWidth - 2.0 * kShoulderShare * sectionHeight, 0.05);
+    p.verticalRate = figures.verticalRate > 0.0 ? figures.verticalRate : 250000.0;
+    p.staticFriction = std::max(figures.peakFriction, 0.05);
+    p.kineticShare = figures.kineticShare > 0.0 ? std::clamp(figures.kineticShare, 0.3, 1.0) : 0.85;
+    p.referenceLoad = std::max(figures.referenceLoad, 100.0);
     p.loadExponent = 0.9;
-    const double angle = std::clamp(peakSlipAngle > 0.0 ? peakSlipAngle : 6.0 * std::numbers::pi / 180.0, 0.02, 0.4);
+    const double angle = std::clamp(figures.peakSlipAngle > 0.0 ? figures.peakSlipAngle : 6.0 * std::numbers::pi / 180.0, 0.02, 0.4);
+    const double stiffnessRatio = figures.longitudinalStiffnessRatio > 0.0 ? std::clamp(figures.longitudinalStiffnessRatio, 0.2, 5.0) : 1.0;
+    const double lateralRelaxation = figures.relaxationLength > 0.0 ? figures.relaxationLength : 0.6 * p.unloadedRadius;
+    const double longitudinalRelaxation = figures.relaxationLength > 0.0 ? figures.relaxationLength : 0.4 * p.unloadedRadius;
 
-    // A rigid-carcass brush slides throughout at tan(alpha_sl) = 3 mu Fz / C_alpha.
+    // The patch: (6) with the transition radius that makes its area at the reference load the load over
+    // the inflation pressure, (l/2)^2 = (2 (R0 - R_l) - deflection) deflection.
+    const double deflection = p.referenceLoad / p.verticalRate;
+    p.transitionRadius = 0.45 * p.unloadedRadius;
+    if (figures.inflationPressure > 0.0)
+    {
+        const double length = p.referenceLoad / (figures.inflationPressure * p.width);
+        const double span = 0.5 * (0.25 * length * length / deflection + deflection);
+        p.transitionRadius = std::clamp(p.unloadedRadius - span, 0.0, p.unloadedRadius);
+    }
+
+    // The steady cornering stiffness on the flexible carcass, at a small angle.
+    const auto flexibleCornering = [&]()
+    {
+        const BrushTyre tyre(p);
+        BrushTyreInput in;
+        in.load = p.referenceLoad;
+        in.forwardVelocity = 20.0;
+        in.wheelSpeed = 20.0 / (p.unloadedRadius - deflection / 3.0);
+        constexpr double kSmall = 1e-3;
+        in.lateralVelocity = -20.0 * kSmall;
+        return std::abs(tyre.Steady(in).Fy) / kSmall;
+    };
     const auto setStiffness = [&](double cornering)
     {
-        const double length = ContactLength(p, p.referenceLoad / p.verticalRate);
+        const double length = ContactLength(p, deflection);
         const double k = 2.0 * cornering / (p.width * std::max(length * length, 1e-6));
-        p.bristleStiffnessX = k;
         p.bristleStiffnessY = k;
-        const double slip = 0.5 * k * p.width * length * length; // C_kappa = C_alpha here
-        p.carcassStiffness = {slip / (0.4 * p.unloadedRadius), cornering / (0.6 * p.unloadedRadius), 1.5 * cornering * p.unloadedRadius * p.unloadedRadius};
+        p.bristleStiffnessX = stiffnessRatio * k;
+        // Fore and aft the carcass's shift leaves the steady slip alone, so C'_x is the bristles' own.
+        p.carcassStiffness = {stiffnessRatio * cornering / longitudinalRelaxation, cornering / lateralRelaxation,
+                              1.5 * cornering * p.unloadedRadius * p.unloadedRadius};
+        // Sideways C'_y falls with the carcass's own stiffness: a few rounds settle sigma = C'_y / K_y.
+        for (int round = 0; round < 3; ++round)
+        {
+            p.carcassStiffness[1] = flexibleCornering() / lateralRelaxation;
+        }
         // The carcass's damping, as a time constant on its stiffness: 0.5 ms sideways and in twist, so a
-        // step in slip still builds its force over the relaxation length, and 10 ms fore and aft. At
-        // 0.5 ms fore and aft a car stopped on its brakes rocked on its tyres' carcasses (the R34 at
-        // 7 Hz, a damping ratio of about 0.05, rolling back and forth for over two seconds); at 10 ms that
-        // mode settles in a cycle or two.
+        // step in slip still builds its force over the relaxation length, and 10 ms fore and aft standing
+        // still (rollingDampingShare lowers it rolling). At 0.5 ms fore and aft a car stopped on its brakes
+        // rocked on its tyres' carcasses (the R34 at 7 Hz, a damping ratio of about 0.05, rolling back and
+        // forth for over two seconds); at 10 ms that mode settles in a cycle or two.
         constexpr double kCarcassDampingSeconds = 0.5e-3;
         constexpr double kLongitudinalCarcassDampingSeconds = 10e-3;
         p.carcassDamping = {p.carcassStiffness[0] * kLongitudinalCarcassDampingSeconds, p.carcassStiffness[1] * kCarcassDampingSeconds,
                             p.carcassStiffness[2] * kCarcassDampingSeconds};
     };
+    // A rigid-carcass brush slides throughout at tan(alpha_sl) = 3 mu Fz / C_alpha.
     double cornering = 3.0 * p.staticFriction * p.referenceLoad / std::tan(angle);
     setStiffness(cornering);
 
@@ -522,7 +561,7 @@ BrushTyreParameters MakeBrushTyreParameters(double peakFriction, double referenc
         BrushTyreInput in;
         in.load = p.referenceLoad;
         in.forwardVelocity = 20.0;
-        in.wheelSpeed = 20.0 / (p.unloadedRadius - p.referenceLoad / p.verticalRate / 3.0);
+        in.wheelSpeed = 20.0 / (p.unloadedRadius - deflection / 3.0);
         double best = 0.0;
         double bestAngle = angle;
         for (double a = 0.25; a <= 25.0; a += 0.25)

@@ -77,6 +77,14 @@ struct VehicleTyreSettings
     // The brush tyre's load sensitivity: its friction scales as (load / static load)^(loadExponent - 1),
     // so the peak force grows as the load to this power (0 keeps the brush tyre's 0.9).
     float loadExponent = 0.0f;
+    // The brush tyre's build, each 0 for its default: the rim's radius (the shoulders come off the section
+    // width by the sidewall's height), the inflation pressure (Pa, the patch's mean pressure), the
+    // relaxation length (m) its carcass is stiffened to, and its tread's fore-aft stiffness over its
+    // sideways one.
+    float rimRadius = 0.0f;
+    float inflationPressure = 0.0f;
+    float relaxationLength = 0.0f;
+    float longitudinalStiffnessRatio = 0.0f;
 
     bool operator==(const VehicleTyreSettings&) const = default;
 };

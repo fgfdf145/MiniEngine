@@ -359,6 +359,83 @@ BrushTyreInput Rolling(const BrushTyreParameters& p, double load, double alpha, 
     return in;
 }
 
+// A tyre's figures with only its grip, peak, size and rate given.
+BrushTyreFigures Figures(double mu, double load, double peakSlipAngle, double radius, double width, double verticalRate)
+{
+    BrushTyreFigures f;
+    f.peakFriction = mu;
+    f.referenceLoad = load;
+    f.peakSlipAngle = peakSlipAngle;
+    f.kineticShare = 0.85;
+    f.radius = radius;
+    f.sectionWidth = width;
+    f.verticalRate = verticalRate;
+    return f;
+}
+
+// The distance rolled at 20 m/s until a step in slip has built 63% of its steady force, along the wheel
+// (slip ratio) or across it (slip angle).
+double RelaxationDistance(const BrushTyreParameters& p, double load, bool lateral)
+{
+    BrushTyre tyre(p);
+    const BrushTyreInput in = lateral ? Rolling(p, load, 1.0 * kDeg) : Rolling(p, load, 0.0, 0.01);
+    const BrushTyreOutput steady = tyre.Steady(in);
+    const double target = 0.632 * std::abs(lateral ? steady.Fy : steady.Fx);
+    constexpr double kStep = 1e-4;
+    for (int step = 1; step <= 5000; ++step)
+    {
+        const BrushTyreOutput o = tyre.Step(in, kStep);
+        if (std::abs(lateral ? o.Fy : o.Fx) >= target)
+        {
+            return step * kStep * 20.0;
+        }
+    }
+    return -1.0;
+}
+
+// The patch from the inflation pressure and the tread less its shoulders: Pacejka (2006, Table 9.1)
+// measures a 205/60R15 at 4 kN and 2.2 bar with a 107 mm patch (a = 0.0535 m); its vertical stiffness
+// is q_Fz1 Fz0 / R0 of Table A3.1.
+void TestBrushPatchFollowsTheInflationPressure()
+{
+    BrushTyreFigures f = Figures(1.0, 4000.0, 6.0 * kDeg, 0.313, 0.205, 13.37 * 4000.0 / 0.313);
+    f.rimRadius = 0.313 - 0.205 * 0.6;
+    f.inflationPressure = 2.2e5;
+    const BrushTyreParameters p = MakeBrushTyreParameters(f);
+    RequireNear(p.width, 0.205 - 2.0 * 0.15 * 0.123, 1e-9, "the tread is the section less its shoulders");
+    const BrushTyreOutput o = BrushTyre(p).Steady(Rolling(p, 4000.0, 0.0));
+    std::cout << "  brush: 205/60R15 at 4 kN, 2.2 bar: contact length " << o.contactLength * 1000.0 << " mm (measured 107)\n";
+    RequireNear(o.contactLength, 0.107, 0.005, "contact length against Pacejka's measured patch");
+    RequireNear(o.contactLength * p.width, 4000.0 / 2.2e5, 1e-6, "mean contact pressure is the inflation pressure");
+    // More load lengthens the patch, more pressure shortens it.
+    Require(BrushTyre(p).Steady(Rolling(p, 6000.0, 0.0)).contactLength > o.contactLength, "a longer patch under more load");
+    f.inflationPressure = 3.0e5;
+    const BrushTyreParameters firmer = MakeBrushTyreParameters(f);
+    Require(BrushTyre(firmer).Steady(Rolling(firmer, 4000.0, 0.0)).contactLength < o.contactLength, "a shorter patch at more pressure");
+}
+
+// The carcass is stiffened to the data's relaxation length both ways, rolling; the tread's fore-aft
+// stiffness is the data's multiple of its sideways one.
+void TestBrushRelaxesOverTheGivenLength()
+{
+    for (double length : {0.0757, 0.2})
+    {
+        BrushTyreFigures f = Figures(1.2, 4200.0, 8.0 * kDeg, 0.3266, 0.245, 325000.0);
+        f.rimRadius = 0.254;
+        f.inflationPressure = 1.93e5;
+        f.relaxationLength = length;
+        f.longitudinalStiffnessRatio = 1.04;
+        const BrushTyreParameters p = MakeBrushTyreParameters(f);
+        const auto stiffness = BrushTyre(p).BristleSlipStiffness(4200.0);
+        RequireNear(stiffness[0] / stiffness[1], 1.04, 1e-9, "fore-aft over sideways stiffness");
+        const double lateral = RelaxationDistance(p, 4200.0, true);
+        const double longitudinal = RelaxationDistance(p, 4200.0, false);
+        std::cout << "  brush: relaxation length " << length << " m asked, " << lateral << " m sideways, " << longitudinal << " m fore and aft\n";
+        RequireNear(lateral, length, 0.25 * length, "sideways relaxation length");
+        RequireNear(longitudinal, length, 0.25 * length, "fore-aft relaxation length");
+    }
+}
+
 // One rib, a parabolic pressure (lambda = 12), one friction coefficient and a carcass too stiff to move:
 // the classic brush, whose force Pacejka (2006, 3.2.1-3.2.2) gives in closed form,
 //   F = 3 mu Fz theta s (1 - |theta s| + (theta s)^2 / 3), theta = 2 c a^2 / (3 mu Fz),
@@ -402,7 +479,7 @@ void TestRigidBrushMatchesTheClosedForm()
 // The road's force never passes the friction circle, whatever the slips (local friction is at most mu_s).
 void TestBrushStaysInsideTheFrictionCircle()
 {
-    const BrushTyreParameters p = MakeBrushTyreParameters(1.1, 4000.0, 7.0 * kDeg, 0.85, 0.32, 0.225, 250000.0);
+    const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
     const BrushTyre tyre(p);
     for (double slip : {-0.6, -0.15, -0.04, 0.0, 0.03, 0.1, 0.5})
     {
@@ -427,7 +504,7 @@ void TestFittedBrushPeaksWhereAskedAndPointsTheRightWay()
 {
     for (double peak : {4.0, 7.0, 10.0})
     {
-        const BrushTyreParameters p = MakeBrushTyreParameters(1.2, 3500.0, peak * kDeg, 0.85, 0.33, 0.25, 0.0);
+        const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.2, 3500.0, peak * kDeg, 0.33, 0.25, 0.0));
         const BrushTyre tyre(p);
         double best = 0.0;
         double bestAngle = 0.0;
@@ -443,7 +520,7 @@ void TestFittedBrushPeaksWhereAskedAndPointsTheRightWay()
         RequireNear(bestAngle, peak, 0.6, "lateral peak angle");
         Require(best > 0.85 * 1.2 * 3500.0 && best <= 1.2 * 3500.0, "the peak is near mu Fz, got " + std::to_string(best));
     }
-    const BrushTyreParameters p = MakeBrushTyreParameters(1.1, 4000.0, 7.0 * kDeg, 0.85, 0.32, 0.225, 250000.0);
+    const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
     const BrushTyre tyre(p);
     const BrushTyreOutput left = tyre.Steady(Rolling(p, 4000.0, 2.0 * kDeg));
     Require(left.Fy < 0.0 && left.Mz > 0.0, "a slip angle to the left pushes right and aligns");
@@ -479,7 +556,7 @@ void TestFittedBrushPeaksWhereAskedAndPointsTheRightWay()
 // A step in slip angle: the force builds over the carcass's relaxation length, not at once.
 void TestBrushForceBuildsOverItsRelaxationLength()
 {
-    const BrushTyreParameters p = MakeBrushTyreParameters(1.1, 4000.0, 7.0 * kDeg, 0.85, 0.32, 0.225, 250000.0);
+    const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
     BrushTyre tyre(p);
     const BrushTyreInput in = Rolling(p, 4000.0, 2.0 * kDeg);
     const double steady = tyre.Steady(in).Fy;
@@ -511,7 +588,7 @@ void TestBrushForceBuildsOverItsRelaxationLength()
 // lets go slowly (the low-speed creep), staying within friction, finite and balanced.
 void TestBrushStandsAndHolds()
 {
-    const BrushTyreParameters p = MakeBrushTyreParameters(1.1, 4000.0, 7.0 * kDeg, 0.85, 0.32, 0.225, 250000.0);
+    const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
     BrushTyre tyre(p);
     BrushTyreInput still;
     still.load = 4000.0;
@@ -562,6 +639,8 @@ int main()
         {"TestRigidBrushMatchesTheClosedForm", TestRigidBrushMatchesTheClosedForm},
         {"TestBrushStaysInsideTheFrictionCircle", TestBrushStaysInsideTheFrictionCircle},
         {"TestFittedBrushPeaksWhereAskedAndPointsTheRightWay", TestFittedBrushPeaksWhereAskedAndPointsTheRightWay},
+        {"TestBrushPatchFollowsTheInflationPressure", TestBrushPatchFollowsTheInflationPressure},
+        {"TestBrushRelaxesOverTheGivenLength", TestBrushRelaxesOverTheGivenLength},
         {"TestBrushForceBuildsOverItsRelaxationLength", TestBrushForceBuildsOverItsRelaxationLength},
         {"TestBrushStandsAndHolds", TestBrushStandsAndHolds},
     };
