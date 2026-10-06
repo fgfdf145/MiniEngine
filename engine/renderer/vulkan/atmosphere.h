@@ -57,6 +57,16 @@ class VulkanAtmosphere
     TextureDescriptorBinding GetCloudDetailNoiseBinding() const;
     // The clouds' shadow map (cloud_shadow.comp), written every frame the atmosphere renders.
     TextureDescriptorBinding GetCloudShadowBinding() const;
+    TextureDescriptorBinding GetCloudWeatherBinding() const;
+
+    // The clouds marched at half the scene's extent (cloud_march.comp) for the sky pass to
+    // composite. EnsureCloudTarget recreates the target when the extent changed and returns true;
+    // the caller has waited for the device and then repoints set 0 binding 28
+    // (VulkanUniformBuffer::SetCloudTarget). RecordClouds marches it, after Record, and orders the
+    // sky pass's reads after its writes.
+    bool EnsureCloudTarget(VkExtent2D sceneExtent);
+    void RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet);
+    TextureDescriptorBinding GetCloudTargetBinding() const;
     VkBuffer GetIrradianceBuffer() const;
 
   private:
@@ -72,11 +82,15 @@ class VulkanAtmosphere
     static constexpr size_t kIrradiancePipeline = kLutCount;
     static constexpr size_t kCloudNoisePipeline = kLutCount + 1;
     static constexpr size_t kCloudShadowPipeline = kLutCount + 2;
-    static constexpr size_t kPipelineCount = kLutCount + 3;
+    static constexpr size_t kCloudWeatherPipeline = kLutCount + 3;
+    static constexpr size_t kCloudMarchPipeline = kLutCount + 4;
+    static constexpr size_t kPipelineCount = kLutCount + 5;
+    // The clouds' images built once: the two billow volumes and the plume map.
     enum CloudNoise : size_t
     {
         kCloudShape,
         kCloudDetail,
+        kCloudWeather,
         kCloudNoiseCount
     };
     // The images the first Record moves out of UNDEFINED: the LUTs, the noise and the shadow map.
@@ -93,6 +107,9 @@ class VulkanAtmosphere
 
     void CreateImages();
     void CreateDescriptors();
+    void CreateCloudTarget(VkExtent2D extent);
+    void DestroyCloudTarget();
+    void WriteCloudTargetDescriptor();
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
     void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
@@ -111,6 +128,10 @@ class VulkanAtmosphere
     VkSampler m_cloudSampler = VK_NULL_HANDLE;
     // RGBA16F, r the transmittance toward the sun; GENERAL like the LUTs.
     LutImage m_cloudShadow{};
+    // The half-extent cloud target; fresh after (re)creation until its first transition.
+    LutImage m_cloudTarget{};
+    VkExtent2D m_cloudTargetExtent{};
+    bool m_cloudTargetFresh = true;
     bool m_cloudNoiseBuilt = false;
     std::array<VkPipeline, kPipelineCount> m_pipelines{};
     // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0

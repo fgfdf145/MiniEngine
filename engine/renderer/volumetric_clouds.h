@@ -4,13 +4,15 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace me
 {
 
 // Volumetric clouds (docs/design/2026-09-28-volumetric-clouds-design.md): a cumulus layer in a
-// shell around the planet, ray marched through tiling Perlin-Worley noise. The shaders mirror
+// shell around the planet, ray marched; the clouds themselves are plumes over a flat base, cut
+// with billows (docs/design/2026-10-06-cumulus-generation-design.md). The shaders mirror
 // these functions line for line in shaders/vulkan/volumetric_clouds.glsl; units are kilometres,
 // planet centre at the origin, as in the atmosphere.
 
@@ -22,10 +24,67 @@ inline constexpr int kCloudScatteringOctaves = 5;
 inline constexpr float kCloudOctaveScattering = 0.8f;
 inline constexpr float kCloudOctaveExtinction = 0.8f;
 inline constexpr float kCloudOctaveAnisotropy = 0.5f;
-// The field's rise from the coverage threshold to full density: narrow, for cumulus's sharp edges.
-inline constexpr float kCloudEdgeWidth = 0.2f;
-// The weather map's share of the field; the base shape has the rest.
-inline constexpr float kCloudWeatherShare = 0.55f;
+
+// The weather map (shaders/vulkan/cloud_weather.comp): per texel of one tile, the top of the
+// tallest plume above the layer's base as a share of the thickness (r, stored as
+// (top - kCloudWeatherFloor) / (1 - kCloudWeatherFloor)), and how steeply it falls, |d top / d uv|
+// over kCloudWeatherSlopeScale (g). Outside every plume the top runs below the base, down to the
+// floor, so the surface distance keeps falling away from a cloud's side.
+inline constexpr uint32_t kCloudWeatherSize = 1024;
+inline constexpr float kCloudWeatherFloor = -0.25f;
+inline constexpr float kCloudWeatherSlopeScale = 256.0f;
+// A plume's top over its footprint: t (1 - (d / r)^p), a paraboloid: a rounded top, sides at 63
+// degrees where it meets the base, and on below the base outside the footprint.
+inline constexpr float kCloudDomeExponent = 2.0f;
+// Overlapping domes join with a polynomial smooth maximum this wide (share of the thickness,
+// 150 m at 2.5 km): a plain maximum leaves a ledge where a wide low turret meets a tall narrow one,
+// and the plumes read as stacked plates.
+inline constexpr float kCloudDomeBlend = 0.06f;
+// A plume's height (share of the thickness) per unit of its diameter in uv: the 40 km tile over
+// the 2.5 km layer the plume sizes were drawn for, so an aspect of 1 is as tall as wide there.
+inline constexpr float kCloudPlumeHeightPerUv = 16.0f;
+
+// One scale of plumes on a jittered grid: each cell holds one with the probability (raised where
+// the clustering field is high), of radius and aspect (height over diameter) drawn from the
+// ranges, in cells. The larger scales are clusters of turrets: three to five sub-domes around a
+// core. Four doublings, 2.5 km cells down to 300 m, so there are four times as many plumes per
+// halving of size, as fair-weather cumulus fields show (a power law near D^-2 to D^-3).
+struct CloudPlumeLevel
+{
+    float cells;
+    float probability;
+    float radiusMin;
+    float radiusMax;
+    float aspectMin;
+    float aspectMax;
+    bool turrets;
+};
+inline constexpr std::array<CloudPlumeLevel, 4> kCloudPlumeLevels = {{
+    {16.0f, 0.55f, 0.30f, 0.45f, 0.45f, 0.80f, true},
+    {32.0f, 0.55f, 0.28f, 0.45f, 0.40f, 0.75f, true},
+    {64.0f, 0.55f, 0.25f, 0.45f, 0.35f, 0.70f, false},
+    {128.0f, 0.55f, 0.25f, 0.45f, 0.30f, 0.60f, false},
+}};
+
+// The billows (shaders/vulkan/cloud_noise.comp): each channel of both volumes is a union of
+// spheres around jittered points, sqrt(1 - d^2), stretched from its 0.45 floor onto [0, 1]; its
+// mean is then kCloudBillowMean, so a billow pushes the surface out as often as in.
+inline constexpr float kCloudBillowMean = 0.69f;
+// Billow heights per tile size, kilometres per kilometre, octave by octave (spheres per tile: shape
+// r g b 4, 8, 16; detail r g b a 2, 4, 8, 16): a fifth of each octave's sphere spacing in the
+// shape, the large lobes, and two fifths in the detail, the cauliflower on them.
+inline constexpr std::array<float, 3> kCloudShapeBillowPerTile = {0.05f, 0.025f, 0.0125f};
+inline constexpr std::array<float, 4> kCloudDetailBillowPerTile = {0.2f, 0.1f, 0.05f, 0.025f};
+// Where the density rises from nothing to full inside the surface: a cumulus's edge is sharp.
+inline constexpr float kCloudEdgeKm = 0.015f;
+// Liquid water rises with height above the base (adiabatic), and extinction with it as its 2/3
+// power; at the base a fraction of the full value, which is reached this far up.
+inline constexpr float kCloudWaterFullHeightKm = 1.0f;
+inline constexpr float kCloudWaterAtBase = 0.25f;
+// Billows grow in from the flat base: the large ones from none at it to all of them this far above;
+// the small ones keep a share at the base, which leaves it ragged but level.
+inline constexpr float kCloudBillowRiseKm = 0.12f;
+inline constexpr float kCloudBaseRaggedness = 0.4f;
 
 // The vertical marches (detail-free) that measure the cloud above and below a point for its ambient
 // light (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md).
@@ -51,24 +110,31 @@ CloudSettings ClampCloudSettings(const CloudSettings& settings);
 // Maps x from [a, b] to [c, d], unclamped; a == b maps everything to c.
 float CloudRemap(float x, float a, float b, float c, float d);
 
-// The cumulus profile over the height fraction h in [0, 1] of the layer: a flat base that fills in
-// over the lowest tenth and tops that thin out from 30 % up. Zero outside [0, 1].
-float CloudHeightGradient(float heightFraction);
+// The weather map's texel at uv in [0, 1)^2, as cloud_weather.comp computes it: x the top
+// (share of the thickness, kCloudWeatherFloor outside every plume), y |d top / d uv|.
+glm::vec2 CloudWeatherTexel(const glm::vec2& uv);
 
-// The weather map from its two noise taps (the shape volume's r and g, normalised to [0, 1]),
-// stretched over [0, 1]: where the clouds gather.
-float CloudWeather(float first, float second);
+// How far the plume tops are lowered so a share coverage of the ground lies under a cloud: the
+// weather map's measured cover, inverted. Lowering them shrinks every plume and drops the
+// smallest; at full coverage they sink below the floor and the layer closes into a deck.
+float CloudCoverageOffset(float coverage);
 
-// The base shape from a shape volume texel (r Perlin-Worley, g b a Worley octaves): the lobes
-// eroded at their edges by the Worley fBm, in [0, 1].
-float CloudShape(const glm::vec4& shape);
+// Kilometres inside the cloud's surface (negative outside) at heightKm above the base, before the
+// billows: the lower of the distance below the plume's top, measured across its slope, and the
+// height above the flat base. top and slope are the weather texel's; weatherFrequency is uv per km.
+float CloudSurfaceDistance(float top, float slope, float coverageOffset, float thicknessKm, float weatherFrequency, float heightKm);
 
-// The field the coverage thresholds: weather and shape blended, times the height profile.
-float CloudField(float weather, float shape, float gradient);
+// How far the billows move the surface out (positive) or in at heightKm above the base: the shape
+// volume's three octaves and the detail volume's four, each about its mean, scaled to the
+// tiles (km) and by strength; detail in [0, 1] fades the detail octaves.
+float CloudBillows(const glm::vec4& shape, const glm::vec4& fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm);
 
-// Density in [0, 1] where the field reads field: 0 below 1 - coverage, full kCloudEdgeWidth above
-// it, and 0 everywhere at coverage 0.
-float CloudCoverageRamp(float field, float coverage);
+// The share of the full extinction at heightKm above the base: kCloudWaterAtBase rising as
+// (h / kCloudWaterFullHeightKm)^(2/3) to 1.
+float CloudWaterProfile(float heightKm);
+
+// Density in [0, 1] distanceKm inside the surface: none outside, full kCloudEdgeKm in.
+float CloudEdgeDensity(float distanceKm);
 
 // Dual-lobe Henyey-Greenstein per steradian; cosTheta is 1 looking into the sun.
 float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta);
@@ -85,16 +151,19 @@ float CloudMeanCosine(float forwardG, float backG, float backWeight);
 // optical depth to scaled optical depth.
 glm::vec2 CloudDiffusionParameters(float albedo, float meanCosine);
 
-// The diffusion field toward the sun (Eddington, half-space lit along the ray, Marshak boundary)
-// as light scattered per steradian per unit of scattering coefficient and of sun illuminance,
-// after lightOpticalDepth of cloud: isotropic, fluence / 4 pi, never negative.
-float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity);
+// The diffusion field (Eddington across a slab lit along the ray, Marshak at both faces) as light
+// scattered per steradian per unit of scattering coefficient and of sun illuminance, after
+// lightOpticalDepth of cloud toward the sun with awayOpticalDepth still ahead before the light
+// leaves: isotropic, fluence / 4 pi, never negative. Deep in a thick cloud it fills toward 5 E;
+// near the face the light leaves by, and in thin clouds, it escapes and falls toward nothing.
+float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, float kappa, float similarity);
 
 // The sun's light scattered toward the camera: the octaves, raised by diffusion in [0, 1] toward
 // single scattering plus the diffusion field wherever that is brighter, so nothing is counted
 // twice and the octaves alone stand at diffusion 0.
 float CloudSunScatteringWithDiffusion(
     float lightOpticalDepth,
+    float awayOpticalDepth,
     float forwardG,
     float backG,
     float backWeight,

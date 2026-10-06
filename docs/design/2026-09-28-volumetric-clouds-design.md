@@ -106,7 +106,7 @@ sky is still captured once.
 
 - `CloudSettings` in `SceneEnvironment` (`scene_environment.h`), YAML `environment.clouds`
   (enabled, coverage, base_altitude, thickness, density, shape_scale, detail_scale, weather_scale,
-  detail_erosion, forward_anisotropy, back_anisotropy, back_weight, albedo, ambient_scale,
+  billows (was detail_erosion), forward_anisotropy, back_anisotropy, back_weight, albedo, ambient_scale,
   haze_distance). Scenes without the node read as off; `AddDefaultSunAndSky` turns them on.
 - `EnvironmentUniformData` grows from 21 to 25 vec4s: `cloudLayer` (base km, thickness km,
   coverage, extinction per km, 0 when off or outside Atmosphere), `cloudScales` (frequencies per km

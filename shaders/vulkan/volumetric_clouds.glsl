@@ -1,14 +1,17 @@
 // Volumetric clouds (docs/design/2026-09-28-volumetric-clouds-design.md): a cumulus layer in a
-// shell around the planet, ray marched through the tiling noise cloud_noise.comp builds, lit by
+// shell around the planet, ray marched through plumes over a flat base cut with billows
+// (docs/design/2026-10-06-cumulus-generation-design.md; cloud_weather.comp and cloud_noise.comp), lit by
 // the atmosphere's sun (dual-lobe Henyey-Greenstein with Wrenninge's multiple-scattering octaves)
 // and sky. The C++ mirror of the scalar functions is engine/renderer/volumetric_clouds.cpp.
 // Units are kilometres, planet centre at the origin. Include after atmosphere_sampling.glsl.
 #ifndef VOLUMETRIC_CLOUDS_GLSL
 #define VOLUMETRIC_CLOUDS_GLSL
 
-// Set 0 bindings 24 and 25: the shape and detail noise (VulkanAtmosphere), REPEAT and linear.
+// Set 0 bindings 24, 25 and 27: the large and small billows and the plume map (VulkanAtmosphere),
+// REPEAT and linear.
 layout(set = 0, binding = 24) uniform sampler3D cloudShapeNoise;
 layout(set = 0, binding = 25) uniform sampler3D cloudDetailNoise;
+layout(set = 0, binding = 27) uniform sampler2D cloudWeatherMap;
 
 // Must match kCloudScatteringOctaves and kCloudOctave* in engine/renderer/volumetric_clouds.h.
 const int CLOUD_SCATTERING_OCTAVES = 5;
@@ -17,16 +20,40 @@ const float CLOUD_OCTAVE_EXTINCTION = 0.8;
 const float CLOUD_OCTAVE_ANISOTROPY = 0.5;
 // The march never reaches further than this; beyond it the haze has taken the clouds anyway.
 const float CLOUD_MAX_DISTANCE_KM = 120.0;
-// The detail erosion fades out by this distance: further away a step is longer than the detail
-// noise's features, which would only alias.
+// The small billows fade out by this distance: further away a step is longer than they are, and
+// they would only alias.
 const float CLOUD_DETAIL_DISTANCE_KM = 30.0;
-const int CLOUD_LIGHT_STEPS = 6;
+// Toward the sun: steps from 25 m doubling, so the light finds the creases between billows and
+// still crosses the whole layer (3.2 km). The first two read the small billows, the next two the
+// large ones, the rest (400 m and longer) the plumes alone.
+const int CLOUD_LIGHT_STEPS = 7;
+const float CLOUD_LIGHT_FIRST_STEP_KM = 0.025;
+const int CLOUD_LIGHT_DETAIL_STEPS = 2;
+const int CLOUD_LIGHT_BILLOW_STEPS = 4;
+// The view march: coarse steps through clear air read the plume map alone; where a billow could
+// reach, fine steps, 30 m near the camera and longer with distance as a pixel grows, so the sharp
+// surfaces are not sliced into bands. Never more iterations than this many times the coarse count.
+const float CLOUD_FINE_STEP_KM = 0.015;
+const float CLOUD_FINE_STEP_PER_KM = 0.002;
+const int CLOUD_MARCH_BUDGET = 4;
+const float CLOUD_DISTANCE_STEP_SHARE = 0.5;
+// Away from the sun, for how much cloud the diffused light still has to cross: 100 m doubling.
+const int CLOUD_AWAY_STEPS = 4;
+const float CLOUD_AWAY_FIRST_STEP_KM = 0.1;
 // Must match kCloudAmbientSteps and kCloudMaxDiffusionDecay in engine/renderer/volumetric_clouds.h.
 const int CLOUD_AMBIENT_STEPS = 3;
 const float CLOUD_MAX_DIFFUSION_DECAY = 0.95;
-// Must match kCloudEdgeWidth and kCloudWeatherShare in engine/renderer/volumetric_clouds.h.
-const float CLOUD_EDGE_WIDTH = 0.2;
-const float CLOUD_WEATHER_SHARE = 0.55;
+// Must match the plume map and billow constants in engine/renderer/volumetric_clouds.h.
+const float CLOUD_WEATHER_FLOOR = -0.25;
+const float CLOUD_WEATHER_SLOPE_SCALE = 256.0;
+const float CLOUD_BILLOW_MEAN = 0.69;
+const vec3 CLOUD_SHAPE_BILLOW_PER_TILE = vec3(0.05, 0.025, 0.0125);
+const vec4 CLOUD_DETAIL_BILLOW_PER_TILE = vec4(0.2, 0.1, 0.05, 0.025);
+const float CLOUD_EDGE_KM = 0.015;
+const float CLOUD_WATER_FULL_HEIGHT_KM = 1.0;
+const float CLOUD_WATER_AT_BASE = 0.25;
+const float CLOUD_BILLOW_RISE_KM = 0.12;
+const float CLOUD_BASE_RAGGEDNESS = 0.4;
 
 bool CloudsEnabled()
 {
@@ -37,18 +64,6 @@ float CloudRemap(float x, float a, float b, float c, float d)
 {
     float span = b - a;
     return span == 0.0 ? c : c + (x - a) / span * (d - c);
-}
-
-float CloudHeightGradient(float heightFraction)
-{
-    float base = clamp(CloudRemap(heightFraction, 0.0, 0.1, 0.0, 1.0), 0.0, 1.0);
-    float top = clamp(CloudRemap(heightFraction, 0.3, 1.0, 1.0, 0.0), 0.0, 1.0);
-    return base * top;
-}
-
-float CloudCoverageRamp(float field, float coverage)
-{
-    return coverage <= 0.0 ? 0.0 : clamp((field - (1.0 - coverage)) / CLOUD_EDGE_WIDTH, 0.0, 1.0);
 }
 
 float CloudHenyeyGreenstein(float g, float cosTheta)
@@ -78,22 +93,22 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
     return scattering;
 }
 
-// The diffusion field toward the sun (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md):
-// Eddington's half-space lit along the ray with a Marshak boundary, in the similarity-scaled
-// medium; per steradian per unit of scattering coefficient and of sun illuminance.
-float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity)
+// The diffusion field (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md,
+// 2026-10-06-cumulus-generation-design.md): lossless Eddington across a slab lit along the ray,
+// Marshak at both faces, awayOpticalDepth the cloud still ahead before the light leaves; per
+// steradian per unit of scattering coefficient and of sun illuminance.
+float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, float kappa, float similarity)
 {
     float scaled = similarity * lightOpticalDepth;
-    float amplitude = (3.0 - kappa * kappa) / (1.0 - kappa * kappa);
-    float boundary = (5.0 / 3.0) / (1.0 + 2.0 * kappa / 3.0);
-    float fluence = amplitude * max(boundary * exp(-kappa * scaled) - exp(-scaled), 0.0);
-    return fluence / (4.0 * ATMOSPHERE_PI);
+    float total = similarity * (lightOpticalDepth + max(awayOpticalDepth, 0.0));
+    float lossless = 5.0 - 3.0 * exp(-scaled) - (5.0 - exp(-total)) * (scaled + 2.0 / 3.0) / (total + 4.0 / 3.0);
+    return max(lossless, 0.0) * exp(-kappa * scaled) / (4.0 * ATMOSPHERE_PI);
 }
 
 // The octaves, raised by diffusion toward single scattering plus the diffusion field wherever
 // that is brighter: deep in a thick cloud the octaves die out, the diffusion field does not.
-float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta,
-                                      float diffusion, float kappa, float similarity)
+float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float awayOpticalDepth, float forwardG, float backG, float backWeight,
+                                      float cosTheta, float diffusion, float kappa, float similarity)
 {
     float octaves = CloudSunScattering(lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
     if (diffusion <= 0.0)
@@ -101,7 +116,7 @@ float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float forwardG, f
         return octaves;
     }
     float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * exp(-lightOpticalDepth);
-    float diffused = single + CloudDiffuseScattering(lightOpticalDepth, kappa, similarity);
+    float diffused = single + CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity);
     return octaves + diffusion * max(diffused - octaves, 0.0);
 }
 
@@ -167,74 +182,133 @@ vec2 CloudShellInterval(vec3 origin, vec3 direction, float planet, float inner, 
     return end > start ? vec2(start, end) : none;
 }
 
-float CloudWeather(float first, float second)
+// Kilometres inside the surface before the billows: below the plume's top across its slope, and
+// above the flat base.
+float CloudSurfaceDistance(float top, float slope, float coverageOffset, float thicknessKm, float weatherFrequency, float heightKm)
 {
-    return clamp(CloudRemap(first * 0.65 + second * 0.35, 0.25, 0.75, 0.0, 1.0), 0.0, 1.0);
+    float topKm = (top - coverageOffset) * thicknessKm;
+    float slopeKm = slope * thicknessKm * weatherFrequency;
+    return min((topKm - heightKm) * inversesqrt(1.0 + slopeKm * slopeKm), heightKm);
 }
 
-// The base shape: the Perlin-Worley lobes, eroded at their edges by the Worley octaves.
-float CloudShape(vec4 shape)
+// How far the billows push the surface out at heightKm above the base: none at the flat base.
+float CloudBillows(vec4 shape, vec4 fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm)
 {
-    float fbm = shape.g * 0.625 + shape.b * 0.25 + shape.a * 0.125;
-    float erosion = (1.0 - fbm) * 0.6;
-    return clamp(CloudRemap(shape.r, erosion, 1.0, 0.0, 1.0), 0.0, 1.0);
+    float large = dot(shape.rgb - CLOUD_BILLOW_MEAN, CLOUD_SHAPE_BILLOW_PER_TILE);
+    float small = dot(fine - CLOUD_BILLOW_MEAN, CLOUD_DETAIL_BILLOW_PER_TILE);
+    float rise = clamp(heightKm / CLOUD_BILLOW_RISE_KM, 0.0, 1.0);
+    return strength * (rise * large * shapeTileKm + max(rise, CLOUD_BASE_RAGGEDNESS) * detail * small * detailTileKm);
 }
 
-// The field the coverage thresholds: mostly weather, some shape, shaped by the height profile.
-float CloudField(float weather, float shape, float gradient)
+float CloudWaterProfile(float heightKm)
 {
-    return (weather * CLOUD_WEATHER_SHARE + shape * (1.0 - CLOUD_WEATHER_SHARE)) * gradient;
+    return max(CLOUD_WATER_AT_BASE, pow(clamp(heightKm / CLOUD_WATER_FULL_HEIGHT_KM, 0.0, 1.0), 2.0 / 3.0));
 }
 
-// Extinction per km at a point of the layer, heightFraction its height in it. detail in [0, 1]
-// scales the detail erosion; at 0 it is the cheaper shape the far march and the light march read.
+float CloudEdgeDensity(float distanceKm)
+{
+    return clamp(distanceKm / CLOUD_EDGE_KM, 0.0, 1.0);
+}
+
+// The furthest the billows can push a surface out: the octaves' highest values above their mean.
+float CloudBillowReachKm(float detail)
+{
+    float shapeTileKm = 1.0 / ubo.cloudScales.x;
+    float detailTileKm = 1.0 / ubo.cloudScales.y;
+    float reach = dot(CLOUD_SHAPE_BILLOW_PER_TILE, vec3(1.0)) * shapeTileKm + detail * dot(CLOUD_DETAIL_BILLOW_PER_TILE, vec4(1.0)) * detailTileKm;
+    return (1.0 - CLOUD_BILLOW_MEAN) * ubo.cloudScales.w * reach;
+}
+
+// Kilometres inside the plumes' smooth surface (before the billows), from the plume map alone;
+// far negative outside the layer.
+float CloudPlumeDistance(vec3 positionKm, float heightFraction)
+{
+    if (heightFraction <= 0.0 || heightFraction >= 1.0)
+    {
+        return -1e3;
+    }
+    float thicknessKm = ubo.cloudLayer.y;
+    vec2 weather = textureLod(cloudWeatherMap, positionKm.xz * ubo.cloudScales.z, 0.0).rg;
+    float top = weather.r * (1.0 - CLOUD_WEATHER_FLOOR) + CLOUD_WEATHER_FLOOR;
+    return CloudSurfaceDistance(top, weather.g * CLOUD_WEATHER_SLOPE_SCALE, ubo.cloudLayer.z, thicknessKm, ubo.cloudScales.z, heightFraction * thicknessKm);
+}
+
+// Extinction per km at a point of the layer, heightFraction its height in it, and how far inside
+// the billowed surface it lies (km, negative outside). detail in [0, 1] fades the small billows;
+// at 0 it is the cheaper cloud the far march and the long light steps read.
+float CloudExtinction(vec3 positionKm, float heightFraction, float detail, out float distanceKm)
+{
+    distanceKm = CloudPlumeDistance(positionKm, heightFraction);
+    // Further outside than any billow reaches: clear, without the volume taps.
+    float reach = CloudBillowReachKm(detail);
+    if (distanceKm < -reach)
+    {
+        distanceKm += reach;
+        return 0.0;
+    }
+    float heightKm = heightFraction * ubo.cloudLayer.y;
+    vec4 shape = textureLod(cloudShapeNoise, positionKm * ubo.cloudScales.x, 0.0);
+    vec4 fine = detail > 0.0 ? textureLod(cloudDetailNoise, positionKm * ubo.cloudScales.y, 0.0) : vec4(CLOUD_BILLOW_MEAN);
+    distanceKm += CloudBillows(shape, fine, 1.0 / ubo.cloudScales.x, 1.0 / ubo.cloudScales.y, ubo.cloudScales.w, detail, heightKm);
+    return CloudEdgeDensity(distanceKm) * CloudWaterProfile(heightKm) * ubo.cloudLayer.w;
+}
+
 float CloudExtinction(vec3 positionKm, float heightFraction, float detail)
 {
-    float gradient = CloudHeightGradient(heightFraction);
-    if (gradient <= 0.0)
-    {
-        return 0.0;
-    }
-    // The weather: two slices of the shape noise, read as a 2D map over the ground, where the
-    // clouds gather.
-    vec2 weatherUv = positionKm.xz * ubo.cloudScales.z;
-    float weather = CloudWeather(
-        textureLod(cloudShapeNoise, vec3(weatherUv, 0.37), 0.0).r,
-        textureLod(cloudShapeNoise, vec3(weatherUv * 2.63 + 0.19, 0.71), 0.0).g);
-    // Its lowest possible field still misses the coverage threshold: nothing here at any height.
-    if (weather * CLOUD_WEATHER_SHARE + (1.0 - CLOUD_WEATHER_SHARE) <= 1.0 - ubo.cloudLayer.z)
-    {
-        return 0.0;
-    }
-    vec4 shape = textureLod(cloudShapeNoise, positionKm * ubo.cloudScales.x, 0.0);
-    float field = CloudField(weather, CloudShape(shape), gradient);
-    float cloud = CloudCoverageRamp(field, ubo.cloudLayer.z);
-    if (detail > 0.0 && cloud > 0.0)
-    {
-        vec3 fine = textureLod(cloudDetailNoise, positionKm * ubo.cloudScales.y, 0.0).rgb;
-        float fineFbm = fine.r * 0.625 + fine.g * 0.25 + fine.b * 0.125;
-        // Wispy at the base, billowy toward the tops.
-        float modifier = mix(fineFbm, 1.0 - fineFbm, clamp(heightFraction * 5.0, 0.0, 1.0));
-        cloud = clamp(CloudRemap(cloud, modifier * ubo.cloudScales.w * detail, 1.0, 0.0, 1.0), 0.0, 1.0);
-    }
-    return cloud * ubo.cloudLayer.w;
+    float distanceKm;
+    return CloudExtinction(positionKm, heightFraction, detail, distanceKm);
 }
 
-// Optical depth from a point toward the sun, over steps that double in length.
-float CloudLightOpticalDepth(vec3 positionKm, vec3 sunDirection, float inner, float thickness, float detail)
+// The plumes alone, without the billows (which sit about the plumes' surface on average): for the
+// long light steps, where a billow is far smaller than the step.
+float CloudPlumeExtinction(vec3 positionKm, float heightFraction)
 {
-    float stepLength = thickness / 32.0;
+    float distanceKm = CloudPlumeDistance(positionKm, heightFraction);
+    return CloudEdgeDensity(distanceKm) * CloudWaterProfile(heightFraction * ubo.cloudLayer.y) * ubo.cloudLayer.w;
+}
+
+// Optical depth from a point toward the sun, over steps that double in length. jitter in [0, 1)
+// places the sample within each step: fixed at the middle, the steps would cut the shading of a
+// smooth surface into contour bands; varied per pixel and frame, TAA averages them away.
+float CloudLightOpticalDepth(vec3 positionKm, vec3 sunDirection, float inner, float thickness, float detail, float jitter)
+{
+    float stepLength = CLOUD_LIGHT_FIRST_STEP_KM;
     float t = 0.0;
     float depth = 0.0;
     for (int step = 0; step < CLOUD_LIGHT_STEPS; ++step)
     {
-        vec3 p = positionKm + sunDirection * (t + stepLength * 0.5);
+        vec3 p = positionKm + sunDirection * (t + stepLength * jitter);
         float heightFraction = (length(p) - inner) / thickness;
         if (heightFraction > 1.0)
         {
             break;
         }
-        depth += CloudExtinction(p, heightFraction, step < 2 ? detail : 0.0) * stepLength;
+        float extinction = step < CLOUD_LIGHT_BILLOW_STEPS ? CloudExtinction(p, heightFraction, step < CLOUD_LIGHT_DETAIL_STEPS ? detail : 0.0)
+                                                           : CloudPlumeExtinction(p, heightFraction);
+        depth += extinction * stepLength;
+        t += stepLength;
+        stepLength *= 2.0;
+    }
+    return depth;
+}
+
+// Optical depth (the plumes alone) from a point away from the sun until the light would leave the
+// cloud: steps from 100 m doubling over 1.5 km, stopping at the layer's base or top; jitter as for
+// the light march.
+float CloudAwayOpticalDepth(vec3 positionKm, vec3 awayDirection, float inner, float thickness, float jitter)
+{
+    float stepLength = CLOUD_AWAY_FIRST_STEP_KM;
+    float t = 0.0;
+    float depth = 0.0;
+    for (int step = 0; step < CLOUD_AWAY_STEPS; ++step)
+    {
+        vec3 p = positionKm + awayDirection * (t + stepLength * jitter);
+        float heightFraction = (length(p) - inner) / thickness;
+        if (heightFraction <= 0.0 || heightFraction >= 1.0)
+        {
+            break;
+        }
+        depth += CloudPlumeExtinction(p, heightFraction) * stepLength;
         t += stepLength;
         stepLength *= 2.0;
     }
@@ -304,17 +378,36 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
     float weightedDistance = 0.0;
     float weightSum = 0.0;
     float t = span.x + dt * jitter;
-    for (int step = 0; step < steps; ++step)
+    float billowReach = CloudBillowReachKm(1.0);
+    for (int iteration = 0; iteration < steps * CLOUD_MARCH_BUDGET && t < span.y; ++iteration)
     {
         vec3 p = camera + direction * t;
         float heightFraction = (length(p) - inner) / thickness;
+        if (CloudPlumeDistance(p, heightFraction) < -billowReach)
+        {
+            t += dt;
+            continue;
+        }
+        float stepLength = min(dt, CLOUD_FINE_STEP_KM + t * CLOUD_FINE_STEP_PER_KM);
         float detail = clamp(1.0 - t / CLOUD_DETAIL_DISTANCE_KM, 0.0, 1.0);
-        float extinction = CloudExtinction(p, heightFraction, detail);
+        float surfaceDistance;
+        float extinction = CloudExtinction(p, heightFraction, detail, surfaceDistance);
+        // Outside the billowed surface, step by its distance: the field changes at most about
+        // twice as fast as a true distance, so half of it cannot overshoot.
+        if (extinction <= 0.0)
+        {
+            t += max(stepLength, -surfaceDistance * CLOUD_DISTANCE_STEP_SHARE);
+            continue;
+        }
         if (extinction > 0.0)
         {
-            float lightDepth = CloudLightOpticalDepth(p, sunDirection, inner, thickness, detail);
+            // A different place in the light steps for every view sample (golden-ratio sequence
+            // from the pixel's jitter).
+            float lightJitter = fract(jitter + float(iteration) * 0.618034);
+            float lightDepth = CloudLightOpticalDepth(p, sunDirection, inner, thickness, detail, lightJitter);
+            float awayDepth = diffusion > 0.0 ? CloudAwayOpticalDepth(p, -sunDirection, inner, thickness, lightJitter) : 0.0;
             float sunScattering = CloudSunScatteringWithDiffusion(
-                lightDepth, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z, cosTheta, diffusion, kappa, similarity);
+                lightDepth, awayDepth, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z, cosTheta, diffusion, kappa, similarity);
             // The sky reaches the point through the cloud above it, the ground's light through
             // the cloud below.
             float skySeen = 1.0;
@@ -329,7 +422,7 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
                 groundSeen = mix(1.0, CloudDiffuseTransmittance(below, meanCosine), ambientOcclusion);
             }
             vec3 ambient = mix(groundBelow * groundSeen, skyAbove * skySeen, clamp(heightFraction, 0.0, 1.0)) * ubo.cloudParams.x;
-            float stepTransmittance = exp(-extinction * dt);
+            float stepTransmittance = exp(-extinction * stepLength);
             // Hillaire 2016's energy-conserving step: the in-scattering integrated analytically
             // over the step's own extinction, which is sigma_s / sigma_t = albedo.
             vec3 scattered = albedo * (sunLight * sunScattering + ambient) * (1.0 - stepTransmittance);
@@ -344,25 +437,34 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
                 break;
             }
         }
-        t += dt;
+        t += stepLength;
     }
     distanceKm = weightSum > 0.0 ? weightedDistance / weightSum : span.x;
     return vec4(luminance, transmittance);
 }
 
+// The clouds along direction as a layer over the sky: rgb the light they and the haze in front of
+// them send toward the camera, a the transmittance, so the sky behind becomes sky * a + rgb.
+// skyHaze is the air's own light without the sun's disk: distant clouds fade into it over the haze
+// distance, which stands for the air between them and the camera.
+vec4 CloudLayer(vec3 direction, vec3 skyHaze, float jitter, int minSteps, int maxSteps)
+{
+    float distanceKm;
+    vec4 clouds = MarchClouds(direction, jitter, minSteps, maxSteps, distanceKm);
+    float fade = exp(-distanceKm / max(ubo.cloudParams.y, 1e-3));
+    return vec4(clouds.rgb * fade + skyHaze * (1.0 - clouds.a) * (1.0 - fade), clouds.a);
+}
+
 // The sky along direction with the clouds in front of it. skyLuminance is what lies behind them
-// (with the sun's disk, which they hide), skyHaze the air's own light without the disk: distant
-// clouds fade into it over the haze distance, which stands for the air between them and the camera.
+// (with the sun's disk, which they hide).
 vec3 ApplyClouds(vec3 skyLuminance, vec3 skyHaze, vec3 direction, float jitter, int minSteps, int maxSteps)
 {
     if (!CloudsEnabled())
     {
         return skyLuminance;
     }
-    float distanceKm;
-    vec4 clouds = MarchClouds(direction, jitter, minSteps, maxSteps, distanceKm);
-    float fade = exp(-distanceKm / max(ubo.cloudParams.y, 1e-3));
-    return skyLuminance * clouds.a + clouds.rgb * fade + skyHaze * (1.0 - clouds.a) * (1.0 - fade);
+    vec4 layer = CloudLayer(direction, skyHaze, jitter, minSteps, maxSteps);
+    return skyLuminance * layer.a + layer.rgb;
 }
 
 // Interleaved gradient noise (Jimenez 2014), stepped per frame so TAA averages the march's jitter.

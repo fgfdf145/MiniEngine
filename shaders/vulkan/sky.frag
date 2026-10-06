@@ -17,6 +17,9 @@ layout(push_constant) uniform SkyConstants
 }
 skyData;
 
+// Set 0 binding 28: the clouds at half extent (cloud_march.comp), pre-exposed rgb over transmittance.
+layout(set = 0, binding = 28) uniform sampler2D cloudTarget;
+
 layout(location = 0) in vec2 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
@@ -37,9 +40,13 @@ void main()
     }
     if (mode == ENVIRONMENT_ATMOSPHERE)
     {
-        // The clouds hide the sky and the sun behind them and fade into the sky's own haze. TAA
-        // averages the per-pixel jitter of the march.
-        luminance = ApplyClouds(luminance, SampleSkyForLighting(direction), direction, CloudJitter(gl_FragCoord.xy), 32, 96);
+        // The clouds hide the sky and the sun behind them and fade into the sky's own haze, marched
+        // at half extent; TAA averages the march's jitter and fills in between the texels.
+        if (CloudsEnabled())
+        {
+            vec4 clouds = textureLod(cloudTarget, fragTexCoord, 0.0);
+            luminance = luminance * clouds.a + clouds.rgb / ubo.exposure.x;
+        }
         // Here and not in SampleSky, which also feeds the probe and the sky SH the fog is lit by. A
         // seamless horizon fogs the sky below it as the mirrored sky above: no ground to end the
         // fog's column, so no wall of fog at and below the horizon either.

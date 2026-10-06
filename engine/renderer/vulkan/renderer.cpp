@@ -1193,6 +1193,10 @@ void VulkanRenderer::DrawFrame()
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot);
                                               m_gpuTimer->Mark(commandBuffer, "Atmosphere");
+                                              // The clouds at half extent, after the LUTs and the noise they
+                                              // read and before the sky pass composites them.
+                                              m_atmosphere->RecordClouds(commandBuffer, frame.frameDescriptorSet);
+                                              m_gpuTimer->Mark(commandBuffer, "Clouds");
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
@@ -1367,6 +1371,9 @@ void VulkanRenderer::CreateSwapchainResources()
             viewportExtent,
             swapchainImageCount);
     }
+    // The clouds march at half the scene's extent; the descriptor sets built after this name the
+    // target, and the device is idle here.
+    m_atmosphere->EnsureCloudTarget(m_sceneTargets->GetExtent());
 
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
@@ -1654,6 +1661,8 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings() const
     bindings.cloudShapeNoise = m_atmosphere->GetCloudShapeNoiseBinding();
     bindings.cloudDetailNoise = m_atmosphere->GetCloudDetailNoiseBinding();
     bindings.cloudShadow = m_atmosphere->GetCloudShadowBinding();
+    bindings.cloudWeather = m_atmosphere->GetCloudWeatherBinding();
+    bindings.cloudTarget = m_atmosphere->GetCloudTargetBinding();
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
     const VkSampler floatTableSampler = EquirectangularSampler();
@@ -2117,6 +2126,11 @@ void VulkanRenderer::SyncSceneTargets()
     if (m_uniformBuffer)
     {
         m_uniformBuffer->SetScatterImages(m_scatterPass->GetLightBinding(), m_scatterPass->GetDepthBinding());
+    }
+    // Likewise the clouds' half-extent target.
+    if (m_atmosphere->EnsureCloudTarget(m_sceneTargets->GetExtent()) && m_uniformBuffer)
+    {
+        m_uniformBuffer->SetCloudTarget(m_atmosphere->GetCloudTargetBinding());
     }
     m_layoutTracker.Reset();
     m_motionHistory.Reset();

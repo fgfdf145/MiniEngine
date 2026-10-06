@@ -60,6 +60,11 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding cloudDetailNoise;
     // Binding 26: the clouds' shadow map (VulkanAtmosphere), in GENERAL.
     TextureDescriptorBinding cloudShadow;
+    // Binding 27: the clouds' plume map (VulkanAtmosphere), in GENERAL.
+    TextureDescriptorBinding cloudWeather;
+    // Binding 28: the clouds marched at half the scene's extent (VulkanAtmosphere), in GENERAL. It
+    // follows the scene's extent: SetCloudTarget repoints it.
+    TextureDescriptorBinding cloudTarget;
 };
 
 struct MaterialTextureBinding
@@ -337,6 +342,9 @@ class VulkanUniformBuffer
     // Points set 0 bindings 19 and 20 of every frame set at the scatter pre-pass's recreated images,
     // under the same condition.
     void SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth);
+    // Points set 0 binding 28 of every frame set at the clouds' recreated half-extent target. The
+    // caller has waited for the device.
+    void SetCloudTarget(TextureDescriptorBinding target);
     uint32_t GetDrawCapacity() const;
     // A draw's material and texture transforms, read by the GPU from the next frame recorded. The
     // caller has waited for every frame that may still read the slot's previous draw.

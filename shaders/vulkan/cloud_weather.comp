@@ -1,0 +1,150 @@
+#version 450
+
+// The volumetric clouds' plume map, built once (VulkanAtmosphere::Record)
+// (docs/design/2026-10-06-cumulus-generation-design.md). One tile of fair-weather cumulus: per
+// texel, the top of the tallest plume above the layer's base as a share of the thickness (r,
+// stored as (top - WEATHER_FLOOR) / (1 - WEATHER_FLOOR)) and how steeply it falls, |d top / d uv|
+// over WEATHER_SLOPE_SCALE (g). The plumes are domes t (1 - (d / r)^2) on four jittered grids, joined by a smooth maximum,
+// four times as many per halving of size; the two larger scales are clusters of turrets. Outside
+// every plume the top runs on below the base, down to the floor, so the surface distance keeps
+// falling away from a cloud's side. Line for line CloudWeatherTexel in
+// engine/renderer/volumetric_clouds.cpp, which the tests measure.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Set 1 binding 10 of the atmosphere's compute set.
+layout(set = 1, binding = 10, rg16) uniform writeonly image2D weatherOut;
+
+// Must match kCloudWeatherSize, kCloudWeatherFloor, kCloudWeatherSlopeScale, kCloudDomeExponent,
+// kCloudPlumeHeightPerUv and kCloudPlumeLevels in engine/renderer/volumetric_clouds.h.
+const int WEATHER_SIZE = 1024;
+const float WEATHER_FLOOR = -0.25;
+const float WEATHER_SLOPE_SCALE = 256.0;
+const float DOME_EXPONENT = 2.0;
+const float DOME_BLEND = 0.06;
+const float PLUME_HEIGHT_PER_UV = 16.0;
+const int PLUME_LEVELS = 4;
+const float LEVEL_CELLS[PLUME_LEVELS] = float[](16.0, 32.0, 64.0, 128.0);
+const float LEVEL_PROBABILITY[PLUME_LEVELS] = float[](0.55, 0.55, 0.55, 0.55);
+const vec2 LEVEL_RADIUS[PLUME_LEVELS] = vec2[](vec2(0.30, 0.45), vec2(0.28, 0.45), vec2(0.25, 0.45), vec2(0.25, 0.45));
+const vec2 LEVEL_ASPECT[PLUME_LEVELS] = vec2[](vec2(0.45, 0.80), vec2(0.40, 0.75), vec2(0.35, 0.70), vec2(0.30, 0.60));
+const bool LEVEL_TURRETS[PLUME_LEVELS] = bool[](true, true, false, false);
+
+const uint WEATHER_SEED = 211u;
+const uint WEATHER_HEIGHT_SEED = 223u;
+const uint CLUSTER_SEED = 101u;
+const float PI = 3.14159265358979323846;
+
+uvec3 Pcg3d(uvec3 v)
+{
+    // Jarzynski and Olano 2020.
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+vec3 WeatherRandom(ivec2 cell, uint slot, uint seed)
+{
+    uvec3 v = Pcg3d(uvec3(uint(cell.x), uint(cell.y), slot) + uvec3(seed, seed * 7u, seed * 13u));
+    return vec3(v & 0xffffu) / 65535.0;
+}
+
+ivec2 Wrap(ivec2 cell, int period)
+{
+    return (cell % period + period) % period;
+}
+
+// Smooth value noise over period cells of the tile, wrapping.
+float WeatherValueNoise(vec2 uv, int period, uint seed)
+{
+    vec2 grid = uv * float(period);
+    ivec2 cell = ivec2(floor(grid));
+    vec2 f = grid - vec2(cell);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = WeatherRandom(Wrap(cell, period), 0u, seed).x;
+    float b = WeatherRandom(Wrap(cell + ivec2(1, 0), period), 0u, seed).x;
+    float c = WeatherRandom(Wrap(cell + ivec2(0, 1), period), 0u, seed).x;
+    float d = WeatherRandom(Wrap(cell + ivec2(1, 1), period), 0u, seed).x;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Where the plumes gather: two octaves of smooth noise, 10 and 5 km across on the 40 km tile.
+float WeatherCluster(vec2 uv)
+{
+    return 0.6 * WeatherValueNoise(uv, 4, CLUSTER_SEED) + 0.4 * WeatherValueNoise(uv, 8, CLUSTER_SEED + 2u);
+}
+
+// One dome of radius and height (grid units, share of the thickness) at centre, joined to the top
+// so far by the smooth maximum; its slope per uv follows.
+void WeatherDome(vec2 grid, vec2 centre, float radius, float height, float cells, inout float top, inout float slope)
+{
+    float d = length(grid - centre) / radius;
+    float dome = height * (1.0 - pow(d, DOME_EXPONENT));
+    float domeSlope = height * DOME_EXPONENT * pow(d, DOME_EXPONENT - 1.0) / radius * cells;
+    // Polynomial smooth maximum; the slope follows the blend.
+    float blend = clamp(0.5 + 0.5 * (dome - top) / DOME_BLEND, 0.0, 1.0);
+    top = mix(top, dome, blend) + DOME_BLEND * blend * (1.0 - blend);
+    slope = mix(slope, domeSlope, blend);
+}
+
+void main()
+{
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, ivec2(WEATHER_SIZE))))
+    {
+        return;
+    }
+    vec2 uv = (vec2(texel) + 0.5) / float(WEATHER_SIZE);
+    float top = WEATHER_FLOOR;
+    float slope = 0.0;
+    for (int level = 0; level < PLUME_LEVELS; ++level)
+    {
+        float cellsF = LEVEL_CELLS[level];
+        int cells = int(cellsF);
+        vec2 grid = uv * cellsF;
+        ivec2 base = ivec2(floor(grid));
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                ivec2 cell = base + ivec2(dx, dy);
+                ivec2 wrapped = Wrap(cell, cells);
+                uint slot = uint(level) * 8u;
+                vec3 placement = WeatherRandom(wrapped, slot, WEATHER_SEED);
+                vec2 centre = vec2(cell) + placement.yz;
+                float cluster = WeatherCluster(fract(centre / cellsF));
+                if (placement.x > LEVEL_PROBABILITY[level] * (0.4 + 1.2 * cluster))
+                {
+                    continue;
+                }
+                vec3 shape = WeatherRandom(wrapped, slot + 1u, WEATHER_SEED);
+                float radius = mix(LEVEL_RADIUS[level].x, LEVEL_RADIUS[level].y, shape.x);
+                float height = min(mix(LEVEL_ASPECT[level].x, LEVEL_ASPECT[level].y, shape.y) * 2.0 * radius / cellsF * PLUME_HEIGHT_PER_UV, 1.0);
+                WeatherDome(grid, centre, LEVEL_TURRETS[level] ? 0.7 * radius : radius, height, cellsF, top, slope);
+                if (!LEVEL_TURRETS[level])
+                {
+                    continue;
+                }
+                int turrets = 3 + int(shape.z * 2.999);
+                for (int turret = 0; turret < turrets; ++turret)
+                {
+                    uint turretSlot = slot + 2u + uint(turret);
+                    vec3 draw = WeatherRandom(wrapped, turretSlot, WEATHER_SEED);
+                    float turretHeight = WeatherRandom(wrapped, turretSlot, WEATHER_HEIGHT_SEED).x;
+                    float turretRadius = radius * mix(0.4, 0.65, draw.x);
+                    float angle = draw.y * 2.0 * PI;
+                    float offset = mix(0.2, 1.0, draw.z) * (radius - turretRadius);
+                    WeatherDome(grid, centre + vec2(cos(angle), sin(angle)) * offset, turretRadius,
+                                min(height * mix(0.65, 1.05, turretHeight), 1.0), cellsF, top, slope);
+                }
+            }
+        }
+    }
+    top = max(top, WEATHER_FLOOR);
+    imageStore(weatherOut, texel, vec4((top - WEATHER_FLOOR) / (1.0 - WEATHER_FLOOR), min(slope / WEATHER_SLOPE_SCALE, 1.0), 0.0, 0.0));
+}

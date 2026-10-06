@@ -218,8 +218,10 @@ set(MINIENGINE_SHADER_SOURCES
     atmosphere_skyview.comp
     atmosphere_aerial_perspective.comp
     atmosphere_irradiance.comp
+    cloud_march.comp
     cloud_noise.comp
     cloud_shadow.comp
+    cloud_weather.comp
     environment_capture.comp
     environment_prefilter.comp
     sky.vert

@@ -178,6 +178,23 @@ void VulkanUniformBuffer::SetScatterImages(TextureDescriptorBinding light, Textu
     }
 }
 
+void VulkanUniformBuffer::SetCloudTarget(TextureDescriptorBinding target)
+{
+    m_environment.cloudTarget = target;
+    const VkDescriptorImageInfo info{target.sampler, target.imageView, VK_IMAGE_LAYOUT_GENERAL};
+    for (VkDescriptorSet set : m_frameDescriptorSets)
+    {
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set;
+        write.dstBinding = 28;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+}
+
 VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) const
 {
     if (imageIndex >= m_imageCount)
@@ -292,7 +309,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 27> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 29> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -391,9 +408,10 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    // The volumetric clouds' shape (24) and detail (25) noise, read by the sky and the environment
-    // capture, and their shadow map (26), read wherever the sun is shadowed.
-    for (uint32_t binding : {24u, 25u, 26u})
+    // The volumetric clouds' large (24) and small (25) billows and plume map (27), read by the sky
+    // and the environment capture, their shadow map (26), read wherever the sun is shadowed, and
+    // the half-extent march (28) the sky composites.
+    for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -606,7 +624,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // Set 0 alone, one per swapchain image: its uniform buffer, image samplers and storage buffers (the
     // material sets, set 1, live in VulkanMaterialSetCache).
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 18},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 20},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -653,7 +671,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 27> frameWrites{};
+        std::array<VkWriteDescriptorSet, 29> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -803,15 +821,20 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         const VkDescriptorImageInfo cloudShapeInfo{m_environment.cloudShapeNoise.sampler, m_environment.cloudShapeNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo cloudDetailInfo{m_environment.cloudDetailNoise.sampler, m_environment.cloudDetailNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo cloudShadowInfo{m_environment.cloudShadow.sampler, m_environment.cloudShadow.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        for (uint32_t binding : {24u, 25u, 26u})
+        const VkDescriptorImageInfo cloudWeatherInfo{m_environment.cloudWeather.sampler, m_environment.cloudWeather.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo cloudTargetInfo{m_environment.cloudTarget.sampler, m_environment.cloudTarget.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
         {
             frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             frameWrites[binding].dstSet = m_frameDescriptorSets[i];
             frameWrites[binding].dstBinding = binding;
             frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             frameWrites[binding].descriptorCount = 1;
-            frameWrites[binding].pImageInfo = binding == 24u ? &cloudShapeInfo : binding == 25u ? &cloudDetailInfo
-                                                                                                : &cloudShadowInfo;
+            frameWrites[binding].pImageInfo = binding == 24u   ? &cloudShapeInfo
+                                              : binding == 25u ? &cloudDetailInfo
+                                              : binding == 26u ? &cloudShadowInfo
+                                              : binding == 27u ? &cloudWeatherInfo
+                                                               : &cloudTargetInfo;
         }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);

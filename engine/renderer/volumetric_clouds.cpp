@@ -33,6 +33,83 @@ bool SphereRoots(const glm::vec3& origin, const glm::vec3& direction, float radi
     farT = -b + root;
     return true;
 }
+
+// The weather map's generator, as cloud_weather.comp: Jarzynski and Olano's pcg3d.
+constexpr uint32_t kWeatherSeed = 211u;
+constexpr uint32_t kWeatherHeightSeed = 223u;
+constexpr uint32_t kClusterSeed = 101u;
+
+glm::uvec3 Pcg3d(glm::uvec3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+glm::vec3 WeatherRandom(const glm::ivec2& cell, uint32_t slot, uint32_t seed)
+{
+    const glm::uvec3 v =
+        Pcg3d(glm::uvec3(static_cast<uint32_t>(cell.x), static_cast<uint32_t>(cell.y), slot) + glm::uvec3(seed, seed * 7u, seed * 13u));
+    return glm::vec3(v & 0xffffu) / 65535.0f;
+}
+
+// Smooth value noise over period cells of the tile, wrapping.
+float WeatherValueNoise(const glm::vec2& uv, int period, uint32_t seed)
+{
+    const glm::vec2 grid = uv * static_cast<float>(period);
+    const glm::ivec2 cell = glm::ivec2(glm::floor(grid));
+    glm::vec2 f = grid - glm::vec2(cell);
+    f = f * f * (3.0f - 2.0f * f);
+    const auto at = [&](int x, int y)
+    {
+        const glm::ivec2 wrapped = ((cell + glm::ivec2(x, y)) % period + period) % period;
+        return WeatherRandom(wrapped, 0u, seed).x;
+    };
+    return glm::mix(glm::mix(at(0, 0), at(1, 0), f.x), glm::mix(at(0, 1), at(1, 1), f.x), f.y);
+}
+
+// Where the plumes gather: two octaves of smooth noise, 10 and 5 km across on the 40 km tile.
+float WeatherCluster(const glm::vec2& uv)
+{
+    return 0.6f * WeatherValueNoise(uv, 4, kClusterSeed) + 0.4f * WeatherValueNoise(uv, 8, kClusterSeed + 2u);
+}
+
+// One dome of radius and height (grid units, share of the thickness) at centre, joined to the top
+// so far by the smooth maximum; its slope per uv follows.
+void WeatherDome(const glm::vec2& grid, const glm::vec2& centre, float radius, float height, float cells, float& top, float& slope)
+{
+    const float d = glm::length(grid - centre) / radius;
+    const float dome = height * (1.0f - std::pow(d, kCloudDomeExponent));
+    const float domeSlope = height * kCloudDomeExponent * std::pow(d, kCloudDomeExponent - 1.0f) / radius * cells;
+    // Polynomial smooth maximum; the slope follows the blend.
+    const float blend = std::clamp(0.5f + 0.5f * (dome - top) / kCloudDomeBlend, 0.0f, 1.0f);
+    top = glm::mix(top, dome, blend) + kCloudDomeBlend * blend * (1.0f - blend);
+    slope = glm::mix(slope, domeSlope, blend);
+}
+
+// CloudCoverageOffset's knots: (share of the ground under a plume, how far the tops are lowered),
+// measured over the 1024^2 map (tests/volumetric_clouds_tests.cpp, CoverageOffsetMatchesTheMap).
+// Below the floor the whole layer closes.
+constexpr std::array<glm::vec2, 12> kCoverageKnots = {
+    glm::vec2(0.00f, 0.7000f),
+    glm::vec2(0.05f, 0.3298f),
+    glm::vec2(0.10f, 0.2108f),
+    glm::vec2(0.20f, 0.1014f),
+    glm::vec2(0.30f, 0.0544f),
+    glm::vec2(0.40f, 0.0297f),
+    glm::vec2(0.50f, 0.0107f),
+    glm::vec2(0.60f, -0.0114f),
+    glm::vec2(0.70f, -0.0392f),
+    glm::vec2(0.80f, -0.0784f),
+    glm::vec2(0.90f, -0.1469f),
+    glm::vec2(1.00f, -0.3000f),
+};
 }
 
 CloudSettings ClampCloudSettings(const CloudSettings& settings)
@@ -45,7 +122,7 @@ CloudSettings ClampCloudSettings(const CloudSettings& settings)
     clamped.shapeScale = std::clamp(settings.shapeScale, 500.0f, 100000.0f);
     clamped.detailScale = std::clamp(settings.detailScale, 50.0f, 10000.0f);
     clamped.weatherScale = std::clamp(settings.weatherScale, 1000.0f, 500000.0f);
-    clamped.detailErosion = std::clamp(settings.detailErosion, 0.0f, 1.0f);
+    clamped.billows = std::clamp(settings.billows, 0.0f, 2.0f);
     clamped.forwardAnisotropy = std::clamp(settings.forwardAnisotropy, 0.0f, 0.95f);
     clamped.backAnisotropy = std::clamp(settings.backAnisotropy, -0.95f, 0.0f);
     clamped.backWeight = std::clamp(settings.backWeight, 0.0f, 1.0f);
@@ -63,33 +140,111 @@ float CloudRemap(float x, float a, float b, float c, float d)
     return span == 0.0f ? c : c + (x - a) / span * (d - c);
 }
 
-float CloudHeightGradient(float heightFraction)
+glm::vec2 CloudWeatherTexel(const glm::vec2& uv)
 {
-    const float base = Saturate(CloudRemap(heightFraction, 0.0f, 0.1f, 0.0f, 1.0f));
-    const float top = Saturate(CloudRemap(heightFraction, 0.3f, 1.0f, 1.0f, 0.0f));
-    return base * top;
+    float top = kCloudWeatherFloor;
+    float slope = 0.0f;
+    for (size_t level = 0; level < kCloudPlumeLevels.size(); ++level)
+    {
+        const CloudPlumeLevel& plumes = kCloudPlumeLevels[level];
+        const int cells = static_cast<int>(plumes.cells);
+        const glm::vec2 grid = uv * plumes.cells;
+        const glm::ivec2 base = glm::ivec2(glm::floor(grid));
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                const glm::ivec2 cell = base + glm::ivec2(dx, dy);
+                const glm::ivec2 wrapped = (cell % cells + cells) % cells;
+                const uint32_t slot = static_cast<uint32_t>(level) * 8u;
+                const glm::vec3 placement = WeatherRandom(wrapped, slot, kWeatherSeed);
+                const glm::vec2 centre = glm::vec2(cell) + glm::vec2(placement.y, placement.z);
+                const float cluster = WeatherCluster(glm::fract(centre / plumes.cells));
+                if (placement.x > plumes.probability * (0.4f + 1.2f * cluster))
+                {
+                    continue;
+                }
+                const glm::vec3 shape = WeatherRandom(wrapped, slot + 1u, kWeatherSeed);
+                const float radius = glm::mix(plumes.radiusMin, plumes.radiusMax, shape.x);
+                const float height =
+                    std::min(glm::mix(plumes.aspectMin, plumes.aspectMax, shape.y) * 2.0f * radius / plumes.cells * kCloudPlumeHeightPerUv, 1.0f);
+                WeatherDome(grid, centre, plumes.turrets ? 0.7f * radius : radius, height, plumes.cells, top, slope);
+                if (!plumes.turrets)
+                {
+                    continue;
+                }
+                const int turrets = 3 + static_cast<int>(shape.z * 2.999f);
+                for (int turret = 0; turret < turrets; ++turret)
+                {
+                    const uint32_t turretSlot = slot + 2u + static_cast<uint32_t>(turret);
+                    const glm::vec3 draw = WeatherRandom(wrapped, turretSlot, kWeatherSeed);
+                    const float turretHeight = WeatherRandom(wrapped, turretSlot, kWeatherHeightSeed).x;
+                    const float turretRadius = radius * glm::mix(0.4f, 0.65f, draw.x);
+                    const float angle = draw.y * 2.0f * kPi;
+                    const float offset = glm::mix(0.2f, 1.0f, draw.z) * (radius - turretRadius);
+                    WeatherDome(
+                        grid,
+                        centre + glm::vec2(std::cos(angle), std::sin(angle)) * offset,
+                        turretRadius,
+                        std::min(height * glm::mix(0.65f, 1.05f, turretHeight), 1.0f),
+                        plumes.cells,
+                        top,
+                        slope);
+                }
+            }
+        }
+    }
+    return glm::vec2(std::max(top, kCloudWeatherFloor), slope);
 }
 
-float CloudWeather(float first, float second)
+float CloudCoverageOffset(float coverage)
 {
-    return Saturate(CloudRemap(first * 0.65f + second * 0.35f, 0.25f, 0.75f, 0.0f, 1.0f));
+    // The share of the tile under a plume (top above the base) as the tops are lowered by each
+    // knot, measured over CloudWeatherTexel (tests/volumetric_clouds_tests.cpp checks it).
+    const float c = Saturate(coverage);
+    for (size_t knot = 1; knot < kCoverageKnots.size(); ++knot)
+    {
+        if (c <= kCoverageKnots[knot].x)
+        {
+            const glm::vec2 a = kCoverageKnots[knot - 1];
+            const glm::vec2 b = kCoverageKnots[knot];
+            return glm::mix(a.y, b.y, (c - a.x) / (b.x - a.x));
+        }
+    }
+    return kCoverageKnots.back().y;
 }
 
-float CloudShape(const glm::vec4& shape)
+float CloudSurfaceDistance(float top, float slope, float coverageOffset, float thicknessKm, float weatherFrequency, float heightKm)
 {
-    const float fbm = shape.g * 0.625f + shape.b * 0.25f + shape.a * 0.125f;
-    const float erosion = (1.0f - fbm) * 0.6f;
-    return Saturate(CloudRemap(shape.r, erosion, 1.0f, 0.0f, 1.0f));
+    const float topKm = (top - coverageOffset) * thicknessKm;
+    const float slopeKm = slope * thicknessKm * weatherFrequency;
+    return std::min((topKm - heightKm) / std::sqrt(1.0f + slopeKm * slopeKm), heightKm);
 }
 
-float CloudField(float weather, float shape, float gradient)
+float CloudBillows(const glm::vec4& shape, const glm::vec4& fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm)
 {
-    return (weather * kCloudWeatherShare + shape * (1.0f - kCloudWeatherShare)) * gradient;
+    float large = 0.0f;
+    for (size_t octave = 0; octave < kCloudShapeBillowPerTile.size(); ++octave)
+    {
+        large += (shape[static_cast<int>(octave)] - kCloudBillowMean) * kCloudShapeBillowPerTile[octave];
+    }
+    float small = 0.0f;
+    for (size_t octave = 0; octave < kCloudDetailBillowPerTile.size(); ++octave)
+    {
+        small += (fine[static_cast<int>(octave)] - kCloudBillowMean) * kCloudDetailBillowPerTile[octave];
+    }
+    const float rise = Saturate(heightKm / kCloudBillowRiseKm);
+    return strength * (rise * large * shapeTileKm + std::max(rise, kCloudBaseRaggedness) * detail * small * detailTileKm);
 }
 
-float CloudCoverageRamp(float field, float coverage)
+float CloudWaterProfile(float heightKm)
 {
-    return coverage <= 0.0f ? 0.0f : Saturate((field - (1.0f - coverage)) / kCloudEdgeWidth);
+    return std::max(kCloudWaterAtBase, std::pow(Saturate(heightKm / kCloudWaterFullHeightKm), 2.0f / 3.0f));
+}
+
+float CloudEdgeDensity(float distanceKm)
+{
+    return Saturate(distanceKm / kCloudEdgeKm);
 }
 
 float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta)
@@ -128,20 +283,22 @@ glm::vec2 CloudDiffusionParameters(float albedo, float meanCosine)
     return glm::vec2(kappa, similarity);
 }
 
-float CloudDiffuseScattering(float lightOpticalDepth, float kappa, float similarity)
+float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, float kappa, float similarity)
 {
-    // D phi'' - sigma_a phi = -sigma_s E exp(-tau'), D = 1 / 3, with phi(0) = 2 D phi'(0):
-    // phi = 3 albedo' E / (1 - kappa^2) * (5/3 / (1 + 2 kappa / 3) exp(-kappa tau') - exp(-tau')),
-    // and 3 albedo' = 3 - kappa^2.
+    // Lossless Eddington across a slab lit along the ray, Marshak at both faces: with D = 1 / 3,
+    // phi'' = -3 E exp(-tau'), phi(0) = 2/3 phi'(0), phi(T) = -2/3 phi'(T) gives
+    // phi = E (5 - 3 exp(-tau') - (5 - exp(-T')) (tau' + 2/3) / (T' + 4/3)): the half-space's
+    // 5 - 3 exp(-tau') deep in a thick cloud, falling linearly to 10 / (3 (T' + 4/3)) at the face
+    // the light leaves by. Absorption takes exp(-kappa tau') on top.
     const float scaled = similarity * lightOpticalDepth;
-    const float amplitude = (3.0f - kappa * kappa) / (1.0f - kappa * kappa);
-    const float boundary = (5.0f / 3.0f) / (1.0f + 2.0f * kappa / 3.0f);
-    const float fluence = amplitude * std::max(boundary * std::exp(-kappa * scaled) - std::exp(-scaled), 0.0f);
-    return fluence / (4.0f * kPi);
+    const float total = similarity * (lightOpticalDepth + std::max(awayOpticalDepth, 0.0f));
+    const float lossless = 5.0f - 3.0f * std::exp(-scaled) - (5.0f - std::exp(-total)) * (scaled + 2.0f / 3.0f) / (total + 4.0f / 3.0f);
+    return std::max(lossless, 0.0f) * std::exp(-kappa * scaled) / (4.0f * kPi);
 }
 
 float CloudSunScatteringWithDiffusion(
     float lightOpticalDepth,
+    float awayOpticalDepth,
     float forwardG,
     float backG,
     float backWeight,
@@ -156,7 +313,7 @@ float CloudSunScatteringWithDiffusion(
         return octaves;
     }
     const float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * std::exp(-lightOpticalDepth);
-    const float diffused = single + CloudDiffuseScattering(lightOpticalDepth, kappa, similarity);
+    const float diffused = single + CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity);
     return octaves + diffusion * std::max(diffused - octaves, 0.0f);
 }
 

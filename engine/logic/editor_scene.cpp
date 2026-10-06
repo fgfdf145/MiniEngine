@@ -281,7 +281,7 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         clouds.shapeScale = cloudNode["shape_scale"].as<float>(clouds.shapeScale);
         clouds.detailScale = cloudNode["detail_scale"].as<float>(clouds.detailScale);
         clouds.weatherScale = cloudNode["weather_scale"].as<float>(clouds.weatherScale);
-        clouds.detailErosion = cloudNode["detail_erosion"].as<float>(clouds.detailErosion);
+        clouds.billows = cloudNode["billows"].as<float>(clouds.billows);
         clouds.forwardAnisotropy = cloudNode["forward_anisotropy"].as<float>(clouds.forwardAnisotropy);
         clouds.backAnisotropy = cloudNode["back_anisotropy"].as<float>(clouds.backAnisotropy);
         clouds.backWeight = cloudNode["back_weight"].as<float>(clouds.backWeight);
@@ -354,7 +354,7 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "shape_scale" << YAML::Value << clouds.shapeScale;
     emitter << YAML::Key << "detail_scale" << YAML::Value << clouds.detailScale;
     emitter << YAML::Key << "weather_scale" << YAML::Value << clouds.weatherScale;
-    emitter << YAML::Key << "detail_erosion" << YAML::Value << clouds.detailErosion;
+    emitter << YAML::Key << "billows" << YAML::Value << clouds.billows;
     emitter << YAML::Key << "forward_anisotropy" << YAML::Value << clouds.forwardAnisotropy;
     emitter << YAML::Key << "back_anisotropy" << YAML::Value << clouds.backAnisotropy;
     emitter << YAML::Key << "back_weight" << YAML::Value << clouds.backWeight;

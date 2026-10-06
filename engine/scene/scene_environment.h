@@ -113,12 +113,13 @@ struct CloudSettings
     // denser than 0.02 the sun no longer reaches past the outer tens of metres and the lit faces
     // turn grey.
     float density = 0.02f;
-    // Metres over which the base shape, the detail and the coverage noise repeat.
+    // Metres over which the large billows, the small billows and the plume map repeat.
     float shapeScale = 7000.0f;
-    float detailScale = 900.0f;
+    float detailScale = 600.0f;
     float weatherScale = 40000.0f;
-    // How deeply the detail noise erodes the base shape's edges, [0, 1].
-    float detailErosion = 0.35f;
+    // How far the billows push the plumes' surfaces in and out, [0, 2]: 0 smooth domes, 1 the
+    // cauliflower of a fair-weather cumulus.
+    float billows = 1.0f;
     // Dual-lobe Henyey-Greenstein: the forward lobe gives the silver lining toward the sun, the
     // backward one the lit faces away from it; backWeight blends them.
     float forwardAnisotropy = 0.8f;

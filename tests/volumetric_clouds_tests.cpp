@@ -6,6 +6,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 // main() stays in the global namespace; everything it drives lives in me::.
 using namespace me;
@@ -41,7 +43,7 @@ void ClampsSettings()
     wild.shapeScale = 1.0f;
     wild.detailScale = 1e9f;
     wild.weatherScale = 0.0f;
-    wild.detailErosion = -1.0f;
+    wild.billows = -1.0f;
     wild.forwardAnisotropy = 1.0f;
     wild.backAnisotropy = 0.5f;
     wild.backWeight = 3.0f;
@@ -54,51 +56,110 @@ void ClampsSettings()
     Require(clamped.coverage == 1.0f && clamped.baseAltitude == 100.0f && clamped.thickness == 10000.0f, "coverage and layer clamped");
     Require(clamped.density == 0.001f, "density clamped above zero");
     Require(clamped.shapeScale == 500.0f && clamped.detailScale == 10000.0f && clamped.weatherScale == 1000.0f, "scales clamped");
-    Require(clamped.detailErosion == 0.0f && clamped.forwardAnisotropy == 0.95f && clamped.backAnisotropy == 0.0f, "shape and lobes clamped");
+    Require(clamped.billows == 0.0f && clamped.forwardAnisotropy == 0.95f && clamped.backAnisotropy == 0.0f, "shape and lobes clamped");
     Require(clamped.backWeight == 1.0f && clamped.albedo == 1.0f && clamped.ambientScale == 0.0f && clamped.hazeDistance == 1000.0f,
             "weights clamped");
     Require(clamped.diffusion == 1.0f && clamped.ambientOcclusion == 0.0f, "diffusion and ambient occlusion clamped");
     Require(ClampCloudSettings(CloudSettings{}) == CloudSettings{}, "the defaults are inside the ranges");
 }
 
-void HeightGradientShape()
+void PlumeMap()
 {
-    Require(CloudHeightGradient(0.0f) == 0.0f, "nothing at the base line");
-    Require(CloudHeightGradient(1.0f) == 0.0f, "nothing at the top");
-    Require(CloudHeightGradient(-0.5f) == 0.0f && CloudHeightGradient(1.5f) == 0.0f, "nothing outside the layer");
-    Require(CloudHeightGradient(0.2f) == 1.0f, "full between the base and the thinning tops");
-    Require(CloudHeightGradient(0.05f) > 0.0f && CloudHeightGradient(0.05f) < 1.0f, "the base fills in");
-    Require(CloudHeightGradient(0.5f) > CloudHeightGradient(0.8f), "the tops thin out");
+    // Away from every plume the top sits on the floor; the map wraps with the tile.
+    int floorTexels = 0;
+    int plumeTexels = 0;
+    float highest = kCloudWeatherFloor;
+    for (int y = 0; y < 64; ++y)
+    {
+        for (int x = 0; x < 64; ++x)
+        {
+            const glm::vec2 uv((static_cast<float>(x) + 0.5f) / 64.0f, (static_cast<float>(y) + 0.5f) / 64.0f);
+            const glm::vec2 texel = CloudWeatherTexel(uv);
+            Require(texel.x >= kCloudWeatherFloor && texel.x <= 1.0f && texel.y >= 0.0f, "tops within [floor, 1], slopes positive");
+            floorTexels += texel.x == kCloudWeatherFloor ? 1 : 0;
+            plumeTexels += texel.x > 0.0f ? 1 : 0;
+            highest = std::max(highest, texel.x);
+            const glm::vec2 wrapped = CloudWeatherTexel(uv + glm::vec2(1.0f, -1.0f));
+            Require(Near(wrapped.x, texel.x, 1e-4f), "the map wraps with the tile");
+        }
+    }
+    Require(floorTexels > 0 && plumeTexels > 0, "clear air and plumes both");
+    Require(highest > 0.4f && highest <= 1.0f, "the tallest plumes reach well up the layer");
 }
 
-void CoverageRamps()
+void CoverageOffsetMatchesTheMap()
 {
-    for (float field : {0.0f, 0.3f, 0.6f, 0.85f, 1.0f})
+    // The share of a 256^2 sampling of the map whose tops clear the lowered base, against the
+    // coverage asked for.
+    constexpr int kSamples = 256;
+    std::vector<float> tops;
+    tops.reserve(kSamples * kSamples);
+    for (int y = 0; y < kSamples; ++y)
     {
-        Require(CloudCoverageRamp(field, 0.0f) == 0.0f, "coverage 0 is a clear sky");
+        for (int x = 0; x < kSamples; ++x)
+        {
+            tops.push_back(CloudWeatherTexel(glm::vec2((static_cast<float>(x) + 0.5f) / kSamples, (static_cast<float>(y) + 0.5f) / kSamples)).x);
+        }
     }
-    Require(CloudCoverageRamp(0.2f, 1.0f) == 1.0f, "coverage 1 fills all but the thinnest field");
-    Require(CloudCoverageRamp(0.5f, 0.45f) == 0.0f, "below the threshold, clear");
-    Require(Near(CloudCoverageRamp(0.65f, 0.45f), 0.5f, 1e-5f), "half way up the edge, half density");
-    Require(CloudCoverageRamp(0.8f, 0.45f) == 1.0f, "past the edge, full density");
-    float previous = -1.0f;
+    for (float coverage : {0.05f, 0.1f, 0.2f, 0.3f, 0.45f, 0.6f, 0.75f, 0.9f})
+    {
+        const float offset = CloudCoverageOffset(coverage);
+        size_t covered = 0;
+        for (float top : tops)
+        {
+            covered += top > offset ? 1u : 0u;
+        }
+        const float share = static_cast<float>(covered) / static_cast<float>(tops.size());
+        Require(Near(share, coverage, 0.04f), "coverage " + std::to_string(coverage) + " covers " + std::to_string(share));
+    }
+    Require(CloudCoverageOffset(0.0f) > 0.65f, "coverage 0 lowers every top below the base");
+    Require(CloudCoverageOffset(1.0f) < kCloudWeatherFloor, "coverage 1 closes the layer");
+    float previous = CloudCoverageOffset(0.0f);
     for (float coverage = 0.05f; coverage <= 1.0f; coverage += 0.05f)
     {
-        const float density = CloudCoverageRamp(0.6f, coverage);
-        Require(density >= previous, "more coverage never removes clouds");
-        previous = density;
+        Require(CloudCoverageOffset(coverage) < previous, "more coverage, lower offset");
+        previous = CloudCoverageOffset(coverage);
     }
 }
 
-void FieldBlendsWeatherAndShape()
+void SurfaceDistance()
 {
-    Require(CloudWeather(0.0f, 0.0f) == 0.0f && CloudWeather(1.0f, 1.0f) == 1.0f, "the weather spans [0, 1]");
-    Require(Near(CloudWeather(0.5f, 0.5f), 0.5f, 1e-6f), "and is centred");
-    Require(CloudShape(glm::vec4(1.0f)) == 1.0f, "a lobe's core is full");
-    Require(CloudShape(glm::vec4(0.3f, 0.0f, 0.0f, 0.0f)) == 0.0f, "where the Worley octaves are low, the edges erode away");
-    Require(CloudShape(glm::vec4(0.3f, 1.0f, 1.0f, 1.0f)) == 0.3f, "where they are high, the lobe keeps its value");
-    Require(CloudField(1.0f, 1.0f, 1.0f) == 1.0f && CloudField(1.0f, 1.0f, 0.0f) == 0.0f, "the profile scales the field");
-    Require(CloudField(1.0f, 0.0f, 1.0f) > CloudField(0.0f, 1.0f, 1.0f), "the weather decides where clouds gather");
+    // A flat top 1 km up (0.4 of 2.5 km), no slope.
+    Require(Near(CloudSurfaceDistance(0.4f, 0.0f, 0.0f, 2.5f, 0.025f, 0.6f), 0.4f, 1e-6f), "below a flat top, the distance up to it");
+    Require(Near(CloudSurfaceDistance(0.4f, 0.0f, 0.0f, 2.5f, 0.025f, 0.1f), 0.1f, 1e-6f), "near the base, the distance down to it");
+    Require(CloudSurfaceDistance(0.4f, 0.0f, 0.0f, 2.5f, 0.025f, 1.2f) < 0.0f, "above the top, outside");
+    Require(CloudSurfaceDistance(0.4f, 0.0f, 0.0f, 2.5f, 0.025f, -0.1f) < 0.0f, "below the base, outside");
+    Require(Near(CloudSurfaceDistance(0.4f, 0.0f, 0.2f, 2.5f, 0.025f, 0.6f), -0.1f, 1e-6f), "the coverage offset lowers the top");
+    // A slope of 1 (45 degrees) measures across it: the vertical gap over sqrt 2.
+    const float slopeUv = 1.0f / (2.5f * 0.025f);
+    Require(Near(CloudSurfaceDistance(0.4f, slopeUv, 0.0f, 2.5f, 0.025f, 0.6f), 0.4f / std::sqrt(2.0f), 1e-5f), "a sloping side is measured across");
+}
+
+void BillowsAndProfile()
+{
+    const glm::vec4 mean(kCloudBillowMean);
+    Require(CloudBillows(mean, mean, 7.0f, 0.6f, 1.0f, 1.0f, 1.0f) == 0.0f, "billows at their mean move nothing");
+    Require(CloudBillows(glm::vec4(1.0f), glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 1.0f, 1.0f) > 0.0f, "high billows push the surface out");
+    Require(CloudBillows(glm::vec4(0.0f), glm::vec4(0.0f), 7.0f, 0.6f, 1.0f, 1.0f, 1.0f) < 0.0f, "low ones cut it in");
+    Require(CloudBillows(glm::vec4(1.0f), mean, 7.0f, 0.6f, 1.0f, 1.0f, 0.0f) == 0.0f, "no large billows at the base: it stays level");
+    const float ragged = CloudBillows(mean, glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 1.0f, 0.0f);
+    Require(Near(ragged, kCloudBaseRaggedness * CloudBillows(mean, glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 1.0f, 1.0f), 1e-6f),
+            "the small ones leave it ragged");
+    Require(CloudBillows(glm::vec4(1.0f), glm::vec4(1.0f), 7.0f, 0.6f, 0.0f, 1.0f, 1.0f) == 0.0f, "strength 0, smooth domes");
+    const float noDetail = CloudBillows(glm::vec4(1.0f), glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 0.0f, 1.0f);
+    const float withDetail = CloudBillows(glm::vec4(1.0f), glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 1.0f, 1.0f);
+    Require(withDetail > noDetail && noDetail > 0.0f, "the detail octaves add the small billows");
+    // The largest lobe is a fifth of its 1.75 km spacing at most above the mean.
+    Require(Near(CloudBillows(glm::vec4(1.0f, kCloudBillowMean, kCloudBillowMean, 0.0f), mean, 7.0f, 0.6f, 1.0f, 0.0f, 1.0f),
+                 (1.0f - kCloudBillowMean) * 0.05f * 7.0f, 1e-5f),
+            "billow heights scale with the tile");
+
+    Require(CloudWaterProfile(0.0f) == kCloudWaterAtBase, "thin water at the base");
+    Require(CloudWaterProfile(kCloudWaterFullHeightKm) == 1.0f && CloudWaterProfile(3.0f) == 1.0f, "full from a kilometre up");
+    Require(CloudWaterProfile(0.5f) > CloudWaterProfile(0.2f), "rising with height");
+
+    Require(CloudEdgeDensity(-0.01f) == 0.0f && CloudEdgeDensity(0.0f) == 0.0f, "nothing outside the surface");
+    Require(Near(CloudEdgeDensity(kCloudEdgeKm * 0.5f), 0.5f, 1e-6f) && CloudEdgeDensity(1.0f) == 1.0f, "full 15 m in");
 }
 
 void PhaseIsNormalized()
@@ -158,29 +219,45 @@ void DiffusionField()
     // A lossless half-space lit along the ray: the fluence is 2 E at the surface (Marshak) and
     // fills toward 5 E deep inside.
     const float perSteradian = static_cast<float>(1.0 / (4.0 * kPi));
-    Require(Near(CloudDiffuseScattering(0.0f, 0.0f, 1.0f), 2.0f * perSteradian, 1e-6f), "the surface fluence is 2 E");
-    Require(Near(CloudDiffuseScattering(40.0f, 0.0f, 1.0f), 5.0f * perSteradian, 1e-5f), "the lossless core fills to 5 E");
+    constexpr float kDeep = 1e6f;
+    Require(Near(CloudDiffuseScattering(0.0f, kDeep, 0.0f, 1.0f), 2.0f * perSteradian, 1e-5f), "the surface fluence is 2 E");
+    Require(Near(CloudDiffuseScattering(40.0f, kDeep, 0.0f, 1.0f), 5.0f * perSteradian, 1e-4f), "the lossless core fills to 5 E");
+
+    // A finite cloud lets the light out the far side: the fluence falls linearly toward the face
+    // the light leaves by, to 10 / (3 (T + 4/3)) E there.
+    Require(Near(CloudDiffuseScattering(40.0f, 0.0f, 0.0f, 1.0f), 10.0f / (3.0f * (40.0f + 4.0f / 3.0f)) * perSteradian, 1e-5f),
+            "at the far face of a tau 40 slab, a twelfth of the incident light");
+    Require(CloudDiffuseScattering(0.0f, 0.0f, 0.0f, 1.0f) == 0.0f, "no cloud, no diffused light");
+    float previousSlab = 10.0f;
+    for (float depth : {5.0f, 10.0f, 20.0f, 30.0f, 39.0f})
+    {
+        const float slab = CloudDiffuseScattering(depth, 40.0f - depth, 0.0f, 1.0f);
+        Require(slab < previousSlab, "falling toward the far face");
+        Require(slab < CloudDiffuseScattering(depth, kDeep, 0.0f, 1.0f), "and below the half-space's");
+        previousSlab = slab;
+    }
+    Require(CloudDiffuseScattering(1.0f, 1.0f, 0.0f, 1.0f) < CloudDiffuseScattering(1.0f, 20.0f, 0.0f, 1.0f), "thin clouds hold less");
 
     // Where both hold, at the lit surface, single scattering plus diffusion stays within a factor
     // of two of the octaves: two approximations of the same light.
     for (float cosTheta : {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f})
     {
         const float octaves = CloudSunScattering(0.0f, 0.8f, -0.3f, 0.3f, cosTheta);
-        const float diffused = CloudPhase(0.8f, -0.3f, 0.3f, cosTheta) + CloudDiffuseScattering(0.0f, cloud.x, cloud.y);
+        const float diffused = CloudPhase(0.8f, -0.3f, 0.3f, cosTheta) + CloudDiffuseScattering(0.0f, kDeep, cloud.x, cloud.y);
         Require(diffused > 0.5f * octaves && diffused < 2.0f * octaves, "the models agree at the lit surface");
     }
 
     for (float depth : {0.0f, 0.5f, 1.0f, 3.0f, 10.0f, 20.0f, 60.0f})
     {
         const float octaves = CloudSunScattering(depth, 0.8f, -0.3f, 0.3f, 0.2f);
-        Require(CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 0.0f, cloud.x, cloud.y) == octaves,
+        Require(CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 0.0f, cloud.x, cloud.y) == octaves,
                 "diffusion 0 leaves the octaves alone");
-        const float half = CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 0.5f, cloud.x, cloud.y);
-        const float full = CloudSunScatteringWithDiffusion(depth, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y);
+        const float half = CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 0.5f, cloud.x, cloud.y);
+        const float full = CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y);
         Require(half >= octaves && full >= half, "diffusion only ever adds what the octaves miss");
     }
     // Ten optical depths in, the octaves are nearly gone; the diffusion field is not.
-    Require(CloudSunScatteringWithDiffusion(10.0f, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y) >
+    Require(CloudSunScatteringWithDiffusion(10.0f, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y) >
                 20.0f * CloudSunScattering(10.0f, 0.8f, -0.3f, 0.3f, 0.2f),
             "diffusion lights the core of a thick cloud");
 }
@@ -269,9 +346,10 @@ int main()
     try
     {
         ClampsSettings();
-        HeightGradientShape();
-        CoverageRamps();
-        FieldBlendsWeatherAndShape();
+        PlumeMap();
+        CoverageOffsetMatchesTheMap();
+        SurfaceDistance();
+        BillowsAndProfile();
         PhaseIsNormalized();
         SunScatteringOctaves();
         DiffusionField();

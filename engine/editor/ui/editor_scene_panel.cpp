@@ -315,9 +315,9 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             ImGui::DragFloat("Thickness (m)", &clouds.thickness, 10.0f, 100.0f, 10000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::DragFloat("Density (/m)", &clouds.density, 0.001f, 0.001f, 0.5f, "%.4f", kLog);
             ImGui::DragFloat("Shape scale (m)", &clouds.shapeScale, 10.0f, 500.0f, 100000.0f, "%.0f", kLog);
-            ImGui::DragFloat("Detail scale (m)", &clouds.detailScale, 1.0f, 50.0f, 10000.0f, "%.0f", kLog);
-            ImGui::DragFloat("Coverage scale (m)", &clouds.weatherScale, 10.0f, 1000.0f, 500000.0f, "%.0f", kLog);
-            DragFloatInRange("Detail erosion", &clouds.detailErosion, 0.0f, 1.0f, "%.2f");
+            ImGui::DragFloat("Billow scale (m)", &clouds.detailScale, 1.0f, 50.0f, 10000.0f, "%.0f", kLog);
+            ImGui::DragFloat("Plume map scale (m)", &clouds.weatherScale, 10.0f, 1000.0f, 500000.0f, "%.0f", kLog);
+            DragFloatInRange("Billows", &clouds.billows, 0.0f, 2.0f, "%.2f");
             DragFloatInRange("Forward anisotropy", &clouds.forwardAnisotropy, 0.0f, 0.95f, "%.2f");
             DragFloatInRange("Back anisotropy", &clouds.backAnisotropy, -0.95f, 0.0f, "%.2f");
             DragFloatInRange("Back weight", &clouds.backWeight, 0.0f, 1.0f, "%.2f");

@@ -1,21 +1,23 @@
 #version 450
 
-// The volumetric clouds' two tiling noise volumes, built once (VulkanAtmosphere::Record):
-//   shape  128^3: r Perlin-Worley, g b a Worley fBm at 4, 8 and 16 cells per tile;
-//   detail  32^3: r g b Worley fBm at 2, 4 and 8 cells per tile, a 1.
-// Each channel is stretched from its 1st to 99th percentile onto [0, 1], so the shader's
-// thresholds mean the same share of the volume whatever the recipe's raw range.
-// The recipe is Schneider's (Nubis, 2015 and 2017): billowy Perlin fBm remapped by inverted
-// Worley fBm gives round, connected cumulus lobes; the Worley octaves erode them. Every noise
-// wraps at the tile edge, so the REPEAT sampler shows no seam.
+// The volumetric clouds' two tiling billow volumes, built once (VulkanAtmosphere::Record)
+// (docs/design/2026-10-06-cumulus-generation-design.md). Every channel is one octave of sphere
+// packing: around one jittered point per cell, sqrt(1 - d^2) of the distance d to the nearest in
+// cells, so a channel is a union of round lobes with creases where they meet - the cauliflower of
+// a cumulus. Each is stretched from its 0.45 floor onto [0, 1], where its mean is 0.69
+// (kCloudBillowMean); the clouds add every octave about that mean, scaled to its sphere size.
+//   shape  128^3: r g b 4, 8 and 16 spheres per tile, a 1;
+//   detail 128^3: r g b a 2, 4, 8 and 16 spheres per tile.
+// Every octave wraps at the tile edge, so the REPEAT sampler shows no seam.
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 // Set 1 bindings 7 and 8 of the atmosphere's compute set.
 layout(set = 1, binding = 7, rgba8) uniform writeonly image3D shapeNoiseOut;
 layout(set = 1, binding = 8, rgba8) uniform writeonly image3D detailNoiseOut;
 
+// Must match kCloudNoiseSizes in engine/renderer/vulkan/atmosphere.cpp.
 const int SHAPE_SIZE = 128;
-const int DETAIL_SIZE = 32;
+const int DETAIL_SIZE = 128;
 
 uvec3 Hash3(uvec3 v)
 {
@@ -36,14 +38,14 @@ vec3 Random3(ivec3 cell, uint seed)
     return vec3(Hash3(uvec3(cell) + uvec3(seed, seed * 7u, seed * 13u)) & 0xffffu) / 65535.0;
 }
 
-// Inverted Worley noise, 1 at a feature point, over period cells per unit of p in [0, 1).
-float Worley(vec3 p, float period, uint seed)
+// One octave of sphere packing over period cells per unit of p in [0, 1), in [0, 1].
+float SphereBillow(vec3 p, float period, uint seed)
 {
     vec3 scaled = p * period;
     ivec3 cell = ivec3(floor(scaled));
     vec3 local = fract(scaled);
     int wrap = int(period);
-    float minDistance = 1.0;
+    float nearest = 1.0;
     for (int z = -1; z <= 1; ++z)
     {
         for (int y = -1; y <= 1; ++y)
@@ -53,77 +55,12 @@ float Worley(vec3 p, float period, uint seed)
                 ivec3 offset = ivec3(x, y, z);
                 ivec3 wrapped = (cell + offset + wrap) % wrap;
                 vec3 feature = vec3(offset) + Random3(wrapped, seed);
-                minDistance = min(minDistance, length(feature - local));
+                nearest = min(nearest, length(feature - local));
             }
         }
     }
-    return 1.0 - minDistance;
-}
-
-float WorleyFbm(vec3 p, float period, uint seed)
-{
-    return Worley(p, period, seed) * 0.625 + Worley(p, period * 2.0, seed + 1u) * 0.25 + Worley(p, period * 4.0, seed + 2u) * 0.125;
-}
-
-vec3 Gradient(ivec3 cell, int wrap, uint seed)
-{
-    ivec3 wrapped = (cell + wrap) % wrap;
-    return normalize(Random3(wrapped, seed) * 2.0 - 1.0 + vec3(1e-4));
-}
-
-// Gradient noise in about [-1, 1], period cells per unit.
-float Perlin(vec3 p, float period, uint seed)
-{
-    vec3 scaled = p * period;
-    ivec3 cell = ivec3(floor(scaled));
-    vec3 f = fract(scaled);
-    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    int wrap = int(period);
-    float n000 = dot(Gradient(cell + ivec3(0, 0, 0), wrap, seed), f - vec3(0, 0, 0));
-    float n100 = dot(Gradient(cell + ivec3(1, 0, 0), wrap, seed), f - vec3(1, 0, 0));
-    float n010 = dot(Gradient(cell + ivec3(0, 1, 0), wrap, seed), f - vec3(0, 1, 0));
-    float n110 = dot(Gradient(cell + ivec3(1, 1, 0), wrap, seed), f - vec3(1, 1, 0));
-    float n001 = dot(Gradient(cell + ivec3(0, 0, 1), wrap, seed), f - vec3(0, 0, 1));
-    float n101 = dot(Gradient(cell + ivec3(1, 0, 1), wrap, seed), f - vec3(1, 0, 1));
-    float n011 = dot(Gradient(cell + ivec3(0, 1, 1), wrap, seed), f - vec3(0, 1, 1));
-    float n111 = dot(Gradient(cell + ivec3(1, 1, 1), wrap, seed), f - vec3(1, 1, 1));
-    float nx00 = mix(n000, n100, u.x);
-    float nx10 = mix(n010, n110, u.x);
-    float nx01 = mix(n001, n101, u.x);
-    float nx11 = mix(n011, n111, u.x);
-    return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 1.5;
-}
-
-// Seven octaves in [0, 1].
-float PerlinFbm(vec3 p, float period, uint seed)
-{
-    float sum = 0.0;
-    float amplitude = 1.0;
-    float total = 0.0;
-    for (int octave = 0; octave < 7; ++octave)
-    {
-        sum += Perlin(p, period, seed + uint(octave)) * amplitude;
-        total += amplitude;
-        amplitude *= 0.5;
-        period *= 2.0;
-    }
-    return clamp(sum / total * 0.5 + 0.5, 0.0, 1.0);
-}
-
-float Remap(float x, float a, float b, float c, float d)
-{
-    return c + (x - a) / (b - a) * (d - c);
-}
-
-// The recipe's percentiles, measured over the whole volume.
-float NormalizePerlinWorley(float x)
-{
-    return clamp(Remap(x, 0.55, 0.9, 0.0, 1.0), 0.0, 1.0);
-}
-
-float NormalizeWorley(float x)
-{
-    return clamp(Remap(x, 0.22, 0.75, 0.0, 1.0), 0.0, 1.0);
+    float sphere = sqrt(max(1.0 - nearest * nearest, 0.0));
+    return clamp((sphere - 0.45) / 0.55, 0.0, 1.0);
 }
 
 void main()
@@ -134,20 +71,11 @@ void main()
         return;
     }
     vec3 p = (vec3(texel) + 0.5) / float(SHAPE_SIZE);
-    float worley4 = WorleyFbm(p, 4.0, 11u);
-    float worley8 = WorleyFbm(p, 8.0, 23u);
-    float worley16 = WorleyFbm(p, 16.0, 37u);
-    // Billowy: folding the fBm about its middle rounds the lobes.
-    float perlin = abs(mix(1.0, PerlinFbm(p, 4.0, 3u), 0.5) * 2.0 - 1.0);
-    float perlinWorley = clamp(Remap(perlin, 0.0, 1.0, worley4, 1.0), 0.0, 1.0);
-    imageStore(shapeNoiseOut, texel, vec4(NormalizePerlinWorley(perlinWorley), NormalizeWorley(worley4), NormalizeWorley(worley8), NormalizeWorley(worley16)));
-
+    imageStore(shapeNoiseOut, texel, vec4(SphereBillow(p, 4.0, 11u), SphereBillow(p, 8.0, 23u), SphereBillow(p, 16.0, 37u), 1.0));
     if (all(lessThan(texel, ivec3(DETAIL_SIZE))))
     {
         vec3 q = (vec3(texel) + 0.5) / float(DETAIL_SIZE);
-        imageStore(
-            detailNoiseOut,
-            texel,
-            vec4(NormalizeWorley(WorleyFbm(q, 2.0, 51u)), NormalizeWorley(WorleyFbm(q, 4.0, 67u)), NormalizeWorley(WorleyFbm(q, 8.0, 79u)), 1.0));
+        imageStore(detailNoiseOut, texel,
+                   vec4(SphereBillow(q, 2.0, 51u), SphereBillow(q, 4.0, 67u), SphereBillow(q, 8.0, 79u), SphereBillow(q, 16.0, 97u)));
     }
 }

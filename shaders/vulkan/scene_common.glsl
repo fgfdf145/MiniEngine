@@ -69,8 +69,8 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 heightFogDensity;           // x density per m (0 off), y falloff per m, z fog height m, w start distance m
     vec4 heightFogColor;             // rgb albedo, w max opacity
     vec4 heightFogParams;            // x Henyey-Greenstein g, yzw sun illuminance at the camera times albedo
-    vec4 cloudLayer;                 // x base altitude km, y thickness km, z coverage, w extinction per km (0 off)
-    vec4 cloudScales;                // noise frequencies per km: x shape, y detail, z coverage; w detail erosion
+    vec4 cloudLayer;                 // x base altitude km, y thickness km, z coverage offset, w extinction per km (0 off)
+    vec4 cloudScales;                // frequencies per km: x large billows, y small billows, z plume map; w billow strength
     vec4 cloudPhase;                 // x forward g, y back g, z back weight, w single-scattering albedo
     vec4 cloudParams;                // x ambient scale, y haze distance km, w frame index
     vec4 nightSky;                   // rgb moonless night sky luminance cd/m^2, added above the horizon

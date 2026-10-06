@@ -85,11 +85,11 @@ struct EnvironmentUniformData
     // once it has set) times the albedo, per frame on the CPU rather than per pixel.
     glm::vec4 heightFogParams{0.0f};
     // Volumetric clouds (volumetric_clouds.h), clamped, in kilometres: x base altitude, y thickness,
-    // z coverage, w extinction per km where the noise is fully dense (0 when off or outside the
-    // Atmosphere mode).
+    // z the coverage as CloudCoverageOffset, w extinction per km where the cloud is fully dense (0
+    // when off, at coverage 0 or outside the Atmosphere mode).
     glm::vec4 cloudLayer{0.0f};
-    // Noise frequencies per km (one over the tile sizes) of the base shape, the detail and the
-    // coverage; w the detail erosion.
+    // Frequencies per km (one over the tile sizes) of the large billows, the small billows and the
+    // plume map; w the billow strength.
     glm::vec4 cloudScales{0.0f};
     glm::vec4 cloudPhase{0.0f}; // x forward g, y back g, z back weight, w single-scattering albedo
     // x ambient scale, y haze distance km, z unused, w the frame's index for the march's jitter.

@@ -131,16 +131,18 @@ EnvironmentUniformData BuildEnvironmentUniformData(
 
     const CloudSettings clouds = ClampCloudSettings(environment.clouds);
     const bool cloudsOn = clouds.enabled && mode == EnvironmentMode::Atmosphere;
+    // Coverage 0 is a clear sky: the billows could otherwise still lift a few wisps over the
+    // lowered tops.
     data.cloudLayer = glm::vec4(
         clouds.baseAltitude * 0.001f,
         clouds.thickness * 0.001f,
-        clouds.coverage,
-        cloudsOn ? clouds.density * 1000.0f : 0.0f);
+        CloudCoverageOffset(clouds.coverage),
+        cloudsOn && clouds.coverage > 0.0f ? clouds.density * 1000.0f : 0.0f);
     data.cloudScales = glm::vec4(
         1000.0f / clouds.shapeScale,
         1000.0f / clouds.detailScale,
         1000.0f / clouds.weatherScale,
-        clouds.detailErosion);
+        clouds.billows);
     data.cloudPhase = glm::vec4(clouds.forwardAnisotropy, clouds.backAnisotropy, clouds.backWeight, clouds.albedo);
     data.cloudParams = glm::vec4(clouds.ambientScale, clouds.hazeDistance * 0.001f, 0.0f, 0.0f);
     data.nightSky = glm::vec4(NightSkyLuminance(environment.timeOfDay), 0.0f);

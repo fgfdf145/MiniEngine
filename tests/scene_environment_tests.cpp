@@ -59,7 +59,7 @@ SceneEnvironment MakeEnvironment()
     environment.clouds.shapeScale = 5000.0f;
     environment.clouds.detailScale = 750.0f;
     environment.clouds.weatherScale = 30000.0f;
-    environment.clouds.detailErosion = 0.5f;
+    environment.clouds.billows = 0.5f;
     environment.clouds.forwardAnisotropy = 0.75f;
     environment.clouds.backAnisotropy = -0.25f;
     environment.clouds.backWeight = 0.125f;

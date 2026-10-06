@@ -1,0 +1,35 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "scene_common.glsl"
+#include "atmosphere_sampling.glsl"
+#include "volumetric_clouds.glsl"
+
+// The volumetric clouds at half the scene's extent, every frame the atmosphere renders
+// (VulkanAtmosphere::RecordClouds; docs/design/2026-10-06-cumulus-generation-design.md). Per texel:
+// rgb the light the clouds and the haze in front of them send toward the camera, pre-exposed; a the
+// transmittance through them. sky.frag samples it bilinearly at full extent and composites
+// sky * a + rgb. The march's jitter changes every frame with the projection's, so TAA rebuilds the
+// detail between the texels.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Set 1 binding 11 of the atmosphere's compute set.
+layout(set = 1, binding = 11, rgba16f) uniform writeonly image2D cloudTargetOut;
+
+void main()
+{
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(cloudTargetOut);
+    if (any(greaterThanEqual(texel, size)))
+    {
+        return;
+    }
+    vec4 result = vec4(0.0, 0.0, 0.0, 1.0);
+    if (CloudsEnabled())
+    {
+        vec3 direction = ViewDirectionFromTexCoord((vec2(texel) + 0.5) / vec2(size));
+        vec4 clouds = CloudLayer(direction, SampleSkyForLighting(direction), CloudJitter(vec2(texel)), 32, 96);
+        result = vec4(min(clouds.rgb * ubo.exposure.x, vec3(65504.0)), clouds.a);
+    }
+    imageStore(cloudTargetOut, texel, result);
+}

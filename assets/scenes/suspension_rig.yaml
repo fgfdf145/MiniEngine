@@ -183,9 +183,9 @@ environment:
     thickness: 2500
     density: 0.02
     shape_scale: 7000
-    detail_scale: 900
+    detail_scale: 600
     weather_scale: 40000
-    detail_erosion: 0.35
+    billows: 1
     forward_anisotropy: 0.8
     back_anisotropy: -0.3
     back_weight: 0.3
