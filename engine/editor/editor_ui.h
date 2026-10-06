@@ -25,6 +25,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,6 +64,16 @@ struct EditorUiActions
     {
         std::string modelPath;
         std::vector<ModelImportedMaterialInfo> materials;
+        // The slots to save; all of them when empty.
+        std::vector<uint32_t> indices;
+    };
+
+    // Materials edited in the Model Preview window, shown in the scene but not saved: each with
+    // its slot index.
+    struct ImportedModelMaterialPreview
+    {
+        std::string modelPath;
+        std::vector<std::pair<uint32_t, ModelImportedMaterialInfo>> materials;
     };
 
     struct AssetPasteRequest
@@ -102,6 +113,9 @@ struct EditorUiActions
     std::optional<AssetPasteRequest> pastedAsset;
     std::vector<AssetManagerResult::RenamedAsset> renamedAssets; // completed on disk
     std::optional<ImportedModelMaterialsUpdate> updatedImportedModelMaterials;
+    std::optional<ImportedModelMaterialPreview> previewImportedModelMaterial;
+    // The model whose previewed material edits are dropped: it is read again from disk.
+    std::optional<std::string> revertImportedModelMaterials;
     std::optional<ViewportModelPlacement> hoveredViewportModel;
     std::optional<ViewportModelPlacement> droppedViewportModel;
     std::optional<LightCreate> createLightEntity;
@@ -272,8 +286,11 @@ class EditorUiController
     void SyncBaseStyleColorsFromCurrentStyle();
     void ResetThemeColorsToDefault();
     bool DrawThemeEditorWindow();
-    void OpenModelProcessorWindow(const std::string& modelPath);
+    // Opens the window on a model; with preselectPaint the slot most like car paint is selected.
+    void OpenModelProcessorWindow(const std::string& modelPath, bool preselectPaint = false);
     void CloseModelProcessorWindow();
+    // The previewed edits back to what is on disk, when there are any.
+    void RevertModelProcessorPreview(EditorUiFrameResult& result);
 
     // Per-panel draw methods, one translation unit each under ui/.
     void DrawCameraPanel(Camera& camera);
@@ -336,6 +353,16 @@ class EditorUiController
     int m_modelProcessorSelectedMaterialIndex = 0;
     int m_modelProcessorSelectedUvSubmeshIndex = 0;
     bool m_modelProcessorDirty = false;
+    // The slots changed since the last save; previewed in the scene, written by Save.
+    std::set<uint32_t> m_modelProcessorEditedSlots;
+    // Edits show in the scene as they are made.
+    bool m_modelProcessorLivePreview = true;
+    // The scene shows edits that are not saved, to be reverted when they are dropped.
+    bool m_modelProcessorScenePreviewed = false;
+    bool m_focusModelProcessorWindow = false;
+    // Quick Edit's base colour brightness, kept between frames so dragging it below 1 does not
+    // fold it back into the colour.
+    float m_quickEditBrightness = 1.0f;
     double m_modelProcessorLastExistsCheckTime = -1.0e9;
     // Its preview camera, orbiting the model.
     struct ModelPreviewCamera

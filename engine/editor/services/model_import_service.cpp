@@ -412,7 +412,8 @@ void OnAssetRenamed(RendererSharedState& state, const std::string& oldPath, cons
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
-    const std::vector<ModelImportedMaterialInfo>& materials)
+    const std::vector<ModelImportedMaterialInfo>& materials,
+    const std::vector<uint32_t>& indices)
 {
     if (modelPathString.empty() || materials.empty())
     {
@@ -420,22 +421,39 @@ void UpdateImportedModelMaterialDefinitions(
     }
 
     const std::filesystem::path modelPath(modelPathString);
+    std::vector<uint32_t> saved = indices;
+    if (saved.empty())
+    {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(materials.size()); ++i)
+        {
+            saved.push_back(i);
+        }
+    }
 
     // Propagate user edits into the cached raw model data so that
     // Dirty renderable refresh picks up the new blend graphs and PBR factors.
-    ModelCache::UpdateMaterials(modelPathString, materials);
+    for (const uint32_t i : saved)
+    {
+        if (i < materials.size())
+        {
+            ModelCache::UpdateMaterial(modelPathString, i, materials[i]);
+        }
+    }
     MarkModelRenderablesDirtyForSourcePath(state, modelPathString);
     RefreshDirtySceneRenderables(state);
 
     // Persist each material as a sidecar .material.yaml file alongside the
     // model. One failure must not stop the others from being saved.
     std::string failures;
-    for (size_t i = 0; i < materials.size(); ++i)
+    for (const uint32_t i : saved)
     {
+        if (i >= materials.size())
+        {
+            continue;
+        }
         try
         {
-            const std::filesystem::path outPath =
-                WriteMaterialYamlFile(modelPath, static_cast<uint32_t>(i), materials[i]);
+            const std::filesystem::path outPath = WriteMaterialYamlFile(modelPath, i, materials[i]);
             LOG_INFO("Saved material '{}' -> '{}'", materials[i].name, outPath.string());
         }
         catch (const std::exception& error)
@@ -449,8 +467,37 @@ void UpdateImportedModelMaterialDefinitions(
     }
     LOG_INFO(
         "Saved {} material(s) for model '{}'",
-        materials.size(),
+        saved.size(),
         modelPathString);
+}
+
+void PreviewImportedModelMaterials(
+    RendererSharedState& state,
+    const std::string& modelPathString,
+    const std::vector<std::pair<uint32_t, ModelImportedMaterialInfo>>& materials)
+{
+    bool updated = false;
+    for (const auto& [index, material] : materials)
+    {
+        updated |= !modelPathString.empty() && ModelCache::UpdateMaterial(modelPathString, index, material);
+    }
+    if (!updated)
+    {
+        return;
+    }
+    MarkModelRenderablesDirtyForSourcePath(state, modelPathString);
+    RefreshDirtySceneRenderables(state);
+}
+
+void RevertImportedModelMaterials(RendererSharedState& state, const std::string& modelPathString)
+{
+    if (modelPathString.empty())
+    {
+        return;
+    }
+    ModelCache::Invalidate(modelPathString);
+    MarkModelRenderablesDirtyForSourcePath(state, modelPathString);
+    RefreshDirtySceneRenderables(state);
 }
 
 }

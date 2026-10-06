@@ -506,13 +506,20 @@ bool RefreshDirtySceneRenderables(RendererSharedState& state)
 
 void MarkModelRenderablesDirtyForSourcePath(RendererSharedState& state, const std::string& sourcePath)
 {
-    const std::filesystem::path targetPath = std::filesystem::path(sourcePath).lexically_normal();
+    // A scene may name the model relative to the working directory and the caller absolutely.
+    const auto normalize = [](const std::string& path)
+    {
+        std::error_code error;
+        const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, error);
+        return error ? std::filesystem::path(path).lexically_normal() : canonical;
+    };
+    const std::filesystem::path targetPath = normalize(sourcePath);
     IEditorWorld& world = state.GetEditorWorld();
     const entt::registry& registry = world.Registry();
     for (entt::entity entity : registry.view<const ModelComponent>())
     {
         const ModelComponent& model = registry.get<ModelComponent>(entity);
-        if (std::filesystem::path(model.sourcePath).lexically_normal() == targetPath)
+        if (!model.sourcePath.empty() && normalize(model.sourcePath) == targetPath)
         {
             world.MarkModelRenderableDirty(entity);
         }

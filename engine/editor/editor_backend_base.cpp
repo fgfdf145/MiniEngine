@@ -406,7 +406,22 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         RunUiAction(modelError, fmt::format("update imported model materials '{}'", update->modelPath), [&]
                     {
-                        ModelImportService::UpdateImportedModelMaterialDefinitions(State(), update->modelPath, update->materials);
+                        ModelImportService::UpdateImportedModelMaterialDefinitions(
+                            State(), update->modelPath, update->materials, update->indices);
+                    });
+    }
+    if (const auto& preview = actions.previewImportedModelMaterial)
+    {
+        RunUiAction(modelError, fmt::format("preview edited materials of '{}'", preview->modelPath), [&]
+                    {
+                        ModelImportService::PreviewImportedModelMaterials(State(), preview->modelPath, preview->materials);
+                    });
+    }
+    if (const auto& revert = actions.revertImportedModelMaterials)
+    {
+        RunUiAction(modelError, fmt::format("revert material edits of '{}'", *revert), [&]
+                    {
+                        ModelImportService::RevertImportedModelMaterials(State(), *revert);
                     });
     }
     if (const auto& texture = actions.selectedBaseColorTexturePath)

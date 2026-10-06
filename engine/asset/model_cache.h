@@ -33,6 +33,9 @@ void Store(const std::string& path, std::shared_ptr<LoadedModelData> data);
 // Apply edited materials back into the cached model. No-ops when the path is
 // not cached; materials past the model's count are ignored.
 void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMaterialInfo>& materials);
+// One material, by its index. False when the path is not cached or the index is past the model's
+// materials.
+bool UpdateMaterial(const std::string& path, size_t index, const ModelImportedMaterialInfo& material);
 
 // Removes the cached entry for `path`. If `path` is a directory, every cached
 // model under it is removed as well. Call before deleting assets on disk so

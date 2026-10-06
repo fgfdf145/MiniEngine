@@ -104,6 +104,19 @@ void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMat
     }
 }
 
+bool UpdateMaterial(const std::string& path, size_t index, const ModelImportedMaterialInfo& material)
+{
+    const std::string key = NormalizeKey(path);
+    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
+    const auto it = s_modelCache.find(key);
+    if (it == s_modelCache.end() || !it->second.data || index >= it->second.data->materials.size())
+    {
+        return false;
+    }
+    ApplyImportedMaterialInfo(material, it->second.data->materials[index]);
+    return true;
+}
+
 void Invalidate(const std::string& path)
 {
     const std::string key = NormalizeKey(path);

@@ -12,9 +12,11 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace me
@@ -157,9 +159,137 @@ void DrawResolvedMaterial(const ModelImportedMaterialInfo& material)
         DrawSecondaryMaterialTextureRows(blendGraph);
     }
 }
+
+// The Color or Scalar node linked into one of the Output node's inputs, which the compile takes
+// over the Output's own factor; nullptr when the input is the factor itself.
+MaterialShaderNode* FindLinkedOutputInput(
+    MaterialShaderGraph& graph,
+    uint32_t outputId,
+    std::string_view slot,
+    MaterialShaderNodeType type)
+{
+    for (const MaterialShaderLink& link : graph.links)
+    {
+        if (link.toNodeId == outputId && link.toSlot == slot)
+        {
+            MaterialShaderNode* node = FindMaterialGraphNode(graph, link.fromNodeId);
+            return node != nullptr && node->type == type ? node : nullptr;
+        }
+    }
+    return nullptr;
 }
 
-void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
+// The slot most like car paint: one named car paint, then paint or body that is not on a rim, a
+// caliper or the interior; 0 when none is.
+int FindPaintSlot(const std::vector<ModelImportedMaterialInfo>& materials)
+{
+    const auto lower = [](std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c)
+                       {
+                           return static_cast<char>(std::tolower(c));
+                       });
+        return text;
+    };
+    int best = -1;
+    int bestRank = 0;
+    for (size_t index = 0; index < materials.size(); ++index)
+    {
+        const std::string name = lower(materials[index].name);
+        const bool excluded = name.find("rim") != std::string::npos || name.find("caliper") != std::string::npos ||
+                              name.find("int_") != std::string::npos || name.find("interior") != std::string::npos;
+        int rank = 0;
+        if (name.find("carpaint") != std::string::npos || name.find("car_paint") != std::string::npos)
+        {
+            rank = 3;
+        }
+        else if (!excluded && name.find("paint") != std::string::npos)
+        {
+            rank = 2;
+        }
+        else if (!excluded && name.find("body") != std::string::npos)
+        {
+            rank = 1;
+        }
+        if (rank > bestRank)
+        {
+            best = static_cast<int>(index);
+            bestRank = rank;
+        }
+    }
+    return std::max(best, 0);
+}
+
+// The factors a colour change needs, without the graph. They are written where the compile reads
+// them: the Output node's own factors, or the Color or Scalar node linked into them.
+bool DrawMaterialQuickEdit(ModelImportedMaterialInfo& material, float& brightness)
+{
+    ImGui::SeparatorText("Quick Edit");
+    const auto outputIterator = std::find_if(
+        material.shaderGraph.nodes.begin(),
+        material.shaderGraph.nodes.end(),
+        [](const MaterialShaderNode& node)
+        {
+            return node.type == MaterialShaderNodeType::Output;
+        });
+    if (outputIterator == material.shaderGraph.nodes.end())
+    {
+        ImGui::TextDisabled("The material graph has no Output node.");
+        return false;
+    }
+    MaterialShaderNode& output = *outputIterator;
+    bool changed = false;
+
+    // The factor is linear. It is edited in gamma, as the picker shows colours, and split into a
+    // colour in [0, 1] and a brightness, so a factor above 1 (a kn5 paint's diffuse gain) stays
+    // editable. The brightness is kept between frames while the factor fits under it.
+    MaterialShaderNode* colorNode =
+        FindLinkedOutputInput(material.shaderGraph, output.id, "base_factor", MaterialShaderNodeType::Color);
+    float* factor = colorNode != nullptr ? colorNode->colorValue : output.pbr.baseColorFactor;
+    constexpr float kGamma = 2.2f;
+    float gamma[3];
+    for (size_t channel = 0; channel < 3; ++channel)
+    {
+        gamma[channel] = std::pow(std::max(factor[channel], 0.0f), 1.0f / kGamma);
+    }
+    const float peak = std::max({gamma[0], gamma[1], gamma[2]});
+    if (brightness <= 0.0f || peak > brightness * 1.0001f)
+    {
+        brightness = std::max(1.0f, peak);
+    }
+    float color[3] = {gamma[0] / brightness, gamma[1] / brightness, gamma[2] / brightness};
+    bool colorChanged = ImGui::ColorEdit3("Base Color", color, ImGuiColorEditFlags_PickerHueWheel);
+    colorChanged |= DragFloatInRange("Brightness", &brightness, 0.05f, 4.0f, "%.2f");
+    if (colorChanged)
+    {
+        for (size_t channel = 0; channel < 3; ++channel)
+        {
+            factor[channel] = std::pow(std::clamp(color[channel], 0.0f, 1.0f) * brightness, kGamma);
+        }
+        changed = true;
+    }
+    if (!material.baseColorTexturePath.empty())
+    {
+        ImGui::TextDisabled(
+            "Multiplies the base map %s",
+            std::filesystem::path(material.baseColorTexturePath).filename().string().c_str());
+    }
+
+    const auto scalarInput = [&](std::string_view slot, float& outputFactor) -> float&
+    {
+        MaterialShaderNode* node =
+            FindLinkedOutputInput(material.shaderGraph, output.id, slot, MaterialShaderNodeType::Scalar);
+        return node != nullptr ? node->scalarValue : outputFactor;
+    };
+    changed |= DragFloatInRange("Metallic", &scalarInput("metallic_factor", output.pbr.metallicFactor), 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Roughness", &scalarInput("roughness_factor", output.pbr.roughnessFactor), 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Clearcoat", &output.pbr.clearcoatFactor, 0.0f, 1.0f, "%.2f");
+    changed |= DragFloatInRange("Clearcoat Roughness", &output.pbr.clearcoatRoughnessFactor, 0.0f, 1.0f, "%.2f");
+    return changed;
+}
+}
+
+void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath, bool preselectPaint)
 {
     const std::filesystem::path normalizedPath = NormalizeFilesystemPath(modelPath);
     ResetMaterialShadedPreviewCache("ModelDraftPreviewCanvas");
@@ -171,6 +301,10 @@ void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
     m_modelProcessorSelectedMaterialIndex = 0;
     m_modelProcessorSelectedUvSubmeshIndex = 0;
     m_modelProcessorDirty = false;
+    m_modelProcessorEditedSlots.clear();
+    m_modelProcessorScenePreviewed = false;
+    m_focusModelProcessorWindow = true;
+    m_quickEditBrightness = 0.0f;
     m_modelProcessorLoadedModel = LoadedModelData{};
     m_modelPreview = ModelPreviewCamera{};
     m_modelPreview.autoFramePending = true;
@@ -182,6 +316,10 @@ void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath)
         const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelProcessorModelPath);
         m_modelProcessorLoadedModel = loadedModel;
         m_modelProcessorMaterials = BuildEditableMaterials(loadedModel);
+        if (preselectPaint)
+        {
+            m_modelProcessorSelectedMaterialIndex = FindPaintSlot(m_modelProcessorMaterials);
+        }
     }
     catch (const std::exception& error)
     {
@@ -199,7 +337,18 @@ void EditorUiController::CloseModelProcessorWindow()
     m_modelProcessorMaterials.clear();
     m_modelProcessorSelectedMaterialIndex = 0;
     m_modelProcessorDirty = false;
+    m_modelProcessorEditedSlots.clear();
+    m_modelProcessorScenePreviewed = false;
     m_materialGraph = MaterialGraphCanvas{};
+}
+
+void EditorUiController::RevertModelProcessorPreview(EditorUiFrameResult& result)
+{
+    if (m_modelProcessorScenePreviewed)
+    {
+        result.actions.revertImportedModelMaterials = m_modelProcessorModelPath;
+        m_modelProcessorScenePreviewed = false;
+    }
 }
 
 void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result)
@@ -212,6 +361,11 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
     ImGui::SetNextWindowSize(
         ImVec2(560.0f * m_effectiveUiScale, 560.0f * m_effectiveUiScale),
         ImGuiCond_FirstUseEver);
+    if (m_focusModelProcessorWindow)
+    {
+        ImGui::SetNextWindowFocus();
+        m_focusModelProcessorWindow = false;
+    }
     if (ImGui::Begin("Model Preview", &keepModelProcessorWindowOpen))
     {
         ImGui::TextWrapped("Model: %s", m_modelProcessorDisplayName.empty() ? "<unknown>" : m_modelProcessorDisplayName.c_str());
@@ -303,6 +457,7 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
                     if (ImGui::Selectable(label.c_str(), isSelected))
                     {
                         m_modelProcessorSelectedMaterialIndex = static_cast<int>(materialIndex);
+                        m_quickEditBrightness = 0.0f;
                     }
                     if (isSelected)
                     {
@@ -315,15 +470,43 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
             const size_t selectedMaterialIndex = static_cast<size_t>(m_modelProcessorSelectedMaterialIndex);
             ModelImportedMaterialInfo& selectedMaterial = m_modelProcessorMaterials[selectedMaterialIndex];
             ImGui::Text("Draft State: %s", m_modelProcessorDirty ? "Modified" : "Clean");
+            if (ImGui::Checkbox("Live Preview in Scene", &m_modelProcessorLivePreview))
+            {
+                if (!m_modelProcessorLivePreview)
+                {
+                    RevertModelProcessorPreview(result);
+                }
+                else if (!m_modelProcessorEditedSlots.empty())
+                {
+                    EditorUiActions::ImportedModelMaterialPreview preview{m_modelProcessorModelPath, {}};
+                    for (const uint32_t slot : m_modelProcessorEditedSlots)
+                    {
+                        preview.materials.emplace_back(slot, m_modelProcessorMaterials[slot]);
+                    }
+                    result.actions.previewImportedModelMaterial = std::move(preview);
+                    m_modelProcessorScenePreviewed = true;
+                }
+            }
+            ImGui::SetItemTooltip("Show edits on the scene's copies of this model as they are made. Save writes them to disk; closing without saving drops them.");
 
-            if (DrawMaterialGraphEditor(selectedMaterial, selectedMaterialIndex))
+            bool materialChanged = DrawMaterialQuickEdit(selectedMaterial, m_quickEditBrightness);
+            materialChanged |= DrawMaterialGraphEditor(selectedMaterial, selectedMaterialIndex);
+            if (materialChanged)
             {
                 const MaterialGraphCompileResult compileResult =
                     CompileMaterialShaderGraph(selectedMaterial);
                 m_modelProcessorDirty = true;
+                m_modelProcessorEditedSlots.insert(static_cast<uint32_t>(selectedMaterialIndex));
                 if (!compileResult.message.empty())
                 {
                     m_modelProcessorStatusMessage = compileResult.message;
+                }
+                if (m_modelProcessorLivePreview)
+                {
+                    result.actions.previewImportedModelMaterial = EditorUiActions::ImportedModelMaterialPreview{
+                        m_modelProcessorModelPath,
+                        {{static_cast<uint32_t>(selectedMaterialIndex), selectedMaterial}}};
+                    m_modelProcessorScenePreviewed = true;
                 }
             }
 
@@ -335,8 +518,11 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
             {
                 result.actions.updatedImportedModelMaterials = EditorUiActions::ImportedModelMaterialsUpdate{
                     m_modelProcessorModelPath,
-                    m_modelProcessorMaterials};
+                    m_modelProcessorMaterials,
+                    std::vector<uint32_t>(m_modelProcessorEditedSlots.begin(), m_modelProcessorEditedSlots.end())};
                 m_modelProcessorDirty = false;
+                m_modelProcessorEditedSlots.clear();
+                m_modelProcessorScenePreviewed = false;
                 m_modelProcessorStatusMessage = "Saved material graph for slot: " + currentSlotLabel;
             }
             ImGui::EndDisabled();
@@ -351,10 +537,12 @@ void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFr
 
     if (requestReloadModelProcessorWindow && !requestCloseModelProcessorWindow && keepModelProcessorWindowOpen)
     {
+        RevertModelProcessorPreview(result);
         OpenModelProcessorWindow(modelProcessorReloadPath);
     }
     if (!keepModelProcessorWindowOpen || requestCloseModelProcessorWindow)
     {
+        RevertModelProcessorPreview(result);
         CloseModelProcessorWindow();
     }
 }

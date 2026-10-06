@@ -1418,6 +1418,31 @@ add_test(
     COMMAND miniengine_suspension_rig_window_tests
 )
 
+add_executable(miniengine_material_live_edit_tests
+    material_live_edit_tests.cpp
+)
+miniengine_group_target_sources(miniengine_material_live_edit_tests)
+
+target_link_libraries(miniengine_material_live_edit_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_material_live_edit_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_material_live_edit_tests>
+            $<TARGET_FILE_DIR:miniengine_material_live_edit_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.material_live_edit
+    COMMAND miniengine_material_live_edit_tests
+)
+set_target_properties(miniengine_material_live_edit_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_command_registry_tests
     command_registry_tests.cpp
 )

@@ -66,6 +66,16 @@ void UpdateEntryPoints()
 
     ModelCache::UpdateMaterials("C:/fake/not-cached.glb", batch);
 
+    ModelImportedMaterialInfo single;
+    single.name = "single-edited";
+    single.pbr.baseColorFactor[0] = 0.25f;
+    Require(ModelCache::UpdateMaterial(path, 0, single), "UpdateMaterial did not find the cached model");
+    observed = ModelCache::Get(path);
+    Require(observed->materials[0].name == "single-edited" && observed->materials[0].baseColor[0] == 0.25f,
+            "UpdateMaterial did not reach the cached material");
+    Require(!ModelCache::UpdateMaterial(path, 1, single), "UpdateMaterial accepted an index past the materials");
+    Require(!ModelCache::UpdateMaterial("C:/fake/not-cached.glb", 0, single), "UpdateMaterial reached an uncached model");
+
     ModelCache::Invalidate(path);
     Require(ModelCache::Get(path) == nullptr, "Invalidate did not remove the entry");
 }

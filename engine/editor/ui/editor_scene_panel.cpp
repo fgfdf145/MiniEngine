@@ -726,6 +726,15 @@ void EditorUiController::DrawScenePanel(
                         }
                     }
 
+                    ImGui::BeginDisabled(model.sourcePath.empty());
+                    if (ImGui::Button("Edit Materials"))
+                    {
+                        RevertModelProcessorPreview(result);
+                        OpenModelProcessorWindow(model.sourcePath, true);
+                    }
+                    ImGui::SetItemTooltip("Opens the model's materials in Model Preview, its paint selected; edits show here as they are made.");
+                    ImGui::EndDisabled();
+
                     if (metadata.modelLightCount > 0)
                     {
                         bool useModelLights = model.useModelLights;
