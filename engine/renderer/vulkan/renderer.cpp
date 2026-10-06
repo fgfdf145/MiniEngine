@@ -634,7 +634,16 @@ void VulkanRenderer::DrawFrame()
     // Switching HDR output changes the swapchain's format, and with it everything built on it.
     // The rebuild replaces the ImGui backend and its font texture, so it runs here: with no frame on
     // its way, and before this frame's UI names the font.
-    if (m_swapchainOutOfDate.exchange(false) || SwapchainNeedsResize() || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
+    // A minimized window's surface is 0 x 0 while SDL can still report its last size (Windows):
+    // nothing can be made or drawn at that size, so frames wait for the window to come back.
+    const VkExtent2D wantedExtent = WantedSwapchainExtent();
+    if (wantedExtent.width == 0 || wantedExtent.height == 0)
+    {
+        return;
+    }
+    const VkExtent2D currentExtent = m_swapchain->GetExtent();
+    if (m_swapchainOutOfDate.exchange(false) || wantedExtent.width != currentExtent.width ||
+        wantedExtent.height != currentExtent.height || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
     {
         m_renderThread->RunExclusive([this]()
                                      {
@@ -2378,7 +2387,9 @@ void VulkanRenderer::DestroyDescriptorResources()
 
 void VulkanRenderer::RecreateSwapchain()
 {
-    if (!HasDrawableArea())
+    // Minimized: the old swapchain stays until the window is restored and the next frame rebuilds it.
+    const VkExtent2D wanted = WantedSwapchainExtent();
+    if (!HasDrawableArea() || wanted.width == 0 || wanted.height == 0)
     {
         return;
     }
@@ -2390,13 +2401,11 @@ void VulkanRenderer::RecreateSwapchain()
     CreateDescriptorResources();
 }
 
-bool VulkanRenderer::SwapchainNeedsResize() const
+VkExtent2D VulkanRenderer::WantedSwapchainExtent() const
 {
-    const VkExtent2D wanted = VulkanSwapchain::ChooseExtent(
+    return VulkanSwapchain::ChooseExtent(
         GetWindow().GetSDLWindow(),
         m_device->QuerySurfaceCapabilities());
-    const VkExtent2D current = m_swapchain->GetExtent();
-    return wanted.width != current.width || wanted.height != current.height;
 }
 
 void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent)

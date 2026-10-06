@@ -208,7 +208,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CreateDescriptorResources();
     void DestroyDescriptorResources();
     void RecreateSwapchain();
-    bool SwapchainNeedsResize() const;
+    // The extent a swapchain made now would have: 0 x 0 while the window is minimized.
+    VkExtent2D WantedSwapchainExtent() const;
     void SyncSceneTargets(RenderExtent viewportExtent);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.

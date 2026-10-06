@@ -835,6 +835,12 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
 
 bool EditorRenderBackendBase::HasDrawableArea() const
 {
+    // Windows keeps a minimized window's last size, but its surface has none.
+    if ((SDL_GetWindowFlags(m_window.GetSDLWindow()) & SDL_WINDOW_MINIMIZED) != 0)
+    {
+        return false;
+    }
+
     int width = 0;
     int height = 0;
     if (!SDL_GetWindowSizeInPixels(m_window.GetSDLWindow(), &width, &height))

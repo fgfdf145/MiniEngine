@@ -536,6 +536,13 @@ int EditorApplication::Run()
                               renderer->HandleEvent(event);
                           });
         renderer->DrawFrame();
+        // A minimized window draws nothing (DrawFrame returns at once), so the loop would spin a
+        // core and run through --frames in a moment: it idles instead, and its frames do not count.
+        const bool minimized = (SDL_GetWindowFlags(window.GetSDLWindow()) & SDL_WINDOW_MINIMIZED) != 0;
+        if (minimized)
+        {
+            SDL_Delay(10);
+        }
 
         // Still loading: the scene file, its models, its textures or its ray scene.
         const bool loading = sharedState->asyncSceneLoad.IsActive() || sharedState->asyncLoad.IsActive() ||
@@ -578,11 +585,11 @@ int EditorApplication::Run()
             }
         }
         // The camera moves only on the frames that count, so it starts from where it was placed.
-        if (!waiting)
+        if (!waiting && !minimized)
         {
             sharedState->camera.position += m_options.cameraVelocity;
         }
-        if (m_options.maxFrames > 0 && !waiting)
+        if (m_options.maxFrames > 0 && !waiting && !minimized)
         {
             ++renderedFrameCount;
             if (m_options.capturePath.has_value() &&
