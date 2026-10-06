@@ -47,6 +47,8 @@ void main()
 
     // The distance to the nearest pixel of the silhouette, and to the nearest one in view.
     const ivec2 size = textureSize(selectionDepth, 0);
+    // The scene's depth is at the render size, which DLSS upscales from; the outline's at the output's.
+    const ivec2 sceneSize = textureSize(sceneDepth, 0);
     float nearest = 1e6;
     float nearestVisible = 1e6;
     for (int y = -outline.radius; y <= outline.radius; ++y)
@@ -65,7 +67,7 @@ void main()
             }
             const float distance = length(vec2(x, y));
             nearest = min(nearest, distance);
-            if (entityDepth >= texelFetch(sceneDepth, tap, 0).r * kVisibleDepthRatio)
+            if (entityDepth >= texelFetch(sceneDepth, tap * sceneSize / size, 0).r * kVisibleDepthRatio)
             {
                 nearestVisible = min(nearestVisible, distance);
             }

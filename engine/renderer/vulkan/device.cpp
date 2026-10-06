@@ -2,6 +2,7 @@
 
 #include <engine/core/log/log.h>
 
+#include <algorithm>
 #include <set>
 
 namespace me
@@ -28,7 +29,7 @@ std::vector<VkExtensionProperties> EnumerateDeviceExtensions(VkPhysicalDevice de
 }
 }
 
-VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
+VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions)
     : m_surface(surface)
 {
     uint32_t deviceCount = 0;
@@ -119,19 +120,61 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface)
         "Block-compressed textures: {}",
         m_supportsBlockCompression ? "BC7/BC5" : "unsupported, textures stay RGBA8");
 
-    std::vector<const char*> enabledExtensions = kRequiredExtensions;
-    for (const auto& extension : EnumerateDeviceExtensions(m_physicalDevice))
+    const std::vector<VkExtensionProperties> availableExtensions = EnumerateDeviceExtensions(m_physicalDevice);
+    const auto isAvailable = [&availableExtensions](const std::string& name)
     {
-        if (std::string(extension.extensionName) == kPortabilitySubsetExtensionName)
+        return std::any_of(availableExtensions.begin(), availableExtensions.end(), [&name](const VkExtensionProperties& extension)
+                           {
+                               return name == extension.extensionName;
+                           });
+    };
+    std::vector<const char*> enabledExtensions = kRequiredExtensions;
+    if (isAvailable(kPortabilitySubsetExtensionName))
+    {
+        enabledExtensions.push_back(kPortabilitySubsetExtensionName);
+        LOG_INFO("Enabling device extension: {}", kPortabilitySubsetExtensionName);
+    }
+
+    // The optional ones, and the buffer device address feature when one of them is that extension
+    // (core since Vulkan 1.2, where the feature still has to be asked for).
+    const std::vector<std::string> optional = optionalExtensions ? optionalExtensions(m_physicalDevice) : std::vector<std::string>{};
+    bool wantsBufferDeviceAddress = false;
+    for (const std::string& name : optional)
+    {
+        if (std::any_of(enabledExtensions.begin(), enabledExtensions.end(), [&name](const char* enabled)
+                        {
+                            return name == enabled;
+                        }))
         {
-            enabledExtensions.push_back(kPortabilitySubsetExtensionName);
-            LOG_INFO("Enabling device extension: {}", kPortabilitySubsetExtensionName);
-            break;
+            continue;
         }
+        if (!isAvailable(name))
+        {
+            LOG_WARN("Optional device extension {} is not available", name);
+            m_optionalExtensionsEnabled = false;
+            continue;
+        }
+        enabledExtensions.push_back(name.c_str());
+        LOG_INFO("Enabling device extension: {}", name);
+        wantsBufferDeviceAddress = wantsBufferDeviceAddress || name.find("buffer_device_address") != std::string::npos;
+    }
+    VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress{};
+    bufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    if (wantsBufferDeviceAddress)
+    {
+        VkPhysicalDeviceBufferDeviceAddressFeatures supported{};
+        supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &supported;
+        vkGetPhysicalDeviceFeatures2(m_physicalDevice, &features2);
+        bufferDeviceAddress.bufferDeviceAddress = supported.bufferDeviceAddress;
+        m_optionalExtensionsEnabled = m_optionalExtensionsEnabled && supported.bufferDeviceAddress == VK_TRUE;
     }
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pNext = wantsBufferDeviceAddress ? &bufferDeviceAddress : nullptr;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
@@ -151,6 +194,11 @@ VulkanDevice::~VulkanDevice()
         vkDestroyDevice(m_device, nullptr);
         LOG_INFO("Logical device destroyed");
     }
+}
+
+bool VulkanDevice::OptionalExtensionsEnabled() const
+{
+    return m_optionalExtensionsEnabled;
 }
 
 VkDevice VulkanDevice::GetHandle() const

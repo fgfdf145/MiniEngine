@@ -13,6 +13,11 @@ namespace me
 // histogram and tone mapping read. Its two history images live here, outside the layout tracker,
 // like the AO resolve's; which is read and whether it is valid arrive in the frame context. With TAA
 // off, and in the forward-only order, it copies SceneHdr to SceneTaa unchanged.
+//
+// When the frame context carries DLSS, DLSS resolves instead, from the render size to the output
+// size: this pass turns the G-buffer's motion vectors into the ones DLSS reads
+// (dlss_motion_vectors.comp), evaluates DLSS into SceneTaa, and copies the result into the history
+// image the SSR trace reads next frame, as the TAA resolve writes it.
 class VulkanTaaPass : public IScenePass
 {
   public:
@@ -43,6 +48,12 @@ class VulkanTaaPass : public IScenePass
 
   private:
     void CreateDescriptorSets(const SceneRenderTargets& targets);
+    void CreateMotionImage(VkExtent2D extent);
+    void DestroyMotionImage();
+    void RecordDlss(
+        VkCommandBuffer commandBuffer,
+        const SceneRenderTargets& targets,
+        const ScenePassFrameContext& frame) const;
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
@@ -56,5 +67,15 @@ class VulkanTaaPass : public IScenePass
     HistoryImagePair m_history;
     // Indexed by frameSlot * 2 + readIndex: set r samples history r and stores to history 1 - r.
     std::vector<VkDescriptorSet> m_descriptorSets;
+
+    // DLSS's motion vectors (RG16F, render size) and the pass that writes them, one set per frame slot.
+    VkDescriptorSetLayout m_motionSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_motionDescriptorPool = VK_NULL_HANDLE;
+    VkPipelineLayout m_motionPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_motionPipeline = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_motionDescriptorSets;
+    VkImage m_motionImage = VK_NULL_HANDLE;
+    VkDeviceMemory m_motionMemory = VK_NULL_HANDLE;
+    VkImageView m_motionView = VK_NULL_HANDLE;
 };
 }

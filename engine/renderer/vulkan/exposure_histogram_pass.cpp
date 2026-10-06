@@ -132,7 +132,7 @@ void VulkanExposureHistogramPass::Record(
         nullptr);
 
     const HistogramPushConstants constants{
-        frame.extent.width, frame.extent.height, frame.physicalSky ? 1u : 0u, 1.0f / frame.preExposure};
+        frame.outputExtent.width, frame.outputExtent.height, frame.physicalSky ? 1u : 0u, 1.0f / frame.preExposure};
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,
@@ -142,8 +142,8 @@ void VulkanExposureHistogramPass::Record(
         &constants);
     vkCmdDispatch(
         commandBuffer,
-        (frame.extent.width + kWorkgroupSize - 1) / kWorkgroupSize,
-        (frame.extent.height + kWorkgroupSize - 1) / kWorkgroupSize,
+        (frame.outputExtent.width + kWorkgroupSize - 1) / kWorkgroupSize,
+        (frame.outputExtent.height + kWorkgroupSize - 1) / kWorkgroupSize,
         1);
 
     VkBufferMemoryBarrier computeToHost{};

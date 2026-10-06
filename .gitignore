@@ -23,6 +23,9 @@ vcpkg_installed/
 # vcpkg installed packages (persisted outside build dir, but not committed)
 .deps/vcpkg_installed/
 
+# NVIDIA DLSS SDK, fetched by scripts/fetch-dlss-sdk.sh (not committed)
+.deps/dlss/
+
 # vcpkg internal build artifacts (inside the submodule, ignored at repo level)
 .deps/vcpkg/buildtrees/
 .deps/vcpkg/packages/

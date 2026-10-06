@@ -60,11 +60,11 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, uint drawSlot, vec2
     layers.coatNormal = TBN[2];
     if (HasShadingFlag(layers.flags, SHADING_FLAG_CLEARCOAT))
     {
-        layers.coatFactor = clamp(material.clearcoatFactors.x * texture(clearcoatTexture, MaterialSlotUv(material, drawSlot, 13u, uv0, uv1)).r, 0.0, 1.0);
-        layers.coatRoughness = clamp(material.clearcoatFactors.y * texture(clearcoatRoughnessTexture, MaterialSlotUv(material, drawSlot, 14u, uv0, uv1)).g, 0.0, 1.0);
+        layers.coatFactor = clamp(material.clearcoatFactors.x * MaterialTexture(clearcoatTexture, MaterialSlotUv(material, drawSlot, 13u, uv0, uv1)).r, 0.0, 1.0);
+        layers.coatRoughness = clamp(material.clearcoatFactors.y * MaterialTexture(clearcoatRoughnessTexture, MaterialSlotUv(material, drawSlot, 14u, uv0, uv1)).g, 0.0, 1.0);
         if (HasShadingFlag(layers.flags, SHADING_FLAG_COAT_NORMAL))
         {
-            vec3 coatSample = DecodeNormalMap(texture(clearcoatNormalTexture, MaterialSlotUv(material, drawSlot, 20u, uv0, uv1)));
+            vec3 coatSample = DecodeNormalMap(MaterialTexture(clearcoatNormalTexture, MaterialSlotUv(material, drawSlot, 20u, uv0, uv1)));
             coatSample.xy = RotateMaterialTangentXy(material, drawSlot, 20u, coatSample.xy);
             coatSample.xy *= material.clearcoatFactors.z;
             layers.coatNormal = normalize(TBN * coatSample);
@@ -75,15 +75,15 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, uint drawSlot, vec2
     layers.sheenRoughness = 0.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_SHEEN))
     {
-        layers.sheenColor = clamp(material.sheenFactors.rgb * texture(sheenColorTexture, MaterialSlotUv(material, drawSlot, 15u, uv0, uv1)).rgb, 0.0, 1.0);
-        layers.sheenRoughness = clamp(material.sheenFactors.a * texture(sheenRoughnessTexture, MaterialSlotUv(material, drawSlot, 16u, uv0, uv1)).a, 0.0, 1.0);
+        layers.sheenColor = clamp(material.sheenFactors.rgb * MaterialTexture(sheenColorTexture, MaterialSlotUv(material, drawSlot, 15u, uv0, uv1)).rgb, 0.0, 1.0);
+        layers.sheenRoughness = clamp(material.sheenFactors.a * MaterialTexture(sheenRoughnessTexture, MaterialSlotUv(material, drawSlot, 16u, uv0, uv1)).a, 0.0, 1.0);
     }
 
     layers.anisotropyTangent = TBN[0];
     layers.anisotropyStrength = 0.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_ANISOTROPY))
     {
-        vec3 sampled = texture(anisotropyTexture, MaterialSlotUv(material, drawSlot, 17u, uv0, uv1)).rgb;
+        vec3 sampled = MaterialTexture(anisotropyTexture, MaterialSlotUv(material, drawSlot, 17u, uv0, uv1)).rgb;
         vec2 direction = RotateMaterialTangentXy(
             material, drawSlot, 17u, AnisotropyDirection(sampled.rg, material.anisotropyFactors.y, material.anisotropyFactors.z));
         vec3 tangent = TBN * vec3(direction, 0.0);
@@ -103,8 +103,8 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, uint drawSlot, vec2
     layers.dielectricF90 = 1.0;
     if (HasShadingFlag(layers.flags, SHADING_FLAG_SPECULAR))
     {
-        float specular = clamp(material.specularFactors.a * texture(specularTexture, MaterialSlotUv(material, drawSlot, 18u, uv0, uv1)).a, 0.0, 1.0);
-        layers.dielectricF0 = min(material.specularFactors.rgb * texture(specularColorTexture, MaterialSlotUv(material, drawSlot, 19u, uv0, uv1)).rgb, vec3(1.0)) * specular;
+        float specular = clamp(material.specularFactors.a * MaterialTexture(specularTexture, MaterialSlotUv(material, drawSlot, 18u, uv0, uv1)).a, 0.0, 1.0);
+        layers.dielectricF0 = min(material.specularFactors.rgb * MaterialTexture(specularColorTexture, MaterialSlotUv(material, drawSlot, 19u, uv0, uv1)).rgb, vec3(1.0)) * specular;
         layers.dielectricF90 = specular;
     }
 
@@ -112,9 +112,9 @@ MaterialLayers EvaluateMaterialLayers(MaterialData material, uint drawSlot, vec2
     layers.iridescenceThickness = 0.0;
     if (material.iridescenceFactors.x > 0.0)
     {
-        layers.iridescenceFactor = clamp(material.iridescenceFactors.x * texture(iridescenceTexture, MaterialSlotUv(material, drawSlot, 21u, uv0, uv1)).r, 0.0, 1.0);
+        layers.iridescenceFactor = clamp(material.iridescenceFactors.x * MaterialTexture(iridescenceTexture, MaterialSlotUv(material, drawSlot, 21u, uv0, uv1)).r, 0.0, 1.0);
         layers.iridescenceThickness =
-            mix(material.iridescenceFactors.z, material.iridescenceFactors.w, texture(iridescenceThicknessTexture, MaterialSlotUv(material, drawSlot, 22u, uv0, uv1)).g);
+            mix(material.iridescenceFactors.z, material.iridescenceFactors.w, MaterialTexture(iridescenceThicknessTexture, MaterialSlotUv(material, drawSlot, 22u, uv0, uv1)).g);
     }
     return layers;
 }

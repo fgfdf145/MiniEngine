@@ -21,3 +21,4 @@ if(WIN32)
         COMMAND_EXPAND_LISTS
     )
 endif()
+miniengine_copy_dlss_runtime(miniengine_app)

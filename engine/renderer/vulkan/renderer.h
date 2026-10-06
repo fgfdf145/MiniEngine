@@ -7,6 +7,7 @@
 #include "buffer.h"
 #include "command.h"
 #include "device.h"
+#include "dlss.h"
 #include "exposure_histogram_pass.h"
 #include "forward_pass.h"
 #include "gbuffer_inputs.h"
@@ -210,7 +211,16 @@ class VulkanRenderer : public EditorRenderBackendBase
     void RecreateSwapchain();
     // The extent a swapchain made now would have: 0 x 0 while the window is minimized.
     VkExtent2D WantedSwapchainExtent() const;
-    void SyncSceneTargets(RenderExtent viewportExtent);
+    // The render and output sizes for a viewport of this size, and the DLSS mode that upscales
+    // between them (Off: the same size, the engine's TAA). Makes or drops the DLSS feature to match.
+    struct SceneExtents
+    {
+        VkExtent2D render{};
+        VkExtent2D output{};
+        DlssMode dlss = DlssMode::Off;
+    };
+    SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
+    void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources(const RenderFramePacket& frame);
@@ -294,6 +304,12 @@ class VulkanRenderer : public EditorRenderBackendBase
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
+    // NVIDIA DLSS: always made, available only with the SDK on a device and driver that run it.
+    std::unique_ptr<VulkanDlss> m_dlss;
+    // The DLSS mode the scene targets were last sized for (Off while the engine's TAA resolves), and
+    // whether DLSS's next evaluation throws its history away.
+    DlssMode m_activeDlssMode = DlssMode::Off;
+    bool m_dlssResetPending = true;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;

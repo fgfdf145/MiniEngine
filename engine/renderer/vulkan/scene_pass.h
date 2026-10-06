@@ -19,6 +19,7 @@ namespace me
 {
 
 class VulkanParallelRecorder;
+class VulkanDlss;
 
 // Which draw items the forward pass records, and whether it owns the frame. The deferred order
 // gives it only Blend items to composite over the lighting result; the forward-only comparison
@@ -37,7 +38,11 @@ struct ScenePassFrameContext
 {
     uint32_t imageIndex = 0;
     uint32_t frameSlot = 0;
+    // The render size, which the scene is drawn and lit at.
     VkExtent2D extent{};
+    // The output size (SceneRenderTargets::GetOutputExtent): the temporal resolve's result and every
+    // pass after it. Larger than extent while DLSS upscales, the same otherwise.
+    VkExtent2D outputExtent{};
     // Every draw item for the frame: Opaque and Mask first in pipeline variant order, then Blend
     // back to front, the partition BuildMaterialDrawOrder produces. blendDrawItemBegin is the
     // index of the first Blend item, so the two halves are views of one vector, never copies.
@@ -84,6 +89,12 @@ struct ScenePassFrameContext
     TemporalHistoryFrame taaHistory;
     // What TAA multiplies its history by (see TaaHistoryScale): 1 without valid history.
     float taaHistoryScale = 1.0f;
+    // Set when DLSS replaces the TAA resolve this frame (VulkanTaaPass), with the jitter the frame
+    // was rendered with, in render pixels, and whether DLSS throws its history away.
+    VulkanDlss* dlss = nullptr;
+    glm::vec2 jitterPixels{0.0f};
+    bool dlssReset = false;
+    float frameTimeMs = 0.0f;
     BloomSettings bloom;
     // One-bounce indirect diffuse settings; enabled is already false in the forward-only order, and
     // its history as aoHistory is the AO resolve's.

@@ -134,13 +134,13 @@ void VulkanTonemapPass::Record(
     renderPassInfo.framebuffer = m_framebuffers.at(
         targets.ResolveIndex(RenderTargetId::SceneLdr, frame.imageIndex, frame.frameSlot));
     renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = frame.extent;
+    renderPassInfo.renderArea.extent = frame.outputExtent;
     renderPassInfo.clearValueCount = 0;
     renderPassInfo.pClearValues = nullptr;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    SetViewportAndScissor(commandBuffer, frame.extent);
+    SetViewportAndScissor(commandBuffer, frame.outputExtent);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
@@ -339,7 +339,7 @@ void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)
 void VulkanTonemapPass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
     // One framebuffer per LDR copy, so these are indexed by swapchain image.
-    const VkExtent2D extent = targets.GetExtent();
+    const VkExtent2D extent = targets.GetOutputExtent();
     const uint32_t copyCount = targets.GetLdrCopyCount();
     m_framebuffers.reserve(copyCount);
 

@@ -220,6 +220,19 @@ class EditorUiController
     {
         m_selectionOutlineTexture = texture;
     }
+    // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
+    // (VulkanDlss::Status).
+    void SetDlssStatus(bool available, std::string status)
+    {
+        m_dlssAvailable = available;
+        m_dlssStatus = std::move(status);
+    }
+    // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
+    // size itself, so the viewport asks for every display pixel whatever the render scale says.
+    bool DlssResolves() const
+    {
+        return m_dlssAvailable && m_renderDebug.dlssMode != DlssMode::Off && !m_renderDebug.forwardOnly;
+    }
     void SetVideoRecordingStatus(VideoRecordingIndicator status)
     {
         m_videoRecording = std::move(status);
@@ -420,6 +433,8 @@ class EditorUiController
     VideoRecordingIndicator m_videoRecording;
     ImTextureID m_minimapTexture = ImTextureID{};
     ImTextureID m_selectionOutlineTexture = ImTextureID{};
+    bool m_dlssAvailable = false;
+    std::string m_dlssStatus;
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehicleHapticsSettings m_vehicleHaptics;

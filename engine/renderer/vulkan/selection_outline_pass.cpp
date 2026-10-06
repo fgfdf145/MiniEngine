@@ -101,12 +101,12 @@ void VulkanSelectionMaskPass::Record(
     renderPassInfo.renderPass = m_renderPass;
     renderPassInfo.framebuffer = m_framebuffers.at(
         targets.ResolveIndex(RenderTargetId::SelectionDepth, frame.imageIndex, frame.frameSlot));
-    renderPassInfo.renderArea.extent = frame.extent;
+    renderPassInfo.renderArea.extent = frame.outputExtent;
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearValue;
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    SetViewportAndScissor(commandBuffer, frame.extent);
+    SetViewportAndScissor(commandBuffer, frame.outputExtent);
 
     VkPipeline boundPipeline = VK_NULL_HANDLE;
     for (const ShadowDrawItem& item : frame.selectionDrawItems)
@@ -325,7 +325,7 @@ void VulkanSelectionMaskPass::CreatePipelines(VkPipelineCache pipelineCache, VkD
 
 void VulkanSelectionMaskPass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
-    const VkExtent2D extent = targets.GetExtent();
+    const VkExtent2D extent = targets.GetOutputExtent();
     const uint32_t copyCount = targets.GetTransientCopyCount();
     m_framebuffers.reserve(copyCount);
     for (uint32_t slot = 0; slot < copyCount; ++slot)
@@ -435,10 +435,10 @@ void VulkanSelectionOutlinePass::Record(
     renderPassInfo.renderPass = m_renderPass;
     renderPassInfo.framebuffer = m_framebuffers.at(
         targets.ResolveIndex(RenderTargetId::SelectionOutline, frame.imageIndex, frame.frameSlot));
-    renderPassInfo.renderArea.extent = frame.extent;
+    renderPassInfo.renderArea.extent = frame.outputExtent;
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    SetViewportAndScissor(commandBuffer, frame.extent);
+    SetViewportAndScissor(commandBuffer, frame.outputExtent);
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
     const VkDescriptorSet descriptorSet = m_descriptorSets.at(
@@ -586,7 +586,7 @@ void VulkanSelectionOutlinePass::CreateDescriptorSets(const SceneRenderTargets& 
 
 void VulkanSelectionOutlinePass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
-    const VkExtent2D extent = targets.GetExtent();
+    const VkExtent2D extent = targets.GetOutputExtent();
     const uint32_t copyCount = targets.GetLdrCopyCount();
     m_framebuffers.reserve(copyCount);
     for (uint32_t imageIndex = 0; imageIndex < copyCount; ++imageIndex)

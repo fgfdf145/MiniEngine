@@ -27,13 +27,13 @@ vec3 DetailLayersFactor(MaterialData material, vec2 uv0, vec3 objectPosition)
         return vec3(1.0);
     }
     vec2 coordinate = mapping == 2u ? objectPosition.xz : uv0;
-    vec4 mask = texture(detailMaskTexture, uv0);
+    vec4 mask = MaterialTexture(detailMaskTexture, uv0);
     vec4 scalesRG = material.detailLayerScales[0];
     vec4 scalesBA = material.detailLayerScales[1];
-    vec3 combined = texture(detailLayerRTexture, coordinate * scalesRG.xy).rgb * mask.r +
-                    texture(detailLayerGTexture, coordinate * scalesRG.zw).rgb * mask.g +
-                    texture(detailLayerBTexture, coordinate * scalesBA.xy).rgb * mask.b +
-                    texture(detailLayerATexture, coordinate * scalesBA.zw).rgb * mask.a;
+    vec3 combined = MaterialTexture(detailLayerRTexture, coordinate * scalesRG.xy).rgb * mask.r +
+                    MaterialTexture(detailLayerGTexture, coordinate * scalesRG.zw).rgb * mask.g +
+                    MaterialTexture(detailLayerBTexture, coordinate * scalesBA.xy).rgb * mask.b +
+                    MaterialTexture(detailLayerATexture, coordinate * scalesBA.zw).rgb * mask.a;
     combined *= material.detailLayerParams.x;
     return DetailLayersSrgbToLinear(max(combined, vec3(0.0)));
 }

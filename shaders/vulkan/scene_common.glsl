@@ -92,8 +92,16 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 ddgiParams;
     vec4 ddgiSpacing;
     vec4 ddgiOrigins[4];
+    // x = the material textures' mip bias (MATERIAL_MIP_BIAS): negative while DLSS upscales, so they
+    // keep the output's detail. Appended last.
+    vec4 textureParams;
 }
 ubo;
+
+#define MATERIAL_MIP_BIAS (ubo.textureParams.x)
+// A material texture sampled with that bias. Fragment shaders only (a macro, so the compute shaders
+// that include this file never compile it).
+#define MaterialTexture(textureSampler, uv) texture(textureSampler, uv, MATERIAL_MIP_BIAS)
 
 // The scene's ambient luminance (cd/m^2) arriving along the unit direction d: its Ambient lights
 // plus its Hemisphere lights, each of which is sky above its up axis and ground below. A hemisphere

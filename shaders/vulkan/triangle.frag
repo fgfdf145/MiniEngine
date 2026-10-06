@@ -132,14 +132,14 @@ void main()
     MaterialData material = materialData.materials[fragDrawSlot];
 
     // ---- Blend mask & blend weight ----------------------------------------
-    float blendMask = texture(blendMaskTexture, fragTexCoord).r;
+    float blendMask = MaterialTexture(blendMaskTexture, fragTexCoord).r;
     float blendWeight = clamp(
         mix(0.0, material.nodeGraphFactors.y, clamp(material.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
         0.0, 1.0);
 
     // ---- Albedo -----------------------------------------------------------
-    vec4 primaryBaseColor = texture(baseColorTexture, MaterialSlotUv(material, fragDrawSlot, 0u, fragTexCoord, fragTexCoord1));
-    vec4 secondaryBaseColor = texture(secondaryBaseColorTexture, fragTexCoord);
+    vec4 primaryBaseColor = MaterialTexture(baseColorTexture, MaterialSlotUv(material, fragDrawSlot, 0u, fragTexCoord, fragTexCoord1));
+    vec4 secondaryBaseColor = MaterialTexture(secondaryBaseColorTexture, fragTexCoord);
     vec4 sampledBaseColor = mix(primaryBaseColor, secondaryBaseColor, blendWeight);
     vec4 albedo = sampledBaseColor * vec4(fragColor, 1.0) * material.baseColorFactor;
     albedo.rgb *= DetailLayersFactor(material, fragTexCoord, fragObjectPosition);
@@ -167,29 +167,29 @@ void main()
     vec3 bitangent = normalize(cross(geoNormal, tangent) * fragWorldTangent.w) * faceSign;
     mat3 TBN = mat3(tangent, bitangent, geoNormal);
 
-    vec3 nrmPrimary = DecodeNormalMap(texture(normalTexture, MaterialSlotUv(material, fragDrawSlot, 1u, fragTexCoord, fragTexCoord1)));
+    vec3 nrmPrimary = DecodeNormalMap(MaterialTexture(normalTexture, MaterialSlotUv(material, fragDrawSlot, 1u, fragTexCoord, fragTexCoord1)));
     nrmPrimary.xy = RotateMaterialTangentXy(material, fragDrawSlot, 1u, nrmPrimary.xy);
-    vec3 nrmSecondary = DecodeNormalMap(texture(secondaryNormalTexture, fragTexCoord));
+    vec3 nrmSecondary = DecodeNormalMap(MaterialTexture(secondaryNormalTexture, fragTexCoord));
     vec3 nrmSample = normalize(mix(nrmPrimary, nrmSecondary, blendWeight));
     nrmSample.xy *= material.surfaceFactors.z; // normal scale
     vec3 N = normalize(TBN * nrmSample);
 
     // ---- PBR factors ------------------------------------------------------
     float metallicSample = mix(
-        texture(metallicTexture, MaterialSlotUv(material, fragDrawSlot, 2u, fragTexCoord, fragTexCoord1)).b,
-        texture(secondaryMetallicTexture, fragTexCoord).b,
+        MaterialTexture(metallicTexture, MaterialSlotUv(material, fragDrawSlot, 2u, fragTexCoord, fragTexCoord1)).b,
+        MaterialTexture(secondaryMetallicTexture, fragTexCoord).b,
         blendWeight);
     float roughnessSample = mix(
-        texture(roughnessTexture, MaterialSlotUv(material, fragDrawSlot, 3u, fragTexCoord, fragTexCoord1)).g,
-        texture(secondaryRoughnessTexture, fragTexCoord).g,
+        MaterialTexture(roughnessTexture, MaterialSlotUv(material, fragDrawSlot, 3u, fragTexCoord, fragTexCoord1)).g,
+        MaterialTexture(secondaryRoughnessTexture, fragTexCoord).g,
         blendWeight);
     float aoSample = mix(
-        texture(occlusionTexture, MaterialSlotUv(material, fragDrawSlot, 4u, fragTexCoord, fragTexCoord1)).r,
-        texture(secondaryOcclusionTexture, fragTexCoord).r,
+        MaterialTexture(occlusionTexture, MaterialSlotUv(material, fragDrawSlot, 4u, fragTexCoord, fragTexCoord1)).r,
+        MaterialTexture(secondaryOcclusionTexture, fragTexCoord).r,
         blendWeight);
     vec3 emissiveSample = mix(
-        texture(emissiveTexture, MaterialSlotUv(material, fragDrawSlot, 5u, fragTexCoord, fragTexCoord1)).rgb,
-        texture(secondaryEmissiveTexture, fragTexCoord).rgb,
+        MaterialTexture(emissiveTexture, MaterialSlotUv(material, fragDrawSlot, 5u, fragTexCoord, fragTexCoord1)).rgb,
+        MaterialTexture(secondaryEmissiveTexture, fragTexCoord).rgb,
         blendWeight);
 
     float metallic = clamp(material.surfaceFactors.x * metallicSample, 0.0, 1.0);
@@ -250,9 +250,9 @@ void main()
         // wall), from the transmission copy at the viewer's blur for the material's roughness. The copy holds
         // pre-exposed values; the shading below is in radiance until its final exposure.
         float transmission = clamp(
-            material.transmissionFactors.x * texture(transmissionTexture, MaterialSlotUv(material, fragDrawSlot, 23u, fragTexCoord, fragTexCoord1)).r,
+            material.transmissionFactors.x * MaterialTexture(transmissionTexture, MaterialSlotUv(material, fragDrawSlot, 23u, fragTexCoord, fragTexCoord1)).r,
             0.0, 1.0);
-        float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
+        float thickness = material.transmissionFactors.y * MaterialTexture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
         float ior = max(material.attenuationColor.a, 1.0);
         vec3 volumeScale = fragModelScale * material.volumeScale.xyz;
         vec3 behind;
@@ -288,11 +288,11 @@ void main()
         // KHR_materials_diffuse_transmission: the factor times its map's A, the colour times its map,
         // attenuated through the volume's thickness (times the node's mean scale) when it has one.
         specular.diffuseTransmissionFactor = clamp(
-            material.diffuseTransmission.a * texture(diffuseTransmissionTexture, MaterialSlotUv(material, fragDrawSlot, 25u, fragTexCoord, fragTexCoord1)).a,
+            material.diffuseTransmission.a * MaterialTexture(diffuseTransmissionTexture, MaterialSlotUv(material, fragDrawSlot, 25u, fragTexCoord, fragTexCoord1)).a,
             0.0, 1.0);
         diffuseTransmissionColor = material.diffuseTransmission.rgb *
-                                   texture(diffuseTransmissionColorTexture, MaterialSlotUv(material, fragDrawSlot, 26u, fragTexCoord, fragTexCoord1)).rgb;
-        float thickness = material.transmissionFactors.y * texture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
+                                   MaterialTexture(diffuseTransmissionColorTexture, MaterialSlotUv(material, fragDrawSlot, 26u, fragTexCoord, fragTexCoord1)).rgb;
+        float thickness = material.transmissionFactors.y * MaterialTexture(thicknessTexture, MaterialSlotUv(material, fragDrawSlot, 24u, fragTexCoord, fragTexCoord1)).g;
         float distance = DiffuseTransmissionDistance(thickness, fragModelScale * material.volumeScale.xyz);
         diffuseTransmissionAttenuation = ApplyVolumeAttenuation(vec3(1.0), distance, material.attenuationColor.rgb, material.transmissionFactors.z);
         specular.diffuseTransmissionColor = diffuseTransmissionColor * diffuseTransmissionAttenuation;

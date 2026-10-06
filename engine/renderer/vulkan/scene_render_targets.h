@@ -35,11 +35,14 @@ namespace me
 class SceneRenderTargets
 {
   public:
+    // renderExtent is what the scene is rendered at, outputExtent what the viewport shows: larger
+    // when DLSS upscales, the same size otherwise.
     SceneRenderTargets(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         VkFormat ldrFormat,
-        VkExtent2D extent,
+        VkExtent2D renderExtent,
+        VkExtent2D outputExtent,
         uint32_t swapchainImageCount);
     ~SceneRenderTargets();
 
@@ -55,11 +58,15 @@ class SceneRenderTargets
     // aspect while the attachment view needs both.
     VkImageView GetSampledView(RenderTargetId target, uint32_t index) const;
 
+    // The render size: every target the scene is drawn and lit in.
     VkExtent2D GetExtent() const;
-    // The size of one target's images: GetExtent, or a fraction of it for the half-resolution traces
-    // (AoRaw and GiRaw), rounded up.
+    // The output size: the temporal resolve's result and everything after it (bloom, exposure, tone
+    // mapping, the selection outline), which the viewport shows.
+    VkExtent2D GetOutputExtent() const;
+    // The size of one target's images: GetExtent, a fraction of it for the half-resolution traces
+    // (AoRaw and GiRaw), rounded up, or GetOutputExtent for the output targets.
     VkExtent2D GetTargetExtent(RenderTargetId target) const;
-    bool MatchesExtent(VkExtent2D extent) const;
+    bool MatchesExtent(VkExtent2D renderExtent, VkExtent2D outputExtent) const;
 
     // Copy counts for the two indexing schemes. Transient covers SceneDepth and SceneHdr.
     uint32_t GetTransientCopyCount() const;
@@ -83,7 +90,7 @@ class SceneRenderTargets
     // format selection, so a caller whose swapchain format may have moved must construct a new
     // instance instead (see VulkanRenderer::CreateSwapchainResources).
     void ReleaseImages();
-    void Rebuild(VkExtent2D extent, uint32_t swapchainImageCount);
+    void Rebuild(VkExtent2D renderExtent, VkExtent2D outputExtent, uint32_t swapchainImageCount);
 
   private:
     struct TargetImage
@@ -106,6 +113,8 @@ class SceneRenderTargets
         bool bindToImGui = false;
         // The images are the scene extent divided by this, rounded up.
         uint32_t downscale = 1;
+        // The images are the output extent instead.
+        bool outputSized = false;
         std::vector<TargetImage> images;
     };
 
@@ -122,6 +131,7 @@ class SceneRenderTargets
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkExtent2D m_extent{};
+    VkExtent2D m_outputExtent{};
     uint32_t m_swapchainImageCount = 0;
     std::array<TargetDescription, kRenderTargetCount> m_targets{};
 };

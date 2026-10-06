@@ -2,13 +2,18 @@
 
 #include "common.h"
 
+#include <span>
+#include <string>
+
 namespace me
 {
 
 class VulkanInstance
 {
   public:
-    explicit VulkanInstance(SDL_Window* window);
+    // optionalExtensions are enabled where the loader offers them (DLSS's, VulkanDlss); whether all
+    // of them were is OptionalExtensionsEnabled.
+    explicit VulkanInstance(SDL_Window* window, std::span<const std::string> optionalExtensions = {});
     ~VulkanInstance();
 
     VulkanInstance(const VulkanInstance&) = delete;
@@ -16,9 +21,10 @@ class VulkanInstance
 
     VkInstance GetHandle() const;
     VkSurfaceKHR GetSurface() const;
+    bool OptionalExtensionsEnabled() const;
 
   private:
-    std::vector<const char*> GetRequiredExtensions(bool enableValidation) const;
+    std::vector<const char*> GetRequiredExtensions(bool enableValidation, std::span<const std::string> optionalExtensions);
     bool IsValidationLayerAvailable() const;
     void CreateDebugMessenger();
     void DestroyDebugMessenger();
@@ -26,5 +32,6 @@ class VulkanInstance
     VkInstance m_instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
+    bool m_optionalExtensionsEnabled = true;
 };
 }

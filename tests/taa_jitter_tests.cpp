@@ -43,6 +43,28 @@ void OffsetsAreSubPixelAndCycle()
             "a cycle is centred on the pixel, mean (" + std::to_string(mean.x) + ", " + std::to_string(mean.y) + ")");
 }
 
+void PhaseCountFollowsTheUpscale()
+{
+    Require(TaaJitterPhaseCount(glm::uvec2(1920u, 1080u), glm::uvec2(1920u, 1080u)) == 8u, "no upscale keeps eight phases");
+    Require(TaaJitterPhaseCount(glm::uvec2(1920u, 1080u), glm::uvec2(3840u, 2160u)) == 32u, "Performance (2x) takes 32");
+    Require(TaaJitterPhaseCount(glm::uvec2(1280u, 720u), glm::uvec2(3840u, 2160u)) == 72u, "Ultra Performance (3x) takes 72");
+    Require(TaaJitterPhaseCount(glm::uvec2(2560u, 1440u), glm::uvec2(3840u, 2160u)) == 18u, "Quality (1.5x) takes 18");
+
+    // A longer cycle still jitters within the pixel and repeats after its own length.
+    std::set<std::pair<float, float>> distinct;
+    for (uint32_t frame = 0; frame < 32u; ++frame)
+    {
+        const glm::vec2 offset = TaaJitterPixels(frame, 32u);
+        Require(offset.x > -0.5f && offset.x < 0.5f && offset.y > -0.5f && offset.y < 0.5f, "a long cycle jitters within the pixel");
+        Require(offset == TaaJitterPixels(frame + 32u, 32u), "a long cycle repeats after its length");
+        distinct.insert({offset.x, offset.y});
+    }
+    Require(distinct.size() == 32u, "every offset in a long cycle is different");
+
+    Require(std::fabs(UpscaleTextureMipBias(glm::uvec2(1920u, 1080u), glm::uvec2(3840u, 2160u)) + 2.0f) < 1e-6f, "Performance biases by -2");
+    Require(std::fabs(UpscaleTextureMipBias(glm::uvec2(3840u, 2160u), glm::uvec2(3840u, 2160u)) + 1.0f) < 1e-6f, "DLAA biases by -1");
+}
+
 // Where a view-space point lands, in pixels from the top left, through a projection.
 glm::vec2 PixelOf(const glm::mat4& projection, const glm::vec3& viewPosition, glm::uvec2 extent)
 {
@@ -79,6 +101,7 @@ int main()
     try
     {
         OffsetsAreSubPixelAndCycle();
+        PhaseCountFollowsTheUpscale();
         JitterMovesEveryPointByTheOffset();
     }
     catch (const std::exception& error)

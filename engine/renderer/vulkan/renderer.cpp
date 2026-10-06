@@ -514,8 +514,25 @@ VulkanRenderer::VulkanRenderer(
 {
     LogVulkanRuntimeInfo();
 
-    m_instance = std::make_unique<VulkanInstance>(GetWindow().GetSDLWindow());
-    m_device = std::make_unique<VulkanDevice>(m_instance->GetHandle(), m_instance->GetSurface());
+    // DLSS's extensions are asked for as the instance and the device are made; without all of them
+    // DLSS stays off and nothing else changes.
+    const std::vector<std::string> dlssInstanceExtensions = VulkanDlss::RequiredInstanceExtensions();
+    m_instance = std::make_unique<VulkanInstance>(GetWindow().GetSDLWindow(), dlssInstanceExtensions);
+    const VkInstance instance = m_instance->GetHandle();
+    m_device = std::make_unique<VulkanDevice>(
+        instance,
+        m_instance->GetSurface(),
+        [instance](VkPhysicalDevice physicalDevice)
+        {
+            return VulkanDlss::RequiredDeviceExtensions(instance, physicalDevice);
+        });
+    m_dlss = std::make_unique<VulkanDlss>(
+        instance,
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_device->GetQueueFamilies().graphicsFamily.value(),
+        m_device->GetGraphicsQueue(),
+        m_instance->OptionalExtensionsEnabled() && m_device->OptionalExtensionsEnabled());
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
         GetWindow().GetSDLWindow(),
         m_instance->GetHandle(),
@@ -606,6 +623,7 @@ VulkanRenderer::~VulkanRenderer()
     m_materialSets.reset();
     m_samplerCache.reset();
     DestroyDeviceResources();
+    m_dlss.reset();
     m_device.reset();
     m_instance.reset();
 }
@@ -661,6 +679,8 @@ void VulkanRenderer::DrawFrame()
     // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
     State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
+    // Fixed once NGX has started, before the render thread exists.
+    State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->Status());
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -815,7 +835,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         PublishFeedback(packet);
         return;
     }
-    SyncSceneTargets(packet.viewportExtent);
+    SyncSceneTargets(packet.viewportExtent, packet.renderDebug);
 
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
@@ -1103,15 +1123,23 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
 
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
-    // the motion vectors. The forward-only order has no motion vectors, so it never jitters.
-    const bool taaEnabled = packet.renderDebug.taa && !packet.renderDebug.forwardOnly;
+    // the motion vectors. The forward-only order has no motion vectors, so it never jitters. DLSS,
+    // when it resolves, always does, through as many phases as it upscales (TaaJitterPhaseCount).
+    const bool dlssEnabled = m_activeDlssMode != DlssMode::Off && m_dlss->HasFeature();
+    const bool taaEnabled = dlssEnabled || (packet.renderDebug.taa && !packet.renderDebug.forwardOnly);
     ViewportMatrices renderMatrices = packet.viewportMatrices;
+    glm::vec2 jitterPixels(0.0f);
     if (taaEnabled)
     {
         const VkExtent2D extent = m_sceneTargets->GetExtent();
+        const VkExtent2D outputExtent = m_sceneTargets->GetOutputExtent();
+        const uint32_t phases = TaaJitterPhaseCount(
+            glm::uvec2(extent.width, extent.height),
+            glm::uvec2(outputExtent.width, outputExtent.height));
+        jitterPixels = TaaJitterPixels(m_taaFrameIndex++, phases);
         renderMatrices.renderProjection = JitterProjection(
             renderMatrices.renderProjection,
-            TaaJitterPixels(m_taaFrameIndex++),
+            jitterPixels,
             glm::uvec2(extent.width, extent.height));
     }
 
@@ -1204,7 +1232,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
         packet.renderDebug.specularAntiAliasing && !packet.renderDebug.khronosReference,
         preExposure,
-        ddgiData);
+        ddgiData,
+        dlssEnabled ? UpscaleTextureMipBias(
+                          glm::uvec2(m_sceneTargets->GetExtent().width, m_sceneTargets->GetExtent().height),
+                          glm::uvec2(m_sceneTargets->GetOutputExtent().width, m_sceneTargets->GetOutputExtent().height))
+                    : 0.0f);
     m_cpuStages.Mark("Uniforms");
     // Culled against the jittered projection, the one the GPU rasterises with.
     std::vector<VulkanDrawItem> drawItems =
@@ -1260,6 +1292,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         m_referenceFrame.ddgiSpacings[level] = ddgiData.spacing[level];
     }
     frame.extent = m_sceneTargets->GetExtent();
+    frame.outputExtent = m_sceneTargets->GetOutputExtent();
     frame.drawItems = drawItems;
     frame.blendDrawItemBegin = static_cast<size_t>(
         std::partition_point(
@@ -1342,6 +1375,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
+    if (dlssEnabled)
+    {
+        frame.dlss = m_dlss.get();
+        frame.jitterPixels = jitterPixels;
+        frame.dlssReset = m_dlssResetPending;
+        frame.frameTimeMs = packet.deltaSeconds * 1000.0f;
+        m_dlssResetPending = false;
+    }
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
@@ -1355,17 +1396,17 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     const std::vector<ShadowDrawItem> selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, models, viewProjection);
     frame.selectionDrawItems = selectionDrawItems;
     frame.selectionViewProjection = viewProjection;
-    // Blender's outline is about a pixel and a half at its UI scale; here in the scene targets' pixels,
-    // which the render scale makes fewer than the screen's.
+    // Blender's outline is about a pixel and a half at its UI scale; here in the output's pixels,
+    // which the render scale makes fewer than the screen's (DLSS outputs every one).
     frame.selectionOutlineWidth =
-        1.5f * packet.uiScale * std::clamp(renderDebug.renderScale, 0.25f, 1.0f);
+        1.5f * packet.uiScale * (dlssEnabled ? 1.0f : std::clamp(renderDebug.renderScale, 0.25f, 1.0f));
 
     // A recording takes the tone mapped image the viewport shows, without the editor's overlays,
     // when its video wants a frame for this moment. Frames of another size than the recording's
     // (the targets not yet resized to the size it fixed) are left out.
     const double videoFrameTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     VideoRecorder* const videoRecorder = ActiveVideoRecorder();
-    const VkExtent2D videoExtent = m_sceneTargets->GetExtent();
+    const VkExtent2D videoExtent = m_sceneTargets->GetOutputExtent();
     const bool recordVideoFrame =
         videoRecorder != nullptr &&
         videoExtent.width == videoRecorder->GetSettings().width &&
@@ -1629,9 +1670,10 @@ void VulkanRenderer::CreateSwapchainResources()
     const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : SrgbFormatOf(m_swapchain->GetImageFormat());
     const bool ldrFormatMatchesSwapchain =
         m_sceneTargets != nullptr && m_sceneTargets->GetFormat(RenderTargetId::SceneLdr) == ldrFormat;
+    // At the viewport's size: SyncSceneTargets moves the render size to DLSS's before a frame draws.
     if (ldrFormatMatchesSwapchain)
     {
-        m_sceneTargets->Rebuild(viewportExtent, swapchainImageCount);
+        m_sceneTargets->Rebuild(viewportExtent, viewportExtent, swapchainImageCount);
     }
     else
     {
@@ -1640,8 +1682,11 @@ void VulkanRenderer::CreateSwapchainResources()
             m_device->GetHandle(),
             ldrFormat,
             viewportExtent,
+            viewportExtent,
             swapchainImageCount);
     }
+    m_activeDlssMode = DlssMode::Off;
+    m_dlssResetPending = true;
     // The clouds' targets follow the scene's extent; the descriptor sets built after this name the
     // target, and the device is idle here.
     m_atmosphere->EnsureCloudTarget(m_sceneTargets->GetExtent());
@@ -1871,7 +1916,7 @@ void VulkanRenderer::CaptureViewportNow(const std::filesystem::path& path)
     const uint32_t index = m_sceneTargets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
     request.image = m_sceneTargets->GetImage(RenderTargetId::SceneLdr, index);
     request.format = m_sceneTargets->GetFormat(RenderTargetId::SceneLdr);
-    request.extent = m_sceneTargets->GetExtent();
+    request.extent = m_sceneTargets->GetOutputExtent();
     // The ImGui pass sampled it last, so the tracker left it shader-read.
     request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     CaptureImageToPng(request, path);
@@ -2408,14 +2453,44 @@ VkExtent2D VulkanRenderer::WantedSwapchainExtent() const
         m_device->QuerySurfaceCapabilities());
 }
 
-void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent)
+VulkanRenderer::SceneExtents VulkanRenderer::ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
+{
+    SceneExtents extents;
+    extents.output = ToVkExtent(viewportExtent);
+    extents.render = extents.output;
+    // DLSS needs the deferred order's motion vectors; where it cannot run, the engine's TAA resolves
+    // at the viewport's size (which the editor already scaled by the render scale).
+    if (renderDebug.dlssMode != DlssMode::Off && !renderDebug.forwardOnly && m_dlss->IsAvailable())
+    {
+        const std::optional<VkExtent2D> render = m_dlss->RenderExtentFor(extents.output, renderDebug.dlssMode);
+        if (render.has_value() && m_dlss->EnsureFeature(*render, extents.output, renderDebug.dlssMode))
+        {
+            extents.render = *render;
+            extents.dlss = renderDebug.dlssMode;
+            return extents;
+        }
+    }
+    m_dlss->ReleaseFeature();
+    return extents;
+}
+
+void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
 {
     if (!m_swapchain || !m_sceneTargets || !viewportExtent.IsValid())
     {
         return;
     }
 
-    if (m_sceneTargets->MatchesExtent(ToVkExtent(viewportExtent)))
+    const SceneExtents extents = ResolveSceneExtents(viewportExtent, renderDebug);
+    if (extents.dlss != m_activeDlssMode)
+    {
+        // Another resolve, or DLSS at another quality: no history carries over.
+        LOG_INFO("Temporal resolve: {}", extents.dlss == DlssMode::Off ? "TAA" : "DLSS");
+        m_activeDlssMode = extents.dlss;
+        m_dlssResetPending = true;
+        m_taaHistory.Reset();
+    }
+    if (m_sceneTargets->MatchesExtent(extents.render, extents.output))
     {
         return;
     }
@@ -2426,7 +2501,8 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent)
     // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
     vkDeviceWaitIdle(m_device->GetHandle());
     m_sceneTargets->Rebuild(
-        ToVkExtent(viewportExtent),
+        extents.render,
+        extents.output,
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     m_gbufferDescriptors->OnTargetsRebuilt(*m_sceneTargets);
     for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
@@ -2449,10 +2525,13 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent)
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
+    m_dlssResetPending = true;
     LOG_INFO(
-        "Scene render targets resized to {}x{}",
+        "Scene render targets resized to {}x{}, output {}x{}",
         m_sceneTargets->GetExtent().width,
-        m_sceneTargets->GetExtent().height);
+        m_sceneTargets->GetExtent().height,
+        m_sceneTargets->GetOutputExtent().width,
+        m_sceneTargets->GetOutputExtent().height);
 }
 
 void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)

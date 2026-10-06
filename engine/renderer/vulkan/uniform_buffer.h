@@ -220,6 +220,10 @@ struct alignas(16) CameraUniformData
     glm::vec4 ambientGradient[3]{};
     // Appended last.
     DdgiUniformData ddgi;
+    // x = the material textures' mip bias: log2(render width / output width) while DLSS upscales,
+    // so textures keep the output's detail (DLSS programming guide 3.5); 0 otherwise. yzw unused.
+    // Appended last.
+    glm::vec4 textureParams{0.0f};
 };
 
 // This struct is memcpy'd straight into the GPU uniform buffer, so its byte layout must match
@@ -231,7 +235,7 @@ static_assert(sizeof(GpuLightData) == 80, "GpuLightData must stay 5 x vec4 to ma
 inline constexpr size_t kCameraBlockHeaderBytes = 2 * 64 + 4 * 16;
 static_assert(
     sizeof(CameraUniformData) ==
-        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16 + 16 + 3 * 16 + 6 * 16,
+        kCameraBlockHeaderBytes + kShadowCascadeCount * 64 + 3 * 16 + 64 + 64 + kEnvironmentUniformVec4Count * 16 + 64 + 16 + 16 + 3 * 16 + 6 * 16 + 16,
     "CameraUniformData layout drifted from the shader CameraBuffer std140 block");
 static_assert(
     offsetof(CameraUniformData, ddgi) ==
@@ -366,7 +370,8 @@ class VulkanUniformBuffer
         const glm::mat4& viewProjNoJitter,
         bool specularAntiAliasing,
         float preExposure,
-        const DdgiUniformData& ddgi);
+        const DdgiUniformData& ddgi,
+        float textureMipBias);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

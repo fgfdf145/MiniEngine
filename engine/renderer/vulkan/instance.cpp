@@ -4,6 +4,7 @@
 #include <engine/core/version/engine_version.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace me
@@ -72,7 +73,7 @@ VkDebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo()
 }
 }
 
-VulkanInstance::VulkanInstance(SDL_Window* window)
+VulkanInstance::VulkanInstance(SDL_Window* window, std::span<const std::string> optionalExtensions)
 {
     if (!window)
     {
@@ -85,7 +86,7 @@ VulkanInstance::VulkanInstance(SDL_Window* window)
         LOG_WARN("Vulkan validation layer '{}' not available; running without validation", kValidationLayerName);
     }
 
-    const std::vector<const char*> extensions = GetRequiredExtensions(enableValidation);
+    const std::vector<const char*> extensions = GetRequiredExtensions(enableValidation, optionalExtensions);
 
     LOG_INFO("Creating Vulkan instance (validation: {})", enableValidation ? "on" : "off");
     for (size_t i = 0; i < extensions.size(); ++i)
@@ -164,7 +165,12 @@ VkSurfaceKHR VulkanInstance::GetSurface() const
     return m_surface;
 }
 
-std::vector<const char*> VulkanInstance::GetRequiredExtensions(bool enableValidation) const
+bool VulkanInstance::OptionalExtensionsEnabled() const
+{
+    return m_optionalExtensionsEnabled;
+}
+
+std::vector<const char*> VulkanInstance::GetRequiredExtensions(bool enableValidation, std::span<const std::string> optionalExtensions)
 {
     Uint32 extensionCount = 0;
     const char* const* extensionNames = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
@@ -192,12 +198,40 @@ std::vector<const char*> VulkanInstance::GetRequiredExtensions(bool enableValida
     vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
     std::vector<VkExtensionProperties> available(availableCount);
     vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
-    for (const VkExtensionProperties& extension : available)
+    const auto isAvailable = [&available](const char* name)
     {
-        if (std::strcmp(extension.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0)
+        return std::any_of(available.begin(), available.end(), [name](const VkExtensionProperties& extension)
+                           {
+                               return std::strcmp(extension.extensionName, name) == 0;
+                           });
+    };
+    const auto isEnabled = [&extensions](const char* name)
+    {
+        return std::any_of(extensions.begin(), extensions.end(), [name](const char* enabled)
+                           {
+                               return std::strcmp(enabled, name) == 0;
+                           });
+    };
+    if (isAvailable(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+    {
+        extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+    }
+
+    m_optionalExtensionsEnabled = true;
+    for (const std::string& name : optionalExtensions)
+    {
+        if (isEnabled(name.c_str()))
         {
-            extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-            break;
+            continue;
+        }
+        if (isAvailable(name.c_str()))
+        {
+            extensions.push_back(name.c_str());
+        }
+        else
+        {
+            LOG_WARN("Optional instance extension {} is not available", name);
+            m_optionalExtensionsEnabled = false;
         }
     }
 

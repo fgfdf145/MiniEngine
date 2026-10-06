@@ -151,18 +151,39 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // Renders as the Khronos glTF Sample Viewer does by default: PBR Neutral, fixed exposure,
         // no glare, AO or SSR, and the viewer's camera framing whenever the scene or viewport changes.
         ImGui::Checkbox("Khronos reference view (comparison)", &m_renderDebug.khronosReference);
-        // The scene's share of the viewport's pixels: 100 % renders every display pixel.
+        // The scene's share of the viewport's pixels: 100 % renders every display pixel. DLSS picks its
+        // own render size from its quality mode.
+        ImGui::BeginDisabled(DlssResolves());
         float renderScalePercent = m_renderDebug.renderScale * 100.0f;
         if (ImGui::SliderFloat("Render scale", &renderScalePercent, 25.0f, 100.0f, "%.0f %%"))
         {
             m_renderDebug.renderScale = renderScalePercent / 100.0f;
         }
+        ImGui::EndDisabled();
+        // NVIDIA DLSS replaces TAA in the deferred order: DLAA at the viewport's size, or super
+        // resolution from a smaller render size. Where it cannot run, TAA resolves instead.
+        static constexpr std::array<const char*, 6> kDlssModeNames = {
+            "Off", "DLAA", "Quality", "Balanced", "Performance", "Ultra Performance"};
+        int dlssMode = static_cast<int>(m_renderDebug.dlssMode);
+        ImGui::BeginDisabled(!m_dlssAvailable || m_renderDebug.forwardOnly);
+        if (ImGui::Combo("DLSS", &dlssMode, kDlssModeNames.data(), static_cast<int>(kDlssModeNames.size())))
+        {
+            m_renderDebug.dlssMode = static_cast<DlssMode>(dlssMode);
+        }
+        ImGui::EndDisabled();
+        if (!m_dlssAvailable)
+        {
+            ImGui::TextDisabled("DLSS: %s", m_dlssStatus.c_str());
+        }
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         ImGui::Checkbox("Local light shadows", &m_renderDebug.localLightShadows);
         DragFloatInRange("Shadow distance (m)", &m_renderDebug.shadowDistance, 10.0f, 5000.0f, "%.0f");
-        // The forward-only order has no motion vectors, so TAA is off there whatever this says.
+        // The forward-only order has no motion vectors, so TAA is off there whatever this says; DLSS
+        // takes its place while it resolves.
+        ImGui::BeginDisabled(DlssResolves());
         ImGui::Checkbox("Temporal anti-aliasing", &m_renderDebug.taa);
+        ImGui::EndDisabled();
         ImGui::Checkbox("Specular anti-aliasing", &m_renderDebug.specularAntiAliasing);
         // Bloom needs no motion vectors, so unlike what follows it works in the forward-only order.
         ImGui::SeparatorText("Glare (bloom)");

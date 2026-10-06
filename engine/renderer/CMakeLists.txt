@@ -125,6 +125,8 @@ add_library(engine_renderer
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
+    vulkan/dlss.cpp
+    vulkan/dlss.h
     vulkan/environment_probe.cpp
     vulkan/environment_probe.h
     vulkan/exposure_histogram_pass.cpp
@@ -218,6 +220,7 @@ set(MINIENGINE_SHADER_SOURCES
     gi_resolve.comp
     gi_composite.frag
     taa_resolve.comp
+    dlss_motion_vectors.comp
     bloom.comp
     atmosphere_transmittance.comp
     atmosphere_multiscattering.comp
@@ -328,6 +331,9 @@ target_link_libraries(engine_renderer
     PRIVATE
         engine_logic
 )
+if(MINIENGINE_DLSS_FOUND)
+    target_link_libraries(engine_renderer PRIVATE miniengine_ngx)
+endif()
 target_include_directories(engine_renderer PRIVATE "${Stb_INCLUDE_DIR}")
 
 add_dependencies(engine_renderer engine_renderer_shaders)

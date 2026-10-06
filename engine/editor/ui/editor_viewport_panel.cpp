@@ -1165,7 +1165,8 @@ void EditorUiController::DrawViewportPanel(
             ImGui::EndDragDropTarget();
         }
 
-        result.viewportExtent = BuildViewportExtent(viewportRect, std::clamp(m_renderDebug.renderScale, 0.25f, 1.0f));
+        result.viewportExtent =
+            BuildViewportExtent(viewportRect, DlssResolves() ? 1.0f : std::clamp(m_renderDebug.renderScale, 0.25f, 1.0f));
         result.viewportInteractionRect = SDL_FRect{
             viewportRect.origin.x,
             viewportRect.origin.y,

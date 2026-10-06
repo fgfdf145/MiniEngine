@@ -54,7 +54,9 @@ void main()
         // The flat background of EnvironmentMode::None is skipped: it is a fixed display value, not
         // radiance, so metering it would feed the exposure back into itself. A physical sky is
         // radiance like any surface and is metered.
-        float depth = texelFetch(depthTexture, pixel, 0).r;
+        // The depth is at the render size, which DLSS upscales from.
+        ivec2 depthPixel = pixel * textureSize(depthTexture, 0) / textureSize(hdrTexture, 0);
+        float depth = texelFetch(depthTexture, depthPixel, 0).r;
         if (!IsFarDepth(depth) || constants.meterBackground != 0u)
         {
             vec3 radiance = min(texelFetch(hdrTexture, pixel, 0).rgb, vec3(65504.0)) * constants.invPreExposure;

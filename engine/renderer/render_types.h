@@ -171,6 +171,19 @@ enum class ToneMapper : uint32_t
     None = 2
 };
 
+// NVIDIA DLSS (VulkanDlss): off, DLAA at the output size, or super resolution from DLSS's own render
+// size for each quality. Where DLSS is unavailable every mode falls back to the engine's TAA at the
+// render scale. The values are what the settings files store.
+enum class DlssMode : uint32_t
+{
+    Off = 0,
+    Dlaa = 1,
+    Quality = 2,
+    Balanced = 3,
+    Performance = 4,
+    UltraPerformance = 5
+};
+
 // Saved in miniengine.settings.json (EngineViewSettings), all but the G-buffer view: a debug view
 // left on should not survive a restart.
 struct RenderDebugSettings
@@ -213,7 +226,10 @@ struct RenderDebugSettings
     // glare/bloom, AO, GI or SSR, and the viewer's camera framing. Off, nothing changes.
     bool khronosReference = false;
     // The scene's resolution as a share of the viewport's pixels (see ScaleViewportExtent), from 0.25
-    // to 1: below 1 it renders fewer pixels and is stretched to fill the panel.
+    // to 1: below 1 it renders fewer pixels and is stretched to fill the panel. DLSS, when it runs,
+    // picks the render size itself and outputs every pixel of the viewport.
     float renderScale = 1.0f;
+    // Replaces TAA, in the deferred order, where the device runs DLSS.
+    DlssMode dlssMode = DlssMode::Off;
 };
 }

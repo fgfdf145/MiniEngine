@@ -1,5 +1,8 @@
 #include "taa_jitter.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace me
 {
 
@@ -20,12 +23,25 @@ float Halton(uint32_t index, uint32_t base)
 }
 }
 
-glm::vec2 TaaJitterPixels(uint32_t frameIndex)
+uint32_t TaaJitterPhaseCount(glm::uvec2 renderExtent, glm::uvec2 outputExtent)
+{
+    const double renderPixels = static_cast<double>(std::max(renderExtent.x, 1u)) * std::max(renderExtent.y, 1u);
+    const double outputPixels = static_cast<double>(outputExtent.x) * outputExtent.y;
+    const double phases = std::round(kTaaJitterSequenceLength * outputPixels / renderPixels);
+    return static_cast<uint32_t>(std::clamp(phases, static_cast<double>(kTaaJitterSequenceLength), 256.0));
+}
+
+float UpscaleTextureMipBias(glm::uvec2 renderExtent, glm::uvec2 outputExtent)
+{
+    return std::log2(static_cast<float>(std::max(renderExtent.x, 1u)) / static_cast<float>(std::max(outputExtent.x, 1u))) - 1.0f;
+}
+
+glm::vec2 TaaJitterPixels(uint32_t frameIndex, uint32_t phaseCount)
 {
     // Halton(2, 3) from index 1: index 0 is (0, 0), which would put one sample in eight on the
     // pixel's corner. Eight points of this sequence cover the pixel evenly, and the pattern
-    // repeats before the eye can pick out a cycle.
-    const uint32_t index = frameIndex % kTaaJitterSequenceLength + 1;
+    // repeats before the eye can pick out a cycle; a longer cycle covers it more finely.
+    const uint32_t index = frameIndex % std::max(phaseCount, 1u) + 1;
     return glm::vec2(Halton(index, 2), Halton(index, 3)) - 0.5f;
 }
 

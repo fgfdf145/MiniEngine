@@ -23,6 +23,7 @@ endif()
 include(CTest)
 include(cmake/MiniEngineBuildOptions.cmake)
 include(cmake/MiniEngineDependencies.cmake)
+include(cmake/MiniEngineDlss.cmake)
 
 add_subdirectory(third_party/enkiTS)
 add_subdirectory(engine/core)

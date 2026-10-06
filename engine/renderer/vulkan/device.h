@@ -2,13 +2,21 @@
 
 #include "common.h"
 
+#include <functional>
+#include <string>
+
 namespace me
 {
 
 class VulkanDevice
 {
   public:
-    VulkanDevice(VkInstance instance, VkSurfaceKHR surface);
+    // Extensions some feature asks for once the physical device is chosen (DLSS's, VulkanDlss).
+    using OptionalExtensions = std::function<std::vector<std::string>(VkPhysicalDevice)>;
+
+    // optionalExtensions' extensions are enabled where the device offers them; whether all of them
+    // were is OptionalExtensionsEnabled.
+    VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions = {});
     ~VulkanDevice();
 
     VulkanDevice(const VulkanDevice&) = delete;
@@ -28,6 +36,7 @@ class VulkanDevice
     // Whether the independentBlend feature is enabled, which deferred decals need; without it they
     // stay forward shaded Blend items.
     bool SupportsIndependentBlend() const;
+    bool OptionalExtensionsEnabled() const;
 
   private:
     bool IsSuitable(VkPhysicalDevice device) const;
@@ -43,5 +52,6 @@ class VulkanDevice
     VkQueue m_presentQueue = VK_NULL_HANDLE;
     bool m_supportsBlockCompression = false;
     bool m_supportsIndependentBlend = false;
+    bool m_optionalExtensionsEnabled = true;
 };
 }

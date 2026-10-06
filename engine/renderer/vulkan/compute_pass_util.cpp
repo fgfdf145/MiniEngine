@@ -196,7 +196,7 @@ HistoryImagePair::~HistoryImagePair()
     Destroy();
 }
 
-void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format)
+void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage)
 {
     Destroy();
     m_device = device;
@@ -211,7 +211,7 @@ void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, 
         imageInfo.format = format;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | extraUsage;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &history.image), "Failed to create a history image");
@@ -253,6 +253,11 @@ void HistoryImagePair::Destroy()
         }
         history = Image{};
     }
+}
+
+VkImage HistoryImagePair::GetImage(uint32_t index) const
+{
+    return m_images.at(index).image;
 }
 
 VkImageView HistoryImagePair::GetView(uint32_t index) const

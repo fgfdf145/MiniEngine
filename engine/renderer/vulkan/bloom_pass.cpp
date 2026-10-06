@@ -88,7 +88,7 @@ VulkanBloomPass::VulkanBloomPass(
         // deepest chain so a resize never needs a new one.
         const uint32_t setCount = targets.GetTransientCopyCount() * 2 + kMaxBloomLevels * 2;
         m_descriptorPool = CreateImageDescriptorPool(m_device, setCount, 1, 1);
-        CreateChain(targets.GetExtent());
+        CreateChain(targets.GetOutputExtent());
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -152,12 +152,12 @@ void VulkanBloomPass::Record(
         &discard);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
-    const glm::uvec2 sceneExtent(frame.extent.width, frame.extent.height);
+    const glm::uvec2 sceneExtent(frame.outputExtent.width, frame.outputExtent.height);
     // Each level's share of every pixel's energy (see ComputeGlareBands). The upsample chain sums
     // band_k * blur_k into level 0, and the composite keeps 1 - total where it was.
     const size_t levelCount = m_levelExtents.size();
     const std::vector<glm::vec3> bands =
-        ComputeGlareBands(frame.glareFNumber, frame.extent.height, levelCount, std::max(frame.bloom.strength, 0.0f));
+        ComputeGlareBands(frame.glareFNumber, frame.outputExtent.height, levelCount, std::max(frame.bloom.strength, 0.0f));
     glm::vec3 total(0.0f);
     for (const glm::vec3& band : bands)
     {
@@ -209,7 +209,7 @@ void VulkanBloomPass::Record(
 
 void VulkanBloomPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    CreateChain(targets.GetExtent());
+    CreateChain(targets.GetOutputExtent());
     CreateDescriptorSets(targets);
 }
 

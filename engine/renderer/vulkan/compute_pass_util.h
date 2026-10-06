@@ -79,9 +79,11 @@ class HistoryImagePair
     HistoryImagePair(const HistoryImagePair&) = delete;
     HistoryImagePair& operator=(const HistoryImagePair&) = delete;
 
-    void Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format);
+    // Storage and sampled, plus extraUsage (TAA's are copied into when DLSS writes the frame).
+    void Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage = 0);
     void Destroy();
 
+    VkImage GetImage(uint32_t index) const;
     VkImageView GetView(uint32_t index) const;
 
     // Both images, compute to compute. Invalid history is discarded with an UNDEFINED to GENERAL

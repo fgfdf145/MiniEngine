@@ -57,12 +57,15 @@ SceneRenderTargets::SceneRenderTargets(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     VkFormat ldrFormat,
-    VkExtent2D extent,
+    VkExtent2D renderExtent,
+    VkExtent2D outputExtent,
     uint32_t swapchainImageCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_extent({std::max(extent.width, 1u),
-                std::max(extent.height, 1u)})
+      m_extent({std::max(renderExtent.width, 1u),
+                std::max(renderExtent.height, 1u)}),
+      m_outputExtent({std::max(outputExtent.width, 1u),
+                      std::max(outputExtent.height, 1u)})
 {
     SelectFormats(ldrFormat);
     CreateImages(swapchainImageCount);
@@ -104,16 +107,28 @@ VkExtent2D SceneRenderTargets::GetExtent() const
     return m_extent;
 }
 
+VkExtent2D SceneRenderTargets::GetOutputExtent() const
+{
+    return m_outputExtent;
+}
+
 VkExtent2D SceneRenderTargets::GetTargetExtent(RenderTargetId target) const
 {
-    const uint32_t downscale = Describe(target).downscale;
+    const TargetDescription& description = Describe(target);
+    if (description.outputSized)
+    {
+        return m_outputExtent;
+    }
+    const uint32_t downscale = description.downscale;
     return {(m_extent.width + downscale - 1) / downscale, (m_extent.height + downscale - 1) / downscale};
 }
 
-bool SceneRenderTargets::MatchesExtent(VkExtent2D extent) const
+bool SceneRenderTargets::MatchesExtent(VkExtent2D renderExtent, VkExtent2D outputExtent) const
 {
-    return m_extent.width == std::max(extent.width, 1u) &&
-           m_extent.height == std::max(extent.height, 1u);
+    return m_extent.width == std::max(renderExtent.width, 1u) &&
+           m_extent.height == std::max(renderExtent.height, 1u) &&
+           m_outputExtent.width == std::max(outputExtent.width, 1u) &&
+           m_outputExtent.height == std::max(outputExtent.height, 1u);
 }
 
 uint32_t SceneRenderTargets::GetTransientCopyCount() const
@@ -155,14 +170,16 @@ void SceneRenderTargets::ReleaseImages()
     }
 }
 
-void SceneRenderTargets::Rebuild(VkExtent2D extent, uint32_t swapchainImageCount)
+void SceneRenderTargets::Rebuild(VkExtent2D renderExtent, VkExtent2D outputExtent, uint32_t swapchainImageCount)
 {
-    const VkExtent2D clamped = {std::max(extent.width, 1u), std::max(extent.height, 1u)};
+    const VkExtent2D clamped = {std::max(renderExtent.width, 1u), std::max(renderExtent.height, 1u)};
+    const VkExtent2D clampedOutput = {std::max(outputExtent.width, 1u), std::max(outputExtent.height, 1u)};
 
     // Snapshot what is live, build the replacement into the members, and put the snapshot back
     // if anything throws. A failure therefore leaves the previous, still-valid set in place.
     std::array<TargetDescription, kRenderTargetCount> previous = std::move(m_targets);
     const VkExtent2D previousExtent = m_extent;
+    const VkExtent2D previousOutputExtent = m_outputExtent;
     const uint32_t previousImageCount = m_swapchainImageCount;
 
     // Only the four scalar description fields are carried over; the images vectors start empty
@@ -177,11 +194,14 @@ void SceneRenderTargets::Rebuild(VkExtent2D extent, uint32_t swapchainImageCount
         description.usage = previous[index].usage;
         description.aspect = previous[index].aspect;
         description.bindToImGui = previous[index].bindToImGui;
+        description.downscale = previous[index].downscale;
+        description.outputSized = previous[index].outputSized;
         // A moved-from vector is valid but unspecified, and clear() neither allocates nor throws,
         // so this is what makes "starts empty" a guarantee rather than an observation.
         description.images.clear();
     }
     m_extent = clamped;
+    m_outputExtent = clampedOutput;
 
     try
     {
@@ -192,6 +212,7 @@ void SceneRenderTargets::Rebuild(VkExtent2D extent, uint32_t swapchainImageCount
         DestroyImages(m_targets);
         m_targets = std::move(previous);
         m_extent = previousExtent;
+        m_outputExtent = previousOutputExtent;
         m_swapchainImageCount = previousImageCount;
         throw;
     }
@@ -255,6 +276,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     ldr.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     ldr.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     ldr.bindToImGui = true;
+    ldr.outputSized = true;
 
     // Written by the geometry pass; sampled by the lighting pass and the tone mapping debug views;
     // never bound to ImGui. Formats and channel contents follow the spec's G-buffer encoding table
@@ -358,9 +380,13 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         kTaaCandidates,
         VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
         query);
-    taa.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // DLSS writes it as well (VulkanTaaPass), at the output size, and may clear it first; a copy keeps
+    // it as SSR's history.
+    taa.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     taa.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     taa.bindToImGui = false;
+    taa.outputSized = true;
 
     // The selection outline. Its depth is the selected entity's alone, in the scene depth's format
     // and sampled the same way; the outline is what ImGui draws over the viewport image, in the LDR
@@ -371,12 +397,14 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     selectionDepth.usage = depth.usage;
     selectionDepth.aspect = depth.aspect;
     selectionDepth.bindToImGui = false;
+    selectionDepth.outputSized = true;
 
     TargetDescription& selectionOutline = Describe(RenderTargetId::SelectionOutline);
     selectionOutline.format = ldrFormat;
     selectionOutline.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     selectionOutline.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     selectionOutline.bindToImGui = true;
+    selectionOutline.outputSized = true;
 
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
