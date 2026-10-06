@@ -67,3 +67,13 @@ assets/**/*.ktx2
 
 # Viewport captures (Tools > Capture Viewport)
 /captures/
+
+# Stray Visual Studio output folder (MSBuild on the .slnx without CMake).
+/x64/
+
+# Agent worktrees and local tool state.
+.claude/worktrees/
+.superpowers/
+
+# Python bytecode from tools/ scripts.
+__pycache__/
