@@ -24,6 +24,7 @@ RenderTargetKind GetRenderTargetKind(RenderTargetId target)
     switch (target)
     {
     case RenderTargetId::SceneDepth:
+    case RenderTargetId::SelectionDepth:
         return RenderTargetKind::Depth;
     case RenderTargetId::AoRaw:
     case RenderTargetId::SceneAo:

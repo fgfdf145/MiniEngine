@@ -126,14 +126,24 @@ uint32_t SceneRenderTargets::GetLdrCopyCount() const
     return m_swapchainImageCount;
 }
 
+bool SceneRenderTargets::IsSwapchainIndexed(RenderTargetId target)
+{
+    return target == RenderTargetId::SceneLdr || target == RenderTargetId::SelectionOutline;
+}
+
 uint32_t SceneRenderTargets::ResolveIndex(RenderTargetId target, uint32_t imageIndex, uint32_t frameSlot) const
 {
-    return target == RenderTargetId::SceneLdr ? imageIndex : frameSlot;
+    return IsSwapchainIndexed(target) ? imageIndex : frameSlot;
 }
 
 ImTextureID SceneRenderTargets::GetLdrTextureId(uint32_t imageIndex) const
 {
     return ToImTextureId(Describe(RenderTargetId::SceneLdr).images.at(imageIndex).imguiBinding);
+}
+
+ImTextureID SceneRenderTargets::GetSelectionOutlineTextureId(uint32_t imageIndex) const
+{
+    return ToImTextureId(Describe(RenderTargetId::SelectionOutline).images.at(imageIndex).imguiBinding);
 }
 
 void SceneRenderTargets::ReleaseImages()
@@ -352,6 +362,22 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     taa.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     taa.bindToImGui = false;
 
+    // The selection outline. Its depth is the selected entity's alone, in the scene depth's format
+    // and sampled the same way; the outline is what ImGui draws over the viewport image, in the LDR
+    // target's format so that its colour reaches the screen as the viewport's does (sRGB-encoded on
+    // write for an SDR swapchain, display-linear for HDR10).
+    TargetDescription& selectionDepth = Describe(RenderTargetId::SelectionDepth);
+    selectionDepth.format = depth.format;
+    selectionDepth.usage = depth.usage;
+    selectionDepth.aspect = depth.aspect;
+    selectionDepth.bindToImGui = false;
+
+    TargetDescription& selectionOutline = Describe(RenderTargetId::SelectionOutline);
+    selectionOutline.format = ldrFormat;
+    selectionOutline.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    selectionOutline.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    selectionOutline.bindToImGui = true;
+
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
     // cause; phase three appends GB4, so name the omission at the point it happens.
@@ -374,7 +400,7 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
         const RenderTargetId target = static_cast<RenderTargetId>(index);
         TargetDescription& description = m_targets[index];
         const uint32_t copyCount =
-            target == RenderTargetId::SceneLdr ? swapchainImageCount : GetTransientCopyCount();
+            IsSwapchainIndexed(target) ? swapchainImageCount : GetTransientCopyCount();
 
         description.images.assign(copyCount, TargetImage{});
         for (TargetImage& image : description.images)

@@ -46,6 +46,10 @@ struct RenderFramePacket
     // SceneMinimap::image when the minimap is valid, else empty.
     std::string minimapPath;
     CollectedSceneLights lights;
+    // The editor's selection, which the selection outline draws around; entt::null without one.
+    entt::entity selectedEntity = entt::null;
+    // The editor UI's scale, which the outline's width follows.
+    float uiScale = 1.0f;
     // The renderables changed since the last frame: the render thread starts an upload.
     bool contentChanged = false;
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;

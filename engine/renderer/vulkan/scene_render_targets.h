@@ -22,8 +22,9 @@ namespace me
 //   * SceneDepth, SceneHdr and the four G-buffer targets are transient. They are written and read
 //     inside one command buffer, so kMaxFramesInFlight copies suffice, indexed by
 //     VulkanCommandContext::GetCurrentFrame().
-//   * SceneLdr is sampled by ImGui, whose texture binding is handed out before the command buffer
-//     is recorded, so it keeps one copy per swapchain image, indexed by the acquired image index.
+//   * SceneLdr and SelectionOutline are sampled by ImGui, whose texture binding is handed out
+//     before the command buffer is recorded, so they keep one copy per swapchain image, indexed by
+//     the acquired image index.
 //
 // Passing a frame slot where an image index belongs would silently sample the wrong target. What
 // prevents that is ResolveIndex: every caller holding both an index and a slot routes through it
@@ -63,6 +64,9 @@ class SceneRenderTargets
     // Copy counts for the two indexing schemes. Transient covers SceneDepth and SceneHdr.
     uint32_t GetTransientCopyCount() const;
     uint32_t GetLdrCopyCount() const;
+    // Whether the target keeps one copy per swapchain image (SceneLdr, SelectionOutline) rather
+    // than one per frame slot.
+    static bool IsSwapchainIndexed(RenderTargetId target);
 
     // Picks the index appropriate to a target's scheme. Every caller that has both an image index
     // and a frame slot in hand goes through this instead of restating the rule, so the rule lives
@@ -70,6 +74,7 @@ class SceneRenderTargets
     uint32_t ResolveIndex(RenderTargetId target, uint32_t imageIndex, uint32_t frameSlot) const;
 
     ImTextureID GetLdrTextureId(uint32_t imageIndex) const;
+    ImTextureID GetSelectionOutlineTextureId(uint32_t imageIndex) const;
 
     // Both must run with the in-flight frames already waited on, and ReleaseImages must run while
     // ImGui's Vulkan backend is still alive because it removes ImGui texture bindings.

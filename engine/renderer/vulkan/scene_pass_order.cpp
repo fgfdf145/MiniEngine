@@ -21,7 +21,9 @@ namespace
 // The three GI passes follow lighting, whose image is the light they bounce, and come before the
 // forward pass, whose surfaces they do not light; like AO they are in the deferred order only. The
 // DDGI debug views follow the composite, whose input they overwrite for the tone mapping pass to show.
-constexpr std::array<ScenePassId, 18> kDeferredOrder = {
+// The selection outline comes last in both: it reads the finished scene depth and writes an image of
+// its own, which nothing in the scene reads.
+constexpr std::array<ScenePassId, 20> kDeferredOrder = {
     ScenePassId::Geometry,
     ScenePassId::AoTrace,
     ScenePassId::AoResolve,
@@ -39,9 +41,11 @@ constexpr std::array<ScenePassId, 18> kDeferredOrder = {
     ScenePassId::Taa,
     ScenePassId::Bloom,
     ScenePassId::ExposureHistogram,
-    ScenePassId::Tonemap};
+    ScenePassId::Tonemap,
+    ScenePassId::SelectionMask,
+    ScenePassId::SelectionOutline};
 
-constexpr std::array<ScenePassId, 8> kForwardOnlyOrder = {
+constexpr std::array<ScenePassId, 10> kForwardOnlyOrder = {
     ScenePassId::Scatter,
     ScenePassId::Forward,
     ScenePassId::TransmissionCopy,
@@ -49,7 +53,9 @@ constexpr std::array<ScenePassId, 8> kForwardOnlyOrder = {
     ScenePassId::Taa,
     ScenePassId::Bloom,
     ScenePassId::ExposureHistogram,
-    ScenePassId::Tonemap};
+    ScenePassId::Tonemap,
+    ScenePassId::SelectionMask,
+    ScenePassId::SelectionOutline};
 }
 
 const char* ScenePassName(ScenePassId id)
@@ -92,6 +98,10 @@ const char* ScenePassName(ScenePassId id)
         return "ExposureHistogram";
     case ScenePassId::Tonemap:
         return "Tonemap";
+    case ScenePassId::SelectionMask:
+        return "SelectionMask";
+    case ScenePassId::SelectionOutline:
+        return "SelectionOutline";
     }
     return "Unknown";
 }

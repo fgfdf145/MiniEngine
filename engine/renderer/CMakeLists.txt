@@ -170,6 +170,8 @@ add_library(engine_renderer
     vulkan/sampler_settings.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
+    vulkan/selection_outline_pass.cpp
+    vulkan/selection_outline_pass.h
     vulkan/local_shadow_pass.cpp
     vulkan/local_shadow_pass.h
     vulkan/shadow_pass.cpp
@@ -235,6 +237,7 @@ set(MINIENGINE_SHADER_SOURCES
     shadow.vert
     shadow_depth.vert
     shadow.frag
+    selection_outline.frag
     imgui_hdr10.frag
     ssr_trace.comp
     ssr_resolve.comp

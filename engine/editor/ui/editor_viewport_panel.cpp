@@ -532,11 +532,29 @@ void DrawLightSelectionIndicator(
     DrawLightViewportIcon(viewportRect.drawList, screenPos, light.type, true, uiScale);
 }
 
+// The renderer's selection outline over the viewport image, as Blender outlines the active object.
+// Drawn every frame, selection or none: the image is transparent without one, and the selection
+// this frame's clicks make is the one the renderer outlines after them.
+void DrawViewportSelectionOutline(const ViewportOverlayRect& viewportRect, ImTextureID outlineTexture)
+{
+    if (viewportRect.drawList == nullptr || !outlineTexture)
+    {
+        return;
+    }
+    viewportRect.drawList->AddImage(
+        outlineTexture,
+        viewportRect.origin,
+        ImVec2(viewportRect.origin.x + viewportRect.size.x, viewportRect.origin.y + viewportRect.size.y));
+}
+
+// outlined: the renderer outlines the selection's meshes (DrawViewportSelectionOutline), so a model
+// needs no bounding box.
 void DrawViewportSelectionOverlay(
     const IEditorWorld& scene,
     const ViewportMatrices& matrices,
     const ViewportOverlayRect& viewportRect,
-    float uiScale)
+    float uiScale,
+    bool outlined)
 {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     if (drawList == nullptr || !scene.HasSelection())
@@ -550,6 +568,10 @@ void DrawViewportSelectionOverlay(
     if (scene.HasLightComponent(selected))
     {
         DrawLightSelectionIndicator(scene, selected, matrices, viewportRect, uiScale);
+        return;
+    }
+    if (outlined)
+    {
         return;
     }
 
@@ -1113,6 +1135,8 @@ void EditorUiController::DrawViewportPanel(
         if (!fullscreen)
         {
             DrawViewportOverlay(viewportRect, viewportTextureId);
+            // Under every other overlay, as in Blender.
+            DrawViewportSelectionOutline(viewportRect, m_selectionOutlineTexture);
         }
 
         if (const ImGuiPayload* dragPayload = ImGui::GetDragDropPayload();
@@ -1216,7 +1240,7 @@ void EditorUiController::DrawViewportPanel(
         std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
         AppendLightProjectedCenters(scene, matrices, viewportRect, m_effectiveUiScale, projectedCenters);
         HandleViewportSelection(scene, projectedCenters, viewportRect, m_effectiveUiScale);
-        DrawViewportSelectionOverlay(scene, matrices, viewportRect, m_effectiveUiScale);
+        DrawViewportSelectionOverlay(scene, matrices, viewportRect, m_effectiveUiScale, static_cast<bool>(m_selectionOutlineTexture));
         const float textMargin = kOverlayTextMarginPixels * m_effectiveUiScale;
         ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
         ImGui::BeginGroup();

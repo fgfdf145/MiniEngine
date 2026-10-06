@@ -213,6 +213,13 @@ class EditorUiController
     {
         m_minimapTexture = texture;
     }
+    // The selection outline the renderer draws for this frame (selection_outline_pass.h), the
+    // viewport's size, transparent but for the line; drawn over the viewport image. Null when the
+    // backend has none, and the selection is then shown by its bounding box.
+    void SetSelectionOutlineTexture(ImTextureID texture)
+    {
+        m_selectionOutlineTexture = texture;
+    }
     void SetVideoRecordingStatus(VideoRecordingIndicator status)
     {
         m_videoRecording = std::move(status);
@@ -412,6 +419,7 @@ class EditorUiController
     VehicleDriveStatus m_vehicleStatus;
     VideoRecordingIndicator m_videoRecording;
     ImTextureID m_minimapTexture = ImTextureID{};
+    ImTextureID m_selectionOutlineTexture = ImTextureID{};
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehicleHapticsSettings m_vehicleHaptics;

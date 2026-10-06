@@ -15,9 +15,9 @@ namespace me
 
 // Every offscreen target the scene passes read or write. The first three arrived in phase one,
 // the four G-buffer targets in phase two, then GBufferVelocity (motion vectors) and the two AO
-// targets; GB4 (entity id) is appended in phase three, which is why Count stays last. Only SceneLdr is indexed by swapchain
-// image; every other target is transient and indexed by frame slot (see
-// SceneRenderTargets::ResolveIndex).
+// targets; GB4 (entity id) is appended in phase three, which is why Count stays last. SceneLdr and
+// SelectionOutline, which ImGui samples, are indexed by swapchain image; every other target is
+// transient and indexed by frame slot (see SceneRenderTargets::ResolveIndex).
 enum class RenderTargetId : uint32_t
 {
     SceneDepth,
@@ -51,6 +51,10 @@ enum class RenderTargetId : uint32_t
     // composite adds to the lit image. rgb pre-exposed radiance.
     GiRaw,
     SceneGi,
+    // The selection outline (selection_outline_pass.h): the selected entity's own depth, drawn
+    // unjittered, and the outline found from it, which ImGui draws over the viewport image.
+    SelectionDepth,
+    SelectionOutline,
     Count
 };
 

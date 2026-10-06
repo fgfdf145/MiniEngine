@@ -34,11 +34,15 @@ enum class ScenePassId
     Taa,
     Bloom,
     ExposureHistogram,
-    Tonemap
+    Tonemap,
+    // The editor's selection outline (selection_outline_pass.h): the selected entity's depth, then
+    // the outline around it, into an image of its own that ImGui draws over the viewport.
+    SelectionMask,
+    SelectionOutline
 };
 
-// The passes to record, in order. Both orders end in the same exposure histogram and tone mapping
-// passes, so flipping the comparison switch isolates shading differences and never confounds them
+// The passes to record, in order. Both orders end in the same exposure histogram, tone mapping and
+// selection outline passes, so flipping the comparison switch isolates shading differences and never confounds them
 // with metering or tone mapping. The directional shadow pass is not a scene pass: the renderer
 // records it before whichever order this returns.
 //

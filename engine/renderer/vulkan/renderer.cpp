@@ -651,6 +651,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
     // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
     State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
+    State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -774,6 +775,8 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
         packet.minimapPath = world->GetMinimap().image;
     }
     packet.lights = world != nullptr ? CollectSceneLights(*world, State().rendererWorld) : CollectedSceneLights{};
+    packet.selectedEntity = world != nullptr && world->HasSelection() ? world->GetSelectedEntity() : entt::null;
+    packet.uiScale = State().editorUi.GetEffectiveUiScale();
 
     packet.contentChanged = contentChanged;
     packet.renderSubmeshes = State().rendererWorld.SnapshotRenderSubmeshes();
@@ -1339,6 +1342,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     m_taaHistoryPreExposure = preExposure;
     frame.physicalSky = environmentMode != EnvironmentMode::None;
     frame.groundPlane = environmentMode == EnvironmentMode::Atmosphere && environment.atmosphere.groundPlane;
+    // Unjittered, as the editor's other overlays are drawn, so the outline holds still.
+    const std::vector<ShadowDrawItem> selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, models, viewProjection);
+    frame.selectionDrawItems = selectionDrawItems;
+    frame.selectionViewProjection = viewProjection;
+    // Blender's outline is about a pixel and a half at its UI scale; here in the scene targets' pixels,
+    // which the render scale makes fewer than the screen's.
+    frame.selectionOutlineWidth =
+        1.5f * packet.uiScale * std::clamp(renderDebug.renderScale, 0.25f, 1.0f);
 
     // A recording takes the tone mapped image the viewport shows, without the editor's overlays,
     // when its video wants a frame for this moment. Frames of another size than the recording's
@@ -1363,6 +1374,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The UI named the render thread's textures by ID; with the swapchain image known, they get the
     // descriptor sets they have now.
     packet.ui.ReplaceTexture(kViewportTextureId, m_sceneTargets->GetLdrTextureId(imageIndex));
+    packet.ui.ReplaceTexture(kSelectionOutlineTextureId, m_sceneTargets->GetSelectionOutlineTextureId(imageIndex));
     packet.ui.ReplaceTexture(
         kMinimapTextureId,
         m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID_Invalid);
@@ -1445,7 +1457,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // ImGui samples the tone mapped image in the editor pass, which is
                                               // not an IScenePass because it writes the swapchain rather than a
                                               // scene target.
-                                              static constexpr std::array<RenderTargetId, 1> kImGuiReads = {RenderTargetId::SceneLdr};
+                                              static constexpr std::array<RenderTargetId, 2> kImGuiReads = {
+                                                  RenderTargetId::SceneLdr,
+                                                  RenderTargetId::SelectionOutline};
                                               RenderPassIo imguiIo{};
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(commandBuffer, imguiIo, frame);
@@ -2292,6 +2306,15 @@ void VulkanRenderer::CreateScenePasses()
         *m_sceneTargets,
         m_gbufferDescriptors->GetSetLayout(),
         m_gbufferDescriptors->GetEmptySetLayout()));
+    m_scenePasses.push_back(std::make_unique<VulkanSelectionMaskPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_materialSetLayout->GetHandle()));
+    m_scenePasses.push_back(std::make_unique<VulkanSelectionOutlinePass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets));
 }
 
 IScenePass* VulkanRenderer::FindScenePass(ScenePassId id) const
@@ -3232,6 +3255,45 @@ void VulkanRenderer::AppendDrawItem(
         transmissive,
         MaterialScatters(renderSubmesh.material),
         renderSubmesh.decal});
+}
+
+std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
+    entt::entity selected,
+    std::span<const glm::mat4> models,
+    const glm::mat4& viewProjection) const
+{
+    std::vector<ShadowDrawItem> items;
+    if (selected == entt::null)
+    {
+        return items;
+    }
+    const ViewFrustum frustum(viewProjection);
+    for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
+    {
+        const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
+        // A decal is a box projected onto what is under it; its own shape is not the entity's.
+        if (renderSubmesh.entity != selected || renderSubmesh.decal)
+        {
+            continue;
+        }
+        // As a caster, but Blend surfaces (glass) too: they are part of the silhouette. Only Mask
+        // cutouts are tested.
+        ShadowDrawItem item{};
+        FillShadowDrawItem(renderSubmesh, models[submeshIndex], item);
+        if (frustum.IntersectsSphere(item.worldBoundsCenter, item.worldBoundsRadius))
+        {
+            items.push_back(item);
+        }
+    }
+    // Opaque first, then mask, so the pass switches pipeline once.
+    std::stable_partition(
+        items.begin(),
+        items.end(),
+        [](const ShadowDrawItem& item)
+        {
+            return !item.alphaMask;
+        });
+    return items;
 }
 
 std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const

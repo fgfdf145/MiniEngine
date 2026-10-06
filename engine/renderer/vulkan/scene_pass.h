@@ -6,6 +6,7 @@
 #include "render_target_layout.h"
 #include "scene_pass_order.h"
 #include "scene_render_targets.h"
+#include "shadow_pass.h"
 
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/exposure.h>
@@ -112,6 +113,13 @@ struct ScenePassFrameContext
     bool physicalSky = false;
     // The geometry pass draws the atmosphere's ground plane (AtmosphereSettings::groundPlane).
     bool groundPlane = false;
+    // The selected entity's submeshes for the selection outline, every one in the frustum but its
+    // decals, drawn as the shadow casters are (ShadowDrawItem); empty without a selection. The
+    // view-projection is unjittered, so the outline holds still while TAA jitters the scene.
+    std::span<const ShadowDrawItem> selectionDrawItems;
+    glm::mat4 selectionViewProjection{1.0f};
+    // The outline's width, in pixels of the scene targets.
+    float selectionOutlineWidth = 2.0f;
 
     std::span<const VulkanDrawItem> OpaqueDrawItems() const
     {

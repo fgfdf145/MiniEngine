@@ -14,6 +14,8 @@ namespace me
 inline constexpr ImTextureID kViewportTextureId = 0xFFFF'FFFF'FFFF'F001ull;
 // The scene's minimap picture.
 inline constexpr ImTextureID kMinimapTextureId = 0xFFFF'FFFF'FFFF'F002ull;
+// The selection outline drawn over the viewport (selection_outline_pass.h), one per swapchain image.
+inline constexpr ImTextureID kSelectionOutlineTextureId = 0xFFFF'FFFF'FFFF'F003ull;
 
 // One frame's ImGui draw data, copied for the render thread to draw while the main thread builds
 // the next frame in the same ImGui context. Every texture reference is resolved to its ID while

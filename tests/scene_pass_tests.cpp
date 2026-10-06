@@ -253,7 +253,7 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 18, "the deferred order must contain eighteen passes");
+    Require(order.size() == 20, "the deferred order must contain twenty passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
     Require(order[1] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
     Require(order[2] == ScenePassId::AoResolve, "the AO resolve filters the trace");
@@ -271,14 +271,16 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
     Require(order[14] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
     Require(order[15] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
     Require(order[16] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
-    Require(order[17] == ScenePassId::Tonemap, "the deferred order must end in tone mapping");
+    Require(order[17] == ScenePassId::Tonemap, "the deferred order must tone map the finished image");
+    Require(order[18] == ScenePassId::SelectionMask, "the selection outline draws the selected entity's depth");
+    Require(order[19] == ScenePassId::SelectionOutline, "the deferred order must end in the selection outline");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(true);
 
-    Require(order.size() == 8, "the forward-only order must contain eight passes");
+    Require(order.size() == 10, "the forward-only order must contain ten passes");
     Require(order[0] == ScenePassId::Scatter, "the forward-only order must start with the scatter pre-pass");
     Require(order[1] == ScenePassId::Forward, "then the forward pass");
     Require(order[2] == ScenePassId::TransmissionCopy, "both orders copy the scene for transmission");
@@ -286,7 +288,9 @@ void ForwardOnlyOrderSkipsTheDeferredPasses()
     Require(order[4] == ScenePassId::Taa, "both orders hand the image to TAA, which passes it through here");
     Require(order[5] == ScenePassId::Bloom, "bloom needs no motion vectors, so both orders have it");
     Require(order[6] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
-    Require(order[7] == ScenePassId::Tonemap, "both orders must end in the same tone mapping pass");
+    Require(order[7] == ScenePassId::Tonemap, "both orders must tone map the same way");
+    Require(order[8] == ScenePassId::SelectionMask, "both orders outline the selection");
+    Require(order[9] == ScenePassId::SelectionOutline, "both orders must end in the same selection outline");
 }
 
 void GBufferTargetsAreColorTargets()

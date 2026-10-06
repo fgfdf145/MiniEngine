@@ -27,6 +27,7 @@
 #include "ray_scene.h"
 #include "ddgi.h"
 #include "scene_render_targets.h"
+#include "selection_outline_pass.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
 #include "ssr_pass.h"
@@ -263,6 +264,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh);
     static void FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item);
+    // The selected entity's submeshes the selection outline draws (ScenePassFrameContext::
+    // selectionDrawItems): every one but its decals whose bounds reach the frustum of viewProjection.
+    // Empty without a selection (entt::null).
+    std::vector<ShadowDrawItem> BuildSelectionDrawItems(
+        entt::entity selected,
+        std::span<const glm::mat4> models,
+        const glm::mat4& viewProjection) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         const RenderPassIo& io,
