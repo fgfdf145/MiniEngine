@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -2095,21 +2096,56 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
 bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip)
 {
     const float friction = grip.friction;
+    // Vertices at the same place become one. The physics engine finds a triangle's neighbours by the
+    // vertices they share, and a mesh that gives each triangle or quad its own (for its normals or UVs,
+    // as generated ground and imported tracks do) leaves every edge open: an open edge counts as a real
+    // one (active), so the physics engine keeps the edge's own contact normal there. The car's body,
+    // gliding a few millimetres over the ground, met the seam ahead of it with a normal leaning back as
+    // far as GroundEdgeContactFilter lets through (25 degrees): at 90 km/h stopping the approach along it
+    // threw the R34 up at 5 m/s. Welded, a seam between faces that meet almost flat (within 5 degrees) is
+    // inactive, and its contacts take the face's normal.
     JPH::VertexList joltVertices;
     joltVertices.reserve(vertices.size());
-    for (const glm::vec3& vertex : vertices)
+    std::vector<uint32_t> welded(vertices.size());
     {
-        joltVertices.push_back(JPH::Float3(vertex.x, vertex.y, vertex.z));
+        // Mixed through every bit: grid coordinates (0.5 m steps) leave a float's low bits all zero.
+        struct PositionHash
+        {
+            size_t operator()(const std::array<uint32_t, 3>& key) const noexcept
+            {
+                uint64_t hash = (static_cast<uint64_t>(key[0]) << 32 | key[1]) ^ (static_cast<uint64_t>(key[2]) * 0x9E3779B97F4A7C15ull);
+                hash = (hash ^ (hash >> 30)) * 0xBF58476D1CE4E5B9ull;
+                hash = (hash ^ (hash >> 27)) * 0x94D049BB133111EBull;
+                return static_cast<size_t>(hash ^ (hash >> 31));
+            }
+        };
+        std::unordered_map<std::array<uint32_t, 3>, uint32_t, PositionHash> unique;
+        unique.reserve(vertices.size());
+        for (size_t index = 0; index < vertices.size(); ++index)
+        {
+            const glm::vec3 vertex = vertices[index] + glm::vec3(0.0f); // -0 as +0
+            const std::array<uint32_t, 3> key = {std::bit_cast<uint32_t>(vertex.x), std::bit_cast<uint32_t>(vertex.y), std::bit_cast<uint32_t>(vertex.z)};
+            const auto [entry, added] = unique.try_emplace(key, static_cast<uint32_t>(joltVertices.size()));
+            if (added)
+            {
+                joltVertices.push_back(JPH::Float3(vertex.x, vertex.y, vertex.z));
+            }
+            welded[index] = entry->second;
+        }
     }
 
     JPH::IndexedTriangleList triangles;
     triangles.reserve(indices.size() / 3);
     for (size_t index = 0; index + 2 < indices.size(); index += 3)
     {
-        const uint32_t a = indices[index];
-        const uint32_t b = indices[index + 1];
-        const uint32_t c = indices[index + 2];
-        if (a >= vertices.size() || b >= vertices.size() || c >= vertices.size() || a == b || b == c || a == c)
+        if (indices[index] >= vertices.size() || indices[index + 1] >= vertices.size() || indices[index + 2] >= vertices.size())
+        {
+            continue;
+        }
+        const uint32_t a = welded[indices[index]];
+        const uint32_t b = welded[indices[index + 1]];
+        const uint32_t c = welded[indices[index + 2]];
+        if (a == b || b == c || a == c)
         {
             continue;
         }

@@ -1637,6 +1637,76 @@ void TestWheelMountsATallKerbWithoutLeaping()
     Require(crossing.endKmh > 45.0f, "the car drives on over the kerb");
 }
 
+// Ground as generated heightfields and imported tracks often come: every 0.5 m cell a quad with its own
+// four vertices, none shared with its neighbours: flat up to z = -40, then gentle waves (2 cm, 7.5 m long).
+void AddGroundOfSeparateCells(PhysicsWorld& world)
+{
+    constexpr float kCell = 0.5f;
+    const auto height = [](float z) { return z > -40.0f ? 0.02f * std::sin(2.0f * 3.14159265f * z / 7.5f) : 0.0f; };
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    for (float x = -10.0f; x < 10.0f; x += kCell)
+    {
+        for (float z = -200.0f; z < 40.0f; z += kCell)
+        {
+            const uint32_t first = static_cast<uint32_t>(vertices.size());
+            vertices.insert(vertices.end(), {{x, height(z), z}, {x + kCell, height(z), z}, {x + kCell, height(z + kCell), z + kCell}, {x, height(z + kCell), z + kCell}});
+            indices.insert(indices.end(), {first, first + 2, first + 1, first, first + 3, first + 2});
+        }
+    }
+    Require(world.AddStaticMesh(vertices, indices), "the ground builds");
+}
+
+// A splitter skimming the road (2 cm up here; Assetto Corsa's R34 has 6 cm, and the 3 cm waves of
+// assets/scenes/rolling_road.yaml and a nose dipping under braking or over a crest take the rest) slides
+// over the seams between the ground's cells. With nothing shared between them each seam was an open edge
+// to the physics engine, whose contact normal there leans back as far as 25 degrees: at 90 km/h stopping
+// the body's approach along it threw the R34 a metre and a half into the air and onto its roof. Welded
+// into one surface, a seam between cells that meet almost flat takes its faces' normal.
+void TestSplitterGlidesOverTheSeamsOfSeparateCells()
+{
+    PhysicsWorld world;
+    AddGroundOfSeparateCells(world);
+    VehicleSettings settings = GtrWithSplitter();
+    const glm::vec3 centreOfMass = settings.chassisCenter + settings.centerOfMassOffset;
+    settings.carColliders[1].center.y = 0.02f + 0.075f - centreOfMass.y;
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 0.0f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    constexpr float kFrame = 1.0f / 60.0f;
+    VehicleControls controls;
+    float fastestRise = 0.0f;
+    float highest = -1.0f;
+    float worstFrameLossKmh = 0.0f;
+    float lastKmh = 0.0f;
+    float atWavesKmh = 0.0f;
+    float lastY = world.GetVehiclePose(car).position.y;
+    for (float time = 0.0f; time < 30.0f && world.GetVehiclePose(car).position.z < 35.0f; time += kFrame)
+    {
+        // Up to 90 km/h on the flat, then on over the waves without throttle (the nose dips a little).
+        const PhysicsPose before = world.GetVehiclePose(car);
+        controls.throttle = before.position.z < -40.0f && world.GetVehicleTelemetry(car).forwardSpeed * 3.6f < 90.0f ? 1.0f : 0.0f;
+        world.SetVehicleControls(car, controls);
+        world.Update(kFrame);
+        const PhysicsPose pose = world.GetVehiclePose(car);
+        const float kmh = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+        if (pose.position.z > -40.0f)
+        {
+            atWavesKmh = atWavesKmh == 0.0f ? kmh : atWavesKmh;
+            fastestRise = std::max(fastestRise, (pose.position.y - lastY) / kFrame);
+            highest = std::max(highest, pose.position.y);
+            worstFrameLossKmh = std::max(worstFrameLossKmh, lastKmh - kmh);
+        }
+        lastY = pose.position.y;
+        lastKmh = kmh;
+    }
+    std::cout << "GT-R with a 2 cm splitter over waves of separate 0.5 m cells from " << atWavesKmh << " km/h: worst frame lost " << worstFrameLossKmh
+              << " km/h, body rose at up to " << fastestRise << " m/s, highest " << highest << " m, " << lastKmh << " km/h after\n";
+    Require(atWavesKmh > 85.0f, "the car reaches the waves at speed");
+    Require(fastestRise < 1.0f, "the seams do not throw the car");
+    Require(highest < 0.1f, "the car stays on the ground");
+    Require(worstFrameLossKmh < 2.0f, "the splitter does not catch on the seams");
+}
+
 // The GT-R as the editor drives it: its data through ApplyCarSpec, then fitted to its model's bounds and
 // wheel nodes (vehicle space). The centre of mass is the data's, not the model's middle: 55.5 % of the
 // weight on the front axle (CG_LOCATION) and 0.43 m up (tyre radius 0.355 - BASEY -0.075); at rest
@@ -2844,6 +2914,7 @@ int main()
         TestUnsprungCarTakesABump();
         TestSplitterRidesOverARoadSpike();
         TestWheelMountsATallKerbWithoutLeaping();
+        TestSplitterGlidesOverTheSeamsOfSeparateCells();
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();
         TestDriveForceLoadsTheLinkageAtTheWheelCentre();
