@@ -43,9 +43,9 @@ constexpr uint8_t kSpinFrequencyHz = 32;
 constexpr uint8_t kLimiterFrequencyHz = 40;
 
 // The actuators. The engine's beat: a floor while it runs, then up with the revs and the throttle.
-constexpr float kEngineIdleLevel = 0.10f;
-constexpr float kEngineRevLevel = 0.20f;
-constexpr float kEngineLoadLevel = 0.10f;
+constexpr float kEngineIdleLevel = 0.05f;
+constexpr float kEngineRevLevel = 0.10f;
+constexpr float kEngineLoadLevel = 0.05f;
 constexpr float kLimiterThrottle = 0.3f;
 // The road: a faint grain from the tarmac that grows with speed up to kGrainFullSpeed, and more as the
 // suspension works over rough ground (an RMS of kRoughnessFull in m/s is as rough as it gets).
@@ -80,6 +80,10 @@ constexpr float kSlipMaxHz = 220.0f;
 // A gear change knocks both hands.
 constexpr float kUpshiftKick = 0.6f;
 constexpr float kDownshiftKick = 0.45f;
+// And once the clutch bites past kBiteClutch the drive comes back with a shunt, harder under throttle.
+constexpr float kBiteClutch = 0.6f;
+constexpr float kBiteKick = 0.3f;
+constexpr float kBiteLoadKick = 0.5f;
 
 float Saturate(float value)
 {
@@ -170,18 +174,25 @@ VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& set
     const float dt = std::max(deltaSeconds, 0.0f);
     VehicleAudioHaptics haptics;
 
-    // A gear change between forward gears, as the rumble has it.
-    float shiftKick = 0.0f;
-    if (state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1)
-    {
-        shiftKick = telemetry.gear > state.lastGear ? kUpshiftKick : kDownshiftKick;
-    }
-    state.hasGear = true;
-    state.lastGear = telemetry.gear;
-
     const float revRange = std::max(input.maxRpm - input.minRpm, 1.0f);
     const float revs = Saturate((telemetry.engineRpm - input.minRpm) / revRange);
     const float throttle = Saturate(input.rightTrigger);
+
+    // A gear change between forward gears, as the rumble has it, and the drive coming back once the
+    // clutch bites in the new gear (a frame later at the soonest, for a box quicker than a frame).
+    float shiftKick = 0.0f;
+    if (state.awaitingBite && telemetry.clutch >= kBiteClutch && telemetry.gear >= 1)
+    {
+        shiftKick = kBiteKick + kBiteLoadKick * throttle;
+        state.awaitingBite = false;
+    }
+    if (state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1)
+    {
+        shiftKick = telemetry.gear > state.lastGear ? kUpshiftKick : kDownshiftKick;
+        state.awaitingBite = true;
+    }
+    state.hasGear = true;
+    state.lastGear = telemetry.gear;
     HapticsVoices& voices = haptics.voices;
     if (telemetry.engineRpm > 1.0f)
     {

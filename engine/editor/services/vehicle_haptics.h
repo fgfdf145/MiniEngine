@@ -88,6 +88,8 @@ struct VehicleAudioHapticsState
     std::vector<Wheel> wheels;
     bool hasGear = false;
     int lastGear = 0;
+    // A gear change opened the clutch: when it bites again the drive comes back with a shunt.
+    bool awaitingBite = false;
 };
 
 // One frame of the actuators' waveforms: the levels, and the thumps (0 to 1) to start on each side.

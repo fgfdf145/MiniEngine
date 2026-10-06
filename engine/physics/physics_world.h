@@ -133,6 +133,8 @@ struct VehicleTelemetry
     float rightSpeed = 0.0f;   // metres per second to the car's right (its -X)
     float engineRpm = 0.0f;
     int gear = 0; // negative reverse, 0 neutral, then the forward gears from 1
+    // The clutch's friction from 0 (open, while the gears change) to 1 (shut, the drive connected).
+    float clutch = 1.0f;
     uint32_t wheelsInContact = 0;
     // A coupled four-wheel drive's centre coupling in the last step (Nm at the transfer case, rear to front
     // positive), and the rear wheels' steer angle (degrees, right positive) for a car with rear steering.

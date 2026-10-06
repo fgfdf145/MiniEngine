@@ -144,6 +144,28 @@ void AudioHapticsFollowTheCar()
     haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
     Require(haptics.kicks[0] > 0.0f && haptics.kicks[1] > 0.0f, "an upshift thumps");
 
+    // The clutch is open while the gears change; the drive comes back when it bites.
+    shifted.telemetry.clutch = 0.0f;
+    haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
+    Require(haptics.kicks[0] == 0.0f, "nothing while the clutch is open");
+    shifted.telemetry.clutch = 0.4f;
+    haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
+    Require(haptics.kicks[0] == 0.0f, "nor while it only starts to bite");
+    shifted.telemetry.clutch = 0.8f;
+    haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
+    Require(haptics.kicks[0] > 0.7f && haptics.kicks[1] > 0.7f, "the drive coming back under full throttle shunts");
+    shifted.telemetry.clutch = 1.0f;
+    haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
+    Require(haptics.kicks[0] == 0.0f, "once per change");
+
+    // A quick box: the clutch is shut again by the next frame.
+    VehicleAudioHapticsInput quick = shifted;
+    quick.rightTrigger = 0.0f;
+    quick.telemetry.gear = 5;
+    ComputeVehicleAudioHaptics(settings, quick, slideState, kDt);
+    haptics = ComputeVehicleAudioHaptics(settings, quick, slideState, kDt);
+    Require(std::abs(haptics.kicks[0] - 0.3f) < 1.0e-4f, "off the throttle the drive comes back softly");
+
     settings.audioHaptics = false;
     haptics = ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
     Require(haptics.voices == HapticsVoices{} && haptics.kicks[0] == 0.0f, "switched off, the actuators are still");

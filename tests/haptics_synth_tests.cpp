@@ -196,11 +196,27 @@ int PlayOnTheDevice()
     for (float rpm = 1000.0f; rpm <= 7000.0f; rpm += 1000.0f)
     {
         voices.engineHz = rpm / 60.0f * 3.0f;
-        voices.engineAmplitude = 0.15f + 0.3f * (rpm - 1000.0f) / 6000.0f;
+        voices.engineAmplitude = 0.075f + 0.15f * (rpm - 1000.0f) / 6000.0f;
         hold(("engine " + std::to_string(static_cast<int>(rpm)) + " rpm").c_str(), voices, 0.7f);
     }
     voices.limiter = true;
     hold("limiter", voices, 1.5f);
+    // An upshift at full throttle: the thump, the engine cut while the clutch is open, the drive back.
+    voices.limiter = false;
+    for (int shift = 0; shift < 3; ++shift)
+    {
+        voices.engineHz = 7000.0f / 60.0f * 3.0f;
+        voices.engineAmplitude = 0.2f;
+        hold("pulling", voices, 0.8f);
+        haptics->Kick(0, 0.6f);
+        haptics->Kick(1, 0.6f);
+        voices.engineHz = 5000.0f / 60.0f * 3.0f;
+        voices.engineAmplitude = 0.05f;
+        hold("upshift", voices, 0.15f);
+        haptics->Kick(0, 0.8f);
+        haptics->Kick(1, 0.8f);
+    }
+    hold("drive back", voices, 0.5f);
     voices = HapticsVoices{};
     voices.roadSpeed = 25.0f;
     voices.roadAmplitude = {0.15f, 0.15f};

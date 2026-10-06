@@ -2918,6 +2918,7 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     telemetry.rightSpeed = -localVelocity.GetX();
     telemetry.engineRpm = controller->GetEngine().GetCurrentRPM();
     telemetry.gear = controller->GetTransmission().GetCurrentGear();
+    telemetry.clutch = vehicle.gearboxState.clutch;
     for (const JPH::Wheel* wheel : vehicle.constraint->GetWheels())
     {
         telemetry.wheelsInContact += wheel->HasContact() ? 1u : 0u;
