@@ -223,6 +223,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
+    // Resizes the scene targets (and DLSS) for the viewport extent. Throws VulkanError when out of
+    // device memory, leaving the targets to be rebuilt before the next draw.
+    void ApplySceneExtent(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources(const RenderFramePacket& frame);
@@ -313,6 +316,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     DlssMode m_activeDlssMode = DlssMode::Off;
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_dlssResetPending = true;
+    // Set while the viewport's own size ran out of device memory: the smaller size rendered instead.
+    struct SceneTargetFallback
+    {
+        RenderExtent requested;
+        RenderExtent used;
+    };
+    std::optional<SceneTargetFallback> m_sceneTargetFallback;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;

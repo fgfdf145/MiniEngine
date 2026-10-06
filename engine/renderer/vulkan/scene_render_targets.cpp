@@ -172,36 +172,12 @@ void SceneRenderTargets::ReleaseImages()
 
 void SceneRenderTargets::Rebuild(VkExtent2D renderExtent, VkExtent2D outputExtent, uint32_t swapchainImageCount)
 {
-    const VkExtent2D clamped = {std::max(renderExtent.width, 1u), std::max(renderExtent.height, 1u)};
-    const VkExtent2D clampedOutput = {std::max(outputExtent.width, 1u), std::max(outputExtent.height, 1u)};
-
-    // Snapshot what is live, build the replacement into the members, and put the snapshot back
-    // if anything throws. A failure therefore leaves the previous, still-valid set in place.
-    std::array<TargetDescription, kRenderTargetCount> previous = std::move(m_targets);
-    const VkExtent2D previousExtent = m_extent;
-    const VkExtent2D previousOutputExtent = m_outputExtent;
-    const uint32_t previousImageCount = m_swapchainImageCount;
-
-    // Only the four scalar description fields are carried over; the images vectors start empty
-    // because CreateImages fills them. Copying whole TargetDescriptions instead would duplicate
-    // every live VkImage handle into a second owner, and the allocation that copy needs sits
-    // outside the try below — a throw there would leave m_targets moved-from with nothing able to
-    // restore it.
-    for (size_t index = 0; index < m_targets.size(); ++index)
-    {
-        TargetDescription& description = m_targets[index];
-        description.format = previous[index].format;
-        description.usage = previous[index].usage;
-        description.aspect = previous[index].aspect;
-        description.bindToImGui = previous[index].bindToImGui;
-        description.downscale = previous[index].downscale;
-        description.outputSized = previous[index].outputSized;
-        // A moved-from vector is valid but unspecified, and clear() neither allocates nor throws,
-        // so this is what makes "starts empty" a guarantee rather than an observation.
-        description.images.clear();
-    }
-    m_extent = clamped;
-    m_outputExtent = clampedOutput;
+    // The old set goes before the new one is made: holding both peaked at twice the targets' memory,
+    // which at 4K with a streamed world was more than an 8 GB GPU had left. The caller has waited on
+    // the in-flight frames, so nothing still reads the old images.
+    ReleaseImages();
+    m_extent = {std::max(renderExtent.width, 1u), std::max(renderExtent.height, 1u)};
+    m_outputExtent = {std::max(outputExtent.width, 1u), std::max(outputExtent.height, 1u)};
 
     try
     {
@@ -209,15 +185,12 @@ void SceneRenderTargets::Rebuild(VkExtent2D renderExtent, VkExtent2D outputExten
     }
     catch (...)
     {
-        DestroyImages(m_targets);
-        m_targets = std::move(previous);
-        m_extent = previousExtent;
-        m_outputExtent = previousOutputExtent;
-        m_swapchainImageCount = previousImageCount;
+        // No images and an extent nothing matches: the caller rebuilds, at this size or a smaller one.
+        ReleaseImages();
+        m_extent = {};
+        m_outputExtent = {};
         throw;
     }
-
-    DestroyImages(previous);
 }
 
 VkFormatFeatureFlags SceneRenderTargets::QueryFormatFeatures(VkFormat format) const

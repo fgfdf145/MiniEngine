@@ -86,9 +86,11 @@ class SceneRenderTargets
     // Both must run with the in-flight frames already waited on, and ReleaseImages must run while
     // ImGui's Vulkan backend is still alive because it removes ImGui texture bindings.
     //
-    // Rebuild re-creates the images at a new extent and swapchain image count; it does not re-run
-    // format selection, so a caller whose swapchain format may have moved must construct a new
-    // instance instead (see VulkanRenderer::CreateSwapchainResources).
+    // Rebuild re-creates the images at a new extent and swapchain image count, releasing the old
+    // ones first; when it throws (out of device memory) no images are left and the caller must
+    // rebuild again before drawing. It does not re-run format selection, so a caller whose
+    // swapchain format may have moved must construct a new instance instead (see
+    // VulkanRenderer::CreateSwapchainResources).
     void ReleaseImages();
     void Rebuild(VkExtent2D renderExtent, VkExtent2D outputExtent, uint32_t swapchainImageCount);
 

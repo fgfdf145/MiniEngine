@@ -1683,7 +1683,20 @@ void VulkanRenderer::CreateSwapchainResources()
     // At the viewport's size: SyncSceneTargets moves the render size to DLSS's before a frame draws.
     if (ldrFormatMatchesSwapchain)
     {
-        m_sceneTargets->Rebuild(viewportExtent, viewportExtent, swapchainImageCount);
+        try
+        {
+            m_sceneTargets->Rebuild(viewportExtent, viewportExtent, swapchainImageCount);
+        }
+        catch (const VulkanError& error)
+        {
+            // A placeholder that fits: SyncSceneTargets finds the size that does before a frame draws.
+            if (!error.IsOutOfMemory())
+            {
+                throw;
+            }
+            LOG_WARN("Scene render targets at {}x{} do not fit in GPU memory yet: {}", viewportExtent.width, viewportExtent.height, error.what());
+            m_sceneTargets->Rebuild({1, 1}, {1, 1}, swapchainImageCount);
+        }
     }
     else
     {
@@ -2496,6 +2509,61 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
         return;
     }
 
+    // A viewport whose targets did not fit keeps rendering at the smaller size that did until the
+    // viewport changes (leaving fullscreen and coming back tries the full size again).
+    if (m_sceneTargetFallback.has_value() && (m_sceneTargetFallback->requested.width != viewportExtent.width ||
+                                              m_sceneTargetFallback->requested.height != viewportExtent.height))
+    {
+        m_sceneTargetFallback.reset();
+    }
+    const RenderExtent wanted = m_sceneTargetFallback.has_value() ? m_sceneTargetFallback->used : viewportExtent;
+    try
+    {
+        ApplySceneExtent(wanted, renderDebug);
+        return;
+    }
+    catch (const VulkanError& error)
+    {
+        if (!error.IsOutOfMemory())
+        {
+            throw;
+        }
+        LOG_ERROR("Scene render targets at {}x{} do not fit in GPU memory: {}", wanted.width, wanted.height, error.what());
+    }
+
+    // Out of device memory (a 4K fullscreen viewport over a streamed world on an 8 GB GPU): the
+    // same view at a lower resolution, as a lower render scale would give, instead of a crash.
+    // Only the last attempt's failure is fatal.
+    static constexpr std::array<float, 4> kFallbackScales = {0.75f, 0.5f, 0.35f, 0.25f};
+    for (size_t attempt = 0; attempt < kFallbackScales.size(); ++attempt)
+    {
+        const RenderExtent smaller{
+            std::max(1u, static_cast<uint32_t>(static_cast<float>(wanted.width) * kFallbackScales[attempt])),
+            std::max(1u, static_cast<uint32_t>(static_cast<float>(wanted.height) * kFallbackScales[attempt]))};
+        try
+        {
+            ApplySceneExtent(smaller, renderDebug);
+            m_sceneTargetFallback = SceneTargetFallback{viewportExtent, smaller};
+            LOG_WARN(
+                "Rendering the {}x{} viewport at {}x{} to fit in GPU memory",
+                viewportExtent.width,
+                viewportExtent.height,
+                smaller.width,
+                smaller.height);
+            return;
+        }
+        catch (const VulkanError& error)
+        {
+            if (!error.IsOutOfMemory() || attempt + 1 == kFallbackScales.size())
+            {
+                throw;
+            }
+        }
+    }
+}
+
+void VulkanRenderer::ApplySceneExtent(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
+{
     const SceneExtents extents = ResolveSceneExtents(viewportExtent, renderDebug);
     if (extents.dlss != m_activeDlssMode || extents.dlssPreset != m_activeDlssPreset)
     {
