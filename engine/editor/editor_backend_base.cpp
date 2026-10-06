@@ -308,9 +308,9 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleDriveService::SetPaused(State(), *actions.pauseVehicleDrive);
     }
-    if (actions.brushTyreRibs.has_value())
+    if (actions.brushTyreBristles.has_value())
     {
-        VehicleDriveService::SetBrushTyreRibs(State(), *actions.brushTyreRibs);
+        VehicleDriveService::SetBrushTyreBristles(State(), (*actions.brushTyreBristles)[0], (*actions.brushTyreBristles)[1]);
     }
     if (actions.stepVehicleDrive)
     {

@@ -1,13 +1,15 @@
 #pragma once
 
 #include <array>
+#include <vector>
 
 namespace me::tyre
 {
 
-// The most ribs a brush tyre is cut into, and the most segments along each rib's contact.
-inline constexpr int kBrushMaxRibs = 32;
-inline constexpr int kBrushMaxSegments = 32;
+// The most ribs a brush tyre is cut into, and the most segments along each rib's contact when stepped.
+// The cost of a step grows with ribs times segments (10 x 20 is the default).
+inline constexpr int kBrushMaxRibs = 128;
+inline constexpr int kBrushMaxSegments = 128;
 
 // One rib's contact where the last step left it, for drawing the patch: its place across the tread
 // (m, left positive), its contact length, and how far from the leading edge its bristles stick to the
@@ -47,7 +49,7 @@ struct BrushTyreParameters
     double unloadedRadius = 0.32; // R0, m
     double width = 0.22;          // tread width, m
     int ribs = 10;
-    int segmentsPerRib = 20; // stepped, at most kBrushMaxSegments
+    int segmentsPerRib = 20; // at least 2; stepped, at most kBrushMaxSegments
     // R_l of (6): the belt's stiffness shortens the contact length below the plain intersection's.
     double transitionRadius = 0.14; // m
     double verticalRate = 250000.0; // N/m, gives the deflection that sizes the patch
@@ -96,7 +98,7 @@ struct BrushTyreParameters
 
 // Each rib's bristles at the segments' ends, from the front of the contact (+x) to the back: their bend
 // and their roots' velocity over the road (m, m/s, along and across the wheel), and the contact length
-// they were kept over (0 for none).
+// they were kept over (0 for none). Sized for the tyre's own ribs and segments, segments + 1 nodes a rib.
 struct BrushBristles
 {
     struct Node
@@ -104,8 +106,24 @@ struct BrushBristles
         std::array<double, 2> bend{};
         std::array<double, 2> rootVelocity{};
     };
-    std::array<std::array<Node, kBrushMaxSegments + 1>, kBrushMaxRibs> nodes{};
+    int segments = 0;
+    std::vector<Node> nodes;
     std::array<double, kBrushMaxRibs> length{};
+
+    void Resize(int ribs, int segmentsPerRib)
+    {
+        segments = segmentsPerRib;
+        nodes.assign(static_cast<size_t>(ribs) * static_cast<size_t>(segmentsPerRib + 1), Node{});
+        length.fill(0.0);
+    }
+    Node& At(int rib, int node)
+    {
+        return nodes[static_cast<size_t>(rib) * static_cast<size_t>(segments + 1) + static_cast<size_t>(node)];
+    }
+    const Node& At(int rib, int node) const
+    {
+        return nodes[static_cast<size_t>(rib) * static_cast<size_t>(segments + 1) + static_cast<size_t>(node)];
+    }
 };
 
 // The carcass between steps: its deflection and the last Jacobian of its balance.

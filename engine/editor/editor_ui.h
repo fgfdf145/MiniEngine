@@ -125,8 +125,9 @@ struct EditorUiActions
     bool recoverVehicle = false; // back on its wheels where it is
     // The view the car is seen from: chase, cockpit, bonnet or bumper.
     std::optional<VehicleCameraView> vehicleCameraView;
-    // The brush tyre's rib count changed in the tuning: the car being driven takes it at once.
-    std::optional<int> brushTyreRibs;
+    // The brush tyre's cut changed in the tuning (ribs, segments per rib; 0 for the tyre's own): the car
+    // being driven takes it at once.
+    std::optional<std::array<int, 2>> brushTyreBristles;
     // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
     bool startVehicleRig = false;
     bool stopVehicleRig = false;

@@ -12,6 +12,12 @@ namespace
 {
 constexpr int kMaxRibs = kBrushMaxRibs;
 
+// The segments along each rib a stepped tyre cuts its contact into (its bristle buffers' size).
+int SteppedSegments(const BrushTyreParameters& p)
+{
+    return std::clamp(p.segmentsPerRib, 2, kBrushMaxSegments);
+}
+
 struct Rib
 {
     double y = 0.0; // across the tread, left positive
@@ -255,7 +261,7 @@ Forces SteppedTreadForces(const BrushTyreParameters& p, const Patch& patch, cons
     {
         bendOut->length.fill(0.0);
     }
-    const int segments = std::clamp(p.segmentsPerRib, 2, kBrushMaxSegments);
+    const int segments = SteppedSegments(p);
     const double vMu = std::max(p.stribeckVelocity, 1e-3);
     const Ellipse ellipse{1.0 / patch.staticFriction[0], 1.0 / patch.staticFriction[1]};
     const auto fall = [&](const Root& r) { return patch.kineticShare + (1.0 - patch.kineticShare) * std::exp(-(r.vx * r.vx + r.vy * r.vy) / (vMu * vMu)); };
@@ -294,8 +300,8 @@ Forces SteppedTreadForces(const BrushTyreParameters& p, const Patch& patch, cons
                 const double at = std::clamp((0.5 * keptLength - upstream) / keptLength * segments, 0.0, static_cast<double>(segments));
                 const int k = std::min(static_cast<int>(at), segments - 1);
                 const double share = at - k;
-                const BrushBristles::Node& a = kept.nodes[i][k];
-                const BrushBristles::Node& b = kept.nodes[i][k + 1];
+                const BrushBristles::Node& a = kept.At(i, k);
+                const BrushBristles::Node& b = kept.At(i, k + 1);
                 const double thenX = a.rootVelocity[0] + share * (b.rootVelocity[0] - a.rootVelocity[0]);
                 const double thenY = a.rootVelocity[1] + share * (b.rootVelocity[1] - a.rootVelocity[1]);
                 return std::array<double, 2>{a.bend[0] + share * (b.bend[0] - a.bend[0]) - 0.5 * (thenX + here.vx) * dt,
@@ -310,7 +316,7 @@ Forces SteppedTreadForces(const BrushTyreParameters& p, const Patch& patch, cons
             if (bendOut != nullptr)
             {
                 // In the front-first order whichever way the tread runs.
-                bendOut->nodes[i][direction > 0.0 ? m : segments - m] = {u, {r.vx, r.vy}};
+                bendOut->At(i, direction > 0.0 ? m : segments - m) = {u, {r.vx, r.vy}};
             }
         };
         if (bendOut != nullptr)
@@ -695,6 +701,11 @@ double RelaxationDistance(const BrushTyreParameters& p, bool lateral)
 BrushTyre::BrushTyre(BrushTyreParameters parameters)
     : m_p(parameters)
 {
+    const int ribs = std::clamp(m_p.ribs, 1, kMaxRibs);
+    for (BrushBristles& bristles : m_bristles)
+    {
+        bristles.Resize(ribs, SteppedSegments(m_p));
+    }
 }
 
 void BrushTyre::Reset()

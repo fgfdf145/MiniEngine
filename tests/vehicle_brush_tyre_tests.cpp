@@ -1,5 +1,6 @@
 #include "gtr_car_spec.h"
 
+#include <engine/core/threading/task_system.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
 
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Cars on the brush tyre with a flexible carcass (VehicleTyreModel::Brush): they stand, launch, brake,
@@ -437,6 +439,16 @@ void ReportCost(const char* car, const VehicleSettings& brush, const VehicleSett
     const double b = measure(brush);
     const double e = measure(engine);
     std::cout << car << " physics per simulated second (1000 steps): brush " << b * 1000.0 << " ms, physics engine " << e * 1000.0 << " ms\n";
+    // Finer cuts with the engine's task system running, as in the editor: the four tyres step side by side.
+    TaskSystem::Initialize();
+    for (const auto& [ribs, segments] : {std::pair{10, 20}, std::pair{32, 32}, std::pair{100, 20}, std::pair{64, 64}})
+    {
+        VehicleSettings cut = brush;
+        cut.brushTyreRibs = ribs;
+        cut.brushTyreSegments = segments;
+        std::cout << car << " brush " << ribs << " x " << segments << " with the task system: " << measure(cut) * 1000.0 << " ms per simulated second\n";
+    }
+    TaskSystem::Shutdown();
 }
 
 // ---- Surfaces ----

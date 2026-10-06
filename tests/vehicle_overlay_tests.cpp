@@ -231,7 +231,7 @@ void TestOverlayDrawsTheBrushPatch()
     Require(fy * outer.carcassDeflection.y > 0.0f, "the carcass is pushed the way the road pushes the tyre");
 
     // Recut into more ribs while driving (the Vehicle panel's Brush Ribs): the patch shows them at once.
-    world.SetVehicleBrushTyreRibs(car, 24);
+    world.SetVehicleBrushTyreBristles(car, 24, 0);
     Simulate(world, 0.2f);
     const VehicleWheelState recut = world.GetVehicleWheels(car)[0];
     Require(recut.brushRibCount == 24, "recut into 24 ribs, got " + std::to_string(recut.brushRibCount));

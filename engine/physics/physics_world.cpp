@@ -483,6 +483,10 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     {
         parameters.ribs = std::clamp(settings.brushTyreRibs, 1, tyre::kBrushMaxRibs);
     }
+    if (settings.brushTyreSegments > 0)
+    {
+        parameters.segmentsPerRib = std::clamp(settings.brushTyreSegments, 2, tyre::kBrushMaxSegments);
+    }
     return parameters;
 }
 
@@ -1907,22 +1911,25 @@ struct PhysicsWorld::Impl
         const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
         // All four loads before any tyre pushes: each spring's depends on the others' through the body.
         const std::array<float, kVehicleWheelCount> loads = PredictSuspensionForces(vehicle, constraint, context);
-        for (size_t index = 0; index < vehicle.brushTyres.size() && index < wheels.size(); ++index)
+        const size_t count = std::min(vehicle.brushTyres.size(), static_cast<size_t>(wheels.size()));
+        // Each tyre's input first, then the tyres stepped side by side (each touches only its own state),
+        // then their forces put on the body and the wheels one after another.
+        std::array<tyre::BrushTyreInput, kVehicleWheelCount> inputs{};
+        std::array<JPH::Vec3, kVehicleWheelCount> normals{}, longitudinals{}, lefts{};
+        std::array<JPH::RVec3, kVehicleWheelCount> positions{};
+        for (size_t index = 0; index < count; ++index)
         {
             auto& wheel = *static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
-            Vehicle::BrushWheel& state = vehicle.brushWheels[index];
-            tyre::BrushTyreInput in;
+            tyre::BrushTyreInput& in = inputs[index];
             in.wheelSpeed = wheel.GetAngularVelocity();
             if (!wheel.HasContact())
             {
-                state = {};
-                state.out = vehicle.brushTyres[index].Step(in, dt);
                 continue;
             }
-            const JPH::Vec3 normal = wheel.GetContactNormal();
-            const JPH::Vec3 longitudinal = wheel.GetContactLongitudinal();
-            const JPH::Vec3 left = -wheel.GetContactLateral();
-            const JPH::RVec3 position = wheel.GetContactPosition();
+            const JPH::Vec3 normal = normals[index] = wheel.GetContactNormal();
+            const JPH::Vec3 longitudinal = longitudinals[index] = wheel.GetContactLongitudinal();
+            const JPH::Vec3 left = lefts[index] = -wheel.GetContactLateral();
+            const JPH::RVec3 position = positions[index] = wheel.GetContactPosition();
             const JPH::Vec3 velocity = body.GetPointVelocity(position) - wheel.GetContactPointVelocity();
             in.forwardVelocity = velocity.Dot(longitudinal);
             in.lateralVelocity = velocity.Dot(left);
@@ -1943,14 +1950,43 @@ struct PhysicsWorld::Impl
                     in.extraRollingResistance = grip.rollingResistance;
                 }
             }
-            const tyre::BrushTyreOutput out = vehicle.brushTyres[index].Step(in, dt);
-            const JPH::Vec3 force = longitudinal * static_cast<float>(out.Fx) + left * static_cast<float>(out.Fy);
-            bodies.AddForce(body.GetID(), force, position, JPH::EActivation::DontActivate);
-            bodies.AddTorque(body.GetID(), normal * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
-            wheel.ApplyTorque(static_cast<float>(-out.Fx * out.effectiveRadius + out.rollingResistanceTorque), dt);
+        }
+        std::array<tyre::BrushTyreOutput, kVehicleWheelCount> outputs{};
+        const auto step = [&](uint32_t begin, uint32_t end)
+        {
+            for (uint32_t index = begin; index < end; ++index)
+            {
+                outputs[index] = vehicle.brushTyres[index].Step(inputs[index], dt);
+            }
+        };
+        // Finely cut tyres are worth the tasks' wake-up; the default cut (10 x 20) steps inline.
+        constexpr int kParallelSegments = 400;
+        const tyre::BrushTyreParameters& cut = vehicle.brushTyres.front().Parameters();
+        if (count > 1 && cut.ribs * cut.segmentsPerRib >= kParallelSegments)
+        {
+            TaskSystem::ParallelFor(static_cast<uint32_t>(count), 1, step);
+        }
+        else
+        {
+            step(0, static_cast<uint32_t>(count));
+        }
+        for (size_t index = 0; index < count; ++index)
+        {
+            auto& wheel = *static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
+            Vehicle::BrushWheel& state = vehicle.brushWheels[index];
+            const tyre::BrushTyreOutput& out = outputs[index];
+            state = {};
             state.out = out;
+            if (!wheel.HasContact())
+            {
+                continue;
+            }
+            const JPH::Vec3 force = longitudinals[index] * static_cast<float>(out.Fx) + lefts[index] * static_cast<float>(out.Fy);
+            bodies.AddForce(body.GetID(), force, positions[index], JPH::EActivation::DontActivate);
+            bodies.AddTorque(body.GetID(), normals[index] * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
+            wheel.ApplyTorque(static_cast<float>(-out.Fx * out.effectiveRadius + out.rollingResistanceTorque), dt);
             state.force = force;
-            state.load = static_cast<float>(in.load);
+            state.load = static_cast<float>(inputs[index].load);
             state.contact = true;
         }
     }
@@ -2728,10 +2764,11 @@ void PhysicsWorld::SetVehicleControls(VehicleId id, const VehicleControls& contr
     vehicle.pendingGearShifts += controls.gearShifts;
 }
 
-void PhysicsWorld::SetVehicleBrushTyreRibs(VehicleId id, int ribs)
+void PhysicsWorld::SetVehicleBrushTyreBristles(VehicleId id, int ribs, int segmentsPerRib)
 {
     Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
     vehicle.settings.brushTyreRibs = std::max(ribs, 0);
+    vehicle.settings.brushTyreSegments = std::max(segmentsPerRib, 0);
     for (size_t index = 0; index < vehicle.brushTyres.size(); ++index)
     {
         vehicle.brushTyres[index] = tyre::BrushTyre(BuildBrushTyreParameters(vehicle.settings, index));

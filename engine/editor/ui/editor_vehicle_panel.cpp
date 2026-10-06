@@ -131,8 +131,23 @@ bool DrawTuning(VehicleSettings& tuning)
         ImGui::SetTooltip(
             "How many ribs each brush tyre is cut into across its tread, each a row of bristles over its own contact\n"
             "length. More follow camber and the pressure across the tread more finely; the tyres' cost grows about in\n"
-            "step (10 ribs is about 0.15 s of physics per simulated second for one car in Release). Applies at once,\n"
-            "also while driving.");
+            "step with ribs times segments (10 x 20 is about 0.15 s of physics per simulated second for one car in\n"
+            "Release). Applies at once, also while driving.");
+    }
+    ImGui::BeginDisabled(tuning.tyreModel != VehicleTyreModel::Brush);
+    int segments = tuning.brushTyreSegments > 0 ? tuning.brushTyreSegments : tyre::BrushTyreParameters{}.segmentsPerRib;
+    if (DragIntInRange("Brush Segments", &segments, 2, tyre::kBrushMaxSegments))
+    {
+        tuning.brushTyreSegments = segments;
+        ribsChanged = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            "How many segments each rib's contact is cut into along its length, the bristles tracked at each one's\n"
+            "ends. More place where the bristles start to slide more finely; the cost grows in step, as with the ribs.\n"
+            "Applies at once, also while driving.");
     }
 
     ImGui::Checkbox("Use the Car's Own Data", &tuning.useCarData);
@@ -454,7 +469,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         }
         if (DrawTuning(m_vehicleTuning) && status.active)
         {
-            result.actions.brushTyreRibs = m_vehicleTuning.brushTyreRibs;
+            result.actions.brushTyreBristles = std::array<int, 2>{m_vehicleTuning.brushTyreRibs, m_vehicleTuning.brushTyreSegments};
         }
     }
 

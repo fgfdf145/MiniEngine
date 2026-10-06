@@ -538,11 +538,11 @@ void SetCameraView(RendererSharedState& state, VehicleCameraView view)
     }
 }
 
-void SetBrushTyreRibs(RendererSharedState& state, int ribs)
+void SetBrushTyreBristles(RendererSharedState& state, int ribs, int segmentsPerRib)
 {
     if (VehicleDriveSession* session = state.vehicleDrive.session.get())
     {
-        session->physics->SetVehicleBrushTyreRibs(session->vehicle, ribs);
+        session->physics->SetVehicleBrushTyreBristles(session->vehicle, ribs, segmentsPerRib);
     }
 }
 

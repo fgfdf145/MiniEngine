@@ -263,8 +263,9 @@ void Recover(RendererSharedState& state);
 void SetPaused(RendererSharedState& state, bool paused);
 // Sees the car from `view`, the head looking ahead again; the next drive starts in it too.
 void SetCameraView(RendererSharedState& state, VehicleCameraView view);
-// The driven car's brush tyres recut into this many ribs (0 for the tyre's own count), at once.
-void SetBrushTyreRibs(RendererSharedState& state, int ribs);
+// The driven car's brush tyres recut into this many ribs and segments along each (0 for the tyre's own
+// count), at once.
+void SetBrushTyreBristles(RendererSharedState& state, int ribs, int segmentsPerRib);
 // While paused: advances the simulation by one fixed step.
 void Step(RendererSharedState& state);
 

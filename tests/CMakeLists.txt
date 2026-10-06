@@ -1806,6 +1806,7 @@ miniengine_group_target_sources(miniengine_vehicle_brush_tyre_tests)
 
 target_link_libraries(miniengine_vehicle_brush_tyre_tests
     PRIVATE
+        engine_core
         engine_physics
 )
 

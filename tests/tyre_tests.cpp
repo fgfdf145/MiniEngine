@@ -10,6 +10,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace me::tyre;
@@ -737,6 +738,52 @@ void TestBrushWithoutFalloffReachesItsLimitWhereAsked()
 }
 }
 
+// The finest cut the tyre takes (kBrushMaxRibs x kBrushMaxSegments) steps to its own steady state and to
+// about the default cut's forces; report what a step costs at each cut.
+void TestFinelyCutBrushAgreesWithTheDefault()
+{
+    const BrushTyreParameters coarse = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
+    BrushTyreParameters fine = coarse;
+    fine.ribs = kBrushMaxRibs;
+    fine.segmentsPerRib = kBrushMaxSegments;
+    const double limit = 1.1 * 4000.0;
+    for (const auto& [degrees, slip] : {std::pair{2.0, 0.0}, std::pair{6.0, 0.03}, std::pair{12.0, -0.05}})
+    {
+        const BrushTyreInput in = Rolling(coarse, 4000.0, degrees * kDeg, slip);
+        BrushTyre stepped(fine);
+        BrushTyreOutput o;
+        for (int step = 0; step < 300; ++step)
+        {
+            o = stepped.Step(in, 1e-3);
+        }
+        const std::string where = std::to_string(degrees) + " deg, slip " + std::to_string(slip);
+        Require(o.converged && o.ribCount == kBrushMaxRibs, "finest cut converges at " + where);
+        const BrushTyreOutput steady = BrushTyre(fine).Steady(in);
+        RequireNear(o.Fx, steady.Fx, 2e-3 * limit, "finest cut stepped Fx = steady at " + where);
+        RequireNear(o.Fy, steady.Fy, 2e-3 * limit, "finest cut stepped Fy = steady at " + where);
+        const BrushTyreOutput usual = BrushTyre(coarse).Steady(in);
+        RequireNear(steady.Fx, usual.Fx, 0.02 * limit, "finest cut Fx near the default's at " + where);
+        RequireNear(steady.Fy, usual.Fy, 0.02 * limit, "finest cut Fy near the default's at " + where);
+        std::cout << "  brush " << where << ": Fy default " << usual.Fy << " N, finest " << steady.Fy << " N; Fx " << usual.Fx << " / " << steady.Fx << " N\n";
+    }
+    for (const auto& [ribs, segments] : {std::pair{10, 20}, std::pair{32, 32}, std::pair{100, 20}, std::pair{64, 64}, std::pair{128, 128}})
+    {
+        BrushTyreParameters p = coarse;
+        p.ribs = ribs;
+        p.segmentsPerRib = segments;
+        BrushTyre tyre(p);
+        const BrushTyreInput in = Rolling(p, 4000.0, 4.0 * kDeg, 0.02);
+        constexpr int kSteps = 200;
+        const auto start = std::chrono::steady_clock::now();
+        for (int step = 0; step < kSteps; ++step)
+        {
+            tyre.Step(in, 1e-3);
+        }
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "  brush " << ribs << " x " << segments << ": " << seconds / kSteps * 1e6 << " us per step\n";
+    }
+}
+
 int main()
 {
     const struct
@@ -764,6 +811,7 @@ int main()
         {"TestBrushGripsEachWayItsOwn", TestBrushGripsEachWayItsOwn},
         {"TestBrushPeaksAtTheSlipRatioAskedFor", TestBrushPeaksAtTheSlipRatioAskedFor},
         {"TestBrushWithoutFalloffReachesItsLimitWhereAsked", TestBrushWithoutFalloffReachesItsLimitWhereAsked},
+        {"TestFinelyCutBrushAgreesWithTheDefault", TestFinelyCutBrushAgreesWithTheDefault},
     };
     int failures = 0;
     for (const auto& test : tests)
