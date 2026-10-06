@@ -33,7 +33,7 @@ uint8_t ToByte(float value)
 
 bool GamepadFeedback::IsIdle() const
 {
-    return lowFrequencyMotor <= 0.0f && highFrequencyMotor <= 0.0f && leftTrigger.mode == TriggerEffect::Mode::Off &&
+    return !audioHaptics && lowFrequencyMotor <= 0.0f && highFrequencyMotor <= 0.0f && leftTrigger.mode == TriggerEffect::Mode::Off &&
            rightTrigger.mode == TriggerEffect::Mode::Off;
 }
 
@@ -83,10 +83,15 @@ std::array<uint8_t, 11> EncodeDualSenseTriggerEffect(const TriggerEffect& effect
 std::array<uint8_t, kDualSenseEffectsSize> EncodeDualSenseEffects(const GamepadFeedback& feedback)
 {
     std::array<uint8_t, kDualSenseEffectsSize> state{};
-    state[kEnableBits1] = kEnableCompatibleRumble | kDisableAudioHaptics | kEnableRightTrigger | kEnableLeftTrigger;
-    // The left motor is the big, low frequency one.
-    state[kRumbleLeft] = ToByte(feedback.lowFrequencyMotor);
-    state[kRumbleRight] = ToByte(feedback.highFrequencyMotor);
+    state[kEnableBits1] = kEnableRightTrigger | kEnableLeftTrigger;
+    if (!feedback.audioHaptics)
+    {
+        // Leaving these two bits off is what gives the actuators back to the audio.
+        state[kEnableBits1] |= kEnableCompatibleRumble | kDisableAudioHaptics;
+        // The left motor is the big, low frequency one.
+        state[kRumbleLeft] = ToByte(feedback.lowFrequencyMotor);
+        state[kRumbleRight] = ToByte(feedback.highFrequencyMotor);
+    }
 
     const std::array<uint8_t, 11> right = EncodeDualSenseTriggerEffect(feedback.rightTrigger);
     const std::array<uint8_t, 11> left = EncodeDualSenseTriggerEffect(feedback.leftTrigger);

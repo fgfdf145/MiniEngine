@@ -2069,6 +2069,34 @@ add_test(
 
 set_target_properties(miniengine_audio_engine_tests PROPERTIES FOLDER "Tests")
 
+# The DualSense's haptic waveforms. With --device it plays them on a DualSense plugged in by USB, to feel
+# by hand; the test itself needs no pad.
+add_executable(miniengine_haptics_synth_tests
+    haptics_synth_tests.cpp
+)
+miniengine_group_target_sources(miniengine_haptics_synth_tests)
+
+target_link_libraries(miniengine_haptics_synth_tests
+    PRIVATE
+        engine_audio
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_haptics_synth_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_haptics_synth_tests>
+            $<TARGET_FILE_DIR:miniengine_haptics_synth_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.haptics_synth
+    COMMAND miniengine_haptics_synth_tests
+)
+
+set_target_properties(miniengine_haptics_synth_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_render_thread_tests
     render_thread_tests.cpp
 )

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/asset/model_loader.h>
+#include <engine/audio/gamepad_haptics.h>
 #include <engine/editor/services/vehicle_haptics.h>
 #include <engine/editor/services/vehicle_steering_assist.h>
 #include <engine/physics/physics_world.h>
@@ -218,6 +219,14 @@ struct VehicleDriveSession
     float engineMinRpm = 1000.0f;
     float engineMaxRpm = 7000.0f;
     VehicleHapticsState haptics;
+    // A DualSense on USB: its actuators play the engine, the road and the tyres (GamepadHaptics). Opened
+    // once per connection of the pad, as finding its device takes a moment and over Bluetooth there is none.
+    std::unique_ptr<GamepadHaptics> audioHaptics;
+    bool audioHapticsTried = false;
+    VehicleAudioHapticsState audioHapticsState;
+    // The engine's beat on the actuators follows its firing: AC's data names no cylinder count, and the
+    // R34's RB26 has six.
+    int engineCylinders = 6;
     // What the driving HUD shows of the car (see VehicleDriveStatus).
     VehicleControls controls;
     bool absFitted = false;

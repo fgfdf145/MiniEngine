@@ -393,6 +393,16 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         DragFloatInRange("Rumble Strength", &haptics.rumbleStrength, 0.0f, 2.0f, "%.2f", 0.01f);
         DragFloatInRange("Trigger Strength", &haptics.triggerStrength, 0.0f, 2.0f, "%.2f", 0.01f);
         ImGui::Checkbox("Brake Trigger Shakes When a Wheel Locks", &haptics.brakeLockFeedback);
+        ImGui::Checkbox("DualSense HD Haptics (USB)", &haptics.audioHaptics);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("A DualSense on a USB cable plays the engine, the road and the tyres on its actuators as waveforms, in place of the rumble.");
+        }
+        ImGui::BeginDisabled(!haptics.audioHaptics);
+        DragFloatInRange("Engine Haptics", &haptics.engineStrength, 0.0f, 2.0f, "%.2f", 0.01f);
+        DragFloatInRange("Road Haptics", &haptics.roadStrength, 0.0f, 2.0f, "%.2f", 0.01f);
+        DragFloatInRange("Tyre Slip Haptics", &haptics.slipStrength, 0.0f, 2.0f, "%.2f", 0.01f);
+        ImGui::EndDisabled();
         ImGui::EndDisabled();
         ImGui::TextDisabled("DualSense: the triggers push back (RT accelerator, LT brake) and shake. Other pads: rumble only.");
     }

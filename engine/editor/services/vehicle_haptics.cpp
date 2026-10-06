@@ -42,6 +42,45 @@ constexpr float kSpinFull = 0.6f;
 constexpr uint8_t kSpinFrequencyHz = 32;
 constexpr uint8_t kLimiterFrequencyHz = 40;
 
+// The actuators. The engine's beat: a floor while it runs, then up with the revs and the throttle.
+constexpr float kEngineIdleLevel = 0.10f;
+constexpr float kEngineRevLevel = 0.20f;
+constexpr float kEngineLoadLevel = 0.10f;
+constexpr float kLimiterThrottle = 0.3f;
+// The road: a faint grain from the tarmac that grows with speed up to kGrainFullSpeed, and more as the
+// suspension works over rough ground (an RMS of kRoughnessFull in m/s is as rough as it gets).
+constexpr float kRoadGrainLevel = 0.10f;
+constexpr float kGrainFullSpeed = 30.0f;
+constexpr float kRoadRoughLevel = 0.60f;
+constexpr float kRoughnessFull = 0.25f;
+// The suspension's motion is split at these time constants: slower is the car rolling and pitching,
+// and the roughness is the RMS of what is left over about this long.
+constexpr float kSlowVelocitySeconds = 0.25f;
+constexpr float kRoughnessSeconds = 0.15f;
+// A bump: the suspension jumping this fast (m/s) and well clear of the road's usual roughness knocks
+// the hand on that side, as hard as kBumpFull gives at most; one knock per wheel in kBumpCooldown.
+constexpr float kBumpVelocity = 0.25f;
+constexpr float kBumpOverRoughness = 2.5f;
+constexpr float kBumpFull = 1.0f;
+constexpr float kBumpLevel = 0.9f;
+constexpr float kBumpCooldownSeconds = 0.08f;
+// A sliding tyre: how far it slides (the brush tyre's sliding share of the load, or the slip itself),
+// faded in over the first kSlideFullSpeed m/s of sliding speed, its buzz rising with that speed.
+constexpr float kSlidingShareStart = 0.15f;
+constexpr float kSlidingShareFull = 0.75f;
+constexpr float kSlipRatioStart = 0.08f;
+constexpr float kSlipRatioFull = 0.33f;
+constexpr float kSlipAngleStartDegrees = 5.0f;
+constexpr float kSlipAngleFullDegrees = 15.0f;
+constexpr float kSlideFullSpeed = 3.0f;
+constexpr float kSlipLevel = 0.7f;
+constexpr float kSlipBaseHz = 70.0f;
+constexpr float kSlipHzPerMetrePerSecond = 10.0f;
+constexpr float kSlipMaxHz = 220.0f;
+// A gear change knocks both hands.
+constexpr float kUpshiftKick = 0.6f;
+constexpr float kDownshiftKick = 0.45f;
+
 float Saturate(float value)
 {
     return std::clamp(value, 0.0f, 1.0f);
@@ -95,6 +134,129 @@ TriggerEffect Vibration(size_t fromZone, float amount, uint8_t frequencyHz, floa
     }
     return effect;
 }
+
+float Blend(float deltaSeconds, float timeConstantSeconds)
+{
+    return deltaSeconds > 0.0f ? 1.0f - std::exp(-deltaSeconds / timeConstantSeconds) : 0.0f;
+}
+
+// How far a wheel's tyre is sliding, from 0 (gripping) to 1.
+float Sliding(const VehicleWheelState& wheel)
+{
+    if (wheel.brushTyre)
+    {
+        return Saturate((wheel.slidingShare - kSlidingShareStart) / (kSlidingShareFull - kSlidingShareStart));
+    }
+    const float ratio = (std::abs(wheel.slipRatio) - kSlipRatioStart) / (kSlipRatioFull - kSlipRatioStart);
+    const float angle = (std::abs(wheel.slipAngleDegrees) - kSlipAngleStartDegrees) / (kSlipAngleFullDegrees - kSlipAngleStartDegrees);
+    return Saturate(std::max(ratio, angle));
+}
+
+// How fast the tread rubs over the ground (m/s): the wheel spinning against the road, and the road
+// running across it.
+float SlidingSpeed(const VehicleWheelState& wheel, const VehicleTelemetry& telemetry)
+{
+    const float alongSlide = wheel.angularVelocity * wheel.radius - telemetry.forwardSpeed;
+    const float speed = std::hypot(telemetry.forwardSpeed, telemetry.rightSpeed);
+    const float acrossSlide = speed * std::sin(glm::radians(std::min(std::abs(wheel.slipAngleDegrees), 90.0f)));
+    return std::hypot(alongSlide, acrossSlide);
+}
+}
+
+VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& settings, const VehicleAudioHapticsInput& input, VehicleAudioHapticsState& state,
+                                               float deltaSeconds)
+{
+    const VehicleTelemetry& telemetry = input.telemetry;
+    const float dt = std::max(deltaSeconds, 0.0f);
+    VehicleAudioHaptics haptics;
+
+    // A gear change between forward gears, as the rumble has it.
+    float shiftKick = 0.0f;
+    if (state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1)
+    {
+        shiftKick = telemetry.gear > state.lastGear ? kUpshiftKick : kDownshiftKick;
+    }
+    state.hasGear = true;
+    state.lastGear = telemetry.gear;
+
+    const float revRange = std::max(input.maxRpm - input.minRpm, 1.0f);
+    const float revs = Saturate((telemetry.engineRpm - input.minRpm) / revRange);
+    const float throttle = Saturate(input.rightTrigger);
+    HapticsVoices& voices = haptics.voices;
+    if (telemetry.engineRpm > 1.0f)
+    {
+        voices.engineHz = telemetry.engineRpm / 60.0f * static_cast<float>(std::max(input.cylinders, 1)) * 0.5f;
+        voices.engineAmplitude = kEngineIdleLevel + kEngineRevLevel * revs + kEngineLoadLevel * throttle;
+        voices.limiter = revs >= kLimiterRevs && throttle > kLimiterThrottle;
+    }
+
+    const float speed = std::hypot(telemetry.forwardSpeed, telemetry.rightSpeed);
+    voices.roadSpeed = speed;
+    const float grain = kRoadGrainLevel * Saturate(speed / kGrainFullSpeed);
+    const glm::vec3 carRight = input.body.rotation * glm::vec3(-1.0f, 0.0f, 0.0f);
+    const float slowBlend = Blend(dt, kSlowVelocitySeconds);
+    const float roughnessBlend = Blend(dt, kRoughnessSeconds);
+    float fastestSlide = 0.0f;
+
+    state.wheels.resize(input.wheels.size());
+    for (size_t index = 0; index < input.wheels.size(); ++index)
+    {
+        const VehicleWheelState& wheel = input.wheels[index];
+        VehicleAudioHapticsState::Wheel& track = state.wheels[index];
+        const size_t side = glm::dot(wheel.pose.position - input.body.position, carRight) > 0.0f ? 1 : 0;
+
+        // The suspension's and the tyre's compression together: what the road pushes up at the hub.
+        const float compression = wheel.suspensionMaxLength - wheel.suspensionLength + (wheel.unsprungMass ? wheel.tyreDeflection : 0.0f);
+        track.kickCooldown = std::max(track.kickCooldown - dt, 0.0f);
+        if (track.known && dt > 0.0f)
+        {
+            const float velocity = (compression - track.compression) / dt;
+            track.slowVelocity += (velocity - track.slowVelocity) * slowBlend;
+            const float jolt = std::abs(velocity - track.slowVelocity);
+            if (wheel.inContact && jolt > kBumpVelocity && jolt > kBumpOverRoughness * track.roughness && track.kickCooldown <= 0.0f)
+            {
+                haptics.kicks[side] = std::max(haptics.kicks[side], kBumpLevel * Saturate(jolt / kBumpFull));
+                track.kickCooldown = kBumpCooldownSeconds;
+            }
+            const float meanSquare = track.roughness * track.roughness;
+            track.roughness = std::sqrt(meanSquare + (jolt * jolt - meanSquare) * roughnessBlend);
+        }
+        track.known = true;
+        track.compression = compression;
+
+        if (!wheel.inContact)
+        {
+            continue;
+        }
+        const float road = grain + kRoadRoughLevel * Saturate(track.roughness / kRoughnessFull);
+        voices.roadAmplitude[side] = std::max(voices.roadAmplitude[side], road);
+
+        const float slidingSpeed = SlidingSpeed(wheel, telemetry);
+        const float slip = kSlipLevel * Sliding(wheel) * Saturate(slidingSpeed / kSlideFullSpeed);
+        if (slip > 0.0f)
+        {
+            voices.slipAmplitude[side] = std::max(voices.slipAmplitude[side], slip);
+            fastestSlide = std::max(fastestSlide, slidingSpeed);
+        }
+    }
+    voices.slipHz = std::min(kSlipBaseHz + kSlipHzPerMetrePerSecond * fastestSlide, kSlipMaxHz);
+
+    if (!settings.enabled || !settings.audioHaptics)
+    {
+        return VehicleAudioHaptics{};
+    }
+
+    const float engineScale = std::max(settings.engineStrength, 0.0f);
+    const float roadScale = std::max(settings.roadStrength, 0.0f);
+    const float slipScale = std::max(settings.slipStrength, 0.0f);
+    voices.engineAmplitude *= engineScale;
+    for (size_t side = 0; side < kHapticsSides; ++side)
+    {
+        voices.roadAmplitude[side] *= roadScale;
+        voices.slipAmplitude[side] *= slipScale;
+        haptics.kicks[side] = Saturate(std::max(haptics.kicks[side] * roadScale, shiftKick * engineScale));
+    }
+    return haptics;
 }
 
 GamepadFeedback ComputeVehicleFeedback(const VehicleHapticsSettings& settings, const VehicleHapticsInput& input, VehicleHapticsState& state, float deltaSeconds)

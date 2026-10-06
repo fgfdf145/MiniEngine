@@ -1,7 +1,10 @@
 #pragma once
 
+#include <engine/audio/haptics_synth.h>
 #include <engine/core/input/gamepad_feedback.h>
 #include <engine/physics/physics_world.h>
+
+#include <vector>
 
 namespace me
 {
@@ -16,6 +19,12 @@ struct VehicleHapticsSettings
     float triggerStrength = 1.0f;
     // The brake trigger shakes while a wheel locks, as an ABS pulses the pedal.
     bool brakeLockFeedback = true;
+    // A DualSense on USB: its actuators play the engine, the road and the tyres as waveforms
+    // (GamepadHaptics) in place of the rumble motors. Each voice has its own scale (0 is off).
+    bool audioHaptics = true;
+    float engineStrength = 1.0f;
+    float roadStrength = 1.0f;
+    float slipStrength = 1.0f;
 };
 
 // What the feedback is made from this frame.
@@ -46,6 +55,53 @@ struct VehicleHapticsState
     // How long the brake trigger keeps shaking after a wheel stopped locking, so it does not flicker.
     float brakeLockHold = 0.0f;
 };
+
+// What the actuators' waveforms are made from: the car's wheels and where its body is, besides
+// what ComputeVehicleFeedback takes.
+struct VehicleAudioHapticsInput
+{
+    VehicleTelemetry telemetry;
+    std::vector<VehicleWheelState> wheels;
+    PhysicsPose body;
+    float minRpm = 1000.0f;
+    float maxRpm = 7000.0f;
+    // Cylinders fire once each every two turns of the crank: the engine's beat is rpm / 60 * cylinders / 2.
+    int cylinders = 6;
+    float rightTrigger = 0.0f;
+};
+
+// Carried from frame to frame: each wheel's suspension, to find the road's bumps in its motion.
+struct VehicleAudioHapticsState
+{
+    struct Wheel
+    {
+        bool known = false;
+        // The suspension's and tyre's combined compression (m) last frame, how fast it moved (m/s)
+        // averaged over a while (the car rolling and pitching, which the road's texture is not), and the
+        // RMS of the rest: how rough the road is under the wheel.
+        float compression = 0.0f;
+        float slowVelocity = 0.0f;
+        float roughness = 0.0f;
+        // A bump only knocks again once this has run out.
+        float kickCooldown = 0.0f;
+    };
+    std::vector<Wheel> wheels;
+    bool hasGear = false;
+    int lastGear = 0;
+};
+
+// One frame of the actuators' waveforms: the levels, and the thumps (0 to 1) to start on each side.
+struct VehicleAudioHaptics
+{
+    HapticsVoices voices;
+    std::array<float, kHapticsSides> kicks{};
+};
+
+// The actuators for one frame of driving: the engine's firing beat (and the limiter chopping it), the
+// road's grain under each side's wheels with a knock at each bump, the tyres' buzz as they slide, and a
+// thump at each gear change. Silent when settings turn them off.
+VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& settings, const VehicleAudioHapticsInput& input, VehicleAudioHapticsState& state,
+                                               float deltaSeconds);
 
 // The rumble and trigger effects for one frame of driving: an engine rumble that grows with the revs
 // and the throttle, a thump at each gear change, an accelerator trigger that pushes back (and shakes at

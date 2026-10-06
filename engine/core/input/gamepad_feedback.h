@@ -39,8 +39,11 @@ struct GamepadFeedback
     float highFrequencyMotor = 0.0f;
     TriggerEffect leftTrigger;
     TriggerEffect rightTrigger;
+    // A DualSense whose actuators are played as sound (GamepadHaptics): its rumble emulation stays off,
+    // which hands the actuators to the audio, and the motors above are not used.
+    bool audioHaptics = false;
 
-    // Nothing to feel: motors off and both triggers free.
+    // Nothing to feel: motors off, both triggers free, and no audio haptics (which have to be asked for).
     bool IsIdle() const;
     bool operator==(const GamepadFeedback&) const = default;
 };
@@ -50,9 +53,9 @@ struct GamepadFeedback
 // the checksum.
 inline constexpr size_t kDualSenseEffectsSize = 47;
 
-// The effects state that makes the controller do `feedback`. It always claims the motors and both triggers, so
-// an idle feedback frees them. Rumble goes through the controller's rumble emulation, and the audio
-// haptics are turned off.
+// The effects state that makes the controller do `feedback`. It always claims both triggers, so an idle
+// feedback frees them. Rumble goes through the controller's rumble emulation, which turns the audio
+// haptics off; with feedback.audioHaptics the emulation is left off, and the actuators follow the audio.
 std::array<uint8_t, kDualSenseEffectsSize> EncodeDualSenseEffects(const GamepadFeedback& feedback);
 
 // One trigger's 11 bytes of the effects state.

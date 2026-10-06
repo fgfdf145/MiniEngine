@@ -58,6 +58,97 @@ void IdleFreesEverything()
     Require(state[10] == 0 && state[21] == 0, "triggers are free");
 }
 
+void AudioHapticsLeaveTheRumbleEmulationOff()
+{
+    GamepadFeedback feedback;
+    feedback.audioHaptics = true;
+    feedback.lowFrequencyMotor = 1.0f;
+    feedback.rightTrigger.mode = TriggerEffect::Mode::Resistance;
+    feedback.rightTrigger.zoneStrength[4] = 2;
+    const std::array<uint8_t, kDualSenseEffectsSize> state = EncodeDualSenseEffects(feedback);
+    Require(state[0] == 0x0C, "only the triggers are claimed, which hands the actuators to the audio");
+    Require(state[2] == 0 && state[3] == 0, "the motors are not used");
+    Require(state[10] == 0x21, "the triggers still work");
+    Require(!GamepadFeedback{.audioHaptics = true}.IsIdle(), "audio haptics alone are still sent to the pad");
+}
+
+// Four wheels on a car facing +Z: its right is -X.
+VehicleAudioHapticsInput Rolling(float speed, float rpm)
+{
+    VehicleAudioHapticsInput input;
+    input.telemetry.forwardSpeed = speed;
+    input.telemetry.engineRpm = rpm;
+    input.telemetry.gear = 3;
+    for (const glm::vec3 position : {glm::vec3(0.8f, 0.3f, 1.3f), glm::vec3(-0.8f, 0.3f, 1.3f), glm::vec3(0.8f, 0.3f, -1.3f), glm::vec3(-0.8f, 0.3f, -1.3f)})
+    {
+        VehicleWheelState wheel;
+        wheel.pose.position = position;
+        wheel.inContact = true;
+        wheel.radius = 0.33f;
+        wheel.angularVelocity = speed / wheel.radius;
+        wheel.suspensionMaxLength = 0.3f;
+        wheel.suspensionLength = 0.2f;
+        input.wheels.push_back(wheel);
+    }
+    return input;
+}
+
+void AudioHapticsFollowTheCar()
+{
+    VehicleHapticsSettings settings;
+    VehicleAudioHapticsState state;
+    constexpr float kDt = 1.0f / 60.0f;
+
+    VehicleAudioHaptics haptics;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        haptics = ComputeVehicleAudioHaptics(settings, Rolling(20.0f, 3000.0f), state, kDt);
+    }
+    Require(std::abs(haptics.voices.engineHz - 150.0f) < 0.01f, "a six at 3000 rpm fires 150 times a second");
+    Require(haptics.voices.engineAmplitude > 0.0f && !haptics.voices.limiter, "the engine beats");
+    Require(haptics.voices.roadAmplitude[0] > 0.0f && haptics.voices.roadAmplitude[0] == haptics.voices.roadAmplitude[1], "a smooth road has its grain on both sides");
+    Require(haptics.kicks[0] == 0.0f && haptics.kicks[1] == 0.0f, "a smooth road does not knock");
+    Require(haptics.voices.slipAmplitude[0] == 0.0f && haptics.voices.slipAmplitude[1] == 0.0f, "gripping tyres are still");
+
+    // The front right wheel (x < 0) hits a bump: its suspension compresses 3 cm in a frame.
+    VehicleAudioHapticsInput bump = Rolling(20.0f, 3000.0f);
+    bump.wheels[1].suspensionLength -= 0.03f;
+    haptics = ComputeVehicleAudioHaptics(settings, bump, state, kDt);
+    Require(haptics.kicks[1] > 0.5f && haptics.kicks[0] == 0.0f, "the bump knocks the right hand");
+    haptics = ComputeVehicleAudioHaptics(settings, bump, state, kDt);
+    Require(haptics.kicks[1] == 0.0f, "one knock per bump");
+    Require(haptics.voices.roadAmplitude[1] > haptics.voices.roadAmplitude[0], "the right side feels the rougher road a while");
+
+    // The left rear wheel slides sideways.
+    VehicleAudioHapticsInput slide = Rolling(20.0f, 3000.0f);
+    slide.wheels[2].suspensionLength -= 0.03f; // where the right one is now: no new bump
+    slide.wheels[1].suspensionLength -= 0.03f;
+    slide.wheels[0].suspensionLength -= 0.03f;
+    slide.wheels[3].suspensionLength -= 0.03f;
+    VehicleAudioHapticsState slideState;
+    ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
+    slide.wheels[2].slipAngleDegrees = 14.0f;
+    haptics = ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
+    Require(haptics.voices.slipAmplitude[0] > 0.3f && haptics.voices.slipAmplitude[1] == 0.0f, "the sliding tyre buzzes on its side");
+    Require(haptics.voices.slipHz > 70.0f, "a fast slide buzzes higher");
+
+    // At the limiter with the throttle down the cut chops the engine.
+    VehicleAudioHapticsInput limiter = Rolling(20.0f, 6950.0f);
+    limiter.rightTrigger = 1.0f;
+    haptics = ComputeVehicleAudioHaptics(settings, limiter, slideState, kDt);
+    Require(haptics.voices.limiter, "the limiter cuts in");
+
+    // A gear change knocks both hands.
+    VehicleAudioHapticsInput shifted = limiter;
+    shifted.telemetry.gear = 4;
+    haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
+    Require(haptics.kicks[0] > 0.0f && haptics.kicks[1] > 0.0f, "an upshift thumps");
+
+    settings.audioHaptics = false;
+    haptics = ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
+    Require(haptics.voices == HapticsVoices{} && haptics.kicks[0] == 0.0f, "switched off, the actuators are still");
+}
+
 VehicleHapticsInput Driving(int gear, float rpm)
 {
     VehicleHapticsInput input;
@@ -179,6 +270,8 @@ int main()
     {
         EncodesTheEffectsState();
         IdleFreesEverything();
+        AudioHapticsLeaveTheRumbleEmulationOff();
+        AudioHapticsFollowTheCar();
         EngineRumbleFollowsTheRevs();
         GearChangesThump();
         BrakeTriggerShakesWhenAWheelLocks();

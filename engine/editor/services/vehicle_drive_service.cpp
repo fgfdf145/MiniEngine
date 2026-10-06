@@ -554,6 +554,64 @@ void Step(RendererSharedState& state)
     }
 }
 
+// Opens a DualSense's audio haptics once the pad is the one driving, and lets them go when it is not,
+// when the settings turn them off, or when the device went away (the cable pulled).
+static void UpdateAudioHaptics(RendererSharedState& state, VehicleDriveSession& session, bool dualSense)
+{
+    const VehicleHapticsSettings& settings = state.vehicleDrive.haptics;
+    if (!dualSense)
+    {
+        session.audioHaptics.reset();
+        session.audioHapticsTried = false;
+        return;
+    }
+    if (!settings.enabled || !settings.audioHaptics)
+    {
+        session.audioHaptics.reset();
+        // Turned back on, it is looked for again.
+        session.audioHapticsTried = false;
+        return;
+    }
+    if (session.audioHaptics && !session.audioHaptics->IsRunning())
+    {
+        LOG_WARN("Gamepad haptics: '{}' stopped; back to the rumble emulation", session.audioHaptics->DeviceName());
+        session.audioHaptics.reset();
+    }
+    if (!session.audioHaptics && !session.audioHapticsTried)
+    {
+        session.audioHapticsTried = true;
+        std::string error;
+        session.audioHaptics = GamepadHaptics::Open(error);
+        if (!session.audioHaptics)
+        {
+            LOG_INFO("Gamepad haptics unavailable, using the rumble emulation: {}", error);
+        }
+        session.audioHapticsState = VehicleAudioHapticsState{};
+    }
+}
+
+// The engine, road and tyres on a DualSense's actuators.
+static void PlayAudioHaptics(RendererSharedState& state, VehicleDriveSession& session, uint32_t player, float deltaSeconds)
+{
+    VehicleAudioHapticsInput input;
+    input.telemetry = session.physics->GetVehicleTelemetry(session.vehicle);
+    input.wheels = session.physics->GetVehicleWheels(session.vehicle);
+    input.body = session.physics->GetVehiclePose(session.vehicle);
+    input.minRpm = session.engineMinRpm;
+    input.maxRpm = session.engineMaxRpm;
+    input.cylinders = session.engineCylinders;
+    input.rightTrigger = state.input.GetGamepadAxis(GamepadAxis::RightTrigger, player);
+    const VehicleAudioHaptics haptics = ComputeVehicleAudioHaptics(state.vehicleDrive.haptics, input, session.audioHapticsState, deltaSeconds);
+    session.audioHaptics->SetVoices(haptics.voices);
+    for (size_t side = 0; side < kHapticsSides; ++side)
+    {
+        if (haptics.kicks[side] > 0.0f)
+        {
+            session.audioHaptics->Kick(side, haptics.kicks[side]);
+        }
+    }
+}
+
 // Gives the gamepad its engine rumble, gear thump and trigger effects; frees it while the drive is paused,
 // typed over, or the window is not the one in focus (the pad's axes freeze then, and so would the effects).
 static void UpdateGamepadFeedback(RendererSharedState& state, VehicleDriveSession& session, float deltaSeconds, bool keyboardCaptured)
@@ -562,14 +620,25 @@ static void UpdateGamepadFeedback(RendererSharedState& state, VehicleDriveSessio
     const int gamepadIndex = input.GetFirstConnectedGamepadIndex();
     if (gamepadIndex < 0)
     {
+        UpdateAudioHaptics(state, session, false);
         return;
     }
 
     const uint32_t player = static_cast<uint32_t>(gamepadIndex);
+    const bool dualSense = input.GetGamepadType(player) == SDL_GAMEPAD_TYPE_PS5;
+    UpdateAudioHaptics(state, session, dualSense);
     if (session.paused || keyboardCaptured || SDL_GetKeyboardFocus() == nullptr)
     {
+        if (session.audioHaptics)
+        {
+            session.audioHaptics->SetVoices(HapticsVoices{});
+        }
         input.SetGamepadFeedback(player, GamepadFeedback{});
         return;
+    }
+    if (session.audioHaptics)
+    {
+        PlayAudioHaptics(state, session, player, deltaSeconds);
     }
 
     VehicleHapticsInput haptics;
@@ -578,8 +647,16 @@ static void UpdateGamepadFeedback(RendererSharedState& state, VehicleDriveSessio
     haptics.maxRpm = session.engineMaxRpm;
     haptics.rightTrigger = input.GetGamepadAxis(GamepadAxis::RightTrigger, player);
     haptics.leftTrigger = input.GetGamepadAxis(GamepadAxis::LeftTrigger, player);
-    haptics.adaptiveTriggers = input.GetGamepadType(player) == SDL_GAMEPAD_TYPE_PS5;
-    input.SetGamepadFeedback(player, ComputeVehicleFeedback(state.vehicleDrive.haptics, haptics, session.haptics, deltaSeconds));
+    haptics.adaptiveTriggers = dualSense;
+    GamepadFeedback feedback = ComputeVehicleFeedback(state.vehicleDrive.haptics, haptics, session.haptics, deltaSeconds);
+    if (session.audioHaptics)
+    {
+        // The actuators play the audio; the rumble emulation would take them back.
+        feedback.audioHaptics = true;
+        feedback.lowFrequencyMotor = 0.0f;
+        feedback.highFrequencyMotor = 0.0f;
+    }
+    input.SetGamepadFeedback(player, feedback);
 }
 
 bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)

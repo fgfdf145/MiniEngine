@@ -3,6 +3,10 @@ add_library(engine_audio
     audio_engine.h
     audio_file.cpp
     audio_file.h
+    gamepad_haptics.cpp
+    gamepad_haptics.h
+    haptics_synth.cpp
+    haptics_synth.h
     miniaudio_impl.cpp
 )
 miniengine_group_target_sources(engine_audio)
