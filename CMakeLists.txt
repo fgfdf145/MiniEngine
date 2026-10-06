@@ -44,4 +44,29 @@ if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
+include(cmake/MiniEnginePch.cmake)
+# The check that picks a target's PCH sees target properties, not a directory's CMAKE_CXX_FLAGS:
+# engine/renderer/optimized (Debug built with /O2) stays out of this list.
+foreach(_miniengine_pch_directory IN ITEMS
+    engine/core
+    engine/platform
+    engine/audio
+    engine/scene
+    engine/asset
+    engine/logic
+    engine/physics
+    engine/suspension
+    engine/tyre
+    engine/renderer
+    engine/editor
+    engine/application
+    app
+    tools/suspension_rigs
+)
+    miniengine_directory_pch("${_miniengine_pch_directory}")
+endforeach()
+if(BUILD_TESTING)
+    miniengine_directory_pch(tests)
+endif()
+
 include(cmake/MiniEngineIde.cmake)

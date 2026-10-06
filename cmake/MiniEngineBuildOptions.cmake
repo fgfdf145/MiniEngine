@@ -13,6 +13,13 @@ cmake_host_system_information(
 )
 message(STATUS "Parallel compilation: ${MINIENGINE_CPU_COUNT} logical cores")
 
+# Debug information in each object (/Z7) instead of a PDB per target that every compiler process
+# writes through mspdbsrv (/Zi). With the shared precompiled headers (MiniEnginePch.cmake) a clean
+# Debug build took 23 s with /Z7 against 28 s with /Zi. The linker still writes the program's PDB.
+if(NOT DEFINED CMAKE_MSVC_DEBUG_INFORMATION_FORMAT)
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif()
+
 if(MSVC)
     add_compile_options(/EHsc)
 
