@@ -1246,7 +1246,7 @@ void EditorUiController::DrawViewportPanel(
         ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
         ImGui::BeginGroup();
         ImGui::TextUnformatted("Viewport");
-        ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, drag assets here to place");
+        ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, right click deselects, drag assets here to place");
         ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
         ImGui::Text("Viewport FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::EndGroup();

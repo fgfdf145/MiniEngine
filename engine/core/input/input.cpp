@@ -17,6 +17,9 @@ namespace
 {
 constexpr float kGamepadAxisChangeEpsilon = 0.001f;
 constexpr float kGamepadAxisLogThreshold = 0.10f;
+// A right press that moves less than this and is released sooner is a click, not a mouse look.
+constexpr float kRightClickMaxTravelPixels = 4.0f;
+constexpr Uint64 kRightClickMaxDurationNs = 300'000'000;
 
 bool ShouldLogAxisChange(float previousValue, float currentValue)
 {
@@ -75,6 +78,10 @@ void InputState::HandleEvent(const SDL_Event& event)
     case SDL_EVENT_MOUSE_MOTION:
         m_mouseDeltaX += event.motion.xrel;
         m_mouseDeltaY += event.motion.yrel;
+        if (m_mouseLookActive)
+        {
+            m_mouseLookTravel += std::abs(event.motion.xrel) + std::abs(event.motion.yrel);
+        }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         if (event.button.button == SDL_BUTTON_RIGHT &&
@@ -85,6 +92,8 @@ void InputState::HandleEvent(const SDL_Event& event)
             m_mouseLookAnchorX = static_cast<int>(event.button.x);
             m_mouseLookAnchorY = static_cast<int>(event.button.y);
             m_shouldRestoreMouseLookAnchor = false;
+            m_mouseLookTravel = 0.0f;
+            m_mouseLookPressTimestampNs = event.button.timestamp;
         }
         if (event.button.button == SDL_BUTTON_MIDDLE &&
             IsViewportInteractionPoint(event.button.x, event.button.y))
@@ -104,6 +113,9 @@ void InputState::HandleEvent(const SDL_Event& event)
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (event.button.button == SDL_BUTTON_RIGHT)
         {
+            m_viewportRightClicked = m_mouseLookActive &&
+                                     m_mouseLookTravel < kRightClickMaxTravelPixels &&
+                                     event.button.timestamp - m_mouseLookPressTimestampNs < kRightClickMaxDurationNs;
             m_mouseLookActive = false;
             m_shouldRestoreMouseLookAnchor = m_hasMouseLookAnchor;
         }
@@ -226,6 +238,13 @@ float InputState::GetMouseDeltaY() const
 float InputState::GetMouseWheelDelta() const
 {
     return m_mouseWheelDelta;
+}
+
+bool InputState::ConsumeViewportRightClick()
+{
+    const bool clicked = m_viewportRightClicked;
+    m_viewportRightClicked = false;
+    return clicked;
 }
 
 bool InputState::ShouldRestoreMouseLookAnchor() const

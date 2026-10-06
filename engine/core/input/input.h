@@ -113,6 +113,9 @@ class InputState
     float GetMouseWheelDelta() const;
     bool ShouldRestoreMouseLookAnchor() const;
     void ConsumeMouseLookAnchor(int& x, int& y);
+    // True once after a right click in the viewport that was a click, not a mouse look: the
+    // button came up quickly without the mouse moving.
+    bool ConsumeViewportRightClick();
 
     static KeyCode FromScancode(SDL_Scancode scancode);
     static std::string GetKeyName(KeyCode key);
@@ -156,6 +159,9 @@ class InputState
     bool m_shouldRestoreMouseLookAnchor = false;
     int m_mouseLookAnchorX = 0;
     int m_mouseLookAnchorY = 0;
+    float m_mouseLookTravel = 0.0f;
+    Uint64 m_mouseLookPressTimestampNs = 0;
+    bool m_viewportRightClicked = false;
     SDL_FRect m_viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool m_hasTimestampBase = false;
     std::chrono::system_clock::time_point m_wallClockAtSdlTickZero{};

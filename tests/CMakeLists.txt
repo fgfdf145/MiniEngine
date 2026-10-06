@@ -1898,6 +1898,32 @@ add_test(
 
 set_target_properties(miniengine_gamepad_feedback_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_input_state_tests
+    input_state_tests.cpp
+)
+miniengine_group_target_sources(miniengine_input_state_tests)
+
+target_link_libraries(miniengine_input_state_tests
+    PRIVATE
+        engine_core
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_input_state_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_input_state_tests>
+            $<TARGET_FILE_DIR:miniengine_input_state_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.input_state
+    COMMAND miniengine_input_state_tests
+)
+
+set_target_properties(miniengine_input_state_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_steering_assist_tests
     steering_assist_tests.cpp
 )

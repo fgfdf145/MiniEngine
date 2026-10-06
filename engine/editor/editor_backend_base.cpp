@@ -112,6 +112,12 @@ void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
         State().input.ConsumeMouseLookAnchor(anchorX, anchorY);
         SDL_WarpMouseInWindow(m_window.GetSDLWindow(), static_cast<float>(anchorX), static_cast<float>(anchorY));
     }
+
+    // A right click anywhere in the viewport deselects; holding it to look around does not.
+    if (State().input.ConsumeViewportRightClick() && State().editorWorld)
+    {
+        State().editorWorld->ClearSelection();
+    }
 }
 
 bool EditorRenderBackendBase::TickSharedFrame()
