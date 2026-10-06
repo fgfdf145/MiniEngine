@@ -104,26 +104,30 @@ void VulkanForwardPass::Record(
     renderPassInfo.clearValueCount = ownsFrame ? static_cast<uint32_t>(clearValues.size()) : 0;
     renderPassInfo.pClearValues = ownsFrame ? clearValues.data() : nullptr;
 
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    SetViewportAndScissor(commandBuffer, frame.extent);
     if (m_part == ForwardPassPart::OpaqueAndSky)
     {
         // Opaque and Mask first: all of them when this pass owns the frame; otherwise the lighting
         // pass shaded all but the forward-shaded ones, which land here on the depth the geometry
         // pass wrote for them. Then the sky into whatever no geometry covered.
-        RecordMaterialDrawItems(
+        RecordMaterialPass(
             commandBuffer,
+            renderPassInfo,
+            frame.recorder,
             *frame.forwardPipelines,
             frame.frameDescriptorSet,
-            ownsFrame ? frame.OpaqueDrawItems() : frame.ForwardShadedDrawItems());
-        RecordSky(commandBuffer, frame);
+            ownsFrame ? frame.OpaqueDrawItems() : frame.ForwardShadedDrawItems(),
+            [&](VkCommandBuffer tailBuffer)
+            {
+                RecordSky(tailBuffer, frame);
+            });
+        return;
     }
-    else
-    {
-        // Over the transmission copy of the above: transmissive items, then Blend over everything.
-        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.TransmissiveDrawItems());
-        RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());
-    }
+    // Over the transmission copy of the above: transmissive items, then Blend over everything. Few
+    // draws, back to front; recorded inline.
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    SetViewportAndScissor(commandBuffer, frame.extent);
+    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.TransmissiveDrawItems());
+    RecordMaterialDrawItems(commandBuffer, *frame.forwardPipelines, frame.frameDescriptorSet, frame.BlendDrawItems());
     vkCmdEndRenderPass(commandBuffer);
 }
 

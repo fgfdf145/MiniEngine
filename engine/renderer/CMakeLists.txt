@@ -145,6 +145,8 @@ add_library(engine_renderer
     vulkan/lighting_pass.h
     vulkan/material_draw.cpp
     vulkan/material_draw.h
+    vulkan/parallel_recorder.cpp
+    vulkan/parallel_recorder.h
     vulkan/pipeline.cpp
     vulkan/pipeline.h
     vulkan/pipeline_set.cpp

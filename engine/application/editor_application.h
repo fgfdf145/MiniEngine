@@ -78,6 +78,8 @@ struct EditorApplicationOptions
     // --no-render-thread: the render work runs on the main thread, inside each frame, as it did before
     // the render thread (for comparisons and debugging).
     bool renderThread = true;
+    // --no-parallel-recording: the render thread records every draw itself (comparisons).
+    bool parallelRecording = true;
     // --task-threads N: the task system's worker threads; 0 takes the logical processors less two.
     uint32_t taskThreads = 0;
     EnginePaths::Overrides paths;

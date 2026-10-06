@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "format_support.h"
+#include "parallel_recorder.h"
 #include "pipeline.h"
 
 #include <engine/core/log/log.h>
@@ -103,16 +104,49 @@ std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* ca
     return plan;
 }
 
+namespace
+{
+// Below this many casters the layers record inline; casters per secondary command buffer above it.
+constexpr size_t kParallelShadowDraws = 1024;
+constexpr uint32_t kShadowDrawsPerSecondary = 1024;
+}
+
 void VulkanShadowPass::Record(
     VkCommandBuffer commandBuffer,
     std::span<const ShadowDrawItem> drawItems,
     const ShadowCascadePlan* plan,
-    VulkanGpuTimer* timer) const
+    VulkanGpuTimer* timer,
+    VulkanParallelRecorder* recorder) const
 {
     static constexpr std::array<const char*, kShadowCascadeCount> kCascadeNames = {
         "Shadows/C0", "Shadows/C1", "Shadows/C2", "Shadows/C3"};
     VkClearValue clearValue{};
     clearValue.depthStencil = {1.0f, 0};
+
+    // Every redrawn layer's draws at once, each layer culling the casters for its cascade.
+    std::array<int, kShadowCascadeCount> batchOfCascade{-1, -1, -1, -1};
+    std::vector<VulkanParallelRecorder::Batch> batches;
+    if (recorder != nullptr && plan != nullptr && drawItems.size() >= kParallelShadowDraws)
+    {
+        for (uint32_t cascadeIndex = 0; cascadeIndex < kShadowCascadeCount; ++cascadeIndex)
+        {
+            if (!m_frameRedraw[cascadeIndex])
+            {
+                continue;
+            }
+            batchOfCascade[cascadeIndex] = static_cast<int>(batches.size());
+            VulkanParallelRecorder::Batch& batch = batches.emplace_back();
+            batch.renderPass = m_renderPass;
+            batch.framebuffer = m_framebuffers[cascadeIndex];
+            batch.itemCount = static_cast<uint32_t>(drawItems.size());
+            const glm::mat4 lightViewProjection = plan->held[cascadeIndex].viewProjection;
+            batch.record = [this, drawItems, lightViewProjection](VkCommandBuffer secondary, uint32_t begin, uint32_t end)
+            {
+                RecordCascadeDraws(secondary, lightViewProjection, drawItems.subspan(begin, end - begin));
+            };
+        }
+        recorder->Record(batches, kShadowDrawsPerSecondary);
+    }
 
     for (uint32_t cascadeIndex = 0; cascadeIndex < kShadowCascadeCount; ++cascadeIndex)
     {
@@ -132,56 +166,18 @@ void VulkanShadowPass::Record(
         renderPassInfo.renderArea.extent = {m_resolution, m_resolution};
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearValue;
-        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-        if (plan != nullptr)
+        if (batchOfCascade[cascadeIndex] >= 0)
         {
-            const glm::mat4& lightViewProjection = plan->held[cascadeIndex].viewProjection;
-            VkPipeline boundPipeline = VK_NULL_HANDLE;
-            for (const ShadowDrawItem& item : drawItems)
+            const std::vector<VkCommandBuffer>& secondaries = batches[static_cast<size_t>(batchOfCascade[cascadeIndex])].buffers;
+            vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+            vkCmdExecuteCommands(commandBuffer, static_cast<uint32_t>(secondaries.size()), secondaries.data());
+        }
+        else
+        {
+            vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            if (plan != nullptr)
             {
-                if (!ShadowCascadeIntersectsSphere(lightViewProjection, item.worldBoundsCenter, item.worldBoundsRadius))
-                {
-                    continue;
-                }
-
-                const VkPipeline requiredPipeline = item.alphaMask ? m_maskPipeline : m_opaquePipeline;
-                if (requiredPipeline != boundPipeline)
-                {
-                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
-                    boundPipeline = requiredPipeline;
-                }
-                if (item.alphaMask)
-                {
-                    vkCmdBindDescriptorSets(
-                        commandBuffer,
-                        VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        m_pipelineLayout,
-                        0,
-                        1,
-                        &item.materialDescriptorSet,
-                        0,
-                        nullptr);
-                }
-
-                ShadowPushConstants constants{};
-                constants.lightModelViewProjection = lightViewProjection * item.model;
-                std::memcpy(constants.baseColorFactor, item.material.baseColorFactor, sizeof(constants.baseColorFactor));
-                std::memcpy(constants.nodeGraphFactors, item.material.nodeGraphFactors, sizeof(constants.nodeGraphFactors));
-                constants.alphaCutoffAndPadding[0] = item.material.alphaCutoff;
-                std::memcpy(constants.baseColorTransform, item.baseColorTransform, sizeof(constants.baseColorTransform));
-                vkCmdPushConstants(
-                    commandBuffer,
-                    m_pipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                    0,
-                    sizeof(ShadowPushConstants),
-                    &constants);
-
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, item.alphaMask ? &item.vertexBuffer : &item.positionBuffer, &offset);
-                vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(commandBuffer, item.indexCount, 1, 0, 0, 0);
+                RecordCascadeDraws(commandBuffer, plan->held[cascadeIndex].viewProjection, drawItems);
             }
         }
 
@@ -190,6 +186,59 @@ void VulkanShadowPass::Record(
         {
             timer->Mark(commandBuffer, kCascadeNames[cascadeIndex]);
         }
+    }
+}
+
+void VulkanShadowPass::RecordCascadeDraws(
+    VkCommandBuffer commandBuffer,
+    const glm::mat4& lightViewProjection,
+    std::span<const ShadowDrawItem> drawItems) const
+{
+    VkPipeline boundPipeline = VK_NULL_HANDLE;
+    for (const ShadowDrawItem& item : drawItems)
+    {
+        if (!ShadowCascadeIntersectsSphere(lightViewProjection, item.worldBoundsCenter, item.worldBoundsRadius))
+        {
+            continue;
+        }
+
+        const VkPipeline requiredPipeline = item.alphaMask ? m_maskPipeline : m_opaquePipeline;
+        if (requiredPipeline != boundPipeline)
+        {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
+            boundPipeline = requiredPipeline;
+        }
+        if (item.alphaMask)
+        {
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_pipelineLayout,
+                0,
+                1,
+                &item.materialDescriptorSet,
+                0,
+                nullptr);
+        }
+
+        ShadowPushConstants constants{};
+        constants.lightModelViewProjection = lightViewProjection * item.model;
+        std::memcpy(constants.baseColorFactor, item.material.baseColorFactor, sizeof(constants.baseColorFactor));
+        std::memcpy(constants.nodeGraphFactors, item.material.nodeGraphFactors, sizeof(constants.nodeGraphFactors));
+        constants.alphaCutoffAndPadding[0] = item.material.alphaCutoff;
+        std::memcpy(constants.baseColorTransform, item.baseColorTransform, sizeof(constants.baseColorTransform));
+        vkCmdPushConstants(
+            commandBuffer,
+            m_pipelineLayout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(ShadowPushConstants),
+            &constants);
+
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, item.alphaMask ? &item.vertexBuffer : &item.positionBuffer, &offset);
+        vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffer, item.indexCount, 1, 0, 0, 0);
     }
 }
 

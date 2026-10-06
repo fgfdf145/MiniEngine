@@ -17,6 +17,8 @@
 namespace me
 {
 
+class VulkanParallelRecorder;
+
 // Which draw items the forward pass records, and whether it owns the frame. The deferred order
 // gives it only Blend items to composite over the lighting result; the forward-only comparison
 // order gives it everything. It lives in the frame context because the switch flips between
@@ -62,6 +64,8 @@ struct ScenePassFrameContext
     std::span<const VulkanDrawItem> decalDrawItems;
     const VulkanPipelineSet* decalPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
+    // Records large draw lists in parallel (RecordMaterialPass); null records everything inline.
+    VulkanParallelRecorder* recorder = nullptr;
     // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see
     // PreExposureFromEv100). Always positive.
     float preExposure = 1.0f;

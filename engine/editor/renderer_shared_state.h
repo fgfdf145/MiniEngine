@@ -138,6 +138,9 @@ struct RendererSharedState
     // The render backend draws on a render thread, one frame behind the main thread; off
     // (--no-render-thread), it draws on the main thread inside DrawFrame.
     bool renderThread = true;
+    // Large draw lists are recorded on the task system into secondary command buffers; off
+    // (--no-parallel-recording), the render thread records them all itself.
+    bool parallelRecording = true;
     InputState input;
     Camera camera;
     ViewportMatrices viewportMatrices;

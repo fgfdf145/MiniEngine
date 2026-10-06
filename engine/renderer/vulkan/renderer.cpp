@@ -825,6 +825,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     SubmitVideoFrame(m_commandContext->GetCurrentFrame());
 
     UpdateAutoExposure(packet, m_commandContext->GetCurrentFrame());
+    // The slot's fence has signalled: the secondary command buffers its last frame used are free.
+    if (m_parallelRecorder)
+    {
+        m_parallelRecorder->BeginFrame(m_commandContext->GetCurrentFrame());
+    }
     UpdateMinimapTexture(packet.minimapPath);
     m_cpuStages.Mark("FrameStart");
 
@@ -1213,6 +1218,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
     frame.frameSlot = m_commandContext->GetCurrentFrame();
+    frame.recorder = m_parallelRecorder.get();
 
     m_referenceFrame.viewProjection = viewProjection;
     m_referenceFrame.cameraPosition = packet.camera.position;
@@ -1387,7 +1393,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   commandBuffer,
                                                   shadowDrawItems,
                                                   shadowPlan.has_value() ? &*shadowPlan : nullptr,
-                                                  m_gpuTimer.get());
+                                                  m_gpuTimer.get(),
+                                                  m_parallelRecorder.get());
                                               m_cpuStages.Mark("RecordShadows");
                                               // The same, for the local lights' atlas.
                                               m_localShadowPass->Record(commandBuffer, shadowDrawItems, localShadowTiles);
@@ -1750,6 +1757,13 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_device->GetQueueFamilies().graphicsFamily.value(),
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    if (State().parallelRecording)
+    {
+        m_parallelRecorder = std::make_unique<VulkanParallelRecorder>(
+            m_device->GetHandle(),
+            m_device->GetQueueFamilies().graphicsFamily.value(),
+            static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    }
 }
 
 void VulkanRenderer::LogFrameTimings() const
@@ -1890,6 +1904,7 @@ void VulkanRenderer::FlushVideoFrames()
 
 void VulkanRenderer::DestroyDeviceResources()
 {
+    m_parallelRecorder.reset();
     m_gpuTimer.reset();
     m_environmentMap.reset();
     m_environmentMapPath.clear();

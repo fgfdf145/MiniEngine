@@ -77,23 +77,29 @@ void VulkanGeometryPass::Record(
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
 
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    SetViewportAndScissor(commandBuffer, frame.extent);
-    RecordMaterialDrawItems(commandBuffer, *frame.geometryPipelines, frame.frameDescriptorSet, frame.OpaqueDrawItems());
-    if (frame.groundPlane)
-    {
-        // After the opaque items, so their depth rejects the ground's hidden pixels; before the
-        // decals, which may lie on it.
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipeline);
-        vkCmdBindDescriptorSets(
-            commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-    }
-    if (frame.decalPipelines != nullptr)
-    {
-        RecordMaterialDrawItems(commandBuffer, *frame.decalPipelines, frame.frameDescriptorSet, frame.decalDrawItems);
-    }
-    vkCmdEndRenderPass(commandBuffer);
+    RecordMaterialPass(
+        commandBuffer,
+        renderPassInfo,
+        frame.recorder,
+        *frame.geometryPipelines,
+        frame.frameDescriptorSet,
+        frame.OpaqueDrawItems(),
+        [&](VkCommandBuffer tailBuffer)
+        {
+            if (frame.groundPlane)
+            {
+                // After the opaque items, so their depth rejects the ground's hidden pixels; before
+                // the decals, which may lie on it.
+                vkCmdBindPipeline(tailBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipeline);
+                vkCmdBindDescriptorSets(
+                    tailBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_groundPipelineLayout, 0, 1, &frame.frameDescriptorSet, 0, nullptr);
+                vkCmdDraw(tailBuffer, 3, 1, 0, 0);
+            }
+            if (frame.decalPipelines != nullptr)
+            {
+                RecordMaterialDrawItems(tailBuffer, *frame.decalPipelines, frame.frameDescriptorSet, frame.decalDrawItems);
+            }
+        });
 }
 
 void VulkanGeometryPass::OnTargetsRebuilt(const SceneRenderTargets& targets)

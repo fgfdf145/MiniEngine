@@ -245,6 +245,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--no-parallel-recording")
+        {
+            options.parallelRecording = false;
+            continue;
+        }
+
         if (argument == "--task-threads")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -400,6 +406,7 @@ int EditorApplication::Run()
 
     auto sharedState = std::make_shared<RendererSharedState>();
     sharedState->renderThread = m_options.renderThread;
+    sharedState->parallelRecording = m_options.parallelRecording;
     // A scripted run renders what its options say, not what the editor was last left at, and does
     // not save the camera or render settings its options changed.
     sharedState->viewSettingsFromCommandLine =

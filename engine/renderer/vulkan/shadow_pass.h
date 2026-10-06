@@ -14,6 +14,8 @@
 namespace me
 {
 
+class VulkanParallelRecorder;
+
 // What the shadow pass needs to draw one caster. Blend materials are not casters.
 // What the alpha test reads of a caster's material: a few floats rather than the whole GpuMaterialData,
 // since a map has tens of thousands of casters a frame.
@@ -96,13 +98,18 @@ class VulkanShadowPass
 
     // Renders the casters into the cascades Plan chose, with the plan it returned (null with no
     // cascades).
+    // With a recorder and enough casters, every redrawn layer's draws are recorded on the task
+    // system into secondary command buffers, all layers at once.
     void Record(
         VkCommandBuffer commandBuffer,
         std::span<const ShadowDrawItem> drawItems,
         const ShadowCascadePlan* plan,
-        VulkanGpuTimer* timer = nullptr) const;
+        VulkanGpuTimer* timer = nullptr,
+        VulkanParallelRecorder* recorder = nullptr) const;
 
   private:
+    // One layer's draws: the casters its cascade sees, opaque ones from the position stream.
+    void RecordCascadeDraws(VkCommandBuffer commandBuffer, const glm::mat4& lightViewProjection, std::span<const ShadowDrawItem> drawItems) const;
     void CreateImage(VkPhysicalDevice physicalDevice);
     void CreateSampler(VkPhysicalDevice physicalDevice);
     void CreateRenderPass();

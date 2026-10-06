@@ -34,6 +34,7 @@
 #include "texture.h"
 #include "tonemap_pass.h"
 #include "material_set_cache.h"
+#include "parallel_recorder.h"
 #include "uniform_buffer.h"
 #include "video_readback.h"
 
@@ -474,6 +475,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
     // GPU time per pass, and the CPU's time per frame outside the waits, for LogFrameTimings.
     std::unique_ptr<VulkanGpuTimer> m_gpuTimer;
+    // Records the shadow layers' and the material passes' large draw lists on the task system;
+    // null with --no-parallel-recording.
+    std::unique_ptr<VulkanParallelRecorder> m_parallelRecorder;
     std::vector<double> m_cpuFrameMs;
     std::vector<double> m_cpuWaitMs;
     uint32_t m_cpuFrameCursor = 0;
