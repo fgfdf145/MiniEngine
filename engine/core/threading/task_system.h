@@ -1,0 +1,75 @@
+#pragma once
+
+#include <TaskScheduler.h>
+
+#include <cstdint>
+#include <functional>
+
+namespace me
+{
+
+// enkiTS's three priorities, by what waits on the work.
+enum class TaskPriority : uint8_t
+{
+    // Inside a frame: the frame waits for it (parallel loops, physics, command recording).
+    High = enki::TASK_PRIORITY_HIGH,
+    // Wanted soon, not by this frame (texture preparation, ray scene builds).
+    Medium = enki::TASK_PRIORITY_MED,
+    // Background work nobody waits for.
+    Low = enki::TASK_PRIORITY_LOW,
+};
+
+// The engine's one task scheduler (enkiTS). Its workers run the parallel work of every subsystem,
+// so the subsystems share the cores instead of each starting a pool of its own. The thread that
+// calls Initialize is task thread 0; the render thread registers as an external one
+// (ScopedExternalTaskThread).
+class TaskSystem
+{
+  public:
+    struct Settings
+    {
+        // Worker threads besides the initializing thread; 0 takes the logical processors less two,
+        // which leaves one for the main thread and one for the render thread.
+        uint32_t workerThreads = 0;
+        // Threads the scheduler did not start that also add and wait for tasks.
+        uint32_t externalThreads = 1;
+    };
+
+    static void Initialize(const Settings& settings = {});
+    // Waits for the tasks in flight, then stops the workers. Nothing may add tasks afterwards.
+    static void Shutdown();
+    static bool IsRunning();
+    static enki::TaskScheduler& Scheduler();
+    // The scheduler's threads, workers and registered external ones included.
+    static uint32_t ThreadCount();
+    // True on the threads that may add and wait for tasks: task thread 0, the workers, and
+    // registered external threads.
+    static bool CanWaitOnCurrentThread();
+
+    // Runs body(begin, end) over [0, count) in ranges of about minRange (enkiTS splits the set in
+    // chunks first, so a chunk's last range can be shorter), on the workers and the calling thread,
+    // and returns once every range has run. While waiting the calling thread runs tasks of this
+    // priority and higher only. The first exception a range throws is
+    // rethrown here, after the others finished. Runs inline when the scheduler is not running, the
+    // calling thread cannot wait for tasks, or the work is a single range.
+    static void ParallelFor(
+        uint32_t count,
+        uint32_t minRange,
+        const std::function<void(uint32_t begin, uint32_t end)>& body,
+        TaskPriority priority = TaskPriority::High);
+};
+
+// Registers the calling thread with the task scheduler for its lifetime, so it can run and wait for
+// tasks. Does nothing when the scheduler is not running or has no external slot left.
+class ScopedExternalTaskThread
+{
+  public:
+    ScopedExternalTaskThread();
+    ~ScopedExternalTaskThread();
+    ScopedExternalTaskThread(const ScopedExternalTaskThread&) = delete;
+    ScopedExternalTaskThread& operator=(const ScopedExternalTaskThread&) = delete;
+
+  private:
+    bool m_registered = false;
+};
+}

@@ -15,11 +15,13 @@
 #include <engine/asset/model_loader.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
+#include <engine/core/threading/render_thread.h>
 #include <engine/logic/world_bounds.h>
 #include <engine/platform/window/window.h>
 #include <engine/scene/world_units.h>
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -542,6 +544,17 @@ void EditorRenderBackendBase::CaptureViewportWithState()
 
 bool EditorRenderBackendBase::StartVideoRecording(const VideoRecordingRequest& request, std::string& error)
 {
+    // The render thread reads frames back for the recorder while it draws.
+    bool started = false;
+    RunWithRenderIdle([&]()
+                      {
+                          started = StartVideoRecordingNow(request, error);
+                      });
+    return started;
+}
+
+bool EditorRenderBackendBase::StartVideoRecordingNow(const VideoRecordingRequest& request, std::string& error)
+{
     if (m_videoRecorder)
     {
         error = "A recording is already running";
@@ -586,6 +599,18 @@ bool EditorRenderBackendBase::StartVideoRecording(const VideoRecordingRequest& r
 }
 
 void EditorRenderBackendBase::StopVideoRecording()
+{
+    if (!m_videoRecorder)
+    {
+        return;
+    }
+    RunWithRenderIdle([this]()
+                      {
+                          StopVideoRecordingNow();
+                      });
+}
+
+void EditorRenderBackendBase::StopVideoRecordingNow()
 {
     if (!m_videoRecorder)
     {
@@ -822,11 +847,14 @@ bool EditorRenderBackendBase::HasDrawableArea() const
 
 RendererSharedState& EditorRenderBackendBase::State()
 {
+    // The main thread changes it while the render thread draws: render work reads its frame packet.
+    assert(!RenderThread::IsRenderWork() && "render work must not read the editor's shared state");
     return *m_sharedState;
 }
 
 const RendererSharedState& EditorRenderBackendBase::State() const
 {
+    assert(!RenderThread::IsRenderWork() && "render work must not read the editor's shared state");
     return *m_sharedState;
 }
 

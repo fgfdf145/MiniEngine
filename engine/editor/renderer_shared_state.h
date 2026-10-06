@@ -134,6 +134,9 @@ struct RendererSharedState
 
     bool initialized = false;
     bool renderablesDirty = false;
+    // The render backend draws on a render thread, one frame behind the main thread; off
+    // (--no-render-thread), it draws on the main thread inside DrawFrame.
+    bool renderThread = true;
     InputState input;
     Camera camera;
     ViewportMatrices viewportMatrices;
@@ -163,8 +166,9 @@ struct RendererSharedState
     // run): the saved camera and render settings are neither applied nor overwritten, so a run is
     // reproducible and leaves the user's settings as they were.
     bool viewSettingsFromCommandLine = false;
-    // Written by the render backend each frame: new content whose ray-traced scene (DDGI's) is still
-    // building. --wait-for-scene counts no frames until it is done.
+    // Written by the render backend each frame: new content the render thread has not drawn yet, or
+    // whose ray-traced scene (DDGI's) is still building. --wait-for-scene counts no frames until it
+    // is done.
     bool rayScenePending = false;
     RenderExtent requestedViewportExtent{};
     // --viewport-size: the scene renders at this size whatever the viewport panel's size, so captures

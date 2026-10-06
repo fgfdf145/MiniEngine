@@ -5,6 +5,7 @@
 #include <engine/core/video/video_recorder.h>
 #include <engine/renderer/rhi/backend.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -42,6 +43,12 @@ class EditorRenderBackendBase : public IRenderBackend
     virtual void FlushVideoFrames()
     {
     }
+    // Runs work while the backend's render thread, if it has one, waits with nothing in hand: for
+    // what the render thread reads (the video recorder) or uses (the device) while it draws.
+    virtual void RunWithRenderIdle(const std::function<void()>& work)
+    {
+        work();
+    }
     void UpdateViewportMatrices(RenderExtent extent);
     EditorUiFrameResult DrawEditorUi(ImTextureID viewportTextureId, RenderExtent viewportExtent);
     bool HasDrawableArea() const;
@@ -72,6 +79,8 @@ class EditorRenderBackendBase : public IRenderBackend
     // there is no Media Foundation), or stops
     // the one running.
     void ToggleVideoRecordingFromEditor();
+    bool StartVideoRecordingNow(const VideoRecordingRequest& request, std::string& error);
+    void StopVideoRecordingNow();
     // Every frame: stops a recording whose file could not be written, and updates what the viewport
     // shows of the one running.
     void UpdateVideoRecording();

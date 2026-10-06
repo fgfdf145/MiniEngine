@@ -19,6 +19,7 @@
 #include "local_shadow_pass.h"
 #include "instance.h"
 #include "pipeline_set.h"
+#include "render_frame_packet.h"
 #include "render_pass.h"
 #include "gi_pass.h"
 #include "gpu_timer.h"
@@ -38,13 +39,17 @@
 
 #include <engine/editor/editor_backend_base.h>
 #include <engine/asset/texture_preparation.h>
+#include <engine/core/threading/render_thread.h>
 #include <engine/renderer/cpu_stage_timer.h>
 #include <engine/renderer/taa_jitter.h>
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <future>
 #include <optional>
 #include <span>
@@ -153,9 +158,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanRenderer(const VulkanRenderer&) = delete;
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
 
+    // On the main thread: runs the frame's simulation and editor UI, then hands what it draws to the
+    // render thread (RenderFrame), which draws it while the next frame runs here.
     void DrawFrame() override;
+    // These wait for the render thread to finish the frames handed to it, then work alone.
     void CaptureViewport(const std::filesystem::path& path) override;
-    // In ddgi_reference_capture.cpp.
     void CaptureDdgiReference(const DdgiReferenceRequest& reference) override;
     void LogFrameTimings() const override;
 
@@ -163,8 +170,23 @@ class VulkanRenderer : public EditorRenderBackendBase
     void HandleBackendEvent(const SDL_Event& event) override;
     bool WantsKeyboardCapture() const override;
     void FlushVideoFrames() override;
+    void RunWithRenderIdle(const std::function<void()>& work) override;
 
   private:
+    // Main thread: takes what the render thread reported of its last frame (exposure, upload status).
+    void ApplyRenderFeedback();
+    // Main thread, after ImGui::Render: makes, updates or destroys the textures ImGui asked for.
+    void ApplyImGuiTextureRequests(const ImDrawData& drawData);
+    // Main thread: everything the render thread will read of this frame.
+    void BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent);
+    // Render thread: draws one frame from its packet.
+    void RenderFrame(RenderFramePacket& frame);
+    void PublishFeedback(const RenderFramePacket& frame);
+    void CaptureViewportNow(const std::filesystem::path& path);
+    // In ddgi_reference_capture.cpp.
+    void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
+    void LogFrameTimingsNow() const;
+
     void CreateDeviceResources();
     void DestroyDeviceResources();
     EnvironmentDescriptorBindings BuildEnvironmentBindings() const;
@@ -172,8 +194,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
     void UpdateEnvironmentMap(const SceneEnvironment& environment);
-    // Loads the scene's minimap picture when its path changes and hands it to the editor UI.
-    void UpdateMinimapTexture();
+    // Loads the scene's minimap picture when its path changes; the editor UI draws it as
+    // kMinimapTextureId.
+    void UpdateMinimapTexture(const std::string& path);
     void ReleaseMinimapTexture();
     void CreateSwapchainResources();
     void CreateScenePasses();
@@ -183,31 +206,34 @@ class VulkanRenderer : public EditorRenderBackendBase
     void DestroyDescriptorResources();
     void RecreateSwapchain();
     bool SwapchainNeedsResize() const;
-    void SyncSceneTargets();
-    // Builds the GPU content for the scene as it now is and swaps it in. Transactional: when it
+    void SyncSceneTargets(RenderExtent viewportExtent);
+    // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
-    void UploadSceneResources();
+    void UploadSceneResources(const RenderFramePacket& frame);
     // UploadSceneResources for a change made while the editor runs. Running out of GPU memory is
     // reported in the editor and leaves the previous content on screen instead of ending the
     // program; any other failure still propagates.
-    void UploadSceneResourcesOrKeepPrevious();
+    void UploadSceneResourcesOrKeepPrevious(const RenderFramePacket& frame);
     // A renderables change: queues the texture files it needs that are not already on the GPU, and
     // marks an upload pending. The upload itself happens in PumpSceneUpload.
-    void RequestSceneUpload();
+    void RequestSceneUpload(const RenderFramePacket& frame);
     // Called every frame: uploads a few textures the workers finished into the staged set and, once
     // a pending change has every texture it needs, commits it with UploadSceneResourcesOrKeepPrevious.
-    // Also keeps State().sceneUploadStatus current.
-    void PumpSceneUpload();
+    // Also keeps m_sceneUploadStatus current.
+    void PumpSceneUpload(const RenderFramePacket& frame);
     // Forgets a pending change's staged textures and failures, after it ran out of memory.
     void AbandonPendingTextures();
     std::unique_ptr<VulkanTexture> UploadPreparedTexture(
         const PreparedTexture& prepared,
         TextureUsage usage,
         VulkanUploadBatch& uploadBatch);
-    // After a failed upload the previous content may still name entities the change deleted.
-    // Drawing one would read a destroyed entity's transform, so those submeshes are dropped.
-    void DropSubmeshesOfRemovedEntities();
-    void ApplyRenderContent(std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes, size_t keptSubmeshCount);
+    // The previous content may still name entities the frame no longer has (deleted, or their model
+    // removed). They are not drawn any more, so their submeshes are dropped.
+    void DropSubmeshesOfRemovedEntities(const RenderFramePacket& frame);
+    void ApplyRenderContent(
+        std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes,
+        size_t keptSubmeshCount,
+        const RenderFramePacket& frame);
     // Destroys the stored textures no live submesh names (after the material sets that named them).
     void DropUnreferencedTextures();
     // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh. Submeshes
@@ -215,7 +241,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::vector<VulkanDrawItem> BuildDrawItems(
         uint32_t imageIndex,
         std::span<const glm::mat4> models,
-        const glm::mat4& viewProjection) const;
+        const glm::mat4& viewProjection,
+        const glm::mat4& view) const;
     std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
@@ -225,13 +252,13 @@ class VulkanRenderer : public EditorRenderBackendBase
         VkCommandBuffer commandBuffer,
         const ScenePassFrameContext& frame,
         std::span<const ScenePassId> passOrder);
-    void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const;
-    // Meters the histogram the given frame slot last wrote and moves the camera's EV100 toward
-    // it. Must run after AcquireNextImage has waited on that slot's fence.
-    void UpdateAutoExposure(uint32_t frameSlot);
+    void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
+    // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
+    // toward it. Must run after AcquireNextImage has waited on that slot's fence.
+    void UpdateAutoExposure(RenderFramePacket& frame, uint32_t frameSlot);
     // Adapts the white point toward this frame's illuminant estimate and returns the balance the
     // tone mapping pass applies (identity when auto white balance is off).
-    glm::mat3 UpdateWhiteBalance();
+    glm::mat3 UpdateWhiteBalance(RenderFramePacket& frame);
     // Logs when the number of lights left out by the light limit changes.
     void ReportDroppedLights(uint32_t droppedCount);
     void ReportDroppedClusterLights(uint32_t droppedCount);
@@ -432,7 +459,32 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::vector<double> m_cpuFrameMs;
     std::vector<double> m_cpuWaitMs;
     uint32_t m_cpuFrameCursor = 0;
-    // The frame's CPU time by stage, logged with the frame timings.
+    // The frame's CPU time by stage, logged with the frame timings: the render thread's, and the
+    // main thread's.
     CpuStageTimer m_cpuStages;
+    CpuStageTimer m_mainStages;
+    std::vector<double> m_mainFrameMs;
+    uint32_t m_mainFrameCursor = 0;
+
+    // The render thread, and the two frames it alternates between: the main thread builds one while
+    // the render thread draws the other.
+    std::unique_ptr<RenderThread> m_renderThread;
+    std::array<RenderFramePacket, 2> m_framePackets;
+    uint64_t m_frameSerial = 0;
+    // The last frame whose renderables changed: until the render thread has drawn it, the scene
+    // counts as loading (RendererSharedState::rayScenePending).
+    uint64_t m_lastContentSerial = 0;
+    // Set by the render thread when acquire or present found the swapchain out of date or
+    // suboptimal. It then skips frames until the main thread rebuilds the swapchain.
+    std::atomic<bool> m_swapchainOutOfDate{false};
+    std::mutex m_feedbackMutex;
+    RenderFeedback m_feedback;
+    // The render thread's own state behind the feedback.
+    std::string m_sceneUploadStatus;
+    std::optional<bool> m_outOfMemoryChange;
+    // The EV100 auto exposure reached; the main thread's camera trails it by a frame.
+    std::optional<float> m_renderExposureEv100;
+    // The main thread's copy of RenderFeedback::minimapLoaded.
+    bool m_minimapAvailable = false;
 };
 }

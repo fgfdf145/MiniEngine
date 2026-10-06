@@ -1988,3 +1988,111 @@ add_test(
 )
 
 set_target_properties(miniengine_audio_engine_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_render_thread_tests
+    render_thread_tests.cpp
+)
+miniengine_group_target_sources(miniengine_render_thread_tests)
+
+target_link_libraries(miniengine_render_thread_tests
+    PRIVATE
+        engine_core
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_render_thread_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_render_thread_tests>
+            $<TARGET_FILE_DIR:miniengine_render_thread_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.render_thread
+    COMMAND miniengine_render_thread_tests
+)
+
+set_target_properties(miniengine_render_thread_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_task_system_tests
+    task_system_tests.cpp
+)
+miniengine_group_target_sources(miniengine_task_system_tests)
+
+target_link_libraries(miniengine_task_system_tests
+    PRIVATE
+        engine_core
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_task_system_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_task_system_tests>
+            $<TARGET_FILE_DIR:miniengine_task_system_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.task_system
+    COMMAND miniengine_task_system_tests
+)
+
+set_target_properties(miniengine_task_system_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_render_transform_snapshot_tests
+    render_transform_snapshot_tests.cpp
+)
+miniengine_group_target_sources(miniengine_render_transform_snapshot_tests)
+
+target_link_libraries(miniengine_render_transform_snapshot_tests
+    PRIVATE
+        engine_render_core
+        engine_logic
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_render_transform_snapshot_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_render_transform_snapshot_tests>
+            $<TARGET_FILE_DIR:miniengine_render_transform_snapshot_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.render_transform_snapshot
+    COMMAND miniengine_render_transform_snapshot_tests
+)
+
+set_target_properties(miniengine_render_transform_snapshot_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_imgui_frame_snapshot_tests
+    imgui_frame_snapshot_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_imgui_frame_snapshot_tests)
+
+target_link_libraries(miniengine_imgui_frame_snapshot_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_imgui_frame_snapshot_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_imgui_frame_snapshot_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_imgui_frame_snapshot_tests>
+            $<TARGET_FILE_DIR:miniengine_imgui_frame_snapshot_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.imgui_frame_snapshot
+    COMMAND miniengine_imgui_frame_snapshot_tests
+)
+
+set_target_properties(miniengine_imgui_frame_snapshot_tests PROPERTIES FOLDER "Tests")

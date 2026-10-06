@@ -342,6 +342,8 @@ void VulkanImGuiLayer::ProcessEvent(const SDL_Event& event)
 
 void VulkanImGuiLayer::BeginFrame()
 {
+    // On the main thread while the render thread draws: the Vulkan backend's NewFrame touches no
+    // device state, and the textures ImGui asks for are made by VulkanRenderer::ApplyImGuiTextureRequests.
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();

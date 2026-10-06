@@ -39,6 +39,8 @@ add_library(engine_render_core
     motion_history.h
     reference_path_tracer.cpp
     reference_path_tracer.h
+    render_transform_snapshot.cpp
+    render_transform_snapshot.h
     render_types.h
     renderer_world.cpp
     renderer_world.h

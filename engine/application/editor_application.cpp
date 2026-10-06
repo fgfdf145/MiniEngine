@@ -2,6 +2,7 @@
 
 #include <engine/audio/audio_engine.h>
 #include <engine/core/log/log.h>
+#include <engine/core/threading/task_system.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/capture_state.h>
@@ -238,6 +239,25 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--no-render-thread")
+        {
+            options.renderThread = false;
+            continue;
+        }
+
+        if (argument == "--task-threads")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            uint32_t number = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), number).ptr != value.data() + value.size() ||
+                number == 0 || number > 256)
+            {
+                throw std::runtime_error("--task-threads requires an integer from 1 to 256");
+            }
+            options.taskThreads = number;
+            continue;
+        }
+
         if (argument == "--wait-for-scene")
         {
             options.waitForScene = true;
@@ -346,6 +366,17 @@ int EditorApplication::Run()
 {
     // Before any thread starts, so the workers inherit it.
     platform::process::RequestFullSpeedScheduling();
+    // Before anything runs tasks; stopped after everything that does (the renderer) is gone.
+    TaskSystem::Settings taskSettings;
+    taskSettings.workerThreads = m_options.taskThreads;
+    TaskSystem::Initialize(taskSettings);
+    struct TaskSystemShutdown
+    {
+        ~TaskSystemShutdown()
+        {
+            TaskSystem::Shutdown();
+        }
+    } taskSystemShutdown;
     // Resolve the directory roots before any subsystem touches the filesystem.
     EnginePaths::Initialize(m_options.paths);
     LOG_INFO(
@@ -368,6 +399,7 @@ int EditorApplication::Run()
     }
 
     auto sharedState = std::make_shared<RendererSharedState>();
+    sharedState->renderThread = m_options.renderThread;
     // A scripted run renders what its options say, not what the editor was last left at, and does
     // not save the camera or render settings its options changed.
     sharedState->viewSettingsFromCommandLine =

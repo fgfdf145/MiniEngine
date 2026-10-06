@@ -73,14 +73,6 @@ glm::mat3 BuildLightRotation(const TransformComponent& transform)
     return glm::mat3(rotMat);
 }
 
-// Every light in the scene, in scene order, as the shader wants it and as the light selection
-// ranks it. The two vectors are parallel.
-struct CollectedSceneLights
-{
-    std::vector<GpuLightData> gpuLights;
-    std::vector<SceneLightCandidate> candidates;
-};
-
 // The scene's light entities, then the lights models carry (KHR_lights_punctual) through their
 // entities' transforms.
 CollectedSceneLights CollectSceneLights(const IEditorWorld& world, const RendererWorld& rendererWorld)
@@ -519,13 +511,39 @@ VulkanRenderer::VulkanRenderer(
     CreateSwapchainResources();
     // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
     // and it has no texture files.
-    UploadSceneResources();
+    RenderFramePacket& startup = m_framePackets[0];
+    startup.renderSubmeshes = RenderWorld().SnapshotRenderSubmeshes();
+    startup.transforms.Capture(RenderWorld(), *startup.renderSubmeshes);
+    UploadSceneResources(startup);
+    m_renderThread = std::make_unique<RenderThread>(State().renderThread ? RenderThread::Mode::Threaded : RenderThread::Mode::Inline);
+    LOG_INFO("Rendering on {}", State().renderThread ? "a render thread" : "the main thread (--no-render-thread)");
 }
 
 VulkanRenderer::~VulkanRenderer()
 {
+    // The render thread finishes the frame in hand and stops; a failure it had is dropped, as the
+    // device goes anyway.
+    if (m_renderThread)
+    {
+        try
+        {
+            m_renderThread->WaitIdle();
+        }
+        catch (const std::exception& error)
+        {
+            LOG_ERROR("The render thread failed: {}", error.what());
+        }
+        m_renderThread.reset();
+    }
     // Its last frames are read back from the device about to be torn down.
-    StopVideoRecording();
+    try
+    {
+        StopVideoRecording();
+    }
+    catch (const std::exception& error)
+    {
+        LOG_ERROR("Failed to finish the recording: {}", error.what());
+    }
     // Joins the workers before anything they might still be preparing for is torn down.
     m_texturePreparation.reset();
 
@@ -563,39 +581,196 @@ void VulkanRenderer::DrawFrame()
 {
     const FrameStallReporter stallReporter;
     const auto frameStart = std::chrono::steady_clock::now();
-    m_cpuStages.BeginFrame();
+    m_mainStages.BeginFrame();
 
     if (!TickSharedFrame())
     {
         return;
     }
-    m_cpuStages.Mark("Tick");
+    m_mainStages.Mark("Tick");
+    ApplyRenderFeedback();
 
-    const bool contentChanged = ProcessPendingOperations();
-    m_cpuStages.Mark("PendingOperations");
-    if (contentChanged)
-    {
-        RequestSceneUpload();
-        m_cpuStages.Mark("RequestUpload");
-    }
-    // Every frame: stages textures the workers finished, and commits a pending change once its
-    // last texture is ready.
-    PumpSceneUpload();
-    m_cpuStages.Mark("PumpUpload");
-
+    bool contentChanged = ProcessPendingOperations();
+    m_mainStages.Mark("PendingOperations");
     EditorWorld().FlushDirtyTransforms();
-    m_cpuStages.Mark("SceneUpdates");
+    m_mainStages.Mark("SceneUpdates");
 
     // A swapchain that no longer matches the window is rebuilt before drawing rather than after a
     // present reports it: drawing into the old size first leaves the newly exposed area unpainted
     // for a frame, which shows on every step of a live resize.
     // Switching HDR output changes the swapchain's format, and with it everything built on it.
-    if (SwapchainNeedsResize() || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
+    // The rebuild replaces the ImGui backend and its font texture, so it runs here: with no frame on
+    // its way, and before this frame's UI names the font.
+    if (m_swapchainOutOfDate.exchange(false) || SwapchainNeedsResize() || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
     {
-        RecreateSwapchain();
+        m_renderThread->RunExclusive([this]()
+                                     {
+                                         RecreateSwapchain();
+                                     });
+        m_mainStages.Mark("RecreateSwapchain");
     }
 
-    SyncSceneTargets();
+    // The size the render thread resizes the scene targets to before drawing this frame.
+    const RenderExtent viewportExtent = State().fixedViewportExtent.value_or(State().requestedViewportExtent);
+    UpdateViewportMatrices(viewportExtent);
+
+    m_imguiLayer->BeginFrame();
+    State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
+    // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
+    State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
+    const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
+    ApplyUiActions(uiFrame);
+    EditorWorld().FlushDirtyTransforms();
+    // A change the UI made goes with this frame: one that needs no new texture file commits in it.
+    contentChanged |= State().renderablesDirty;
+    State().renderablesDirty = false;
+    ImGui::Render();
+    ApplyImGuiTextureRequests(*ImGui::GetDrawData());
+    m_mainStages.Mark("EditorUi");
+
+    // The packet two frames back: Submit waited for the render thread to finish it.
+    RenderFramePacket& packet = m_framePackets[(m_frameSerial + 1) % m_framePackets.size()];
+    BuildFramePacket(packet, contentChanged, viewportExtent);
+    if (contentChanged)
+    {
+        // Loading until the render thread reports on this frame (ApplyRenderFeedback).
+        m_lastContentSerial = packet.serial;
+        State().rayScenePending = true;
+    }
+    m_mainStages.Mark("BuildFrame");
+    m_renderThread->Submit([this, &packet]()
+                           {
+                               RenderFrame(packet);
+                           });
+    // Waiting for the render thread to finish the previous frame (in inline mode: drawing this one).
+    m_mainStages.Mark("WaitForRender");
+
+    const double frameMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+    if (m_mainFrameMs.size() < VulkanGpuTimer::kAverageFrames)
+    {
+        m_mainFrameMs.push_back(frameMs);
+    }
+    else
+    {
+        m_mainFrameMs[m_mainFrameCursor % VulkanGpuTimer::kAverageFrames] = frameMs;
+    }
+    ++m_mainFrameCursor;
+}
+
+void VulkanRenderer::ApplyImGuiTextureRequests(const ImDrawData& drawData)
+{
+    // ImGui asks the backend through the draw data to make, update or destroy its textures (the font
+    // atlas grows as text needs new glyphs). The backend does that with the device and the queue, on
+    // textures the ImGui context owns, so it happens here on the main thread with the render thread
+    // idle, on the frames that ask; the frame's copy of the draw data carries no requests.
+    if (drawData.Textures == nullptr ||
+        std::none_of(drawData.Textures->begin(), drawData.Textures->end(), [](const ImTextureData* texture)
+                     {
+                         return texture->Status != ImTextureStatus_OK;
+                     }))
+    {
+        return;
+    }
+    m_renderThread->RunExclusive([&drawData]()
+                                 {
+                                     for (ImTextureData* texture : *drawData.Textures)
+                                     {
+                                         if (texture->Status != ImTextureStatus_OK)
+                                         {
+                                             ImGui_ImplVulkan_UpdateTexture(texture);
+                                         }
+                                     }
+                                 });
+}
+
+void VulkanRenderer::ApplyRenderFeedback()
+{
+    RenderFeedback feedback;
+    {
+        const std::lock_guard lock(m_feedbackMutex);
+        feedback = m_feedback;
+        m_feedback.outOfMemory.reset();
+    }
+    // A change of content the render thread has not drawn yet is still loading.
+    State().rayScenePending = feedback.rayScenePending || feedback.serial < m_lastContentSerial;
+    if (feedback.serial == 0)
+    {
+        return;
+    }
+    Camera& camera = State().camera;
+    // Auto exposure and the Khronos reference view set the EV. In manual mode it is the user's, which
+    // the render thread took from the frame.
+    if (camera.autoExposure.enabled || State().renderDebug.khronosReference)
+    {
+        camera.exposureEv100 = feedback.exposureEv100;
+    }
+    camera.adaptedLongTermEv100 = feedback.adaptedLongTermEv100;
+    camera.adaptedWhiteKelvin = feedback.adaptedWhiteKelvin;
+    State().sceneUploadStatus = feedback.sceneUploadStatus;
+    if (feedback.outOfMemory.has_value())
+    {
+        if (*feedback.outOfMemory)
+        {
+            State().lastModelLoadError = kOutOfMemoryReport;
+        }
+        // The screen matches the scene again, so a report of it not matching is now stale.
+        else if (State().lastModelLoadError == kOutOfMemoryReport)
+        {
+            State().lastModelLoadError.clear();
+        }
+    }
+    m_minimapAvailable = feedback.minimapLoaded;
+}
+
+void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent)
+{
+    packet.serial = ++m_frameSerial;
+    packet.deltaSeconds = State().frameDeltaSeconds;
+    // Again after the UI, which may have moved the camera (framing the selection, the mouse wheel).
+    UpdateViewportMatrices(viewportExtent);
+    packet.camera = State().camera;
+    packet.viewportMatrices = State().viewportMatrices;
+    packet.renderDebug = State().renderDebug;
+    packet.viewportExtent = viewportExtent;
+
+    IEditorWorld* const world = State().editorWorld.get();
+    packet.environment = world != nullptr ? world->GetEnvironment() : SceneEnvironment{};
+    packet.minimapPath.clear();
+    if (world != nullptr && world->GetMinimap().IsValid())
+    {
+        packet.minimapPath = world->GetMinimap().image;
+    }
+    packet.lights = world != nullptr ? CollectSceneLights(*world, State().rendererWorld) : CollectedSceneLights{};
+
+    packet.contentChanged = contentChanged;
+    packet.renderSubmeshes = State().rendererWorld.SnapshotRenderSubmeshes();
+    packet.transforms.Capture(State().rendererWorld, *packet.renderSubmeshes);
+    packet.ui.Capture(*ImGui::GetDrawData());
+}
+
+void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
+{
+    const FrameStallReporter stallReporter;
+    const auto frameStart = std::chrono::steady_clock::now();
+    m_cpuStages.BeginFrame();
+
+    if (packet.contentChanged)
+    {
+        RequestSceneUpload(packet);
+        m_cpuStages.Mark("RequestUpload");
+    }
+    // Every frame: stages textures the workers finished, and commits a pending change once its
+    // last texture is ready.
+    PumpSceneUpload(packet);
+    m_cpuStages.Mark("PumpUpload");
+
+    // The main thread rebuilds the swapchain before its next frame; until then nothing is drawn.
+    if (m_swapchainOutOfDate.load())
+    {
+        PublishFeedback(packet);
+        return;
+    }
+    SyncSceneTargets(packet.viewportExtent);
 
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
@@ -604,7 +779,8 @@ void VulkanRenderer::DrawFrame()
     m_cpuStages.Mark("Acquire");
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
-        RecreateSwapchain();
+        m_swapchainOutOfDate = true;
+        PublishFeedback(packet);
         return;
     }
 
@@ -615,34 +791,13 @@ void VulkanRenderer::DrawFrame()
     // AcquireNextImage waited on this slot's fence: the video frame its last use copied is ready.
     SubmitVideoFrame(m_commandContext->GetCurrentFrame());
 
-    UpdateAutoExposure(m_commandContext->GetCurrentFrame());
-    UpdateViewportMatrices(FromVkExtent(m_sceneTargets->GetExtent()));
+    UpdateAutoExposure(packet, m_commandContext->GetCurrentFrame());
+    UpdateMinimapTexture(packet.minimapPath);
+    m_cpuStages.Mark("FrameStart");
 
-    m_imguiLayer->BeginFrame();
-    State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
-    // ImGui samples the tone mapped image, which is the LDR target and so is indexed by
-    // swapchain image: its texture binding is handed out here, before the command buffer that
-    // writes it is recorded.
-    UpdateMinimapTexture();
-    const EditorUiFrameResult uiFrame = DrawEditorUi(
-        m_sceneTargets->GetLdrTextureId(imageIndex),
-        FromVkExtent(m_sceneTargets->GetExtent()));
-    ApplyUiActions(uiFrame);
-    EditorWorld().FlushDirtyTransforms();
-    if (State().renderablesDirty)
-    {
-        // A change that needs no new texture file commits right here, in this frame.
-        RequestSceneUpload();
-        PumpSceneUpload();
-        State().renderablesDirty = false;
-    }
-    ImGui::Render();
-    m_cpuStages.Mark("EditorUi");
-
-    const CollectedSceneLights sceneLights =
-        State().editorWorld ? CollectSceneLights(*State().editorWorld, State().rendererWorld) : CollectedSceneLights{};
+    const CollectedSceneLights& sceneLights = packet.lights;
     const SceneLightSelection lightSelection =
-        SelectSceneLights(sceneLights.candidates, State().camera.position, kMaxSceneLights);
+        SelectSceneLights(sceneLights.candidates, packet.camera.position, kMaxSceneLights);
     ReportDroppedLights(lightSelection.droppedCount);
     std::vector<GpuLightData> selectedLights;
     selectedLights.reserve(lightSelection.selected.size());
@@ -659,7 +814,7 @@ void VulkanRenderer::DrawFrame()
     ShadowUniformData shadowData{};
     std::optional<ShadowCascades> shadowCascades;
     const int32_t shadowLightIndex = SelectShadowCasterLight(sceneLights.candidates, lightSelection);
-    const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
+    const SceneEnvironment& environment = packet.environment;
     // At night the moon stands in for the sun: everything below that takes the sun (the shadows, the
     // sky, the clouds, the fog, the exposure) takes the moon instead.
     if (shadowLightIndex >= 0)
@@ -674,18 +829,18 @@ void VulkanRenderer::DrawFrame()
     }
     // The Khronos reference view draws no shadows, as the Sample Viewer does not; the caster stays
     // the sun for the sky and exposure below.
-    if (shadowLightIndex >= 0 && !State().renderDebug.khronosReference)
+    if (shadowLightIndex >= 0 && !packet.renderDebug.khronosReference)
     {
         const VkExtent2D extent = m_sceneTargets->GetExtent();
         ShadowCameraInput shadowCamera{};
-        shadowCamera.view = State().viewportMatrices.view;
-        shadowCamera.verticalFovRadians = glm::radians(State().camera.fovDegrees);
+        shadowCamera.view = packet.viewportMatrices.view;
+        shadowCamera.verticalFovRadians = glm::radians(packet.camera.fovDegrees);
         shadowCamera.aspect = static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
-        shadowCamera.nearPlane = State().camera.nearPlane;
-        shadowCamera.farPlane = State().camera.farPlane;
+        shadowCamera.nearPlane = packet.camera.nearPlane;
+        shadowCamera.farPlane = packet.camera.farPlane;
         ShadowCascadeSettings shadowSettings{};
         shadowSettings.resolution = m_shadowPass->GetResolution();
-        shadowSettings.maxDistance = std::clamp(State().renderDebug.shadowDistance, 10.0f, 5000.0f);
+        shadowSettings.maxDistance = std::clamp(packet.renderDebug.shadowDistance, 10.0f, 5000.0f);
         shadowCascades = BuildShadowCascades(
             shadowCamera,
             glm::vec3(selectedLights[shadowLightIndex].directionAndType),
@@ -711,7 +866,7 @@ void VulkanRenderer::DrawFrame()
     drawSlots.reserve(m_renderSubmeshes.size());
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        models.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
+        models.push_back(packet.transforms.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
         motionKeys.push_back(renderSubmesh->motionKey);
         drawSlots.push_back(renderSubmesh->drawSlot);
     }
@@ -747,7 +902,7 @@ void VulkanRenderer::DrawFrame()
         {
             // The light's intensity is the illuminance above the atmosphere; the scene receives
             // what gets through to the camera's altitude.
-            const glm::vec3 camera = ToAtmosphereCameraPositionKm(atmosphereParameters, State().camera.position);
+            const glm::vec3 camera = ToAtmosphereCameraPositionKm(atmosphereParameters, packet.camera.position);
             const float cosZenith = glm::dot(sun->directionToSun, glm::normalize(camera));
             const glm::vec3 transmittance = ComputeTransmittanceToSpace(
                 atmosphereParameters,
@@ -792,7 +947,7 @@ void VulkanRenderer::DrawFrame()
         environment,
         atmosphereParameters,
         sun,
-        State().camera.position,
+        packet.camera.position,
         environmentMode == EnvironmentMode::Hdri ? &m_environmentMapSh : nullptr);
     // The clouds' march jitter steps with the TAA sequence, which averages it; without TAA the
     // index stands still and so does the noise.
@@ -808,7 +963,7 @@ void VulkanRenderer::DrawFrame()
     }
 
     m_cpuStages.Mark("Environment");
-    const glm::mat4 viewProjection = State().viewportMatrices.renderProjection * State().viewportMatrices.view;
+    const glm::mat4 viewProjection = packet.viewportMatrices.renderProjection * packet.viewportMatrices.view;
     const MotionFrame motion = m_motionHistory.Advance(viewProjection, motionKeys, models);
     m_cpuStages.Mark("Motion");
 
@@ -827,7 +982,6 @@ void VulkanRenderer::DrawFrame()
     }
     const std::span<const uint8_t> ddgiMoving = m_ddgiMovingInstances.Update(models);
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, ddgiMoving);
-    State().rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
     m_cpuStages.Mark("RayInstances");
 
     // The lighting the probes hold, so they start their averages over when it changes: every
@@ -844,7 +998,7 @@ void VulkanRenderer::DrawFrame()
     ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
     ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
     m_ddgiLighting.Update(ddgiLighting);
-    const float ddgiHysteresis = std::clamp(State().renderDebug.ddgi.hysteresis, 0.0f, 0.999f);
+    const float ddgiHysteresis = std::clamp(packet.renderDebug.ddgi.hysteresis, 0.0f, 0.999f);
     const uint32_t ddgiLightingEpoch = m_ddgiLighting.Epoch();
     const uint32_t ddgiGeometryEpoch = m_ddgiGeometryEpoch;
     // What the probes this frame slot updated last time reported (its fence has signalled).
@@ -854,8 +1008,8 @@ void VulkanRenderer::DrawFrame()
     // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.
     DdgiUniformData ddgiData{};
     std::vector<uint32_t> ddgiSchedule;
-    const DdgiSettings ddgiSettings = State().renderDebug.ddgi;
-    if (ddgiSettings.enabled && !State().renderDebug.khronosReference && m_rayScene->IsReady())
+    const DdgiSettings ddgiSettings = packet.renderDebug.ddgi;
+    if (ddgiSettings.enabled && !packet.renderDebug.khronosReference && m_rayScene->IsReady())
     {
         const uint32_t levelCount = static_cast<uint32_t>(std::clamp(ddgiSettings.levels, 1, static_cast<int>(kDdgiMaxLevels)));
         const float baseSpacing = std::clamp(ddgiSettings.baseSpacing, 0.25f, 8.0f);
@@ -869,7 +1023,7 @@ void VulkanRenderer::DrawFrame()
         std::array<DdgiLevel, kDdgiMaxLevels> levels{};
         for (uint32_t level = 0; level < levelCount; ++level)
         {
-            levels[level] = ComputeDdgiLevel(State().camera.position, std::ldexp(baseSpacing, static_cast<int>(level)));
+            levels[level] = ComputeDdgiLevel(packet.camera.position, std::ldexp(baseSpacing, static_cast<int>(level)));
             ddgiData.spacing[level] = levels[level].spacing;
             ddgiData.origins[level] = glm::vec4(glm::vec3(levels[level].origin), 0.0f);
         }
@@ -898,8 +1052,8 @@ void VulkanRenderer::DrawFrame()
     // TAA jitters what the GPU rasterises, and only that: the editor's matrices and the motion
     // history keep the plain projection, and the camera block carries the plain view-projection for
     // the motion vectors. The forward-only order has no motion vectors, so it never jitters.
-    const bool taaEnabled = State().renderDebug.taa && !State().renderDebug.forwardOnly;
-    ViewportMatrices renderMatrices = State().viewportMatrices;
+    const bool taaEnabled = packet.renderDebug.taa && !packet.renderDebug.forwardOnly;
+    ViewportMatrices renderMatrices = packet.viewportMatrices;
     if (taaEnabled)
     {
         const VkExtent2D extent = m_sceneTargets->GetExtent();
@@ -913,7 +1067,7 @@ void VulkanRenderer::DrawFrame()
     // and each light learns its first tile through areaRightAxis.w (1 + tile, 0 for none).
     std::vector<LocalShadowTile> localShadowTiles;
     std::vector<GpuLocalShadowTile> gpuShadowTiles;
-    if (State().renderDebug.localLightShadows && !State().renderDebug.khronosReference)
+    if (packet.renderDebug.localLightShadows && !packet.renderDebug.khronosReference)
     {
         std::vector<LocalShadowLight> shadowLights;
         shadowLights.reserve(selectedLights.size());
@@ -950,7 +1104,7 @@ void VulkanRenderer::DrawFrame()
 
     // The selection puts every directional light first, so the local lights the grid bins are the
     // tail of selectedLights, and the grid's indices point into the same array the shader reads.
-    const bool clusteredLighting = State().renderDebug.clusteredLighting;
+    const bool clusteredLighting = packet.renderDebug.clusteredLighting;
     LightClusterGrid lightClusters;
     if (clusteredLighting)
     {
@@ -962,12 +1116,12 @@ void VulkanRenderer::DrawFrame()
             lightSpheres.push_back(LightClusterSphere{glm::vec3(positionAndRange), positionAndRange.w, index});
         }
         LightClusterCamera clusterCamera{};
-        clusterCamera.view = State().viewportMatrices.view;
+        clusterCamera.view = packet.viewportMatrices.view;
         // The jittered projection: the shader finds a pixel's cluster through the one it rasterised
         // with, and the binning must agree with it.
         clusterCamera.projection = renderMatrices.renderProjection;
-        clusterCamera.nearPlane = State().camera.nearPlane;
-        clusterCamera.farPlane = State().camera.farPlane;
+        clusterCamera.nearPlane = packet.camera.nearPlane;
+        clusterCamera.farPlane = packet.camera.farPlane;
         lightClusters = BuildLightClusters(clusterCamera, lightSpheres, kLightClusterIndexCapacity);
     }
     ReportDroppedClusterLights(lightClusters.droppedCount);
@@ -980,11 +1134,11 @@ void VulkanRenderer::DrawFrame()
 
     // This frame's EV, already adapted by UpdateAutoExposure, so every writer and reader of the
     // HDR target agrees on one pre-exposure.
-    const float preExposure = PreExposureFromEv100(State().camera.exposureEv100);
+    const float preExposure = PreExposureFromEv100(packet.camera.exposureEv100);
     m_uniformBuffer->Update(
         imageIndex,
         renderMatrices,
-        State().camera.position,
+        packet.camera.position,
         lightSelection.ambientLuminance,
         lightSelection.usesFallbackAmbient,
         lightSelection.ambientGradient,
@@ -996,18 +1150,18 @@ void VulkanRenderer::DrawFrame()
         environmentData,
         viewProjection,
         // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
-        State().renderDebug.specularAntiAliasing && !State().renderDebug.khronosReference,
+        packet.renderDebug.specularAntiAliasing && !packet.renderDebug.khronosReference,
         preExposure,
         ddgiData);
     m_cpuStages.Mark("Uniforms");
     // Culled against the jittered projection, the one the GPU rasterises with.
     std::vector<VulkanDrawItem> drawItems =
-        BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view);
+        BuildDrawItems(imageIndex, models, renderMatrices.renderProjection * renderMatrices.view, packet.viewportMatrices.view);
     // The deferred decals leave the Blend tail for the geometry pass, in the same back to front
     // order. The forward-only order has no G-buffer, and a device without independent blending no
     // decal pipelines, so there they stay Blend items.
     std::vector<VulkanDrawItem> decalDrawItems;
-    if (!State().renderDebug.forwardOnly && m_decalPipelines)
+    if (!packet.renderDebug.forwardOnly && m_decalPipelines)
     {
         const auto decals = std::stable_partition(
             drawItems.begin(),
@@ -1026,10 +1180,10 @@ void VulkanRenderer::DrawFrame()
     frame.frameSlot = m_commandContext->GetCurrentFrame();
 
     m_referenceFrame.viewProjection = viewProjection;
-    m_referenceFrame.cameraPosition = State().camera.position;
+    m_referenceFrame.cameraPosition = packet.camera.position;
     m_referenceFrame.preExposure = preExposure;
     m_referenceFrame.frameSlot = frame.frameSlot;
-    m_referenceFrame.view = State().renderDebug.forwardOnly ? GBufferDebugView::Off : State().renderDebug.gbufferView;
+    m_referenceFrame.view = packet.renderDebug.forwardOnly ? GBufferDebugView::Off : packet.renderDebug.gbufferView;
     m_referenceFrame.lights.clear();
     for (size_t index = 0; index < selectedLights.size(); ++index)
     {
@@ -1102,7 +1256,7 @@ void VulkanRenderer::DrawFrame()
     // The order and the forward filter both derive from this one switch, here, so they cannot
     // disagree. The forward-only order never runs the geometry pass and leaves the G-buffer
     // undefined, so its debug views are forced off rather than trusted to the UI's disabled state.
-    const RenderDebugSettings renderDebug = State().renderDebug;
+    const RenderDebugSettings& renderDebug = packet.renderDebug;
     const std::span<const ScenePassId> passOrder = BuildScenePassOrder(renderDebug.forwardOnly);
     frame.forwardFilter = renderDebug.forwardOnly ? ForwardDrawFilter::All : ForwardDrawFilter::BlendOnly;
     frame.gbufferView = renderDebug.forwardOnly ? GBufferDebugView::Off : renderDebug.gbufferView;
@@ -1126,12 +1280,12 @@ void VulkanRenderer::DrawFrame()
     frame.toneMapper = renderDebug.toneMapper;
     frame.bloom.enabled = renderDebug.bloom.enabled && !renderDebug.khronosReference;
 
-    frame.whiteBalance = UpdateWhiteBalance();
+    frame.whiteBalance = UpdateWhiteBalance(packet);
     frame.hdrOutput = m_swapchain->IsHdr();
     frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
     // HDR output shows more of the highlight's brightness directly, so it needs less glare.
     frame.glareFNumber = GlareFNumberFromEv100(
-        State().camera.exposureEv100,
+        packet.camera.exposureEv100,
         frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
     frame.taaHistory = m_taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, m_taaHistoryPreExposure);
@@ -1164,6 +1318,13 @@ void VulkanRenderer::DrawFrame()
             m_device->GetHandle(),
             static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
+
+    // The UI named the render thread's textures by ID; with the swapchain image known, they get the
+    // descriptor sets they have now.
+    packet.ui.ReplaceTexture(kViewportTextureId, m_sceneTargets->GetLdrTextureId(imageIndex));
+    packet.ui.ReplaceTexture(
+        kMinimapTextureId,
+        m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID_Invalid);
 
     m_cpuStages.Mark("FrameSetup");
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -1247,7 +1408,7 @@ void VulkanRenderer::DrawFrame()
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(commandBuffer, imguiIo, frame);
 
-                                              RecordEditorLayer(commandBuffer, imageIndex);
+                                              RecordEditorLayer(commandBuffer, imageIndex, packet.ui.GetDrawData());
                                               m_gpuTimer->Mark(commandBuffer, "ImGui");
 
                                               if (recordVideoFrame)
@@ -1306,13 +1467,42 @@ void VulkanRenderer::DrawFrame()
     m_cpuStages.Mark("Present");
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
-        RecreateSwapchain();
-        return;
+        // The main thread rebuilds it before its next frame.
+        m_swapchainOutOfDate = true;
     }
-
-    if (presentResult != VK_SUCCESS)
+    else if (presentResult != VK_SUCCESS)
     {
         CheckVulkan(presentResult, "Failed to present swapchain image");
+    }
+    PublishFeedback(packet);
+}
+
+void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
+{
+    const std::lock_guard lock(m_feedbackMutex);
+    m_feedback.serial = frame.serial;
+    m_feedback.exposureEv100 = frame.camera.exposureEv100;
+    m_feedback.adaptedLongTermEv100 = frame.camera.adaptedLongTermEv100;
+    m_feedback.adaptedWhiteKelvin = frame.camera.adaptedWhiteKelvin;
+    m_feedback.sceneUploadStatus = m_sceneUploadStatus;
+    m_feedback.rayScenePending = m_rayScene->IsBuilding() || !m_rayScene->IsReady();
+    if (m_outOfMemoryChange.has_value())
+    {
+        m_feedback.outOfMemory = m_outOfMemoryChange;
+        m_outOfMemoryChange.reset();
+    }
+    m_feedback.minimapLoaded = m_minimapBinding != VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::RunWithRenderIdle(const std::function<void()>& work)
+{
+    if (m_renderThread)
+    {
+        m_renderThread->RunExclusive(work);
+    }
+    else
+    {
+        work();
     }
 }
 
@@ -1529,6 +1719,14 @@ void VulkanRenderer::CreateDeviceResources()
 
 void VulkanRenderer::LogFrameTimings() const
 {
+    m_renderThread->RunExclusive([this]()
+                                 {
+                                     LogFrameTimingsNow();
+                                 });
+}
+
+void VulkanRenderer::LogFrameTimingsNow() const
+{
     const auto average = [](const std::vector<double>& samples)
     {
         double sum = 0.0;
@@ -1550,6 +1748,15 @@ void VulkanRenderer::LogFrameTimings() const
     {
         LOG_INFO("  CPU {:<20} {:7.3f} ms", stage.name, stage.averageMs);
     }
+    LOG_INFO(
+        "Main thread: {:.2f} ms a frame ({} frames), render work on {}",
+        average(m_mainFrameMs),
+        m_mainFrameMs.size(),
+        m_renderThread && m_renderThread->GetMode() == RenderThread::Mode::Threaded ? "the render thread" : "the main thread");
+    for (const CpuStageTimer::Stage& stage : m_mainStages.GetStages())
+    {
+        LOG_INFO("  Main {:<19} {:7.3f} ms", stage.name, stage.averageMs);
+    }
     if (m_gpuTimer)
     {
         for (const VulkanGpuTimer::Section& section : m_gpuTimer->GetSections())
@@ -1560,6 +1767,22 @@ void VulkanRenderer::LogFrameTimings() const
 }
 
 void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
+{
+    m_renderThread->RunExclusive([&]()
+                                 {
+                                     CaptureViewportNow(path);
+                                 });
+}
+
+void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
+{
+    m_renderThread->RunExclusive([&]()
+                                 {
+                                     CaptureDdgiReferenceNow(reference);
+                                 });
+}
+
+void VulkanRenderer::CaptureViewportNow(const std::filesystem::path& path)
 {
     if (!m_lastRecordedImageIndex.has_value() || !m_sceneTargets)
     {
@@ -1580,7 +1803,8 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
     // The ImGui pass sampled it last, so the tracker left it shader-read.
     request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     CaptureImageToPng(request, path);
-    LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), State().camera.exposureEv100);
+    // The EV the render thread drew the frame with; the main thread's camera trails it by a frame.
+    LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), m_renderExposureEv100.value_or(State().camera.exposureEv100));
 }
 
 void VulkanRenderer::SubmitVideoFrame(uint32_t frameSlot)
@@ -1707,10 +1931,8 @@ EnvironmentMode VulkanRenderer::EffectiveEnvironmentMode(const SceneEnvironment&
     return loaded ? EnvironmentMode::Hdri : EnvironmentMode::None;
 }
 
-void VulkanRenderer::UpdateMinimapTexture()
+void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
 {
-    const SceneMinimap& minimap = EditorWorld().GetMinimap();
-    const std::string path = minimap.IsValid() ? minimap.image : std::string{};
     if (path != m_minimapPath)
     {
         ReleaseMinimapTexture();
@@ -1746,8 +1968,6 @@ void VulkanRenderer::UpdateMinimapTexture()
             }
         }
     }
-    State().editorUi.SetMinimapTexture(
-        m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID{});
 }
 
 void VulkanRenderer::ReleaseMinimapTexture()
@@ -2106,19 +2326,14 @@ bool VulkanRenderer::SwapchainNeedsResize() const
     return wanted.width != current.width || wanted.height != current.height;
 }
 
-void VulkanRenderer::SyncSceneTargets()
+void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent)
 {
-    if (!m_swapchain || !m_sceneTargets)
+    if (!m_swapchain || !m_sceneTargets || !viewportExtent.IsValid())
     {
         return;
     }
 
-    if (!State().requestedViewportExtent.IsValid())
-    {
-        State().requestedViewportExtent = FromVkExtent(m_sceneTargets->GetExtent());
-    }
-
-    if (m_sceneTargets->MatchesExtent(ToVkExtent(State().requestedViewportExtent)))
+    if (m_sceneTargets->MatchesExtent(ToVkExtent(viewportExtent)))
     {
         return;
     }
@@ -2129,7 +2344,7 @@ void VulkanRenderer::SyncSceneTargets()
     // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
     vkDeviceWaitIdle(m_device->GetHandle());
     m_sceneTargets->Rebuild(
-        ToVkExtent(State().requestedViewportExtent),
+        ToVkExtent(viewportExtent),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     m_gbufferDescriptors->OnTargetsRebuilt(*m_sceneTargets);
     for (const std::unique_ptr<IScenePass>& pass : m_scenePasses)
@@ -2158,7 +2373,7 @@ void VulkanRenderer::SyncSceneTargets()
         m_sceneTargets->GetExtent().height);
 }
 
-void VulkanRenderer::UploadSceneResources()
+void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
 {
     const auto uploadStart = std::chrono::steady_clock::now();
     // Textures stay in m_textureStore by cache key; a submesh the GPU already has keeps its own, so
@@ -2338,8 +2553,9 @@ void VulkanRenderer::UploadSceneResources()
         // holds is the same data, so its buffers carry over. Gathered on the first new submesh.
         std::unordered_map<const MeshData*, std::shared_ptr<VulkanBuffer>> liveBuffers;
         bool liveBuffersGathered = false;
-        for (const CpuRenderSubmesh& cpuRenderSubmesh : State().rendererWorld.GetRenderSubmeshes())
+        for (const std::shared_ptr<const CpuRenderSubmesh>& entry : *frame.renderSubmeshes)
         {
+            const CpuRenderSubmesh& cpuRenderSubmesh = *entry;
             const uint32_t ordinal = nextSubmeshOrdinal[cpuRenderSubmesh.entity]++;
 
             // Kept: a submesh the GPU already has, with its textures, material set and draw slot.
@@ -2472,7 +2688,7 @@ void VulkanRenderer::UploadSceneResources()
     const auto applyStart = std::chrono::steady_clock::now();
     try
     {
-        ApplyRenderContent(std::move(newRenderSubmeshes), keptSubmeshCount);
+        ApplyRenderContent(std::move(newRenderSubmeshes), keptSubmeshCount, frame);
     }
     catch (...)
     {
@@ -2497,11 +2713,11 @@ void VulkanRenderer::DropUnreferencedTextures()
                   });
 }
 
-void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
+void VulkanRenderer::UploadSceneResourcesOrKeepPrevious(const RenderFramePacket& frame)
 {
     try
     {
-        UploadSceneResources();
+        UploadSceneResources(frame);
     }
     catch (const std::exception& error)
     {
@@ -2510,9 +2726,9 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
             throw;
         }
         LOG_ERROR("Keeping the previous scene content, the upload ran out of GPU memory: {}", error.what());
-        State().lastModelLoadError = kOutOfMemoryReport;
+        m_outOfMemoryChange = true;
         AbandonPendingTextures();
-        DropSubmeshesOfRemovedEntities();
+        DropSubmeshesOfRemovedEntities(frame);
         return;
     }
 
@@ -2523,20 +2739,18 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious()
     m_textureUploadStats = TextureUploadStats{};
 
     // The screen matches the scene again, so a report of it not matching is now stale.
-    if (State().lastModelLoadError == kOutOfMemoryReport)
-    {
-        State().lastModelLoadError.clear();
-    }
+    m_outOfMemoryChange = false;
 }
 
-void VulkanRenderer::RequestSceneUpload()
+void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
 {
     // The previous content stays on screen until the change commits, so it must stop drawing any
     // entity the change deleted right away.
-    DropSubmeshesOfRemovedEntities();
+    DropSubmeshesOfRemovedEntities(frame);
 
-    for (const CpuRenderSubmesh& submesh : State().rendererWorld.GetRenderSubmeshes())
+    for (const std::shared_ptr<const CpuRenderSubmesh>& entry : *frame.renderSubmeshes)
     {
+        const CpuRenderSubmesh& submesh = *entry;
         // A submesh the GPU already draws has every texture it names.
         if (!submesh.hasTexCoords || m_liveSubmeshes.count(submesh.revision) != 0)
         {
@@ -2563,7 +2777,7 @@ void VulkanRenderer::RequestSceneUpload()
     m_sceneUploadPending = true;
 }
 
-void VulkanRenderer::PumpSceneUpload()
+void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
 {
     // A few per frame: each upload copies megabytes and waits for the queue, and the frame loop
     // should keep its pace while a large scene streams in.
@@ -2602,7 +2816,7 @@ void VulkanRenderer::PumpSceneUpload()
                 throw;
             }
             LOG_ERROR("Keeping the previous scene content, staging a texture ran out of GPU memory: {}", error.what());
-            State().lastModelLoadError = kOutOfMemoryReport;
+            m_outOfMemoryChange = true;
             AbandonPendingTextures();
         }
     }
@@ -2611,7 +2825,7 @@ void VulkanRenderer::PumpSceneUpload()
     if (m_sceneUploadPending && m_texturePreparation->IsIdle())
     {
         m_sceneUploadPending = false;
-        UploadSceneResourcesOrKeepPrevious();
+        UploadSceneResourcesOrKeepPrevious(frame);
         m_cpuStages.Mark("CommitContent");
     }
 
@@ -2619,12 +2833,12 @@ void VulkanRenderer::PumpSceneUpload()
     {
         const size_t pending = m_texturePreparation->PendingCount();
         const size_t done = m_texturesRequested > pending ? m_texturesRequested - pending : 0;
-        State().sceneUploadStatus =
+        m_sceneUploadStatus =
             "Preparing textures: " + std::to_string(done) + " of " + std::to_string(m_texturesRequested);
     }
     else
     {
-        State().sceneUploadStatus.clear();
+        m_sceneUploadStatus.clear();
     }
 }
 
@@ -2673,12 +2887,11 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
         *prepared.compressed, uploadBatch);
 }
 
-void VulkanRenderer::DropSubmeshesOfRemovedEntities()
+void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& frame)
 {
-    const ISceneWorld& sceneWorld = State().rendererWorld.GetSceneWorld();
-    const auto isRemoved = [&sceneWorld](const std::shared_ptr<const RenderSubmesh>& renderSubmesh)
+    const auto isRemoved = [&frame](const std::shared_ptr<const RenderSubmesh>& renderSubmesh)
     {
-        return !sceneWorld.IsValidEntity(renderSubmesh->entity);
+        return !frame.transforms.Contains(renderSubmesh->entity);
     };
     if (std::none_of(m_renderSubmeshes.begin(), m_renderSubmeshes.end(), isRemoved))
     {
@@ -2712,7 +2925,10 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities()
                   });
 }
 
-void VulkanRenderer::ApplyRenderContent(std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes, size_t keptSubmeshCount)
+void VulkanRenderer::ApplyRenderContent(
+    std::vector<std::shared_ptr<const RenderSubmesh>> newRenderSubmeshes,
+    size_t keptSubmeshCount,
+    const RenderFramePacket& frame)
 {
     // Up to the ray scene's content everything may throw and leaves the old content drawable;
     // afterwards nothing does. A change costs what it adds and drops: kept draws keep their slots,
@@ -2817,7 +3033,7 @@ void VulkanRenderer::ApplyRenderContent(std::vector<std::shared_ptr<const Render
             rayModels.reserve(newRenderSubmeshes.size());
             for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
             {
-                rayModels.push_back(State().rendererWorld.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
+                rayModels.push_back(frame.transforms.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
             }
             m_rayScene->SetContent(
                 std::move(raySubmeshes), std::move(rayModels), m_uniformBuffer->GetDrawCapacity(), placedMaterials, releasedSlots);
@@ -2882,7 +3098,8 @@ void VulkanRenderer::ApplyRenderContent(std::vector<std::shared_ptr<const Render
 std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
     uint32_t imageIndex,
     std::span<const glm::mat4> models,
-    const glm::mat4& viewProjection) const
+    const glm::mat4& viewProjection,
+    const glm::mat4& view) const
 {
     std::vector<VulkanDrawItem> unsorted;
     std::vector<MaterialDrawSortKey> sortKeys;
@@ -2908,7 +3125,7 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
             renderSubmesh.alphaMode,
             renderSubmesh.doubleSided};
         const glm::vec4 viewCenter =
-            State().viewportMatrices.view *
+            view *
             drawConstants.model *
             glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
         const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
@@ -3103,11 +3320,11 @@ void VulkanRenderer::ReportDroppedLocalShadows(uint32_t droppedCount)
     }
 }
 
-glm::mat3 VulkanRenderer::UpdateWhiteBalance()
+glm::mat3 VulkanRenderer::UpdateWhiteBalance(RenderFramePacket& frame)
 {
-    Camera& camera = State().camera;
+    Camera& camera = frame.camera;
     const AutoWhiteBalanceSettings& settings = camera.autoWhiteBalance;
-    if (!settings.enabled || State().renderDebug.khronosReference)
+    if (!settings.enabled || frame.renderDebug.khronosReference)
     {
         // Off shows the illuminant as it is; turned back on, the white point adapts from where it
         // was rather than from D65.
@@ -3125,32 +3342,50 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance()
     }
     const glm::vec2 target = EstimateIlluminantXy(m_whiteBalanceReferences);
     m_adaptedWhiteXy = m_adaptedWhiteXy.has_value()
-                           ? AdaptWhitePointXy(*m_adaptedWhiteXy, target, State().frameDeltaSeconds, settings.adaptPerSecond)
+                           ? AdaptWhitePointXy(*m_adaptedWhiteXy, target, frame.deltaSeconds, settings.adaptPerSecond)
                            : target;
     camera.adaptedWhiteKelvin = CorrelatedColorTemperature(*m_adaptedWhiteXy);
     return WhiteBalanceMatrix(*m_adaptedWhiteXy, settings.degree, DaylightXy(settings.targetKelvin));
 }
 
-void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)
+void VulkanRenderer::UpdateAutoExposure(RenderFramePacket& frame, uint32_t frameSlot)
 {
-    Camera& camera = State().camera;
+    Camera& camera = frame.camera;
     const AutoExposureSettings& settings = camera.autoExposure;
-    if (State().renderDebug.khronosReference)
+    // Whatever sets the EV below, the next frame adapts from it.
+    struct RememberExposure
+    {
+        std::optional<float>& remembered;
+        const Camera& camera;
+        ~RememberExposure()
+        {
+            remembered = camera.exposureEv100;
+        }
+    } rememberExposure{m_renderExposureEv100, camera};
+    if (frame.renderDebug.khronosReference)
     {
         // The Sample Viewer's exposure 1.0: an HDRI texel of 1 exposed to 1. Without an HDRI the
         // exposure is left where it is.
-        const SceneEnvironment environment = State().editorWorld ? EditorWorld().GetEnvironment() : SceneEnvironment{};
-        if (environment.mode == EnvironmentMode::Hdri)
+        if (frame.environment.mode == EnvironmentMode::Hdri)
         {
-            camera.exposureEv100 = KhronosReferenceEv100(environment.hdri.intensity);
+            camera.exposureEv100 = KhronosReferenceEv100(frame.environment.hdri.intensity);
+        }
+        else if (m_renderExposureEv100.has_value())
+        {
+            camera.exposureEv100 = *m_renderExposureEv100;
         }
         return;
     }
     if (!settings.enabled || !m_exposurePass)
     {
-        // Manual mode: exposureEv100 is the user's. When auto exposure is turned back on it
-        // adapts from that value rather than snapping.
+        // Manual mode: exposureEv100 is the user's, as the frame brought it. When auto exposure is
+        // turned back on it adapts from that value rather than snapping.
         return;
+    }
+    // The main thread's camera trails the adapted EV by a frame: adapt from where this thread got to.
+    if (m_renderExposureEv100.has_value())
+    {
+        camera.exposureEv100 = *m_renderExposureEv100;
     }
 
     // The slot's fence has signaled, so its histogram is the one it recorded kMaxFramesInFlight
@@ -3172,13 +3407,13 @@ void VulkanRenderer::UpdateAutoExposure(uint32_t frameSlot)
         camera.exposureEv100,
         *target,
         MeterLongTermTargetEv100(references, settings),
-        State().frameDeltaSeconds,
+        frame.deltaSeconds,
         settings);
     camera.adaptedLongTermEv100 = m_autoExposureState.longTermEv100;
     m_hasMeteredExposure = true;
 }
 
-void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex) const
+void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const
 {
     // Single color attachment: the ImGui pass has no depth buffer (see VulkanRenderPass).
     VkClearValue clearValue{};
@@ -3194,7 +3429,10 @@ void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t i
     renderPassInfo.pClearValues = &clearValue;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    if (drawData != nullptr)
+    {
+        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
+    }
     vkCmdEndRenderPass(commandBuffer);
 }
 }

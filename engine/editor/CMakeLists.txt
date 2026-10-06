@@ -11,6 +11,8 @@ add_library(engine_editor
     editor_ui.h
     engine_settings.cpp
     engine_settings.h
+    imgui_frame_snapshot.cpp
+    imgui_frame_snapshot.h
     renderer_shared_state.h
     services/capture_state.cpp
     services/capture_state.h

@@ -475,11 +475,11 @@ bool RefreshDirtySceneRenderables(RendererSharedState& state)
 
     bool changed = false;
     std::unordered_set<entt::entity> staleEntities;
-    for (const CpuRenderSubmesh& submesh : state.rendererWorld.GetRenderSubmeshes())
+    for (const std::shared_ptr<const CpuRenderSubmesh>& submesh : state.rendererWorld.GetRenderSubmeshes())
     {
-        if (!world.HasModelComponent(submesh.entity))
+        if (!world.HasModelComponent(submesh->entity))
         {
-            staleEntities.insert(submesh.entity);
+            staleEntities.insert(submesh->entity);
         }
     }
     for (entt::entity entity : staleEntities)

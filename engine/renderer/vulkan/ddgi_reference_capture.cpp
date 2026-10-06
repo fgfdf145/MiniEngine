@@ -350,7 +350,7 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
         ratio(5));
 }
 
-void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
+void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference)
 {
     const std::filesystem::path& prefix = reference.prefix;
     const uint32_t samples = std::max(reference.samples, 1u);

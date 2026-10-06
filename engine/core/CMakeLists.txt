@@ -13,6 +13,12 @@ add_library(engine_core
     paths/engine_paths.h
     render_backend_type.h
     text/ascii.h
+    threading/render_thread.cpp
+    threading/render_thread.h
+    threading/task_system.cpp
+    threading/task_system.h
+    threading/thread_setup.cpp
+    threading/thread_setup.h
     uuid/uuid.cpp
     uuid/uuid.h
     version/engine_version.cpp
@@ -56,6 +62,7 @@ target_link_libraries(engine_core
     PUBLIC
         SDL3::SDL3
         spdlog::spdlog
+        enkiTS::enkiTS
 )
 
 if(WIN32)

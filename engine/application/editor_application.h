@@ -75,6 +75,11 @@ struct EditorApplicationOptions
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
     // are mixed into nothing.
     bool audioDisabled = false;
+    // --no-render-thread: the render work runs on the main thread, inside each frame, as it did before
+    // the render thread (for comparisons and debugging).
+    bool renderThread = true;
+    // --task-threads N: the task system's worker threads; 0 takes the logical processors less two.
+    uint32_t taskThreads = 0;
     EnginePaths::Overrides paths;
 };
 

@@ -27,12 +27,14 @@ class VulkanImGuiLayer
     VulkanImGuiLayer(const VulkanImGuiLayer&) = delete;
     VulkanImGuiLayer& operator=(const VulkanImGuiLayer&) = delete;
 
+    // The main thread's side: events and the frame's UI.
     void ProcessEvent(const SDL_Event& event);
     void BeginFrame();
     ImDrawData* GetDrawData() const;
     bool WantsKeyboardCapture() const;
     bool WantsMouseCapture() const;
 
+    // The render side, used while the main thread builds no UI (construction, swapchain rebuilds).
     // hdrOutput selects imgui_hdr10.frag, which PQ-encodes everything ImGui draws for an HDR10
     // swapchain; otherwise the backend's own shader writes display-linear values as before.
     void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput);

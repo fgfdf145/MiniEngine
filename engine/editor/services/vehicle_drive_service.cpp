@@ -758,8 +758,9 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
 
     size_t groundCoverSubmeshes = 0;
     size_t groundCoverTriangles = 0;
-    for (const CpuRenderSubmesh& submesh : renderWorld.GetRenderSubmeshes())
+    for (const std::shared_ptr<const CpuRenderSubmesh>& entry : renderWorld.GetRenderSubmeshes())
     {
+        const CpuRenderSubmesh& submesh = *entry;
         // Glass, smoke, decals and the top of water are drawn over surfaces rather than being any; alpha-tested
         // fences and foliage still count.
         if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water ||

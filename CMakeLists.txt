@@ -24,6 +24,7 @@ include(CTest)
 include(cmake/MiniEngineBuildOptions.cmake)
 include(cmake/MiniEngineDependencies.cmake)
 
+add_subdirectory(third_party/enkiTS)
 add_subdirectory(engine/core)
 add_subdirectory(engine/platform)
 add_subdirectory(engine/audio)

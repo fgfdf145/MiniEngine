@@ -92,6 +92,10 @@ struct CpuModelLight
     glm::vec3 direction{0.0f, 0.0f, -1.0f};
 };
 
+// The world's render submeshes. Each is immutable once the world numbered it, so a copy of the list
+// shares the submeshes rather than copying them.
+using CpuRenderSubmeshList = std::vector<std::shared_ptr<const CpuRenderSubmesh>>;
+
 class RendererWorld
 {
   public:
@@ -104,7 +108,10 @@ class RendererWorld
     void ReplaceEntityRenderSubmeshes(entt::entity entity, std::vector<CpuRenderSubmesh> renderSubmeshes);
     bool RemoveEntityRenderSubmeshes(entt::entity entity);
     void ClearRenderSubmeshes();
-    const std::vector<CpuRenderSubmesh>& GetRenderSubmeshes() const;
+    const CpuRenderSubmeshList& GetRenderSubmeshes() const;
+    // The list as it is now, for the render thread to draw from while this world changes: the same
+    // snapshot until the list changes, so an unchanged scene shares one.
+    std::shared_ptr<const CpuRenderSubmeshList> SnapshotRenderSubmeshes() const;
     glm::mat4 GetModelMatrix(entt::entity entity) const;
 
     // A submesh's own transform inside its model, applied before the entity's: a car's wheels turn
@@ -114,6 +121,7 @@ class RendererWorld
     void SetSubmeshLocalTransforms(entt::entity entity, std::vector<glm::mat4> transforms);
     void ClearSubmeshLocalTransforms(entt::entity entity);
     glm::mat4 GetSubmeshModelMatrix(entt::entity entity, uint32_t ordinal) const;
+    const std::unordered_map<entt::entity, std::vector<glm::mat4>>& GetSubmeshLocalTransforms() const;
 
     void SetModelLights(std::vector<CpuModelLight> modelLights);
     void ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights);
@@ -122,7 +130,12 @@ class RendererWorld
 
   private:
     ISceneWorld* m_sceneWorld = nullptr;
-    std::vector<CpuRenderSubmesh> m_renderSubmeshes;
+    // Numbers the submeshes and makes them shared and immutable.
+    std::vector<std::shared_ptr<const CpuRenderSubmesh>> Number(std::vector<CpuRenderSubmesh> renderSubmeshes);
+
+    CpuRenderSubmeshList m_renderSubmeshes;
+    // SnapshotRenderSubmeshes' copy; dropped whenever the list changes.
+    mutable std::shared_ptr<const CpuRenderSubmeshList> m_snapshot;
     uint64_t m_nextRevision = 1;
     std::vector<CpuModelLight> m_modelLights;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_submeshLocalTransforms;
