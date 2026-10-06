@@ -177,6 +177,8 @@ struct RendererSharedState
     // whose ray-traced scene (DDGI's) is still building. --wait-for-scene counts no frames until it
     // is done.
     bool rayScenePending = false;
+    // The render thread's last measurement of GPU memory, which world streaming fits the scene in.
+    GpuMemoryReport gpuMemory;
     RenderExtent requestedViewportExtent{};
     // --viewport-size: the scene renders at this size whatever the viewport panel's size, so captures
     // do not depend on the editor's layout or the window manager. Unset, the panel decides.

@@ -1,5 +1,6 @@
 #include <engine/editor/services/world_streaming_service.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -129,6 +130,70 @@ void TestHighDetailOnly()
     Require(WorldStreamingService::TargetOf(cells[1]) == StreamedCell::Shown::None, "a LOD-only cell shows nothing");
     Require(WorldStreamingService::TargetOf(cells[2]) == StreamedCell::Shown::None, "a far-only cell shows nothing");
 }
+
+constexpr uint64_t kMiB = uint64_t{1} << 20;
+
+// Ten cells in high detail at 100, 200 ... 1000 m, 100 MB each by the world's 1000 MB.
+GpuMemoryReport ReportWithHeadroom(int64_t headroomMiB)
+{
+    GpuMemoryReport report;
+    report.serial = 1;
+    report.budget = 6000 * kMiB;
+    report.reserve = 1000 * kMiB;
+    report.worldBytes = 1000 * kMiB;
+    report.usage = static_cast<uint64_t>(5000 - headroomMiB) * kMiB;
+    return report;
+}
+
+std::vector<float> Distances(float first, float step, int count)
+{
+    std::vector<float> distances;
+    for (int index = 0; index < count; ++index)
+    {
+        distances.push_back(first + step * static_cast<float>(index));
+    }
+    return distances;
+}
+
+void TestBudgetRadius()
+{
+    const std::vector<float> shown = Distances(100.0f, 100.0f, 10);
+    const std::vector<float> farther = Distances(1100.0f, 100.0f, 10);
+    const auto next = [&](float radius, int64_t headroomMiB, bool outOfMemory, bool mayGrow)
+    {
+        return WorldStreamingService::NextBudgetRadius(radius, ReportWithHeadroom(headroomMiB), outOfMemory, mayGrow, shown, farther);
+    };
+
+    Require(
+        WorldStreamingService::NextBudgetRadius(1000.0f, GpuMemoryReport{}, false, true, shown, farther) == 1000.0f,
+        "nothing changes before the first measurement");
+
+    // 100 MB over: 100 + 192 MB of margin is three cells, so the cells at 800, 900 and 1000 m go, and the
+    // radius ends below 800 m by more than the hysteresis that would keep the one at 800 m.
+    const float shrunk = next(1000.0f, -100, false, true);
+    Require(shrunk < 800.0f - WorldStreamingService::kBudgetRadiusHysteresis && shrunk > 700.0f, "over budget, the farthest cells go");
+
+    Require(next(1000.0f, -100000, false, true) == WorldStreamingService::kMinBudgetRadius, "the radius never goes below its minimum");
+
+    // An upload that ran out of memory takes at least an eighth of the cells (one of ten) even with room.
+    const float afterFailure = next(1000.0f, 300, true, true);
+    Require(afterFailure < 1000.0f - WorldStreamingService::kBudgetRadiusHysteresis && afterFailure > 900.0f, "a failed upload sheds a cell");
+
+    // Between 0 and 384 MB free nothing moves; the band keeps a wrong cell cost from oscillating.
+    Require(next(1000.0f, 0, false, true) == 1000.0f, "no shrink at exactly the budget");
+    Require(next(1000.0f, 300, false, true) == 1000.0f, "no growth with less than the grow headroom");
+
+    // 1000 MB free: (1000 - 192) / 100 / 2 = 4 cells more, the ones at 1100 ... 1400 m.
+    Require(next(1000.0f, 1000, false, true) == 1400.0f, "with room the radius takes in the next cells, half the room at a time");
+    Require(next(1000.0f, 1000, false, false) == 1000.0f, "growth waits for the last change to be drawn");
+
+    // The radius already sends the cells beyond 525 m away (five of them, 500 MB), so 300 MB over is
+    // not over once they are gone: no second shrink before the first shows in the measurement.
+    Require(next(500.0f, -300, false, true) == 500.0f, "cells on their way out count as freed");
+    // Likewise cells within the radius that have not loaded yet count as used: 600 MB free, but the
+    // radius of 1300 m brings in three more cells (300 MB), which leaves less than the grow headroom.
+    Require(next(1300.0f, 600, false, true) == 1300.0f, "cells on their way in count as used");
+}
 }
 
 int main()
@@ -138,6 +203,7 @@ int main()
         TestTargets();
         TestManifestFarOnly();
         TestHighDetailOnly();
+        TestBudgetRadius();
     }
     catch (const std::exception& error)
     {

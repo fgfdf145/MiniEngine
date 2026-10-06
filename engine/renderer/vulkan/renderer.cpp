@@ -1,6 +1,7 @@
 ﻿#include "renderer.h"
 
 #include <third_party/imgui_backends/imgui_impl_vulkan.h>
+#include "memory_pool.h"
 #include "viewport_capture.h"
 
 #include <engine/renderer/view_frustum.h>
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <future>
 #include <optional>
 #include <stdexcept>
@@ -260,6 +262,26 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
 constexpr const char* kOutOfMemoryReport =
     "Not enough GPU memory to show the latest scene change. The scene on screen is from before it; "
     "remove models to free memory, and the next change will try again.";
+
+// The Graphics Debug window's line on GPU memory and the world's streaming radius.
+std::string FormatGpuMemoryStatus(const GpuMemoryReport& report, const WorldStreamingState& streaming)
+{
+    if (report.serial == 0)
+    {
+        return {};
+    }
+    std::string status = std::format(
+        "GPU memory: {} / {} MB (world {} MB, fullscreen reserve {} MB)",
+        report.usage >> 20,
+        report.budget >> 20,
+        report.worldBytes >> 20,
+        report.reserve >> 20);
+    if (!streaming.cells.empty())
+    {
+        status += std::format("\nStreaming radius {:.0f} m, {} cells in high detail", streaming.budgetRadius, streaming.HighDetailCount());
+    }
+    return status;
+}
 
 // Logs a frame long enough to have stalled the editor. Texture work belongs on the preparation
 // queue; this is where a regression back onto the frame loop shows up.
@@ -682,6 +704,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     // Fixed once NGX has started, before the render thread exists.
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
+    State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -784,6 +807,12 @@ void VulkanRenderer::ApplyRenderFeedback()
         }
     }
     m_minimapAvailable = feedback.minimapLoaded;
+    State().gpuMemory = feedback.gpuMemory;
+    if (feedback.outOfMemory.value_or(false))
+    {
+        // World streaming gives memory back before it asks for more.
+        State().worldStreaming.uploadOutOfMemory = true;
+    }
 }
 
 void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent)
@@ -796,6 +825,14 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
     packet.viewportExtent = viewportExtent;
+    packet.displayExtent = {};
+    if (const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(GetWindow().GetSDLWindow())); mode != nullptr)
+    {
+        const float density = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
+        packet.displayExtent = {
+            static_cast<uint32_t>(static_cast<float>(mode->w) * density),
+            static_cast<uint32_t>(static_cast<float>(mode->h) * density)};
+    }
 
     IEditorWorld* const world = State().editorWorld.get();
     packet.environment = world != nullptr ? world->GetEnvironment() : SceneEnvironment{};
@@ -1641,6 +1678,39 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
         m_outOfMemoryChange.reset();
     }
     m_feedback.minimapLoaded = m_minimapBinding != VK_NULL_HANDLE;
+    // A driver query a few times a second is plenty for streaming, which waits a second between steps.
+    if (frame.serial >= m_gpuMemory.serial + 10)
+    {
+        m_gpuMemory = MeasureGpuMemory(frame);
+    }
+    m_feedback.gpuMemory = m_gpuMemory;
+}
+
+GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
+{
+    const VulkanDevice::LocalMemory local = m_device->QueryLocalMemory();
+    const uint64_t targetBytes = m_sceneTargets ? m_sceneTargets->GetAllocatedBytes() : 0;
+    GpuMemoryReport report;
+    report.serial = frame.serial;
+    report.budget = local.budget;
+    report.worldBytes = VulkanMemoryPool::CommittedBytes();
+    // Without the driver's count, what is known: the scene's content and its targets.
+    report.usage = local.measured ? local.usage : report.worldBytes + targetBytes;
+
+    // The targets scale with the output's pixels; the ones outside SceneRenderTargets that do too (the
+    // bloom chain, TAA's history, the scatter targets, DLSS's own) add about half again.
+    static constexpr double kResolutionDependentFactor = 1.5;
+    static constexpr uint64_t kMargin = uint64_t{256} << 20;
+    double growth = 0.0;
+    if (m_sceneTargets && frame.displayExtent.IsValid())
+    {
+        const VkExtent2D output = m_sceneTargets->GetOutputExtent();
+        const double outputPixels = std::max(1.0, static_cast<double>(output.width) * output.height);
+        const double displayPixels = static_cast<double>(frame.displayExtent.width) * frame.displayExtent.height;
+        growth = std::max(0.0, displayPixels / outputPixels - 1.0);
+    }
+    report.reserve = static_cast<uint64_t>(static_cast<double>(targetBytes) * kResolutionDependentFactor * growth) + kMargin;
+    return report;
 }
 
 void VulkanRenderer::RunWithRenderIdle(const std::function<void()>& work)
@@ -1716,20 +1786,7 @@ void VulkanRenderer::CreateSwapchainResources()
     // At the viewport's size: SyncSceneTargets moves the render size to DLSS's before a frame draws.
     if (ldrFormatMatchesSwapchain)
     {
-        try
-        {
-            m_sceneTargets->Rebuild(viewportExtent, viewportExtent, swapchainImageCount);
-        }
-        catch (const VulkanError& error)
-        {
-            // A placeholder that fits: SyncSceneTargets finds the size that does before a frame draws.
-            if (!error.IsOutOfMemory())
-            {
-                throw;
-            }
-            LOG_WARN("Scene render targets at {}x{} do not fit in GPU memory yet: {}", viewportExtent.width, viewportExtent.height, error.what());
-            m_sceneTargets->Rebuild({1, 1}, {1, 1}, swapchainImageCount);
-        }
+        m_sceneTargets->Rebuild(viewportExtent, viewportExtent, swapchainImageCount);
     }
     else
     {
@@ -2570,61 +2627,6 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
         return;
     }
 
-    // A viewport whose targets did not fit keeps rendering at the smaller size that did until the
-    // viewport changes (leaving fullscreen and coming back tries the full size again).
-    if (m_sceneTargetFallback.has_value() && (m_sceneTargetFallback->requested.width != viewportExtent.width ||
-                                              m_sceneTargetFallback->requested.height != viewportExtent.height))
-    {
-        m_sceneTargetFallback.reset();
-    }
-    const RenderExtent wanted = m_sceneTargetFallback.has_value() ? m_sceneTargetFallback->used : viewportExtent;
-    try
-    {
-        ApplySceneExtent(wanted, renderDebug);
-        return;
-    }
-    catch (const VulkanError& error)
-    {
-        if (!error.IsOutOfMemory())
-        {
-            throw;
-        }
-        LOG_ERROR("Scene render targets at {}x{} do not fit in GPU memory: {}", wanted.width, wanted.height, error.what());
-    }
-
-    // Out of device memory (a 4K fullscreen viewport over a streamed world on an 8 GB GPU): the
-    // same view at a lower resolution, as a lower render scale would give, instead of a crash.
-    // Only the last attempt's failure is fatal.
-    static constexpr std::array<float, 4> kFallbackScales = {0.75f, 0.5f, 0.35f, 0.25f};
-    for (size_t attempt = 0; attempt < kFallbackScales.size(); ++attempt)
-    {
-        const RenderExtent smaller{
-            std::max(1u, static_cast<uint32_t>(static_cast<float>(wanted.width) * kFallbackScales[attempt])),
-            std::max(1u, static_cast<uint32_t>(static_cast<float>(wanted.height) * kFallbackScales[attempt]))};
-        try
-        {
-            ApplySceneExtent(smaller, renderDebug);
-            m_sceneTargetFallback = SceneTargetFallback{viewportExtent, smaller};
-            LOG_WARN(
-                "Rendering the {}x{} viewport at {}x{} to fit in GPU memory",
-                viewportExtent.width,
-                viewportExtent.height,
-                smaller.width,
-                smaller.height);
-            return;
-        }
-        catch (const VulkanError& error)
-        {
-            if (!error.IsOutOfMemory() || attempt + 1 == kFallbackScales.size())
-            {
-                throw;
-            }
-        }
-    }
-}
-
-void VulkanRenderer::ApplySceneExtent(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
-{
     const SceneExtents extents = ResolveSceneExtents(viewportExtent, renderDebug);
     if (extents.dlss != m_activeDlssMode || extents.dlssPreset != m_activeDlssPreset || extents.rayReconstruction != m_activeDlssRayReconstruction)
     {

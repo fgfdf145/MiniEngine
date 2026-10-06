@@ -7,6 +7,28 @@
 namespace me
 {
 
+// The GPU's device-local memory as the render thread last measured it (docs/design/2026-10-07-vram-budget-design.md),
+// in bytes. World streaming fits the scene's content in Headroom.
+struct GpuMemoryReport
+{
+    // The frame it was measured on; 0 before the first measurement.
+    uint64_t serial = 0;
+    // The driver's budget and this process's usage of the device-local heaps (VK_EXT_memory_budget).
+    uint64_t budget = 0;
+    uint64_t usage = 0;
+    // The scene's buffers, textures and acceleration structures: the memory pool's allocations.
+    uint64_t worldBytes = 0;
+    // What the render targets would need on top of today's to fill the display, plus a margin, so
+    // that going fullscreen needs no room the world holds.
+    uint64_t reserve = 0;
+
+    // The room left for more of the world; negative when over budget.
+    int64_t Headroom() const
+    {
+        return static_cast<int64_t>(budget) - static_cast<int64_t>(usage) - static_cast<int64_t>(reserve);
+    }
+};
+
 struct RenderExtent
 {
     uint32_t width = 0;

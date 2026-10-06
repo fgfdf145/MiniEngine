@@ -191,6 +191,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Render thread: draws one frame from its packet.
     void RenderFrame(RenderFramePacket& frame);
     void PublishFeedback(const RenderFramePacket& frame);
+    // The device-local memory now (docs/design/2026-10-07-vram-budget-design.md). Render thread.
+    GpuMemoryReport MeasureGpuMemory(const RenderFramePacket& frame) const;
     void CaptureViewportNow(const std::filesystem::path& path);
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
@@ -229,9 +231,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
-    // Resizes the scene targets (and DLSS) for the viewport extent. Throws VulkanError when out of
-    // device memory, leaving the targets to be rebuilt before the next draw.
-    void ApplySceneExtent(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources(const RenderFramePacket& frame);
@@ -323,13 +322,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_activeDlssRayReconstruction = false;
     bool m_dlssResetPending = true;
-    // Set while the viewport's own size ran out of device memory: the smaller size rendered instead.
-    struct SceneTargetFallback
-    {
-        RenderExtent requested;
-        RenderExtent used;
-    };
-    std::optional<SceneTargetFallback> m_sceneTargetFallback;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;
@@ -554,6 +546,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The render thread's own state behind the feedback.
     std::string m_sceneUploadStatus;
     std::optional<bool> m_outOfMemoryChange;
+    GpuMemoryReport m_gpuMemory;
     // The EV100 auto exposure reached; the main thread's camera trails it by a frame.
     std::optional<float> m_renderExposureEv100;
     // The main thread's copy of RenderFeedback::minimapLoaded.

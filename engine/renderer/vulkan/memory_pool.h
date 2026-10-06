@@ -43,5 +43,9 @@ VulkanPooledMemory Allocate(
 
 // Releases the range and resets it to empty. Safe on an empty range.
 void Free(VkDevice device, VulkanPooledMemory& allocation);
+
+// The device memory the pool holds from the driver (whole blocks and dedicated allocations): the
+// scene's buffers, textures and acceleration structures, which is what world streaming budgets.
+uint64_t CommittedBytes();
 }
 }

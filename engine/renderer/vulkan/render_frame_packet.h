@@ -42,6 +42,9 @@ struct RenderFramePacket
     RenderDebugSettings renderDebug;
     // The size the scene renders at this frame.
     RenderExtent viewportExtent;
+    // The window's display in pixels: the largest the viewport can become (fullscreen), which the GPU
+    // memory report reserves room for.
+    RenderExtent displayExtent;
     SceneEnvironment environment;
     // SceneMinimap::image when the minimap is valid, else empty.
     std::string minimapPath;
@@ -72,5 +75,6 @@ struct RenderFeedback
     // main thread takes it.
     std::optional<bool> outOfMemory;
     bool minimapLoaded = false;
+    GpuMemoryReport gpuMemory;
 };
 }

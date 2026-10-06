@@ -14,6 +14,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <utility>
 
 namespace me
 {
@@ -43,6 +44,23 @@ constexpr int kMaxSwapsPerFrame = 16;
 // size, so swaps between high detail and LOD wait until this long after the last and then go together.
 // A cell that shows nothing yet (the first fill) never waits.
 constexpr float kSwapBatchSeconds = 0.5f;
+
+// The GPU memory budget (docs/design/2026-10-07-vram-budget-design.md). The radius grows when more than
+// kGrowHeadroom is free and shrinks when nothing is, each time to leave about kTargetHeadroom: the band
+// between them absorbs a wrong guess of the cost of a cell.
+constexpr int64_t kMiB = int64_t{1} << 20;
+constexpr int64_t kGrowHeadroom = 384 * kMiB;
+constexpr int64_t kTargetHeadroom = 192 * kMiB;
+// A cell's cost before any is loaded to measure it by (a GTA SA cell is 10-30 MB).
+constexpr int64_t kDefaultCellBytes = 48 * kMiB;
+// Steps come at most this often, which gives the measurement time to follow.
+constexpr float kBudgetStepSeconds = 1.0f;
+// How long a dip of the driver's budget is remembered. On Windows the budget rises when other
+// processes' memory could be paged out for ours and falls again once ours grows (seen 7.2 -> 5.3 GB
+// within seconds, a cycle of 20-30 s), so a dip is the truth for a while.
+constexpr std::chrono::seconds kBudgetWindow{60};
+// After a shrink the radius does not grow for this long, which damps the cycle above.
+constexpr std::chrono::seconds kGrowAfterShrink{20};
 
 glm::vec3 ReadVec3(const YAML::Node& node)
 {
@@ -110,6 +128,75 @@ glm::vec3 FocusOf(RendererSharedState& state)
     }
     return state.camera.position;
 }
+
+// One step of the budget radius (NextBudgetRadius), at most every kBudgetStepSeconds.
+void UpdateBudgetRadius(RendererSharedState& state, const std::vector<float>& distances, std::chrono::steady_clock::time_point now)
+{
+    WorldStreamingState& streaming = state.worldStreaming;
+    if (streaming.budgetRadius <= 0.0f)
+    {
+        streaming.budgetRadius = WorldStreamingService::kMinBudgetRadius;
+    }
+    // The driver's budget moves with what other processes take: the lowest of the last seconds holds.
+    if (state.gpuMemory.serial != 0 &&
+        (streaming.budgetSamples.empty() || now - streaming.budgetSamples.back().first >= std::chrono::milliseconds(250)))
+    {
+        streaming.budgetSamples.emplace_back(now, state.gpuMemory.budget);
+        while (now - streaming.budgetSamples.front().first > kBudgetWindow)
+        {
+            streaming.budgetSamples.pop_front();
+        }
+    }
+    if (std::chrono::duration<float>(now - streaming.lastBudgetChange).count() < kBudgetStepSeconds)
+    {
+        return;
+    }
+    std::vector<float> highDetail;
+    std::vector<float> candidates;
+    for (size_t index = 0; index < streaming.cells.size(); ++index)
+    {
+        const StreamedCell& cell = streaming.cells[index];
+        if (cell.shown == StreamedCell::Shown::HighDetail)
+        {
+            highDetail.push_back(distances[index]);
+        }
+        else if (!cell.highDetailPath.empty() && !cell.farOnly && distances[index] <= cell.loadRadius &&
+                 streaming.failedPaths.count(cell.highDetailPath) == 0)
+        {
+            candidates.push_back(distances[index]);
+        }
+    }
+    GpuMemoryReport report = state.gpuMemory;
+    for (const auto& [time, budget] : streaming.budgetSamples)
+    {
+        report.budget = std::min(report.budget, budget);
+    }
+    const bool outOfMemory = std::exchange(streaming.uploadOutOfMemory, false);
+    // Growing waits for the last change to be drawn, so that the cost of a cell is measured on cells
+    // that are all on the GPU. Shrinking never waits: the cells on their way are counted.
+    const bool mayGrow = streaming.settled && !state.rayScenePending && now - streaming.lastBudgetShrink >= kGrowAfterShrink;
+    const float radius = WorldStreamingService::NextBudgetRadius(
+        streaming.budgetRadius, report, outOfMemory, mayGrow, std::move(highDetail), std::move(candidates));
+    if (radius == streaming.budgetRadius)
+    {
+        return;
+    }
+    LOG_INFO(
+        "GPU memory: {} of {} MB used (world {} MB, fullscreen reserve {} MB){}: streaming radius {:.0f} -> {:.0f} m",
+        report.usage >> 20,
+        report.budget >> 20,
+        report.worldBytes >> 20,
+        report.reserve >> 20,
+        outOfMemory ? ", an upload ran out of memory" : "",
+        streaming.budgetRadius,
+        radius);
+    if (radius < streaming.budgetRadius)
+    {
+        streaming.lastBudgetShrink = now;
+    }
+    streaming.budgetRadius = radius;
+    streaming.lastBudgetChange = now;
+}
 }
 
 float WorldStreamingService::HorizontalDistance(const glm::vec3& point, const glm::vec3& boundsMin, const glm::vec3& boundsMax)
@@ -117,6 +204,85 @@ float WorldStreamingService::HorizontalDistance(const glm::vec3& point, const gl
     const float dx = std::max({boundsMin.x - point.x, 0.0f, point.x - boundsMax.x});
     const float dz = std::max({boundsMin.z - point.z, 0.0f, point.z - boundsMax.z});
     return std::sqrt(dx * dx + dz * dz);
+}
+
+float WorldStreamingService::NextBudgetRadius(
+    float radius,
+    const GpuMemoryReport& report,
+    bool outOfMemory,
+    bool mayGrow,
+    std::vector<float> highDetailDistances,
+    std::vector<float> candidateDistances)
+{
+    if (report.serial == 0 && !outOfMemory)
+    {
+        return radius;
+    }
+    const int64_t cellBytes = highDetailDistances.empty()
+                                  ? kDefaultCellBytes
+                                  : std::max(kMiB, static_cast<int64_t>(report.worldBytes / highDetailDistances.size()));
+
+    // Where the radius already leads: cells beyond it are on their way out, cells within it that are
+    // not shown yet on their way in. Neither shows in the measurement yet, so they are counted here;
+    // that lets a step follow the last without waiting for its uploads and releases.
+    std::vector<float> future;
+    std::vector<float> beyond;
+    int64_t leaving = 0;
+    int64_t arriving = 0;
+    for (const float distance : highDetailDistances)
+    {
+        if (distance <= radius + kBudgetRadiusHysteresis)
+        {
+            future.push_back(distance);
+        }
+        else
+        {
+            ++leaving;
+        }
+    }
+    for (const float distance : candidateDistances)
+    {
+        if (distance <= radius)
+        {
+            future.push_back(distance);
+            ++arriving;
+        }
+        else
+        {
+            beyond.push_back(distance);
+        }
+    }
+    std::sort(future.begin(), future.end());
+    const int64_t headroom = report.Headroom() + (leaving - arriving) * cellBytes;
+
+    if (outOfMemory || headroom < 0)
+    {
+        // The farthest cells go, as many as the overshoot is worth; after a failed upload at least an
+        // eighth of them, as the failed upload's own size is unknown.
+        const size_t count = future.size();
+        size_t drop = headroom < 0 ? static_cast<size_t>((-headroom + kTargetHeadroom + cellBytes - 1) / cellBytes) : 0;
+        if (outOfMemory)
+        {
+            drop = std::max(drop, std::max<size_t>(1, count / 8));
+        }
+        drop = std::min(drop, count);
+        if (drop == 0)
+        {
+            return radius;
+        }
+        // Below the first cell to go by more than the hysteresis, which would otherwise keep it.
+        const float firstDropped = future[count - drop];
+        return std::max(kMinBudgetRadius, std::min(radius, firstDropped - kBudgetRadiusHysteresis - 1.0f));
+    }
+
+    if (mayGrow && headroom > kGrowHeadroom && !beyond.empty())
+    {
+        // Half the room at a time: the nearest cells measured the cost, and the next ones may cost more.
+        std::sort(beyond.begin(), beyond.end());
+        const size_t add = std::clamp<size_t>(static_cast<size_t>((headroom - kTargetHeadroom) / cellBytes / 2), 1, beyond.size());
+        return std::max(radius, beyond[add - 1]);
+    }
+    return radius;
 }
 
 StreamedCell::Shown WorldStreamingService::TargetOf(const StreamedCell& cell)
@@ -197,6 +363,8 @@ bool WorldStreamingService::Tick(RendererSharedState& state)
     }
     if (streaming.cells.empty())
     {
+        // Nothing to give back: a failed upload is the scene's own, not a world's to shed cells for.
+        streaming.uploadOutOfMemory = false;
         streaming.settled = true;
         if (changed)
         {
@@ -205,14 +373,25 @@ bool WorldStreamingService::Tick(RendererSharedState& state)
         return changed;
     }
 
-    // What each cell wants, nearest first.
     const glm::vec3 focus = FocusOf(state);
+    std::vector<float> distances(streaming.cells.size());
+    for (size_t index = 0; index < streaming.cells.size(); ++index)
+    {
+        const StreamedCell& cell = streaming.cells[index];
+        distances[index] = HorizontalDistance(focus, cell.boundsMin, cell.boundsMax);
+    }
+    const auto now = std::chrono::steady_clock::now();
+    UpdateBudgetRadius(state, distances, now);
+
+    // What each cell wants, nearest first: its high detail within its own radius and the budget's.
     std::vector<std::pair<float, size_t>> pending;
     for (size_t index = 0; index < streaming.cells.size(); ++index)
     {
         StreamedCell& cell = streaming.cells[index];
-        const float distance = HorizontalDistance(focus, cell.boundsMin, cell.boundsMax);
-        cell.wantHighDetail = cell.wantHighDetail ? distance <= cell.unloadRadius : distance <= cell.loadRadius;
+        const float distance = distances[index];
+        cell.wantHighDetail = cell.wantHighDetail
+                                  ? distance <= std::min(cell.unloadRadius, streaming.budgetRadius + kBudgetRadiusHysteresis)
+                                  : distance <= std::min(cell.loadRadius, streaming.budgetRadius);
         if (TargetOf(cell) != cell.shown)
         {
             pending.emplace_back(distance, index);
@@ -224,7 +403,6 @@ bool WorldStreamingService::Tick(RendererSharedState& state)
     // model at a time, so streaming waits for them rather than read alongside.
     const bool otherLoaderBusy = state.asyncSceneLoad.IsLoading() || state.asyncLoad.IsLoading();
     int swaps = 0;
-    const auto now = std::chrono::steady_clock::now();
     const bool batchDue = std::chrono::duration<float>(now - streaming.lastSwap).count() >= kSwapBatchSeconds;
     for (const auto& [distance, index] : pending)
     {

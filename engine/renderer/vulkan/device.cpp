@@ -140,6 +140,13 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
         enabledExtensions.push_back(kPortabilitySubsetExtensionName);
         LOG_INFO("Enabling device extension: {}", kPortabilitySubsetExtensionName);
     }
+    // The driver's per-process budget and usage of each heap, which the world's streaming fits in.
+    m_supportsMemoryBudget = isAvailable(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    if (m_supportsMemoryBudget)
+    {
+        enabledExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        LOG_INFO("Enabling device extension: {}", VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    }
 
     // The optional ones, and the buffer device address feature when one of them is that extension
     // (core since Vulkan 1.2, where the feature still has to be asked for).
@@ -261,6 +268,37 @@ VulkanDevice::~VulkanDevice()
         vkDestroyDevice(m_device, nullptr);
         LOG_INFO("Logical device destroyed");
     }
+}
+
+VulkanDevice::LocalMemory VulkanDevice::QueryLocalMemory() const
+{
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2 properties{};
+    properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    properties.pNext = m_supportsMemoryBudget ? &budget : nullptr;
+    vkGetPhysicalDeviceMemoryProperties2(m_physicalDevice, &properties);
+
+    LocalMemory result;
+    result.measured = m_supportsMemoryBudget;
+    const VkPhysicalDeviceMemoryProperties& memory = properties.memoryProperties;
+    for (uint32_t heap = 0; heap < memory.memoryHeapCount; ++heap)
+    {
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0)
+        {
+            continue;
+        }
+        if (m_supportsMemoryBudget)
+        {
+            result.usage += budget.heapUsage[heap];
+            result.budget += budget.heapBudget[heap];
+        }
+        else
+        {
+            result.budget += memory.memoryHeaps[heap].size / 5 * 4;
+        }
+    }
+    return result;
 }
 
 bool VulkanDevice::OptionalExtensionsEnabled() const

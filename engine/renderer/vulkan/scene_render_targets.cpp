@@ -123,6 +123,19 @@ VkExtent2D SceneRenderTargets::GetTargetExtent(RenderTargetId target) const
     return {(m_extent.width + downscale - 1) / downscale, (m_extent.height + downscale - 1) / downscale};
 }
 
+uint64_t SceneRenderTargets::GetAllocatedBytes() const
+{
+    uint64_t bytes = 0;
+    for (const TargetDescription& description : m_targets)
+    {
+        for (const TargetImage& image : description.images)
+        {
+            bytes += image.bytes;
+        }
+    }
+    return bytes;
+}
+
 bool SceneRenderTargets::MatchesExtent(VkExtent2D renderExtent, VkExtent2D outputExtent) const
 {
     return m_extent.width == std::max(renderExtent.width, 1u) &&
@@ -517,6 +530,7 @@ void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, V
     allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &target.memory), "Failed to allocate viewport image memory");
+    target.bytes = memoryRequirements.size;
     CheckVulkan(vkBindImageMemory(m_device, target.image, target.memory, 0), "Failed to bind viewport image memory");
 }
 

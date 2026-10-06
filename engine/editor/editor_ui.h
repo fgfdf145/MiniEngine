@@ -237,6 +237,11 @@ class EditorUiController
     {
         m_selectionOutlineTexture = texture;
     }
+    // A line on GPU memory and the world's streaming radius for the Graphics Debug window.
+    void SetGpuMemoryStatus(std::string status)
+    {
+        m_gpuMemoryStatus = std::move(status);
+    }
     // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
     // (VulkanDlss::Status).
     void SetDlssStatus(bool available, bool rayReconstructionAvailable, std::string status)
@@ -467,6 +472,7 @@ class EditorUiController
     bool m_dlssAvailable = false;
     bool m_dlssRayReconstructionAvailable = false;
     std::string m_dlssStatus;
+    std::string m_gpuMemoryStatus;
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;
     VehicleHapticsSettings m_vehicleHaptics;

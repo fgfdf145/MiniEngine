@@ -198,6 +198,10 @@ void EditorUiController::DrawGraphicsDebugPanel()
         {
             ImGui::TextDisabled("DLSS: %s", m_dlssStatus.c_str());
         }
+        if (!m_gpuMemoryStatus.empty())
+        {
+            ImGui::TextDisabled("%s", m_gpuMemoryStatus.c_str());
+        }
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         ImGui::Checkbox("Local light shadows", &m_renderDebug.localLightShadows);

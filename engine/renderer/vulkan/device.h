@@ -43,6 +43,17 @@ class VulkanDevice
     // it every ray walks the ray scene's own hierarchies in compute (ray_tracing_common.glsl).
     bool SupportsRayQuery() const;
 
+    // The device-local heaps' usage and budget summed, in bytes. With VK_EXT_memory_budget they are the
+    // driver's (the budget shrinks as other processes take memory); without it the budget is 80 % of
+    // the heaps' size and the usage is unknown (0).
+    struct LocalMemory
+    {
+        uint64_t usage = 0;
+        uint64_t budget = 0;
+        bool measured = false;
+    };
+    LocalMemory QueryLocalMemory() const;
+
   private:
     bool IsSuitable(VkPhysicalDevice device) const;
     QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
@@ -58,6 +69,7 @@ class VulkanDevice
     bool m_supportsBlockCompression = false;
     bool m_supportsIndependentBlend = false;
     bool m_optionalExtensionsEnabled = true;
+    bool m_supportsMemoryBudget = false;
     bool m_supportsRayQuery = false;
 };
 }

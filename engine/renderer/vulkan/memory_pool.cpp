@@ -3,6 +3,7 @@
 #include <engine/renderer/block_suballocator.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -32,6 +33,8 @@ constexpr VkDeviceSize kDedicatedThreshold = kBlockSize / 4;
 
 std::mutex g_mutex;
 std::vector<std::unique_ptr<VulkanMemoryBlock>> g_blocks;
+// What vkAllocateMemory handed out: whole blocks and dedicated allocations.
+std::atomic<uint64_t> g_committedBytes{0};
 
 uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
 {
@@ -62,6 +65,7 @@ VkDeviceMemory AllocateMemory(VkDevice device, VkDeviceSize size, uint32_t memor
     }
     VkDeviceMemory memory = VK_NULL_HANDLE;
     CheckVulkan(vkAllocateMemory(device, &allocateInfo, nullptr, &memory), "Failed to allocate Vulkan device memory");
+    g_committedBytes += size;
     return memory;
 }
 }
@@ -108,6 +112,7 @@ VulkanPooledMemory VulkanMemoryPool::Allocate(
     if (!offset)
     {
         vkFreeMemory(device, block->memory, nullptr);
+        g_committedBytes -= kBlockSize;
         throw std::runtime_error("Vulkan memory pool: a request does not fit in a fresh block");
     }
     result.memory = block->memory;
@@ -126,6 +131,7 @@ void VulkanMemoryPool::Free(VkDevice device, VulkanPooledMemory& allocation)
     if (allocation.block == nullptr)
     {
         vkFreeMemory(device, allocation.memory, nullptr);
+        g_committedBytes -= allocation.size;
         allocation = {};
         return;
     }
@@ -136,6 +142,7 @@ void VulkanMemoryPool::Free(VkDevice device, VulkanPooledMemory& allocation)
     if (block->ranges.Empty())
     {
         vkFreeMemory(block->device, block->memory, nullptr);
+        g_committedBytes -= kBlockSize;
         g_blocks.erase(std::find_if(
             g_blocks.begin(),
             g_blocks.end(),
@@ -145,5 +152,10 @@ void VulkanMemoryPool::Free(VkDevice device, VulkanPooledMemory& allocation)
             }));
     }
     allocation = {};
+}
+
+uint64_t VulkanMemoryPool::CommittedBytes()
+{
+    return g_committedBytes.load();
 }
 }

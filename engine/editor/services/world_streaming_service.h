@@ -1,15 +1,19 @@
 #pragma once
 
 #include <engine/core/threading/task_future.h>
+#include <engine/renderer/render_types.h>
 #include <engine/scene/scene_streaming.h>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
 #include <chrono>
+#include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -61,6 +65,15 @@ struct WorldStreamingState
     std::string lastError;
     // When cells last swapped between high detail and LOD (see kSwapBatchSeconds).
     std::chrono::steady_clock::time_point lastSwap{};
+    // docs/design/2026-10-07-vram-budget-design.md: no cell beyond this distance from the focus is in
+    // high detail, whatever its own radius, so that the world fits in the GPU's memory budget.
+    float budgetRadius = 0.0f;
+    std::chrono::steady_clock::time_point lastBudgetChange{};
+    std::chrono::steady_clock::time_point lastBudgetShrink{};
+    // The driver's budget over the last seconds, by when it was read.
+    std::deque<std::pair<std::chrono::steady_clock::time_point, uint64_t>> budgetSamples;
+    // Set by the render backend when an upload ran out of GPU memory: the radius shrinks next.
+    bool uploadOutOfMemory = false;
 
     // The cells showing their high detail, and those showing their LOD.
     size_t HighDetailCount() const;
@@ -86,5 +99,24 @@ float HorizontalDistance(const glm::vec3& point, const glm::vec3& boundsMin, con
 
 // The shown state a cell should move to, given whether it wants its high detail.
 StreamedCell::Shown TargetOf(const StreamedCell& cell);
+
+// The budget radius never goes below this: the cells around the focus always load, over budget or not.
+inline constexpr float kMinBudgetRadius = 150.0f;
+// A cell in high detail stays until it is this far beyond the budget radius (no flicker at its edge).
+inline constexpr float kBudgetRadiusHysteresis = 25.0f;
+
+// One step of the budget radius (docs/design/2026-10-07-vram-budget-design.md). highDetailDistances: the
+// distances of the cells in high detail now; candidateDistances: those of the cells that would load
+// their high detail within their own radius but do not show it. The report's headroom is corrected for
+// the cells the radius already sends away or brings in, at the world's bytes per high-detail cell.
+// Shrinks when that is negative or an upload ran out of memory, grows by half the room when there is
+// room for more cells (only with mayGrow), else returns radius unchanged.
+float NextBudgetRadius(
+    float radius,
+    const GpuMemoryReport& report,
+    bool outOfMemory,
+    bool mayGrow,
+    std::vector<float> highDetailDistances,
+    std::vector<float> candidateDistances);
 }
 }

@@ -63,6 +63,8 @@ class SceneRenderTargets
     // The output size: the temporal resolve's result and everything after it (bloom, exposure, tone
     // mapping, the selection outline), which the viewport shows.
     VkExtent2D GetOutputExtent() const;
+    // The device memory every target image holds, all copies.
+    uint64_t GetAllocatedBytes() const;
     // The size of one target's images: GetExtent, a fraction of it for the half-resolution traces
     // (AoRaw and GiRaw), rounded up, or GetOutputExtent for the output targets.
     VkExtent2D GetTargetExtent(RenderTargetId target) const;
@@ -105,6 +107,7 @@ class SceneRenderTargets
         // ImGui's view of an sRGB target: the same bytes as UNORM, see DisplayViewFormat.
         VkImageView imguiView = VK_NULL_HANDLE;
         VkDescriptorSet imguiBinding = VK_NULL_HANDLE;
+        VkDeviceSize bytes = 0;
     };
 
     struct TargetDescription
