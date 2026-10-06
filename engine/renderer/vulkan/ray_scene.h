@@ -119,6 +119,9 @@ class VulkanRayScene
     void Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool hardwareRays);
 
     bool IsReady() const;
+    // True once after the hardware bottom levels a new content waited for are all built (they are
+    // built a few at a time): the probes should look at the scene again.
+    bool TakeAccelerationCompleted();
     // The set has binding 5 and the passes may trace with ray queries.
     bool HasHardwareRayTracing() const;
     // A build started by SetContent has not been installed yet.
@@ -194,7 +197,9 @@ class VulkanRayScene
     // The release tasks, waited for before the device goes; finished ones are dropped as new ones come.
     std::vector<TaskFuture<void>> m_releases;
 
-    Buffer CreateBuffer(VkDeviceSize size) const;
+    // Host visible and coherent, mapped. nearGpu puts it in video memory the CPU can write (resizable
+    // BAR) when the device has such memory and room in it: for the small buffers every hit reads.
+    Buffer CreateBuffer(VkDeviceSize size, bool nearGpu = false) const;
     void DestroyBuffer(Buffer& buffer) const;
     void WriteSets();
     void CreateMaterialPipeline(VkPipelineCache pipelineCache);

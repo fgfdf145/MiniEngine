@@ -126,13 +126,13 @@ VulkanRayScene::VulkanRayScene(
         // Placeholder buffers, so the sets are valid before the first build.
         m_meshNodes = CreateBuffer(AtLeastOne(0));
         m_meshTriangles = CreateBuffer(AtLeastOne(0));
-        m_meshGeometry = CreateBuffer(AtLeastOne(0));
-        m_sourceTriangles = CreateBuffer(AtLeastOne(0));
-        m_materials = CreateBuffer(AtLeastOne(0));
+        m_meshGeometry = CreateBuffer(AtLeastOne(0), true);
+        m_sourceTriangles = CreateBuffer(AtLeastOne(0), true);
+        m_materials = CreateBuffer(AtLeastOne(0), true);
         for (uint32_t slot = 0; slot < m_frameCount; ++slot)
         {
-            m_instances.push_back(CreateBuffer(AtLeastOne(0)));
-            m_topNodes.push_back(CreateBuffer(AtLeastOne(0)));
+            m_instances.push_back(CreateBuffer(AtLeastOne(0), true));
+            m_topNodes.push_back(CreateBuffer(AtLeastOne(0), true));
         }
         WriteSets();
         CreateMaterialPipeline(pipelineCache);
@@ -208,7 +208,7 @@ void VulkanRayScene::SetContent(
     if (capacity > m_materialCapacity)
     {
         DestroyBuffer(m_materials);
-        m_materials = CreateBuffer(kRayMaterialBytes * capacity);
+        m_materials = CreateBuffer(kRayMaterialBytes * capacity, true);
         m_materialCapacity = capacity;
         m_materialSlots.resize(capacity);
         for (uint32_t index = 0; index < capacity; ++index)
@@ -424,7 +424,7 @@ void VulkanRayScene::SetContent(
 
                 // Hit shading's view of the meshes: each one's buffer addresses, and each leaf
                 // triangle's index in its index list, laid out as the triangles are.
-                build.meshGeometry = CreateBuffer(AtLeastOne(sizeof(RayMeshGeometry) * distinct.size()));
+                build.meshGeometry = CreateBuffer(AtLeastOne(sizeof(RayMeshGeometry) * distinct.size()), true);
                 auto* geometry = static_cast<RayMeshGeometry*>(build.meshGeometry.mapped);
                 size_t triangleCount = 0;
                 for (size_t index = 0; index < distinct.size(); ++index)
@@ -433,7 +433,7 @@ void VulkanRayScene::SetContent(
                     geometry[index] = buffer ? RayMeshGeometry{buffer->GetVertexAddress(), buffer->GetIndexAddress()} : RayMeshGeometry{};
                     triangleCount += bvhs[index]->sourceTriangles.size();
                 }
-                build.sourceTriangles = CreateBuffer(AtLeastOne(sizeof(uint32_t) * triangleCount));
+                build.sourceTriangles = CreateBuffer(AtLeastOne(sizeof(uint32_t) * triangleCount), true);
                 auto* sources = static_cast<uint32_t*>(build.sourceTriangles.mapped);
                 for (size_t index = 0; index < distinct.size(); ++index)
                 {
@@ -555,8 +555,8 @@ void VulkanRayScene::InstallBuild()
     {
         DestroyBuffer(m_instances[slot]);
         DestroyBuffer(m_topNodes[slot]);
-        m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * IncrementalTopLevel::MaxInstances(instanceCount)));
-        m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * IncrementalTopLevel::MaxNodes(instanceCount)));
+        m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * IncrementalTopLevel::MaxInstances(instanceCount)), true);
+        m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * IncrementalTopLevel::MaxNodes(instanceCount)), true);
     }
     // New buffers, which every frame slot copies the worker's top level into.
     m_slotGenerations.assign(m_frameCount, 0);
@@ -706,6 +706,11 @@ bool VulkanRayScene::IsReady() const
     return m_ready;
 }
 
+bool VulkanRayScene::TakeAccelerationCompleted()
+{
+    return m_acceleration && m_acceleration->TakeBuildsCompleted();
+}
+
 bool VulkanRayScene::HasHardwareRayTracing() const
 {
     return m_acceleration != nullptr;
@@ -806,7 +811,7 @@ std::vector<ReferenceMaterial> VulkanRayScene::ReadMaterials() const
     return materials;
 }
 
-VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size) const
+VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size, bool nearGpu) const
 {
     Buffer result{};
     result.size = size;
@@ -824,12 +829,35 @@ VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size) const
         allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocateInfo.allocationSize = requirements.size;
         // Host visible: the CPU writes the hierarchies and every frame's instances straight in. On
-        // this Mac's unified memory that is also where the GPU reads fastest.
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            m_physicalDevice,
-            requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory), "Failed to allocate a ray scene buffer");
+        // this Mac's unified memory that is also where the GPU reads fastest. On a discrete GPU with
+        // resizable BAR the buffers every hit reads go to video memory, which the CPU writes as well;
+        // where there is none, or no room, they stay in system memory.
+        constexpr VkMemoryPropertyFlags kHostVisible = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        VkResult allocated = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (nearGpu)
+        {
+            VkPhysicalDeviceMemoryProperties memory{};
+            vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memory);
+            for (uint32_t type = 0; type < memory.memoryTypeCount && allocated != VK_SUCCESS; ++type)
+            {
+                const VkMemoryPropertyFlags flags = memory.memoryTypes[type].propertyFlags;
+                // A full-size BAR heap only: a 256 MiB window is better left to the driver.
+                const VkDeviceSize heapSize = memory.memoryHeaps[memory.memoryTypes[type].heapIndex].size;
+                if ((requirements.memoryTypeBits & (1u << type)) != 0 && (flags & (kHostVisible | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) ==
+                                                                          (kHostVisible | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                    heapSize > (VkDeviceSize{1} << 30))
+                {
+                    allocateInfo.memoryTypeIndex = type;
+                    allocated = vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory);
+                }
+            }
+        }
+        if (allocated != VK_SUCCESS)
+        {
+            result.memory = VK_NULL_HANDLE;
+            allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, kHostVisible);
+            CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory), "Failed to allocate a ray scene buffer");
+        }
         CheckVulkan(vkBindBufferMemory(m_device, result.buffer, result.memory, 0), "Failed to bind a ray scene buffer");
         CheckVulkan(vkMapMemory(m_device, result.memory, 0, VK_WHOLE_SIZE, 0, &result.mapped), "Failed to map a ray scene buffer");
     }

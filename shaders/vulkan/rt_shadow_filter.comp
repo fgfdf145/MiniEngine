@@ -43,6 +43,13 @@ void main()
     }
 
     vec4 center = imageLoad(rtShadowAccumulated, pixel);
+    // Every ray of a settled history agreed: fully lit or fully shadowed, nothing to blur (a blur would
+    // only pull a neighbouring penumbra over it). Most of the screen ends here.
+    if (center.z >= 4.0 && (center.x <= 0.001 || center.x >= 0.999))
+    {
+        imageStore(rtShadowOutput, pixel, vec4(center.x, 1.0, 0.0, 0.0));
+        return;
+    }
     float distanceToCamera = RtShadowViewDistance(depth);
     vec3 normal = DecodeNormalOctahedral(texelFetch(rtShadowNormal, pixel, 0).ba);
 

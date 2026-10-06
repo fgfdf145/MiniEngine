@@ -22,6 +22,8 @@ struct RayTracingFunctions
     PFN_vkGetAccelerationStructureBuildSizesKHR getBuildSizes = nullptr;
     PFN_vkGetAccelerationStructureDeviceAddressKHR getDeviceAddress = nullptr;
     PFN_vkCmdBuildAccelerationStructuresKHR cmdBuild = nullptr;
+    PFN_vkCmdWriteAccelerationStructuresPropertiesKHR cmdWriteProperties = nullptr;
+    PFN_vkCmdCopyAccelerationStructureKHR cmdCopy = nullptr;
 };
 
 struct RayBlas::VertexBatch
@@ -131,6 +133,18 @@ constexpr VkDeviceSize kStructureAlignment = 256;
 // One bottom-level build batch's scratch at most, unless a single mesh needs more: the GTA map's
 // first content builds some 6 million triangles at once.
 constexpr VkDeviceSize kScratchBudget = VkDeviceSize{256} << 20;
+
+// A frame builds bottom levels for at most this many triangles (at least one structure), so a map's
+// first content (some 6 million triangles in 15,000 structures) spreads over a few frames instead of
+// stalling one; its instances join the top level as their structures are built.
+constexpr size_t kBuildTriangleBudget = size_t{1} << 21;
+// And at most this many structures, the size of each frame slot's compaction query pool.
+constexpr uint32_t kMaxBuildsPerFrame = 1024;
+// A compacted copy is made only where it saves more than this share.
+constexpr double kCompactionMinimumSaving = 0.05;
+
+constexpr VkBuildAccelerationStructureFlagsKHR kBottomLevelFlags =
+    VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
 }
 
 VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameCount)
@@ -144,6 +158,9 @@ VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, Vk
     functions->getBuildSizes = LoadDeviceFunction<PFN_vkGetAccelerationStructureBuildSizesKHR>(device, "vkGetAccelerationStructureBuildSizesKHR");
     functions->getDeviceAddress = LoadDeviceFunction<PFN_vkGetAccelerationStructureDeviceAddressKHR>(device, "vkGetAccelerationStructureDeviceAddressKHR");
     functions->cmdBuild = LoadDeviceFunction<PFN_vkCmdBuildAccelerationStructuresKHR>(device, "vkCmdBuildAccelerationStructuresKHR");
+    functions->cmdWriteProperties =
+        LoadDeviceFunction<PFN_vkCmdWriteAccelerationStructuresPropertiesKHR>(device, "vkCmdWriteAccelerationStructuresPropertiesKHR");
+    functions->cmdCopy = LoadDeviceFunction<PFN_vkCmdCopyAccelerationStructureKHR>(device, "vkCmdCopyAccelerationStructureKHR");
     m_functions = std::move(functions);
 
     VkPhysicalDeviceAccelerationStructurePropertiesKHR accelerationProperties{};
@@ -156,6 +173,7 @@ VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, Vk
 
     m_retired.resize(m_frameCount);
     m_topLevels.resize(m_frameCount);
+    m_compactionQueries.resize(m_frameCount);
     try
     {
         // One instance each until content installs, so the descriptor sets name a structure.
@@ -163,12 +181,27 @@ VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, Vk
         {
             CreateTopLevel(topLevel, 1);
         }
+        for (CompactionQueries& queries : m_compactionQueries)
+        {
+            VkQueryPoolCreateInfo poolInfo{};
+            poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            poolInfo.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+            poolInfo.queryCount = kMaxBuildsPerFrame;
+            CheckVulkan(vkCreateQueryPool(m_device, &poolInfo, nullptr, &queries.pool), "Failed to create the compaction query pool");
+        }
     }
     catch (...)
     {
         for (TopLevel& topLevel : m_topLevels)
         {
             DestroyTopLevel(topLevel);
+        }
+        for (CompactionQueries& queries : m_compactionQueries)
+        {
+            if (queries.pool != VK_NULL_HANDLE)
+            {
+                vkDestroyQueryPool(m_device, queries.pool, nullptr);
+            }
         }
         throw;
     }
@@ -185,6 +218,157 @@ VulkanRayAcceleration::~VulkanRayAcceleration()
         for (Buffer& buffer : retired.buffers)
         {
             DestroyBuffer(buffer);
+        }
+        for (OldStructure& structure : retired.structures)
+        {
+            DestroyOldStructure(structure);
+        }
+    }
+    for (CompactionQueries& queries : m_compactionQueries)
+    {
+        if (queries.pool != VK_NULL_HANDLE)
+        {
+            vkDestroyQueryPool(m_device, queries.pool, nullptr);
+        }
+    }
+}
+
+void VulkanRayAcceleration::DestroyOldStructure(OldStructure& structure) const
+{
+    if (structure.handle != VK_NULL_HANDLE)
+    {
+        m_functions->destroyAccelerationStructure(m_device, structure.handle, nullptr);
+    }
+    if (structure.buffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, structure.buffer, nullptr);
+    }
+    VulkanMemoryPool::Free(m_device, structure.memory);
+    structure = OldStructure{};
+}
+
+bool VulkanRayAcceleration::TakeBuildsCompleted()
+{
+    const bool completed = m_buildsCompleted;
+    m_buildsCompleted = false;
+    return completed;
+}
+
+void VulkanRayAcceleration::RebuildAddressMap()
+{
+    m_addressByNodeOffset.clear();
+    for (size_t index = 0; index < m_meshRanges.size() && index < m_meshBlas.size(); ++index)
+    {
+        const std::shared_ptr<RayBlas>& blas = m_meshBlas[index];
+        if (blas && blas->built && m_meshRanges[index].nodeCount > 0)
+        {
+            m_addressByNodeOffset[m_meshRanges[index].nodeOffset] = blas->address;
+        }
+    }
+}
+
+void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
+{
+    CompactionQueries& queries = m_compactionQueries[frameSlot];
+    if (queries.structures.empty())
+    {
+        return;
+    }
+    // The slot's last frame wrote these queries, and its fence has signalled.
+    const uint32_t count = static_cast<uint32_t>(queries.structures.size());
+    std::vector<uint64_t> sizes(count, 0);
+    const VkResult result = vkGetQueryPoolResults(
+        m_device,
+        queries.pool,
+        0,
+        count,
+        sizeof(uint64_t) * count,
+        sizes.data(),
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    std::vector<std::shared_ptr<RayBlas>> structures = std::move(queries.structures);
+    queries.structures.clear();
+    if (result != VK_SUCCESS)
+    {
+        LOG_WARN("Ray acceleration: compacted sizes unavailable ({}); structures stay uncompacted", static_cast<int>(result));
+        return;
+    }
+
+    bool replaced = false;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        // No content holds it any more: it goes with this list.
+        if (structures[index].use_count() == 1)
+        {
+            continue;
+        }
+        RayBlas& blas = *structures[index];
+        const VkDeviceSize compactedSize = sizes[index];
+        blas.compacted = true;
+        if (compactedSize == 0 || blas.handle == VK_NULL_HANDLE ||
+            static_cast<double>(compactedSize) > static_cast<double>(blas.memory.size) * (1.0 - kCompactionMinimumSaving))
+        {
+            continue;
+        }
+        OldStructure compact{};
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = compactedSize;
+        bufferInfo.usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &compact.buffer), "Failed to create a compacted acceleration structure buffer");
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(m_device, compact.buffer, &requirements);
+        requirements.alignment = std::max<VkDeviceSize>(requirements.alignment, kStructureAlignment);
+        compact.memory = VulkanMemoryPool::Allocate(
+            m_physicalDevice, m_device, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::AddressableBuffer);
+        CheckVulkan(vkBindBufferMemory(m_device, compact.buffer, compact.memory.memory, compact.memory.offset), "Failed to bind a compacted acceleration structure buffer");
+        VkAccelerationStructureCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        createInfo.buffer = compact.buffer;
+        createInfo.size = compactedSize;
+        createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        CheckVulkan(
+            m_functions->createAccelerationStructure(m_device, &createInfo, nullptr, &compact.handle),
+            "Failed to create a compacted acceleration structure");
+        m_compactionCopies.push_back(CompactionCopy{blas.handle, structures[index]});
+        m_compactedFrom += blas.memory.size;
+        m_compactedTo += compact.memory.size;
+
+        // The original goes once this frame, whose copy reads it, is done; the frames before it are by
+        // then too. The compacted one takes its place now: this frame's top level is built after the copy.
+        OldStructure original{blas.handle, blas.buffer, blas.memory};
+        m_retired[frameSlot].structures.push_back(original);
+        blas.handle = compact.handle;
+        blas.buffer = compact.buffer;
+        blas.memory = compact.memory;
+        VkAccelerationStructureDeviceAddressInfoKHR addressInfo{};
+        addressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        addressInfo.accelerationStructure = blas.handle;
+        blas.address = m_functions->getDeviceAddress(m_device, &addressInfo);
+        if (blas.installNumber == m_installNumber)
+        {
+            m_addressByNodeOffset[blas.installedNodeOffset] = blas.address;
+        }
+        replaced = true;
+    }
+    if (replaced)
+    {
+        ++m_bottomEpoch;
+    }
+    if (m_pendingNext >= m_pending.size() && !m_compactionCopies.empty())
+    {
+        bool waiting = false;
+        for (const CompactionQueries& slotQueries : m_compactionQueries)
+        {
+            waiting = waiting || !slotQueries.structures.empty();
+        }
+        if (!waiting)
+        {
+            LOG_INFO(
+                "Ray acceleration: compacted bottom levels so far {:.1f} -> {:.1f} MiB",
+                static_cast<double>(m_compactedFrom) / (1024.0 * 1024.0),
+                static_cast<double>(m_compactedTo) / (1024.0 * 1024.0));
         }
     }
 }
@@ -270,7 +454,7 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
                 VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
                 buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
                 buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-                buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+                buildInfo.flags = kBottomLevelFlags;
                 buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
                 buildInfo.geometryCount = 1;
                 buildInfo.pGeometries = &geometry;
@@ -332,9 +516,11 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Install(
     std::vector<std::shared_ptr<RayBlas>> previous = std::move(m_meshBlas);
     m_meshBlas = std::move(meshBlas);
     m_meshBlas.resize(meshes.size());
+    m_meshRanges.assign(meshes.begin(), meshes.end());
+    ++m_installNumber;
     // Pending builds of the content this replaces that this one does not hold go with it.
     m_pending.clear();
-    m_addressByNodeOffset.clear();
+    m_pendingNext = 0;
     for (size_t index = 0; index < meshes.size(); ++index)
     {
         const std::shared_ptr<RayBlas>& blas = m_meshBlas[index];
@@ -342,7 +528,8 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Install(
         {
             continue;
         }
-        m_addressByNodeOffset[meshes[index].nodeOffset] = blas->address;
+        blas->installedNodeOffset = meshes[index].nodeOffset;
+        blas->installNumber = m_installNumber;
         // Two meshes never share one, but a mesh made by a build that never installed may be pending
         // here for the first time.
         if (!blas->built)
@@ -350,6 +537,9 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Install(
             m_pending.push_back(blas);
         }
     }
+    // The built ones are in the top level at once; the others join it as they are built.
+    RebuildAddressMap();
+    ++m_bottomEpoch;
 
     // Sized for this content exactly: a map's capacity is large, and a small scene after it should not
     // keep it.
@@ -379,11 +569,26 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
     }
     retired.buffers.clear();
     retired.batches.clear();
+    for (OldStructure& structure : retired.structures)
+    {
+        DestroyOldStructure(structure);
+    }
+    retired.structures.clear();
+    retired.compacted.clear();
+
+    // The sizes the slot's last frame measured: the structures that shrink are replaced now.
+    StartCompactions(frameSlot);
 
     TopLevel& topLevel = m_topLevels[frameSlot];
-    if (topLevel.generation == generation)
+    if (topLevel.generation == generation && topLevel.bottomEpoch == m_bottomEpoch)
     {
         return;
+    }
+    if (topLevel.bottomEpoch != m_bottomEpoch)
+    {
+        // Structures built or moved: every instance is written again.
+        topLevel.written.clear();
+        topLevel.bottomEpoch = m_bottomEpoch;
     }
     const size_t count = std::min(scene.instances.size(), topLevel.capacity);
     const size_t known = std::min(topLevel.written.size(), count);
@@ -450,8 +655,24 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
 
 void VulkanRayAcceleration::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool buildTopLevel)
 {
-    const bool builtBottom = !m_pending.empty();
-    RecordBottomLevels(commandBuffer, frameSlot);
+    bool builtBottom = RecordBottomLevels(commandBuffer, frameSlot);
+    if (!m_compactionCopies.empty())
+    {
+        // The originals were built in earlier submissions (or just now).
+        AccelerationBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+        for (CompactionCopy& copy : m_compactionCopies)
+        {
+            VkCopyAccelerationStructureInfoKHR copyInfo{};
+            copyInfo.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+            copyInfo.src = copy.source;
+            copyInfo.dst = copy.destination->handle;
+            copyInfo.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+            m_functions->cmdCopy(commandBuffer, &copyInfo);
+            m_retired[frameSlot].compacted.push_back(std::move(copy.destination));
+        }
+        m_compactionCopies.clear();
+        builtBottom = true;
+    }
 
     TopLevel& topLevel = m_topLevels[frameSlot];
     if (buildTopLevel && topLevel.dirty)
@@ -487,23 +708,40 @@ void VulkanRayAcceleration::Record(VkCommandBuffer commandBuffer, uint32_t frame
         VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
 }
 
-void VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, uint32_t frameSlot)
+bool VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, uint32_t frameSlot)
 {
-    if (m_pending.empty())
+    if (m_pendingNext >= m_pending.size())
     {
-        return;
+        return false;
     }
+    // A frame that wrote no instances (UpdateTopLevel) left the slot's last sizes unread; their pool is
+    // about to be reused.
+    if (!m_compactionQueries[frameSlot].structures.empty())
+    {
+        StartCompactions(frameSlot);
+    }
+    // This frame's share: up to the triangle budget, at least one structure.
+    const size_t first = m_pendingNext;
+    size_t last = first;
+    size_t triangles = 0;
+    while (last < m_pending.size() && last - first < kMaxBuildsPerFrame &&
+           (last == first || triangles + m_pending[last]->triangleCount <= kBuildTriangleBudget))
+    {
+        triangles += m_pending[last]->triangleCount;
+        ++last;
+    }
+    const std::span<const std::shared_ptr<RayBlas>> batch(m_pending.data() + first, last - first);
+    m_pendingNext = last;
+
     VkDeviceSize largest = 0;
     VkDeviceSize total = 0;
     VkDeviceSize storage = 0;
-    size_t triangles = 0;
-    for (const std::shared_ptr<RayBlas>& blas : m_pending)
+    for (const std::shared_ptr<RayBlas>& blas : batch)
     {
         const VkDeviceSize aligned = AlignUp(blas->scratchSize, m_scratchAlignment);
         largest = std::max(largest, aligned);
         total += aligned;
         storage += blas->memory.size;
-        triangles += blas->triangleCount;
     }
     // One scratch for every batch, the batches apart by barriers; it goes when this frame is done.
     const VkDeviceSize scratchSize = std::max(largest, std::min(total, kScratchBudget));
@@ -515,19 +753,19 @@ void VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
     std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
     std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> rangePointers;
-    geometries.reserve(m_pending.size());
+    geometries.reserve(batch.size());
     size_t next = 0;
-    bool first = true;
-    while (next < m_pending.size())
+    bool firstBatch = true;
+    while (next < batch.size())
     {
         geometries.clear();
         infos.clear();
         ranges.clear();
         rangePointers.clear();
         VkDeviceSize used = 0;
-        while (next < m_pending.size())
+        while (next < batch.size())
         {
-            RayBlas& blas = *m_pending[next];
+            RayBlas& blas = *batch[next];
             const VkDeviceSize aligned = AlignUp(blas.scratchSize, m_scratchAlignment);
             if (!infos.empty() && used + aligned > scratchSize)
             {
@@ -537,7 +775,7 @@ void VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
             VkAccelerationStructureBuildGeometryInfoKHR info{};
             info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
             info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            info.flags = kBottomLevelFlags;
             info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
             info.dstAccelerationStructure = blas.handle;
             info.geometryCount = 1;
@@ -554,7 +792,7 @@ void VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
             infos[index].pGeometries = &geometries[index];
             rangePointers.push_back(&ranges[index]);
         }
-        if (!first)
+        if (!firstBatch)
         {
             // The last batch's builds are done with the scratch before this one reuses it.
             AccelerationBarrier(
@@ -562,26 +800,59 @@ void VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
                 VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                 VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
         }
-        first = false;
+        firstBatch = false;
         m_functions->cmdBuild(commandBuffer, static_cast<uint32_t>(infos.size()), infos.data(), rangePointers.data());
     }
 
+    // Their compacted sizes, which the slot reads when it comes round again (StartCompactions). The
+    // slot's last queries were read when this frame began.
+    CompactionQueries& queries = m_compactionQueries[frameSlot];
+    std::vector<VkAccelerationStructureKHR> handles;
+    handles.reserve(batch.size());
+    for (const std::shared_ptr<RayBlas>& blas : batch)
+    {
+        handles.push_back(blas->handle);
+        queries.structures.push_back(blas);
+    }
+    vkCmdResetQueryPool(commandBuffer, queries.pool, 0, static_cast<uint32_t>(handles.size()));
+    AccelerationBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+    m_functions->cmdWriteProperties(
+        commandBuffer,
+        static_cast<uint32_t>(handles.size()),
+        handles.data(),
+        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+        queries.pool,
+        0);
+
     Retired& retired = m_retired[frameSlot];
     retired.buffers.push_back(scratch);
-    for (const std::shared_ptr<RayBlas>& blas : m_pending)
+    for (const std::shared_ptr<RayBlas>& blas : batch)
     {
         // The vertices stay until this frame is done reading them.
         retired.batches.push_back(std::move(blas->vertices));
         blas->vertices.reset();
         blas->built = true;
+        if (blas->installNumber == m_installNumber)
+        {
+            m_addressByNodeOffset[blas->installedNodeOffset] = blas->address;
+        }
     }
+    // The top levels name them from the next frame on.
+    ++m_bottomEpoch;
     LOG_INFO(
-        "Ray acceleration: {} bottom levels built, {} triangles, {:.1f} MiB (scratch {:.1f} MiB)",
-        m_pending.size(),
+        "Ray acceleration: {} bottom levels built, {} triangles, {:.1f} MiB (scratch {:.1f} MiB), {} left",
+        batch.size(),
         triangles,
         static_cast<double>(storage) / (1024.0 * 1024.0),
-        static_cast<double>(scratchSize) / (1024.0 * 1024.0));
-    m_pending.clear();
+        static_cast<double>(scratchSize) / (1024.0 * 1024.0),
+        m_pending.size() - m_pendingNext);
+    if (m_pendingNext >= m_pending.size())
+    {
+        m_pending.clear();
+        m_pendingNext = 0;
+        m_buildsCompleted = true;
+    }
+    return true;
 }
 
 VkAccelerationStructureKHR VulkanRayAcceleration::GetTopLevel(uint32_t frameSlot) const

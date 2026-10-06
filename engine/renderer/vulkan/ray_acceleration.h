@@ -24,10 +24,12 @@ inline constexpr uint8_t kRayMaskStatic = 0x1;
 inline constexpr uint8_t kRayMaskDynamic = 0x2;
 
 // One mesh's bottom-level acceleration structure, shared by every content that holds the mesh and
-// freed with the last of them. Made on the ray scene's worker, built on the GPU by the first
-// VulkanRayAcceleration::Record after a content holding it installs. Its triangles are the mesh
-// hierarchy's (MeshBvh::triangles, leaf order), so a hit's primitive index plus the instance's
-// triangle offset is the same index the compute walk reports.
+// freed with the last of them. Made on the ray scene's worker, built on the GPU by the
+// VulkanRayAcceleration::Records after a content holding it installs (a few at a time, see
+// kBuildTriangleBudget), then compacted: copied into a structure of the size the build turned out to
+// need, which takes the original's place. Its triangles are the mesh hierarchy's (MeshBvh::triangles,
+// leaf order), so a hit's primitive index plus the instance's triangle offset is the same index the
+// compute walk reports.
 struct RayBlas
 {
     ~RayBlas();
@@ -46,8 +48,13 @@ struct RayBlas
     VkDeviceSize vertexOffset = 0;
     uint32_t triangleCount = 0;
     VkDeviceSize scratchSize = 0;
-    // Render thread only.
+    // Render thread only: built (a top level may name it from the next frame on), and replaced by its
+    // compacted copy; the installed content's node offset for it (RayMeshRange::nodeOffset) and that
+    // install's number, which says whether the offset is the installed content's.
     bool built = false;
+    bool compacted = false;
+    uint32_t installedNodeOffset = 0;
+    uint64_t installNumber = 0;
 };
 
 // Hardware ray tracing for the ray scene (docs/design/2026-10-07-hardware-ray-tracing-design.md): a
@@ -86,9 +93,14 @@ class VulkanRayAcceleration
     // last frame retired, so call it once per frame after the slot's fence.
     void UpdateTopLevel(uint32_t frameSlot, const RayScene& scene, uint64_t generation, std::span<const uint8_t> opaqueMaterials);
 
-    // The pending bottom-level builds, then the slot's top level if its instances changed and
+    // A share of the pending bottom-level builds (and the queries of their compacted sizes), the
+    // compactions UpdateTopLevel decided, then the slot's top level if its instances changed and
     // buildTopLevel says rays will use it, then a barrier for ray queries in compute shaders.
     void Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool buildTopLevel);
+
+    // True once after the last bottom level a content was waiting for is built: the scene the rays see
+    // is now complete (the DDGI probes look again).
+    bool TakeBuildsCompleted();
 
     VkAccelerationStructureKHR GetTopLevel(uint32_t frameSlot) const;
     // How many meshes the bottom-level cache holds.
@@ -113,6 +125,8 @@ class VulkanRayAcceleration
         size_t capacity = 0;
         uint32_t count = 0;
         uint64_t generation = 0;
+        // The bottom levels' state it was written with (m_bottomEpoch): which are built, and where.
+        uint64_t bottomEpoch = 0;
         bool dirty = false;
         // The ray instances the instance buffer was written from: between two frames only what moved
         // differs (IncrementalTopLevel keeps the full build's instances in place), and only that is
@@ -134,7 +148,12 @@ class VulkanRayAcceleration
     void DestroyBuffer(Buffer& buffer) const;
     void CreateTopLevel(TopLevel& topLevel, size_t capacity) const;
     void DestroyTopLevel(TopLevel& topLevel) const;
-    void RecordBottomLevels(VkCommandBuffer commandBuffer, uint32_t frameSlot);
+    // Returns whether it built any.
+    bool RecordBottomLevels(VkCommandBuffer commandBuffer, uint32_t frameSlot);
+    // The compacted sizes the slot's last frame queried, now readable: each structure that shrinks gets
+    // its compacted copy, recorded by this frame's Record, and takes its place at once.
+    void StartCompactions(uint32_t frameSlot);
+    void RebuildAddressMap();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -144,17 +163,53 @@ class VulkanRayAcceleration
 
     std::shared_ptr<BlasCache> m_cache = std::make_shared<BlasCache>();
     std::vector<std::shared_ptr<RayBlas>> m_meshBlas;
-    // Bottom levels of the installed content not built yet.
+    std::vector<RayMeshRange> m_meshRanges;
+    // Bottom levels of the installed content not built yet, built from the front.
     std::vector<std::shared_ptr<RayBlas>> m_pending;
-    // The nodes' offset of each installed mesh (RayInstance::data.x) -> its bottom level's address.
+    size_t m_pendingNext = 0;
+    bool m_buildsCompleted = false;
+    // The nodes' offset of each installed mesh (RayInstance::data.x) -> its bottom level's address, for
+    // the built ones only: an instance whose structure is not built yet is inactive in the top level.
     std::unordered_map<uint32_t, VkDeviceAddress> m_addressByNodeOffset;
+    // Bumped when a bottom level is built or replaced by its compacted copy: every top level is then
+    // written again.
+    uint64_t m_bottomEpoch = 1;
+    uint64_t m_installNumber = 0;
     std::vector<TopLevel> m_topLevels;
     // What a frame slot's commands still read: freed when the slot comes round again.
+    struct OldStructure
+    {
+        VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VulkanPooledMemory memory;
+    };
     struct Retired
     {
         std::vector<Buffer> buffers;
         std::vector<std::shared_ptr<RayBlas::VertexBatch>> batches;
+        std::vector<OldStructure> structures;
+        std::vector<std::shared_ptr<RayBlas>> compacted;
     };
     std::vector<Retired> m_retired;
+    void DestroyOldStructure(OldStructure& structure) const;
+    // Per frame slot: the structures its last frame built, whose compacted sizes the pool's queries
+    // hold in the same order.
+    struct CompactionQueries
+    {
+        VkQueryPool pool = VK_NULL_HANDLE;
+        std::vector<std::shared_ptr<RayBlas>> structures;
+    };
+    std::vector<CompactionQueries> m_compactionQueries;
+    // This frame's compacting copies, recorded by Record: from the original to the compacted structure.
+    struct CompactionCopy
+    {
+        VkAccelerationStructureKHR source = VK_NULL_HANDLE;
+        // Held until the frame that copies into it is done.
+        std::shared_ptr<RayBlas> destination;
+    };
+    std::vector<CompactionCopy> m_compactionCopies;
+    // What compaction has saved so far, for the log.
+    VkDeviceSize m_compactedFrom = 0;
+    VkDeviceSize m_compactedTo = 0;
 };
 }

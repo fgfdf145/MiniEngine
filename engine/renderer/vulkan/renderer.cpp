@@ -1059,6 +1059,13 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         ++m_ddgiGeometryEpoch;
         m_ddgiScheduler.GeometryChanged();
     }
+    // Hardware bottom levels are built a few each frame; once the last of a content's is, the probes look
+    // again, as they do when content installs.
+    if (m_rayScene->TakeAccelerationCompleted())
+    {
+        ++m_ddgiGeometryEpoch;
+        m_ddgiScheduler.GeometryChanged();
+    }
     const std::span<const uint8_t> ddgiMoving = m_ddgiMovingInstances.Update(models);
     m_rayScene->UpdateInstances(m_commandContext->GetCurrentFrame(), models, ddgiMoving);
     m_cpuStages.Mark("RayInstances");
