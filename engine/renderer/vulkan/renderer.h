@@ -224,6 +224,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         VkExtent2D output{};
         DlssMode dlss = DlssMode::Off;
         DlssPreset dlssPreset = DlssPreset::Default;
+        // The DLSS feature is ray reconstruction.
+        bool rayReconstruction = false;
     };
     SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
@@ -319,6 +321,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // whether DLSS's next evaluation throws its history away.
     DlssMode m_activeDlssMode = DlssMode::Off;
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
+    bool m_activeDlssRayReconstruction = false;
     bool m_dlssResetPending = true;
     // Set while the viewport's own size ran out of device memory: the smaller size rendered instead.
     struct SceneTargetFallback

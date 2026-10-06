@@ -681,7 +681,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     // Fixed once NGX has started, before the render thread exists.
-    State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->Status());
+    State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -1376,7 +1376,6 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.rayTextureSet = m_rayScene->GetTextureSet();
     }
     frame.aoHistory = m_aoHistory.Advance((frame.ao.enabled || frame.rayTracing.probeOcclusion) && frame.ao.temporalFilter);
-    frame.rtShadowHistory = m_rtShadowHistory.Advance(frame.rayTracing.sunShadows);
     // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
     // view has none, as the Sample Viewer.
     frame.gi = renderDebug.gi;
@@ -1406,8 +1405,18 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.jitterPixels = jitterPixels;
         frame.dlssReset = m_dlssResetPending;
         frame.frameTimeMs = packet.deltaSeconds * 1000.0f;
+        frame.dlssRayReconstruction = m_dlss->HasRayReconstruction();
+        frame.view = packet.viewportMatrices.view;
+        frame.projection = packet.viewportMatrices.renderProjection;
+        // Ray reconstruction denoises the traced shadow itself; it wants the raw rays.
+        if (frame.dlssRayReconstruction)
+        {
+            frame.rayTracing.denoise = false;
+        }
         m_dlssResetPending = false;
     }
+    // The traced shadow accumulates only while its filters run.
+    frame.rtShadowHistory = m_rtShadowHistory.Advance(frame.rayTracing.sunShadows && frame.rayTracing.denoise);
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
@@ -1727,6 +1736,7 @@ void VulkanRenderer::CreateSwapchainResources()
     }
     m_activeDlssMode = DlssMode::Off;
     m_activeDlssPreset = DlssPreset::Default;
+    m_activeDlssRayReconstruction = false;
     m_dlssResetPending = true;
     // The clouds' targets follow the scene's extent; the descriptor sets built after this name the
     // target, and the device is idle here.
@@ -2533,11 +2543,12 @@ VulkanRenderer::SceneExtents VulkanRenderer::ResolveSceneExtents(RenderExtent vi
     {
         const std::optional<VkExtent2D> render = m_dlss->RenderExtentFor(extents.output, renderDebug.dlssMode);
         if (render.has_value() &&
-            m_dlss->EnsureFeature(*render, extents.output, renderDebug.dlssMode, renderDebug.dlssPreset))
+            m_dlss->EnsureFeature(*render, extents.output, renderDebug.dlssMode, renderDebug.dlssPreset, renderDebug.dlssRayReconstruction))
         {
             extents.render = *render;
             extents.dlss = renderDebug.dlssMode;
             extents.dlssPreset = renderDebug.dlssPreset;
+            extents.rayReconstruction = m_dlss->HasRayReconstruction();
             return extents;
         }
     }
@@ -2608,12 +2619,15 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
 void VulkanRenderer::ApplySceneExtent(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
 {
     const SceneExtents extents = ResolveSceneExtents(viewportExtent, renderDebug);
-    if (extents.dlss != m_activeDlssMode || extents.dlssPreset != m_activeDlssPreset)
+    if (extents.dlss != m_activeDlssMode || extents.dlssPreset != m_activeDlssPreset || extents.rayReconstruction != m_activeDlssRayReconstruction)
     {
         // Another resolve, or DLSS at another quality or with another model: no history carries over.
-        LOG_INFO("Temporal resolve: {}", extents.dlss == DlssMode::Off ? "TAA" : "DLSS");
+        LOG_INFO(
+            "Temporal resolve: {}",
+            extents.dlss == DlssMode::Off ? "TAA" : (extents.rayReconstruction ? "DLSS ray reconstruction" : "DLSS"));
         m_activeDlssMode = extents.dlss;
         m_activeDlssPreset = extents.dlssPreset;
+        m_activeDlssRayReconstruction = extents.rayReconstruction;
         m_dlssResetPending = true;
         m_taaHistory.Reset();
     }

@@ -95,6 +95,11 @@ struct ScenePassFrameContext
     glm::vec2 jitterPixels{0.0f};
     bool dlssReset = false;
     float frameTimeMs = 0.0f;
+    // The DLSS feature is ray reconstruction (VulkanDlss::HasRayReconstruction): the TAA pass makes its
+    // guides and hands it the camera, world to view and the unjittered view to clip.
+    bool dlssRayReconstruction = false;
+    glm::mat4 view{1.0f};
+    glm::mat4 projection{1.0f};
     BloomSettings bloom;
     // One-bounce indirect diffuse settings; enabled is already false in the forward-only order, and
     // its history as aoHistory is the AO resolve's.

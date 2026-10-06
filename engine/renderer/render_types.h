@@ -290,5 +290,8 @@ struct RenderDebugSettings
     // Replaces TAA, in the deferred order, where the device runs DLSS.
     DlssMode dlssMode = DlssMode::Off;
     DlssPreset dlssPreset = DlssPreset::Default;
+    // While DLSS runs, its ray reconstruction (DLSS-D) where the device has it: one network denoises the
+    // ray traced effects and upscales, so the engine's own traced shadow filter steps aside.
+    bool dlssRayReconstruction = true;
 };
 }

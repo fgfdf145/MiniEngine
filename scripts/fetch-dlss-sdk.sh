@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Downloads the parts of NVIDIA's DLSS SDK (https://github.com/NVIDIA/DLSS) the engine builds against
-# into .deps/dlss: the NGX headers, the NGX static library and the DLSS runtime DLL / shared object.
+# into .deps/dlss: the NGX headers, the NGX static library and the DLSS runtime DLLs / shared objects
+# (super resolution, and ray reconstruction, DLSS-D).
 # The SDK is not committed and not in vcpkg; without it the engine builds as before, with its own TAA
 # only (see cmake/MiniEngineDlss.cmake). Re-running with the same version does nothing.
 #
@@ -9,7 +10,7 @@ set -euo pipefail
 
 version="v310.9.1"
 # Bumped when the set of files fetched changes, so an older fetch is replaced.
-layout="2"
+layout="3"
 base_url="https://raw.githubusercontent.com/NVIDIA/DLSS/${version}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,12 +67,14 @@ case "$(uname -s)" in
             lib/Windows_x86_64/x64/nvsdk_ngx_d.lib
             lib/Windows_x86_64/x64/nvsdk_ngx_d_dbg.lib
             lib/Windows_x86_64/rel/nvngx_dlss.dll
+            lib/Windows_x86_64/rel/nvngx_dlssd.dll
         )
         ;;
     Linux)
         files+=(
             lib/Linux_x86_64/libnvsdk_ngx.a
             "lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.${version#v}"
+            "lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.${version#v}"
         )
         ;;
     *)

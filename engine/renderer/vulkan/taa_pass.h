@@ -50,6 +50,16 @@ class VulkanTaaPass : public IScenePass
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     void CreateMotionImage(VkExtent2D extent);
     void DestroyMotionImage();
+    // Ray reconstruction's guides (dlss_rr_guides.comp), at the render size.
+    struct GuideImage
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+    };
+    void CreateGuideImages(VkExtent2D extent);
+    void DestroyGuideImages();
     void RecordDlss(
         VkCommandBuffer commandBuffer,
         const SceneRenderTargets& targets,
@@ -77,5 +87,13 @@ class VulkanTaaPass : public IScenePass
     VkImage m_motionImage = VK_NULL_HANDLE;
     VkDeviceMemory m_motionMemory = VK_NULL_HANDLE;
     VkImageView m_motionView = VK_NULL_HANDLE;
+    // Diffuse albedo, specular albedo, normal and roughness, written before a ray reconstruction
+    // evaluation; one set per transient copy names the G-buffer they are made from.
+    std::array<GuideImage, 3> m_guides{};
+    VkDescriptorSetLayout m_guideSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_guideDescriptorPool = VK_NULL_HANDLE;
+    VkPipelineLayout m_guidePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_guidePipeline = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_guideDescriptorSets;
 };
 }

@@ -225,9 +225,10 @@ class EditorUiController
     }
     // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
     // (VulkanDlss::Status).
-    void SetDlssStatus(bool available, std::string status)
+    void SetDlssStatus(bool available, bool rayReconstructionAvailable, std::string status)
     {
         m_dlssAvailable = available;
+        m_dlssRayReconstructionAvailable = rayReconstructionAvailable;
         m_dlssStatus = std::move(status);
     }
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
@@ -437,6 +438,7 @@ class EditorUiController
     ImTextureID m_minimapTexture = ImTextureID{};
     ImTextureID m_selectionOutlineTexture = ImTextureID{};
     bool m_dlssAvailable = false;
+    bool m_dlssRayReconstructionAvailable = false;
     std::string m_dlssStatus;
     VehicleSettings m_vehicleTuning = VehicleDriveService::DefaultTuning();
     VehicleCameraSettings m_vehicleCamera;

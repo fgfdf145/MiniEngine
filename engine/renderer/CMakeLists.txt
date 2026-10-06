@@ -232,6 +232,7 @@ set(MINIENGINE_SHADER_SOURCES
     gi_composite.frag
     taa_resolve.comp
     dlss_motion_vectors.comp
+    dlss_rr_guides.comp
     bloom.comp
     atmosphere_transmittance.comp
     atmosphere_multiscattering.comp

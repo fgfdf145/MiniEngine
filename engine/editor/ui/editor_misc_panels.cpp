@@ -190,7 +190,11 @@ void EditorUiController::DrawGraphicsDebugPanel()
                 "J: like K, slightly less ghosting but more flicker.\n"
                 "M: the default for Performance.  L: the default for Ultra Performance.");
         }
-        if (!m_dlssAvailable)
+        // Ray reconstruction denoises the ray traced effects as DLSS upscales.
+        ImGui::BeginDisabled(!DlssResolves() || !m_dlssRayReconstructionAvailable);
+        ImGui::Checkbox("DLSS ray reconstruction", &m_renderDebug.dlssRayReconstruction);
+        ImGui::EndDisabled();
+        if (!m_dlssAvailable || !m_dlssRayReconstructionAvailable)
         {
             ImGui::TextDisabled("DLSS: %s", m_dlssStatus.c_str());
         }

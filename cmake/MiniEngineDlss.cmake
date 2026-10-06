@@ -18,11 +18,13 @@ if(MINIENGINE_ENABLE_DLSS AND EXISTS "${MINIENGINE_DLSS_SDK_DIR}/include/nvsdk_n
         set(_dlss_release_lib "${_dlss_lib_dir}/x64/nvsdk_ngx_d.lib")
         set(_dlss_debug_lib "${_dlss_lib_dir}/x64/nvsdk_ngx_d_dbg.lib")
         set(_dlss_runtime "${_dlss_lib_dir}/rel/nvngx_dlss.dll")
+        set(_dlss_rr_runtime "${_dlss_lib_dir}/rel/nvngx_dlssd.dll")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
         set(_dlss_lib_dir "${MINIENGINE_DLSS_SDK_DIR}/lib/Linux_x86_64")
         set(_dlss_release_lib "${_dlss_lib_dir}/libnvsdk_ngx.a")
         set(_dlss_debug_lib "${_dlss_release_lib}")
         file(GLOB _dlss_runtime "${_dlss_lib_dir}/rel/libnvidia-ngx-dlss.so.*")
+        file(GLOB _dlss_rr_runtime "${_dlss_lib_dir}/rel/libnvidia-ngx-dlssd.so.*")
     endif()
 
     if(_dlss_lib_dir AND EXISTS "${_dlss_release_lib}" AND EXISTS "${_dlss_debug_lib}" AND _dlss_runtime AND EXISTS "${_dlss_runtime}")
@@ -35,6 +37,10 @@ if(MINIENGINE_ENABLE_DLSS AND EXISTS "${MINIENGINE_DLSS_SDK_DIR}/include/nvsdk_n
         target_compile_definitions(miniengine_ngx INTERFACE MINIENGINE_WITH_DLSS=1)
         set(MINIENGINE_DLSS_FOUND TRUE)
         set(MINIENGINE_DLSS_RUNTIME "${_dlss_runtime}")
+        # Ray reconstruction's runtime, when the SDK fetch brought it (scripts/fetch-dlss-sdk.sh layout 3).
+        if(_dlss_rr_runtime AND EXISTS "${_dlss_rr_runtime}")
+            list(APPEND MINIENGINE_DLSS_RUNTIME "${_dlss_rr_runtime}")
+        endif()
         file(READ "${MINIENGINE_DLSS_SDK_DIR}/VERSION" _dlss_version)
         message(STATUS "DLSS: SDK ${_dlss_version} in ${MINIENGINE_DLSS_SDK_DIR}")
     else()
@@ -44,14 +50,16 @@ else()
     message(STATUS "DLSS: no SDK (run scripts/fetch-dlss-sdk.sh); building without it")
 endif()
 
-# Copies the DLSS runtime next to target's executable, where NGX looks for it first.
+# Copies the DLSS runtimes next to target's executable, where NGX looks for them first.
 function(miniengine_copy_dlss_runtime target_name)
     if(MINIENGINE_DLSS_FOUND)
-        get_filename_component(_dlss_runtime_name "${MINIENGINE_DLSS_RUNTIME}" NAME)
-        add_custom_command(TARGET ${target_name} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MINIENGINE_DLSS_RUNTIME}"
-                "$<TARGET_FILE_DIR:${target_name}>/${_dlss_runtime_name}"
-        )
+        foreach(_dlss_runtime_file IN LISTS MINIENGINE_DLSS_RUNTIME)
+            get_filename_component(_dlss_runtime_name "${_dlss_runtime_file}" NAME)
+            add_custom_command(TARGET ${target_name} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_dlss_runtime_file}"
+                    "$<TARGET_FILE_DIR:${target_name}>/${_dlss_runtime_name}"
+            )
+        endforeach()
     endif()
 endfunction()

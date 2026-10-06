@@ -34,6 +34,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "hdr_peak_nits", settings.hdrPeakNits);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);
+    visit("", "dlss_ray_reconstruction", settings.dlssRayReconstruction);
     visit("bloom", "enabled", settings.bloom.enabled);
     visit("bloom", "strength", settings.bloom.strength);
     visit("ssr", "enabled", settings.ssr.enabled);
