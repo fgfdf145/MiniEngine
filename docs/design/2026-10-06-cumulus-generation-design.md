@@ -102,15 +102,32 @@ distance = min( (topKm − h) / sqrt(1 + slopeKm²), h )          （CloudSurfac
 - 迭代次数上限为粗步数的 4 倍。
 - 每步的透射按实际步长计算。
 
-## 6. 半分辨率目标（`cloud_march.comp`）
+## 6. 每帧四分之一像素 + 时间重建（`cloud_march.comp`、`cloud_resolve.comp`）
 
-原来的云在 sky.frag 里逐像素步进；新的步进更贵，所以挪到计算着色器，按场景尺寸的一半运行：
+原来的云在 sky.frag 里逐像素步进；新的步进更贵，所以挪到计算着色器。最初的做法是按场景尺寸的一半步进、sky.frag 双线性放大，TAA 补不回半分辨率丢掉的细节，边缘明显偏软。现在每帧只步进四分之一的像素，但每帧换一个，再由历史重建全分辨率：
 
-- `VulkanAtmosphere` 持有一张 RGBA16F 目标（场景尺寸的一半，向上取整）：rgb 是云及其前方雾霭送向相机的光（预乘曝光，避免 fp16 溢出），a 是透射率。atmosphere 计算集 binding 11 作为存储图像写入，帧描述符集 set 0 binding 28 作为采样器读取。
-- `VulkanRenderer::CreateSwapchainResources` 和 `SyncSceneTargets` 在场景目标重建后调用 `EnsureCloudTarget`；尺寸变化时重建目标，并用 `VulkanUniformBuffer::SetCloudTarget` 重指每个帧描述符集的 binding 28（此时设备已空闲）。
-- 每帧在 Atmosphere 之后 `RecordClouds`：首次从 UNDEFINED 转到 GENERAL，之后用全局屏障把上一帧 sky 的读排在本帧写之前，步进后再把写排在本帧 sky 的读之前。GPU 计时项 “Clouds”。
-- sky.frag 在全分辨率下双线性采样，`sky × a + rgb / exposure`。步进抖动随投影抖动每帧变化，TAA 补回半分辨率丢掉的细节。
+- **步进**（`cloud_march.comp`，场景尺寸的一半，向上取整）：每个 2 × 2 块这一帧只步进其中一个像素，顺序 (0,0)、(1,1)、(1,0)、(0,1)（先走对角，两帧就均匀覆盖），四帧轮完。轮换索引由 `VulkanAtmosphere` 自己的计数器给出，与 TAA 是否打开无关。
+- **重建**（`cloud_resolve.comp`，场景尺寸）：这一帧步进到的像素取自己的样本，与历史按 0.5 混合（历史先平均掉步进的抖动）。其余像素取上一帧的云重投影过来：方向延伸到这条光线第一次穿过云层那段的中点（与步进照明取的位置相同），用 `prevViewProj` 投影，Catmull-Rom 取样（运动时历史每帧都被重采样，双线性会越来越糊），再夹到这一帧周围 3 × 3 个样本的范围里，所以运动的视角不会拖尾。没有历史时（第一帧、改尺寸后）全部用这一帧样本的双线性插值。
+- **未抖动的网格**：TAA 的抖动只是 NDC 上的整体平移，`CloudJitterUv` 用一个点量出它。步进和重建都在未抖动的像素网格上取方向，所以静止视角下历史正好落在自己的像素上，不会被反复重采样。sky.frag 按像素直接 `texelFetch`：在抖动位置双线性读取会把每条边摊开一个像素（试过，锐度回退约一半），而云的边缘本来就有 15 m 的过渡，不需要再抗锯齿。
+- **运动时的梳状纹**：重投影每条光线只取一个距离，相机快速平移时视差会差一两个像素，不同帧刷新的相邻像素在边缘排成梳齿（关掉 TAA 时可见）。非新样本按“这一帧移动了多少像素 × 0.125，最多 0.5”向这一帧的插值靠拢；静止时为 0，不影响锐度。
+- **固定比例而非曝光**：目标存的是亮度 × 1/64（`CLOUD_TARGET_SCALE`），不再预乘曝光，否则自动曝光一变历史就不对了。朝太阳的亮云约 1e5 cd/m²，仍在 fp16 范围内。
+- **资源**：`VulkanAtmosphere` 持有三张 RGBA16F：步进样本（atmosphere 计算集 binding 11）、重建结果（binding 12 存储写入；set 0 binding 28 供 sky 读取）、历史（binding 13 采样读取）。每帧重建后 `vkCmdCopyImage` 把结果复制成下一帧的历史。帧常量（轮换索引、历史是否有效、场景尺寸）用 16 字节 push constant，atmosphere 的管线布局新增这一段，其他 atmosphere 着色器不用它。
+- `VulkanRenderer::CreateSwapchainResources` 和 `SyncSceneTargets` 在场景目标重建后调用 `EnsureCloudTarget`；尺寸变化时重建三张图，并用 `VulkanUniformBuffer::SetCloudTarget` 重指每个帧描述符集的 binding 28（此时设备已空闲）。GPU 计时项 “CloudMarch” 和 “CloudResolve”（含复制）。
 - 环境探针（`environment_capture.comp`）仍然用 `ApplyClouds` 内联步进（12 ~ 32 步）。它只在环境变化时更新，稳态 0 ms。
+
+边缘（朝太阳，放大 2 倍；左：半分辨率双线性，中：时间重建，右：参考，2560 x 1440 渲染再 2 × 2 平均，即每个输出像素至少一个步进样本）：
+
+![边缘对比](images/2026-10-06-cumulus-reconstruction-edges.png)
+
+天空区域亮度梯度的 99.9 % 分位（越大越锐）：半分辨率 0.144，时间重建 0.183，参考 0.192；99 % 分位 0.090、0.108、0.111。差距收回八成以上。改用双线性读取的版本是 0.171。
+
+运动（相机每帧横移 15 m，约 900 m/s，远超车速，用来放大问题；上：没有运动混合，下：有；左：TAA 关，右：TAA 开）：
+
+![运动](images/2026-10-06-cumulus-reconstruction-motion.png)
+
+没有拖尾。TAA 关时运动混合去掉了大部分梳齿；TAA 开时两者都干净。
+
+开销：重建加复制在 1280 x 720 下约 0.21 ~ 0.25 ms；步进的工作量与半分辨率时相同（同样四分之一的像素）。测量时机器上有其他会话在跑测试和另一个引擎实例（GPU 占用约 70 %），步进的绝对时间不可比，所以这里只给重建的增量。
 
 ## 7. 满覆盖：散射光沿自己的云柱下来
 
@@ -164,7 +181,7 @@ distance = min( (topKm − h) / sqrt(1 + slopeKm²), h )          （CloudSurfac
 - `CloudSettings::detailErosion` 改名为 `billows`（[0, 2]，默认 1），YAML 键 `billows`；旧场景的 `detail_erosion` 被忽略，按默认值读入。`detailScale` 默认值 900 → 600 m。仓库里的 rolling_road 和 suspension_rig 已改成新键和新默认值。
 - 编辑器 Clouds 面板：“Detail scale” → “Billow scale”，“Coverage scale” → “Plume map scale”，“Detail erosion” → “Billows”。
 - `EnvironmentUniformData` 大小不变：`cloudLayer.z` 由覆盖率改为 `CloudCoverageOffset(coverage)`，`cloudScales.w` 由侵蚀改为翻卷强度，原来未用的 `cloudParams.z` 放 `CloudDeckWeight(coverage)`。
-- set 0 新增 binding 27（羽流图）和 28（半分辨率云目标）；atmosphere 计算集新增 10、11。
+- set 0 新增 binding 27（羽流图）和 28（重建后的云）；atmosphere 计算集新增 10 ~ 13，管线布局新增 16 字节 push constant（第 6 节）。
 - detail 体积由 32³ 扩大到 128³（每通道一个球堆积八度，32³ 装不下每瓦片 16 个球）。
 - C++ 镜像（`volumetric_clouds.cpp`）：`CloudWeatherTexel`、`CloudCoverageOffset`、`CloudSurfaceDistance`、`CloudBillows`、`CloudWaterProfile`、`CloudEdgeDensity`、新的 `CloudDiffuseScattering`；旧的 `CloudHeightGradient`、`CloudWeather`、`CloudShape`、`CloudField`、`CloudCoverageRamp` 删除。
 
@@ -191,12 +208,13 @@ GPU 时间（单帧采样）：
 | 第 7 节之后：覆盖率 0.45 | 1.72 ms 朝太阳（之前 1.77 ~ 1.98），2.39 ms 背向太阳（之前未测） | 0.02 ms |
 | 第 7 节之后：覆盖率 0.75 / 1.0 | 2.65 / 2.95 ms（之前 2.79 / 3.23） | 0.02 ms |
 
-2560 x 1440 视口（Clouds 1280 x 720）下默认设置为 5.1 ms。默认覆盖率下总开销与改动前的全分辨率逐像素步进相当（1.8 ~ 2.0 ms 对 1.9 ~ 2.2 ms，720p），代价是半分辨率加 TAA 带来的边缘略软。
+2560 x 1440 视口（Clouds 1280 x 720）下默认设置为 5.1 ms。默认覆盖率下总开销与改动前的全分辨率逐像素步进相当（1.8 ~ 2.0 ms 对 1.9 ~ 2.2 ms，720p）。以上是时间重建（第 6 节）之前的数字；重建另加约 0.2 ms。
 
 验证：`miniengine_volumetric_clouds_tests`、`atmosphere_tests`、`scene_environment_tests` 通过，全部 98 个测试通过；Debug 运行（Vulkan 验证层开）包括一次场景目标重建，没有验证报错。
 
 ## 未解决
 
 - 满覆盖时的云塔阴影条纹：已由第 7 节解决。
-- **半分辨率的边缘偏软。** 静止画面由 TAA 补回；运动时可以考虑云自己的时间重投影（四分之一分辨率 + 重投影，同扩散文档的后续项）。
+- 半分辨率的边缘偏软：已由第 6 节的时间重建解决。
+- 重投影每条光线只取一个距离；云层很厚、相机又快速平移时，远近两段云的视差不同，重建会稍软。车速下每帧位移不到 1 m，影响很小。
 - 环境探针的内联步进在环境变化的那几帧会比原来贵；目前没有单独测量。

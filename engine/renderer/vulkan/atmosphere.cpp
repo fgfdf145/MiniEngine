@@ -8,6 +8,7 @@
 #include <engine/renderer/volumetric_clouds.h>
 
 #include <stdexcept>
+#include <string>
 
 namespace me
 {
@@ -21,7 +22,7 @@ constexpr std::array<VkExtent3D, 4> kLutExtents = {
     VkExtent3D{32, 32, 1},
     VkExtent3D{192, 108, 1},
     VkExtent3D{32, 32, 32}};
-constexpr std::array<const char*, 9> kShaderNames = {
+constexpr std::array<const char*, 10> kShaderNames = {
     "atmosphere_transmittance.comp.spv",
     "atmosphere_multiscattering.comp.spv",
     "atmosphere_skyview.comp.spv",
@@ -30,7 +31,8 @@ constexpr std::array<const char*, 9> kShaderNames = {
     "cloud_noise.comp.spv",
     "cloud_shadow.comp.spv",
     "cloud_weather.comp.spv",
-    "cloud_march.comp.spv"};
+    "cloud_march.comp.spv",
+    "cloud_resolve.comp.spv"};
 constexpr VkFormat kCloudTargetFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 // The billow volumes and the plume map (top and slope, 16 bits: 8 would step the tops by 12 m).
 constexpr std::array<VkFormat, 3> kCloudNoiseFormats = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16_UNORM};
@@ -40,6 +42,12 @@ constexpr std::array<uint32_t, 3> kCloudNoiseSizes = {128, 128, kCloudWeatherSiz
 // Must match CLOUD_SHADOW_MAP_SIZE in shaders/vulkan/cloud_shadow.glsl.
 constexpr uint32_t kCloudShadowSize = kCloudShadowMapSize;
 constexpr VkDeviceSize kIrradianceBytes = 9 * 4 * sizeof(float);
+
+// The march's target: one texel per 2 x 2 block of the scene, rounded up.
+VkExtent2D CloudMarchExtent(VkExtent2D sceneExtent)
+{
+    return VkExtent2D{std::max((sceneExtent.width + 1) / 2, 1u), std::max((sceneExtent.height + 1) / 2, 1u)};
+}
 
 uint32_t GroupCount(uint32_t size, uint32_t groupSize)
 {
@@ -72,9 +80,9 @@ VulkanAtmosphere::VulkanAtmosphere(
     try
     {
         CreateImages();
-        // A placeholder until the renderer names the scene's extent (EnsureCloudTarget), so the
+        // Placeholders until the renderer names the scene's extent (EnsureCloudTarget), so the
         // descriptors are valid from the start.
-        CreateCloudTarget(VkExtent2D{1, 1});
+        CreateCloudTargets(VkExtent2D{1, 1});
         CreateDescriptors();
         CreatePipelines(pipelineCache, frameSetLayout);
     }
@@ -127,57 +135,105 @@ TextureDescriptorBinding VulkanAtmosphere::GetCloudWeatherBinding() const
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudTargetBinding() const
 {
-    return TextureDescriptorBinding{m_cloudTarget.view, m_sampler};
+    return TextureDescriptorBinding{m_cloudResolved.view, m_sampler};
 }
 
 bool VulkanAtmosphere::EnsureCloudTarget(VkExtent2D sceneExtent)
 {
-    const VkExtent2D extent{std::max((sceneExtent.width + 1) / 2, 1u), std::max((sceneExtent.height + 1) / 2, 1u)};
-    if (extent.width == m_cloudTargetExtent.width && extent.height == m_cloudTargetExtent.height)
+    const VkExtent2D extent{std::max(sceneExtent.width, 1u), std::max(sceneExtent.height, 1u)};
+    if (extent.width == m_cloudSceneExtent.width && extent.height == m_cloudSceneExtent.height)
     {
         return false;
     }
-    DestroyCloudTarget();
-    CreateCloudTarget(extent);
-    WriteCloudTargetDescriptor();
+    DestroyCloudTargets();
+    CreateCloudTargets(extent);
+    WriteCloudTargetDescriptors();
     return true;
 }
 
-void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet)
+void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer)
 {
+    const bool historyValid = !m_cloudTargetFresh;
     if (m_cloudTargetFresh)
     {
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = m_cloudTarget.image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        std::array<VkImageMemoryBarrier, 3> barriers{};
+        const std::array<VkImage, 3> images = {m_cloudTarget.image, m_cloudResolved.image, m_cloudHistory.image};
+        for (size_t index = 0; index < barriers.size(); ++index)
+        {
+            VkImageMemoryBarrier& barrier = barriers[index];
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = images[index];
+            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        }
         vkCmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            commandBuffer,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0,
+            0,
+            nullptr,
+            0,
+            nullptr,
+            static_cast<uint32_t>(barriers.size()),
+            barriers.data());
         m_cloudTargetFresh = false;
     }
     else
     {
-        // The previous frame's sky reads before this frame's writes.
+        // The previous frame's sky reads of the resolved clouds and its copy into the history
+        // before this frame's writes and reads.
         GlobalBarrier(
             commandBuffer,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_ACCESS_SHADER_WRITE_BIT);
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
+
+    // Must match CloudReconstruction in shaders/vulkan/cloud_reconstruction.glsl.
+    const std::array<uint32_t, 4> constants = {
+        m_cloudFrame++ & 3u, historyValid ? 1u : 0u, m_cloudSceneExtent.width, m_cloudSceneExtent.height};
     const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    Dispatch(commandBuffer, kCloudMarchPipeline, GroupCount(m_cloudTargetExtent.width, 8), GroupCount(m_cloudTargetExtent.height, 8), 1);
-    GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+    vkCmdPushConstants(
+        commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, static_cast<uint32_t>(sizeof(constants)), constants.data());
+    const VkExtent2D marchExtent = CloudMarchExtent(m_cloudSceneExtent);
+    Dispatch(commandBuffer, kCloudMarchPipeline, GroupCount(marchExtent.width, 8), GroupCount(marchExtent.height, 8), 1);
+    if (timer != nullptr)
+    {
+        timer->Mark(commandBuffer, "CloudMarch");
+    }
+    GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+    Dispatch(commandBuffer, kCloudResolvePipeline, GroupCount(m_cloudSceneExtent.width, 8), GroupCount(m_cloudSceneExtent.height, 8), 1);
+
+    // The resolved clouds become next frame's history; the resolve's reads of the old one come
+    // first.
+    GlobalBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    VkImageCopy copy{};
+    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.extent = VkExtent3D{m_cloudSceneExtent.width, m_cloudSceneExtent.height, 1};
+    vkCmdCopyImage(commandBuffer, m_cloudResolved.image, VK_IMAGE_LAYOUT_GENERAL, m_cloudHistory.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    GlobalBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
 }
 
-void VulkanAtmosphere::CreateCloudTarget(VkExtent2D extent)
+void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkImageUsageFlags usage, const char* name)
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -188,60 +244,80 @@ void VulkanAtmosphere::CreateCloudTarget(VkExtent2D extent)
     imageInfo.format = kCloudTargetFormat;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_cloudTarget.image), "Failed to create the cloud target");
+    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), (std::string("Failed to create the ") + name).c_str());
 
     VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_cloudTarget.image, &requirements);
+    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
     VkMemoryAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocateInfo.allocationSize = requirements.size;
     allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_cloudTarget.memory), "Failed to allocate the cloud target");
-    CheckVulkan(vkBindImageMemory(m_device, m_cloudTarget.image, m_cloudTarget.memory, 0), "Failed to bind the cloud target");
+    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), (std::string("Failed to allocate the ") + name).c_str());
+    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), (std::string("Failed to bind the ") + name).c_str());
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_cloudTarget.image;
+    viewInfo.image = image.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = kCloudTargetFormat;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_cloudTarget.view), "Failed to create the cloud target view");
-    m_cloudTargetExtent = extent;
+    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), (std::string("Failed to create the view of the ") + name).c_str());
+}
+
+void VulkanAtmosphere::CreateCloudTargets(VkExtent2D sceneExtent)
+{
+    CreateCloudImage(m_cloudTarget, CloudMarchExtent(sceneExtent), VK_IMAGE_USAGE_STORAGE_BIT, "cloud march target");
+    CreateCloudImage(
+        m_cloudResolved,
+        sceneExtent,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        "resolved clouds");
+    CreateCloudImage(m_cloudHistory, sceneExtent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "cloud history");
+    m_cloudSceneExtent = sceneExtent;
     m_cloudTargetFresh = true;
 }
 
-void VulkanAtmosphere::DestroyCloudTarget()
+void VulkanAtmosphere::DestroyCloudTargets()
 {
-    if (m_cloudTarget.view != VK_NULL_HANDLE)
+    for (LutImage* image : {&m_cloudTarget, &m_cloudResolved, &m_cloudHistory})
     {
-        vkDestroyImageView(m_device, m_cloudTarget.view, nullptr);
+        if (image->view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(m_device, image->view, nullptr);
+        }
+        if (image->image != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(m_device, image->image, nullptr);
+        }
+        if (image->memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(m_device, image->memory, nullptr);
+        }
+        *image = LutImage{};
     }
-    if (m_cloudTarget.image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_cloudTarget.image, nullptr);
-    }
-    if (m_cloudTarget.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_cloudTarget.memory, nullptr);
-    }
-    m_cloudTarget = LutImage{};
-    m_cloudTargetExtent = VkExtent2D{};
+    m_cloudSceneExtent = VkExtent2D{};
 }
 
-void VulkanAtmosphere::WriteCloudTargetDescriptor()
+void VulkanAtmosphere::WriteCloudTargetDescriptors()
 {
-    const VkDescriptorImageInfo info{VK_NULL_HANDLE, m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = m_descriptorSet;
-    write.dstBinding = 11;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    write.pImageInfo = &info;
-    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    const std::array<VkDescriptorImageInfo, 3> infos = {
+        VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL},
+        VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL},
+        VkDescriptorImageInfo{m_sampler, m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL}};
+    std::array<VkWriteDescriptorSet, 3> writes{};
+    for (uint32_t index = 0; index < writes.size(); ++index)
+    {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = m_descriptorSet;
+        writes[index].dstBinding = 11 + index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[index].pImageInfo = &infos[index];
+    }
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 std::optional<glm::vec3> VulkanAtmosphere::GetSkyAverageRadiance(uint32_t frameSlot) const
@@ -577,15 +653,16 @@ void VulkanAtmosphere::CreateImages()
 void VulkanAtmosphere::CreateDescriptors()
 {
     // 0-3 the LUTs as storage images, 4-5 the transmittance and multiple-scattering LUTs sampled,
-    // 6 the SH buffer, 7-8 the clouds' billow volumes, 9 their shadow map, 10 their plume map and 11
-    // their half-extent target as storage images.
-    std::array<VkDescriptorSetLayoutBinding, 12> bindings{};
+    // 6 the SH buffer, 7-8 the clouds' billow volumes, 9 their shadow map, 10 their plume map, 11
+    // the march's samples and 12 the resolved clouds as storage images, and 13 the clouds' history
+    // sampled.
+    std::array<VkDescriptorSetLayoutBinding, 14> bindings{};
     for (uint32_t binding = 0; binding < bindings.size(); ++binding)
     {
         bindings[binding].binding = binding;
-        bindings[binding].descriptorType = (binding < 4 || binding >= 7) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-                                           : binding < 6                 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                                         : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[binding].descriptorType = (binding < 4 || (binding >= 7 && binding < 13)) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                           : binding == 6                                  ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                                                                           : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
@@ -596,8 +673,8 @@ void VulkanAtmosphere::CreateDescriptors()
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create the atmosphere set layout");
 
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 9},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -613,7 +690,7 @@ void VulkanAtmosphere::CreateDescriptors()
     allocateInfo.pSetLayouts = &m_setLayout;
     CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_descriptorSet), "Failed to allocate the atmosphere descriptor set");
 
-    std::array<VkDescriptorImageInfo, 12> infos{};
+    std::array<VkDescriptorImageInfo, 14> infos{};
     for (size_t lut = 0; lut < kLutCount; ++lut)
     {
         infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
@@ -625,8 +702,10 @@ void VulkanAtmosphere::CreateDescriptors()
     infos[9] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudShadow.view, VK_IMAGE_LAYOUT_GENERAL};
     infos[10] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudWeather].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[11] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[12] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[13] = VkDescriptorImageInfo{m_sampler, m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
-    std::array<VkWriteDescriptorSet, 12> writes{};
+    std::array<VkWriteDescriptorSet, 14> writes{};
     for (uint32_t binding = 0; binding < writes.size(); ++binding)
     {
         writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -653,6 +732,10 @@ void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
     pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+    // The cloud passes' frame constants (cloud_reconstruction.glsl); the other passes ignore them.
+    const VkPushConstantRange pushConstants{VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 * sizeof(uint32_t)};
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstants;
     CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create the atmosphere pipeline layout");
 
     for (size_t pipeline = 0; pipeline < kPipelineCount; ++pipeline)
@@ -756,7 +839,7 @@ void VulkanAtmosphere::DestroyHandles()
         vkFreeMemory(m_device, m_cloudShadow.memory, nullptr);
     }
     m_cloudShadow = LutImage{};
-    DestroyCloudTarget();
+    DestroyCloudTargets();
     for (LutImage& image : m_cloudNoise)
     {
         if (image.view != VK_NULL_HANDLE)

@@ -557,6 +557,23 @@ vec3 ApplyClouds(vec3 skyLuminance, vec3 skyHaze, vec3 direction, float jitter, 
     return skyLuminance * layer.a + layer.rgb;
 }
 
+// The cloud targets (cloud_march.comp, cloud_resolve.comp) hold luminance times this: a fixed scale
+// rather than the frame's exposure, so the history stays valid while the exposure adapts, and cloud
+// lit toward the sun (~1e5 cd/m^2) still fits in half float.
+const float CLOUD_TARGET_SCALE = 1.0 / 64.0;
+
+// The TAA jitter as a shift in texture coordinates: ViewDirectionFromTexCoord(uv + CloudJitterUv())
+// is the direction through the unjittered uv, the grid the cloud targets are laid out on. The
+// jitter moves every point by the same amount in normalised device coordinates, so one point
+// measures it.
+vec2 CloudJitterUv()
+{
+    vec4 point = vec4(ubo.cameraWorldPosition.xyz + ViewDirectionFromTexCoord(vec2(0.5)) * 1000.0, 1.0);
+    vec4 jittered = ubo.proj * ubo.view * point;
+    vec4 plain = ubo.viewProjNoJitter * point;
+    return (jittered.xy / jittered.w - plain.xy / plain.w) * 0.5;
+}
+
 // Interleaved gradient noise (Jimenez 2014), stepped per frame so TAA averages the march's jitter.
 float CloudJitter(vec2 pixel)
 {

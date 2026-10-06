@@ -410,7 +410,7 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     }
     // The volumetric clouds' large (24) and small (25) billows and plume map (27), read by the sky
     // and the environment capture, their shadow map (26), read wherever the sun is shadowed, and
-    // the half-extent march (28) the sky composites.
+    // the resolved clouds (28) the sky composites.
     for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
     {
         bindings[binding].binding = binding;

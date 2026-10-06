@@ -1207,10 +1207,10 @@ void VulkanRenderer::DrawFrame()
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot);
                                               m_gpuTimer->Mark(commandBuffer, "Atmosphere");
-                                              // The clouds at half extent, after the LUTs and the noise they
+                                              // The clouds, marched and resolved, after the LUTs and the noise they
                                               // read and before the sky pass composites them.
-                                              m_atmosphere->RecordClouds(commandBuffer, frame.frameDescriptorSet);
-                                              m_gpuTimer->Mark(commandBuffer, "Clouds");
+                                              m_atmosphere->RecordClouds(commandBuffer, frame.frameDescriptorSet, m_gpuTimer.get());
+                                              m_gpuTimer->Mark(commandBuffer, "CloudResolve");
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
@@ -1387,7 +1387,7 @@ void VulkanRenderer::CreateSwapchainResources()
             viewportExtent,
             swapchainImageCount);
     }
-    // The clouds march at half the scene's extent; the descriptor sets built after this name the
+    // The clouds' targets follow the scene's extent; the descriptor sets built after this name the
     // target, and the device is idle here.
     m_atmosphere->EnsureCloudTarget(m_sceneTargets->GetExtent());
 
@@ -2141,7 +2141,7 @@ void VulkanRenderer::SyncSceneTargets()
     {
         m_uniformBuffer->SetScatterImages(m_scatterPass->GetLightBinding(), m_scatterPass->GetDepthBinding());
     }
-    // Likewise the clouds' half-extent target.
+    // Likewise the clouds' resolved target.
     if (m_atmosphere->EnsureCloudTarget(m_sceneTargets->GetExtent()) && m_uniformBuffer)
     {
         m_uniformBuffer->SetCloudTarget(m_atmosphere->GetCloudTargetBinding());

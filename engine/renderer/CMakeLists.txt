@@ -220,6 +220,7 @@ set(MINIENGINE_SHADER_SOURCES
     atmosphere_irradiance.comp
     cloud_march.comp
     cloud_noise.comp
+    cloud_resolve.comp
     cloud_shadow.comp
     cloud_weather.comp
     environment_capture.comp
@@ -274,6 +275,7 @@ set(MINIENGINE_SHADER_INCLUDES
     atmosphere_sampling.glsl
     height_fog.glsl
     volumetric_clouds.glsl
+    cloud_reconstruction.glsl
     cloud_shadow.glsl
     spherical_harmonics.glsl
     cubemap_common.glsl
