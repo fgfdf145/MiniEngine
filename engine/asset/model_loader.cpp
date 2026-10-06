@@ -1,6 +1,7 @@
 #include "model_loader.h"
 
 #include "gltf_model_loader.h"
+#include "gta5_importer.h"
 #include "kn5_importer.h"
 #include "material_definition.h"
 
@@ -273,11 +274,16 @@ bool ModelLoader::IsSupportedModelPath(const std::filesystem::path& path)
 
 bool ModelLoader::IsImportableModelPath(const std::filesystem::path& path)
 {
-    return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path) || Kn5Importer::IsLayoutPath(path);
+    return IsSupportedModelPath(path) || Kn5Importer::IsKn5Path(path) || Kn5Importer::IsLayoutPath(path) ||
+           Gta5Importer::IsGta5Path(path);
 }
 
 std::string ModelLoader::ImportName(const std::filesystem::path& path)
 {
+    if (Gta5Importer::IsGta5Path(path))
+    {
+        return Gta5Importer::ImportName(path);
+    }
     return Kn5Importer::ImportName(path);
 }
 
@@ -299,6 +305,10 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
     {
         // Converted rather than copied: the result is a glTF bundle, so it needs no unpacking.
         return Kn5Importer::ConvertToGltf(modelPath, targetDirectory, kn5Options, progress).gltfPath;
+    }
+    if (Gta5Importer::IsGta5Path(modelPath))
+    {
+        return Gta5Importer::ConvertToGltf(modelPath, targetDirectory, {}, progress).gltfPath;
     }
     // A .gltf's copy and its unpacking of embedded textures split the bar between them; a .glb's
     // one file copy is over in a single step.
@@ -356,8 +366,8 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     if (!IsSupportedModelPath(modelPath))
     {
         throw std::runtime_error(
-            Kn5Importer::IsKn5Path(modelPath) || Kn5Importer::IsLayoutPath(modelPath)
-                ? "Assetto Corsa models are loaded through an import, which converts them to glTF: " + modelPath.string()
+            Kn5Importer::IsKn5Path(modelPath) || Kn5Importer::IsLayoutPath(modelPath) || Gta5Importer::IsGta5Path(modelPath)
+                ? "Assetto Corsa and GTA V models are loaded through an import, which converts them to glTF: " + modelPath.string()
                 : "Unsupported model format. MiniEngine only supports glTF 2.0 (*.gltf, *.glb): " + modelPath.string());
     }
 

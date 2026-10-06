@@ -1197,6 +1197,32 @@ add_test(
 
 set_target_properties(miniengine_model_import_texture_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_gta5_import_tests
+    gta5_import_tests.cpp
+)
+miniengine_group_target_sources(miniengine_gta5_import_tests)
+
+target_link_libraries(miniengine_gta5_import_tests
+    PRIVATE
+        engine_asset
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_gta5_import_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_gta5_import_tests>
+            $<TARGET_FILE_DIR:miniengine_gta5_import_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.gta5_import
+    COMMAND miniengine_gta5_import_tests
+)
+
+set_target_properties(miniengine_gta5_import_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_kn5_import_tests
     kn5_import_tests.cpp
 )

@@ -10,6 +10,7 @@
 #include "services/world_streaming_service.h"
 
 #include <engine/asset/asset_registry.h>
+#include <engine/asset/gta5_importer.h>
 #include <engine/asset/kn5_importer.h>
 #include <engine/asset/model_cache.h>
 #include <engine/asset/model_loader.h>
@@ -204,9 +205,9 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
             // Unpacking embedded textures happens at import, so a model that
             // was never imported has none. Import it first; the invariant is
             // that anything reaching the loader lives under the assets root.
-            // Assetto Corsa files are never loaded as they are: their import converts them.
+            // Assetto Corsa and GTA V files are never loaded as they are: their import converts them.
             if (!AssetRegistry::IsUnderAssetsRoot(path) || Kn5Importer::IsKn5Path(path) ||
-                Kn5Importer::IsLayoutPath(path))
+                Kn5Importer::IsLayoutPath(path) || Gta5Importer::IsGta5Path(path))
             {
                 LOG_INFO("Model '{}' is not an imported glTF; importing it first", path);
                 path = ModelImportService::ImportModelIntoAssetDirectory(

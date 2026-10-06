@@ -265,7 +265,8 @@ class ModelLoader
     // Formats LoadModel reads: glTF 2.0 (.gltf, .glb).
     static bool IsSupportedModelPath(const std::filesystem::path& path);
     // Formats an import accepts: the loadable ones, plus Assetto Corsa .kn5 and track layouts
-    // (models*.ini), which an import converts into a glTF bundle (see Kn5Importer).
+    // (models*.ini) and GTA V Enhanced vehicles (.yft), which an import converts into a glTF bundle
+    // (see Kn5Importer and Gta5Importer).
     static bool IsImportableModelPath(const std::filesystem::path& path);
     // The name an import of `path` gives its folder and model: the file's stem, or a track
     // layout's name (Kn5Importer::ImportName).

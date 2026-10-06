@@ -19,6 +19,12 @@
     gltf_compression.h
     gltf_model_loader.cpp
     gltf_model_loader.h
+    gta5_game_data.cpp
+    gta5_game_data.h
+    gta5_importer.cpp
+    gta5_importer.h
+    gta5_resource.cpp
+    gta5_resource.h
     kn5_importer.cpp
     kn5_importer.h
     kn5_reader.cpp
@@ -37,6 +43,8 @@
     model_loader.h
     model_post_process.cpp
     model_post_process.h
+    rage_resource.cpp
+    rage_resource.h
     svg_document.h
     svg_font.cpp
     svg_font.h
