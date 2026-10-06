@@ -20,8 +20,19 @@
 // rather than overflow.
 #define RAY_STACK_SIZE 48
 
-// Instance flags (RayInstance::data.w), matching kRayInstance* in ray_tracing_bvh.h.
+// Instance flags (RayInstance::data.w's low bits), matching kRayInstance* in ray_tracing_bvh.h; the
+// instance's mesh index sits above RAY_INSTANCE_MESH_SHIFT.
 #define RAY_INSTANCE_SKIP 1u
+#define RAY_INSTANCE_DYNAMIC 2u
+#define RAY_INSTANCE_MESH_SHIFT 4u
+
+// Which instances a ray sees, matching kRayMask* in ray_acceleration.h (the top level's instance
+// masks). The probes' rays leave moving instances out, so a passing car leaves no trail in their
+// light; the per-pixel visibility rays (shadows, occlusion, reflections) see everything traceable.
+#define RAY_MASK_STATIC 1u
+#define RAY_MASK_DYNAMIC 2u
+#define RAY_MASK_PROBE RAY_MASK_STATIC
+#define RAY_MASK_VISIBILITY (RAY_MASK_STATIC | RAY_MASK_DYNAMIC)
 
 // Ray material flags (RayMaterial.emissionFlags.w as uint bits), matching ray_scene.cpp.
 #define RAY_MATERIAL_DOUBLE_SIDED 1u
@@ -152,19 +163,30 @@ float RayHash(uint a, uint b)
     return float(word) * (1.0 / 4294967296.0);
 }
 
+#ifdef RAY_TEXTURED_ALPHA
+// In ray_hit_common.glsl, which a shader defining RAY_TEXTURED_ALPHA includes after this file.
+bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint rayId);
+#endif
+
 // Whether a candidate hit stops the ray: a partly covered surface (foliage cards, glass) stops the
-// share of rays its coverage says, decided per ray and triangle so a ray agrees with itself.
-bool AcceptHit(uint instance, uint triangle, uint rayId)
+// share of rays its coverage says, decided per ray and triangle so a ray agrees with itself. With
+// RAY_TEXTURED_ALPHA an alpha-tested surface reads its texture instead (AcceptTexturedHit).
+bool AcceptHit(uint instance, uint triangle, vec2 barycentrics, uint rayId)
 {
+#ifdef RAY_TEXTURED_ALPHA
+    return AcceptTexturedHit(instance, triangle, barycentrics, rayId);
+#else
     float coverage = rayMaterials[rayInstances[instance].data.z].albedoCoverage.a;
     return coverage >= 1.0 || RayHash(rayId, triangle) < coverage;
+#endif
 }
 
 #ifdef RAY_QUERY
-// The nearest accepted hit within (tMin, tMax), or the first found when anyHit (shadow rays). rayId
-// seeds the coverage decisions. Instances whose material stops every ray are opaque to the hardware
-// (VulkanRayAcceleration::UpdateTopLevel); the others' candidates come back here for AcceptHit.
-bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, out RayHit hit)
+// The nearest accepted hit within (tMin, tMax), or the first found when anyHit (shadow rays), among
+// the instances rayMask names (RAY_MASK_*). rayId seeds the coverage decisions. Instances whose
+// material stops every ray are opaque to the hardware (VulkanRayAcceleration::UpdateTopLevel); the
+// others' candidates come back here for AcceptHit.
+bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, uint rayMask, out RayHit hit)
 {
     hit.t = tMax;
     hit.instance = 0u;
@@ -174,7 +196,7 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
 
     rayQueryEXT query;
     uint flags = anyHit ? gl_RayFlagsTerminateOnFirstHitEXT : gl_RayFlagsNoneEXT;
-    rayQueryInitializeEXT(query, rayTopLevel, flags, 0xFFu, origin, tMin, direction, tMax);
+    rayQueryInitializeEXT(query, rayTopLevel, flags, rayMask, origin, tMin, direction, tMax);
     while (rayQueryProceedEXT(query))
     {
         if (rayQueryGetIntersectionTypeEXT(query, false) != gl_RayQueryCandidateIntersectionTriangleEXT)
@@ -183,7 +205,7 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
         }
         uint instance = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, false));
         uint triangle = rayInstances[instance].data.y + uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, false));
-        if (AcceptHit(instance, triangle, rayId))
+        if (AcceptHit(instance, triangle, rayQueryGetIntersectionBarycentricsEXT(query, false), rayId))
         {
             rayQueryConfirmIntersectionEXT(query);
         }
@@ -207,9 +229,10 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
 // The nearest accepted hit within (tMin, tMax), or the first found when anyHit (shadow rays). rayId
 // seeds the coverage decisions. Both hierarchy levels share one stack: an instance's nodes are pushed
 // over the top level's and all popped before the next top-level entry, so the current instance's
-// transformed ray is the right one for every mesh entry popped.
-bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, out RayHit hit)
+// transformed ray is the right one for every mesh entry popped. rayMask as for the ray query variant.
+bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, uint rayMask, out RayHit hit)
 {
+    uint skipFlags = RAY_INSTANCE_SKIP | ((rayMask & RAY_MASK_DYNAMIC) != 0u ? 0u : RAY_INSTANCE_DYNAMIC);
     hit.t = tMax;
     hit.instance = 0u;
     hit.triangle = 0u;
@@ -253,7 +276,7 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
             }
             // One instance per top-level leaf (BuildTopLevel).
             RayInstance instance = rayInstances[first];
-            if ((instance.data.w & RAY_INSTANCE_SKIP) != 0u)
+            if ((instance.data.w & skipFlags) != 0u)
             {
                 continue;
             }
@@ -305,7 +328,7 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
             {
                 continue;
             }
-            if (!AcceptHit(instanceIndex, triangleOffset + k, rayId))
+            if (!AcceptHit(instanceIndex, triangleOffset + k, barycentrics, rayId))
             {
                 continue;
             }
@@ -324,6 +347,12 @@ bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool any
     return found;
 }
 #endif
+
+// What the probes trace: moving instances left out.
+bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, out RayHit hit)
+{
+    return TraceSceneRayMasked(origin, direction, tMin, tMax, anyHit, rayId, RAY_MASK_PROBE, hit);
+}
 
 // The hit triangle's normal in world space, unit length, on its front (glTF's counter-clockwise)
 // side: a back-face hit's normal points along the ray.

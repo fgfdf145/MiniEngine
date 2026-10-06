@@ -227,10 +227,10 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
             uint32_t view = 0;
             if (std::from_chars(value.data(), value.data() + value.size(), view).ptr != value.data() + value.size() ||
-                view > static_cast<uint32_t>(GBufferDebugView::DdgiProbes))
+                view > static_cast<uint32_t>(kLastGBufferDebugView))
             {
                 throw std::runtime_error("--debug-view requires a view number from 0 to " +
-                                         std::to_string(static_cast<uint32_t>(GBufferDebugView::DdgiProbes)));
+                                         std::to_string(static_cast<uint32_t>(kLastGBufferDebugView)));
             }
             options.debugView = static_cast<GBufferDebugView>(view);
             continue;

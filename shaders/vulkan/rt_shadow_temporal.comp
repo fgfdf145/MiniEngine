@@ -1,0 +1,75 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// The ray traced sun shadow's temporal filter (VulkanRtShadowPass): this frame's one-ray visibility
+// averaged into the history reprojected through the motion vectors, as the AO resolve does. The
+// history is first clamped to the range of the raw visibility around the pixel: where every ray
+// nearby agrees (fully lit or fully shadowed), the history must too, so a shadow that moves (a car's
+// on the road) leaves no trail, while in a penumbra, where the raw rays disagree, it accumulates
+// freely. A history the clamp had to move restarts the average from a few samples.
+
+#include "scene_common.glsl"
+#include "rt_shadow_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const float MAX_SAMPLES = 24.0;
+const float TEMPORAL_DEPTH_TOLERANCE = 0.05;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = ivec2(rtShadow.extent);
+    if (any(greaterThanEqual(pixel, extent)))
+    {
+        return;
+    }
+    float depth = texelFetch(rtShadowDepth, pixel, 0).r;
+    if (IsFarDepth(depth))
+    {
+        imageStore(rtShadowHistoryWrite, pixel, vec4(1.0, 0.0, 0.0, 0.0));
+        return;
+    }
+    vec2 raw = imageLoad(rtShadowRaw, pixel).xy;
+    float lowest = raw.x;
+    float highest = raw.x;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 neighbour = clamp(pixel + ivec2(x, y), ivec2(0), extent - 1);
+            if (IsFarDepth(texelFetch(rtShadowDepth, neighbour, 0).r))
+            {
+                continue;
+            }
+            float value = imageLoad(rtShadowRaw, neighbour).x;
+            lowest = min(lowest, value);
+            highest = max(highest, value);
+        }
+    }
+
+    float distanceToCamera = RtShadowViewDistance(depth);
+    float visibility = raw.x;
+    float occluder = raw.y;
+    float samples = 1.0;
+    if ((rtShadow.flags & RT_SHADOW_FLAG_HISTORY_VALID) != 0u)
+    {
+        vec2 uv = (vec2(pixel) + 0.5) * rtShadow.invExtent;
+        vec2 previousUv = uv - texelFetch(rtShadowVelocity, pixel, 0).rg;
+        if (all(greaterThanEqual(previousUv, vec2(0.0))) && all(lessThanEqual(previousUv, vec2(1.0))))
+        {
+            vec4 history = textureLod(rtShadowHistoryRead, previousUv, 0.0);
+            vec3 world = RtShadowWorldPosition(pixel, depth);
+            float expectedDistance = (ubo.prevViewProj * vec4(world, 1.0)).w;
+            if (abs(history.y - expectedDistance) < TEMPORAL_DEPTH_TOLERANCE * expectedDistance)
+            {
+                float clamped = clamp(history.x, lowest, highest);
+                samples = abs(clamped - history.x) > 0.1 ? 2.0 : min(history.z + 1.0, MAX_SAMPLES);
+                visibility = mix(clamped, raw.x, 1.0 / samples);
+                // The occluders' distance, from the rays that found one.
+                occluder = raw.y > 0.0 ? (history.w > 0.0 ? mix(history.w, raw.y, 0.25) : raw.y) : history.w;
+            }
+        }
+    }
+    imageStore(rtShadowHistoryWrite, pixel, vec4(visibility, distanceToCamera, samples, occluder));
+}

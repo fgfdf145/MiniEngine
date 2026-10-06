@@ -1,5 +1,6 @@
 #include "ray_scene.h"
 
+#include "buffer.h"
 #include "compute_pass_util.h"
 
 #include <engine/core/log/log.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 
@@ -29,6 +31,22 @@ struct RayMaterialConstants
 
 // Must match the RAY_MATERIAL_* flags in shaders/vulkan/ray_tracing_common.glsl.
 constexpr uint32_t kRayMaterialDoubleSided = 1u;
+// Alpha tested: hit shading's textured coverage test applies (ray_hit_common.glsl).
+constexpr uint32_t kRayMaterialAlphaMask = 2u;
+
+// One mesh's buffers as hit shading reads them (RayMeshGeometry in ray_hit_common.glsl): the vertex
+// and index buffers' device addresses.
+struct RayMeshGeometry
+{
+    VkDeviceAddress vertices = 0;
+    VkDeviceAddress indices = 0;
+};
+static_assert(sizeof(RayMeshGeometry) == 16, "RayMeshGeometry must match ray_hit_common.glsl");
+// Hit shading reads vertices as floats at these offsets (RAY_VERTEX_* in ray_hit_common.glsl).
+static_assert(sizeof(Vertex) == 17 * sizeof(float), "RAY_VERTEX_FLOATS in ray_hit_common.glsl must match Vertex");
+static_assert(offsetof(Vertex, color) == 3 * sizeof(float) && offsetof(Vertex, texCoord) == 6 * sizeof(float) &&
+                  offsetof(Vertex, normal) == 8 * sizeof(float) && offsetof(Vertex, texCoord1) == 15 * sizeof(float),
+              "RAY_VERTEX_* offsets in ray_hit_common.glsl must match Vertex");
 
 // Matches RayMaterial in ray_tracing_common.glsl: albedo and coverage, emission and flags.
 constexpr VkDeviceSize kRayMaterialBytes = 32;
@@ -41,10 +59,17 @@ VkDeviceSize AtLeastOne(VkDeviceSize size)
 }
 }
 
-VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount, bool hardwareRayTracing)
+VulkanRayScene::VulkanRayScene(
+    VkPhysicalDevice physicalDevice,
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    uint32_t frameCount,
+    bool hardwareRayTracing,
+    TextureDescriptorBinding defaultTexture)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_frameCount(frameCount)
+      m_frameCount(frameCount),
+      m_defaultTexture(defaultTexture)
 {
     try
     {
@@ -53,13 +78,42 @@ VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device,
             m_acceleration = std::make_unique<VulkanRayAcceleration>(m_physicalDevice, m_device, m_frameCount);
         }
         std::vector<VkDescriptorType> types(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 * m_frameCount}};
+        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 * m_frameCount}};
         if (m_acceleration)
         {
             types.push_back(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
+            types.push_back(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            types.push_back(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             poolSizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, m_frameCount});
         }
-        m_setLayout = CreateComputeSetLayout(m_device, types);
+        // The lighting pass traces too (its local lights' shadows), from its fragment shader.
+        m_setLayout = CreateComputeSetLayout(m_device, types, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        if (m_acceleration)
+        {
+            // The texture table: as many entries as the device lets one stage see, less a margin for
+            // the frame set's own samplers; each content allocates what its slots need.
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
+            const uint32_t limit = std::min(properties.limits.maxPerStageDescriptorSampledImages, properties.limits.maxDescriptorSetSampledImages);
+            m_textureLimit = std::min<uint32_t>(limit > 256u ? limit - 256u : limit / 2u, 1u << 20);
+            const VkDescriptorBindingFlags bindingFlags =
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+            VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
+            flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+            flagsInfo.bindingCount = 1;
+            flagsInfo.pBindingFlags = &bindingFlags;
+            VkDescriptorSetLayoutBinding binding{};
+            binding.binding = 0;
+            binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            binding.descriptorCount = m_textureLimit;
+            binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            VkDescriptorSetLayoutCreateInfo layoutInfo{};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layoutInfo.pNext = &flagsInfo;
+            layoutInfo.bindingCount = 1;
+            layoutInfo.pBindings = &binding;
+            CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_textureSetLayout), "Failed to create the ray texture table layout");
+        }
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -72,6 +126,8 @@ VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device,
         // Placeholder buffers, so the sets are valid before the first build.
         m_meshNodes = CreateBuffer(AtLeastOne(0));
         m_meshTriangles = CreateBuffer(AtLeastOne(0));
+        m_meshGeometry = CreateBuffer(AtLeastOne(0));
+        m_sourceTriangles = CreateBuffer(AtLeastOne(0));
         m_materials = CreateBuffer(AtLeastOne(0));
         for (uint32_t slot = 0; slot < m_frameCount; ++slot)
         {
@@ -96,12 +152,16 @@ VulkanRayScene::~VulkanRayScene()
         Build pending = m_pendingBuild.get();
         DestroyBuffer(pending.meshNodes);
         DestroyBuffer(pending.meshTriangles);
+        DestroyBuffer(pending.meshGeometry);
+        DestroyBuffer(pending.sourceTriangles);
     }
     for (TaskFuture<Build>& stale : m_staleBuilds)
     {
         Build build = stale.get();
         DestroyBuffer(build.meshNodes);
         DestroyBuffer(build.meshTriangles);
+        DestroyBuffer(build.meshGeometry);
+        DestroyBuffer(build.sourceTriangles);
     }
     for (TaskFuture<void>& release : m_releases)
     {
@@ -203,6 +263,74 @@ void VulkanRayScene::SetContent(
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         m_dirtyMaterialSlots.push_back(index);
     }
+
+    // The texture table: a larger one when the slots outgrew it, with every slot written; otherwise
+    // the placed slots get their textures and the released ones the default.
+    if (m_textureSetLayout != VK_NULL_HANDLE)
+    {
+        std::vector<VkDescriptorImageInfo> infos;
+        std::vector<VkWriteDescriptorSet> writes;
+        if (capacity > m_textureCapacity)
+        {
+            if (static_cast<uint64_t>(capacity) * kRayTexturesPerSlot > m_textureLimit)
+            {
+                throw std::runtime_error("The ray texture table outgrew the device's sampled image limit");
+            }
+            if (m_texturePool != VK_NULL_HANDLE)
+            {
+                vkDestroyDescriptorPool(m_device, m_texturePool, nullptr);
+                m_texturePool = VK_NULL_HANDLE;
+                m_textureSet = VK_NULL_HANDLE;
+            }
+            // Room to grow, so a streamed map does not reallocate it at every new cell.
+            m_textureCapacity = std::min<uint32_t>(std::max(capacity + capacity / 2u, 1024u), m_textureLimit / kRayTexturesPerSlot);
+            const uint32_t count = m_textureCapacity * kRayTexturesPerSlot;
+            const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
+            VkDescriptorPoolCreateInfo poolInfo{};
+            poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            poolInfo.maxSets = 1;
+            poolInfo.poolSizeCount = 1;
+            poolInfo.pPoolSizes = &poolSize;
+            CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_texturePool), "Failed to create the ray texture table pool");
+            VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo{};
+            variableInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+            variableInfo.descriptorSetCount = 1;
+            variableInfo.pDescriptorCounts = &count;
+            VkDescriptorSetAllocateInfo allocateInfo{};
+            allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocateInfo.pNext = &variableInfo;
+            allocateInfo.descriptorPool = m_texturePool;
+            allocateInfo.descriptorSetCount = 1;
+            allocateInfo.pSetLayouts = &m_textureSetLayout;
+            CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_textureSet), "Failed to allocate the ray texture table");
+            infos.reserve(static_cast<size_t>(count));
+            for (uint32_t index = 0; index < m_textureCapacity; ++index)
+            {
+                const bool held = index < m_materialSlots.size() && m_materialSlots[index].set != VK_NULL_HANDLE;
+                WriteTextureSlot(index, held ? &m_materialSlots[index].source : nullptr, infos, writes);
+            }
+        }
+        else
+        {
+            infos.reserve((placed.size() + released.size()) * kRayTexturesPerSlot);
+            for (const uint32_t index : released)
+            {
+                if (index < m_textureCapacity)
+                {
+                    WriteTextureSlot(index, nullptr, infos, writes);
+                }
+            }
+            for (const RayMaterialSource& source : placed)
+            {
+                WriteTextureSlot(source.slot, &source, infos, writes);
+            }
+        }
+        if (!writes.empty())
+        {
+            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        }
+    }
+
     m_submeshes = std::move(submeshes);
     WriteSets();
 
@@ -219,19 +347,21 @@ void VulkanRayScene::SetContent(
     // The hierarchies, on a worker: only meshes not built before cost anything. The previous
     // content's hierarchies go in with it and come back out pruned to what this content uses.
     std::vector<std::shared_ptr<const MeshData>> meshes;
+    std::vector<std::shared_ptr<const VulkanBuffer>> buffers;
     std::vector<uint8_t> blend;
     std::vector<uint32_t> slots;
     meshes.reserve(m_submeshes.size());
     for (const RaySceneSubmesh& submesh : m_submeshes)
     {
         meshes.push_back(submesh.mesh);
+        buffers.push_back(submesh.buffer);
         blend.push_back(submesh.blend ? 1u : 0u);
         slots.push_back(submesh.slot);
     }
     // The task uses this only to make its buffers, which the destructor waits for.
     m_pendingBuild = RunAsync(
         TaskPriority::Medium,
-        [this, meshes = std::move(meshes), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache]() mutable
+        [this, meshes = std::move(meshes), buffers = std::move(buffers), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache]() mutable
         {
             const auto start = std::chrono::steady_clock::now();
             Build build;
@@ -241,8 +371,9 @@ void VulkanRayScene::SetContent(
             std::unordered_map<const MeshData*, uint32_t> meshIndex;
             std::vector<std::shared_ptr<const MeshData>> distinct;
             std::vector<std::shared_ptr<const MeshBvh>> bvhs;
-            for (const std::shared_ptr<const MeshData>& mesh : meshes)
+            for (size_t submesh = 0; submesh < meshes.size(); ++submesh)
             {
+                const std::shared_ptr<const MeshData>& mesh = meshes[submesh];
                 const MeshData* key = mesh.get();
                 const auto [found, inserted] = meshIndex.emplace(key, static_cast<uint32_t>(distinct.size()));
                 build.submeshMeshes.push_back(found->second);
@@ -251,6 +382,7 @@ void VulkanRayScene::SetContent(
                     continue;
                 }
                 distinct.push_back(mesh);
+                build.meshBuffers.push_back(submesh < buffers.size() ? buffers[submesh] : nullptr);
                 std::lock_guard lock(cache->mutex);
                 const auto cached = cache->meshes.find(key);
                 bvhs.push_back(cached != cache->meshes.end() && cached->second.mesh.lock() == mesh ? cached->second.bvh : nullptr);
@@ -289,6 +421,29 @@ void VulkanRayScene::SetContent(
             if (m_acceleration)
             {
                 build.blas = m_acceleration->Prepare(distinct, bvhs);
+
+                // Hit shading's view of the meshes: each one's buffer addresses, and each leaf
+                // triangle's index in its index list, laid out as the triangles are.
+                build.meshGeometry = CreateBuffer(AtLeastOne(sizeof(RayMeshGeometry) * distinct.size()));
+                auto* geometry = static_cast<RayMeshGeometry*>(build.meshGeometry.mapped);
+                size_t triangleCount = 0;
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    const std::shared_ptr<const VulkanBuffer>& buffer = build.meshBuffers[index];
+                    geometry[index] = buffer ? RayMeshGeometry{buffer->GetVertexAddress(), buffer->GetIndexAddress()} : RayMeshGeometry{};
+                    triangleCount += bvhs[index]->sourceTriangles.size();
+                }
+                build.sourceTriangles = CreateBuffer(AtLeastOne(sizeof(uint32_t) * triangleCount));
+                auto* sources = static_cast<uint32_t*>(build.sourceTriangles.mapped);
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    const std::vector<uint32_t>& meshSources = bvhs[index]->sourceTriangles;
+                    if (!meshSources.empty())
+                    {
+                        std::memcpy(sources, meshSources.data(), sizeof(uint32_t) * meshSources.size());
+                    }
+                    sources += meshSources.size();
+                }
             }
             {
                 // Into the cache for the builds after this one; hierarchies of meshes nobody holds any
@@ -359,11 +514,24 @@ void VulkanRayScene::InstallBuild()
     previous.topLevel = std::move(m_topLevel);
     previous.meshNodes = m_meshNodes;
     previous.meshTriangles = m_meshTriangles;
+    previous.meshBuffers = std::move(m_meshBuffers);
+    // Without hardware ray tracing the placeholders stay.
+    if (build.meshGeometry.buffer != VK_NULL_HANDLE)
+    {
+        previous.meshGeometry = m_meshGeometry;
+        previous.sourceTriangles = m_sourceTriangles;
+    }
     DiscardBuild(std::move(previous));
     m_scene = std::move(build.scene);
     m_topLevel = std::move(build.topLevel);
     m_meshNodes = build.meshNodes;
     m_meshTriangles = build.meshTriangles;
+    if (build.meshGeometry.buffer != VK_NULL_HANDLE)
+    {
+        m_meshGeometry = build.meshGeometry;
+        m_sourceTriangles = build.sourceTriangles;
+    }
+    m_meshBuffers = std::move(build.meshBuffers);
     m_meshNodeCount = build.meshNodeCount;
     m_meshTriangleCount = build.meshTriangleCount;
     if (m_scene.topNodes.empty())
@@ -397,7 +565,7 @@ void VulkanRayScene::InstallBuild()
     m_ready = true;
 }
 
-void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> skipped)
+void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> movingInstances)
 {
     if (!m_ready || models.size() != m_submeshMeshes.size())
     {
@@ -411,8 +579,9 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
         // add little to the light between surfaces, and that a coverage decision per ray turns into
         // noise on everything they lie on. Rays pass through them.
         const bool blend = index < m_installedBlend.size() && m_installedBlend[index] != 0;
-        const bool skip = blend || (index < skipped.size() && skipped[index] != 0);
-        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], models[index], m_submeshes[index].slot, skip ? kRayInstanceSkip : 0u});
+        const bool moving = index < movingInstances.size() && movingInstances[index] != 0;
+        const uint32_t flags = blend ? kRayInstanceSkip : moving ? kRayInstanceDynamic : 0u;
+        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], models[index], m_submeshes[index].slot, flags});
     }
     // Rebuilt only where something moved (IncrementalTopLevel), and copied to a frame slot only when the
     // slot holds an older one.
@@ -471,7 +640,7 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, b
             constants.params = glm::uvec4(
                 index,
                 static_cast<uint32_t>(submesh.alphaMode),
-                submesh.doubleSided ? kRayMaterialDoubleSided : 0u,
+                (submesh.doubleSided ? kRayMaterialDoubleSided : 0u) | (submesh.alphaMode == MaterialAlphaMode::Mask ? kRayMaterialAlphaMask : 0u),
                 transmissionBits);
             vkCmdBindDescriptorSets(
                 commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipelineLayout, 0, 1, &m_materialSlots[index].set, 0, nullptr);
@@ -512,6 +681,8 @@ void VulkanRayScene::DiscardBuild(Build build)
         {
             DestroyBuffer(build.meshNodes);
             DestroyBuffer(build.meshTriangles);
+            DestroyBuffer(build.meshGeometry);
+            DestroyBuffer(build.sourceTriangles);
             build = Build{};
         }));
 }
@@ -553,6 +724,45 @@ VkDescriptorSetLayout VulkanRayScene::GetSetLayout() const
 VkDescriptorSet VulkanRayScene::GetSet(uint32_t frameSlot) const
 {
     return m_sets[frameSlot];
+}
+
+VkDescriptorSetLayout VulkanRayScene::GetTextureSetLayout() const
+{
+    return m_textureSetLayout;
+}
+
+VkDescriptorSet VulkanRayScene::GetTextureSet() const
+{
+    return m_textureSet;
+}
+
+void VulkanRayScene::WriteTextureSlot(
+    uint32_t slot,
+    const RayMaterialSource* source,
+    std::vector<VkDescriptorImageInfo>& infos,
+    std::vector<VkWriteDescriptorSet>& writes) const
+{
+    // The order of kRayTexturesPerSlot (RAY_TEXTURE_* in ray_hit_common.glsl).
+    using Bindings = std::array<TextureDescriptorBinding, kRayTexturesPerSlot>;
+    const Bindings bindings = source != nullptr
+                                  ? Bindings{source->baseColor, source->metallic, source->roughness, source->emissive}
+                                  : Bindings{m_defaultTexture, m_defaultTexture, m_defaultTexture, m_defaultTexture};
+    // infos was reserved for every write, so the pointers taken below stay valid.
+    const size_t first = infos.size();
+    for (uint32_t index = 0; index < kRayTexturesPerSlot; ++index)
+    {
+        const TextureDescriptorBinding& binding = bindings[index].imageView != VK_NULL_HANDLE ? bindings[index] : m_defaultTexture;
+        infos.push_back(VkDescriptorImageInfo{binding.sampler, binding.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+    }
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_textureSet;
+    write.dstBinding = 0;
+    write.dstArrayElement = slot * kRayTexturesPerSlot;
+    write.descriptorCount = kRayTexturesPerSlot;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &infos[first];
+    writes.push_back(write);
 }
 
 size_t VulkanRayScene::GetSubmeshCount() const
@@ -682,6 +892,21 @@ void VulkanRayScene::WriteSets()
             write.descriptorCount = 1;
             write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
             vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+            const std::array<VkDescriptorBufferInfo, 2> hitInfos = {
+                VkDescriptorBufferInfo{m_meshGeometry.buffer, 0, VK_WHOLE_SIZE},
+                VkDescriptorBufferInfo{m_sourceTriangles.buffer, 0, VK_WHOLE_SIZE}};
+            std::array<VkWriteDescriptorSet, 2> hitWrites{};
+            for (uint32_t index = 0; index < hitWrites.size(); ++index)
+            {
+                hitWrites[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                hitWrites[index].dstSet = m_sets[slot];
+                hitWrites[index].dstBinding = 6 + index;
+                hitWrites[index].descriptorCount = 1;
+                hitWrites[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                hitWrites[index].pBufferInfo = &hitInfos[index];
+            }
+            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(hitWrites.size()), hitWrites.data(), 0, nullptr);
         }
     }
 }
@@ -728,7 +953,21 @@ void VulkanRayScene::DestroyHandles()
     }
     DestroyBuffer(m_meshNodes);
     DestroyBuffer(m_meshTriangles);
+    DestroyBuffer(m_meshGeometry);
+    DestroyBuffer(m_sourceTriangles);
+    m_meshBuffers.clear();
     DestroyBuffer(m_materials);
+    if (m_texturePool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device, m_texturePool, nullptr);
+        m_texturePool = VK_NULL_HANDLE;
+        m_textureSet = VK_NULL_HANDLE;
+    }
+    if (m_textureSetLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_textureSetLayout, nullptr);
+        m_textureSetLayout = VK_NULL_HANDLE;
+    }
     for (Buffer& buffer : m_instances)
     {
         DestroyBuffer(buffer);

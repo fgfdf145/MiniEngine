@@ -55,6 +55,11 @@ enum class RenderTargetId : uint32_t
     // unjittered, and the outline found from it, which ImGui draws over the viewport image.
     SelectionDepth,
     SelectionOutline,
+    // The ray traced sun shadow (rt_shadow_pass.h), written by compute: the raw one-ray trace
+    // (visibility, occluder distance), then the filtered result the lighting pass reads (r visibility,
+    // g 1 where it ran this frame).
+    ShadowRaw,
+    SceneShadow,
     Count
 };
 

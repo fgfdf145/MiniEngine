@@ -2,6 +2,7 @@
 
 #include "gbuffer_inputs.h"
 #include "pipeline.h"
+#include "ray_scene.h"
 
 #include <array>
 
@@ -15,7 +16,9 @@ struct LightingPushConstants
 {
     // xyz = the background radiance, w unused.
     glm::vec4 backgroundRadiance{0.0f};
-    // x = 1 to draw the light cluster heat map instead of shading; yzw unused.
+    // x = 1 to draw the light cluster heat map instead of shading; y = 1 to read the ray traced sun
+    // shadow (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows (the ray
+    // query pipeline); w unused.
     glm::vec4 debug{0.0f};
 };
 
@@ -28,13 +31,18 @@ VulkanLightingPass::VulkanLightingPass(
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout emptySetLayout,
-    VkDescriptorSetLayout gbufferSetLayout)
+    VkDescriptorSetLayout gbufferSetLayout,
+    const VulkanRayScene& rayScene)
     : m_device(device)
 {
     try
     {
         m_renderPass = CreateFullscreenRenderPass(m_device, targets.GetFormat(RenderTargetId::SceneHdr), "lighting");
         CreatePipeline(pipelineCache, frameSetLayout, emptySetLayout, gbufferSetLayout);
+        if (rayScene.HasHardwareRayTracing())
+        {
+            CreateTracedPipeline(pipelineCache, frameSetLayout, rayScene.GetSetLayout(), gbufferSetLayout, rayScene.GetTextureSetLayout());
+        }
         CreateFramebuffers(targets);
     }
     catch (...)
@@ -81,7 +89,16 @@ void VulkanLightingPass::Record(
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     SetViewportAndScissor(commandBuffer, frame.extent);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+    // The ray query variant traces the local lights' shadows; its set 1 is the ray scene and set 3 its
+    // texture table.
+    const bool traced = frame.rayTracing.localShadows && m_tracedPipeline != VK_NULL_HANDLE;
+    const VkPipelineLayout layout = traced ? m_tracedPipelineLayout : m_pipelineLayout;
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, traced ? m_tracedPipeline : m_pipeline);
+    if (traced)
+    {
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &frame.raySet, 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &frame.rayTextureSet, 0, nullptr);
+    }
 
     // Set 0 is the same per-swapchain-image camera set the material passes bind; its layout
     // already includes the fragment stage. Set 2 is the per-frame-slot G-buffer set. Set 1 is
@@ -89,7 +106,7 @@ void VulkanLightingPass::Record(
     vkCmdBindDescriptorSets(
         commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout,
+        layout,
         0,
         1,
         &frame.frameDescriptorSet,
@@ -98,7 +115,7 @@ void VulkanLightingPass::Record(
     vkCmdBindDescriptorSets(
         commandBuffer,
         VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout,
+        layout,
         2,
         1,
         &frame.gbufferDescriptorSet,
@@ -108,10 +125,14 @@ void VulkanLightingPass::Record(
     LightingPushConstants constants{};
     // The same constant the forward pass clears with, so the two orders' backgrounds cannot differ.
     constants.backgroundRadiance = glm::vec4(kViewportBackgroundFrameBuffer, 1.0f);
-    constants.debug = glm::vec4(frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    constants.debug = glm::vec4(
+        frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f,
+        frame.rayTracing.sunShadows ? 1.0f : 0.0f,
+        traced ? 1.0f : 0.0f,
+        0.0f);
     vkCmdPushConstants(
         commandBuffer,
-        m_pipelineLayout,
+        layout,
         VK_SHADER_STAGE_FRAGMENT_BIT,
         0,
         sizeof(constants),
@@ -160,6 +181,37 @@ void VulkanLightingPass::CreatePipeline(
         "lighting");
 }
 
+void VulkanLightingPass::CreateTracedPipeline(
+    VkPipelineCache pipelineCache,
+    VkDescriptorSetLayout frameSetLayout,
+    VkDescriptorSetLayout raySetLayout,
+    VkDescriptorSetLayout gbufferSetLayout,
+    VkDescriptorSetLayout rayTextureSetLayout)
+{
+    const std::array<VkDescriptorSetLayout, 4> setLayouts = {frameSetLayout, raySetLayout, gbufferSetLayout, rayTextureSetLayout};
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(LightingPushConstants);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    CheckVulkan(
+        vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_tracedPipelineLayout),
+        "Failed to create the ray traced lighting pipeline layout");
+    m_tracedPipeline = CreateFullscreenPipeline(
+        m_device,
+        pipelineCache,
+        m_renderPass,
+        m_tracedPipelineLayout,
+        "deferred_lighting_ray_query.frag.spv",
+        "lighting (ray traced shadows)");
+}
+
 void VulkanLightingPass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
     const VkExtent2D extent = targets.GetExtent();
@@ -199,6 +251,16 @@ void VulkanLightingPass::DestroyFramebuffers()
 
 void VulkanLightingPass::DestroyHandles()
 {
+    if (m_tracedPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_tracedPipeline, nullptr);
+        m_tracedPipeline = VK_NULL_HANDLE;
+    }
+    if (m_tracedPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
+        m_tracedPipelineLayout = VK_NULL_HANDLE;
+    }
     if (m_pipeline != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(m_device, m_pipeline, nullptr);

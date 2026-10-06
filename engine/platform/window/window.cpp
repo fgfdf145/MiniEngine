@@ -6,6 +6,7 @@
 #include <engine/core/version/engine_version.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 #include <utility>
 
@@ -157,6 +158,13 @@ void Window::CreateNativeWindow()
     ClampWindowSizeToPrimaryDisplay(m_width, m_height);
 
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // Scripted captures (--frames) render offscreen and read the viewport back; with
+    // MINIENGINE_HIDDEN_WINDOW=1 their window is never shown, so it cannot take the focus from
+    // whatever the desktop is doing.
+    if (const char* hidden = std::getenv("MINIENGINE_HIDDEN_WINDOW"); hidden != nullptr && hidden[0] == '1')
+    {
+        flags |= SDL_WINDOW_HIDDEN;
+    }
     switch (m_backendType)
     {
     case RenderBackendType::Vulkan:

@@ -1,6 +1,7 @@
 #include "ao_pass.h"
 
 #include "compute_pass_util.h"
+#include "ray_scene.h"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +38,8 @@ constexpr uint32_t kFlagEnabled = 1u;
 constexpr uint32_t kFlagSpatial = 2u;
 constexpr uint32_t kFlagTemporal = 4u;
 constexpr uint32_t kFlagHistoryValid = 8u;
+constexpr uint32_t kFlagRayTracedAo = 16u;
+constexpr uint32_t kFlagProbeOcclusion = 32u;
 
 // Clamps every setting to the range the editor offers, so a value from anywhere else cannot reach
 // the shader.
@@ -55,7 +58,9 @@ AoPushConstants BuildPushConstants(const ScenePassFrameContext& frame)
         (frame.ao.enabled ? kFlagEnabled : 0u) |
         (frame.ao.spatialFilter ? kFlagSpatial : 0u) |
         (frame.ao.temporalFilter ? kFlagTemporal : 0u) |
-        (frame.aoHistory.valid ? kFlagHistoryValid : 0u);
+        (frame.aoHistory.valid ? kFlagHistoryValid : 0u) |
+        (frame.rayTracing.ambientOcclusion ? kFlagRayTracedAo : 0u) |
+        (frame.rayTracing.probeOcclusion ? kFlagProbeOcclusion : 0u);
     return constants;
 }
 
@@ -69,7 +74,8 @@ VulkanAoTracePass::VulkanAoTracePass(
     VkDevice device,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
+    VkDescriptorSetLayout frameSetLayout,
+    const VulkanRayScene& rayScene)
     : m_device(device)
 {
     try
@@ -81,6 +87,13 @@ VulkanAoTracePass::VulkanAoTracePass(
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_trace.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
+        if (rayScene.HasHardwareRayTracing())
+        {
+            const std::array<VkDescriptorSetLayout, 4> setLayouts = {
+                frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
+            CreateComputePipeline(
+                m_device, pipelineCache, setLayouts, "rt_occlusion.comp.spv", sizeof(AoPushConstants), m_tracedPipelineLayout, m_tracedPipeline);
+        }
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
         CreateDescriptorSets(targets);
     }
@@ -116,21 +129,53 @@ void VulkanAoTracePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    if (!frame.ao.enabled)
+    const bool traced = m_tracedPipeline != VK_NULL_HANDLE && (frame.rayTracing.ambientOcclusion || frame.rayTracing.probeOcclusion);
+    const bool bitmask = frame.ao.enabled && !frame.rayTracing.ambientOcclusion;
+    if (!traced && !bitmask)
     {
         return;
     }
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::AoRaw, frame.imageIndex, frame.frameSlot);
-    const AoPushConstants constants = BuildPushConstants(frame);
-    DispatchCompute(
+    const VkExtent2D extent = targets.GetTargetExtent(RenderTargetId::AoRaw);
+    AoPushConstants constants = BuildPushConstants(frame);
+    if (bitmask)
+    {
+        DispatchCompute(
+            commandBuffer,
+            m_pipeline,
+            m_pipelineLayout,
+            frame.frameDescriptorSet,
+            m_descriptorSets.at(slot),
+            &constants,
+            sizeof(constants),
+            extent);
+    }
+    if (!traced)
+    {
+        return;
+    }
+    if (bitmask)
+    {
+        // The traced pass reads the bitmask's AO back and adds the probe occlusion beside it.
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(
+            commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    }
+    // The traced rays per pixel ride in the slice count.
+    constants.sliceCount = static_cast<uint32_t>(frame.rayTracing.occlusionRays);
+    const std::array<VkDescriptorSet, 4> sets = {frame.frameDescriptorSet, frame.raySet, m_descriptorSets.at(slot), frame.rayTextureSet};
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipeline);
+    vkCmdBindDescriptorSets(
+        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+    vkCmdPushConstants(commandBuffer, m_tracedPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+    vkCmdDispatch(
         commandBuffer,
-        m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_descriptorSets.at(slot),
-        &constants,
-        sizeof(constants),
-        targets.GetTargetExtent(RenderTargetId::AoRaw));
+        (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+        1);
 }
 
 void VulkanAoTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
@@ -157,6 +202,16 @@ void VulkanAoTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
 
 void VulkanAoTracePass::DestroyHandles()
 {
+    if (m_tracedPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_tracedPipeline, nullptr);
+        m_tracedPipeline = VK_NULL_HANDLE;
+    }
+    if (m_tracedPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
+        m_tracedPipelineLayout = VK_NULL_HANDLE;
+    }
     if (m_pipeline != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(m_device, m_pipeline, nullptr);

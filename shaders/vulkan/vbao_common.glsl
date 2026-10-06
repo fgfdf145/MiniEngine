@@ -25,6 +25,10 @@ const uint AO_FLAG_ENABLED = 1u;
 const uint AO_FLAG_SPATIAL = 2u;
 const uint AO_FLAG_TEMPORAL = 4u;
 const uint AO_FLAG_HISTORY_VALID = 8u;
+// Hardware ray tracing (rt_occlusion.comp): the AO is traced rather than marched, and the DDGI probe
+// occlusion is traced into AoRaw's g. The GI passes never set them.
+const uint AO_FLAG_RAY_TRACED_AO = 16u;
+const uint AO_FLAG_PROBE_OCCLUSION = 32u;
 
 // View-space depth (negative in front of the camera) from a 0..1 depth sample, for glm's
 // perspectiveRH_ZO: clip.z = P22 * z + P32, clip.w = -z.

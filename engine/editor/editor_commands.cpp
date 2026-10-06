@@ -214,6 +214,8 @@ constexpr DebugViewCommand kDebugViewCommands[] = {
     {GBufferDebugView::RayTraced, "ray_traced", "DDGI Ray-Traced Scene", ICON_PH_TREE_STRUCTURE, ImGuiMod_Alt | ImGuiKey_6, true},
     {GBufferDebugView::DdgiIrradiance, "ddgi_irradiance", "DDGI Irradiance", "", 0, false},
     {GBufferDebugView::DdgiProbes, "ddgi_probes", "DDGI Probes", "", 0, false},
+    {GBufferDebugView::RayTracedShadow, "ray_traced_shadow", "Ray-Traced Sun Shadow", "", 0, true},
+    {GBufferDebugView::ProbeOcclusion, "probe_occlusion", "DDGI Probe Occlusion", "", 0, false},
 };
 
 void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)

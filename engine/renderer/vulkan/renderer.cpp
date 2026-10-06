@@ -1359,7 +1359,24 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // advances once per recorded frame; a frame that does not accumulate invalidates the next.
     frame.ao = renderDebug.ao;
     frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
-    frame.aoHistory = m_aoHistory.Advance(frame.ao.enabled && frame.ao.temporalFilter);
+    // The ray traced effects, where hardware rays run and the ray scene is ready; the deferred order
+    // only, as the passes they replace.
+    const bool rayTracedEffects = frame.hardwareRays && m_rayScene->IsReady() && m_rayScene->GetTextureSet() != VK_NULL_HANDLE &&
+                                  !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    frame.rayTracing = renderDebug.rayTracing;
+    frame.rayTracing.occlusionRays = std::clamp(frame.rayTracing.occlusionRays, 1, 8);
+    frame.rayTracing.sunShadows = frame.rayTracing.sunShadows && rayTracedEffects;
+    frame.rayTracing.ambientOcclusion = frame.rayTracing.ambientOcclusion && rayTracedEffects && frame.ao.enabled;
+    frame.rayTracing.probeOcclusion = frame.rayTracing.probeOcclusion && rayTracedEffects && ddgiData.params.x > 0.0f;
+    frame.rayTracing.reflections = frame.rayTracing.reflections && rayTracedEffects;
+    frame.rayTracing.localShadows = frame.rayTracing.localShadows && rayTracedEffects && renderDebug.localLightShadows;
+    if (rayTracedEffects)
+    {
+        frame.raySet = m_rayScene->GetSet(frame.frameSlot);
+        frame.rayTextureSet = m_rayScene->GetTextureSet();
+    }
+    frame.aoHistory = m_aoHistory.Advance((frame.ao.enabled || frame.rayTracing.probeOcclusion) && frame.ao.temporalFilter);
+    frame.rtShadowHistory = m_rtShadowHistory.Advance(frame.rayTracing.sunShadows);
     // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
     // view has none, as the Sample Viewer.
     frame.gi = renderDebug.gi;
@@ -1718,6 +1735,7 @@ void VulkanRenderer::CreateSwapchainResources()
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_rtShadowHistory.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -1789,13 +1807,27 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetHandle(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle());
-    // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight.
+    // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
+    // hardware ray tracing its texture table names a white texture where no material's is.
+    TextureDescriptorBinding rayDefaultTexture{};
+    if (m_device->SupportsRayQuery())
+    {
+        VulkanUploadBatch rayUploadBatch(
+            m_device->GetHandle(),
+            m_device->GetQueueFamilies().graphicsFamily.value(),
+            m_device->GetGraphicsQueue());
+        m_rayDefaultTexture = std::make_unique<VulkanTexture>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
+        rayUploadBatch.Flush();
+        rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->Get(TextureSampler{})};
+    }
     m_rayScene = std::make_unique<VulkanRayScene>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
-        m_device->SupportsRayQuery());
+        m_device->SupportsRayQuery(),
+        rayDefaultTexture);
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -2009,6 +2041,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_environmentProbe.reset();
     m_ddgi.reset();
     m_rayScene.reset();
+    m_rayDefaultTexture.reset();
     m_atmosphere.reset();
     // Its pipelines were built against the material set layout released below.
     m_shadowPass.reset();
@@ -2294,11 +2327,19 @@ void VulkanRenderer::CreateScenePasses()
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
     m_scenePasses.push_back(std::move(geometryPass));
+    m_scenePasses.push_back(std::make_unique<VulkanRtShadowPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        *m_rayScene));
     m_scenePasses.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
         m_pipelineCache,
         *m_sceneTargets,
-        m_frameSetLayout->GetHandle()));
+        m_frameSetLayout->GetHandle(),
+        *m_rayScene));
     m_scenePasses.push_back(std::make_unique<VulkanAoResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -2311,7 +2352,8 @@ void VulkanRenderer::CreateScenePasses()
         *m_sceneTargets,
         m_frameSetLayout->GetHandle(),
         m_gbufferDescriptors->GetEmptySetLayout(),
-        m_gbufferDescriptors->GetSetLayout()));
+        m_gbufferDescriptors->GetSetLayout(),
+        *m_rayScene));
     m_scenePasses.push_back(std::make_unique<VulkanGiTracePass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -2366,7 +2408,8 @@ void VulkanRenderer::CreateScenePasses()
         m_pipelineCache,
         *m_sceneTargets,
         m_frameSetLayout->GetHandle(),
-        taa));
+        taa,
+        *m_rayScene));
     m_scenePasses.push_back(std::make_unique<VulkanSsrResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -2606,6 +2649,7 @@ void VulkanRenderer::ApplySceneExtent(RenderExtent viewportExtent, const RenderD
     m_layoutTracker.Reset();
     m_motionHistory.Reset();
     m_aoHistory.Reset();
+    m_rtShadowHistory.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -2835,9 +2879,10 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             }
             else
             {
+                // Addressable for the ray scene's hit shading when rays run on the hardware.
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
                     m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                    *cpuRenderSubmesh.mesh, uploadBatch);
+                    *cpuRenderSubmesh.mesh, uploadBatch, m_device->SupportsRayQuery());
                 liveBuffers.emplace(cpuRenderSubmesh.mesh.get(), renderSubmesh->buffer);
                 ++newBufferCount;
                 flushUploadBatchIfNeeded();
@@ -2908,6 +2953,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             madeSubmeshes[index]->materialSet = m_materialSets->Acquire(bindings[index]);
             madeSubmeshes[index]->rayBaseColor = bindings[index].baseColor;
             madeSubmeshes[index]->rayEmissive = bindings[index].emissive;
+            madeSubmeshes[index]->rayMetallic = bindings[index].metallic;
+            madeSubmeshes[index]->rayRoughness = bindings[index].roughness;
         }
         uploadBatch.Flush();
     }
@@ -3259,7 +3306,8 @@ void VulkanRenderer::ApplyRenderContent(
             raySubmeshes.reserve(newRenderSubmeshes.size());
             for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
             {
-                raySubmeshes.push_back(RaySceneSubmesh{renderSubmesh->mesh, renderSubmesh->alphaMode == MaterialAlphaMode::Blend, renderSubmesh->drawSlot});
+                raySubmeshes.push_back(RaySceneSubmesh{
+                    renderSubmesh->mesh, renderSubmesh->buffer, renderSubmesh->alphaMode == MaterialAlphaMode::Blend, renderSubmesh->drawSlot});
             }
             std::vector<RayMaterialSource> placedMaterials;
             placedMaterials.reserve(placed.size());
@@ -3271,7 +3319,9 @@ void VulkanRenderer::ApplyRenderContent(
                     renderSubmesh->alphaMode,
                     renderSubmesh->doubleSided,
                     renderSubmesh->rayBaseColor,
-                    renderSubmesh->rayEmissive});
+                    renderSubmesh->rayEmissive,
+                    renderSubmesh->rayMetallic,
+                    renderSubmesh->rayRoughness});
             }
             // Where every draw is now, for the worker's top level.
             std::vector<glm::mat4> rayModels;

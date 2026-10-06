@@ -23,7 +23,7 @@ class VulkanGBufferDescriptors
 {
   public:
     // Binding order: binding N samples kInputs[N]. gbuffer_inputs.glsl declares the same order.
-    static constexpr std::array<RenderTargetId, 12> kInputs = {
+    static constexpr std::array<RenderTargetId, 13> kInputs = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
@@ -36,7 +36,9 @@ class VulkanGBufferDescriptors
         RenderTargetId::GBufferSheen,
         RenderTargetId::SceneReflections,
         // Written after the lighting pass: only the GI composite and the debug view sample it.
-        RenderTargetId::SceneGi};
+        RenderTargetId::SceneGi,
+        // The ray traced sun shadow, which the lighting pass reads in place of the cascades.
+        RenderTargetId::SceneShadow};
 
     VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();

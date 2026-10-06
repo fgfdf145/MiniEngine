@@ -28,6 +28,8 @@ const uint GBUFFER_VIEW_INDIRECT_DIFFUSE = 13u;
 const uint GBUFFER_VIEW_RAY_TRACED = 14u;
 const uint GBUFFER_VIEW_DDGI_IRRADIANCE = 15u;
 const uint GBUFFER_VIEW_DDGI_PROBES = 16u;
+const uint GBUFFER_VIEW_RAY_TRACED_SHADOW = 17u;
+const uint GBUFFER_VIEW_PROBE_OCCLUSION = 18u;
 
 // Must match kOperator* in engine/renderer/vulkan/tonemap_pass.cpp.
 const uint TONEMAP_OPERATOR_GT7 = 0u;
@@ -98,6 +100,18 @@ void main()
     {
         // The resolved screen-space AO alone, white where nothing occludes.
         color = vec3(texture(sceneAo, fragTexCoord).r);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_RAY_TRACED_SHADOW)
+    {
+        // The traced sun visibility the lighting reads (rt_shadow_filter.comp); its g says whether it
+        // ran this frame, so the view is white where it did not.
+        vec4 shadow = texture(sceneShadow, fragTexCoord);
+        color = vec3(shadow.g > 0.5 ? shadow.r : 1.0);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_PROBE_OCCLUSION)
+    {
+        // The ray traced DDGI probe occlusion beside the AO in SceneAo.
+        color = vec3(texture(sceneAo, fragTexCoord).g);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_SPECULAR)
     {

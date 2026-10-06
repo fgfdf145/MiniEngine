@@ -42,7 +42,7 @@ VkSampler CreateClampSampler(VkDevice device, VkFilter filter)
     return sampler;
 }
 
-VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types)
+VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types, VkShaderStageFlags stages)
 {
     std::vector<VkDescriptorSetLayoutBinding> bindings(types.size());
     for (uint32_t binding = 0; binding < static_cast<uint32_t>(types.size()); ++binding)
@@ -50,7 +50,7 @@ VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const Vk
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = types[binding];
         bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[binding].stageFlags = stages;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

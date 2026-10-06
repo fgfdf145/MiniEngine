@@ -194,7 +194,13 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     {
         m_optionalExtensionsEnabled = m_optionalExtensionsEnabled && vulkan12Features.bufferDeviceAddress == VK_TRUE;
     }
-    m_supportsRayQuery = rayQueryExtensions && vulkan12Features.bufferDeviceAddress == VK_TRUE &&
+    // Hit shading samples every material's textures through one array indexed per hit (the ray scene's
+    // texture table), which needs descriptor indexing; every GPU with ray queries has it.
+    const bool descriptorIndexing = vulkan12Features.runtimeDescriptorArray == VK_TRUE &&
+                                    vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
+                                    vulkan12Features.descriptorBindingPartiallyBound == VK_TRUE &&
+                                    vulkan12Features.descriptorBindingVariableDescriptorCount == VK_TRUE;
+    m_supportsRayQuery = rayQueryExtensions && vulkan12Features.bufferDeviceAddress == VK_TRUE && descriptorIndexing &&
                          accelerationFeatures.accelerationStructure == VK_TRUE && rayQueryFeatures.rayQuery == VK_TRUE;
     LOG_INFO(
         "Hardware ray tracing: {}",
@@ -214,6 +220,13 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     VkPhysicalDeviceVulkan12Features enabled12{};
     enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     enabled12.bufferDeviceAddress = (wantsBufferDeviceAddress || m_supportsRayQuery) ? vulkan12Features.bufferDeviceAddress : VK_FALSE;
+    if (m_supportsRayQuery)
+    {
+        enabled12.runtimeDescriptorArray = VK_TRUE;
+        enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        enabled12.descriptorBindingPartiallyBound = VK_TRUE;
+        enabled12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    }
     VkPhysicalDeviceFeatures2 enabledFeatures{};
     enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     enabledFeatures.features = deviceFeatures;

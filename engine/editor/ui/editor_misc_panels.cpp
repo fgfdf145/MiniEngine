@@ -204,6 +204,28 @@ void EditorUiController::DrawGraphicsDebugPanel()
         {
             ImGui::SetTooltip("DDGI probe rays use ray queries when the GPU has them (see the log); off uses the compute walk");
         }
+        // What hardware ray tracing replaces: each effect falls back to its screen-space or shadow-map
+        // counterpart while the switch above is off or the GPU has no ray queries.
+        ImGui::BeginDisabled(!m_renderDebug.hardwareRayTracing);
+        RayTracingSettings& rayTracing = m_renderDebug.rayTracing;
+        ImGui::Indent();
+        ImGui::Checkbox("Ray traced sun shadows", &rayTracing.sunShadows);
+        ImGui::Checkbox("Ray traced local light shadows", &rayTracing.localShadows);
+        ImGui::Checkbox("Ray traced reflections", &rayTracing.reflections);
+        ImGui::Checkbox("Ray traced ambient occlusion", &rayTracing.ambientOcclusion);
+        ImGui::Checkbox("DDGI probe occlusion", &rayTracing.probeOcclusion);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Darkens the probes' light where spaces are smaller than a coarse level's spacing");
+        }
+        DragIntInRange("Occlusion rays", &rayTracing.occlusionRays, 1, 8);
+        ImGui::Checkbox("Denoise traced shadows", &rayTracing.denoise);
+        if (ImGui::SmallButton("Reset##rt"))
+        {
+            rayTracing = RayTracingSettings{};
+        }
+        ImGui::Unindent();
+        ImGui::EndDisabled();
         DragFloatInRange("Shadow distance (m)", &m_renderDebug.shadowDistance, 10.0f, 5000.0f, "%.0f");
         // The forward-only order has no motion vectors, so TAA is off there whatever this says; DLSS
         // takes its place while it resolves.
@@ -246,7 +268,7 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // The forward-only order never writes the G-buffer, so there is nothing to view.
         ImGui::BeginDisabled(m_renderDebug.forwardOnly);
         // Order matches GBufferDebugView's numeric values.
-        static constexpr std::array<const char*, 17> kGBufferViewNames = {
+        static constexpr std::array<const char*, 19> kGBufferViewNames = {
             "Shaded",
             "G-buffer: albedo",
             "G-buffer: shading normal",
@@ -263,7 +285,9 @@ void EditorUiController::DrawGraphicsDebugPanel()
             "Screen-space GI",
             "DDGI: ray-traced scene",
             "DDGI: irradiance",
-            "DDGI: probes"};
+            "DDGI: probes",
+            "Ray traced sun shadow",
+            "DDGI probe occlusion"};
         int gbufferView = static_cast<int>(m_renderDebug.gbufferView);
         if (ImGui::Combo(
                 "Viewport output",

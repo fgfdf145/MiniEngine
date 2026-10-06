@@ -166,7 +166,7 @@ CaptureState CaptureStateService::Read(const std::filesystem::path& path)
     const YAML::Node renderDebug = root["render_debug"];
     uint32_t view = 0;
     ReadField(renderDebug, "gbuffer_view", view);
-    state.renderDebug.gbufferView = static_cast<GBufferDebugView>(std::min(view, static_cast<uint32_t>(GBufferDebugView::DdgiProbes)));
+    state.renderDebug.gbufferView = static_cast<GBufferDebugView>(std::min(view, static_cast<uint32_t>(kLastGBufferDebugView)));
     uint32_t toneMapper = 0;
     ReadField(renderDebug, "tone_mapper", toneMapper);
     state.renderDebug.toneMapper = static_cast<ToneMapper>(std::min(toneMapper, static_cast<uint32_t>(ToneMapper::None)));

@@ -1,5 +1,6 @@
 #include "ssr_pass.h"
 
+#include "ray_scene.h"
 #include "taa_pass.h"
 
 #include <algorithm>
@@ -11,6 +12,8 @@ namespace me
 namespace
 {
 constexpr VkFormat kHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+// How far a ray traced reflection looks, in metres.
+constexpr float kTracedReflectionDistance = 5000.0f;
 
 // Must match SsrConstants in shaders/vulkan/ssr_trace.comp.
 struct SsrPushConstants
@@ -87,7 +90,7 @@ void DestroyCommon(
 
 bool SsrTraces(const ScenePassFrameContext& frame)
 {
-    return frame.ssr.enabled && frame.taaHistory.valid;
+    return (frame.ssr.enabled || frame.rayTracing.reflections) && frame.taaHistory.valid;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -99,7 +102,8 @@ VulkanSsrTracePass::VulkanSsrTracePass(
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
-    const VulkanTaaPass& taa)
+    const VulkanTaaPass& taa,
+    const VulkanRayScene& rayScene)
     : m_device(device),
       m_taa(taa)
 {
@@ -117,6 +121,13 @@ VulkanSsrTracePass::VulkanSsrTracePass(
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "ssr_trace.comp.spv", sizeof(SsrPushConstants), m_pipelineLayout, m_pipeline);
+        if (rayScene.HasHardwareRayTracing())
+        {
+            const std::array<VkDescriptorSetLayout, 4> setLayouts = {
+                frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
+            CreateComputePipeline(
+                m_device, pipelineCache, setLayouts, "rt_reflection_trace.comp.spv", sizeof(SsrPushConstants), m_tracedPipelineLayout, m_tracedPipeline);
+        }
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 6, 1);
         CreateDescriptorSets(targets);
     }
@@ -192,15 +203,33 @@ void VulkanSsrTracePass::Record(
     constants.frameIndex = frame.frameIndex;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SsrRaw, frame.imageIndex, frame.frameSlot);
+    const VkDescriptorSet passSet = m_descriptorSets.at(slot * 2 + frame.taaHistory.readIndex);
+    const VkExtent2D extent = targets.GetTargetExtent(RenderTargetId::SsrRaw);
+    if (frame.rayTracing.reflections && m_tracedPipeline != VK_NULL_HANDLE)
+    {
+        // The scene, not the screen: the rays reach as far as the sky.
+        constants.maxDistance = kTracedReflectionDistance;
+        const std::array<VkDescriptorSet, 4> sets = {frame.frameDescriptorSet, frame.raySet, passSet, frame.rayTextureSet};
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipeline);
+        vkCmdBindDescriptorSets(
+            commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+        vkCmdPushConstants(commandBuffer, m_tracedPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+        vkCmdDispatch(
+            commandBuffer,
+            (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+            (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+            1);
+        return;
+    }
     DispatchCompute(
         commandBuffer,
         m_pipeline,
         m_pipelineLayout,
         frame.frameDescriptorSet,
-        m_descriptorSets.at(slot * 2 + frame.taaHistory.readIndex),
+        passSet,
         &constants,
         sizeof(constants),
-        targets.GetTargetExtent(RenderTargetId::SsrRaw));
+        extent);
 }
 
 void VulkanSsrTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
@@ -240,6 +269,16 @@ void VulkanSsrTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
 void VulkanSsrTracePass::DestroyHandles()
 {
     m_descriptorSets.clear();
+    if (m_tracedPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, m_tracedPipeline, nullptr);
+        m_tracedPipeline = VK_NULL_HANDLE;
+    }
+    if (m_tracedPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
+        m_tracedPipelineLayout = VK_NULL_HANDLE;
+    }
     DestroyCommon(m_device, m_pipeline, m_pipelineLayout, m_descriptorPool, m_setLayout, {&m_nearestSampler, &m_linearSampler});
 }
 

@@ -117,6 +117,8 @@ add_library(engine_renderer
     vulkan/ddgi.h
     vulkan/ddgi_debug_pass.cpp
     vulkan/ddgi_debug_pass.h
+    vulkan/rt_shadow_pass.cpp
+    vulkan/rt_shadow_pass.h
     vulkan/ddgi_reference_capture.cpp
     vulkan/common.h
     vulkan/device.cpp
@@ -253,6 +255,8 @@ set(MINIENGINE_SHADER_SOURCES
     imgui_hdr10.frag
     ssr_trace.comp
     ssr_resolve.comp
+    rt_shadow_temporal.comp
+    rt_shadow_filter.comp
     transmission_copy.comp
     ray_material_average.comp
     ddgi_debug.comp
@@ -299,6 +303,8 @@ set(MINIENGINE_SHADER_INCLUDES
     spherical_harmonics.glsl
     cubemap_common.glsl
     ray_tracing_common.glsl
+    ray_hit_common.glsl
+    rt_shadow_common.glsl
     ddgi_common.glsl
     ground_plane.glsl
 )
@@ -340,6 +346,22 @@ function(miniengine_add_shaders shader_target)
         list(APPEND spv_outputs "${shader_output}")
     endforeach()
 
+    # Shaders only hardware ray tracing runs (the ray traced effects): one ray query build, named as
+    # the source.
+    foreach(shader_name IN LISTS MINIENGINE_HARDWARE_RAY_SHADERS)
+        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
+        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_name}.spv")
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}" ${shader_includes}
+            COMMENT "Compiling ${shader_name} (hardware ray tracing)"
+            VERBATIM
+        )
+        list(APPEND spv_outputs "${shader_output}")
+    endforeach()
+
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
 
@@ -347,6 +369,14 @@ endfunction()
 set(MINIENGINE_RAY_QUERY_SHADERS
     ddgi_trace.comp
     ddgi_debug.comp
+    deferred_lighting.frag
+)
+
+# The ray traced effects, which exist only with hardware ray tracing.
+set(MINIENGINE_HARDWARE_RAY_SHADERS
+    rt_occlusion.comp
+    rt_shadow_trace.comp
+    rt_reflection_trace.comp
 )
 
 miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})

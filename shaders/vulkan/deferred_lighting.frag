@@ -1,5 +1,14 @@
-#version 450
+#version 460
 #extension GL_GOOGLE_include_directive : require
+#ifdef RAY_QUERY
+// The ray query variant (deferred_lighting_ray_query.frag.spv) traces the local lights' shadows.
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+#define LOCAL_SHADOW_RAYS
+#define RAY_TEXTURED_ALPHA
+#endif
 
 #include "scene_common.glsl"
 #include "atmosphere_sampling.glsl"
@@ -7,6 +16,13 @@
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
 #include "pre_exposure.glsl"
+#ifdef RAY_QUERY
+// The ray scene at set 1, which the plain variant leaves empty, and its texture table at set 3.
+#include "ray_tracing_common.glsl"
+#include "material_common.glsl"
+#include "material_uv.glsl"
+#include "ray_hit_common.glsl"
+#endif
 
 // Must match the push constant VulkanLightingPass::Record pushes.
 layout(push_constant) uniform LightingConstants
@@ -14,7 +30,9 @@ layout(push_constant) uniform LightingConstants
     // xyz = kViewportBackgroundFrameBuffer, exactly what the forward pass clears the HDR target to;
     // w unused. A pixel no geometry covered resolves to it.
     vec4 backgroundRadiance;
-    // x = 1 for the light cluster heat map instead of shading; yzw unused.
+    // x = 1 for the light cluster heat map instead of shading; y = 1 to take the sun's shadow from the
+    // ray traced one (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows
+    // (the ray query variant only); w unused.
     vec4 debug;
 }
 lightingData;
@@ -33,6 +51,55 @@ vec3 LightCountHeat(uint count)
 layout(location = 0) in vec2 fragTexCoord;
 
 layout(location = 0) out vec4 outColor;
+
+#ifdef RAY_QUERY
+float LocalShadowNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+// One ray from the surface toward a point on the light's source: its sphere (point and spot lights
+// with a source radius) or its rectangle (area lights), drawn afresh each frame so TAA averages a
+// soft shadow; a light without a size casts a hard one. The ray stops short of the light by the
+// atlas's near plane, so a lamp's own housing does not shadow it.
+float TraceLocalLightShadow(SceneLightData light, vec3 worldPosition, vec3 offsetNormal)
+{
+    float frame = ubo.cloudParams.w;
+    vec2 u = vec2(LocalShadowNoise(gl_FragCoord.xy + 5.588238 * frame),
+                  LocalShadowNoise(gl_FragCoord.yx + 7.123 * frame + light.positionAndRange.xy));
+    vec3 target = light.positionAndRange.xyz;
+    if (int(light.directionAndType.w) == LIGHT_AREA)
+    {
+        vec3 lightNormal = normalize(light.directionAndType.xyz);
+        vec3 rightAxis = normalize(light.areaRightAxis.xyz);
+        vec3 upAxis = cross(lightNormal, rightAxis);
+        target += rightAxis * ((u.x - 0.5) * light.spotAndArea.z) + upAxis * ((u.y - 0.5) * light.spotAndArea.w);
+    }
+    else if (light.spotAndArea.z > 0.0)
+    {
+        // A disk of the source's radius facing the surface: the sphere as the surface sees it.
+        vec3 axis = normalize(worldPosition - target);
+        vec3 helper = abs(axis.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 tangent = normalize(cross(helper, axis));
+        vec3 bitangent = cross(axis, tangent);
+        float radius = light.spotAndArea.z * sqrt(u.x);
+        float phi = 6.28318530718 * u.y;
+        target += (tangent * cos(phi) + bitangent * sin(phi)) * radius;
+    }
+    float distanceToCamera = length(worldPosition - ubo.cameraWorldPosition.xyz);
+    vec3 origin = OffsetRayOrigin(worldPosition + offsetNormal * (0.002 + 0.0004 * distanceToCamera), offsetNormal);
+    vec3 toTarget = target - origin;
+    float distance = length(toTarget);
+    float reach = distance - kLocalShadowNearPlaneMetres;
+    if (reach <= 0.0)
+    {
+        return 1.0;
+    }
+    RayHit hit;
+    uint rayId = uint(gl_FragCoord.x) * 73856093u ^ uint(gl_FragCoord.y) * 19349663u ^ uint(frame) * 83492791u;
+    return TraceSceneRayMasked(origin, toTarget / distance, 0.0, reach, true, rayId, RAY_MASK_VISIBILITY, hit) ? 0.0 : 1.0;
+}
+#endif
 
 void main()
 {
@@ -53,9 +120,18 @@ void main()
     // Re-clamped: 8-bit storage can round the geometry pass's 0.04 floor down to 10/255, and the
     // GGX terms assume the floor holds.
     float roughness = clamp(surface.g, 0.04, 1.0);
-    // Material occlusion times the screen-space result. Only the ambient term uses it; the resolve
-    // writes 1.0 when AO is off.
-    float ao = surface.b * texture(sceneAo, fragTexCoord).r;
+    // Material occlusion times the screen-space (or ray traced) result. Only the ambient term uses it;
+    // the resolve writes 1.0 when AO is off. g is the ray traced DDGI probe occlusion, 1 without it.
+    vec2 aoSample = texture(sceneAo, fragTexCoord).rg;
+    float ao = surface.b * aoSample.r;
+    ddgiProbeOcclusion = aoSample.g;
+    if (lightingData.debug.y > 0.5)
+    {
+        tracedSunShadow = texture(sceneShadow, fragTexCoord).r;
+    }
+#ifdef RAY_QUERY
+    tracedLocalShadows = lightingData.debug.z > 0.5;
+#endif
     // GB3 is pre-exposed; shading runs in physical units, so it is divided back here.
     vec3 emissive = texture(gbufferEmissive, fragTexCoord).rgb * ubo.exposure.y;
 

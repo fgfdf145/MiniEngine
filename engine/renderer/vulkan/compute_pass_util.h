@@ -21,8 +21,12 @@ VkSampler CreateClampSampler(VkDevice device, VkFilter filter);
 // A memory type in typeFilter with every one of properties; throws when there is none.
 uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
-// One binding per type, all compute stage, binding N of type types[N].
-VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types);
+// One binding per type, binding N of type types[N], visible to stages (the compute stage unless
+// another shader reads the set too).
+VkDescriptorSetLayout CreateComputeSetLayout(
+    VkDevice device,
+    std::span<const VkDescriptorType> types,
+    VkShaderStageFlags stages = VK_SHADER_STAGE_COMPUTE_BIT);
 
 // Set 0 is the frame set, set 1 the pass's own; one compute-stage push constant range of
 // pushConstantSize bytes.

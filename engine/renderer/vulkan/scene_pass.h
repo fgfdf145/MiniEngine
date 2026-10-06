@@ -122,6 +122,15 @@ struct ScenePassFrameContext
     // Passes that trace the ray scene use its ray-query variants: the device supports them and the
     // hardware ray tracing switch is on (RenderDebugSettings::hardwareRayTracing).
     bool hardwareRays = false;
+    // The ray traced effects that run this frame: each switch is already false where it cannot
+    // (no hardware rays, no ray scene yet, the forward-only order or the Khronos reference view), and
+    // probeOcclusion where DDGI is off. The ray scene's sets for this frame slot (VulkanRayScene's ray
+    // set and texture table), null when no effect traces.
+    RayTracingSettings rayTracing;
+    VkDescriptorSet raySet = VK_NULL_HANDLE;
+    VkDescriptorSet rayTextureSet = VK_NULL_HANDLE;
+    // The traced sun shadow's temporal filter history, as aoHistory is the AO resolve's.
+    TemporalHistoryFrame rtShadowHistory;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
     // exposure histogram meters, unlike the flat background of EnvironmentMode::None.
     bool physicalSky = false;

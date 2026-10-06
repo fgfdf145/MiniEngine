@@ -23,10 +23,15 @@
 namespace me
 {
 
+class VulkanBuffer;
+
 // One render submesh of the content, as the ray scene traces it.
 struct RaySceneSubmesh
 {
     std::shared_ptr<const MeshData> mesh;
+    // The mesh's GPU buffers, device addressable with hardware ray tracing: hit shading reads the hit's
+    // vertices through them. Held while any content naming them is installed.
+    std::shared_ptr<const VulkanBuffer> buffer;
     // Rays pass through Blend surfaces.
     bool blend = false;
     // The submesh's draw slot, which is where its ray material lives.
@@ -43,7 +48,14 @@ struct RayMaterialSource
     // The material's base colour and emissive textures (the defaults when it has none).
     TextureDescriptorBinding baseColor;
     TextureDescriptorBinding emissive;
+    // Its metallic and roughness maps, which hit shading reads with the two above.
+    TextureDescriptorBinding metallic;
+    TextureDescriptorBinding roughness;
 };
+
+// The textures hit shading samples per draw slot, in this order, in the ray texture table
+// (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.glsl).
+inline constexpr uint32_t kRayTexturesPerSlot = 4;
 
 // The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.glsl): the meshes'
 // hierarchies (ray_tracing_bvh.h), built on a worker thread when content changes; each submesh's ray
@@ -53,12 +65,24 @@ struct RayMaterialSource
 //   0 mesh nodes, 1 mesh triangles, 2 instances, 3 top-level nodes, 4 ray materials,
 // all storage buffers, and with hardware ray tracing 5, the frame slot's top-level acceleration
 // structure over the same instances (VulkanRayAcceleration), which the shaders' RAY_QUERY variants
-// trace instead of walking 0 to 3. Nothing is traceable until the first build installs (IsReady).
+// trace instead of walking 0 to 3, 6 each mesh's vertex and index buffer addresses and 7 each leaf
+// triangle's index in its mesh's index list, which hit shading (ray_hit_common.glsl) reads the hit's
+// vertices through. Hardware ray tracing also brings the texture table (GetTextureSet): every draw
+// slot's kRayTexturesPerSlot material textures in one array, which hit shading indexes by the hit's
+// slot. Nothing is traceable until the first build installs (IsReady).
 class VulkanRayScene
 {
   public:
-    // hardwareRayTracing: the device supports ray queries (VulkanDevice::SupportsRayQuery).
-    VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount, bool hardwareRayTracing);
+    // hardwareRayTracing: the device supports ray queries (VulkanDevice::SupportsRayQuery), and with
+    // them the descriptor indexing the texture table needs. defaultTexture (hardware ray tracing only):
+    // a white texture the table names where no material's is; it must outlive the ray scene.
+    VulkanRayScene(
+        VkPhysicalDevice physicalDevice,
+        VkDevice device,
+        VkPipelineCache pipelineCache,
+        uint32_t frameCount,
+        bool hardwareRayTracing,
+        TextureDescriptorBinding defaultTexture = {});
     ~VulkanRayScene();
 
     VulkanRayScene(const VulkanRayScene&) = delete;
@@ -84,10 +108,10 @@ class VulkanRayScene
     bool HasFinishedBuild() const;
     void InstallBuild();
 
-    // This frame's instances: models is parallel to the submeshes of the installed content, skipped
-    // flags every instance probe rays leave out (kRayInstanceSkip). Writes the frame slot's
-    // instance and top-level buffers.
-    void UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> skipped);
+    // This frame's instances: models is parallel to the submeshes of the installed content, moving
+    // flags the instances probe rays leave out and visibility rays still see (kRayInstanceDynamic).
+    // Writes the frame slot's instance and top-level buffers.
+    void UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> moving);
 
     // Averages the ray materials when content changed; builds the acceleration structures new content
     // or moved instances need, the frame slot's top level only when hardwareRays says this frame's
@@ -101,6 +125,10 @@ class VulkanRayScene
     bool IsBuilding() const;
     VkDescriptorSetLayout GetSetLayout() const;
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
+    // The texture table, with hardware ray tracing only (null handles without): one combined image
+    // sampler array, binding 0, kRayTexturesPerSlot entries per draw slot.
+    VkDescriptorSetLayout GetTextureSetLayout() const;
+    VkDescriptorSet GetTextureSet() const;
     // Submeshes of the installed content, in the order SetContent gave them.
     size_t GetSubmeshCount() const;
 
@@ -153,6 +181,11 @@ class VulkanRayScene
         // Each mesh's bottom-level acceleration structure (RayScene::meshes order), with hardware ray
         // tracing only.
         std::vector<std::shared_ptr<RayBlas>> blas;
+        // Hardware ray tracing only: each mesh's buffers (RayScene::meshes order), held while the build
+        // is installed, their addresses (binding 6) and each leaf triangle's source triangle (binding 7).
+        std::vector<std::shared_ptr<const VulkanBuffer>> meshBuffers;
+        Buffer meshGeometry;
+        Buffer sourceTriangles;
     };
     // A build that will never be installed (or the content a new build replaces) is released on a
     // background task: freeing its hierarchies, hundreds of megabytes of mapped GPU memory on a map, took
@@ -178,6 +211,9 @@ class VulkanRayScene
     // Static per build.
     Buffer m_meshNodes;
     Buffer m_meshTriangles;
+    Buffer m_meshGeometry;
+    Buffer m_sourceTriangles;
+    std::vector<std::shared_ptr<const VulkanBuffer>> m_meshBuffers;
     // Written by the material averaging, per content.
     Buffer m_materials;
     // Per frame slot, sized for the installed content.
@@ -222,6 +258,17 @@ class VulkanRayScene
     size_t m_meshNodeCount = 0;
     size_t m_meshTriangleCount = 0;
     bool m_ready = false;
+
+    // The texture table (hardware ray tracing only): allocated for m_textureCapacity draw slots,
+    // reallocated when the slots outgrow it. A slot without a material names the default texture, so
+    // an installed content still tracing a slot another content released reads something valid.
+    void WriteTextureSlot(uint32_t slot, const RayMaterialSource* source, std::vector<VkDescriptorImageInfo>& infos, std::vector<VkWriteDescriptorSet>& writes) const;
+    TextureDescriptorBinding m_defaultTexture;
+    VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_texturePool = VK_NULL_HANDLE;
+    VkDescriptorSet m_textureSet = VK_NULL_HANDLE;
+    uint32_t m_textureCapacity = 0;
+    uint32_t m_textureLimit = 0;
 
     // Null without hardware ray tracing.
     std::unique_ptr<VulkanRayAcceleration> m_acceleration;

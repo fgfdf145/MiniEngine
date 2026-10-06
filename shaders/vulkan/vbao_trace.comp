@@ -15,7 +15,8 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 1, binding = 0) uniform sampler2D depthTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
-layout(set = 1, binding = 2, r32f) uniform writeonly image2D aoRawImage;
+// r the AO; g the DDGI probe occlusion, 1 here (rt_occlusion.comp writes it after this pass).
+layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D aoRawImage;
 
 const float PI = 3.14159265359;
 const float HALF_PI = 1.57079632679;
@@ -143,5 +144,5 @@ void main()
         weightSum += weight;
     }
 
-    imageStore(aoRawImage, halfPixel, vec4(weightSum > 0.0 ? visibility / weightSum : 1.0));
+    imageStore(aoRawImage, halfPixel, vec4(weightSum > 0.0 ? visibility / weightSum : 1.0, 1.0, 0.0, 0.0));
 }

@@ -18,6 +18,11 @@ namespace me
 
 struct RayTracingFunctions;
 
+// Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.glsl: the probes'
+// rays trace kRayMaskStatic only, the per-pixel visibility rays both.
+inline constexpr uint8_t kRayMaskStatic = 0x1;
+inline constexpr uint8_t kRayMaskDynamic = 0x2;
+
 // One mesh's bottom-level acceleration structure, shared by every content that holds the mesh and
 // freed with the last of them. Made on the ray scene's worker, built on the GPU by the first
 // VulkanRayAcceleration::Record after a content holding it installs. Its triangles are the mesh

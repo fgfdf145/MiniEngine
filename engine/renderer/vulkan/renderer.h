@@ -26,6 +26,7 @@
 #include "gpu_timer.h"
 #include "ddgi_debug_pass.h"
 #include "ray_scene.h"
+#include "rt_shadow_pass.h"
 #include "ddgi.h"
 #include "scene_render_targets.h"
 #include "selection_outline_pass.h"
@@ -85,9 +86,12 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     // left out): an upload that keeps this submesh keeps those textures.
     VkDescriptorSet materialSet = VK_NULL_HANDLE;
     std::vector<std::string> textureKeys;
-    // The base colour and emission the ray scene averages for this submesh's ray material.
+    // The base colour and emission the ray scene averages for this submesh's ray material, and the
+    // metallic and roughness maps its hit shading samples with them.
     TextureDescriptorBinding rayBaseColor;
     TextureDescriptorBinding rayEmissive;
+    TextureDescriptorBinding rayMetallic;
+    TextureDescriptorBinding rayRoughness;
     // The draw slot (firstInstance) holding this submesh's material, texture transforms, previous model
     // matrix and ray material, from the commit that first draws it until the one that drops it. Set at
     // commit, hence mutable: everything else is fixed once made.
@@ -370,8 +374,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanAtmosphere> m_atmosphere;
     // The sky prefiltered for the specular lobe, and the DFG table it is weighted by.
     std::unique_ptr<VulkanEnvironmentProbe> m_environmentProbe;
-    // The scene as compute shaders trace it (DDGI).
+    // The scene as compute shaders trace it (DDGI, and with hardware ray tracing the ray traced
+    // effects), and the white texture its texture table names where no material's is.
     std::unique_ptr<VulkanRayScene> m_rayScene;
+    std::unique_ptr<VulkanTexture> m_rayDefaultTexture;
     // The DDGI probes, the CPU's schedule of their updates, the level layout their data belongs to
     // (count and base spacing: another one invalidates every probe) and the frame index that seeds
     // their ray rotations.
@@ -481,6 +487,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Which AO history image each frame reads and writes. Reset with the motion history, because
     // the resolve pass recreates its history images at the same points.
     TemporalHistory m_aoHistory;
+    TemporalHistory m_rtShadowHistory;
     TemporalHistory m_giHistory;
     TemporalHistory m_ssrHistory;
     TemporalHistory m_taaHistory;

@@ -10,17 +10,24 @@
 namespace me
 {
 
+class VulkanRayScene;
+
 // The visibility bitmask AO trace. Reads depth and the G-buffer geometric normal, writes the noisy
-// per-pixel visibility into AoRaw. Records nothing when AO is disabled; the resolve then ignores
-// AoRaw.
+// per-pixel visibility into AoRaw's r. With hardware ray tracing (RayTracingSettings) the occlusion is
+// traced through the ray scene instead (rt_occlusion.comp): r the AO within the radius, unless the
+// bitmask still gives it, and g the DDGI probe occlusion, the share of rays that escape to a coarse
+// level's spacing (1 where the finest level answers). Records nothing when neither runs; the resolve
+// then ignores AoRaw.
 class VulkanAoTracePass : public IScenePass
 {
   public:
+    // rayScene's set layouts make the traced variant's pipeline when it has hardware ray tracing.
     VulkanAoTracePass(
         VkDevice device,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+        VkDescriptorSetLayout frameSetLayout,
+        const VulkanRayScene& rayScene);
     ~VulkanAoTracePass() override;
 
     VulkanAoTracePass(const VulkanAoTracePass&) = delete;
@@ -44,6 +51,9 @@ class VulkanAoTracePass : public IScenePass
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
+    // The ray traced occlusion: frame set, ray set, this pass's set, ray texture table.
+    VkPipelineLayout m_tracedPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_tracedPipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
 };
 

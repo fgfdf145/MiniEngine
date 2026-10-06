@@ -66,8 +66,17 @@ enum class GBufferDebugView : uint32_t
     DdgiIrradiance = 15,
     // The image with every DDGI probe drawn as a small sphere of its irradiance: red inactive, blue not
     // yet updated for where it is.
-    DdgiProbes = 16
+    DdgiProbes = 16,
+    // The ray traced sun shadow as the lighting reads it (white lit, black shadowed), filtered unless
+    // RayTracingSettings::denoise is off. White where it does not run.
+    RayTracedShadow = 17,
+    // The ray traced DDGI probe occlusion (SceneAo's g): the share of the probes' light the lighting
+    // keeps. White where it does not run.
+    ProbeOcclusion = 18
 };
+
+// The last view, for the readers that clamp a stored number.
+inline constexpr GBufferDebugView kLastGBufferDebugView = GBufferDebugView::ProbeOcclusion;
 
 // Visibility bitmask ambient occlusion. The pass clamps every value again before the
 // shader sees it, so the editor's slider ranges are a convenience, not a guarantee.
@@ -159,6 +168,35 @@ struct DdgiSettings
     int probeViewLevel = 0;
 };
 
+// Effects traced through the ray scene with the GPU's ray queries (docs/design/
+// 2026-10-07-ray-traced-effects-design.md). Each replaces its screen-space or shadow-map
+// counterpart while hardware ray tracing runs (the device has ray queries and
+// RenderDebugSettings::hardwareRayTracing is on); without it the counterpart stays.
+struct RayTracingSettings
+{
+    bool operator==(const RayTracingSettings&) const = default;
+
+    // The sun's shadow: one ray a pixel toward a point on the sun's disk, filtered, instead of the
+    // cascades. Soft as the sun's size makes it, sharp at contact, and as far as the scene reaches.
+    bool sunShadows = true;
+    // Ambient occlusion traced within AoSettings::radius instead of the screen-space bitmask: it sees
+    // what is off screen or hidden behind the surface.
+    bool ambientOcclusion = true;
+    // The DDGI probes' light scaled by the share of short rays that escape where a coarse level
+    // answers, so spaces smaller than its spacing are not lit as if open (the DDGI design's
+    // "Occlusion Finer Than the Probes").
+    bool probeOcclusion = true;
+    // Rays a pixel for the two above, at half resolution.
+    int occlusionRays = 2;
+    // Reflections traced through the scene instead of marched against the depth buffer: what lies off
+    // screen or behind something is reflected too, shaded at the hit.
+    bool reflections = true;
+    // Point, spot and area lights' shadows traced from the lighting pass instead of the shadow atlas.
+    bool localShadows = true;
+    // The traced shadow's spatial and temporal filters. Off, the raw one-ray result.
+    bool denoise = true;
+};
+
 // The operator the tone mapping pass applies to the shaded image (the G-buffer views pick their own).
 // The numeric values are not the tonemap.frag push constant: VulkanTonemapPass maps them.
 enum class ToneMapper : uint32_t
@@ -219,6 +257,9 @@ struct RenderDebugSettings
     // acceleration structures when the device has them. Off, or without them, they walk the ray
     // scene's own hierarchies in compute: the comparison path, which must find the same hits.
     bool hardwareRayTracing = true;
+    // The effects traced with hardware ray tracing; each falls back to its screen-space or shadow-map
+    // counterpart without it.
+    RayTracingSettings rayTracing;
     // How far from the camera the sun's cascaded shadows reach, in metres (ShadowCascadeSettings::
     // maxDistance). The same four cascades cover it, so a longer reach gives coarser shadows.
     float shadowDistance = 80.0f;

@@ -365,7 +365,7 @@ std::vector<uint32_t> BuildTopLevel(RayScene& scene, std::span<const RayInstance
             instance.worldToObject[row] = glm::vec4(worldToObject[0][row], worldToObject[1][row], worldToObject[2][row], worldToObject[3][row]);
         }
         const RayMeshRange& range = scene.meshes[input.mesh];
-        instance.data = glm::uvec4(range.nodeOffset, range.triangleOffset, input.material, input.flags);
+        instance.data = glm::uvec4(range.nodeOffset, range.triangleOffset, input.material, (input.flags & kRayInstanceFlagMask) | (input.mesh << kRayInstanceMeshShift));
         scene.instances.push_back(instance);
         sourceIndices.push_back(kept[boxIndex]);
     }
@@ -479,7 +479,7 @@ bool IncrementalTopLevel::Update(RayScene& scene, std::span<const RayInstanceInp
     {
         if (m_slotOfInput[index] != ~0u)
         {
-            scene.instances[m_slotOfInput[index]].data.w = kRayInstanceSkip;
+            scene.instances[m_slotOfInput[index]].data.w |= kRayInstanceSkip;
         }
     }
     const uint32_t movedInstanceBase = static_cast<uint32_t>(scene.instances.size());
@@ -593,7 +593,7 @@ bool TraceRay(const RayScene& scene, const Ray& ray, RayHit& hit, bool anyHit, c
         for (uint32_t instanceIndex = node.first; instanceIndex < node.first + node.count; ++instanceIndex)
         {
             const RayInstance& instance = scene.instances[instanceIndex];
-            if ((instance.data.w & kRayInstanceSkip) != 0u)
+            if ((instance.data.w & (kRayInstanceSkip | kRayInstanceDynamic)) != 0u)
             {
                 continue;
             }

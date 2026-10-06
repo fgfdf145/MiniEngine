@@ -674,10 +674,18 @@ float SampleShadowCascade(int cascade, vec3 worldPos, vec3 geoNormal)
     return lit / 9.0;
 }
 
+// The ray traced sun shadow at the pixel being shaded (rt_shadow_filter.comp), which the deferred
+// lighting pass sets before ShadeSurface when it runs; negative, the cascades answer.
+float tracedSunShadow = -1.0;
+
 // The fraction of the shadow casting light that reaches this point: 1 lit, 0 in shadow. The
 // clouds' shadow (cloud_shadow.glsl) multiplies the cascades' and reaches beyond them.
 float EvaluateDirectionalShadow(vec3 worldPos, vec3 geoNormal)
 {
+    if (tracedSunShadow >= 0.0)
+    {
+        return tracedSunShadow * CloudShadow(worldPos);
+    }
     float viewDepth = -(ubo.view * vec4(worldPos, 1.0)).z;
     int cascade = -1;
     for (int i = 0; i < SHADOW_CASCADE_COUNT; ++i)
@@ -965,6 +973,12 @@ vec3 EvaluateSkyIrradiance(vec3 direction)
     return max(irradiance, vec3(0.0));
 }
 
+// The share of the DDGI probes' light that reaches the surface being shaded where a level coarser
+// than the finest answers: the ray traced probe occlusion (rt_occlusion.comp, SceneAo's g). The
+// deferred lighting pass sets it per pixel before ShadeSurface; everywhere else the probes' light
+// stands as it is.
+float ddgiProbeOcclusion = 1.0;
+
 // The light the diffuse ambient term receives at worldPosition from around n, as irradiance / pi (the
 // ambient luminance's unit): the DDGI probes where they reach, which hold the sky, the Ambient and
 // Hemisphere lights and every bounce off the scene; the sky's SH and the ambient lights where they do
@@ -979,7 +993,7 @@ vec3 SceneDiffuseAmbient(vec3 worldPosition, vec3 n, vec3 V)
         return fallback;
     }
     float weight;
-    vec3 probes = DdgiIrradiance(worldPosition, n, V, weight).rgb;
+    vec3 probes = DdgiIrradiance(worldPosition, n, V, weight).rgb * ddgiProbeOcclusion;
     return probes + (1.0 - weight) * fallback;
 }
 
@@ -1000,7 +1014,7 @@ vec3 SceneSpecularEnvironment(vec3 worldPosition, vec3 N, vec3 R, vec3 V, vec3 e
     {
         return environment;
     }
-    probes /= weight;
+    probes *= ddgiProbeOcclusion / weight;
     float skyVisibility = clamp(probes.a, 0.0, 1.0);
     // The probes' irradiance / pi around R is the sky's, times the share of rays that escaped, plus
     // the surroundings', times the rest.
@@ -1104,6 +1118,13 @@ vec3 EvaluateCoatAmbient(vec3 worldPosition, CoatParams coat, vec3 geoNormal, ve
     return coatAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, coat.roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 
+#ifdef LOCAL_SHADOW_RAYS
+// The ray traced local light shadow (deferred_lighting.frag's ray query variant), used instead of the
+// atlas while tracedLocalShadows is set.
+float TraceLocalLightShadow(SceneLightData light, vec3 worldPosition, vec3 offsetNormal);
+bool tracedLocalShadows = false;
+#endif
+
 // Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
 // like the directional caster, the lookup is skipped where the light contributes nothing.
 // A surface that transmits offsets its lookup toward a light behind it (ShadowOffsetNormal).
@@ -1115,12 +1136,21 @@ void ApplyLocalShadow(
         (any(greaterThan(contribution, vec3(0.0))) || any(greaterThan(coatContribution, vec3(0.0)))))
     {
         vec3 toLight = light.positionAndRange.xyz - worldPosition;
+#ifdef LOCAL_SHADOW_RAYS
+        float shadow = tracedLocalShadows ? TraceLocalLightShadow(light, worldPosition, ShadowOffsetNormal(geoNormal, toLight, transmits))
+                                          : EvaluateLocalShadow(light, worldPosition, ShadowOffsetNormal(geoNormal, toLight, transmits));
+#else
         float shadow = EvaluateLocalShadow(light, worldPosition, ShadowOffsetNormal(geoNormal, toLight, transmits));
+#endif
         contribution *= shadow;
         coatContribution *= shadow;
         sheenContribution *= shadow;
     }
 }
+
+// Loops over every local light instead of the cluster grid's list: for a point outside the view
+// frustum the grid covers (what a ray traced reflection hits).
+bool shadeAllLocalLights = false;
 
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
@@ -1205,7 +1235,7 @@ vec3 ShadeSurface(
     // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
     // and a light left out contributes exactly zero, so this sums the same values in the same order
     // as the brute-force loop below. That loop stays as the comparison path.
-    if (ubo.lightCounts.z != 0u)
+    if (ubo.lightCounts.z != 0u && !shadeAllLocalLights)
     {
         uvec2 range = lightClusters.ranges[FindLightCluster(worldPosition)];
         for (uint k = 0u; k < range.y; ++k)

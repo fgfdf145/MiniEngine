@@ -21,10 +21,13 @@ namespace
 // The three GI passes follow lighting, whose image is the light they bounce, and come before the
 // forward pass, whose surfaces they do not light; like AO they are in the deferred order only. The
 // DDGI debug views follow the composite, whose input they overwrite for the tone mapping pass to show.
+// The ray traced sun shadow follows the geometry pass, whose depth and normals it traces from, and is in
+// the deferred order only; it writes a neutral result while it does not trace.
 // The selection outline comes last in both: it reads the finished scene depth and writes an image of
 // its own, which nothing in the scene reads.
-constexpr std::array<ScenePassId, 20> kDeferredOrder = {
+constexpr std::array<ScenePassId, 21> kDeferredOrder = {
     ScenePassId::Geometry,
+    ScenePassId::RtShadow,
     ScenePassId::AoTrace,
     ScenePassId::AoResolve,
     ScenePassId::SsrTrace,
@@ -64,6 +67,8 @@ const char* ScenePassName(ScenePassId id)
     {
     case ScenePassId::Geometry:
         return "Geometry";
+    case ScenePassId::RtShadow:
+        return "RtShadow";
     case ScenePassId::AoTrace:
         return "AoTrace";
     case ScenePassId::AoResolve:

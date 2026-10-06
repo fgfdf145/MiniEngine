@@ -23,5 +23,7 @@ layout(set = 2, binding = 10) uniform sampler2D sceneReflections;
 // One-bounce indirect diffuse: rgb pre-exposed radiance (see gi_resolve.comp). Written after the
 // lighting pass, so only the composite and the debug view read anything meaningful from it.
 layout(set = 2, binding = 11) uniform sampler2D sceneGi;
+// The ray traced sun shadow (rt_shadow_filter.comp): r visibility, g 1 where it ran this frame.
+layout(set = 2, binding = 12) uniform sampler2D sceneShadow;
 
 #endif

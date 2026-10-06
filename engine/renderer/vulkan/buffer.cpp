@@ -108,11 +108,13 @@ VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     const MeshData& meshData,
-    VulkanUploadBatch& uploadBatch)
+    VulkanUploadBatch& uploadBatch,
+    bool deviceAddressable)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
-      m_indexCount(static_cast<uint32_t>(meshData.indices.size()))
+      m_indexCount(static_cast<uint32_t>(meshData.indices.size())),
+      m_deviceAddressable(deviceAddressable)
 {
     // A throw out of a constructor skips the destructor, so whatever was created before the
     // failure is released here with the same call the destructor makes. The copies recorded into
@@ -182,6 +184,16 @@ uint32_t VulkanBuffer::GetIndexCount() const
     return m_indexCount;
 }
 
+VkDeviceAddress VulkanBuffer::GetVertexAddress() const
+{
+    return m_vertexAddress;
+}
+
+VkDeviceAddress VulkanBuffer::GetIndexAddress() const
+{
+    return m_indexAddress;
+}
+
 void VulkanBuffer::CreateBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
@@ -226,8 +238,13 @@ void VulkanBuffer::CreateDeviceLocalBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
     VkBuffer& buffer,
-    VulkanPooledMemory& memory)
+    VulkanPooledMemory& memory,
+    VkDeviceAddress* address)
 {
+    if (address != nullptr)
+    {
+        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
@@ -242,8 +259,19 @@ void VulkanBuffer::CreateDeviceLocalBuffer(
         VkMemoryRequirements memoryRequirements{};
         vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
         memory = VulkanMemoryPool::Allocate(
-            m_physicalDevice, m_device, memoryRequirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::Buffer);
+            m_physicalDevice,
+            m_device,
+            memoryRequirements,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            address != nullptr ? VulkanMemoryPool::Resource::AddressableBuffer : VulkanMemoryPool::Resource::Buffer);
         CheckVulkan(vkBindBufferMemory(m_device, buffer, memory.memory, memory.offset), "Failed to bind Vulkan buffer memory");
+        if (address != nullptr)
+        {
+            VkBufferDeviceAddressInfo addressInfo{};
+            addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+            addressInfo.buffer = buffer;
+            *address = vkGetBufferDeviceAddress(m_device, &addressInfo);
+        }
     }
     catch (...)
     {
@@ -278,7 +306,8 @@ void VulkanBuffer::UploadDeviceLocal(
     VkBufferUsageFlags usage,
     VulkanUploadBatch& uploadBatch,
     VkBuffer& buffer,
-    VulkanPooledMemory& memory)
+    VulkanPooledMemory& memory,
+    VkDeviceAddress* address)
 {
     VkBufferCopy copyRegion{};
     copyRegion.size = size;
@@ -308,7 +337,7 @@ void VulkanBuffer::UploadDeviceLocal(
         vkUnmapMemory(m_device, stagingMemory);
     }
 
-    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory);
+    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory, address);
     vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer, 1, &copyRegion);
 }
 
@@ -320,7 +349,8 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         uploadBatch,
         m_vertexBuffer,
-        m_vertexMemory);
+        m_vertexMemory,
+        m_deviceAddressable ? &m_vertexAddress : nullptr);
 }
 
 void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
@@ -331,7 +361,8 @@ void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& up
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         uploadBatch,
         m_indexBuffer,
-        m_indexMemory);
+        m_indexMemory,
+        m_deviceAddressable ? &m_indexAddress : nullptr);
 }
 
 void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& uploadBatch)

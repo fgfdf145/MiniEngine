@@ -317,11 +317,12 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[0].descriptorCount = 1;
     // Compute too: the AO passes reconstruct view-space positions from the camera block.
     bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    // The shadow map, sampled with depth comparison by the material fragment shader.
+    // The shadow map, sampled with depth comparison by the material fragment shader, and by the ray
+    // traced reflections' hit shading beyond the traced shadows' reach.
     bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // Each draw's previous model matrix, read by triangle.vert for motion vectors.
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -360,11 +361,12 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    // Every draw's material, read by the material fragment shaders at their draw slot.
+    // Every draw's material, read by the material fragment shaders at their draw slot, and by hardware
+    // ray tracing's hit shading at the hit's (ray_hit_common.glsl).
     bindings[12].binding = 12;
     bindings[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[12].descriptorCount = 1;
-    bindings[12].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[12].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // The local shadow atlas (13) and its tiles (14), read by ShadeSurface.
     bindings[13].binding = 13;
     bindings[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -374,19 +376,19 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     bindings[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[14].descriptorCount = 1;
     bindings[14].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    // The area lights' LTC tables.
+    // The area lights' LTC tables (compute too: reflected hits are lit by the same lights).
     for (uint32_t binding = 15; binding <= 16; ++binding)
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    // Each draw's texture transforms, read by gbuffer.frag and triangle.frag.
+    // Each draw's texture transforms, read by gbuffer.frag and triangle.frag, and by hit shading.
     bindings[17].binding = 17;
     bindings[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[17].descriptorCount = 1;
-    bindings[17].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[17].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // The transmission copy, sampled by triangle.frag for transmissive surfaces.
     bindings[18].binding = 18;
     bindings[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

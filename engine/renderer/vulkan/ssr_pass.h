@@ -9,6 +9,7 @@
 namespace me
 {
 
+class VulkanRayScene;
 class VulkanTaaPass;
 
 // Screen-space reflections, the trace (shaders/vulkan/ssr_trace.comp). One GGX-sampled ray a pixel
@@ -20,12 +21,15 @@ class VulkanSsrTracePass : public IScenePass
   public:
     // taa must outlive this pass and must have rebuilt its history before OnTargetsRebuilt here,
     // which the renderer guarantees by owning TAA before SSR in its pass list.
+    // With hardware ray tracing (rayScene's) the pass also makes the ray traced variant
+    // (rt_reflection_trace.comp), which replaces the march where RayTracingSettings::reflections says.
     VulkanSsrTracePass(
         VkDevice device,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
-        const VulkanTaaPass& taa);
+        const VulkanTaaPass& taa,
+        const VulkanRayScene& rayScene);
     ~VulkanSsrTracePass() override;
 
     VulkanSsrTracePass(const VulkanSsrTracePass&) = delete;
@@ -51,6 +55,9 @@ class VulkanSsrTracePass : public IScenePass
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
+    // The ray traced variant: frame set, ray set, this pass's set, ray texture table.
+    VkPipelineLayout m_tracedPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline m_tracedPipeline = VK_NULL_HANDLE;
     // Indexed by frameSlot * 2 + the TAA history index that holds last frame's image.
     std::vector<VkDescriptorSet> m_descriptorSets;
 };

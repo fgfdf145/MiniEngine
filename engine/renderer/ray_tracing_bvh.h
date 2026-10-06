@@ -85,7 +85,8 @@ struct RayMeshRange
 // 64 bytes, one per render submesh, in the top level's leaf order. worldToObject holds the rows of
 // the inverse model matrix (a ray is carried into the mesh's space, where its t stays the world t
 // because the direction is not renormalised). data: x node offset, y triangle offset, z the ray
-// material, w flags (RAY_INSTANCE_*).
+// material, w flags (RAY_INSTANCE_*) in its low kRayInstanceMeshShift bits and the instance's mesh
+// (RayScene::meshes index) above them.
 struct RayInstance
 {
     glm::vec4 worldToObject[3]{};
@@ -94,8 +95,15 @@ struct RayInstance
 
 static_assert(sizeof(RayInstance) == 64, "RayInstance must stay four vec4 to match the shader");
 
-// Instances with this flag are skipped by every ray (moving ones, see the DDGI design).
+// Instances with this flag are skipped by every ray: Blend surfaces, and a moved instance's old leaf
+// in the full build (IncrementalTopLevel).
 inline constexpr uint32_t kRayInstanceSkip = 1u;
+// Moving instances (see the DDGI design): the probes' rays leave them out, so a passing car leaves no
+// trail in the probes' light; the per-pixel visibility rays (shadows, occlusion, reflections) see them.
+inline constexpr uint32_t kRayInstanceDynamic = 2u;
+// RayInstance::data.w holds the mesh index above this many flag bits.
+inline constexpr uint32_t kRayInstanceMeshShift = 4u;
+inline constexpr uint32_t kRayInstanceFlagMask = (1u << kRayInstanceMeshShift) - 1u;
 
 // A scene ready to trace: every mesh's hierarchy concatenated, and this frame's instances and top
 // level.
@@ -185,7 +193,8 @@ struct RayHit
 // Decides whether a candidate hit counts (a Mask surface's coverage, a clear one); none accepts all.
 using RayHitFilter = std::function<bool(const RayHit&)>;
 
-// The nearest accepted hit, or none. anyHit stops at the first accepted one (shadow rays).
+// The nearest accepted hit, or none. anyHit stops at the first accepted one (shadow rays). Moving
+// instances (kRayInstanceDynamic) are left out as the probe rays leave them out.
 bool TraceRay(const RayScene& scene, const Ray& ray, RayHit& hit, bool anyHit = false, const RayHitFilter& filter = {});
 
 // Moller-Trumbore against one triangle; t in (tMin, tMax).

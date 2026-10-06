@@ -20,6 +20,13 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "clustered_lighting", settings.clusteredLighting);
     visit("", "local_light_shadows", settings.localLightShadows);
     visit("", "hardware_ray_tracing", settings.hardwareRayTracing);
+    visit("ray_tracing", "sun_shadows", settings.rayTracing.sunShadows);
+    visit("ray_tracing", "ambient_occlusion", settings.rayTracing.ambientOcclusion);
+    visit("ray_tracing", "probe_occlusion", settings.rayTracing.probeOcclusion);
+    visit("ray_tracing", "occlusion_rays", settings.rayTracing.occlusionRays);
+    visit("ray_tracing", "reflections", settings.rayTracing.reflections);
+    visit("ray_tracing", "local_shadows", settings.rayTracing.localShadows);
+    visit("ray_tracing", "denoise", settings.rayTracing.denoise);
     visit("", "shadow_distance", settings.shadowDistance);
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);

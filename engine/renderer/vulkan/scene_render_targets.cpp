@@ -298,9 +298,10 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeGBufferTarget(RenderTargetId::GBufferCoat, "G-buffer coat", kLayerCandidates);
     describeGBufferTarget(RenderTargetId::GBufferSheen, "G-buffer sheen", kLayerCandidates);
 
-    // Visibility bitmask AO, written by compute through image stores. R32F is in the core list of
-    // storage formats, so no shaderStorageImageExtendedFormats is needed, and it has no fallback.
-    static constexpr std::array<VkFormat, 1> kAoCandidates = {VK_FORMAT_R32_SFLOAT};
+    // Visibility bitmask AO, written by compute through image stores: r the AO, g the DDGI probe
+    // occlusion the ray traced pass adds (1 without it). RGBA16F is in the core list of storage
+    // formats, so no shaderStorageImageExtendedFormats is needed, and it has no fallback.
+    static constexpr std::array<VkFormat, 1> kAoCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
     const auto describeAoTarget = [&](RenderTargetId target, std::string_view label)
     {
         TargetDescription& description = Describe(target);
@@ -344,6 +345,9 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     describeSsrTarget(RenderTargetId::SceneGi, "Indirect diffuse");
     // Read back by the DDGI reference comparison (--reference), which reads its irradiance view.
     Describe(RenderTargetId::SceneGi).usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // The ray traced sun shadow, raw and filtered, at the render size.
+    describeSsrTarget(RenderTargetId::ShadowRaw, "Ray traced shadow trace");
+    describeSsrTarget(RenderTargetId::SceneShadow, "Ray traced shadow");
 
     // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
     static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};

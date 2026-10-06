@@ -13,6 +13,8 @@ namespace me
 enum class ScenePassId
 {
     Geometry,
+    // The ray traced sun shadow (rt_shadow_pass.h), which the lighting pass reads.
+    RtShadow,
     AoTrace,
     AoResolve,
     SsrTrace,

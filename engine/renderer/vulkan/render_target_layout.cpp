@@ -33,6 +33,8 @@ RenderTargetKind GetRenderTargetKind(RenderTargetId target)
     case RenderTargetId::SceneTaa:
     case RenderTargetId::GiRaw:
     case RenderTargetId::SceneGi:
+    case RenderTargetId::ShadowRaw:
+    case RenderTargetId::SceneShadow:
         return RenderTargetKind::Storage;
     default:
         return RenderTargetKind::Color;
