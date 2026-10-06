@@ -85,6 +85,11 @@ inline constexpr float kCloudWaterAtBase = 0.25f;
 // the small ones keep a share at the base, which leaves it ragged but level.
 inline constexpr float kCloudBillowRiseKm = 0.12f;
 inline constexpr float kCloudBaseRaggedness = 0.4f;
+// The base itself is not cut flat by the layer's floor: the large billows (this share of them) and
+// the small ones (kCloudBaseRaggedness) move it up and down about their reach above the floor, and
+// the density fades in over this many km there instead of the sides' kCloudEdgeKm.
+inline constexpr float kCloudBaseLargeBillows = 0.25f;
+inline constexpr float kCloudBaseFadeKm = 0.1f;
 
 // Scattered sunlight may come down a point's own column instead of along the slanted path through
 // its neighbours once the layer closes into a deck: from none at this coverage to all of it at
@@ -136,6 +141,13 @@ float CloudSurfaceDistance(float top, float slope, float coverageOffset, float t
 // volume's three octaves and the detail volume's four, each about its mean, scaled to the
 // tiles (km) and by strength; detail in [0, 1] fades the detail octaves.
 float CloudBillows(const glm::vec4& shape, const glm::vec4& fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm);
+
+// The furthest the billows lift the base above the layer's floor (km), all detail octaves in.
+float CloudBaseReachKm(float shapeTileKm, float detailTileKm, float strength);
+
+// Density in [0, 1] at heightKm above the layer's floor from the base alone: none at the floor,
+// rising over kCloudBaseFadeKm from where the billows put the base.
+float CloudBaseDensity(const glm::vec4& shape, const glm::vec4& fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm);
 
 // The share of the full extinction at heightKm above the base: kCloudWaterAtBase rising as
 // (h / kCloudWaterFullHeightKm)^(2/3) to 1.

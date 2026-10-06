@@ -54,6 +54,9 @@ const float CLOUD_WATER_FULL_HEIGHT_KM = 1.0;
 const float CLOUD_WATER_AT_BASE = 0.25;
 const float CLOUD_BILLOW_RISE_KM = 0.12;
 const float CLOUD_BASE_RAGGEDNESS = 0.4;
+// Must match kCloudBaseLargeBillows and kCloudBaseFadeKm.
+const float CLOUD_BASE_LARGE_BILLOWS = 0.25;
+const float CLOUD_BASE_FADE_KM = 0.1;
 // Must match kCloudMinSunCosine: below it the sun's path down a column is too long to matter.
 const float CLOUD_MIN_SUN_COSINE = 0.1;
 
@@ -252,6 +255,33 @@ float CloudBillows(vec4 shape, vec4 fine, float shapeTileKm, float detailTileKm,
     return strength * (rise * large * shapeTileKm + max(rise, CLOUD_BASE_RAGGEDNESS) * detail * small * detailTileKm);
 }
 
+// The furthest the billows lift the base: their reach there, with all the detail octaves.
+float CloudBaseReachKm(float shapeTileKm, float detailTileKm, float strength)
+{
+    float large = CLOUD_BASE_LARGE_BILLOWS * dot(CLOUD_SHAPE_BILLOW_PER_TILE, vec3(1.0)) * shapeTileKm;
+    float small = CLOUD_BASE_RAGGEDNESS * dot(CLOUD_DETAIL_BILLOW_PER_TILE, vec4(1.0)) * detailTileKm;
+    return (1.0 - CLOUD_BILLOW_MEAN) * strength * (large + small);
+}
+
+// Density in [0, 1] at heightKm above the layer's floor from the base: the billows move it up and
+// down about their reach above the floor (never below it, where the shell would cut it flat), and
+// it fades in over CLOUD_BASE_FADE_KM rather than the sides' sharp edge.
+float CloudBaseDensity(vec4 shape, vec4 fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm)
+{
+    float large = dot(shape.rgb - CLOUD_BILLOW_MEAN, CLOUD_SHAPE_BILLOW_PER_TILE);
+    float small = dot(fine - CLOUD_BILLOW_MEAN, CLOUD_DETAIL_BILLOW_PER_TILE);
+    float push = strength * (CLOUD_BASE_LARGE_BILLOWS * large * shapeTileKm + CLOUD_BASE_RAGGEDNESS * detail * small * detailTileKm);
+    float baseKm = CloudBaseReachKm(shapeTileKm, detailTileKm, strength) - push;
+    return clamp((heightKm - baseKm) / CLOUD_BASE_FADE_KM, 0.0, 1.0);
+}
+
+// The base without the billows, at its mean height: for the long light steps.
+float CloudMeanBaseDensity(float heightKm)
+{
+    float baseKm = CloudBaseReachKm(1.0 / ubo.cloudScales.x, 1.0 / ubo.cloudScales.y, ubo.cloudScales.w);
+    return clamp((heightKm - baseKm) / CLOUD_BASE_FADE_KM, 0.0, 1.0);
+}
+
 float CloudWaterProfile(float heightKm)
 {
     return max(CLOUD_WATER_AT_BASE, pow(clamp(heightKm / CLOUD_WATER_FULL_HEIGHT_KM, 0.0, 1.0), 2.0 / 3.0));
@@ -331,8 +361,11 @@ float CloudExtinction(vec3 positionKm, float heightFraction, float detail, out f
     float heightKm = heightFraction * ubo.cloudLayer.y;
     vec4 shape = textureLod(cloudShapeNoise, positionKm * ubo.cloudScales.x, 0.0);
     vec4 fine = detail > 0.0 ? textureLod(cloudDetailNoise, positionKm * ubo.cloudScales.y, 0.0) : vec4(CLOUD_BILLOW_MEAN);
-    distanceKm += CloudBillows(shape, fine, 1.0 / ubo.cloudScales.x, 1.0 / ubo.cloudScales.y, ubo.cloudScales.w, detail, heightKm);
-    return CloudEdgeDensity(distanceKm) * CloudWaterProfile(heightKm) * ubo.cloudLayer.w;
+    float shapeTileKm = 1.0 / ubo.cloudScales.x;
+    float detailTileKm = 1.0 / ubo.cloudScales.y;
+    distanceKm += CloudBillows(shape, fine, shapeTileKm, detailTileKm, ubo.cloudScales.w, detail, heightKm);
+    float base = CloudBaseDensity(shape, fine, shapeTileKm, detailTileKm, ubo.cloudScales.w, detail, heightKm);
+    return CloudEdgeDensity(distanceKm) * base * CloudWaterProfile(heightKm) * ubo.cloudLayer.w;
 }
 
 float CloudExtinction(vec3 positionKm, float heightFraction, float detail)
@@ -346,7 +379,8 @@ float CloudExtinction(vec3 positionKm, float heightFraction, float detail)
 float CloudPlumeExtinction(vec3 positionKm, float heightFraction)
 {
     float distanceKm = CloudPlumeDistance(positionKm, heightFraction);
-    return CloudEdgeDensity(distanceKm) * CloudWaterProfile(heightFraction * ubo.cloudLayer.y) * ubo.cloudLayer.w;
+    float heightKm = heightFraction * ubo.cloudLayer.y;
+    return CloudEdgeDensity(distanceKm) * CloudMeanBaseDensity(heightKm) * CloudWaterProfile(heightKm) * ubo.cloudLayer.w;
 }
 
 // Optical depth from a point toward the sun, over steps that double in length. jitter in [0, 1)

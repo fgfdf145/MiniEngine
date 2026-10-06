@@ -237,6 +237,38 @@ float CloudBillows(const glm::vec4& shape, const glm::vec4& fine, float shapeTil
     return strength * (rise * large * shapeTileKm + std::max(rise, kCloudBaseRaggedness) * detail * small * detailTileKm);
 }
 
+float CloudBaseReachKm(float shapeTileKm, float detailTileKm, float strength)
+{
+    float large = 0.0f;
+    for (const float perTile : kCloudShapeBillowPerTile)
+    {
+        large += perTile;
+    }
+    float small = 0.0f;
+    for (const float perTile : kCloudDetailBillowPerTile)
+    {
+        small += perTile;
+    }
+    return (1.0f - kCloudBillowMean) * strength * (kCloudBaseLargeBillows * large * shapeTileKm + kCloudBaseRaggedness * small * detailTileKm);
+}
+
+float CloudBaseDensity(const glm::vec4& shape, const glm::vec4& fine, float shapeTileKm, float detailTileKm, float strength, float detail, float heightKm)
+{
+    float large = 0.0f;
+    for (size_t octave = 0; octave < kCloudShapeBillowPerTile.size(); ++octave)
+    {
+        large += (shape[static_cast<int>(octave)] - kCloudBillowMean) * kCloudShapeBillowPerTile[octave];
+    }
+    float small = 0.0f;
+    for (size_t octave = 0; octave < kCloudDetailBillowPerTile.size(); ++octave)
+    {
+        small += (fine[static_cast<int>(octave)] - kCloudBillowMean) * kCloudDetailBillowPerTile[octave];
+    }
+    const float push = strength * (kCloudBaseLargeBillows * large * shapeTileKm + kCloudBaseRaggedness * detail * small * detailTileKm);
+    const float baseKm = CloudBaseReachKm(shapeTileKm, detailTileKm, strength) - push;
+    return Saturate((heightKm - baseKm) / kCloudBaseFadeKm);
+}
+
 float CloudWaterProfile(float heightKm)
 {
     return std::max(kCloudWaterAtBase, std::pow(Saturate(heightKm / kCloudWaterFullHeightKm), 2.0f / 3.0f));

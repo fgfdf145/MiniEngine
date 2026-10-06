@@ -154,6 +154,17 @@ void BillowsAndProfile()
                  (1.0f - kCloudBillowMean) * 0.05f * 7.0f, 1e-5f),
             "billow heights scale with the tile");
 
+    const float reach = CloudBaseReachKm(7.0f, 0.6f, 1.0f);
+    Require(reach > 0.0f && Near(CloudBaseReachKm(7.0f, 0.6f, 2.0f), 2.0f * reach, 1e-6f), "the base's reach scales with the billows");
+    Require(CloudBaseDensity(glm::vec4(1.0f), glm::vec4(1.0f), 7.0f, 0.6f, 1.0f, 1.0f, 0.0f) == 0.0f,
+            "the highest billows bring the base down to the floor, not through it");
+    Require(CloudBaseDensity(mean, mean, 7.0f, 0.6f, 1.0f, 1.0f, reach) == 0.0f, "on average the base sits its reach up");
+    Require(Near(CloudBaseDensity(mean, mean, 7.0f, 0.6f, 1.0f, 1.0f, reach + kCloudBaseFadeKm * 0.5f), 0.5f, 1e-5f) &&
+                CloudBaseDensity(mean, mean, 7.0f, 0.6f, 1.0f, 1.0f, reach + kCloudBaseFadeKm * 1.01f) == 1.0f,
+            "and fades in over kCloudBaseFadeKm");
+    Require(CloudBaseDensity(glm::vec4(0.0f), glm::vec4(0.0f), 7.0f, 0.6f, 1.0f, 1.0f, reach + kCloudBaseFadeKm) == 0.0f,
+            "low billows lift it");
+
     Require(CloudWaterProfile(0.0f) == kCloudWaterAtBase, "thin water at the base");
     Require(CloudWaterProfile(kCloudWaterFullHeightKm) == 1.0f && CloudWaterProfile(3.0f) == 1.0f, "full from a kilometre up");
     Require(CloudWaterProfile(0.5f) > CloudWaterProfile(0.2f), "rising with height");

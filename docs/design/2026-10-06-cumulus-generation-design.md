@@ -176,6 +176,25 @@ distance = min( (topKm − h) / sqrt(1 + slopeKm²), h )          （CloudSurfac
 
 测试（`ColumnAndDeck`）：含水积分与数值积分一致；deckWeight 的端点和单调性；`CloudScatteredOpticalDepth` 的取值规则；单次散射仍受硬阴影；μ = 1 的平板等于沿光线的解，厚板的 2μ 和 μ(3μ + 2) 极限；一个 600 m 云柱底部、斜线 τ = 40 的点，云柱扩散场比沿光线的亮 10 倍以上，沿云柱的八度比沿斜线的亮 100 倍以上。
 
+## 8. 云底不再被层底切平（2026-10-07）
+
+### 问题
+
+`CloudSurfaceDistance` 取 `min(到顶距离, heightKm)`，层底处距离为 0；小翻滚在底部保留 `kCloudBaseRaggedness` = 0.4，向外最多推约 28 m，大于 15 m 的边缘，于是在 heightKm = 0 处密度已经是满值（底部水含量 0.25 × 20/km）。层壳在这里截断光线，云底成了一整片水平切面，远处看是一条条平直的暗线。
+
+### 做法
+
+`CloudBaseDensity`（GLSL 与 CPU 各一份）乘在密度上：
+
+- 云底高度 = 翻滚在底部的最大外推量 `CloudBaseReachKm` 减去当地的外推量：大翻滚取 `kCloudBaseLargeBillows` = 0.25，小翻滚取 0.4。默认参数下平均抬高约 75 m，翻滚最高处正好落到层底而不会穿过，所以层壳不再切出平面。
+- 从云底往上 `kCloudBaseFadeKm` = 100 m 线性淡入，比侧面的 15 m 柔和，像凝结高度附近逐渐变湿的空气。
+- 长光照步（`CloudPlumeExtinction`）用不含翻滚的平均云底 `CloudMeanBaseDensity`。
+- 不增加纹理采样，复用已有的 shape/detail 噪声。云柱光学深度（`CloudWaterColumn`）仍从层底积分，少了底部约 75 m 的水，对漫射影响很小，未改。
+
+### 结果
+
+1280×720，EV100 13，相机在地面仰视 8° 与 25°：原来云底的水平暗线消失，底面随翻滚起伏、边缘变软。代价：最矮的一些碎云（高度不足约 175 m）被抬起的云底吃掉，覆盖率略降。
+
 ## 数据与兼容
 
 - `CloudSettings::detailErosion` 改名为 `billows`（[0, 2]，默认 1），YAML 键 `billows`；旧场景的 `detail_erosion` 被忽略，按默认值读入。`detailScale` 默认值 900 → 600 m。仓库里的 rolling_road 和 suspension_rig 已改成新键和新默认值。
