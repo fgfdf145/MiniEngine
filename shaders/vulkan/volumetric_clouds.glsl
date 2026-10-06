@@ -54,6 +54,8 @@ const float CLOUD_WATER_FULL_HEIGHT_KM = 1.0;
 const float CLOUD_WATER_AT_BASE = 0.25;
 const float CLOUD_BILLOW_RISE_KM = 0.12;
 const float CLOUD_BASE_RAGGEDNESS = 0.4;
+// Must match kCloudMinSunCosine: below it the sun's path down a column is too long to matter.
+const float CLOUD_MIN_SUN_COSINE = 0.1;
 
 bool CloudsEnabled()
 {
@@ -77,7 +79,9 @@ float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta)
     return CloudHenyeyGreenstein(forwardG, cosTheta) * (1.0 - backWeight) + CloudHenyeyGreenstein(backG, cosTheta) * backWeight;
 }
 
-float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta)
+// Wrenninge's octaves: the first, single scattering, through lightOpticalDepth toward the sun; the
+// rest, light already scattered, through scatteredOpticalDepth (CloudScatteredOpticalDepth).
+float CloudSunScattering(float lightOpticalDepth, float scatteredOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta)
 {
     float scattering = 0.0;
     float a = 1.0;
@@ -85,12 +89,40 @@ float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, f
     float c = 1.0;
     for (int octave = 0; octave < CLOUD_SCATTERING_OCTAVES; ++octave)
     {
-        scattering += a * CloudPhase(forwardG * c, backG * c, backWeight, cosTheta) * exp(-b * lightOpticalDepth);
+        float depth = octave == 0 ? lightOpticalDepth : scatteredOpticalDepth;
+        scattering += a * CloudPhase(forwardG * c, backG * c, backWeight, cosTheta) * exp(-b * depth);
         a *= CLOUD_OCTAVE_SCATTERING;
         b *= CLOUD_OCTAVE_EXTINCTION;
         c *= CLOUD_OCTAVE_ANISOTROPY;
     }
     return scattering;
+}
+
+// The optical depth scattered sunlight crosses to reach a point. In a closed deck (deckWeight 1,
+// CloudDeckWeight) it need not take the slanted path toward the sun, which runs through the
+// neighbouring towers: it can come down through the point's own column from its sunlit top
+// (upOpticalDepth above the point, entered at sunCosine), whichever is less. Towers then cast their
+// hard shadows in single scattering only, not as streaks across the deck. In a field of separate
+// cumulus (deckWeight 0) the column is too narrow for that, and the slanted path stands.
+float CloudScatteredOpticalDepth(float lightOpticalDepth, float upOpticalDepth, float sunCosine, float deckWeight)
+{
+    if (sunCosine <= 0.0)
+    {
+        return lightOpticalDepth;
+    }
+    float column = upOpticalDepth / max(sunCosine, CLOUD_MIN_SUN_COSINE);
+    return mix(lightOpticalDepth, min(lightOpticalDepth, column), deckWeight);
+}
+
+// Lossless Eddington fluence per unit of beam illuminance, Marshak at both faces of a slab of
+// scaled optical thickness total, scaled optical depth in from the lit face, the beam entering at
+// cosine mu to the face's normal.
+float CloudDiffuseFluence(float scaled, float total, float mu)
+{
+    float deep = mu * (3.0 * mu + 2.0);
+    float beam = exp(-scaled / mu);
+    float leaving = deep + (2.0 * mu - 3.0 * mu * mu) * exp(-total / mu);
+    return max(deep - 3.0 * mu * mu * beam - leaving * (scaled + 2.0 / 3.0) / (total + 4.0 / 3.0), 0.0);
 }
 
 // The diffusion field (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md,
@@ -101,22 +133,42 @@ float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, fl
 {
     float scaled = similarity * lightOpticalDepth;
     float total = similarity * (lightOpticalDepth + max(awayOpticalDepth, 0.0));
-    float lossless = 5.0 - 3.0 * exp(-scaled) - (5.0 - exp(-total)) * (scaled + 2.0 / 3.0) / (total + 4.0 / 3.0);
-    return max(lossless, 0.0) * exp(-kappa * scaled) / (4.0 * ATMOSPHERE_PI);
+    return CloudDiffuseFluence(scaled, total, 1.0) * exp(-kappa * scaled) / (4.0 * ATMOSPHERE_PI);
+}
+
+// The same field across the cloud's own column, a horizontal slab lit from above at sunCosine:
+// upOpticalDepth of it above the point, downOpticalDepth below. Deep in a deck the light has
+// forgotten the sun's direction, so its column, not the slanted path to the sun, sets how much
+// reaches the base.
+float CloudSlabDiffuseScattering(float upOpticalDepth, float downOpticalDepth, float sunCosine, float kappa, float similarity)
+{
+    if (sunCosine <= 0.0)
+    {
+        return 0.0;
+    }
+    float scaled = similarity * max(upOpticalDepth, 0.0);
+    float total = scaled + similarity * max(downOpticalDepth, 0.0);
+    return CloudDiffuseFluence(scaled, total, sunCosine) * exp(-kappa * scaled) / (4.0 * ATMOSPHERE_PI);
 }
 
 // The octaves, raised by diffusion toward single scattering plus the diffusion field wherever
 // that is brighter: deep in a thick cloud the octaves die out, the diffusion field does not.
-float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float awayOpticalDepth, float forwardG, float backG, float backWeight,
+// scatteredOpticalDepth is CloudScatteredOpticalDepth's; upOpticalDepth and downOpticalDepth are the
+// point's own column above and below it, sunCosine the sun's height over its horizon: the
+// diffusion field is the brighter of the field along the ray and across the column.
+float CloudSunScatteringWithDiffusion(float lightOpticalDepth, float scatteredOpticalDepth, float awayOpticalDepth, float upOpticalDepth,
+                                      float downOpticalDepth, float sunCosine, float forwardG, float backG, float backWeight,
                                       float cosTheta, float diffusion, float kappa, float similarity)
 {
-    float octaves = CloudSunScattering(lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
+    float octaves = CloudSunScattering(lightOpticalDepth, scatteredOpticalDepth, forwardG, backG, backWeight, cosTheta);
     if (diffusion <= 0.0)
     {
         return octaves;
     }
     float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * exp(-lightOpticalDepth);
-    float diffused = single + CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity);
+    float field = max(CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity),
+                      CloudSlabDiffuseScattering(upOpticalDepth, downOpticalDepth, sunCosine, kappa, similarity));
+    float diffused = single + field;
     return octaves + diffusion * max(diffused - octaves, 0.0);
 }
 
@@ -210,6 +262,28 @@ float CloudEdgeDensity(float distanceKm)
     return clamp(distanceKm / CLOUD_EDGE_KM, 0.0, 1.0);
 }
 
+// CloudWaterProfile integrated from the base up to heightKm (km).
+float CloudWaterColumn(float heightKm)
+{
+    float h = max(heightKm, 0.0);
+    float baseTop = CLOUD_WATER_FULL_HEIGHT_KM * pow(CLOUD_WATER_AT_BASE, 1.5);
+    if (h <= baseTop)
+    {
+        return CLOUD_WATER_AT_BASE * h;
+    }
+    float rising = 0.6 * pow(CLOUD_WATER_FULL_HEIGHT_KM, -2.0 / 3.0);
+    float full = min(h, CLOUD_WATER_FULL_HEIGHT_KM);
+    float column = CLOUD_WATER_AT_BASE * baseTop + rising * (pow(full, 5.0 / 3.0) - pow(baseTop, 5.0 / 3.0));
+    return column + max(h - CLOUD_WATER_FULL_HEIGHT_KM, 0.0);
+}
+
+// Optical depth of a column of cloud from the base up to heightKm, extinctionPerKm where full:
+// the plumes' smooth body, without the billows or the 15 m edge.
+float CloudPlumeColumnDepth(float heightKm, float extinctionPerKm)
+{
+    return CloudWaterColumn(heightKm) * extinctionPerKm;
+}
+
 // The furthest the billows can push a surface out: the octaves' highest values above their mean.
 float CloudBillowReachKm(float detail)
 {
@@ -221,8 +295,9 @@ float CloudBillowReachKm(float detail)
 
 // Kilometres inside the plumes' smooth surface (before the billows), from the plume map alone;
 // far negative outside the layer.
-float CloudPlumeDistance(vec3 positionKm, float heightFraction)
+float CloudPlumeDistance(vec3 positionKm, float heightFraction, out float columnTopKm)
 {
+    columnTopKm = 0.0;
     if (heightFraction <= 0.0 || heightFraction >= 1.0)
     {
         return -1e3;
@@ -230,7 +305,14 @@ float CloudPlumeDistance(vec3 positionKm, float heightFraction)
     float thicknessKm = ubo.cloudLayer.y;
     vec2 weather = textureLod(cloudWeatherMap, positionKm.xz * ubo.cloudScales.z, 0.0).rg;
     float top = weather.r * (1.0 - CLOUD_WEATHER_FLOOR) + CLOUD_WEATHER_FLOOR;
+    columnTopKm = clamp((top - ubo.cloudLayer.z) * thicknessKm, 0.0, thicknessKm);
     return CloudSurfaceDistance(top, weather.g * CLOUD_WEATHER_SLOPE_SCALE, ubo.cloudLayer.z, thicknessKm, ubo.cloudScales.z, heightFraction * thicknessKm);
+}
+
+float CloudPlumeDistance(vec3 positionKm, float heightFraction)
+{
+    float columnTopKm;
+    return CloudPlumeDistance(positionKm, heightFraction, columnTopKm);
 }
 
 // Extinction per km at a point of the layer, heightFraction its height in it, and how far inside
@@ -383,7 +465,8 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
     {
         vec3 p = camera + direction * t;
         float heightFraction = (length(p) - inner) / thickness;
-        if (CloudPlumeDistance(p, heightFraction) < -billowReach)
+        float columnTopKm;
+        if (CloudPlumeDistance(p, heightFraction, columnTopKm) < -billowReach)
         {
             t += dt;
             continue;
@@ -406,8 +489,15 @@ vec4 MarchClouds(vec3 direction, float jitter, int minSteps, int maxSteps, out f
             float lightJitter = fract(jitter + float(iteration) * 0.618034);
             float lightDepth = CloudLightOpticalDepth(p, sunDirection, inner, thickness, detail, lightJitter);
             float awayDepth = diffusion > 0.0 ? CloudAwayOpticalDepth(p, -sunDirection, inner, thickness, lightJitter) : 0.0;
+            // The point's own column, from the plume map alone: the cloud above it and below it.
+            float heightKm = clamp(heightFraction, 0.0, 1.0) * thickness;
+            float upDepth = CloudPlumeColumnDepth(max(columnTopKm, heightKm), ubo.cloudLayer.w) - CloudPlumeColumnDepth(heightKm, ubo.cloudLayer.w);
+            float downDepth = CloudPlumeColumnDepth(heightKm, ubo.cloudLayer.w);
+            float sunCosine = dot(sunDirection, p / length(p));
+            float scatteredDepth = CloudScatteredOpticalDepth(lightDepth, upDepth, sunCosine, ubo.cloudParams.z);
             float sunScattering = CloudSunScatteringWithDiffusion(
-                lightDepth, awayDepth, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z, cosTheta, diffusion, kappa, similarity);
+                lightDepth, scatteredDepth, awayDepth, upDepth, downDepth, sunCosine, ubo.cloudPhase.x, ubo.cloudPhase.y, ubo.cloudPhase.z,
+                cosTheta, diffusion, kappa, similarity);
             // The sky reaches the point through the cloud above it, the ground's light through
             // the cloud below.
             float skySeen = 1.0;

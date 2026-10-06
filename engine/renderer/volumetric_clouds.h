@@ -86,6 +86,14 @@ inline constexpr float kCloudWaterAtBase = 0.25f;
 inline constexpr float kCloudBillowRiseKm = 0.12f;
 inline constexpr float kCloudBaseRaggedness = 0.4f;
 
+// Scattered sunlight may come down a point's own column instead of along the slanted path through
+// its neighbours once the layer closes into a deck: from none at this coverage to all of it at
+// full coverage (docs/design/2026-10-06-cumulus-generation-design.md, overcast).
+inline constexpr float kCloudDeckCoverageStart = 0.6f;
+// The sun's height over the horizon a column's path is measured at, at least: lower, the path
+// down the column is so long the slanted one is shorter anyway.
+inline constexpr float kCloudMinSunCosine = 0.1f;
+
 // The vertical marches (detail-free) that measure the cloud above and below a point for its ambient
 // light (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md).
 inline constexpr int kCloudAmbientSteps = 3;
@@ -136,12 +144,33 @@ float CloudWaterProfile(float heightKm);
 // Density in [0, 1] distanceKm inside the surface: none outside, full kCloudEdgeKm in.
 float CloudEdgeDensity(float distanceKm);
 
+// CloudWaterProfile integrated from the base up to heightKm (km of full-density cloud).
+float CloudWaterColumn(float heightKm);
+
+// Optical depth of a column of the plumes' smooth body from the base up to heightKm, at
+// extinctionPerKm where full (no billows, no edge).
+float CloudPlumeColumnDepth(float heightKm, float extinctionPerKm);
+
+// How far scattered sunlight may come down a point's own column rather than along the slanted
+// path toward the sun: smoothstep from kCloudDeckCoverageStart to 1 of the coverage.
+float CloudDeckWeight(float coverage);
+
 // Dual-lobe Henyey-Greenstein per steradian; cosTheta is 1 looking into the sun.
 float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta);
 
 // The sun's light scattered toward the camera per unit of scattering coefficient, after
 // lightOpticalDepth of cloud toward the sun: the octave sum above.
 float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta);
+
+// The same with the first octave, single scattering, through lightOpticalDepth and the rest, light
+// already scattered, through scatteredOpticalDepth (CloudScatteredOpticalDepth).
+float CloudSunScattering(float lightOpticalDepth, float scatteredOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta);
+
+// The optical depth scattered sunlight crosses to reach a point: the slanted lightOpticalDepth,
+// moved by deckWeight (CloudDeckWeight) toward the lesser of it and the path down the point's own
+// column from its sunlit top, upOpticalDepth / sunCosine. In a deck the slanted path runs through
+// the neighbouring towers and would draw their shadows as streaks across it.
+float CloudScatteredOpticalDepth(float lightOpticalDepth, float upOpticalDepth, float sunCosine, float deckWeight);
 
 // The dual lobe's mean cosine, held to [0, 0.95]: the anisotropy diffusion theory scales away.
 float CloudMeanCosine(float forwardG, float backG, float backWeight);
@@ -158,12 +187,30 @@ glm::vec2 CloudDiffusionParameters(float albedo, float meanCosine);
 // near the face the light leaves by, and in thin clouds, it escapes and falls toward nothing.
 float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, float kappa, float similarity);
 
-// The sun's light scattered toward the camera: the octaves, raised by diffusion in [0, 1] toward
+// Lossless Eddington fluence per unit of beam illuminance in a slab of scaled optical thickness
+// total, scaled optical depth in from the lit face, the beam entering at cosine mu to the face's
+// normal, Marshak at both faces: mu (3 mu + 2) deep in a thick slab, 2 mu at its lit face.
+float CloudDiffuseFluence(float scaled, float total, float mu);
+
+// The diffusion field across the point's own column, a horizontal slab lit from above at
+// sunCosine with upOpticalDepth above the point and downOpticalDepth below; as
+// CloudDiffuseScattering, and 0 with the sun below the horizon. Deep in a deck the light has
+// forgotten the sun's direction, so the column, not the slanted path, sets what reaches the base.
+float CloudSlabDiffuseScattering(float upOpticalDepth, float downOpticalDepth, float sunCosine, float kappa, float similarity);
+
+// The sun's light scattered toward the camera: the octaves (single scattering through
+// lightOpticalDepth, the rest through scatteredOpticalDepth), raised by diffusion in [0, 1] toward
 // single scattering plus the diffusion field wherever that is brighter, so nothing is counted
-// twice and the octaves alone stand at diffusion 0.
+// twice and the octaves alone stand at diffusion 0. The field is the brighter of the one along the
+// ray (awayOpticalDepth ahead) and the one across the point's column (upOpticalDepth above,
+// downOpticalDepth below, lit at sunCosine).
 float CloudSunScatteringWithDiffusion(
     float lightOpticalDepth,
+    float scatteredOpticalDepth,
     float awayOpticalDepth,
+    float upOpticalDepth,
+    float downOpticalDepth,
+    float sunCosine,
     float forwardG,
     float backG,
     float backWeight,

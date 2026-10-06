@@ -112,11 +112,58 @@ distance = min( (topKm − h) / sqrt(1 + slopeKm²), h )          （CloudSurfac
 - sky.frag 在全分辨率下双线性采样，`sky × a + rgb / exposure`。步进抖动随投影抖动每帧变化，TAA 补回半分辨率丢掉的细节。
 - 环境探针（`environment_capture.comp`）仍然用 `ApplyClouds` 内联步进（12 ~ 32 步）。它只在环境变化时更新，稳态 0 ms。
 
+## 7. 满覆盖：散射光沿自己的云柱下来
+
+### 问题
+
+覆盖率 1 时从下往上看，云底布满指向太阳方位的明暗条纹（下图左）。正午太阳高时条纹变成斑块，关掉扩散或翻卷都不变，所以不是步进问题。
+
+原因在光照的几何：向太阳的光学深度沿斜线取。满覆盖时云层闭合，大部分云柱 0.4 ~ 2.5 km 厚（覆盖率节点：40 % 的面积顶高低于 720 m，10 % 低于 380 m），云底一点朝太阳的斜线会穿过旁边更高的云塔，τ 常在 30 以上。八度项按 `exp(−0.41 τ)` 衰减，原来的扩散场也沿这条斜线取深度，于是云底几乎全黑。只有斜线恰好避开云塔的地方亮，而相邻点的斜线大部分重合，亮暗就沿太阳方位拉成长条。
+
+真实的云盖里，光在 τ ≫ 1 后已经忘了太阳的方向：到达云底的光由这一点自己的云柱多厚决定（平行平面的漫射透射），而不是斜线上碰到了什么。
+
+### 做法
+
+1. **云柱的光学深度。** 羽流图在该点给出云柱顶高 `columnTop = clamp((top − offset) × thickness, 0, thickness)`，含水剖面可以解析积分（`CloudWaterColumn`：云底 a = 0.25 平台到 `H a^{3/2}`，再按 `(3/5) H^{−2/3} h^{5/3}` 上升到 H = 1 km，以上每 km 加 1）。于是上方 `τ_up = σ (C(columnTop) − C(h))`、下方 `τ_down = σ C(h)`，不读任何额外纹理。忽略翻卷和 15 m 边缘，对扩散量级的估计足够。
+
+2. **斜射的平行平面扩散场**（`CloudDiffuseFluence`、`CloudSlabDiffuseScattering`）。把第 4 节的板推广到入射余弦 μ（`φ'' = −3 E e^{−τ/μ}`，两面 Marshak）：
+
+   ```
+   B = −( μ(3μ + 2) + (2μ − 3μ²) e^{−T/μ} ) / (T + 4/3)
+   φ(τ) = μ(3μ + 2) − 3μ² e^{−τ/μ} + B (τ + 2/3)          （单位入射照度 E）
+   ```
+
+   μ = 1 时就是第 4 节沿光线的解；厚板受光面为 2μE，深处为 μ(3μ + 2)E。用 μ0（太阳在该点地平线上的高度余弦）、τ_up、τ_up + τ_down 算出云柱上的扩散场，再乘 `e^{−κ τ'_up}`，与沿光线的扩散场取较大者：光从哪条路扩散进来更容易，就按哪条算。太阳在地平线以下时为 0。
+
+3. **多次散射的八度沿云柱**（`CloudScatteredOpticalDepth`）。第一个八度是单次散射，仍沿斜线，云塔照样投下硬阴影。其余八度（已经散射过的光）取
+
+   ```
+   τ_scattered = mix(τ_slant, min(τ_slant, τ_up / max(μ0, 0.1)), deckWeight)
+   ```
+
+   `deckWeight = smoothstep(0.6, 1, coverage)`（`CloudDeckWeight`，CPU 上算好放进 `cloudParams.z`）。只在云层闭合时才用：分散的积云不是宽阔的平板，从顶上进来的光会从侧面漏掉，如果在覆盖率 0.45 时也让八度沿云柱下来，背光面会被照亮，积云失去立体感（试过，明显变平）。覆盖率 0.6 以下 deckWeight 为 0，八度与原来完全相同。
+
+### 结果
+
+上：仰视 60°；下：平视 20°。左为改动前，右为改动后，16:00，覆盖率 1：
+
+![满覆盖修正](images/2026-10-06-cumulus-overcast-fix.jpg)
+
+条纹换成了跟随云柱厚度的块状明暗，云底平均亮度 +20 %（0.166 → 0.201，显示值）。云塔的硬阴影仍在单次散射里。
+
+对其他覆盖率的影响（上：覆盖率 0.75，下：默认 0.45 朝太阳；左改动前，右改动后）：
+
+![其他覆盖率](images/2026-10-06-cumulus-overcast-fix-cumulus.jpg)
+
+覆盖率 0.45 只有云柱扩散场起作用，云底和背光面从近黑变成深灰，明暗关系不变。0.75 时 deckWeight 为 0.32，暗核略亮。
+
+测试（`ColumnAndDeck`）：含水积分与数值积分一致；deckWeight 的端点和单调性；`CloudScatteredOpticalDepth` 的取值规则；单次散射仍受硬阴影；μ = 1 的平板等于沿光线的解，厚板的 2μ 和 μ(3μ + 2) 极限；一个 600 m 云柱底部、斜线 τ = 40 的点，云柱扩散场比沿光线的亮 10 倍以上，沿云柱的八度比沿斜线的亮 100 倍以上。
+
 ## 数据与兼容
 
 - `CloudSettings::detailErosion` 改名为 `billows`（[0, 2]，默认 1），YAML 键 `billows`；旧场景的 `detail_erosion` 被忽略，按默认值读入。`detailScale` 默认值 900 → 600 m。仓库里的 rolling_road 和 suspension_rig 已改成新键和新默认值。
 - 编辑器 Clouds 面板：“Detail scale” → “Billow scale”，“Coverage scale” → “Plume map scale”，“Detail erosion” → “Billows”。
-- `EnvironmentUniformData` 大小不变：`cloudLayer.z` 由覆盖率改为 `CloudCoverageOffset(coverage)`，`cloudScales.w` 由侵蚀改为翻卷强度。
+- `EnvironmentUniformData` 大小不变：`cloudLayer.z` 由覆盖率改为 `CloudCoverageOffset(coverage)`，`cloudScales.w` 由侵蚀改为翻卷强度，原来未用的 `cloudParams.z` 放 `CloudDeckWeight(coverage)`。
 - set 0 新增 binding 27（羽流图）和 28（半分辨率云目标）；atmosphere 计算集新增 10、11。
 - detail 体积由 32³ 扩大到 128³（每通道一个球堆积八度，32³ 装不下每瓦片 16 个球）。
 - C++ 镜像（`volumetric_clouds.cpp`）：`CloudWeatherTexel`、`CloudCoverageOffset`、`CloudSurfaceDistance`、`CloudBillows`、`CloudWaterProfile`、`CloudEdgeDensity`、新的 `CloudDiffuseScattering`；旧的 `CloudHeightGradient`、`CloudWeather`、`CloudShape`、`CloudField`、`CloudCoverageRamp` 删除。
@@ -141,6 +188,8 @@ GPU 时间（单帧采样）：
 | 覆盖率 0.75 | 2.79 ms | 0.02 ms |
 | 覆盖率 1.0 | 3.23 ms | 0.02 ms |
 | 覆盖率 0.45，billows 0 | 1.03 ms | 0.02 ms |
+| 第 7 节之后：覆盖率 0.45 | 1.72 ms 朝太阳（之前 1.77 ~ 1.98），2.39 ms 背向太阳（之前未测） | 0.02 ms |
+| 第 7 节之后：覆盖率 0.75 / 1.0 | 2.65 / 2.95 ms（之前 2.79 / 3.23） | 0.02 ms |
 
 2560 x 1440 视口（Clouds 1280 x 720）下默认设置为 5.1 ms。默认覆盖率下总开销与改动前的全分辨率逐像素步进相当（1.8 ~ 2.0 ms 对 1.9 ~ 2.2 ms，720p），代价是半分辨率加 TAA 带来的边缘略软。
 
@@ -148,8 +197,6 @@ GPU 时间（单帧采样）：
 
 ## 未解决
 
-- **满覆盖时的云塔阴影条纹。** 覆盖率 1 时 floor 处的云盖只有 (−0.25 + 0.30) × 2.5 km = 125 m 厚，上面的云塔沿太阳方向在这层薄云里投下很长的阴影；从下往上看，这些阴影收敛成指向太阳的条纹（下图左，16:00；右，正午，条纹变成斑块）。关掉扩散或翻卷都不变，说明不是步进问题：薄云盖里的多次散射本应把阴影抹平，而扩散场沿同一条光线取光学深度，继承了阴影。可能的方向：覆盖率接近 1 时把 floor 处的云盖加厚到层云量级，或让扩散项改用竖直方向的光学深度。
+- 满覆盖时的云塔阴影条纹：已由第 7 节解决。
 - **半分辨率的边缘偏软。** 静止画面由 TAA 补回；运动时可以考虑云自己的时间重投影（四分之一分辨率 + 重投影，同扩散文档的后续项）。
 - 环境探针的内联步进在环境变化的那几帧会比原来贵；目前没有单独测量。
-
-![满覆盖：16:00 与正午](images/2026-10-06-cumulus-overcast-shadows.jpg)

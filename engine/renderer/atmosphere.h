@@ -92,7 +92,8 @@ struct EnvironmentUniformData
     // plume map; w the billow strength.
     glm::vec4 cloudScales{0.0f};
     glm::vec4 cloudPhase{0.0f}; // x forward g, y back g, z back weight, w single-scattering albedo
-    // x ambient scale, y haze distance km, z unused, w the frame's index for the march's jitter.
+    // x ambient scale, y haze distance km, z CloudDeckWeight of the coverage, w the frame's index
+    // for the march's jitter.
     // w changes every frame, so the environment probe's CaptureKey leaves it out.
     glm::vec4 cloudParams{0.0f};
     // rgb: the moonless night sky's luminance, cd/m^2, added to the sky above the horizon

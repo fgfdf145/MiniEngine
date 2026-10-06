@@ -247,6 +247,33 @@ float CloudEdgeDensity(float distanceKm)
     return Saturate(distanceKm / kCloudEdgeKm);
 }
 
+float CloudWaterColumn(float heightKm)
+{
+    // The profile is flat at kCloudWaterAtBase up to where (h / H)^(2/3) reaches it, H a^(3/2),
+    // rises as that power to H, whose integral is (3/5) H^(-2/3) h^(5/3), and is 1 above.
+    const float h = std::max(heightKm, 0.0f);
+    const float baseTop = kCloudWaterFullHeightKm * std::pow(kCloudWaterAtBase, 1.5f);
+    if (h <= baseTop)
+    {
+        return kCloudWaterAtBase * h;
+    }
+    const float rising = 0.6f * std::pow(kCloudWaterFullHeightKm, -2.0f / 3.0f);
+    const float full = std::min(h, kCloudWaterFullHeightKm);
+    const float column = kCloudWaterAtBase * baseTop + rising * (std::pow(full, 5.0f / 3.0f) - std::pow(baseTop, 5.0f / 3.0f));
+    return column + std::max(h - kCloudWaterFullHeightKm, 0.0f);
+}
+
+float CloudPlumeColumnDepth(float heightKm, float extinctionPerKm)
+{
+    return CloudWaterColumn(heightKm) * extinctionPerKm;
+}
+
+float CloudDeckWeight(float coverage)
+{
+    const float x = Saturate((coverage - kCloudDeckCoverageStart) / (1.0f - kCloudDeckCoverageStart));
+    return x * x * (3.0f - 2.0f * x);
+}
+
 float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta)
 {
     return HenyeyGreenstein(forwardG, cosTheta) * (1.0f - backWeight) + HenyeyGreenstein(backG, cosTheta) * backWeight;
@@ -254,18 +281,34 @@ float CloudPhase(float forwardG, float backG, float backWeight, float cosTheta)
 
 float CloudSunScattering(float lightOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta)
 {
+    return CloudSunScattering(lightOpticalDepth, lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
+}
+
+float CloudSunScattering(float lightOpticalDepth, float scatteredOpticalDepth, float forwardG, float backG, float backWeight, float cosTheta)
+{
     float scattering = 0.0f;
     float a = 1.0f;
     float b = 1.0f;
     float c = 1.0f;
     for (int octave = 0; octave < kCloudScatteringOctaves; ++octave)
     {
-        scattering += a * CloudPhase(forwardG * c, backG * c, backWeight, cosTheta) * std::exp(-b * lightOpticalDepth);
+        const float depth = octave == 0 ? lightOpticalDepth : scatteredOpticalDepth;
+        scattering += a * CloudPhase(forwardG * c, backG * c, backWeight, cosTheta) * std::exp(-b * depth);
         a *= kCloudOctaveScattering;
         b *= kCloudOctaveExtinction;
         c *= kCloudOctaveAnisotropy;
     }
     return scattering;
+}
+
+float CloudScatteredOpticalDepth(float lightOpticalDepth, float upOpticalDepth, float sunCosine, float deckWeight)
+{
+    if (sunCosine <= 0.0f)
+    {
+        return lightOpticalDepth;
+    }
+    const float column = upOpticalDepth / std::max(sunCosine, kCloudMinSunCosine);
+    return glm::mix(lightOpticalDepth, std::min(lightOpticalDepth, column), deckWeight);
 }
 
 float CloudMeanCosine(float forwardG, float backG, float backWeight)
@@ -292,13 +335,38 @@ float CloudDiffuseScattering(float lightOpticalDepth, float awayOpticalDepth, fl
     // the light leaves by. Absorption takes exp(-kappa tau') on top.
     const float scaled = similarity * lightOpticalDepth;
     const float total = similarity * (lightOpticalDepth + std::max(awayOpticalDepth, 0.0f));
-    const float lossless = 5.0f - 3.0f * std::exp(-scaled) - (5.0f - std::exp(-total)) * (scaled + 2.0f / 3.0f) / (total + 4.0f / 3.0f);
-    return std::max(lossless, 0.0f) * std::exp(-kappa * scaled) / (4.0f * kPi);
+    return CloudDiffuseFluence(scaled, total, 1.0f) * std::exp(-kappa * scaled) / (4.0f * kPi);
+}
+
+float CloudDiffuseFluence(float scaled, float total, float mu)
+{
+    // The same slab with the beam at cosine mu to its normal: phi'' = -3 E exp(-tau / mu) has the
+    // particular part -3 mu^2 E exp(-tau / mu); with phi = A + B tau + that, the Marshak faces give
+    // B = -(mu (3 mu + 2) + (2 mu - 3 mu^2) exp(-T / mu)) / (T + 4/3) and
+    // phi = mu (3 mu + 2) - 3 mu^2 exp(-tau / mu) + B (tau + 2/3), mu = 1 the slab along the ray.
+    const float deep = mu * (3.0f * mu + 2.0f);
+    const float leaving = deep + (2.0f * mu - 3.0f * mu * mu) * std::exp(-total / mu);
+    return std::max(deep - 3.0f * mu * mu * std::exp(-scaled / mu) - leaving * (scaled + 2.0f / 3.0f) / (total + 4.0f / 3.0f), 0.0f);
+}
+
+float CloudSlabDiffuseScattering(float upOpticalDepth, float downOpticalDepth, float sunCosine, float kappa, float similarity)
+{
+    if (sunCosine <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const float scaled = similarity * std::max(upOpticalDepth, 0.0f);
+    const float total = scaled + similarity * std::max(downOpticalDepth, 0.0f);
+    return CloudDiffuseFluence(scaled, total, sunCosine) * std::exp(-kappa * scaled) / (4.0f * kPi);
 }
 
 float CloudSunScatteringWithDiffusion(
     float lightOpticalDepth,
+    float scatteredOpticalDepth,
     float awayOpticalDepth,
+    float upOpticalDepth,
+    float downOpticalDepth,
+    float sunCosine,
     float forwardG,
     float backG,
     float backWeight,
@@ -307,13 +375,16 @@ float CloudSunScatteringWithDiffusion(
     float kappa,
     float similarity)
 {
-    const float octaves = CloudSunScattering(lightOpticalDepth, forwardG, backG, backWeight, cosTheta);
+    const float octaves = CloudSunScattering(lightOpticalDepth, scatteredOpticalDepth, forwardG, backG, backWeight, cosTheta);
     if (diffusion <= 0.0f)
     {
         return octaves;
     }
     const float single = CloudPhase(forwardG, backG, backWeight, cosTheta) * std::exp(-lightOpticalDepth);
-    const float diffused = single + CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity);
+    const float field = std::max(
+        CloudDiffuseScattering(lightOpticalDepth, awayOpticalDepth, kappa, similarity),
+        CloudSlabDiffuseScattering(upOpticalDepth, downOpticalDepth, sunCosine, kappa, similarity));
+    const float diffused = single + field;
     return octaves + diffusion * std::max(diffused - octaves, 0.0f);
 }
 

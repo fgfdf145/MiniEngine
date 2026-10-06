@@ -72,7 +72,7 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 cloudLayer;                 // x base altitude km, y thickness km, z coverage offset, w extinction per km (0 off)
     vec4 cloudScales;                // frequencies per km: x large billows, y small billows, z plume map; w billow strength
     vec4 cloudPhase;                 // x forward g, y back g, z back weight, w single-scattering albedo
-    vec4 cloudParams;                // x ambient scale, y haze distance km, w frame index
+    vec4 cloudParams;                // x ambient scale, y haze distance km, z deck weight, w frame index
     vec4 nightSky;                   // rgb moonless night sky luminance cd/m^2, added above the horizon
     vec4 cloudLighting;              // x diffusion, y ambient occlusion, z diffusion decay kappa, w mean cosine
 

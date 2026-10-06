@@ -250,16 +250,93 @@ void DiffusionField()
     for (float depth : {0.0f, 0.5f, 1.0f, 3.0f, 10.0f, 20.0f, 60.0f})
     {
         const float octaves = CloudSunScattering(depth, 0.8f, -0.3f, 0.3f, 0.2f);
-        Require(CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 0.0f, cloud.x, cloud.y) == octaves,
+        Require(CloudSunScatteringWithDiffusion(depth, depth, kDeep, 0.0f, 0.0f, 0.0f, 0.8f, -0.3f, 0.3f, 0.2f, 0.0f, cloud.x, cloud.y) == octaves,
                 "diffusion 0 leaves the octaves alone");
-        const float half = CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 0.5f, cloud.x, cloud.y);
-        const float full = CloudSunScatteringWithDiffusion(depth, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y);
+        const float half = CloudSunScatteringWithDiffusion(depth, depth, kDeep, 0.0f, 0.0f, 0.0f, 0.8f, -0.3f, 0.3f, 0.2f, 0.5f, cloud.x, cloud.y);
+        const float full = CloudSunScatteringWithDiffusion(depth, depth, kDeep, 0.0f, 0.0f, 0.0f, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y);
         Require(half >= octaves && full >= half, "diffusion only ever adds what the octaves miss");
     }
     // Ten optical depths in, the octaves are nearly gone; the diffusion field is not.
-    Require(CloudSunScatteringWithDiffusion(10.0f, kDeep, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y) >
+    Require(CloudSunScatteringWithDiffusion(10.0f, 10.0f, kDeep, 0.0f, 0.0f, 0.0f, 0.8f, -0.3f, 0.3f, 0.2f, 1.0f, cloud.x, cloud.y) >
                 20.0f * CloudSunScattering(10.0f, 0.8f, -0.3f, 0.3f, 0.2f),
             "diffusion lights the core of a thick cloud");
+}
+
+void ColumnAndDeck()
+{
+    // The water column is the profile's integral: check it against a fine midpoint sum.
+    for (float height : {0.05f, 0.125f, 0.4f, 1.0f, 1.7f})
+    {
+        constexpr int kSteps = 20000;
+        double sum = 0.0;
+        for (int step = 0; step < kSteps; ++step)
+        {
+            sum += CloudWaterProfile((static_cast<float>(step) + 0.5f) * height / kSteps) * height / kSteps;
+        }
+        Require(Near(CloudWaterColumn(height), static_cast<float>(sum), 1e-4f), "the column integrates the water profile at " + std::to_string(height));
+    }
+    Require(CloudWaterColumn(-1.0f) == 0.0f && CloudWaterColumn(0.0f) == 0.0f, "nothing below the base");
+    Require(Near(CloudPlumeColumnDepth(0.6f, 20.0f), 20.0f * CloudWaterColumn(0.6f), 1e-6f), "depth is the column times the extinction");
+
+    Require(CloudDeckWeight(0.0f) == 0.0f && CloudDeckWeight(0.45f) == 0.0f && CloudDeckWeight(kCloudDeckCoverageStart) == 0.0f,
+            "separate cumulus keep the slanted path");
+    Require(CloudDeckWeight(1.0f) == 1.0f, "a closed deck takes the column");
+    float previous = 0.0f;
+    for (float coverage = 0.6f; coverage <= 1.0f; coverage += 0.05f)
+    {
+        Require(CloudDeckWeight(coverage) >= previous, "rising with coverage");
+        previous = CloudDeckWeight(coverage);
+    }
+
+    // Scattered light takes the column when that is shorter, only as far as the deck weight goes,
+    // and never the column of a point the sun does not reach from above.
+    Require(CloudScatteredOpticalDepth(40.0f, 6.4f, 0.64f, 1.0f) == 10.0f, "down the column in a deck");
+    Require(CloudScatteredOpticalDepth(40.0f, 6.4f, 0.64f, 0.0f) == 40.0f, "the slanted path between cumulus");
+    Require(Near(CloudScatteredOpticalDepth(40.0f, 6.4f, 0.64f, 0.5f), 25.0f, 1e-5f), "between, in between");
+    Require(CloudScatteredOpticalDepth(2.0f, 6.4f, 0.64f, 1.0f) == 2.0f, "a shorter slanted path stands");
+    Require(CloudScatteredOpticalDepth(40.0f, 0.0f, -0.2f, 1.0f) == 40.0f, "the sun below the horizon: the slanted path");
+    Require(CloudScatteredOpticalDepth(40.0f, 1.0f, 0.01f, 1.0f) == 1.0f / kCloudMinSunCosine, "a low sun's column is measured at the floor");
+
+    // A tower's hard shadow stays in single scattering: with the scattered light clear, the slanted
+    // path still takes the first octave.
+    const float clear = CloudSunScattering(0.0f, 0.8f, -0.3f, 0.3f, 0.2f);
+    Require(Near(CloudSunScattering(1e3f, 0.0f, 0.8f, -0.3f, 0.3f, 0.2f), clear - CloudPhase(0.8f, -0.3f, 0.3f, 0.2f), 1e-6f),
+            "the shadow takes single scattering only");
+    Require(CloudSunScattering(3.0f, 3.0f, 0.8f, -0.3f, 0.3f, 0.2f) == CloudSunScattering(3.0f, 0.8f, -0.3f, 0.3f, 0.2f),
+            "one depth for all, the plain octaves");
+
+    // The fluence across a slab lit at an angle: mu = 1 is the slab along the ray.
+    for (float scaled : {0.0f, 0.5f, 3.0f, 12.0f})
+    {
+        const float total = scaled + 7.0f;
+        const float alongRay = 5.0f - 3.0f * std::exp(-scaled) - (5.0f - std::exp(-total)) * (scaled + 2.0f / 3.0f) / (total + 4.0f / 3.0f);
+        Require(Near(CloudDiffuseFluence(scaled, total, 1.0f), alongRay, 1e-5f), "mu 1 is the field along the ray");
+    }
+    for (float mu : {0.2f, 0.5f, 0.8f})
+    {
+        Require(Near(CloudDiffuseFluence(0.0f, 1e7f, mu), 2.0f * mu, 1e-4f), "2 mu E at the lit face of a thick slab");
+        Require(Near(CloudDiffuseFluence(40.0f, 1e7f, mu), mu * (3.0f * mu + 2.0f), 1e-3f), "mu (3 mu + 2) E deep inside");
+        Require(CloudDiffuseFluence(0.0f, 0.0f, mu) == 0.0f, "no slab, no field");
+        Require(CloudDiffuseFluence(2.0f, 10.0f, mu) < CloudDiffuseFluence(2.0f, 10.0f, 1.0f), "a slanted sun lights it less");
+    }
+
+    const glm::vec2 cloud = CloudDiffusionParameters(0.98f, CloudMeanCosine(0.8f, -0.3f, 0.3f));
+    Require(CloudSlabDiffuseScattering(5.0f, 5.0f, 0.0f, cloud.x, cloud.y) == 0.0f &&
+                CloudSlabDiffuseScattering(5.0f, 5.0f, -0.5f, cloud.x, cloud.y) == 0.0f,
+            "no sun above the column, no field across it");
+    Require(Near(CloudSlabDiffuseScattering(4.0f, 9.0f, 1.0f, cloud.x, cloud.y), CloudDiffuseScattering(4.0f, 9.0f, cloud.x, cloud.y), 1e-6f),
+            "a sun overhead: the column is the ray");
+
+    // The base of a 600 m deck beside a tower: the slanted path crosses 40 of cloud, the column 6.
+    const float up = CloudPlumeColumnDepth(0.6f, 20.0f);
+    const float slanted = CloudSunScatteringWithDiffusion(40.0f, 40.0f, 0.0f, up, 0.0f, 0.64f, 0.8f, -0.3f, 0.3f, -0.6f, 1.0f, cloud.x, cloud.y);
+    // With diffusion off, the octaves alone: down the column they still reach it.
+    const float deckOctaves = CloudSunScatteringWithDiffusion(
+        40.0f, CloudScatteredOpticalDepth(40.0f, up, 0.64f, 1.0f), 0.0f, up, 0.0f, 0.64f, 0.8f, -0.3f, 0.3f, -0.6f, 0.0f, cloud.x, cloud.y);
+    const float slantedOctaves = CloudSunScatteringWithDiffusion(40.0f, 40.0f, 0.0f, up, 0.0f, 0.64f, 0.8f, -0.3f, 0.3f, -0.6f, 0.0f, cloud.x, cloud.y);
+    const float alongRay = CloudSunScatteringWithDiffusion(40.0f, 40.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.8f, -0.3f, 0.3f, -0.6f, 1.0f, cloud.x, cloud.y);
+    Require(slanted > 10.0f * alongRay, "the column's diffusion field lights a deck's base the slanted ray left dark");
+    Require(deckOctaves > 100.0f * slantedOctaves, "and the scattered octaves come down the column too");
 }
 
 void DiffuseTransmittance()
@@ -353,6 +430,7 @@ int main()
         PhaseIsNormalized();
         SunScatteringOctaves();
         DiffusionField();
+        ColumnAndDeck();
         DiffuseTransmittance();
         ShellFromTheGround();
         ShellFromInsideAndAbove();

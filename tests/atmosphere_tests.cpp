@@ -254,6 +254,7 @@ void PacksClouds()
     const EnvironmentUniformData clamped =
         BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, wild, p, std::nullopt, glm::vec3(0.0f), nullptr);
     Require(clamped.cloudLayer.z == CloudCoverageOffset(1.0f) && clamped.cloudLayer.w == 500.0f, "coverage and density are clamped");
+    Require(clamped.cloudParams.z == 1.0f && data.cloudParams.z == 0.0f, "full coverage is a deck, half is separate cumulus");
     SceneEnvironment clear = environment;
     clear.clouds.coverage = 0.0f;
     Require(BuildEnvironmentUniformData(EnvironmentMode::Atmosphere, clear, p, std::nullopt, glm::vec3(0.0f), nullptr).cloudLayer.w == 0.0f,
