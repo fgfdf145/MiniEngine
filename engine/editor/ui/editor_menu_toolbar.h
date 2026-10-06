@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // The editor's main menu bar and toolbar, both generated from a CommandRegistry.
 
@@ -92,9 +92,8 @@ class CommandPalette
 };
 
 // Every command with a shortcut, by menu, plus `extraKeys` ({keys, what they do}) for keys the
-// commands do not own, such as the viewport's.
-void DrawKeyboardShortcutsWindow(
+// commands do not own, such as the viewport's. Drawn into the current window.
+void DrawKeyboardShortcutsTable(
     const CommandRegistry& registry,
-    bool* open,
     std::span<const std::pair<const char*, const char*>> extraKeys);
 }

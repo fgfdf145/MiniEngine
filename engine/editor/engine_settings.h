@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <imgui.h>
 #include <engine/platform/ui/ui_scale.h>
@@ -14,8 +14,8 @@
 namespace me
 {
 
-// Which of the Window menu's windows are open, by the settings key of each (EditorUiController's panel
-// ids; the asset browser keeps its older "asset_manager"). A window not named keeps its default.
+// Which of the Window menu's panels are open, by the settings key of each (EditorPanel::GetSettingsKey,
+// the panel's id; the asset browser keeps its older "asset_manager"). A panel not named keeps its default.
 struct EditorWindowVisibilitySettings
 {
     std::map<std::string, bool> open;

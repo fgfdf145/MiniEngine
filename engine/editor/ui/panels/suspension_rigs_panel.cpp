@@ -1,7 +1,8 @@
-#include "editor_suspension_rigs.h"
+﻿#include "suspension_rigs_panel.h"
 
 #include <engine/asset/model_cache.h>
 #include <engine/editor/editor_ui.h>
+#include <engine/editor/ui/framework/editor_context.h>
 #include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
 #include <engine/physics/vehicle_suspension.h>
@@ -417,7 +418,7 @@ std::string Hz(double value, const char* none)
 }
 }
 
-SuspensionRigWindow::~SuspensionRigWindow()
+SuspensionRigsPanel::~SuspensionRigsPanel()
 {
     if (m_run)
     {
@@ -430,20 +431,45 @@ SuspensionRigWindow::~SuspensionRigWindow()
     }
 }
 
-void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open, const VehicleRigStatus& live, EditorUiFrameResult& result)
+SuspensionRigsPanel::SuspensionRigsPanel()
+    : EditorPanel("suspension_rigs", "Suspension Rigs", ICON_PH_CHART_LINE)
 {
-    result.vehicleRigExcitation = m_excitation;
-    ImGui::SetNextWindowSize(ImVec2(1100.0f, 760.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Suspension Rigs", open))
+}
+
+void SuspensionRigsPanel::Tick(EditorContext& context)
+{
+    // Also while the window is not drawn (fullscreen): the running rig keeps its settings. Until
+    // the window has been shown the rig keeps what it has.
+    if (m_shown)
     {
-        ImGui::End();
-        return;
+        context.result.vehicleRigExcitation = m_excitation;
     }
+    if (!IsOpen() && context.state.vehicleRigStatus.active)
+    {
+        // Closing the window takes the car off the rig.
+        context.result.actions.stopVehicleRig = true;
+    }
+}
+
+void SuspensionRigsPanel::PreBegin(EditorContext& context)
+{
+    static_cast<void>(context);
+    ImGui::SetNextWindowSize(ImVec2(1100.0f, 760.0f), ImGuiCond_FirstUseEver);
+}
+
+void SuspensionRigsPanel::OnGui(EditorContext& context)
+{
+    DrawContents(context.scene, context.state.vehicleRigStatus, context.result);
+}
+
+void SuspensionRigsPanel::DrawContents(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result)
+{
+    m_shown = true;
+    result.vehicleRigExcitation = m_excitation;
     PollRun();
     DrawCarSource(scene);
     if (!m_car.has_value())
     {
-        ImGui::End();
         return;
     }
     DrawRunControls();
@@ -482,10 +508,9 @@ void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open, const Vehi
         m_requestedTab = -1;
         ImGui::EndTabBar();
     }
-    ImGui::End();
 }
 
-void SuspensionRigWindow::DrawCarSource(const IEditorWorld& scene)
+void SuspensionRigsPanel::DrawCarSource(const IEditorWorld& scene)
 {
     std::string selectedPath;
     std::string selectedName;
@@ -524,7 +549,7 @@ void SuspensionRigWindow::DrawCarSource(const IEditorWorld& scene)
     }
 }
 
-void SuspensionRigWindow::LoadCar(const std::string& sourcePath, const std::string& name)
+void SuspensionRigsPanel::LoadCar(const std::string& sourcePath, const std::string& name)
 {
     m_sourcePath = sourcePath;
     m_carName = name.empty() ? sourcePath : name;
@@ -556,7 +581,7 @@ void SuspensionRigWindow::LoadCar(const std::string& sourcePath, const std::stri
     }
 }
 
-void SuspensionRigWindow::DrawRunControls()
+void SuspensionRigsPanel::DrawRunControls()
 {
     if (m_run)
     {
@@ -607,7 +632,7 @@ void SuspensionRigWindow::DrawRunControls()
     }
 }
 
-void SuspensionRigWindow::StartRun()
+void SuspensionRigsPanel::StartRun()
 {
     if (m_run || !m_car.has_value())
     {
@@ -629,7 +654,7 @@ void SuspensionRigWindow::StartRun()
     m_runError.clear();
 }
 
-void SuspensionRigWindow::PollRun()
+void SuspensionRigsPanel::PollRun()
 {
     if (!m_run || m_run->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
     {
@@ -650,7 +675,7 @@ void SuspensionRigWindow::PollRun()
     m_run.reset();
 }
 
-void SuspensionRigWindow::DrawSummaryTab()
+void SuspensionRigsPanel::DrawSummaryTab()
 {
     if (!m_report.has_value())
     {
@@ -750,7 +775,7 @@ void SuspensionRigWindow::DrawSummaryTab()
     }
 }
 
-void SuspensionRigWindow::DrawKcTab()
+void SuspensionRigsPanel::DrawKcTab()
 {
     if (!m_report.has_value())
     {
@@ -837,7 +862,7 @@ void SuspensionRigWindow::DrawKcTab()
     ImPlot::EndSubplots();
 }
 
-void SuspensionRigWindow::DrawSevenPostTab()
+void SuspensionRigsPanel::DrawSevenPostTab()
 {
     if (!m_report.has_value())
     {
@@ -963,7 +988,7 @@ void SuspensionRigWindow::DrawSevenPostTab()
     ImPlot::EndSubplots();
 }
 
-void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result)
+void SuspensionRigsPanel::DrawLiveTab(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result)
 {
     VehicleRigExcitation& e = m_excitation;
     if (live.active)
@@ -1139,7 +1164,7 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
     }
 }
 
-void SuspensionRigWindow::PoseLinkage()
+void SuspensionRigsPanel::PoseLinkage()
 {
     const suspension::CarModel& car = *m_car;
     if (m_kinematicsAxle != m_axle)
@@ -1201,7 +1226,7 @@ void SuspensionRigWindow::PoseLinkage()
     }
 }
 
-void SuspensionRigWindow::DrawLinkageTab()
+void SuspensionRigsPanel::DrawLinkageTab()
 {
     ImGui::SetNextItemWidth(120.0f);
     const int previousAxle = m_axle;

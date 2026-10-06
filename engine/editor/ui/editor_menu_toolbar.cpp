@@ -1,4 +1,4 @@
-#include "editor_menu_toolbar.h"
+﻿#include "editor_menu_toolbar.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -540,17 +540,10 @@ void CommandPalette::Draw(const CommandRegistry& registry, float uiScale)
     }
 }
 
-void DrawKeyboardShortcutsWindow(
+void DrawKeyboardShortcutsTable(
     const CommandRegistry& registry,
-    bool* open,
     std::span<const std::pair<const char*, const char*>> extraKeys)
 {
-    if (!ImGui::Begin("Keyboard Shortcuts", open))
-    {
-        ImGui::End();
-        return;
-    }
-
     // One table per top-level menu, in menu order; toolbar-only commands under "Toolbar".
     std::vector<std::string> groups;
     const auto groupOf = [](const Command& command)
@@ -605,6 +598,5 @@ void DrawKeyboardShortcutsWindow(
             ImGui::EndTable();
         }
     }
-    ImGui::End();
 }
 }

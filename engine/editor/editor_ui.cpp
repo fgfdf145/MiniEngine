@@ -1,13 +1,26 @@
 ﻿#include "editor_ui.h"
 #include "ui/editor_menu_toolbar.h"
-#include "ui/editor_suspension_rigs.h"
 #include "ui/editor_ui_internal.h"
+#include "ui/modals/about_modal.h"
+#include "ui/modals/import_conflict_modal.h"
+#include "ui/modals/kn5_import_modal.h"
+#include "ui/modals/scene_reset_modal.h"
+#include "ui/panels/asset_browser_panel.h"
+#include "ui/panels/camera_panel.h"
+#include "ui/panels/graphics_debug_panel.h"
+#include "ui/panels/input_monitor_panel.h"
+#include "ui/panels/scene_panel.h"
+#include "ui/panels/suspension_rigs_panel.h"
+#include "ui/panels/theme_panel.h"
+#include "ui/panels/vehicle_panel.h"
+#include "ui/panels/viewport_panel.h"
+#include "ui/windows/keyboard_shortcuts_window.h"
+#include "ui/windows/model_processor_window.h"
+#include "ui/windows/preferences_window.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/logic/editor_world.h>
-#include <engine/platform/ui/ui_scale.h>
-#include <IconsPhosphor.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 
@@ -21,26 +34,39 @@ namespace me
 
 EditorUiController::EditorUiController()
 {
+    RegisterWindows();
     RegisterCommands();
+}
+
+void EditorUiController::RegisterWindows()
+{
+    // Dockable panels, in the Window menu's order. A new panel needs its class and a line here.
+    m_windows.Register<ScenePanel>();
+    m_windows.Register<ViewportPanel>();
+    m_windows.Register<CameraPanel>();
+    m_windows.Register<GraphicsDebugPanel>();
+    m_windows.Register<AssetBrowserPanel>();
+    m_windows.Register<InputMonitorPanel>();
+    m_windows.Register<VehiclePanel>();
+    m_windows.Register<SuspensionRigsPanel>();
+    m_windows.Register<ThemePanel>();
+    // Floating tool windows, opened by commands or by other windows.
+    m_windows.Register<ModelProcessorWindow>();
+    m_windows.Register<PreferencesWindow>();
+    m_windows.Register<KeyboardShortcutsWindow>();
+    // Modals, drawn last so they are over everything else.
+    m_windows.Register<SceneResetModal>();
+    m_windows.Register<Kn5ImportModal>();
+    m_windows.Register<ImportConflictModal>();
+    m_windows.Register<AboutModal>();
 }
 
 void EditorUiController::RegisterCommands()
 {
-    // The Window menu lists these, in this order. A new panel needs a line here and nothing else.
-    m_panels = {
-        {"scene", "Scene", ICON_PH_TREE_STRUCTURE, &m_showSceneWindow},
-        {"viewport", "Viewport", ICON_PH_MONITOR, &m_showViewportWindow},
-        {"camera", "Camera", ICON_PH_VIDEO_CAMERA, &m_showCameraWindow},
-        {"graphics_debug", "Graphics Debug", ICON_PH_BUG, &m_showGraphicsDebugWindow},
-        {"assets", "Assets", ICON_PH_TREE_VIEW, &m_showAssetManagerWindow},
-        {"input_monitor", "Input Monitor", ICON_PH_KEYBOARD, &m_showInputMonitorWindow},
-        {"vehicle", "Vehicle", ICON_PH_CAR, &m_showVehicleWindow},
-        {"suspension_rigs", "Suspension Rigs", ICON_PH_CHART_LINE, &m_showSuspensionRigWindow},
-        {"theme", "Theme", ICON_PH_PALETTE, &m_showThemeWindow},
-    };
-
+    // The Window menu lists the panels in the order they were registered.
+    const std::vector<EditorPanelMenuEntry> panels = m_windows.BuildPanelMenuEntries();
     EditorWindowCommands window;
-    window.panels = m_panels;
+    window.panels = panels;
     window.resetLayout = [this]
     {
         m_resetDockLayoutRequested = true;
@@ -49,13 +75,11 @@ void EditorUiController::RegisterCommands()
     EditorSceneCommands scene;
     scene.newScene = [this]
     {
-        m_pendingSceneReset = SceneReset::New;
-        m_openSceneResetModal = true;
+        m_windows.Get<SceneResetModal>().Ask(SceneResetModal::Reset::New);
     };
     scene.clearScene = [this]
     {
-        m_pendingSceneReset = SceneReset::Clear;
-        m_openSceneResetModal = true;
+        m_windows.Get<SceneResetModal>().Ask(SceneResetModal::Reset::Clear);
     };
     scene.openScene = [this]
     {
@@ -95,7 +119,7 @@ void EditorUiController::RegisterCommands()
     // While a car is driven the camera is the driver's (or chases the car).
     scene.canFrameSelection = [this]
     {
-        return m_hasSceneSelection && !m_vehicleStatus.active;
+        return m_hasSceneSelection && !m_state.vehicleStatus.active;
     };
     scene.createEntity = [this]
     {
@@ -120,14 +144,12 @@ void EditorUiController::RegisterCommands()
     };
     scene.openPreferences = [this]
     {
-        m_showPreferencesWindow = true;
-        FocusWindowWhenDrawn("Preferences");
+        m_windows.Open<PreferencesWindow>();
     };
     // The scene's environment, fog and clouds are edited in the Scene panel.
     scene.openSceneSettings = [this]
     {
-        m_showSceneWindow = true;
-        FocusWindowWhenDrawn("Scene");
+        m_windows.Open<ScenePanel>();
     };
     scene.showDocumentation = [this]
     {
@@ -135,39 +157,48 @@ void EditorUiController::RegisterCommands()
     };
     scene.showKeyboardShortcuts = [this]
     {
-        m_showKeyboardShortcutsWindow = true;
-        FocusWindowWhenDrawn("Keyboard Shortcuts");
+        m_windows.Open<KeyboardShortcutsWindow>();
     };
     scene.showAbout = [this]
     {
-        m_openAboutModal = true;
+        m_windows.Get<AboutModal>().Open();
     };
-    RegisterEditorCommands(m_commands, m_commandState, window, scene);
+    RegisterEditorCommands(m_commands, m_state.commands, window, scene);
     m_toolbarLayout = BuildEditorToolbarLayout();
 }
 
 void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& settings)
 {
     m_window = window;
-    if (!m_hasCapturedBaseStyle)
-    {
-        m_baseStyle = ImGui::GetStyle();
-        m_hasCapturedBaseStyle = true;
-    }
-    if (!m_hasCapturedDefaultThemeColors)
-    {
-        CaptureDefaultThemeColors();
-        m_builtInThemeColors = m_defaultThemeColors;
-        m_hasCapturedDefaultThemeColors = true;
-    }
+    m_style.BeginFrame(window);
     if (!m_hasAppliedEngineSettings)
     {
-        ApplyEngineSettings(settings);
+        m_style.ApplySettings(settings.editorUi);
+        m_state.audio = settings.audio;
+        m_windows.ApplyOpenState(settings.editorUi.windows);
         m_hasAppliedEngineSettings = true;
     }
 
-    ApplyUiScale();
+    m_style.ApplyUiScale();
     ImGuizmo::BeginFrame();
+}
+
+void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
+{
+    settings.version = 1;
+    settings.audio = m_state.audio;
+    m_windows.WriteOpenState(settings.editorUi.windows);
+    m_style.WriteSettings(settings.editorUi);
+}
+
+void EditorUiController::RequestAssetBrowserRefresh()
+{
+    m_windows.Get<AssetBrowserPanel>().Refresh();
+}
+
+void EditorUiController::QueueDroppedFile(std::string path)
+{
+    m_windows.Get<AssetBrowserPanel>().QueueDroppedFile(std::move(path));
 }
 
 EditorUiFrameResult EditorUiController::Draw(
@@ -186,173 +217,81 @@ EditorUiFrameResult EditorUiController::Draw(
 
     EditorUiFrameResult result{};
     result.viewportExtent = viewportExtent;
-    const float previousUiScale = m_uiScale;
-    const EngineAudioSettings previousAudio = m_audio;
-    // Every Window-menu window's open state, to save the settings when one opens or closes.
-    std::vector<bool> previousOpen;
-    for (const EditorPanel& panel : m_panels)
-    {
-        previousOpen.push_back(*panel.visible);
-    }
+    const EditorFrameInput frame{
+        lastLoadError,
+        lastSceneIoError,
+        sceneUploadStatus,
+        viewportTextureId,
+        viewportExtent,
+        currentBackendType};
+    EditorContext context{scene, camera, matrices, frame, result, m_state, m_style, m_windows, m_commands};
 
-    // Close the processor once its model is gone. Checking the disk every frame is a filesystem
-    // call per frame for a file that rarely changes, so it is checked twice a second.
-    constexpr double kModelProcessorExistsCheckIntervalSeconds = 0.5;
-    const double now = ImGui::GetTime();
-    if (m_showModelProcessorWindow &&
-        now - m_modelProcessorLastExistsCheckTime >= kModelProcessorExistsCheckIntervalSeconds)
-    {
-        m_modelProcessorLastExistsCheckTime = now;
-        std::error_code processorErrorCode;
-        const std::filesystem::path processorModelPath(m_modelProcessorModelPath);
-        if (m_modelProcessorModelPath.empty() ||
-            !std::filesystem::exists(processorModelPath, processorErrorCode) ||
-            processorErrorCode ||
-            !IsSupportedModelAssetPath(processorModelPath))
-        {
-            CloseModelProcessorWindow();
-        }
-    }
+    const float previousUiScale = m_style.UiScaleMultiplier();
+    const EngineAudioSettings previousAudio = m_state.audio;
+    // Every panel's open state, to save the settings when one opens or closes.
+    const std::vector<bool> previousOpen = m_windows.CapturePanelOpenState();
 
     // Shortcuts first, so what they change shows in this frame's menus and panels. The menu bar
     // and the toolbar come before the dock space, which fills the area they leave.
     m_hasSceneSelection = scene.HasSelection();
     SyncCommandStateFromEditor(scene);
-    const EditorCommandState commandStateBefore = m_commandState;
+    const EditorCommandState commandStateBefore = m_state.commands;
     ProcessCommandShortcuts(m_commands);
     // Escape leaves the fullscreen viewport as F11 does: with no menu there is nothing else to click.
     // An open popup (a typed-path prompt, the command palette) takes Escape to close itself instead.
-    if (m_commandState.viewportFullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+    if (m_state.commands.viewportFullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
     {
-        m_commandState.viewportFullscreen = false;
+        m_state.commands.viewportFullscreen = false;
     }
     UpdateWindowFullscreen();
-    const bool fullscreen = m_commandState.viewportFullscreen;
+    const bool fullscreen = m_state.commands.viewportFullscreen;
     if (!fullscreen)
     {
         DrawMainMenu(m_commands);
-        DrawToolbar(m_commands, m_toolbarLayout, m_effectiveUiScale);
+        DrawToolbar(m_commands, m_toolbarLayout, m_style.EffectiveUiScale());
     }
     // Before the command state is applied, so what a command picked here shows this frame.
-    if (std::exchange(m_commandState.commandPaletteRequested, false))
+    if (std::exchange(m_state.commands.commandPaletteRequested, false))
     {
         m_commandPalette.Open();
     }
-    m_commandPalette.Draw(m_commands, m_effectiveUiScale);
+    m_commandPalette.Draw(m_commands, m_style.EffectiveUiScale());
     ApplyCommandStateToEditor(commandStateBefore, scene);
     if (!fullscreen)
     {
-        DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false));
+        DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false), m_windows.GetPanels());
     }
     result.actions = std::exchange(m_commandActions, {});
-    HandleFileCommands(scene, result);
-    DrawSceneResetConfirmModal(result);
+    HandleFileCommands(context);
 
-    // The fullscreen viewport is all there is: every panel waits for it to end.
-    if (!fullscreen && m_showCameraWindow)
-    {
-        DrawCameraPanel(camera);
-    }
+    // Every window, panel and modal. Over the fullscreen viewport only those that draw there.
+    m_windows.TickAndDraw(context, fullscreen);
 
-    if (!fullscreen && m_showGraphicsDebugWindow)
-    {
-        DrawGraphicsDebugPanel();
-    }
+    const bool windowToggled = previousOpen != m_windows.CapturePanelOpenState();
+    // The Theme panel sets engineSettingsChanged itself when the palette changes.
+    result.engineSettingsChanged = result.engineSettingsChanged ||
+                                   std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
+                                   windowToggled || previousAudio != m_state.audio;
 
-    bool themeChanged = false;
-    if (!fullscreen && m_showThemeWindow)
-    {
-        themeChanged = DrawThemeEditorWindow();
-    }
-
-    if (!fullscreen && m_showModelProcessorWindow)
-    {
-        DrawModelProcessorPanel(scene, result);
-    }
-
-    if (!fullscreen && m_showInputMonitorWindow)
-    {
-        DrawInputMonitorPanel();
-    }
-
-    if (!fullscreen && m_showVehicleWindow)
-    {
-        DrawVehiclePanel(scene, result);
-    }
-
-    if (!fullscreen && m_showSuspensionRigWindow)
-    {
-        if (!m_suspensionRigs)
-        {
-            m_suspensionRigs = std::make_shared<SuspensionRigWindow>();
-        }
-        m_suspensionRigs->Draw(scene, &m_showSuspensionRigWindow, m_vehicleRigStatus, result);
-    }
-    if (m_suspensionRigs)
-    {
-        // Also when the window is not drawn (fullscreen): the running rig keeps its settings.
-        result.vehicleRigExcitation = m_suspensionRigs->Excitation();
-    }
-    if (!m_showSuspensionRigWindow && m_vehicleRigStatus.active)
-    {
-        // Closing the window takes the car off the rig.
-        result.actions.stopVehicleRig = true;
-    }
-
-    if (!fullscreen && m_showSceneWindow)
-    {
-        DrawScenePanel(scene, lastLoadError, lastSceneIoError, sceneUploadStatus, result);
-    }
-
-    if (fullscreen || m_showViewportWindow)
-    {
-        DrawViewportPanel(camera, matrices, scene, viewportTextureId, currentBackendType, result);
-    }
-
-    if (!fullscreen && m_showAssetManagerWindow)
-    {
-        DrawAssetBrowserPanel(result);
-    }
-
-    if (!fullscreen && m_showPreferencesWindow)
-    {
-        DrawPreferencesWindow();
-    }
-    DrawHelpWindows(fullscreen);
-    // Once every window has been drawn, so one opened this frame exists to be focused.
-    if (!fullscreen && !m_focusWindowRequest.empty())
-    {
-        ImGui::SetWindowFocus(m_focusWindowRequest.c_str());
-        m_focusWindowRequest.clear();
-    }
-
-    bool windowToggled = false;
-    for (size_t index = 0; index < m_panels.size(); ++index)
-    {
-        windowToggled = windowToggled || previousOpen[index] != *m_panels[index].visible;
-    }
-    result.engineSettingsChanged =
-        themeChanged || std::abs(previousUiScale - m_uiScale) > 0.0001f || windowToggled || previousAudio != m_audio;
-
-    result.renderDebug = m_renderDebug;
-    result.audio = m_audio;
-    result.vehicleTuning = m_vehicleTuning;
-    result.vehicleCamera = m_vehicleCamera;
-    result.vehicleHaptics = m_vehicleHaptics;
-    result.vehicleSteeringAssist = m_vehicleSteeringAssist;
-    result.vehicleManualGearbox = m_vehicleManualGearbox;
+    result.renderDebug = m_state.renderDebug;
+    result.audio = m_state.audio;
+    result.vehicleTuning = m_state.vehicle.tuning;
+    result.vehicleCamera = m_state.vehicle.camera;
+    result.vehicleHaptics = m_state.vehicle.haptics;
+    result.vehicleSteeringAssist = m_state.vehicle.steeringAssist;
+    result.vehicleManualGearbox = m_state.vehicle.manualGearbox;
     return result;
 }
 
 void EditorUiController::UpdateWindowFullscreen()
 {
-    if (m_commandState.viewportFullscreen == m_windowFullscreen)
+    if (m_state.commands.viewportFullscreen == m_windowFullscreen)
     {
         return;
     }
-    m_windowFullscreen = m_commandState.viewportFullscreen;
-    m_fullscreenEnteredTime = ImGui::GetTime();
+    m_windowFullscreen = m_state.commands.viewportFullscreen;
+    m_state.fullscreenEnteredTime = ImGui::GetTime();
     // SDL's fullscreen without a display mode is the borderless one at the desktop's resolution.
     if (m_window != nullptr && !SDL_SetWindowFullscreen(m_window, m_windowFullscreen))
     {
@@ -363,29 +302,29 @@ void EditorUiController::UpdateWindowFullscreen()
 void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
 {
     const ImGuizmo::OPERATION operation = scene.GetGizmoSettings().operation;
-    m_commandState.transformTool = operation == ImGuizmo::SCALE    ? TransformTool::Scale
+    m_state.commands.transformTool = operation == ImGuizmo::SCALE    ? TransformTool::Scale
                                    : operation == ImGuizmo::ROTATE ? TransformTool::Rotate
                                                                    : TransformTool::Move;
     // Every debug view has a View command, so the menu and the toolbar show whichever is set, also
     // when the Graphics Debug panel set it.
-    m_commandState.debugView = m_renderDebug.gbufferView;
-    m_commandState.gbufferAvailable = !m_renderDebug.forwardOnly;
-    m_commandState.toneMapping = m_renderDebug.toneMapper;
-    m_commandState.khronosReference = m_renderDebug.khronosReference;
-    m_commandState.antiAliasing = m_renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
-    m_commandState.videoRecording = m_videoRecording.active;
+    m_state.commands.debugView = m_state.renderDebug.gbufferView;
+    m_state.commands.gbufferAvailable = !m_state.renderDebug.forwardOnly;
+    m_state.commands.toneMapping = m_state.renderDebug.toneMapper;
+    m_state.commands.khronosReference = m_state.renderDebug.khronosReference;
+    m_state.commands.antiAliasing = m_state.renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
+    m_state.commands.videoRecording = m_state.videoRecording.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
-    m_commandState.playState = !m_vehicleStatus.active ? PlayState::Stopped
-                               : m_vehicleStatus.paused ? PlayState::Paused
+    m_state.commands.playState = !m_state.vehicleStatus.active ? PlayState::Stopped
+                               : m_state.vehicleStatus.paused ? PlayState::Paused
                                                         : PlayState::Playing;
 }
 
 void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& before, IEditorWorld& scene)
 {
-    if (m_commandState.transformTool != before.transformTool)
+    if (m_state.commands.transformTool != before.transformTool)
     {
         GizmoSettings& gizmo = scene.GetGizmoSettings();
-        switch (m_commandState.transformTool)
+        switch (m_state.commands.transformTool)
         {
         case TransformTool::Move:
             gizmo.operation = kCombinedGizmoOperation;
@@ -398,39 +337,41 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
             break;
         }
     }
-    if (m_commandState.debugView != before.debugView)
+    if (m_state.commands.debugView != before.debugView)
     {
-        m_renderDebug.gbufferView = m_commandState.debugView;
+        m_state.renderDebug.gbufferView = m_state.commands.debugView;
     }
-    if (m_commandState.toneMapping != before.toneMapping)
+    if (m_state.commands.toneMapping != before.toneMapping)
     {
-        m_renderDebug.toneMapper = m_commandState.toneMapping;
+        m_state.renderDebug.toneMapper = m_state.commands.toneMapping;
     }
-    if (m_commandState.antiAliasing != before.antiAliasing)
+    if (m_state.commands.antiAliasing != before.antiAliasing)
     {
-        m_renderDebug.taa = m_commandState.antiAliasing == AntiAliasingMode::Taa;
+        m_state.renderDebug.taa = m_state.commands.antiAliasing == AntiAliasingMode::Taa;
     }
-    if (m_commandState.playState != before.playState)
+    if (m_state.commands.playState != before.playState)
     {
         if (before.playState == PlayState::Stopped)
         {
             // Play drives the selected model; the Vehicle panel shows how, or why it could not.
             m_commandActions.startVehicleDrive = true;
-            m_showVehicleWindow = true;
+            m_windows.Get<VehiclePanel>().Open();
         }
-        else if (m_commandState.playState == PlayState::Stopped)
+        else if (m_state.commands.playState == PlayState::Stopped)
         {
             m_commandActions.stopVehicleDrive = true;
         }
         else
         {
-            m_commandActions.pauseVehicleDrive = m_commandState.playState == PlayState::Paused;
+            m_commandActions.pauseVehicleDrive = m_state.commands.playState == PlayState::Paused;
         }
     }
 }
 
-void EditorUiController::HandleFileCommands(IEditorWorld& scene, EditorUiFrameResult& result)
+void EditorUiController::HandleFileCommands(EditorContext& context)
 {
+    IEditorWorld& scene = context.scene;
+    EditorUiFrameResult& result = context.result;
     // Each prompt has its own ID, so the typed-path fallback modals do not share one popup.
     // Save goes to the current path if already set; otherwise it asks, like Save As.
     const bool saveToCurrentPath = m_saveSceneRequested && !scene.GetSceneFilePath().empty();
@@ -461,12 +402,9 @@ void EditorUiController::HandleFileCommands(IEditorWorld& scene, EditorUiFrameRe
     if (const std::optional<std::string> sourcePath = PickFilePath(FileDialogType::OpenModel, m_importModelRequested);
         sourcePath.has_value())
     {
-        if (!m_assetManager.has_value())
-        {
-            m_assetManager.emplace(EnginePaths::AssetsRoot());
-        }
-        m_showAssetManagerWindow = true;
-        RequestModelImport(*sourcePath, result);
+        AssetBrowserPanel& assets = m_windows.Get<AssetBrowserPanel>();
+        assets.Open();
+        assets.RequestModelImport(context, *sourcePath);
     }
     ImGui::PopID();
 
@@ -476,123 +414,26 @@ void EditorUiController::HandleFileCommands(IEditorWorld& scene, EditorUiFrameRe
     m_importModelRequested = false;
 }
 
-void EditorUiController::DrawSceneResetConfirmModal(EditorUiFrameResult& result)
+void EditorUiController::OpenDocumentation()
 {
-    constexpr const char* kTitle = "Discard Scene Contents?";
-    if (m_openSceneResetModal)
+    const std::filesystem::path readme = EnginePaths::ProjectRoot() / "README.md";
+    std::error_code error;
+    if (!std::filesystem::exists(readme, error))
     {
-        ImGui::OpenPopup(kTitle);
-        m_openSceneResetModal = false;
-    }
-
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
+        LOG_WARN("No documentation at {}", readme.string());
         return;
     }
-    const bool newScene = m_pendingSceneReset == SceneReset::New;
-    if (newScene)
+    // A file URL: three slashes before a drive letter, two before an absolute POSIX path. Spaces are
+    // the one character project paths commonly hold that a URL cannot.
+    std::string path = std::filesystem::absolute(readme, error).generic_string();
+    std::string url = path.starts_with('/') ? "file://" : "file:///";
+    for (const char character : path)
     {
-        ImGui::TextUnformatted("Start a new scene? Every entity is removed and the scene is no longer tied to its file;");
-        ImGui::TextUnformatted("a sun and the default atmosphere are added.");
+        url += character == ' ' ? std::string("%20") : std::string(1, character);
     }
-    else
+    if (!SDL_OpenURL(url.c_str()))
     {
-        ImGui::TextUnformatted("Remove every entity from the scene? The environment and the scene's file are kept.");
+        LOG_WARN("Could not open {}: {}", url, SDL_GetError());
     }
-    ImGui::TextUnformatted("Changes not saved to the scene file are lost. This cannot be undone.");
-    ImGui::Separator();
-
-    const float uiScale = ImGui::GetStyle().FontScaleMain;
-    if (ImGui::Button(newScene ? "New Scene" : "Clear Scene", ImVec2(120.0f * uiScale, 0.0f)))
-    {
-        result.actions.newScene = newScene;
-        result.actions.clearScene = !newScene;
-        m_pendingSceneReset.reset();
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120.0f * uiScale, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
-    {
-        m_pendingSceneReset.reset();
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::EndPopup();
-}
-
-std::string EditorUiController::PanelSettingsKey(const EditorPanel& panel)
-{
-    // The asset browser was saved as "asset_manager" before every window was.
-    return std::string(panel.id) == "assets" ? "asset_manager" : std::string(panel.id);
-}
-
-void EditorUiController::ApplyEngineSettings(const EngineSettings& settings)
-{
-    m_uiScale = platform::ui::ResolveConfiguredUiScale(settings.editorUi.scale);
-    m_audio = settings.audio;
-    for (const EditorPanel& panel : m_panels)
-    {
-        const auto open = settings.editorUi.windows.open.find(PanelSettingsKey(panel));
-        if (open != settings.editorUi.windows.open.end())
-        {
-            *panel.visible = open->second;
-        }
-    }
-
-    if (settings.editorUi.theme.hasCustomColors)
-    {
-        ImGuiStyle& style = ImGui::GetStyle();
-        for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
-        {
-            if (!settings.editorUi.theme.colorDefined[static_cast<size_t>(colorIndex)])
-            {
-                continue;
-            }
-            style.Colors[colorIndex] = settings.editorUi.theme.colors[static_cast<size_t>(colorIndex)];
-        }
-        SyncBaseStyleColorsFromCurrentStyle();
-    }
-}
-
-void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
-{
-    settings.version = 1;
-    platform::ui::SetConfiguredUiScaleForCurrentPlatform(settings.editorUi.scale, m_uiScale);
-    settings.audio = m_audio;
-    for (const EditorPanel& panel : m_panels)
-    {
-        settings.editorUi.windows.open[PanelSettingsKey(panel)] = *panel.visible;
-    }
-    if (!m_hasCapturedDefaultThemeColors)
-    {
-        return; // no frame yet: the palette was never applied, so the loaded overrides stand
-    }
-    settings.editorUi.theme.hasCustomColors = false;
-
-    const ImGuiStyle& style = ImGui::GetStyle();
-    for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
-    {
-        const ImVec4& color = style.Colors[colorIndex];
-        const ImVec4& builtIn = m_builtInThemeColors[static_cast<size_t>(colorIndex)];
-        const bool changed = color.x != builtIn.x || color.y != builtIn.y || color.z != builtIn.z || color.w != builtIn.w;
-        settings.editorUi.theme.colors[static_cast<size_t>(colorIndex)] = color;
-        settings.editorUi.theme.colorDefined[static_cast<size_t>(colorIndex)] = changed;
-        settings.editorUi.theme.hasCustomColors |= changed;
-    }
-}
-
-void EditorUiController::ApplyUiScale()
-{
-    ImGuiStyle& style = ImGui::GetStyle();
-    m_effectiveUiScale = platform::ui::ClampUiScale(platform::ui::ResolveWindowUiScale(m_window) * m_uiScale);
-
-    if (std::abs(style.FontScaleMain - m_effectiveUiScale) <= 0.001f)
-    {
-        return;
-    }
-
-    style = m_baseStyle;
-    style.ScaleAllSizes(m_effectiveUiScale);
-    style.FontScaleMain = m_effectiveUiScale;
 }
 }

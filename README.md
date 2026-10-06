@@ -56,6 +56,19 @@ engine_physics -> glm（Jolt::Jolt 为 private）
 4. 每帧先轮询 SDL 事件并更新输入/相机，再处理 UI 请求、异步模型或场景加载及后台导入；必要时更新 CPU Renderable。
 5. `VulkanRenderer::DrawFrame()` 在内容变更时调用 `UploadSceneResources()`，随后记录场景和 ImGui 命令并提交交换链显示。
 
+### 编辑器 UI 窗口体系
+
+编辑器 UI 按 Unity `EditorWindow` / Unreal `SDockTab` 的方式组织（`engine/editor/ui/framework/`）：
+
+```text
+EditorWindow（抽象基类：id、标题、打开状态；Draw() 模板方法 = BeginWindow → OnGui → EndWindow）
+├─ EditorPanel   可停靠面板：进入 Window 菜单、打开状态写入设置、带默认停靠位（ui/panels/）
+├─ EditorModal   模态弹窗：Open() 请求，按钮 CloseModal() 或 Esc 关闭后回调 OnClose（ui/modals/）
+└─ 浮动工具窗口  直接继承 EditorWindow，由命令或其他窗口打开（ui/windows/）
+```
+
+`EditorWindowManager` 拥有全部窗口，按注册顺序每帧 Tick、绘制，并在打开状态变化后回调 `OnOpen` / `OnClose`；窗口之间通过它 `Find<T>()` / `Open<T>()` 互相访问，不经过外壳。`EditorUiController` 是编辑器外壳：主菜单、工具栏、命令面板与停靠空间，并对后端保持原有接口。窗口每帧收到 `EditorContext`（场景、相机、帧输入、`EditorUiFrameResult`、共享状态 `EditorSharedState`、样式 `EditorStyle`、窗口管理器与命令表），把请求写进 `EditorUiFrameResult` 交给后端。新增面板只需继承 `EditorPanel` 并在 `EditorUiController::RegisterWindows()` 注册一行。设计见 [docs/design/2026-10-07-editor-ui-window-hierarchy-design.md](docs/design/2026-10-07-editor-ui-window-hierarchy-design.md)。
+
 ### 场景、CPU 与 GPU 数据流
 
 `IEditorWorld` 是场景真相来源：稳定的 `GetSceneOrder()` 用于编辑器列表与序列化，运行时的高频查询使用 EnTT view。`ISceneWorld::Registry()` 仅返回 `const entt::registry&`；创建、销毁、组件写入和脏标记必须经过场景接口。
@@ -76,7 +89,7 @@ engine_physics -> glm（Jolt::Jolt 为 private）
 | `engine/physics/` | Jolt Physics 封装：`PhysicsWorld`（固定步长 60 Hz、插值读回）、`VehicleSettings` 与按包围盒拟合车辆。 |
 | `engine/logic/` | `IEditorWorld`、实体/选择管理、场景 YAML 序列化。 |
 | `engine/asset/` | glTF/贴图加载、模型缓存、资产 UUID 注册表。 |
-| `engine/editor/` | 编辑器后端基类、UI 面板和编辑服务。 |
+| `engine/editor/` | 编辑器后端基类、编辑服务与 UI：`ui/framework/` 窗口基类与管理器，`ui/panels/`、`ui/windows/`、`ui/modals/` 各类窗口。 |
 | `engine/renderer/` | `engine_render_core`、RHI 接口和 Vulkan 后端。 |
 | `engine/application/` | `EditorApplication` 生命周期和命令行解析。 |
 | `assets/` | 项目资产、导入模型包、材质 sidecar 和默认场景。 |

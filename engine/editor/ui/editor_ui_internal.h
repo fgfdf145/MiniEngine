@@ -10,10 +10,13 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace me
 {
+
+class EditorPanel;
 
 // Shared selection highlight color (viewport selection, material graph links).
 inline constexpr ImU32 kSelectionOutlineColor = IM_COL32(255, 196, 64, 255);
@@ -55,7 +58,7 @@ bool DragIntInRange(const char* label, int* value, int min, int max);
 std::optional<std::string> PickFilePath(FileDialogType type, bool requested);
 
 // --- editor_dockspace.cpp -------------------------------------------------
-// The dock space over the main viewport's work area, with the default layout when it is empty.
-// `resetLayout` puts every window back where the default layout has it.
-ImGuiID DrawEditorDockspace(bool resetLayout);
+// The dock space over the main viewport's work area, with the default layout when it is empty: each
+// panel docked in its default slot. `resetLayout` puts every window back where that layout has it.
+ImGuiID DrawEditorDockspace(bool resetLayout, std::span<EditorPanel* const> panels);
 }

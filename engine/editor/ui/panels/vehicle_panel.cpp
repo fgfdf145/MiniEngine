@@ -1,5 +1,9 @@
+﻿#include "vehicle_panel.h"
+
 #include <engine/editor/editor_ui.h>
-#include "editor_ui_internal.h"
+#include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/panels/suspension_rigs_panel.h>
 
 #include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
@@ -216,15 +220,17 @@ bool DrawTuning(VehicleSettings& tuning)
 }
 }
 
-void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFrameResult& result)
+VehiclePanel::VehiclePanel()
+    : EditorPanel("vehicle", "Vehicle", ICON_PH_CAR)
 {
-    if (!ImGui::Begin("Vehicle", &m_showVehicleWindow))
-    {
-        ImGui::End();
-        return;
-    }
+}
 
-    const VehicleDriveStatus& status = m_vehicleStatus;
+void VehiclePanel::OnGui(EditorContext& context)
+{
+    const IEditorWorld& scene = context.scene;
+    EditorUiFrameResult& result = context.result;
+    EditorVehicleSettings& vehicle = context.state.vehicle;
+    const VehicleDriveStatus& status = context.state.vehicleStatus;
     if (status.active)
     {
         ImGui::Text("%s %s: %s", ICON_PH_CAR, status.paused ? "Paused" : "Driving", status.vehicleName.c_str());
@@ -271,13 +277,12 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         {
             ImGui::TextDisabled(
                 "Every other model becomes the track. The car's front is %s (Tuning > Model Front).",
-                m_vehicleTuning.modelFront == VehicleModelFront::NegativeZ ? "-Z" : "+Z");
+                vehicle.tuning.modelFront == VehicleModelFront::NegativeZ ? "-Z" : "+Z");
         }
     }
     if (ImGui::Button(ICON_PH_CHART_LINE " Suspension Rigs"))
     {
-        m_showSuspensionRigWindow = true;
-        ImGui::SetWindowFocus("Suspension Rigs");
+        context.windows.Open<SuspensionRigsPanel>();
     }
     if (ImGui::IsItemHovered())
     {
@@ -290,7 +295,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Checkbox("Manual Gearbox", &m_vehicleManualGearbox);
+        ImGui::Checkbox("Manual Gearbox", &vehicle.manualGearbox);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(
@@ -300,9 +305,9 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 "let go, it bites: rev the engine with it held and let go to launch or kick the car out.\n"
                 "Off: the automatic picks the gear and pulling back reverses once stopped.");
         }
-        ImGui::TextUnformatted(m_vehicleManualGearbox ? "W/S or Up/Down: throttle and brake" : "W/S or Up/Down: throttle, brake and reverse");
+        ImGui::TextUnformatted(vehicle.manualGearbox ? "W/S or Up/Down: throttle and brake" : "W/S or Up/Down: throttle, brake and reverse");
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
-        if (m_vehicleManualGearbox)
+        if (vehicle.manualGearbox)
         {
             ImGui::TextUnformatted("E/Q: change up/down    N (held): clutch");
         }
@@ -317,7 +322,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Steering Assist", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        VehicleSteeringAssistSettings& assist = m_vehicleSteeringAssist;
+        VehicleSteeringAssistSettings& assist = vehicle.steeringAssist;
         ImGui::Checkbox("Smooth Steering (GT7 style)", &assist.enabled);
         if (ImGui::IsItemHovered())
         {
@@ -346,8 +351,8 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Checkbox("Follow the Car", &m_vehicleCamera.follow);
-        ImGui::BeginDisabled(!m_vehicleCamera.follow);
+        ImGui::Checkbox("Follow the Car", &vehicle.camera.follow);
+        ImGui::BeginDisabled(!vehicle.camera.follow);
         static const char* const kViewLabels[] = {"Chase", "Cockpit", "Bonnet", "Bumper"};
         static_assert(IM_ARRAYSIZE(kViewLabels) == kVehicleCameraViewCount);
         int view = static_cast<int>(status.cameraView);
@@ -363,21 +368,21 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 "The driver's eyes come from an Assetto Corsa car's DRIVEREYES, else from the steering wheel (STEER_HR), else the car's size.");
         }
         ImGui::SeparatorText("Chase");
-        DragFloatInRange("Distance (m)", &m_vehicleCamera.distance, 2.0f, 30.0f, "%.1f", 0.05f);
-        DragFloatInRange("Height (m)", &m_vehicleCamera.height, 0.2f, 15.0f, "%.1f", 0.05f);
-        DragFloatInRange("Look Height (m)", &m_vehicleCamera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
-        DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.0f, 20.0f, "%.1f", 0.1f);
+        DragFloatInRange("Distance (m)", &vehicle.camera.distance, 2.0f, 30.0f, "%.1f", 0.05f);
+        DragFloatInRange("Height (m)", &vehicle.camera.height, 0.2f, 15.0f, "%.1f", 0.05f);
+        DragFloatInRange("Look Height (m)", &vehicle.camera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
+        DragFloatInRange("Look Recentre Rate", &vehicle.camera.lookRecenterRate, 0.0f, 20.0f, "%.1f", 0.1f);
         ImGui::SeparatorText("Cockpit, Bonnet and Bumper");
-        DragFloatInRange("Cockpit FOV (deg)", &m_vehicleCamera.cockpitFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
-        DragFloatInRange("Bonnet and Bumper FOV (deg)", &m_vehicleCamera.exteriorFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
-        DragFloatInRange("Seat Right (m)", &m_vehicleCamera.seatOffset.x, -0.5f, 0.5f, "%.2f", 0.005f);
-        DragFloatInRange("Seat Up (m)", &m_vehicleCamera.seatOffset.y, -0.5f, 0.5f, "%.2f", 0.005f);
-        DragFloatInRange("Seat Forward (m)", &m_vehicleCamera.seatOffset.z, -0.5f, 0.5f, "%.2f", 0.005f);
+        DragFloatInRange("Cockpit FOV (deg)", &vehicle.camera.cockpitFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
+        DragFloatInRange("Bonnet and Bumper FOV (deg)", &vehicle.camera.exteriorFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
+        DragFloatInRange("Seat Right (m)", &vehicle.camera.seatOffset.x, -0.5f, 0.5f, "%.2f", 0.005f);
+        DragFloatInRange("Seat Up (m)", &vehicle.camera.seatOffset.y, -0.5f, 0.5f, "%.2f", 0.005f);
+        DragFloatInRange("Seat Forward (m)", &vehicle.camera.seatOffset.z, -0.5f, 0.5f, "%.2f", 0.005f);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Moves the driver's eyes in the cockpit view from where the car's data or its steering wheel puts them.");
         }
-        DragFloatInRange("Head Recentre Rate", &m_vehicleCamera.headLookRecenterRate, 0.0f, 30.0f, "%.1f", 0.1f);
+        DragFloatInRange("Head Recentre Rate", &vehicle.camera.headLookRecenterRate, 0.0f, 30.0f, "%.1f", 0.1f);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("How quickly the head turns back to the road after looking round (0: it stays where it was turned).");
@@ -387,7 +392,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Gamepad Feedback", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        VehicleHapticsSettings& haptics = m_vehicleHaptics;
+        VehicleHapticsSettings& haptics = vehicle.haptics;
         ImGui::Checkbox("Engine Rumble and Gear Thump", &haptics.enabled);
         ImGui::BeginDisabled(!haptics.enabled);
         DragFloatInRange("Rumble Strength", &haptics.rumbleStrength, 0.0f, 2.0f, "%.2f", 0.01f);
@@ -409,7 +414,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
 
     if (ImGui::CollapsingHeader("Physics Overlay", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        VehiclePhysicsOverlaySettings& overlay = m_vehicleOverlay;
+        VehiclePhysicsOverlaySettings& overlay = vehicle.overlay;
         ImGui::Checkbox("Show Suspension and Tyre Physics", &overlay.enabled);
         if (ImGui::IsItemHovered())
         {
@@ -477,12 +482,10 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         {
             ImGui::TextDisabled("Changes apply the next time driving starts.");
         }
-        if (DrawTuning(m_vehicleTuning) && status.active)
+        if (DrawTuning(vehicle.tuning) && status.active)
         {
-            result.actions.brushTyreBristles = std::array<int, 2>{m_vehicleTuning.brushTyreRibs, m_vehicleTuning.brushTyreSegments};
+            result.actions.brushTyreBristles = std::array<int, 2>{vehicle.tuning.brushTyreRibs, vehicle.tuning.brushTyreSegments};
         }
     }
-
-    ImGui::End();
 }
 }

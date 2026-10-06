@@ -1469,6 +1469,36 @@ add_test(
 
 set_target_properties(miniengine_command_registry_tests PROPERTIES FOLDER "Tests")
 
+# The editor UI's window framework: EditorWindowManager ticking, drawing, opening and closing the
+# EditorWindow, EditorPanel and EditorModal it owns, in ImGui frames without a GPU.
+add_executable(miniengine_editor_window_framework_tests
+    editor_window_framework_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_editor_window_framework_tests)
+
+target_link_libraries(miniengine_editor_window_framework_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_editor_window_framework_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_editor_window_framework_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_editor_window_framework_tests>
+            $<TARGET_FILE_DIR:miniengine_editor_window_framework_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.editor_window_framework
+    COMMAND miniengine_editor_window_framework_tests
+)
+
+set_target_properties(miniengine_editor_window_framework_tests PROPERTIES FOLDER "Tests")
+
 # The streamed world's manifest and what a cell shows near and far (WorldStreamingService). Links
 # engine_editor for the service; nothing is drawn.
 add_executable(miniengine_world_streaming_tests

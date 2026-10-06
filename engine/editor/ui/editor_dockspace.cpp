@@ -1,4 +1,5 @@
 ﻿#include "editor_ui_internal.h"
+#include "framework/editor_panel.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -10,7 +11,7 @@ namespace
 {
 constexpr ImGuiDockNodeFlags kEditorDockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
 
-void EnsureDefaultDockLayout(ImGuiID dockspaceId, const ImVec2& dockspaceSize)
+void EnsureDefaultDockLayout(ImGuiID dockspaceId, const ImVec2& dockspaceSize, std::span<EditorPanel* const> panels)
 {
     ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
     if (dockNode != nullptr &&
@@ -39,15 +40,31 @@ void EnsureDefaultDockLayout(ImGuiID dockspaceId, const ImVec2& dockspaceSize)
     ImGuiID upperRightNode = rightNode;
     ImGui::DockBuilderSplitNode(upperRightNode, ImGuiDir_Down, 0.42f, &lowerRightNode, &upperRightNode);
 
-    ImGui::DockBuilderDockWindow("Scene", leftNode);
-    ImGui::DockBuilderDockWindow("Camera", lowerRightNode);
-    ImGui::DockBuilderDockWindow("Graphics Debug", lowerRightNode);
-    ImGui::DockBuilderDockWindow("Viewport", centerNode);
+    // Each panel names its place; the upper right is left for whatever the user docks there.
+    for (const EditorPanel* panel : panels)
+    {
+        ImGuiID node = 0;
+        switch (panel->GetDefaultDockSlot())
+        {
+        case EditorDockSlot::Floating:
+            continue;
+        case EditorDockSlot::Left:
+            node = leftNode;
+            break;
+        case EditorDockSlot::Center:
+            node = centerNode;
+            break;
+        case EditorDockSlot::RightBottom:
+            node = lowerRightNode;
+            break;
+        }
+        ImGui::DockBuilderDockWindow(panel->GetTitle().c_str(), node);
+    }
     ImGui::DockBuilderFinish(dockspaceId);
 }
 }
 
-ImGuiID DrawEditorDockspace(bool resetLayout)
+ImGuiID DrawEditorDockspace(bool resetLayout, std::span<EditorPanel* const> panels)
 {
     ImGuiViewport* mainViewport = ImGui::GetMainViewport();
     if (mainViewport == nullptr)
@@ -63,7 +80,7 @@ ImGuiID DrawEditorDockspace(bool resetLayout)
         ImGui::DockBuilderRemoveNode(dockspaceId);
     }
     ImGui::DockSpaceOverViewport(dockspaceId, mainViewport, kEditorDockspaceFlags);
-    EnsureDefaultDockLayout(dockspaceId, mainViewport->WorkSize);
+    EnsureDefaultDockLayout(dockspaceId, mainViewport->WorkSize, panels);
     return dockspaceId;
 }
 }

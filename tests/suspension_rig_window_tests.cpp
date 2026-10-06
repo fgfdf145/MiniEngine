@@ -1,4 +1,4 @@
-// The editor's Suspension Rigs window, driven without a GPU: ImGui and ImPlot run headless, the
+﻿// The editor's Suspension Rigs window, driven without a GPU: ImGui and ImPlot run headless, the
 // window loads the GT-R from the selected entity's model data, runs the rigs and draws every tab.
 // With MINIENGINE_UI_SNAPSHOT_DIR set, each tab is also rasterised in software to a PNG there, to
 // look at.
@@ -10,7 +10,7 @@
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/vehicle_rig_service.h>
-#include <engine/editor/ui/editor_suspension_rigs.h>
+#include <engine/editor/ui/panels/suspension_rigs_panel.h>
 #include <engine/logic/editor_scene.h>
 
 #include <imgui.h>
@@ -175,7 +175,7 @@ void WritePng(const std::vector<float>& image, const std::filesystem::path& path
 }
 
 // One editor frame with only the rigs window in it, the window filling the display.
-void Frame(SuspensionRigWindow& window, const EditorScene& scene, const char* snapshot = nullptr)
+void Frame(SuspensionRigsPanel& window, const EditorScene& scene, const char* snapshot = nullptr)
 {
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(static_cast<float>(kWidth), static_cast<float>(kHeight));
@@ -183,9 +183,10 @@ void Frame(SuspensionRigWindow& window, const EditorScene& scene, const char* sn
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowSize(io.DisplaySize);
-    bool open = true;
     EditorUiFrameResult result;
-    window.Draw(scene, &open, g_liveStatus, result);
+    ImGui::Begin(window.GetTitle().c_str());
+    window.DrawContents(scene, g_liveStatus, result);
+    ImGui::End();
     ImGui::Render();
     ImDrawData* drawData = ImGui::GetDrawData();
     ServeTextures(*drawData);
@@ -197,7 +198,7 @@ void Frame(SuspensionRigWindow& window, const EditorScene& scene, const char* sn
     }
 }
 
-void Frames(SuspensionRigWindow& window, const EditorScene& scene, int count, const char* snapshot = nullptr)
+void Frames(SuspensionRigsPanel& window, const EditorScene& scene, int count, const char* snapshot = nullptr)
 {
     for (int i = 0; i < count; ++i)
     {
@@ -243,7 +244,7 @@ void TestWindowRunsTheRigsOnTheSelectedCar()
     car.modelSourcePath = path;
     scene.SetSelectedEntity(scene.CreateEntity(car));
 
-    SuspensionRigWindow window;
+    SuspensionRigsPanel window;
     // The selected car loads by itself; the linkage view draws at rest and posed.
     Frames(window, scene, 3, "rigs_linkage_rest.png");
     window.SetLinkagePose(0, 35.0f, 2.0f, 0.6f);
@@ -269,15 +270,15 @@ void TestWindowRunsTheRigsOnTheSelectedCar()
     }
     Require(window.HasReport(), "the run leaves its report");
 
-    window.RequestTab(SuspensionRigWindow::SummaryTab);
+    window.RequestTab(SuspensionRigsPanel::SummaryTab);
     Frames(window, scene, 3, "rigs_summary.png");
-    window.RequestTab(SuspensionRigWindow::KcTab);
+    window.RequestTab(SuspensionRigsPanel::KcTab);
     Frames(window, scene, 3, "rigs_kc.png");
-    window.RequestTab(SuspensionRigWindow::SevenPostTab);
+    window.RequestTab(SuspensionRigsPanel::SevenPostTab);
     Frames(window, scene, 3, "rigs_seven_post.png");
-    window.RequestTab(SuspensionRigWindow::LiveTab);
+    window.RequestTab(SuspensionRigsPanel::LiveTab);
     Frames(window, scene, 3, "rigs_live.png");
-    window.RequestTab(SuspensionRigWindow::LinkageTab);
+    window.RequestTab(SuspensionRigsPanel::LinkageTab);
     window.SetLinkagePose(0, 0.0f, 0.0f, 0.0f);
     Frames(window, scene, 3);
     ModelCache::Invalidate(path);
@@ -297,8 +298,8 @@ void TestWindowDrawsTheLiveAxle()
     car.modelSourcePath = path;
     scene.SetSelectedEntity(scene.CreateEntity(car));
 
-    SuspensionRigWindow window;
-    window.RequestTab(SuspensionRigWindow::LinkageTab);
+    SuspensionRigsPanel window;
+    window.RequestTab(SuspensionRigsPanel::LinkageTab);
     Frames(window, scene, 2);
     window.SetLinkagePose(1, 0.0f, 0.0f, 0.0f);
     Frames(window, scene, 3, "rigs_ae86_axle_rest.png");
@@ -318,7 +319,7 @@ void TestWindowDrawsTheLiveAxle()
         Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(120), "the AE86's run finishes");
     }
     Require(window.HasReport(), "the rigs run on a live axle");
-    window.RequestTab(SuspensionRigWindow::KcTab);
+    window.RequestTab(SuspensionRigsPanel::KcTab);
     Frames(window, scene, 3, "rigs_ae86_kc.png");
     ModelCache::Invalidate(path);
 }

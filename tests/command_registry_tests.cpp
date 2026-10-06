@@ -300,7 +300,7 @@ void TestEditorCommands()
     bool sceneVisible = false;
     bool themeVisible = true;
     int resets = 0;
-    const std::array<EditorPanel, 2> panels = {{
+    const std::array<EditorPanelMenuEntry, 2> panels = {{
         {"scene", "Scene", "", &sceneVisible},
         {"theme", "Theme", "", &themeVisible},
     }};
