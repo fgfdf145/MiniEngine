@@ -7,7 +7,7 @@
 #include <engine/core/paths/engine_paths.h>
 #include <engine/logic/editor_world.h>
 #include <engine/platform/ui/ui_scale.h>
-#include <IconsFontAwesome6.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 
@@ -28,15 +28,15 @@ void EditorUiController::RegisterCommands()
 {
     // The Window menu lists these, in this order. A new panel needs a line here and nothing else.
     m_panels = {
-        {"scene", "Scene", ICON_FA_SITEMAP, &m_showSceneWindow},
-        {"viewport", "Viewport", ICON_FA_DISPLAY, &m_showViewportWindow},
-        {"camera", "Camera", ICON_FA_VIDEO, &m_showCameraWindow},
-        {"graphics_debug", "Graphics Debug", ICON_FA_BUG, &m_showGraphicsDebugWindow},
-        {"assets", "Assets", ICON_FA_FOLDER_TREE, &m_showAssetManagerWindow},
-        {"input_monitor", "Input Monitor", ICON_FA_KEYBOARD, &m_showInputMonitorWindow},
-        {"vehicle", "Vehicle", ICON_FA_CAR, &m_showVehicleWindow},
-        {"suspension_rigs", "Suspension Rigs", ICON_FA_CHART_LINE, &m_showSuspensionRigWindow},
-        {"theme", "Theme", ICON_FA_PALETTE, &m_showThemeWindow},
+        {"scene", "Scene", ICON_PH_TREE_STRUCTURE, &m_showSceneWindow},
+        {"viewport", "Viewport", ICON_PH_MONITOR, &m_showViewportWindow},
+        {"camera", "Camera", ICON_PH_VIDEO_CAMERA, &m_showCameraWindow},
+        {"graphics_debug", "Graphics Debug", ICON_PH_BUG, &m_showGraphicsDebugWindow},
+        {"assets", "Assets", ICON_PH_TREE_VIEW, &m_showAssetManagerWindow},
+        {"input_monitor", "Input Monitor", ICON_PH_KEYBOARD, &m_showInputMonitorWindow},
+        {"vehicle", "Vehicle", ICON_PH_CAR, &m_showVehicleWindow},
+        {"suspension_rigs", "Suspension Rigs", ICON_PH_CHART_LINE, &m_showSuspensionRigWindow},
+        {"theme", "Theme", ICON_PH_PALETTE, &m_showThemeWindow},
     };
 
     EditorWindowCommands window;
@@ -157,6 +157,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
     if (!m_hasCapturedDefaultThemeColors)
     {
         CaptureDefaultThemeColors();
+        m_builtInThemeColors = m_defaultThemeColors;
         m_hasCapturedDefaultThemeColors = true;
     }
     if (!m_hasAppliedEngineSettings)
@@ -562,13 +563,21 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     {
         settings.editorUi.windows.open[PanelSettingsKey(panel)] = *panel.visible;
     }
-    settings.editorUi.theme.hasCustomColors = true;
+    if (!m_hasCapturedDefaultThemeColors)
+    {
+        return; // no frame yet: the palette was never applied, so the loaded overrides stand
+    }
+    settings.editorUi.theme.hasCustomColors = false;
 
     const ImGuiStyle& style = ImGui::GetStyle();
     for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
     {
-        settings.editorUi.theme.colors[static_cast<size_t>(colorIndex)] = style.Colors[colorIndex];
-        settings.editorUi.theme.colorDefined[static_cast<size_t>(colorIndex)] = true;
+        const ImVec4& color = style.Colors[colorIndex];
+        const ImVec4& builtIn = m_builtInThemeColors[static_cast<size_t>(colorIndex)];
+        const bool changed = color.x != builtIn.x || color.y != builtIn.y || color.z != builtIn.z || color.w != builtIn.w;
+        settings.editorUi.theme.colors[static_cast<size_t>(colorIndex)] = color;
+        settings.editorUi.theme.colorDefined[static_cast<size_t>(colorIndex)] = changed;
+        settings.editorUi.theme.hasCustomColors |= changed;
     }
 }
 

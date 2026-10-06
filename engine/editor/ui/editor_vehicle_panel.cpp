@@ -1,9 +1,10 @@
 #include <engine/editor/editor_ui.h>
 #include "editor_ui_internal.h"
 
+#include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
 #include <engine/tyre/tyre_brush.h>
-#include <IconsFontAwesome6.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 
 #include <cmath>
@@ -38,7 +39,7 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     {
         // The physics can't keep up: the drive is in slow motion (a debug build runs the multibody car
         // and its tyres many times slower than a release one).
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Physics at %.0f%% of real time (slow motion)", status.realTimeShare * 100.0f);
+        ImGui::TextColored(ui_colors::kTextWarning, "Physics at %.0f%% of real time (slow motion)", status.realTimeShare * 100.0f);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("The physics steps at 1000 Hz and gets at most 25 ms a frame. A Debug build runs the\nmultibody suspension and the brush tyres 15-20 times slower than Release: use the Release build to drive.");
@@ -211,23 +212,23 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
     const VehicleDriveStatus& status = m_vehicleStatus;
     if (status.active)
     {
-        ImGui::Text("%s %s: %s", ICON_FA_CAR, status.paused ? "Paused" : "Driving", status.vehicleName.c_str());
-        if (ImGui::Button(ICON_FA_STOP " Stop"))
+        ImGui::Text("%s %s: %s", ICON_PH_CAR, status.paused ? "Paused" : "Driving", status.vehicleName.c_str());
+        if (ImGui::Button(ICON_PH_STOP " Stop"))
         {
             result.actions.stopVehicleDrive = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button(status.paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause"))
+        if (ImGui::Button(status.paused ? ICON_PH_PLAY " Resume" : ICON_PH_PAUSE " Pause"))
         {
             result.actions.pauseVehicleDrive = !status.paused;
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_ROTATE_LEFT " Reset Car"))
+        if (ImGui::Button(ICON_PH_ARROW_COUNTER_CLOCKWISE " Reset Car"))
         {
             result.actions.resetVehicle = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_CAR_BURST " Flip Upright"))
+        if (ImGui::Button(ICON_PH_ARROW_U_UP_LEFT " Flip Upright"))
         {
             result.actions.recoverVehicle = true;
         }
@@ -242,7 +243,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
     {
         const bool canDrive = scene.HasSelection() && scene.HasModelComponent(scene.GetSelectedEntity());
         ImGui::BeginDisabled(!canDrive);
-        if (ImGui::Button(ICON_FA_PLAY " Drive Selected Model"))
+        if (ImGui::Button(ICON_PH_PLAY " Drive Selected Model"))
         {
             result.actions.startVehicleDrive = true;
         }
@@ -258,7 +259,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
                 m_vehicleTuning.modelFront == VehicleModelFront::NegativeZ ? "-Z" : "+Z");
         }
     }
-    if (ImGui::Button(ICON_FA_CHART_LINE " Suspension Rigs"))
+    if (ImGui::Button(ICON_PH_CHART_LINE " Suspension Rigs"))
     {
         m_showSuspensionRigWindow = true;
         ImGui::SetWindowFocus("Suspension Rigs");
@@ -269,7 +270,7 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
     }
     if (!status.lastError.empty())
     {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", status.lastError.c_str());
+        ImGui::TextColored(ui_colors::kTextDanger, "%s", status.lastError.c_str());
     }
 
     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen))

@@ -94,6 +94,15 @@ bool ReadBoolOrDefault(const YAML::Node& node, bool defaultValue)
     return node.as<bool>(defaultValue);
 }
 
+int ReadIntOrDefault(const YAML::Node& node, int defaultValue)
+{
+    if (!node || !node.IsScalar())
+    {
+        return defaultValue;
+    }
+    return node.as<int>(defaultValue);
+}
+
 void LoadOptionalUiScale(const YAML::Node& node, std::optional<float>& value)
 {
     if (!node || !node.IsScalar())
@@ -148,6 +157,11 @@ void LoadWindowVisibilitySettings(const YAML::Node& windowsNode, EditorWindowVis
 void LoadThemeSettings(const YAML::Node& themeNode, EditorThemeSettings& theme)
 {
     if (!themeNode || !themeNode.IsMap())
+    {
+        return;
+    }
+
+    if (ReadIntOrDefault(themeNode["version"], 1) < kEditorThemeSettingsVersion)
     {
         return;
     }
@@ -486,22 +500,29 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         }
         output << "    },\n";
         output << "    \"theme\": {\n";
-        output << "      \"colors\": {\n";
+        output << "      \"version\": " << kEditorThemeSettingsVersion << ",\n";
+        output << "      \"colors\": {";
 
+        bool firstColor = true;
         for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
         {
+            if (!settings.editorUi.theme.colorDefined[static_cast<size_t>(colorIndex)])
+            {
+                continue;
+            }
             const char* colorName = ImGui::GetStyleColorName(static_cast<ImGuiCol>(colorIndex));
             const ImVec4 color = settings.editorUi.theme.colors[static_cast<size_t>(colorIndex)];
+            output << (firstColor ? "\n" : ",\n");
             output << "        \"" << EscapeJsonString(colorName) << "\": ["
                    << std::fixed << std::setprecision(3)
                    << color.x << ", "
                    << color.y << ", "
                    << color.z << ", "
                    << color.w << "]";
-            output << (colorIndex + 1 < ImGuiCol_COUNT ? ",\n" : "\n");
+            firstColor = false;
         }
 
-        output << "      }\n";
+        output << (firstColor ? "}\n" : "\n      }\n");
         output << "    }\n";
         output << "  },\n";
         output << "  \"audio\": {\n";

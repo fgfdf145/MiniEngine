@@ -97,6 +97,34 @@ void TestAudioSettingsSurviveTheSettingsFile()
     Require(loaded.audio.masterVolume == 1.0f && !loaded.audio.muted, "without audio settings the volume is full");
 }
 
+// Only the theme colours the user changed are saved and come back; a file from before the theme had a
+// version holds the whole palette it was saved with, and is not read, so the built-in palette applies.
+void TestThemeKeepsOnlyChangedColours()
+{
+    EngineSettings saved;
+    saved.editorUi.theme.hasCustomColors = true;
+    saved.editorUi.theme.colors[ImGuiCol_Text] = ImVec4(0.25f, 0.5f, 0.75f, 1.0f);
+    saved.editorUi.theme.colorDefined[ImGuiCol_Text] = true;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_theme_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    Require(loaded.editorUi.theme.hasCustomColors, "a changed colour comes back");
+    Require(loaded.editorUi.theme.colorDefined[ImGuiCol_Text] && loaded.editorUi.theme.colors[ImGuiCol_Text].y == 0.5f,
+            "the changed colour keeps its value");
+    Require(!loaded.editorUi.theme.colorDefined[ImGuiCol_WindowBg], "an unchanged colour is not saved");
+
+    {
+        std::ofstream legacy(path, std::ios::trunc);
+        legacy << R"({"version": 1, "ui": {"theme": {"colors": {"WindowBg": [0.039, 0.039, 0.039, 1.0]}}}})";
+    }
+    EngineSettings legacyLoaded;
+    Require(LoadEngineSettings(path, legacyLoaded, error), ("the legacy settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(!legacyLoaded.editorUi.theme.hasCustomColors, "a whole-palette theme without a version is ignored");
+}
+
 // The camera's and the renderer's settings survive the settings file, field for field.
 void TestViewSettingsSurviveTheSettingsFile()
 {
@@ -497,6 +525,7 @@ int main()
         TestCommandPalette();
         TestEditorCommands();
         TestWindowStatesSurviveTheSettingsFile();
+        TestThemeKeepsOnlyChangedColours();
         TestViewSettingsSurviveTheSettingsFile();
         TestAudioSettingsSurviveTheSettingsFile();
     }

@@ -5,6 +5,7 @@
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
+#include <engine/editor/ui_colors.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -279,7 +280,7 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
             ImGui::TextDisabled("Keep Both imports into '%s' and leaves the existing model alone.",
                                 conflict.keepBothFolderName.c_str());
             ImGui::TextColored(
-                ImVec4(1.00f, 0.55f, 0.35f, 1.0f),
+                ui_colors::kTextWarning,
                 "Overwrite deletes everything in '%s', including material edits.",
                 conflict.existingFolderName.c_str());
             ImGui::TextDisabled("Scenes that use the replaced model keep referencing it.");
@@ -304,9 +305,9 @@ void EditorUiController::DrawImportConflictModal(EditorUiFrameResult& result)
             ImGui::SetItemDefaultFocus();
 
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ui_colors::kFillDanger);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui_colors::kFillDangerHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui_colors::kFillDanger);
             const bool overwrite = ImGui::Button("Overwrite", ImVec2(120.0f * m_effectiveUiScale, 0.0f));
             ImGui::PopStyleColor(3);
             if (overwrite)

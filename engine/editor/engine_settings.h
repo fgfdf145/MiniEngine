@@ -21,6 +21,11 @@ struct EditorWindowVisibilitySettings
     std::map<std::string, bool> open;
 };
 
+// The colours changed in the Theme window, over the built-in palette (ConfigureImGuiStyle). Only those
+// are saved, so a palette change in code still reaches every colour the user left alone. Version 1
+// files saved the whole palette; they are not read, as they would pin the palette they were saved with.
+inline constexpr int kEditorThemeSettingsVersion = 2;
+
 struct EditorThemeSettings
 {
     bool hasCustomColors = false;

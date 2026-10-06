@@ -46,6 +46,20 @@ namespace
 // Per cascade. Four 2048 x 2048 32-bit layers are 64 MiB.
 constexpr uint32_t kShadowMapResolution = 2048;
 
+// The sRGB format with the same bytes as an 8-bit UNORM one.
+VkFormat SrgbFormatOf(VkFormat format)
+{
+    switch (format)
+    {
+    case VK_FORMAT_B8G8R8A8_UNORM:
+        return VK_FORMAT_B8G8R8A8_SRGB;
+    case VK_FORMAT_R8G8B8A8_UNORM:
+        return VK_FORMAT_R8G8B8A8_SRGB;
+    default:
+        return format;
+    }
+}
+
 // A transform's Euler rotation (XYZ order, same as BuildTransformMatrix). Directional and spot
 // lights shine along local -Y. An area light is the rectangle DrawLightAreaGizmo draws: it lies in
 // the local XY plane, width along +X and height along Y, and emits along local -Z, the gizmo's
@@ -1354,8 +1368,10 @@ void VulkanRenderer::CreateSwapchainResources()
     // format and ImGui samples the image, so a stale one would be a wrong-format viewport. Only
     // a fresh SceneRenderTargets re-runs the selection, so that case is reconstructed outright.
     // With HDR output the LDR target holds display-linear values above UI white, which only a float
-    // format keeps; ImGui's HDR shader encodes them for the swapchain.
-    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : m_swapchain->GetImageFormat();
+    // format keeps; ImGui's HDR shader encodes them for the swapchain. Without it the target is the
+    // swapchain's format made sRGB: tone mapping writes linear light and the image encodes it, and
+    // ImGui, which draws in sRGB space into a UNORM swapchain, reads those bytes through a UNORM view.
+    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : SrgbFormatOf(m_swapchain->GetImageFormat());
     const bool ldrFormatMatchesSwapchain =
         m_sceneTargets != nullptr && m_sceneTargets->GetFormat(RenderTargetId::SceneLdr) == ldrFormat;
     if (ldrFormatMatchesSwapchain)
@@ -1708,19 +1724,17 @@ void VulkanRenderer::UpdateMinimapTexture()
                     m_device->GetHandle(),
                     m_device->GetQueueFamilies().graphicsFamily.value(),
                     m_device->GetGraphicsQueue());
+                // Read as UNORM: only ImGui shows it, and ImGui works on sRGB values as they are.
                 m_minimapTexture = std::make_unique<VulkanTexture>(
                     m_device->GetPhysicalDevice(),
                     m_device->GetHandle(),
                     file.string(),
-                    uploadBatch);
+                    uploadBatch,
+                    VulkanTextureFormat::LinearData);
                 uploadBatch.Flush();
-                // Clamped, not repeated: past the picture's edges the minimap shows the edge's colour
-                // (the sea, on a game's radar map) rather than the far side of the map.
-                TextureSampler sampler;
-                sampler.wrapS = TextureWrap::ClampToEdge;
-                sampler.wrapT = TextureWrap::ClampToEdge;
+                // ImGui samples it with its own linear sampler, which clamps: past the picture's edges the
+                // minimap shows the edge's colour (the sea, on a game's radar map) rather than the far side.
                 m_minimapBinding = ImGui_ImplVulkan_AddTexture(
-                    m_samplerCache->Get(sampler),
                     m_minimapTexture->GetImageView(),
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
                 LOG_INFO("Minimap: loaded '{}'", file.string());

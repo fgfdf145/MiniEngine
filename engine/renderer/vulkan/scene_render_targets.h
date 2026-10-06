@@ -88,6 +88,8 @@ class SceneRenderTargets
         VkImageView view = VK_NULL_HANDLE;
         // Only created when the target's aspect has more than one bit; see GetSampledView.
         VkImageView sampledView = VK_NULL_HANDLE;
+        // ImGui's view of an sRGB target: the same bytes as UNORM, see DisplayViewFormat.
+        VkImageView imguiView = VK_NULL_HANDLE;
         VkDescriptorSet imguiBinding = VK_NULL_HANDLE;
     };
 
@@ -104,11 +106,10 @@ class SceneRenderTargets
 
     VkFormatFeatureFlags QueryFormatFeatures(VkFormat format) const;
     void SelectFormats(VkFormat ldrFormat);
-    void CreateSampler();
     void CreateImages(uint32_t swapchainImageCount);
     void DestroyImages(std::array<TargetDescription, kRenderTargetCount>& targets) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
-    void CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, TargetImage& target) const;
+    void CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, bool mutableFormat, TargetImage& target) const;
     VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
     TargetDescription& Describe(RenderTargetId target);
     const TargetDescription& Describe(RenderTargetId target) const;
@@ -116,7 +117,6 @@ class SceneRenderTargets
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkExtent2D m_extent{};
-    VkSampler m_sampler = VK_NULL_HANDLE;
     uint32_t m_swapchainImageCount = 0;
     std::array<TargetDescription, kRenderTargetCount> m_targets{};
 };

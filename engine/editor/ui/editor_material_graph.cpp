@@ -3,6 +3,7 @@
 
 #include <engine/asset/material_graph_runtime.h>
 
+#include <engine/editor/ui_colors.h>
 #include <engine/platform/file_dialog/file_dialog.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -68,7 +69,7 @@ bool DrawGraphTextureSlotEditor(
     }
     else
     {
-        ImGui::TextColored(ImVec4(0.82f, 0.88f, 0.96f, 1.0f), "%s", compactPathLabel.c_str());
+        ImGui::TextColored(ui_colors::kTextSecondary, "%s", compactPathLabel.c_str());
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("%s", path.c_str());
@@ -1010,7 +1011,6 @@ MaterialGraphNodeDrawResult DrawMaterialGraphNode(
         nodeMax,
         nodeBorderColor,
         cornerRounding,
-        0,
         nodeSelected ? 2.8f * uiScale : 1.4f * uiScale);
 
     const char* nodeTitle = node.name.empty() ? GetDefaultMaterialGraphNodeName(node.type) : node.name.c_str();

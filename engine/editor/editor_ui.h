@@ -295,6 +295,8 @@ class EditorUiController
     float m_effectiveUiScale = 1.0f;
     ImGuiStyle m_baseStyle{};
     std::array<ImVec4, ImGuiCol_COUNT> m_defaultThemeColors{};
+    // The palette as ConfigureImGuiStyle set it; the settings file keeps only the colours that differ.
+    std::array<ImVec4, ImGuiCol_COUNT> m_builtInThemeColors{};
     bool m_hasCapturedBaseStyle = false;
     bool m_hasCapturedDefaultThemeColors = false;
     bool m_hasAppliedEngineSettings = false;

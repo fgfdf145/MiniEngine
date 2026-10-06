@@ -1,6 +1,6 @@
 #include "editor_commands.h"
 
-#include <IconsFontAwesome6.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 
 #include <utility>
@@ -93,36 +93,36 @@ void AddBound(
 
 void RegisterFileCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
 {
-    AddBound(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_FA_FILE, ImGuiMod_Ctrl | ImGuiKey_N, scene.newScene);
-    AddBound(registry, "file.open_scene", "Open Scene", "File/Open Scene...", ICON_FA_FOLDER_OPEN, ImGuiMod_Ctrl | ImGuiKey_O, scene.openScene);
-    AddBound(registry, "file.save_scene", "Save Scene", "File/Save Scene", ICON_FA_FLOPPY_DISK, ImGuiMod_Ctrl | ImGuiKey_S, scene.saveScene);
+    AddBound(registry, "file.new_scene", "New Scene", "File/New Scene", ICON_PH_FILE, ImGuiMod_Ctrl | ImGuiKey_N, scene.newScene);
+    AddBound(registry, "file.open_scene", "Open Scene", "File/Open Scene...", ICON_PH_FOLDER_OPEN, ImGuiMod_Ctrl | ImGuiKey_O, scene.openScene);
+    AddBound(registry, "file.save_scene", "Save Scene", "File/Save Scene", ICON_PH_FLOPPY_DISK, ImGuiMod_Ctrl | ImGuiKey_S, scene.saveScene);
     AddBound(registry, "file.save_scene_as", "Save Scene As", "File/Save Scene As...", "", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, scene.saveSceneAs);
     registry.AddSeparator("File");
-    AddBound(registry, "file.import_model", "Import Model", "File/Import Model...", ICON_FA_FILE_IMPORT, ImGuiMod_Ctrl | ImGuiKey_I, scene.importModel);
+    AddBound(registry, "file.import_model", "Import Model", "File/Import Model...", ICON_PH_FILE_ARROW_DOWN, ImGuiMod_Ctrl | ImGuiKey_I, scene.importModel);
     registry.AddSeparator("File");
-    AddBound(registry, "file.exit", "Exit", "File/Exit", ICON_FA_RIGHT_FROM_BRACKET, 0, scene.exit);
+    AddBound(registry, "file.exit", "Exit", "File/Exit", ICON_PH_SIGN_OUT, 0, scene.exit);
 }
 
 void RegisterEditCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
 {
     // The scene has no undo history nor entity clipboard yet, so the editor binds none of these
     // and they stay disabled, leaving Ctrl+Z, Ctrl+C and the rest to the text fields.
-    AddBound(registry, "edit.undo", "Undo", "Edit/Undo", ICON_FA_ROTATE_LEFT, ImGuiMod_Ctrl | ImGuiKey_Z, scene.undo);
-    AddBound(registry, "edit.redo", "Redo", "Edit/Redo", ICON_FA_ROTATE_RIGHT, ImGuiMod_Ctrl | ImGuiKey_Y, scene.redo);
+    AddBound(registry, "edit.undo", "Undo", "Edit/Undo", ICON_PH_ARROW_COUNTER_CLOCKWISE, ImGuiMod_Ctrl | ImGuiKey_Z, scene.undo);
+    AddBound(registry, "edit.redo", "Redo", "Edit/Redo", ICON_PH_ARROW_CLOCKWISE, ImGuiMod_Ctrl | ImGuiKey_Y, scene.redo);
     registry.AddSeparator("Edit");
-    AddBound(registry, "edit.cut", "Cut", "Edit/Cut", ICON_FA_SCISSORS, ImGuiMod_Ctrl | ImGuiKey_X, scene.cut);
-    AddBound(registry, "edit.copy", "Copy", "Edit/Copy", ICON_FA_COPY, ImGuiMod_Ctrl | ImGuiKey_C, scene.copy);
-    AddBound(registry, "edit.paste", "Paste", "Edit/Paste", ICON_FA_PASTE, ImGuiMod_Ctrl | ImGuiKey_V, scene.paste);
-    AddBound(registry, "edit.duplicate", "Duplicate", "Edit/Duplicate", ICON_FA_CLONE, ImGuiMod_Ctrl | ImGuiKey_D, scene.duplicate);
+    AddBound(registry, "edit.cut", "Cut", "Edit/Cut", ICON_PH_SCISSORS, ImGuiMod_Ctrl | ImGuiKey_X, scene.cut);
+    AddBound(registry, "edit.copy", "Copy", "Edit/Copy", ICON_PH_COPY, ImGuiMod_Ctrl | ImGuiKey_C, scene.copy);
+    AddBound(registry, "edit.paste", "Paste", "Edit/Paste", ICON_PH_CLIPBOARD_TEXT, ImGuiMod_Ctrl | ImGuiKey_V, scene.paste);
+    AddBound(registry, "edit.duplicate", "Duplicate", "Edit/Duplicate", ICON_PH_COPY_SIMPLE, ImGuiMod_Ctrl | ImGuiKey_D, scene.duplicate);
     registry.AddSeparator("Edit");
-    AddBound(registry, "edit.delete", "Delete", "Edit/Delete", ICON_FA_TRASH_CAN, ImGuiKey_Delete, scene.deleteSelection, scene.hasSelection);
+    AddBound(registry, "edit.delete", "Delete", "Edit/Delete", ICON_PH_TRASH, ImGuiKey_Delete, scene.deleteSelection, scene.hasSelection);
     registry.AddSeparator("Edit");
-    AddBound(registry, "edit.preferences", "Preferences", "Edit/Preferences...", ICON_FA_GEAR, ImGuiMod_Ctrl | ImGuiKey_Comma, scene.openPreferences);
+    AddBound(registry, "edit.preferences", "Preferences", "Edit/Preferences...", ICON_PH_GEAR, ImGuiMod_Ctrl | ImGuiKey_Comma, scene.openPreferences);
 }
 
 void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
-    AddBound(registry, "scene.create_entity", "Create Empty Entity", "Scene/Create Empty Entity", ICON_FA_CUBE, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_N, scene.createEntity);
+    AddBound(registry, "scene.create_entity", "Create Empty Entity", "Scene/Create Empty Entity", ICON_PH_CUBE, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_N, scene.createEntity);
     const auto createLight = [&scene](LightType type) -> std::function<void()>
     {
         if (!scene.createLight)
@@ -134,8 +134,8 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
             createLight(type);
         };
     };
-    AddBound(registry, "scene.create_light.directional", "Create Directional Light", "Scene/Create Light/Directional", ICON_FA_SUN, 0, createLight(LightType::Directional));
-    AddBound(registry, "scene.create_light.point", "Create Point Light", "Scene/Create Light/Point", ICON_FA_LIGHTBULB, 0, createLight(LightType::Point));
+    AddBound(registry, "scene.create_light.directional", "Create Directional Light", "Scene/Create Light/Directional", ICON_PH_SUN, 0, createLight(LightType::Directional));
+    AddBound(registry, "scene.create_light.point", "Create Point Light", "Scene/Create Light/Point", ICON_PH_LIGHTBULB, 0, createLight(LightType::Point));
     AddBound(registry, "scene.create_light.spot", "Create Spot Light", "Scene/Create Light/Spot", "", 0, createLight(LightType::Spot));
     AddBound(registry, "scene.create_light.area", "Create Area Light", "Scene/Create Light/Area", "", 0, createLight(LightType::Area));
     registry.AddSeparator("Scene");
@@ -148,14 +148,14 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
         return state.playState != PlayState::Stopped;
     };
     Add(
-        registry, "scene.play", "Play", "Scene/Play", ICON_FA_PLAY, ImGuiKey_F5,
+        registry, "scene.play", "Play", "Scene/Play", ICON_PH_PLAY, ImGuiKey_F5,
         [&state]
         {
             state.playState = state.playState == PlayState::Stopped ? PlayState::Playing : PlayState::Stopped;
         },
         isPlaying);
     Add(
-        registry, "scene.pause", "Pause", "Scene/Pause", ICON_FA_PAUSE, ImGuiKey_F6,
+        registry, "scene.pause", "Pause", "Scene/Pause", ICON_PH_PAUSE, ImGuiKey_F6,
         [&state]
         {
             state.playState = state.playState == PlayState::Paused ? PlayState::Playing : PlayState::Paused;
@@ -166,23 +166,23 @@ void RegisterSceneCommands(CommandRegistry& registry, EditorCommandState& state,
         },
         isPlaying);
     AddBound(
-        registry, "scene.step", "Step", "Scene/Step", ICON_FA_FORWARD_STEP, ImGuiKey_F10,
+        registry, "scene.step", "Step", "Scene/Step", ICON_PH_SKIP_FORWARD, ImGuiKey_F10,
         scene.stepSimulation,
         [&state]
         {
             return state.playState == PlayState::Paused;
         });
     registry.AddSeparator("Scene");
-    AddBound(registry, "scene.settings", "Scene Settings", "Scene/Scene Settings...", ICON_FA_SLIDERS, 0, scene.openSceneSettings);
+    AddBound(registry, "scene.settings", "Scene Settings", "Scene/Scene Settings...", ICON_PH_SLIDERS_HORIZONTAL, 0, scene.openSceneSettings);
     registry.AddSeparator("Scene");
-    AddBound(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_FA_BROOM, 0, scene.clearScene);
+    AddBound(registry, "scene.clear", "Clear Scene", "Scene/Clear Scene", ICON_PH_BROOM, 0, scene.clearScene);
 
     // Toolbar only: the viewport's R key already toggles combined and scale. The editor UI drives
     // the gizmo from transformTool: Move is the combined translate and rotate gizmo, Rotate the
     // rotate-only one, Scale the scale one.
-    AddOption(registry, "tool.move", "Move", "", ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, 0, state.transformTool, TransformTool::Move);
-    AddOption(registry, "tool.rotate", "Rotate", "", ICON_FA_ROTATE, 0, state.transformTool, TransformTool::Rotate);
-    AddOption(registry, "tool.scale", "Scale", "", ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, 0, state.transformTool, TransformTool::Scale);
+    AddOption(registry, "tool.move", "Move", "", ICON_PH_ARROWS_OUT_CARDINAL, 0, state.transformTool, TransformTool::Move);
+    AddOption(registry, "tool.rotate", "Rotate", "", ICON_PH_ARROWS_CLOCKWISE, 0, state.transformTool, TransformTool::Rotate);
+    AddOption(registry, "tool.scale", "Scale", "", ICON_PH_ARROWS_OUT, 0, state.transformTool, TransformTool::Scale);
 }
 
 // Every view the tone mapping pass has (GBufferDebugView), in the order the View menu lists them.
@@ -197,21 +197,21 @@ struct DebugViewCommand
 };
 
 constexpr DebugViewCommand kDebugViewCommands[] = {
-    {GBufferDebugView::Off, "lit", "Lit", ICON_FA_SUN, ImGuiMod_Alt | ImGuiKey_1, false},
-    {GBufferDebugView::Albedo, "albedo", "Albedo", ICON_FA_PALETTE, ImGuiMod_Alt | ImGuiKey_2, true},
-    {GBufferDebugView::Normal, "normal", "Normal", ICON_FA_COMPASS, ImGuiMod_Alt | ImGuiKey_3, false},
+    {GBufferDebugView::Off, "lit", "Lit", ICON_PH_SUN, ImGuiMod_Alt | ImGuiKey_1, false},
+    {GBufferDebugView::Albedo, "albedo", "Albedo", ICON_PH_PALETTE, ImGuiMod_Alt | ImGuiKey_2, true},
+    {GBufferDebugView::Normal, "normal", "Normal", ICON_PH_COMPASS, ImGuiMod_Alt | ImGuiKey_3, false},
     {GBufferDebugView::GeometricNormal, "geometric_normal", "Geometric Normal", "", 0, false},
-    {GBufferDebugView::Surface, "surface", "Metallic, Roughness, Occlusion", ICON_FA_CIRCLE_HALF_STROKE, ImGuiMod_Alt | ImGuiKey_4, false},
+    {GBufferDebugView::Surface, "surface", "Metallic, Roughness, Occlusion", ICON_PH_CIRCLE_HALF, ImGuiMod_Alt | ImGuiKey_4, false},
     {GBufferDebugView::Specular, "specular", "Specular", "", 0, false},
-    {GBufferDebugView::Emissive, "emissive", "Emissive", ICON_FA_LIGHTBULB, 0, false},
+    {GBufferDebugView::Emissive, "emissive", "Emissive", ICON_PH_LIGHTBULB, 0, false},
     {GBufferDebugView::Coat, "coat", "Coat and Anisotropy", "", 0, false},
     {GBufferDebugView::Sheen, "sheen", "Sheen", "", 0, false},
     {GBufferDebugView::MotionVectors, "motion_vectors", "Motion Vectors", "", 0, false},
-    {GBufferDebugView::AmbientOcclusion, "ambient_occlusion", "Ambient Occlusion", ICON_FA_LAYER_GROUP, ImGuiMod_Alt | ImGuiKey_5, true},
+    {GBufferDebugView::AmbientOcclusion, "ambient_occlusion", "Ambient Occlusion", ICON_PH_STACK, ImGuiMod_Alt | ImGuiKey_5, true},
     {GBufferDebugView::Reflections, "reflections", "Screen-Space Reflections", "", 0, false},
     {GBufferDebugView::IndirectDiffuse, "indirect_diffuse", "Screen-Space GI", "", 0, false},
     {GBufferDebugView::LightClusters, "light_clusters", "Light Clusters", "", 0, false},
-    {GBufferDebugView::RayTraced, "ray_traced", "DDGI Ray-Traced Scene", ICON_FA_SITEMAP, ImGuiMod_Alt | ImGuiKey_6, true},
+    {GBufferDebugView::RayTraced, "ray_traced", "DDGI Ray-Traced Scene", ICON_PH_TREE_STRUCTURE, ImGuiMod_Alt | ImGuiKey_6, true},
     {GBufferDebugView::DdgiIrradiance, "ddgi_irradiance", "DDGI Irradiance", "", 0, false},
     {GBufferDebugView::DdgiProbes, "ddgi_probes", "DDGI Probes", "", 0, false},
 };
@@ -219,7 +219,7 @@ constexpr DebugViewCommand kDebugViewCommands[] = {
 void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
     Add(
-        registry, "view.wireframe", "Wireframe", "View/Wireframe", ICON_FA_DRAW_POLYGON, ImGuiMod_Alt | ImGuiKey_W,
+        registry, "view.wireframe", "Wireframe", "View/Wireframe", ICON_PH_POLYGON, ImGuiMod_Alt | ImGuiKey_W,
         [&state]
         {
             state.wireframe = !state.wireframe;
@@ -250,9 +250,9 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
             command.view == GBufferDebugView::Off ? std::function<bool()>{} : std::function<bool()>(gbufferAvailable));
     }
     registry.AddSeparator("View");
-    AddBound(registry, "view.frame_selected", "Frame Selected", "View/Frame Selected", ICON_FA_BULLSEYE, ImGuiKey_F, scene.frameSelection, scene.canFrameSelection);
+    AddBound(registry, "view.frame_selected", "Frame Selected", "View/Frame Selected", ICON_PH_TARGET, ImGuiKey_F, scene.frameSelection, scene.canFrameSelection);
     Add(
-        registry, "view.viewport_fullscreen", "Fullscreen Viewport", "View/Fullscreen Viewport", ICON_FA_EXPAND, ImGuiKey_F11,
+        registry, "view.viewport_fullscreen", "Fullscreen Viewport", "View/Fullscreen Viewport", ICON_PH_CORNERS_OUT, ImGuiKey_F11,
         [&state]
         {
             state.viewportFullscreen = !state.viewportFullscreen;
@@ -263,7 +263,7 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
         });
     // The viewport's transform gizmo and light gizmos.
     Add(
-        registry, "view.gizmos", "Gizmos", "View/Gizmos", ICON_FA_CROSSHAIRS, ImGuiMod_Alt | ImGuiKey_G,
+        registry, "view.gizmos", "Gizmos", "View/Gizmos", ICON_PH_CROSSHAIR, ImGuiMod_Alt | ImGuiKey_G,
         [&state]
         {
             state.gizmos = !state.gizmos;
@@ -282,12 +282,12 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     {
         return state.rayTracingSupported;
     };
-    AddOption(registry, "render.pipeline.rasterization", "Rasterization", "Render/Pipeline/Rasterization", ICON_FA_CUBE, ImGuiMod_Ctrl | ImGuiKey_1, state.pipelineMode, RenderPipelineMode::Rasterization);
-    AddOption(registry, "render.pipeline.hybrid", "Hybrid", "Render/Pipeline/Hybrid", ICON_FA_CUBES, ImGuiMod_Ctrl | ImGuiKey_2, state.pipelineMode, RenderPipelineMode::Hybrid, rayTracingSupported);
-    AddOption(registry, "render.pipeline.path_tracing", "Path Tracing", "Render/Pipeline/Path Tracing", ICON_FA_WAND_MAGIC_SPARKLES, ImGuiMod_Ctrl | ImGuiKey_3, state.pipelineMode, RenderPipelineMode::PathTracing, rayTracingSupported);
+    AddOption(registry, "render.pipeline.rasterization", "Rasterization", "Render/Pipeline/Rasterization", ICON_PH_CUBE, ImGuiMod_Ctrl | ImGuiKey_1, state.pipelineMode, RenderPipelineMode::Rasterization);
+    AddOption(registry, "render.pipeline.hybrid", "Hybrid", "Render/Pipeline/Hybrid", ICON_PH_CUBE_TRANSPARENT, ImGuiMod_Ctrl | ImGuiKey_2, state.pipelineMode, RenderPipelineMode::Hybrid, rayTracingSupported);
+    AddOption(registry, "render.pipeline.path_tracing", "Path Tracing", "Render/Pipeline/Path Tracing", ICON_PH_MAGIC_WAND, ImGuiMod_Ctrl | ImGuiKey_3, state.pipelineMode, RenderPipelineMode::PathTracing, rayTracingSupported);
     // Path tracing always traces rays, so the switch shows on and cannot be turned off there.
     Add(
-        registry, "render.ray_tracing", "Ray Tracing", "Render/Ray Tracing", ICON_FA_BOLT, 0,
+        registry, "render.ray_tracing", "Ray Tracing", "Render/Ray Tracing", ICON_PH_LIGHTNING, 0,
         [&state]
         {
             state.rayTracing = !state.rayTracing;
@@ -313,22 +313,22 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     AddOption(registry, "render.anti_aliasing.none", "No Anti-Aliasing", "Render/Anti-Aliasing/None", "", 0, state.antiAliasing, AntiAliasingMode::None);
     registry.AddSeparator("Render");
     // The passes load their SPIR-V once, when they are built; the renderer cannot rebuild them yet.
-    AddBound(registry, "render.reload_shaders", "Reload Shaders", "Render/Reload Shaders", ICON_FA_ARROWS_ROTATE, ImGuiMod_Ctrl | ImGuiKey_R, scene.reloadShaders);
+    AddBound(registry, "render.reload_shaders", "Reload Shaders", "Render/Reload Shaders", ICON_PH_ARROWS_CLOCKWISE, ImGuiMod_Ctrl | ImGuiKey_R, scene.reloadShaders);
 }
 
 void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
     Add(
-        registry, "tools.command_palette", "Command Palette", "Tools/Command Palette...", ICON_FA_TERMINAL, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P,
+        registry, "tools.command_palette", "Command Palette", "Tools/Command Palette...", ICON_PH_TERMINAL_WINDOW, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P,
         [&state]
         {
             state.commandPaletteRequested = true;
         });
     registry.AddSeparator("Tools");
-    AddBound(registry, "tools.capture_viewport", "Capture Viewport", "Tools/Capture Viewport", ICON_FA_CAMERA, ImGuiKey_F12, scene.captureViewport);
+    AddBound(registry, "tools.capture_viewport", "Capture Viewport", "Tools/Capture Viewport", ICON_PH_CAMERA, ImGuiKey_F12, scene.captureViewport);
     // Checked while recording; the same command stops it.
     Add(
-        registry, "tools.record_viewport", "Record Viewport", "Tools/Record Viewport", ICON_FA_VIDEO, ImGuiMod_Shift | ImGuiKey_F12,
+        registry, "tools.record_viewport", "Record Viewport", "Tools/Record Viewport", ICON_PH_VIDEO_CAMERA, ImGuiMod_Shift | ImGuiKey_F12,
         scene.toggleVideoRecording,
         [&state]
         {
@@ -336,9 +336,9 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
         },
         IfBound(scene.toggleVideoRecording));
     // Shaders are compiled with the build, not by the editor, so there is no log or cache to show.
-    AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_FA_FILE_LINES, 0, scene.showShaderLog);
+    AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_PH_FILE_TEXT, 0, scene.showShaderLog);
     registry.AddSeparator("Tools");
-    AddBound(registry, "tools.clear_shader_cache", "Clear Shader Cache", "Tools/Clear Shader Cache", ICON_FA_TRASH_CAN, 0, scene.clearShaderCache);
+    AddBound(registry, "tools.clear_shader_cache", "Clear Shader Cache", "Tools/Clear Shader Cache", ICON_PH_TRASH, 0, scene.clearShaderCache);
 }
 
 void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommands& window)
@@ -373,15 +373,15 @@ void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommand
                 *visible = true;
             }
         });
-    Add(registry, "window.reset_layout", "Reset Layout", "Window/Reset Layout", ICON_FA_TABLE_COLUMNS, 0, window.resetLayout);
+    Add(registry, "window.reset_layout", "Reset Layout", "Window/Reset Layout", ICON_PH_SQUARE_SPLIT_HORIZONTAL, 0, window.resetLayout);
 }
 
 void RegisterHelpCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
 {
-    AddBound(registry, "help.documentation", "Documentation", "Help/Documentation", ICON_FA_BOOK, ImGuiKey_F1, scene.showDocumentation);
-    AddBound(registry, "help.keyboard_shortcuts", "Keyboard Shortcuts", "Help/Keyboard Shortcuts...", ICON_FA_KEYBOARD, 0, scene.showKeyboardShortcuts);
+    AddBound(registry, "help.documentation", "Documentation", "Help/Documentation", ICON_PH_BOOK, ImGuiKey_F1, scene.showDocumentation);
+    AddBound(registry, "help.keyboard_shortcuts", "Keyboard Shortcuts", "Help/Keyboard Shortcuts...", ICON_PH_KEYBOARD, 0, scene.showKeyboardShortcuts);
     registry.AddSeparator("Help");
-    AddBound(registry, "help.about", "About MiniEngine", "Help/About MiniEngine...", ICON_FA_CIRCLE_INFO, 0, scene.showAbout);
+    AddBound(registry, "help.about", "About MiniEngine", "Help/About MiniEngine...", ICON_PH_INFO, 0, scene.showAbout);
 }
 }
 

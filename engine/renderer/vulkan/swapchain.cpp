@@ -132,21 +132,19 @@ VkSurfaceFormatKHR VulkanSwapchain::ChooseSurfaceFormat(const std::vector<VkSurf
         }
     }
 
-    for (const auto& availableFormat : formats)
+    // UNORM before SRGB: only ImGui draws into the swapchain, and its colours are sRGB values, mixed
+    // as a browser mixes them, in sRGB space. An SRGB image would take them for linear light and
+    // encode them again (the dark theme's #151515 came out #515151), and would blend translucent
+    // fills in linear light, much brighter than the same fill on a web page. The scene reaches the
+    // UI through its own sRGB target (see VulkanRenderer::CreateSwapchainResources).
+    for (const VkFormat format : {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB})
     {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        for (const auto& availableFormat : formats)
         {
-            return availableFormat;
-        }
-    }
-
-    for (const auto& availableFormat : formats)
-    {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM &&
-            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-        {
-            return availableFormat;
+            if (availableFormat.format == format && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                return availableFormat;
+            }
         }
     }
 

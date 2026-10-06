@@ -107,7 +107,7 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
         rect.drawList->AddRectFilled(rect.origin, max, IM_COL32(18, 22, 30, 255));
     }
 
-    rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 0, 1.0f);
+    rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 1.0f);
 }
 
 void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, double secondsSinceEntered, const VehicleDriveStatus& vehicle)
@@ -196,7 +196,7 @@ void DrawMinimap(
         uvAt(half, -half),
         uvAt(half, half),
         uvAt(-half, half));
-    drawList->AddRect(min, max, IM_COL32(255, 255, 255, 90), 0.0f, 0, 1.0f);
+    drawList->AddRect(min, max, IM_COL32(255, 255, 255, 90), 0.0f, 1.0f);
 
     // The player: an arrow pointing up (the way they face), white with a dark outline.
     const float arrow = 7.0f * uiScale;
@@ -207,7 +207,7 @@ void DrawMinimap(
     drawList->AddTriangleFilled(tip, left, notch, IM_COL32(255, 255, 255, 255));
     drawList->AddTriangleFilled(tip, notch, rightCorner, IM_COL32(255, 255, 255, 255));
     const ImVec2 outline[] = {tip, rightCorner, notch, left};
-    drawList->AddPolyline(outline, 4, IM_COL32(0, 0, 0, 220), ImDrawFlags_Closed, 1.5f * uiScale);
+    drawList->AddPolyline(outline, 4, IM_COL32(0, 0, 0, 220), 1.5f * uiScale, ImDrawFlags_Closed);
 
     // North (-Z) on the screen, pushed out to just inside the border.
     const glm::vec2 north(0.0f, -1.0f);

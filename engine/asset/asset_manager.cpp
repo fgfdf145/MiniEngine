@@ -7,11 +7,11 @@
 #include "model_cache.h"
 #include "svg_icon.h"
 
-#include <engine/core/text/ascii.h>
-
 #include <engine/audio/audio_file.h>
+#include <engine/core/text/ascii.h>
+#include <engine/editor/ui_colors.h>
 
-#include <IconsFontAwesome6.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -208,7 +208,7 @@ AssetManagerResult AssetManager::Draw()
     if (!m_statusError.empty())
     {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", m_statusError.c_str());
+        ImGui::TextColored(ui_colors::kTextDanger, "%s", m_statusError.c_str());
         ImGui::PopTextWrapPos();
     }
     ImGui::Separator();
@@ -356,30 +356,7 @@ const char* AssetManager::TypeTag(AssetType t)
 
 void AssetManager::PushTypeColor(AssetType t)
 {
-    switch (t)
-    {
-    case AssetType::Dir:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.80f, 0.30f, 1.0f));
-        break;
-    case AssetType::Model:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.75f, 1.00f, 1.0f));
-        break;
-    case AssetType::Material:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.55f, 1.00f, 1.0f));
-        break;
-    case AssetType::Scene:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 1.00f, 0.60f, 1.0f));
-        break;
-    case AssetType::Texture:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.40f, 0.90f, 0.85f, 1.0f));
-        break;
-    case AssetType::Audio:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.55f, 0.70f, 1.0f));
-        break;
-    default:
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
-        break;
-    }
+    ImGui::PushStyleColor(ImGuiCol_Text, TypeColorU32(t));
 }
 
 const SvgIcon* AssetManager::TileIcon(const Entry& entry)
@@ -438,19 +415,19 @@ const char* AssetManager::TypeIcon(AssetType t)
     switch (t)
     {
     case AssetType::Dir:
-        return ICON_FA_FOLDER;
+        return ICON_PH_FOLDER;
     case AssetType::Model:
-        return ICON_FA_CUBE;
+        return ICON_PH_CUBE;
     case AssetType::Material:
-        return ICON_FA_PALETTE;
+        return ICON_PH_PALETTE;
     case AssetType::Scene:
-        return ICON_FA_MOUNTAIN_SUN;
+        return ICON_PH_MOUNTAINS;
     case AssetType::Texture:
-        return ICON_FA_IMAGE;
+        return ICON_PH_IMAGE;
     case AssetType::Audio:
-        return ICON_FA_MUSIC;
+        return ICON_PH_MUSIC_NOTES;
     default:
-        return ICON_FA_FILE;
+        return ICON_PH_FILE;
     }
 }
 
@@ -475,24 +452,25 @@ const char* AssetManager::ShortTag(AssetType t)
     }
 }
 
+// The Claude desktop app's tint colours (--cds-text-tint-*, dark theme), one hue per asset type.
 unsigned int AssetManager::TypeColorU32(AssetType t)
 {
     switch (t)
     {
     case AssetType::Dir:
-        return IM_COL32(255, 204, 77, 255);
+        return IM_COL32(219, 147, 0, 255); // yellow
     case AssetType::Model:
-        return IM_COL32(115, 191, 255, 255);
+        return IM_COL32(109, 167, 236, 255); // blue
     case AssetType::Material:
-        return IM_COL32(204, 140, 255, 255);
+        return IM_COL32(160, 150, 235, 255); // violet
     case AssetType::Scene:
-        return IM_COL32(128, 255, 153, 255);
+        return IM_COL32(85, 191, 80, 255); // green
     case AssetType::Texture:
-        return IM_COL32(102, 230, 217, 255);
+        return IM_COL32(59, 189, 140, 255); // aqua
     case AssetType::Audio:
-        return IM_COL32(255, 140, 179, 255);
+        return IM_COL32(232, 123, 164, 255); // magenta
     default:
-        return IM_COL32(153, 153, 158, 255);
+        return IM_COL32(137, 135, 129, 255); // --cds-text-muted
     }
 }
 
@@ -502,25 +480,25 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
 void AssetManager::DrawToolbar(AssetManagerResult& result)
 {
     const float rightEdge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-    if (WrappingButton(ICON_FA_FILE_IMPORT " Import Model", rightEdge, true))
+    if (WrappingButton(ICON_PH_FILE_ARROW_DOWN " Import Model", rightEdge, true))
     {
         result.wantsImportModel = true;
     }
 
-    if (WrappingButton(ICON_FA_ROTATE " Refresh", rightEdge, false))
+    if (WrappingButton(ICON_PH_ARROWS_CLOCKWISE " Refresh", rightEdge, false))
     {
         // Also pick up files changed outside the editor (new/copied/moved assets).
         AssetRegistry::RescanAssetTree();
         m_needsScan = true;
     }
 
-    if (WrappingButton(ICON_FA_FOLDER_PLUS " New Folder", rightEdge, false))
+    if (WrappingButton(ICON_PH_FOLDER_PLUS " New Folder", rightEdge, false))
     {
         CreateNewFolder();
     }
 
     // Navigate to root shortcut
-    if (WrappingButton(ICON_FA_HOUSE " Assets Root", rightEdge, false))
+    if (WrappingButton(ICON_PH_HOUSE " Assets Root", rightEdge, false))
     {
         NavigateTo(m_root);
     }
@@ -570,7 +548,7 @@ void AssetManager::DrawBreadcrumb()
         }
         else
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.75f, 1.00f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui_colors::kTextAccent);
             const std::string btnId = label + "##bc" + std::to_string(i);
             if (ImGui::SmallButton(btnId.c_str()))
             {
@@ -967,7 +945,7 @@ void AssetManager::DrawPreviewDetails(AssetManagerResult& result)
     }
     if (entry.type == AssetType::Audio)
     {
-        if (ImGui::SmallButton(ICON_FA_PLAY " Play / Stop"))
+        if (ImGui::SmallButton(ICON_PH_PLAY " Play / Stop"))
         {
             result.previewAudioPath = entry.path.string();
         }
@@ -1332,18 +1310,18 @@ void AssetManager::DrawDeleteConfirmModal(AssetManagerResult& result)
         ImGui::Spacing();
         if (m_pendingDeleteHasDir)
         {
-            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "Folders are deleted recursively.");
+            ImGui::TextColored(ui_colors::kTextWarning, "Folders are deleted recursively.");
         }
         for (const std::string& warning : m_pendingDeleteWarnings)
         {
-            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "%s", warning.c_str());
+            ImGui::TextColored(ui_colors::kTextWarning, "%s", warning.c_str());
         }
         ImGui::TextDisabled("This cannot be undone.");
         ImGui::Separator();
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.25f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.20f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ui_colors::kFillDanger);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui_colors::kFillDangerHover);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui_colors::kFillDanger);
         if (ImGui::Button("Delete", ImVec2(120.0f * UiScale(), 0.0f)))
         {
             for (std::string& path : m_pendingDeletePaths)
@@ -1396,7 +1374,7 @@ void AssetManager::DrawRenameConfirmModal()
 
         for (const std::string& warning : m_pendingRenameWarnings)
         {
-            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.35f, 1.0f), "%s", warning.c_str());
+            ImGui::TextColored(ui_colors::kTextWarning, "%s", warning.c_str());
         }
         ImGui::TextDisabled("Those files reference it by path: renaming breaks them. Scenes are not affected.");
         ImGui::Separator();

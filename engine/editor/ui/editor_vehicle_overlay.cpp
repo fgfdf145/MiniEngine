@@ -185,7 +185,7 @@ struct Painter
         }
         points[count++] = at(0.9f, 0.0f);
         points[count++] = b;
-        drawList.AddPolyline(points.data(), static_cast<int>(count), color, ImDrawFlags_None, kLineThickness * uiScale);
+        drawList.AddPolyline(points.data(), static_cast<int>(count), color, kLineThickness * uiScale);
     }
 
     void Text(const ImVec2& position, const char* text) const
@@ -256,7 +256,7 @@ void DrawTyre(const Painter& painter, const VehicleWheelState& wheel, bool draws
         }
         if (visible)
         {
-            painter.drawList.AddPolyline(ring.data(), kTyreSegments + 1, color, ImDrawFlags_None, kLineThickness * painter.uiScale);
+            painter.drawList.AddPolyline(ring.data(), kTyreSegments + 1, color, kLineThickness * painter.uiScale);
         }
     }
     painter.Line(center, center + axes.up * wheel.radius, color, 2.0f);
@@ -283,7 +283,7 @@ void DrawTyre(const Painter& painter, const VehicleWheelState& wheel, bool draws
         }
     }
     painter.drawList.AddConvexPolyFilled(projected.data(), 4, WithAlpha(color, 110));
-    painter.drawList.AddPolyline(projected.data(), 4, color, ImDrawFlags_Closed, 1.5f * painter.uiScale);
+    painter.drawList.AddPolyline(projected.data(), 4, color, 1.5f * painter.uiScale, ImDrawFlags_Closed);
 }
 
 constexpr ImU32 kStuckColor = IM_COL32(70, 220, 110, 255);

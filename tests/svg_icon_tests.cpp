@@ -105,12 +105,12 @@ void TestMalformedDocuments()
     Require(partial.has_value() && !partial->MeshAt(10.0f).quads.empty(), "data before an unknown command is kept");
 }
 
-// The Assets window's icons at 16, 32, 64 and 160 pixels; each fills between a quarter and all
-// of its box, and a larger size flattens its curves into more pieces.
+// The Assets window's icons at 16, 32, 64 and 160 pixels; each fills part of its box (at least a
+// twentieth), and a larger size flattens its curves into more pieces.
 void TestAssetIcons()
 {
     const std::filesystem::path folder = std::filesystem::path(MINIENGINE_SOURCE_DIR) / "engine" / "asset" / "icons";
-    const std::vector<std::string> names = {"folder", "model", "material", "scene", "texture", "file", "parent_folder"};
+    const std::vector<std::string> names = {"folder", "model", "material", "scene", "texture", "file", "parent_folder", "audio"};
     const std::vector<float> sizes = {16.0f, 32.0f, 64.0f, 160.0f};
     constexpr int kWidth = 1840;
     constexpr int kHeight = 180;
@@ -145,7 +145,9 @@ void TestAssetIcons()
             {
                 points += outline.size();
             }
-            Require(area > 0.1 * box && area < box, name + " fills part of its box at " + std::to_string(size) + " px");
+            // Phosphor's regular icons are drawn lines, so a thin one (the parent folder's arrow) inks
+            // well under a tenth of its box; an empty or broken fill still fails.
+            Require(area > 0.05 * box && area < box, name + " fills part of its box at " + std::to_string(size) + " px");
             Require(points >= previousPoints, name + " has at least as many outline points at a larger size");
             previousPoints = points;
             if (size == sizes.back())

@@ -48,7 +48,7 @@
 )
 miniengine_group_target_sources(engine_asset)
 
-# The Assets window's type icons (SVG, written by tools/editor_icons/fontawesome_to_svg.py), built
+# The Assets window's type icons (SVG, written by tools/editor_icons/phosphor_to_svg.py), built
 # into the library so they need no file at run time.
 set(_asset_icon_names folder model material scene texture file parent_folder audio)
 foreach(_icon IN LISTS _asset_icon_names)
@@ -75,7 +75,7 @@ target_include_directories(engine_asset
     PRIVATE
         "${Stb_INCLUDE_DIR}"
         "${MINIENGINE_TINYGLTF_INCLUDE_DIR}"
-        "${PROJECT_SOURCE_DIR}/third_party/IconFontCppHeaders"
+        "${PROJECT_SOURCE_DIR}/third_party/phosphor"
 )
 
 target_link_libraries(engine_asset

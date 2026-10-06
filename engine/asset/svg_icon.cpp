@@ -375,7 +375,7 @@ std::vector<std::string_view> Tags(std::string_view document, std::string_view n
 }
 
 // Drops the points where a closed outline goes straight on or turns straight back ("H448H64H448"
-// in Font Awesome's paths): they add nothing to the fill, and the anti-aliasing outline would
+// in some icon sets' paths): they add nothing to the fill, and the anti-aliasing outline would
 // fold over itself there and leave a notch.
 void RemoveStraightPoints(std::vector<ImVec2>& contour)
 {
@@ -831,7 +831,7 @@ void SvgIcon::Draw(ImDrawList& drawList, ImVec2 topLeft, float height, ImU32 col
         {
             outline[i] = contour[i] + origin;
         }
-        drawList.AddPolyline(outline.data(), static_cast<int>(outline.size()), colour, ImDrawFlags_Closed, 1.0f);
+        drawList.AddPolyline(outline.data(), static_cast<int>(outline.size()), colour, 1.0f, ImDrawFlags_Closed);
     }
 }
 }

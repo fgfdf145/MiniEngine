@@ -2,10 +2,11 @@
 
 #include <engine/asset/model_cache.h>
 #include <engine/editor/editor_ui.h>
+#include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
 #include <engine/physics/vehicle_suspension.h>
 
-#include <IconsFontAwesome6.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 #include <implot.h>
 
@@ -86,8 +87,11 @@ struct Segments
         {
             return;
         }
-        ImPlot::SetNextLineStyle(colour, weight);
-        ImPlot::PlotLine(label, x.data(), y.data(), static_cast<int>(x.size()), ImPlotLineFlags_Segments);
+        ImPlotSpec spec;
+        spec.LineColor = colour;
+        spec.LineWeight = weight;
+        spec.Flags = ImPlotLineFlags_Segments;
+        ImPlot::PlotLine(label, x.data(), y.data(), static_cast<int>(x.size()), spec);
     }
 };
 
@@ -108,8 +112,13 @@ struct Markers
         {
             return;
         }
-        ImPlot::SetNextMarkerStyle(marker, size, colour, 1.0f, colour);
-        ImPlot::PlotScatter(label, x.data(), y.data(), static_cast<int>(x.size()));
+        ImPlotSpec spec;
+        spec.Marker = marker;
+        spec.MarkerSize = size;
+        spec.MarkerFillColor = colour;
+        spec.MarkerLineColor = colour;
+        spec.LineWeight = 1.0f;
+        ImPlot::PlotScatter(label, x.data(), y.data(), static_cast<int>(x.size()), spec);
     }
 };
 
@@ -371,8 +380,18 @@ void DrawLinkageView(const char* title, View view, const std::array<std::unique_
 // A vertical marker in the current plot.
 void MarkX(const char* label, double x)
 {
-    ImPlot::SetNextLineStyle(ImVec4(1.0f, 1.0f, 1.0f, 0.35f), 1.0f);
-    ImPlot::PlotInfLines(label, &x, 1);
+    ImPlotSpec spec;
+    spec.LineColor = ImVec4(1.0f, 1.0f, 1.0f, 0.35f);
+    spec.LineWeight = 1.0f;
+    ImPlot::PlotInfLines(label, &x, 1, spec);
+}
+
+// Data read from an array of structs: consecutive values are stride bytes apart.
+ImPlotSpec Strided(size_t stride)
+{
+    ImPlotSpec spec;
+    spec.Stride = static_cast<int>(stride);
+    return spec;
 }
 
 void TableRow(const char* name, double front, double rear, const char* format = "%.2f")
@@ -435,27 +454,27 @@ void SuspensionRigWindow::Draw(const IEditorWorld& scene, bool* open, const Vehi
         const auto flags = [&](Tab tab) {
             return m_requestedTab == tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
         };
-        if (ImGui::BeginTabItem(ICON_FA_PLAY " Live Rig", nullptr, flags(LiveTab)))
+        if (ImGui::BeginTabItem(ICON_PH_PLAY " Live Rig", nullptr, flags(LiveTab)))
         {
             DrawLiveTab(scene, live, result);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(ICON_FA_GEARS " Linkage", nullptr, flags(LinkageTab)))
+        if (ImGui::BeginTabItem(ICON_PH_GEAR_FINE " Linkage", nullptr, flags(LinkageTab)))
         {
             DrawLinkageTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(ICON_FA_TABLE " Summary", nullptr, flags(SummaryTab)))
+        if (ImGui::BeginTabItem(ICON_PH_TABLE " Summary", nullptr, flags(SummaryTab)))
         {
             DrawSummaryTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(ICON_FA_CHART_LINE " K&C", nullptr, flags(KcTab)))
+        if (ImGui::BeginTabItem(ICON_PH_CHART_LINE " K&C", nullptr, flags(KcTab)))
         {
             DrawKcTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Seven-Post", nullptr, flags(SevenPostTab)))
+        if (ImGui::BeginTabItem(ICON_PH_WAVE_SQUARE " Seven-Post", nullptr, flags(SevenPostTab)))
         {
             DrawSevenPostTab();
             ImGui::EndTabItem();
@@ -483,7 +502,7 @@ void SuspensionRigWindow::DrawCarSource(const IEditorWorld& scene)
 
     if (m_car.has_value())
     {
-        ImGui::Text(ICON_FA_CAR " %s", m_carName.c_str());
+        ImGui::Text(ICON_PH_CAR " %s", m_carName.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled("%.0f kg, wheelbase %.2f m, rack %.1f mm at full lock", m_car->mass, m_car->wheelbase, m_car->rackAtLock * 1000.0);
     }
@@ -493,7 +512,7 @@ void SuspensionRigWindow::DrawCarSource(const IEditorWorld& scene)
     }
     const bool otherSelected = !selectedPath.empty() && selectedPath != m_sourcePath;
     ImGui::BeginDisabled(!otherSelected || m_run != nullptr);
-    if (ImGui::Button(ICON_FA_ARROW_POINTER " Use Selected Model"))
+    if (ImGui::Button(ICON_PH_CURSOR " Use Selected Model"))
     {
         LoadCar(selectedPath, selectedName);
     }
@@ -501,7 +520,7 @@ void SuspensionRigWindow::DrawCarSource(const IEditorWorld& scene)
     if (!m_carError.empty())
     {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", m_carError.c_str());
+        ImGui::TextColored(ui_colors::kTextDanger, "%s", m_carError.c_str());
     }
 }
 
@@ -548,13 +567,13 @@ void SuspensionRigWindow::DrawRunControls()
         }
         ImGui::ProgressBar(static_cast<float>(m_run->progress.load()), ImVec2(-120.0f, 0.0f), stage.c_str());
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(-1.0f, 0.0f)))
+        if (ImGui::Button(ICON_PH_X " Cancel", ImVec2(-1.0f, 0.0f)))
         {
             m_run->cancel = true;
         }
         return;
     }
-    if (ImGui::Button(ICON_FA_PLAY " Run Rigs"))
+    if (ImGui::Button(ICON_PH_PLAY " Run Rigs"))
     {
         StartRun();
     }
@@ -577,14 +596,14 @@ void SuspensionRigWindow::DrawRunControls()
         ImGui::SameLine();
         ImGui::TextDisabled("last run %.1f s", m_report->seconds);
         ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_COPY " Copy Summary"))
+        if (ImGui::SmallButton(ICON_PH_COPY " Copy Summary"))
         {
             ImGui::SetClipboardText(suspension::FormatRigSummary(*m_report).c_str());
         }
     }
     if (!m_runError.empty())
     {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", m_runError.c_str());
+        ImGui::TextColored(ui_colors::kTextDanger, "%s", m_runError.c_str());
     }
 }
 
@@ -755,7 +774,7 @@ void SuspensionRigWindow::DrawKcTab()
                 const auto& points = kc.bounce[axle];
                 if (!points.empty())
                 {
-                    ImPlot::PlotLine(axleNames[axle], &points[0].travel, &field(points[0]), static_cast<int>(points.size()), 0, 0, sizeof(points[0]));
+                    ImPlot::PlotLine(axleNames[axle], &points[0].travel, &field(points[0]), static_cast<int>(points.size()), Strided(sizeof(points[0])));
                 }
             }
             MarkX("linkage", m_heaveMm);
@@ -776,7 +795,7 @@ void SuspensionRigWindow::DrawKcTab()
                 const auto& points = kc.roll[axle];
                 if (!points.empty())
                 {
-                    ImPlot::PlotLine(axleNames[axle], &points[0].roll, &field(points[0]), static_cast<int>(points.size()), 0, 0, sizeof(points[0]));
+                    ImPlot::PlotLine(axleNames[axle], &points[0].roll, &field(points[0]), static_cast<int>(points.size()), Strided(sizeof(points[0])));
                 }
             }
             MarkX("linkage", m_rollDegrees);
@@ -792,8 +811,8 @@ void SuspensionRigWindow::DrawKcTab()
         if (!kc.steer.empty())
         {
             const int n = static_cast<int>(kc.steer.size());
-            ImPlot::PlotLine("left", &kc.steer[0].steeringWheel, &kc.steer[0].left, n, 0, 0, sizeof(suspension::KcSteerPoint));
-            ImPlot::PlotLine("right", &kc.steer[0].steeringWheel, &kc.steer[0].right, n, 0, 0, sizeof(suspension::KcSteerPoint));
+            ImPlot::PlotLine("left", &kc.steer[0].steeringWheel, &kc.steer[0].left, n, Strided(sizeof(suspension::KcSteerPoint)));
+            ImPlot::PlotLine("right", &kc.steer[0].steeringWheel, &kc.steer[0].right, n, Strided(sizeof(suspension::KcSteerPoint)));
             if (m_car.has_value())
             {
                 MarkX("linkage", m_steering * m_car->steeringWheelLockDegrees);
@@ -847,7 +866,7 @@ void SuspensionRigWindow::DrawSevenPostTab()
     const auto sweepLine = [](const char* label, const suspension::SweepResult& s, const double* firstY) {
         if (!s.cycles.empty())
         {
-            ImPlot::PlotLine(label, &s.cycles[0].frequency, firstY, static_cast<int>(s.cycles.size()), 0, 0, sizeof(suspension::SweepCycle));
+            ImPlot::PlotLine(label, &s.cycles[0].frequency, firstY, static_cast<int>(s.cycles.size()), Strided(sizeof(suspension::SweepCycle)));
         }
     };
     const auto frequencyAxis = [](const char* yLabel) {
@@ -949,7 +968,7 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
     VehicleRigExcitation& e = m_excitation;
     if (live.active)
     {
-        if (ImGui::Button(ICON_FA_STOP " Stop the Rig"))
+        if (ImGui::Button(ICON_PH_STOP " Stop the Rig"))
         {
             result.actions.stopVehicleRig = true;
         }
@@ -965,7 +984,7 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
     {
         const bool canStart = scene.HasSelection() && scene.HasModelComponent(scene.GetSelectedEntity());
         ImGui::BeginDisabled(!canStart);
-        if (ImGui::Button(ICON_FA_PLAY " Put the Selected Car on the Rig"))
+        if (ImGui::Button(ICON_PH_PLAY " Put the Selected Car on the Rig"))
         {
             result.actions.startVehicleRig = true;
         }
@@ -974,7 +993,7 @@ void SuspensionRigWindow::DrawLiveTab(const IEditorWorld& scene, const VehicleRi
         ImGui::TextDisabled("The car, its wheels and the scene's pads (\"Wheel pad FL\"...) and loaders (\"Aero loader ...\") move in the viewport.");
         if (!live.lastError.empty())
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", live.lastError.c_str());
+            ImGui::TextColored(ui_colors::kTextDanger, "%s", live.lastError.c_str());
         }
     }
 
@@ -1283,7 +1302,7 @@ void SuspensionRigWindow::DrawLinkageTab()
     }
     if (m_poseFailed)
     {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "The linkage cannot reach this pose: it stops where it can.");
+        ImGui::TextColored(ui_colors::kTextWarning, "The linkage cannot reach this pose: it stops where it can.");
     }
 
     const float width = ImGui::GetContentRegionAvail().x;

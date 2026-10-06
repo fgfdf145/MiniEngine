@@ -38,5 +38,19 @@
     "tinygltf",
     "vulkan",
     "yaml-cpp"
+  ],
+  "overrides": [
+    {
+      "name": "imgui",
+      "version": "1.92.9"
+    },
+    {
+      "name": "imguizmo",
+      "version": "1.10"
+    },
+    {
+      "name": "implot",
+      "version": "1.0"
+    }
   ]
 }

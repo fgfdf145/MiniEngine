@@ -157,7 +157,7 @@ void DrawModelUvPreview(
     const ImVec2 canvasMax = ImGui::GetItemRectMax();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(canvasMin, canvasMax, IM_COL32(15, 17, 24, 255), 10.0f * uiScale);
-    drawList->AddRect(canvasMin, canvasMax, IM_COL32(94, 104, 126, 255), 10.0f * uiScale, 0, 1.25f);
+    drawList->AddRect(canvasMin, canvasMax, IM_COL32(94, 104, 126, 255), 10.0f * uiScale, 1.25f);
 
     const float padding = 20.0f * uiScale;
     const ImVec2 uvMin(canvasMin.x + padding, canvasMin.y + padding);
@@ -171,7 +171,7 @@ void DrawModelUvPreview(
         drawList->AddLine(ImVec2(x, uvMin.y), ImVec2(x, uvMax.y), gridColor, 1.0f);
         drawList->AddLine(ImVec2(uvMin.x, y), ImVec2(uvMax.x, y), gridColor, 1.0f);
     }
-    drawList->AddRect(uvMin, uvMax, IM_COL32(130, 146, 176, 255), 0.0f, 0, 1.3f);
+    drawList->AddRect(uvMin, uvMax, IM_COL32(130, 146, 176, 255), 0.0f, 1.3f);
 
     const auto mapUv = [&uvMin, &uvMax](const Vertex& vertex)
     {
@@ -1122,7 +1122,7 @@ void DrawMaterialShadedPreview(
         IM_COL32(18, 24, 36, 255),
         IM_COL32(28, 34, 48, 255),
         IM_COL32(18, 20, 30, 255));
-    drawList->AddRect(canvasMin, canvasMax, IM_COL32(92, 108, 132, 255), 10.0f * uiScale, 0, 1.25f);
+    drawList->AddRect(canvasMin, canvasMax, IM_COL32(92, 108, 132, 255), 10.0f * uiScale, 1.25f);
 
     const bool previewHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (previewHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left))

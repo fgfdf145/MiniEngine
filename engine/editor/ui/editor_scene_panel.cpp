@@ -4,6 +4,7 @@
 #include <engine/asset/asset_registry.h>
 #include <engine/asset/model_loader.h>
 
+#include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
 #include <engine/platform/file_dialog/file_dialog.h>
 #include <engine/scene/sun_position.h>
@@ -476,7 +477,7 @@ void EditorUiController::DrawScenePanel(
         // place the user learns that the scene on screen is not the one they asked for.
         if (!lastLoadError.empty())
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui_colors::kTextDanger);
             ImGui::TextWrapped("Error: %s", lastLoadError.c_str());
             ImGui::PopStyleColor();
             ImGui::Separator();
@@ -722,7 +723,7 @@ void EditorUiController::DrawScenePanel(
         ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
         if (!lastSceneIoError.empty())
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", lastSceneIoError.c_str());
+            ImGui::TextColored(ui_colors::kTextDanger, "Error: %s", lastSceneIoError.c_str());
         }
         // Save goes to the current path if already set; otherwise it asks, like Save As.
         const bool savePressed = ImGui::Button("Save Scene");

@@ -42,7 +42,6 @@ class VulkanImGuiLayer
     // The HDR fragment shader's SPIR-V, kept alive while the backend uses it.
     std::vector<uint32_t> m_hdrFragmentShader;
     void CreateDescriptorPool();
-    void UploadFonts() const;
     static void CheckVkResult(VkResult result);
 
     SDL_Window* m_window = nullptr;

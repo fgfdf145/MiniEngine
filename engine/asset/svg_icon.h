@@ -12,7 +12,7 @@ namespace me
 
 // A one-colour vector icon from an SVG document: the <path> elements inside its viewBox,
 // filled by their fill-rule (nonzero unless "evenodd"). Groups, transforms, strokes and
-// styles are not read; Font Awesome's icons need none of them.
+// styles are not read; the Phosphor icons it draws need none of them.
 //
 // It is drawn as geometry, flattened for the size it is drawn at, so it is as sharp at
 // 200 px as at 16 px; the edges are anti-aliased by a 1 px outline over the fill.

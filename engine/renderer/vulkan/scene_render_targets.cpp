@@ -24,6 +24,21 @@ bool HasStencilComponent(VkFormat format)
     return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
+// ImGui draws in sRGB space, as a browser does (see VulkanSwapchain::ChooseSurfaceFormat): it reads an
+// sRGB image's bytes as they are, through a UNORM view, rather than decoded to linear light.
+VkFormat DisplayViewFormat(VkFormat format)
+{
+    switch (format)
+    {
+    case VK_FORMAT_B8G8R8A8_SRGB:
+        return VK_FORMAT_B8G8R8A8_UNORM;
+    case VK_FORMAT_R8G8B8A8_SRGB:
+        return VK_FORMAT_R8G8B8A8_UNORM;
+    default:
+        return format;
+    }
+}
+
 template <typename Handle>
 ImTextureID ToImTextureId(Handle handle)
 {
@@ -50,18 +65,12 @@ SceneRenderTargets::SceneRenderTargets(
                 std::max(extent.height, 1u)})
 {
     SelectFormats(ldrFormat);
-    CreateSampler();
     CreateImages(swapchainImageCount);
 }
 
 SceneRenderTargets::~SceneRenderTargets()
 {
     ReleaseImages();
-
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-    }
 }
 
 VkFormat SceneRenderTargets::GetFormat(RenderTargetId target) const
@@ -356,29 +365,6 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     }
 }
 
-void SceneRenderTargets::CreateSampler()
-{
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-    samplerInfo.mipLodBias = 0.0f;
-
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create viewport sampler");
-}
-
 void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
 {
     m_swapchainImageCount = swapchainImageCount;
@@ -393,10 +379,12 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
         description.images.assign(copyCount, TargetImage{});
         for (TargetImage& image : description.images)
         {
+            const VkFormat imguiFormat = description.bindToImGui ? DisplayViewFormat(description.format) : description.format;
             CreateImage(
                 description.format,
                 description.usage,
                 GetTargetExtent(target),
+                imguiFormat != description.format,
                 image);
             image.view = CreateImageView(image.image, description.format, description.aspect);
             if ((description.aspect & VK_IMAGE_ASPECT_STENCIL_BIT) != 0)
@@ -405,9 +393,12 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
             }
             if (description.bindToImGui)
             {
+                if (imguiFormat != description.format)
+                {
+                    image.imguiView = CreateImageView(image.image, imguiFormat, description.aspect);
+                }
                 image.imguiBinding = ImGui_ImplVulkan_AddTexture(
-                    m_sampler,
-                    image.view,
+                    image.imguiView != VK_NULL_HANDLE ? image.imguiView : image.view,
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             }
         }
@@ -423,6 +414,10 @@ void SceneRenderTargets::DestroyImages(std::array<TargetDescription, kRenderTarg
             if (image.imguiBinding != VK_NULL_HANDLE)
             {
                 ImGui_ImplVulkan_RemoveTexture(image.imguiBinding);
+            }
+            if (image.imguiView != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(m_device, image.imguiView, nullptr);
             }
             if (image.sampledView != VK_NULL_HANDLE)
             {
@@ -462,10 +457,11 @@ uint32_t SceneRenderTargets::FindMemoryType(uint32_t typeFilter, VkMemoryPropert
     throw std::runtime_error("Failed to find suitable viewport image memory type");
 }
 
-void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, TargetImage& target) const
+void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, bool mutableFormat, TargetImage& target) const
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.flags = mutableFormat ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.extent.width = extent.width;
     imageInfo.extent.height = extent.height;

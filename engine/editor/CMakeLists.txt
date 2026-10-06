@@ -52,22 +52,23 @@ add_library(engine_editor
     ui/editor_suspension_rigs.h
     ui/editor_vehicle_panel.cpp
     ui/editor_viewport_panel.cpp
+    ui_colors.h
     view_settings_fields.h
 )
 miniengine_group_target_sources(engine_editor)
 
-# The Font Awesome icon font, built into the editor so it needs no file at run time.
-set(_editor_icon_font "${PROJECT_SOURCE_DIR}/third_party/fontawesome/fa-solid-900.ttf")
-set(_editor_icon_font_source "${CMAKE_CURRENT_BINARY_DIR}/generated/fa_solid_900_ttf.cpp")
+# The Phosphor icon font, built into the editor so it needs no file at run time.
+set(_editor_icon_font "${PROJECT_SOURCE_DIR}/third_party/phosphor/Phosphor.ttf")
+set(_editor_icon_font_source "${CMAKE_CURRENT_BINARY_DIR}/generated/phosphor_regular_ttf.cpp")
 add_custom_command(
     OUTPUT "${_editor_icon_font_source}"
     COMMAND ${CMAKE_COMMAND}
         "-DINPUT=${_editor_icon_font}"
         "-DOUTPUT=${_editor_icon_font_source}"
-        -DSYMBOL=kFontAwesomeSolidTtf
+        -DSYMBOL=kPhosphorRegularTtf
         -P "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
     DEPENDS "${_editor_icon_font}" "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
-    COMMENT "Embedding fa-solid-900.ttf"
+    COMMENT "Embedding Phosphor.ttf"
     VERBATIM
 )
 target_sources(engine_editor PRIVATE "${_editor_icon_font_source}")
@@ -77,7 +78,7 @@ target_include_directories(engine_editor
     PUBLIC
         "${PROJECT_SOURCE_DIR}"
     PRIVATE
-        "${PROJECT_SOURCE_DIR}/third_party/IconFontCppHeaders"
+        "${PROJECT_SOURCE_DIR}/third_party/phosphor"
 )
 
 target_link_libraries(engine_editor

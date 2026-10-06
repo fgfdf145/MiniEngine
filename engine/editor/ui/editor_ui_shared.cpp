@@ -1,6 +1,7 @@
 ﻿#include "editor_ui_internal.h"
 
 #include <engine/asset/model_loader.h>
+#include <engine/editor/ui_colors.h>
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -216,7 +217,7 @@ std::optional<std::string> PickFilePath(FileDialogType type, bool requested)
         const bool entered = ImGui::InputText("##typed_path", &s_typedPath, ImGuiInputTextFlags_EnterReturnsTrue);
         if (!s_typedPathError.empty())
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", s_typedPathError.c_str());
+            ImGui::TextColored(ui_colors::kTextDanger, "%s", s_typedPathError.c_str());
         }
         ImGui::Separator();
 

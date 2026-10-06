@@ -17,10 +17,16 @@
 namespace me
 {
 
+// engine/renderer/imgui holds Dear ImGui's own Vulkan and SDL3 backends, unmodified, from the release
+// vcpkg installs (vcpkg.json pins it). A backend from another release may not match imgui.h.
+static_assert(IMGUI_VERSION_NUM == 19291, "Update engine/renderer/imgui to the backends of this ImGui release");
+
 namespace
 {
+// Sampled images: the font atlas pages plus every ImGui_ImplVulkan_AddTexture (viewport, minimap).
 constexpr uint32_t kImGuiDescriptorCount = 128;
-constexpr float kDefaultUiFontSizePixels = 16.0f;
+// The Claude desktop app's body text, --cds-font-size-body (0.8125rem at its default density).
+constexpr float kDefaultUiFontSizePixels = 13.0f;
 
 std::string BuildImGuiIniPath()
 {
@@ -95,21 +101,37 @@ void ConfigureImGuiStyle()
 {
     ImGui::StyleColorsDark();
 
+    // Spacing is the Claude desktop app's at its default density (the .cds-root tokens, which its rows
+    // and fields measure to): 13 px text in 24 px controls, padding and gaps from its pad and gap scales.
+    constexpr float kControlHeight = 24.0f; // --cds-h-control
+    constexpr float kNestedControlHeight = 18.0f; // --cds-h-control-nested
+    constexpr float kPadXs = 4.0f; // --cds-pad-xs
+    constexpr float kPadMd = 8.0f; // --cds-pad-md
+    constexpr float kPadLg = 12.0f; // --cds-pad-lg
+    constexpr float kGapXs = 6.0f; // --cds-gap-xs
+    constexpr float kGapSm = 8.0f; // --cds-gap-sm
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowPadding = ImVec2(12.0f, 10.0f);
-    style.FramePadding = ImVec2(10.0f, 6.0f);
-    style.CellPadding = ImVec2(8.0f, 6.0f);
-    style.ItemSpacing = ImVec2(10.0f, 8.0f);
-    style.ItemInnerSpacing = ImVec2(6.0f, 6.0f);
-    style.IndentSpacing = 22.0f;
-    style.ScrollbarSize = 15.0f;
-    style.GrabMinSize = 12.0f;
-    style.WindowRounding = 4.0f;
-    style.ChildRounding = 4.0f;
-    style.PopupRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-    style.TabRounding = 3.0f;
+    style.WindowPadding = ImVec2(kPadLg, kPadMd); // --cds-panel-inset vertically
+    style.FramePadding = ImVec2(kPadMd, 0.5f * (kControlHeight - kDefaultUiFontSizePixels));
+    style.CellPadding = ImVec2(kPadMd, kPadXs);
+    style.ItemSpacing = ImVec2(kGapSm, kGapXs);
+    style.ItemInnerSpacing = ImVec2(kGapXs, kGapXs);
+    style.IndentSpacing = kNestedControlHeight;
+    style.ScrollbarSize = 10.0f; // the app's thin overlay scrollbars
+    style.GrabMinSize = 14.0f; // --cds-switch-h, the app's smallest knob
+    // Corner radii are the Claude desktop app's (its default density, measured on its own rows and
+    // fields): controls --cds-radius 6 px, cards and popovers --cds-radius-card (radius + 4 px), and
+    // scrollbars fully round. A slider's grab sits 2 px inside its frame, so its corner is the frame's
+    // less 2 px, and the two curves stay parallel.
+    constexpr float kControlRadius = 6.0f; // --cds-radius
+    constexpr float kCardRadius = kControlRadius + 4.0f; // --cds-radius-card
+    style.WindowRounding = kCardRadius;
+    style.ChildRounding = kCardRadius;
+    style.PopupRounding = kCardRadius;
+    style.FrameRounding = kControlRadius;
+    style.GrabRounding = kControlRadius - 2.0f;
+    style.TabRounding = kControlRadius;
+    style.ScrollbarRounding = 0.5f * style.ScrollbarSize;
     style.WindowBorderSize = 1.0f;
     style.ChildBorderSize = 1.0f;
     style.PopupBorderSize = 1.0f;
@@ -118,10 +140,14 @@ void ConfigureImGuiStyle()
     style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
     style.SeparatorTextBorderSize = 1.0f;
     style.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
-    style.DisplaySafeAreaPadding = ImVec2(6.0f, 6.0f);
-    style.DockingSeparatorSize = 2.0f;
+    style.DisplaySafeAreaPadding = ImVec2(kGapXs, kGapXs);
+    style.DockingSeparatorSize = 1.0f; // the app's 1 px dividers
 
-    // Colors mirror the Claude desktop app's dark theme design tokens (--cds-*).
+    // Colours are the Claude desktop app's dark theme, its design tokens (--cds-*) resolved to sRGB and
+    // checked against the app's own pixels: content on surface-1, the sidebar (here the menu bar, the
+    // dock's tab bars and empty dock space) one step darker on neutral-30, translucent white fills for
+    // fields, buttons and rows, and blue (fill-accent) for the controls the app marks as active.
+    // Clay (fill-brand) is the brand colour there, not a control colour, so only plots use it.
     auto rgb = [](int r, int g, int b, float a = 1.0f)
     {
         return ImVec4(static_cast<float>(r) / 255.0f, static_cast<float>(g) / 255.0f, static_cast<float>(b) / 255.0f, a);
@@ -130,20 +156,24 @@ void ConfigureImGuiStyle()
     {
         return ImVec4(1.0f, 1.0f, 1.0f, a);
     };
+    auto withAlpha = [](ImVec4 colour, float a)
+    {
+        colour.w = a;
+        return colour;
+    };
 
-    const ImVec4 surface0 = rgb(11, 11, 11);          // --cds-surface-0
-    const ImVec4 surface1 = rgb(21, 21, 21);          // --cds-surface-1
-    const ImVec4 surface2 = rgb(26, 26, 25);          // --cds-surface-2 / panel
-    const ImVec4 surface3 = rgb(32, 32, 31);          // --cds-surface-3 / popover
-    const ImVec4 textPrimary = rgb(240, 239, 236);    // --cds-text-primary
-    const ImVec4 textSecondary = rgb(195, 194, 183);  // --cds-text-secondary
-    const ImVec4 textMuted = rgb(137, 135, 129);      // --cds-text-muted
-    const ImVec4 textAccent = rgb(217, 119, 87);      // --cds-fill-brand-hover
-    const ImVec4 fillAccent = rgb(198, 97, 63);       // --cds-fill-brand
-    const ImVec4 fillAccentHover = rgb(217, 119, 87); // --cds-fill-brand-hover
-    const ImVec4 fillBrandHover = rgb(217, 119, 87);  // --cds-fill-brand-hover
-    const ImVec4 fillWarning = rgb(250, 178, 25);     // --cds-fill-warning
-    const ImVec4 fillWarningHover = rgb(237, 161, 0); // --cds-fill-warning-hover
+    const ImVec4 sidebar = rgb(17, 17, 17);            // --cds-neutral-30 (gray-870), the app's sidebar
+    const ImVec4 surface1 = rgb(21, 21, 21);           // --cds-surface-1, the app's content area
+    const ImVec4 surface3 = rgb(32, 32, 31);           // --cds-surface-3 / surface-popover
+    const ImVec4 textPrimary = rgb(240, 239, 236);     // --cds-text-primary
+    const ImVec4 textSecondary = rgb(195, 194, 183);   // --cds-text-secondary
+    const ImVec4 textMuted = rgb(137, 135, 129);       // --cds-text-muted
+    const ImVec4 textAccent = rgb(109, 167, 236);      // --cds-text-accent
+    const ImVec4 fillAccent = rgb(42, 120, 214);       // --cds-fill-accent
+    const ImVec4 fillAccentHover = rgb(57, 135, 229);  // --cds-fill-accent-hover
+    const ImVec4 fillBrandHover = rgb(217, 119, 87);   // --cds-fill-brand-hover (clay)
+    const ImVec4 fillWarning = rgb(250, 178, 25);      // --cds-fill-warning
+    const ImVec4 fillWarningHover = rgb(237, 161, 0);  // --cds-fill-warning-hover
     const ImVec4 clear = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     ImVec4* colors = style.Colors;
@@ -152,15 +182,15 @@ void ConfigureImGuiStyle()
     colors[ImGuiCol_WindowBg] = surface1;
     colors[ImGuiCol_ChildBg] = clear;
     colors[ImGuiCol_PopupBg] = surface3;
-    colors[ImGuiCol_Border] = white(0.10f); // --cds-border
+    colors[ImGuiCol_Border] = white(0.10f); // --cds-alpha-2, the app's dividers and card edges
     colors[ImGuiCol_BorderShadow] = clear;
     colors[ImGuiCol_FrameBg] = white(0.05f);         // --cds-fill-field
     colors[ImGuiCol_FrameBgHovered] = white(0.075f); // --cds-fill-ghost-hover
     colors[ImGuiCol_FrameBgActive] = white(0.10f);   // --cds-fill-control
-    colors[ImGuiCol_TitleBg] = surface0;
-    colors[ImGuiCol_TitleBgActive] = surface0;
-    colors[ImGuiCol_TitleBgCollapsed] = surface0;
-    colors[ImGuiCol_MenuBarBg] = surface0;
+    colors[ImGuiCol_TitleBg] = sidebar;
+    colors[ImGuiCol_TitleBgActive] = sidebar;
+    colors[ImGuiCol_TitleBgCollapsed] = sidebar;
+    colors[ImGuiCol_MenuBarBg] = sidebar;
     colors[ImGuiCol_ScrollbarBg] = clear;
     colors[ImGuiCol_ScrollbarGrab] = white(0.20f);        // --cds-alpha-3
     colors[ImGuiCol_ScrollbarGrabHovered] = white(0.35f); // --cds-alpha-4
@@ -171,7 +201,7 @@ void ConfigureImGuiStyle()
     colors[ImGuiCol_Button] = white(0.10f);         // --cds-fill-secondary
     colors[ImGuiCol_ButtonHovered] = white(0.14f);  // --cds-fill-secondary-hover
     colors[ImGuiCol_ButtonActive] = white(0.20f);   // --cds-fill-control-hover
-    colors[ImGuiCol_Header] = white(0.10f);         // --cds-bg-neutral-hover
+    colors[ImGuiCol_Header] = white(0.15f);         // --cds-fill-ghost-selected, the app's selected row
     colors[ImGuiCol_HeaderHovered] = white(0.075f); // --cds-fill-ghost-hover
     colors[ImGuiCol_HeaderActive] = white(0.15f);   // --cds-fill-ghost-selected
     colors[ImGuiCol_Separator] = white(0.10f);
@@ -181,15 +211,17 @@ void ConfigureImGuiStyle()
     colors[ImGuiCol_ResizeGripHovered] = white(0.20f);
     colors[ImGuiCol_ResizeGripActive] = fillAccent;
     colors[ImGuiCol_InputTextCursor] = textPrimary;
+    // Tabs sit on the sidebar tone and the selected one takes the content's, like the app's sidebar
+    // and conversation; the app draws no coloured line on a selected tab.
     colors[ImGuiCol_TabHovered] = white(0.075f);
-    colors[ImGuiCol_Tab] = surface0;
+    colors[ImGuiCol_Tab] = sidebar;
     colors[ImGuiCol_TabSelected] = surface1;
-    colors[ImGuiCol_TabSelectedOverline] = fillAccent;
-    colors[ImGuiCol_TabDimmed] = surface0;
-    colors[ImGuiCol_TabDimmedSelected] = surface2;
+    colors[ImGuiCol_TabSelectedOverline] = clear;
+    colors[ImGuiCol_TabDimmed] = sidebar;
+    colors[ImGuiCol_TabDimmedSelected] = surface1;
     colors[ImGuiCol_TabDimmedSelectedOverline] = clear;
-    colors[ImGuiCol_DockingPreview] = ImVec4(fillAccent.x, fillAccent.y, fillAccent.z, 0.35f);
-    colors[ImGuiCol_DockingEmptyBg] = surface0;
+    colors[ImGuiCol_DockingPreview] = withAlpha(fillAccent, 0.20f); // --cds-shadow-drop-glow
+    colors[ImGuiCol_DockingEmptyBg] = sidebar;
     colors[ImGuiCol_PlotLines] = textSecondary;
     colors[ImGuiCol_PlotLinesHovered] = fillBrandHover;
     colors[ImGuiCol_PlotHistogram] = fillWarning;
@@ -200,15 +232,15 @@ void ConfigureImGuiStyle()
     colors[ImGuiCol_TableRowBg] = clear;
     colors[ImGuiCol_TableRowBgAlt] = white(0.05f); // --cds-alpha-1
     colors[ImGuiCol_TextLink] = textAccent;
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(fillAccent.x, fillAccent.y, fillAccent.z, 0.35f);
+    colors[ImGuiCol_TextSelectedBg] = withAlpha(fillAccent, 0.35f);
     colors[ImGuiCol_TreeLines] = white(0.20f);
-    colors[ImGuiCol_DragDropTarget] = fillAccent;
+    colors[ImGuiCol_DragDropTarget] = fillAccent; // --cds-shadow-drop-ring
     colors[ImGuiCol_DragDropTargetBg] = clear;
     colors[ImGuiCol_UnsavedMarker] = textPrimary;
     colors[ImGuiCol_NavCursor] = fillAccent;
     colors[ImGuiCol_NavWindowingHighlight] = white(0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.50f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.50f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.50f); // --cds-backdrop
 }
 
 void ConfigureImGuiFonts(ImGuiIO& io)
@@ -222,18 +254,13 @@ void ConfigureImGuiFonts(ImGuiIO& io)
     fontConfig.OversampleV = 1;
     fontConfig.PixelSnapH = false;
     fontConfig.RasterizerMultiply = 1.08f;
-    fontConfig.GlyphRanges = fonts->GetGlyphRangesDefault();
 
     ImFont* defaultFont = nullptr;
     const std::filesystem::path preferredFontPath = FindPreferredUiFontPath();
     if (!preferredFontPath.empty())
     {
         const std::string preferredFontPathString = preferredFontPath.string();
-        defaultFont = fonts->AddFontFromFileTTF(
-            preferredFontPathString.c_str(),
-            fontConfig.SizePixels,
-            &fontConfig,
-            fontConfig.GlyphRanges);
+        defaultFont = fonts->AddFontFromFileTTF(preferredFontPathString.c_str(), fontConfig.SizePixels, &fontConfig);
     }
 
     if (defaultFont == nullptr)
@@ -257,24 +284,6 @@ void ConfigureImGuiFonts(ImGuiIO& io)
     MergeEditorIconFont(*fonts, fontConfig.SizePixels);
 
     io.FontDefault = defaultFont;
-}
-
-void CleanupImGuiViewportState()
-{
-    if (ImGui::GetCurrentContext() == nullptr)
-    {
-        return;
-    }
-
-    ImGui::DestroyPlatformWindows();
-
-    if (ImGuiViewport* mainViewport = ImGui::GetMainViewport(); mainViewport != nullptr)
-    {
-        mainViewport->RendererUserData = nullptr;
-        mainViewport->PlatformUserData = nullptr;
-        mainViewport->PlatformHandle = nullptr;
-        mainViewport->PlatformHandleRaw = nullptr;
-    }
 }
 }
 
@@ -316,7 +325,6 @@ VulkanImGuiLayer::VulkanImGuiLayer(
 VulkanImGuiLayer::~VulkanImGuiLayer()
 {
     DestroyVulkanResources();
-    CleanupImGuiViewportState();
     ImGui_ImplSDL3_Shutdown();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
@@ -381,23 +389,25 @@ void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, ui
     initInfo.QueueFamily = m_graphicsQueueFamily;
     initInfo.Queue = m_graphicsQueue;
     initInfo.DescriptorPool = m_descriptorPool;
-    initInfo.RenderPass = renderPass;
+    initInfo.PipelineInfoMain.RenderPass = renderPass;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     initInfo.MinImageCount = imageCount;
     initInfo.ImageCount = imageCount;
-    initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     initInfo.CheckVkResultFn = &VulkanImGuiLayer::CheckVkResult;
     if (!m_hdrFragmentShader.empty())
     {
-        initInfo.FragmentShaderCode = m_hdrFragmentShader.data();
-        initInfo.FragmentShaderCodeSize = m_hdrFragmentShader.size() * sizeof(uint32_t);
+        initInfo.CustomShaderFragCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        initInfo.CustomShaderFragCreateInfo.codeSize = m_hdrFragmentShader.size() * sizeof(uint32_t);
+        initInfo.CustomShaderFragCreateInfo.pCode = m_hdrFragmentShader.data();
     }
 
+    // The font atlas is uploaded by the backend itself (ImGuiBackendFlags_RendererHasTextures): glyphs
+    // are rasterised at the size they are drawn, so scaled text and icons stay sharp.
     if (!ImGui_ImplVulkan_Init(&initInfo))
     {
         throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
     }
 
-    UploadFonts();
     m_vulkanBackendInitialized = true;
 }
 
@@ -413,26 +423,20 @@ void VulkanImGuiLayer::DestroyVulkanResources()
 
 void VulkanImGuiLayer::CreateDescriptorPool()
 {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = kImGuiDescriptorCount;
+    // ImGui binds the image (set 0) and the sampler (set 1, its linear and nearest samplers) separately.
+    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kImGuiDescriptorCount},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE},
+    }};
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    poolInfo.maxSets = kImGuiDescriptorCount;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = kImGuiDescriptorCount + IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
 
     CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create ImGui descriptor pool");
-}
-
-void VulkanImGuiLayer::UploadFonts() const
-{
-    if (!ImGui_ImplVulkan_CreateFontsTexture())
-    {
-        throw std::runtime_error("Failed to upload ImGui font texture");
-    }
 }
 
 void VulkanImGuiLayer::CheckVkResult(VkResult result)
