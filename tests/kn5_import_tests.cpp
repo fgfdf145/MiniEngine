@@ -1723,6 +1723,127 @@ void ImportsMultilayerSurfacesAsDetailLayers()
     RequireNear(named("asph").roughnessFactor, 0.91287f, 1e-4f, "a matte multilayer surface stays matte");
 }
 
+// A cockpit's ksPerPixelMultiMap materials: leather on an alpha-0 diffuse (alpha-tested, as the
+// Skyline's is), carbon on a diffuse whose alpha is 0 in one half, a grille that really is a
+// cutout, and a panel whose detail is a flat paint colour.
+std::vector<std::uint8_t> BuildCockpitKn5()
+{
+    ByteWriter writer;
+    writer.Raw("sc6969", 6);
+    writer.U32(5);
+    std::vector<std::array<std::uint8_t, 4>> checker;
+    std::vector<std::array<std::uint8_t, 4>> halfAlpha;
+    for (int texel = 0; texel < 16; ++texel)
+    {
+        const bool odd = ((texel % 4) + (texel / 4)) % 2 == 1;
+        checker.push_back(odd ? std::array<std::uint8_t, 4>{200, 180, 160, 255} : std::array<std::uint8_t, 4>{40, 40, 40, 255});
+        halfAlpha.push_back({120, 120, 120, static_cast<std::uint8_t>(texel < 8 ? 0 : 255)});
+    }
+    const std::vector<std::pair<std::string, std::vector<std::uint8_t>>> textures{
+        {"cockpit.dds", DdsFlat(4, {120, 120, 120, 0})},
+        {"skin.dds", DdsBgra(4, 4, halfAlpha)},
+        {"flat_nm.dds", DdsFlat(4, {128, 128, 255, 255})},
+        {"leather.dds", DdsBgra(4, 4, checker)},
+        {"leather_nm.dds", DdsBgra(4, 4, checker)},
+        {"carbon.dds", DdsBgra(4, 4, checker)},
+        {"grille.dds", DdsBgra(4, 4, halfAlpha)},
+        {"paint.dds", DdsFlat(4, {100, 20, 20, 255})},
+    };
+    writer.U32(static_cast<std::uint32_t>(textures.size()));
+    for (const auto& [name, blob] : textures)
+    {
+        writer.U32(1);
+        writer.String(name);
+        writer.Blob(blob);
+    }
+    const std::vector<FixtureMaterial> materials{
+        {"Leather", "ksPerPixelMultiMap_AT_NMDetail", false, true,
+         {{"useDetail", 1.0f}, {"detailUVMultiplier", 37.0f}, {"detailNormalBlend", 0.7f}},
+         {{"txDiffuse", "cockpit.dds"}, {"txNormal", "flat_nm.dds"}, {"txDetail", "leather.dds"}, {"txNormalDetail", "leather_nm.dds"}}},
+        {"Carbon", "ksPerPixelMultiMap_NMDetail", false, false,
+         {{"useDetail", 1.0f}, {"detailUVMultiplier", 400.0f}, {"detailNormalBlend", 0.0f}},
+         {{"txDiffuse", "skin.dds"}, {"txNormal", "flat_nm.dds"}, {"txDetail", "carbon.dds"}, {"txNormalDetail", "leather_nm.dds"}}},
+        {"Grille", "ksPerPixelAT", false, true, {}, {{"txDiffuse", "grille.dds"}}},
+        {"Panel", "ksPerPixelMultiMap", false, false,
+         {{"useDetail", 1.0f}, {"detailUVMultiplier", 5.0f}},
+         {{"txDiffuse", "cockpit.dds"}, {"txDetail", "paint.dds"}}},
+    };
+    writer.U32(static_cast<std::uint32_t>(materials.size()));
+    for (const FixtureMaterial& material : materials)
+    {
+        WriteMaterial(writer, material);
+    }
+    WriteDummy(writer, "ROOT", 4, kIdentity);
+    WriteMesh(writer, "SEAT", 0, 1.0f);
+    WriteMesh(writer, "TRIM", 1, 2.0f);
+    WriteMesh(writer, "GRILLE", 2, 3.0f);
+    WriteMesh(writer, "PANEL", 3, 4.0f);
+    return writer.Bytes();
+}
+
+// The texels of a PNG the import wrote, as RGBA.
+std::vector<std::uint8_t> ReadPngRgba(const std::string& path, int& width, int& height)
+{
+    int channels = 0;
+    stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    Require(pixels != nullptr, "readable png " + path);
+    std::vector<std::uint8_t> rgba(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+    stbi_image_free(pixels);
+    return rgba;
+}
+
+void ImportsMultiMapDetailAsDetailLayers()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = scope.Path() / "cockpit" / "cockpit.kn5";
+    WriteFile(kn5, BuildCockpitKn5());
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "assets" / "cockpit");
+    const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
+    const auto named = [&model](const std::string& name) -> const ModelMaterialData&
+    {
+        for (const ModelMaterialData& material : model.materials)
+        {
+            if (material.name == name)
+            {
+                return material;
+            }
+        }
+        throw std::runtime_error("no material " + name);
+    };
+
+    const ModelMaterialData& leather = named("Leather");
+    Require(leather.alphaMode == MaterialAlphaMode::Opaque, "an alpha test that would discard every texel is dropped");
+    const MaterialDetailLayers& grain = leather.detailLayers;
+    Require(grain.IsEnabled() && grain.mapping == DetailLayerMapping::TexCoord, "the detail tiles by UV");
+    Require(!grain.layerTexturePaths[0].empty(), "txDetail is the first layer");
+    Require(grain.layerTexturePaths[1].empty(), "an alpha-0 diffuse needs no neutral layer");
+    RequireNear(grain.layerScales[0][0], 37.0f, 1e-6f, "tiled by detailUVMultiplier");
+    RequireNear(grain.intensity, 2.0f, 1e-6f, "doubled: a detail map is neutral at mid-grey");
+    int width = 0;
+    int height = 0;
+    const std::filesystem::path folder = report.gltfPath.parent_path();
+    std::vector<std::uint8_t> mask = ReadPngRgba((folder / grain.maskTexturePath).string(), width, height);
+    Require(width == 1 && height == 1, "a uniform alpha makes a one-texel mask");
+    Require(mask[0] == 255 && mask[1] == 0 && mask[2] == 0 && mask[3] == 0, "all detail, nothing else");
+    Require(leather.normalTexturePath.find("leather_nm") != std::string::npos, "txNormalDetail replaces the flat normal");
+    RequireNear(leather.normalScale, 0.7f, 1e-6f, "scaled by detailNormalBlend");
+    RequireNear(leather.textureTransforms[static_cast<size_t>(MaterialTextureSlot::Normal)].scale[0], 37.0f, 1e-6f,
+                "and tiled like the detail");
+
+    const ModelMaterialData& carbon = named("Carbon");
+    Require(carbon.detailLayers.IsEnabled() && !carbon.detailLayers.layerTexturePaths[1].empty(),
+            "where the diffuse's alpha is 1 a mid-grey layer keeps it as it is");
+    mask = ReadPngRgba((folder / carbon.detailLayers.maskTexturePath).string(), width, height);
+    Require(width == 4 && height == 4, "a varying alpha makes a full-size mask");
+    Require(mask[0] == 255 && mask[1] == 0, "alpha 0: the detail");
+    Require(mask[15 * 4] == 0 && mask[15 * 4 + 1] == 255 && mask[15 * 4 + 3] == 0, "alpha 1: the neutral layer");
+    Require(carbon.normalTexturePath.find("flat_nm") != std::string::npos, "detailNormalBlend 0 binds no detail normal");
+
+    Require(named("Grille").alphaMode == MaterialAlphaMode::Mask, "a real cutout keeps its alpha test");
+    Require(!named("Panel").detailLayers.IsEnabled(), "a flat detail stays a base-colour tint");
+    Require(named("Panel").baseColor[1] < named("Panel").baseColor[0], "tinted by the paint");
+}
+
 int main()
 {
     try
@@ -1744,6 +1865,7 @@ int main()
         ReadsTrackLayouts();
         ImportsAWholeTrackLayout();
         ImportsMultilayerSurfacesAsDetailLayers();
+        ImportsMultiMapDetailAsDetailLayers();
         AcdKeysMatchTheGame();
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();

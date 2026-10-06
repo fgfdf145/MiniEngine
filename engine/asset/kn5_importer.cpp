@@ -730,9 +730,22 @@ class GltfBuilder
                     continue;
                 }
                 m_usedTextures.insert(ToLowerAscii(name));
+                m_plainTextures.insert(ToLowerAscii(name));
                 if (material.alphaBlend || material.alphaTested)
                 {
                     m_alphaTextures.insert(ToLowerAscii(name));
+                }
+            }
+            // A ksPerPixelMultiMap detail: written only if it turns out to be a pattern (see
+            // WriteTextures), as a flat one folds into the base colour. Tables carry no texels.
+            if (!IsMultilayer(material) && material.Property("useDetail", 0.0f) > 0.0f)
+            {
+                for (const char* slot : {"txDetail", "txNormalDetail"})
+                {
+                    if (const std::string name = material.Texture(slot); !name.empty())
+                    {
+                        m_usedTextures.insert(ToLowerAscii(name));
+                    }
                 }
             }
             if (IsMultilayer(material))
@@ -744,6 +757,7 @@ class GltfBuilder
                     if (const std::string name = material.Texture(slot); !name.empty())
                     {
                         m_usedTextures.insert(ToLowerAscii(name));
+                        m_multilayerTextures.insert(ToLowerAscii(name));
                     }
                 }
             }
@@ -772,6 +786,10 @@ class GltfBuilder
             if (!m_usedTextures.count(key) || texture.data.size() < kStubTextureBytes || m_textureUris.count(key) != 0)
             {
                 continue;
+            }
+            if (!m_plainTextures.count(key) && !m_multilayerTextures.count(key) && DetailTint(model, texture.name).has_value())
+            {
+                continue; // a flat txDetail: a base-colour factor, not a map
             }
             // Reserved now so a later texture of this model sees the name taken; a texture that
             // then fails to decode gives it back below.
@@ -1048,6 +1066,73 @@ class GltfBuilder
         return ToLowerAscii(material.shader).starts_with("ksmultilayer") && !material.Texture("txMask").empty();
     }
 
+    // The MASK cutoff of an alpha-tested material. ksAlphaRef is often 0 (or 0.01), and a cutoff
+    // there passes every fragment.
+    static float AlphaCutoff(const Kn5Material& material)
+    {
+        const float reference = material.Property("ksAlphaRef", 0.0f);
+        return reference >= 0.02f ? reference : 0.5f;
+    }
+
+    // The lowest and highest alpha of a texture, decoded once per name; nullopt when it cannot be read.
+    std::optional<std::pair<std::uint8_t, std::uint8_t>> AlphaRange(const Kn5Model& model, const std::string& textureName)
+    {
+        const std::string key = ToLowerAscii(textureName);
+        const auto cached = m_alphaRangeCache.find(key);
+        if (cached != m_alphaRangeCache.end())
+        {
+            return cached->second;
+        }
+        std::optional<std::pair<std::uint8_t, std::uint8_t>> range;
+        const Kn5Texture* texture = FindTexture(model, textureName);
+        if (texture != nullptr && texture->data.empty() && texture->size > 0)
+        {
+            return std::nullopt; // read without its texels: not known yet
+        }
+        if (texture != nullptr && texture->data.size() >= kStubTextureBytes)
+        {
+            if (const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name))
+            {
+                std::uint8_t low = 255;
+                std::uint8_t high = 0;
+                for (size_t pixel = 0; pixel * 4 + 3 < image->pixels.size(); ++pixel)
+                {
+                    low = std::min(low, image->pixels[pixel * 4 + 3]);
+                    high = std::max(high, image->pixels[pixel * 4 + 3]);
+                }
+                range = std::make_pair(low, high);
+            }
+        }
+        m_alphaRangeCache[key] = range;
+        return range;
+    }
+
+    // Whether an alpha-tested material's test keeps anything. On ksPerPixelMultiMap the diffuse
+    // alpha is the detail mask, and the Skyline's leather and headliner (_AT_NMDetail) sample a
+    // diffuse whose alpha is 0 everywhere: as a cutout they would vanish, while the game draws them.
+    bool AlphaTestCutsOut(const Kn5Model& model, const Kn5Material& material)
+    {
+        if (!material.alphaTested)
+        {
+            return false;
+        }
+        const std::optional<std::pair<std::uint8_t, std::uint8_t>> range = AlphaRange(model, material.Texture("txDiffuse"));
+        return !range.has_value() || static_cast<float>(range->second) / 255.0f >= AlphaCutoff(material);
+    }
+
+    // ksPerPixelMultiMap's txDetail when it is a pattern (cloth weave, leather grain, carbon) and not
+    // a flat colour, which DetailTint folds into the base colour instead.
+    bool HasTiledDetail(const Kn5Model& model, const Kn5Material& material)
+    {
+        if (IsMultilayer(material) || material.Property("useDetail", 0.0f) <= 0.0f)
+        {
+            return false;
+        }
+        const std::string detail = material.Texture("txDetail");
+        const Kn5Texture* texture = detail.empty() ? nullptr : FindTexture(model, detail);
+        return texture != nullptr && texture->data.size() >= kStubTextureBytes && !DetailTint(model, detail).has_value();
+    }
+
     // Decodes one texture and writes it as PNG under m_textureDirectory / fileName; false, with a
     // warning, when it cannot be decoded. Reads only state that is fixed by now, so texture
     // writers may run concurrently.
@@ -1271,17 +1356,19 @@ class GltfBuilder
         {
             AddDetailLayers(material, out);
         }
+        else if (HasTiledDetail(model, material))
+        {
+            AddTiledDetail(model, material, out);
+        }
 
         if (material.alphaBlend)
         {
             out["alphaMode"] = "BLEND";
         }
-        else if (material.alphaTested)
+        else if (AlphaTestCutsOut(model, material))
         {
             out["alphaMode"] = "MASK";
-            // ksAlphaRef is often 0 (or 0.01), and a MASK cutoff there passes every fragment.
-            const float reference = material.Property("ksAlphaRef", 0.0f);
-            out["alphaCutoff"] = reference >= 0.02f ? reference : 0.5f;
+            out["alphaCutoff"] = AlphaCutoff(material);
         }
 
         const float emissive = material.Property("ksEmissive", 0.0f);
@@ -1291,6 +1378,110 @@ class GltfBuilder
             out["emissiveFactor"] = {level, level, level};
         }
         return out;
+    }
+
+    // ksPerPixelMultiMap's tiled detail (docs/design/2026-10-06-multimap-detail-design.md), as one
+    // MINIENGINE_materials_detail_layers layer: AC multiplies the diffuse by the detail, doubled (a
+    // detail map is neutral at mid-grey), where the diffuse's alpha is 0, and leaves it alone where
+    // the alpha is 1. The mask carries 1 - alpha in red for the detail and alpha in green for a
+    // mid-grey layer. The _NMDetail shaders' txNormalDetail, tiled the same way and scaled by
+    // detailNormalBlend, becomes the normal map where the material's own is flat.
+    void AddTiledDetail(const Kn5Model& model, const Kn5Material& material, Json& out)
+    {
+        const std::optional<size_t> detail = TextureIndexForKn5(material.Texture("txDetail"));
+        const std::optional<DetailMask> mask = BakeDetailMask(model, material.Texture("txDiffuse"));
+        if (!detail.has_value() || !mask.has_value())
+        {
+            return;
+        }
+        const float tiling = Round(material.Property("detailUVMultiplier", 1.0f), 6);
+        Json layers = Json::array();
+        layers.push_back(Json{{"texture", {{"index", *detail}}}, {"scale", {tiling, tiling}}});
+        if (mask->keepsDiffuse)
+        {
+            layers.push_back(Json{{"texture", {{"index", NeutralDetailIndex()}}}, {"scale", {1.0f, 1.0f}}});
+        }
+        out["extensions"]["MINIENGINE_materials_detail_layers"] = {
+            {"maskTexture", {{"index", *TextureIndexForUri(mask->uri)}}},
+            {"mapping", "texCoord"},
+            {"intensity", 2.0f},
+            {"layers", std::move(layers)}};
+        m_extensionsUsed.insert("MINIENGINE_materials_detail_layers");
+
+        const float normalBlend = material.Property("detailNormalBlend", 0.0f);
+        const std::string ownNormal = material.Texture("txNormal");
+        const bool ownNormalFlat = !out.contains("normalTexture") || DetailTint(model, ownNormal).has_value();
+        if (normalBlend > 0.0f && ownNormalFlat)
+        {
+            if (const std::optional<size_t> normal = TextureIndexForKn5(material.Texture("txNormalDetail")))
+            {
+                out["normalTexture"] = {
+                    {"index", *normal},
+                    {"scale", Round(normalBlend, 6)},
+                    {"extensions", {{"KHR_texture_transform", {{"scale", {tiling, tiling}}}}}}};
+                m_extensionsUsed.insert("KHR_texture_transform");
+            }
+        }
+    }
+
+    struct DetailMask
+    {
+        std::string uri;
+        bool keepsDiffuse = false; // some texel's alpha is above 0: the mid-grey layer is needed
+    };
+
+    // The detail mask of a diffuse map (see AddTiledDetail), written once per diffuse: one texel
+    // when the alpha is uniform, as it is on most cars.
+    std::optional<DetailMask> BakeDetailMask(const Kn5Model& model, const std::string& diffuseName)
+    {
+        const std::string key = ToLowerAscii(diffuseName);
+        const auto cached = m_detailMaskCache.find(key);
+        if (cached != m_detailMaskCache.end())
+        {
+            return cached->second;
+        }
+        m_detailMaskCache[key] = std::nullopt;
+        // No readable diffuse: AC's sampler returns 0 alpha, the detail everywhere.
+        const std::pair<std::uint8_t, std::uint8_t> range =
+            AlphaRange(model, diffuseName).value_or(std::make_pair<std::uint8_t, std::uint8_t>(0, 0));
+        int width = 1;
+        int height = 1;
+        std::vector<std::uint8_t> rgba{static_cast<std::uint8_t>(255 - range.first), range.first, 0, 0};
+        if (range.first != range.second)
+        {
+            const Kn5Texture* texture = FindTexture(model, diffuseName);
+            const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name);
+            if (!image.has_value())
+            {
+                return std::nullopt;
+            }
+            width = image->width;
+            height = image->height;
+            rgba.assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4, 0);
+            for (size_t pixel = 0; pixel < rgba.size() / 4; ++pixel)
+            {
+                const std::uint8_t alpha = image->pixels[pixel * 4 + 3];
+                rgba[pixel * 4] = static_cast<std::uint8_t>(255 - alpha);
+                rgba[pixel * 4 + 1] = alpha;
+            }
+        }
+        const std::string fileName = UniqueFileName(SafeStem(diffuseName) + "_detail_mask", ".png");
+        WritePng(m_textureDirectory / fileName, width, height, 4, rgba.data());
+        m_detailMaskCache[key] = DetailMask{"textures/" + fileName, range.second > 0};
+        return m_detailMaskCache[key];
+    }
+
+    // A one-texel mid-grey map: the detail layer that leaves the diffuse as it is.
+    size_t NeutralDetailIndex()
+    {
+        if (m_neutralDetailUri.empty())
+        {
+            const std::string fileName = UniqueFileName("detail_neutral", ".png");
+            const std::array<std::uint8_t, 3> grey{128, 128, 128};
+            WritePng(m_textureDirectory / fileName, 1, 1, 3, grey.data());
+            m_neutralDetailUri = "textures/" + fileName;
+        }
+        return *TextureIndexForUri(m_neutralDetailUri);
     }
 
     // AC's multilayer surfaces (see docs/design/2026-09-28-detail-layers-design.md): the mask and
@@ -1530,10 +1721,17 @@ class GltfBuilder
     // Keyed by lower-case texture name.
     std::unordered_set<std::string> m_usedTextures;
     std::unordered_set<std::string> m_alphaTextures;
+    // Of m_usedTextures, those some material samples as txDiffuse or txNormal, and those a
+    // multilayer one samples: the rest are ksPerPixelMultiMap details only.
+    std::unordered_set<std::string> m_plainTextures;
+    std::unordered_set<std::string> m_multilayerTextures;
     std::unordered_map<std::string, std::string> m_textureUris;
     std::unordered_map<std::string, size_t> m_textureIndices;
     std::unordered_map<std::string, std::optional<std::array<float, 3>>> m_tintCache;
     std::unordered_map<std::string, std::optional<std::string>> m_bakeCache;
+    std::unordered_map<std::string, std::optional<std::pair<std::uint8_t, std::uint8_t>>> m_alphaRangeCache;
+    std::unordered_map<std::string, std::optional<DetailMask>> m_detailMaskCache;
+    std::string m_neutralDetailUri;
 };
 
 void CollectNodeNames(const Kn5Node& node, std::vector<std::string>& names)
