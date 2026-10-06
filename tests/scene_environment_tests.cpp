@@ -68,6 +68,11 @@ SceneEnvironment MakeEnvironment()
     environment.clouds.hazeDistance = 20000.0f;
     environment.clouds.diffusion = 0.375f;
     environment.clouds.ambientOcclusion = 0.625f;
+    environment.clouds.updraft = 2.5f;
+    environment.clouds.lifetime = 22.5f;
+    environment.clouds.timeScale = 30.0f;
+    environment.wind.speed = 7.25f;
+    environment.wind.fromDegrees = 225.0f;
     environment.timeOfDay.enabled = true;
     environment.timeOfDay.hours = 7.5f;
     environment.timeOfDay.dayOfYear = 100;

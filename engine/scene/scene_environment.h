@@ -139,8 +139,31 @@ struct CloudSettings
     // Off by default: measured, it darkens the clouds by under 1 % on average for a third more
     // march cost (docs/design/2026-10-06-cloud-diffusion-and-ambient-occlusion-design.md).
     float ambientOcclusion = 0.0f;
+    // The layer moves (docs/design/2026-10-07-dynamic-clouds-design.md): the scene's wind
+    // (WindSettings) carries it at the speed it blows at the layer's middle; inside it the billows
+    // rise through the plumes at updraft (m/s), and each plume grows, stands and dissipates over
+    // lifetime (minutes, a mid-sized plume's; the large clusters live longer, the small ones less).
+    // timeScale runs the clouds' clock faster than real time (0 holds them).
+    float updraft = 1.5f;
+    float lifetime = 15.0f;
+    float timeScale = 1.0f;
 
     bool operator==(const CloudSettings&) const = default;
+};
+
+// The scene's wind (engine/scene/wind.h): one mean wind over the scene, which the clouds drift
+// with; anything else that should move with the wind asks wind.h for its velocity at a height.
+struct WindSettings
+{
+    // Mean speed at the meteorological reference height, 10 m above the ground, m/s. It rises with
+    // height through the boundary layer (WindSpeedAt).
+    float speed = 5.0f;
+    // The compass bearing the wind blows from, degrees clockwise from north
+    // (TimeOfDaySettings::northDegrees places north in the world): 0 a north wind, 270 a west wind,
+    // which blows toward the east.
+    float fromDegrees = 270.0f;
+
+    bool operator==(const WindSettings&) const = default;
 };
 
 // The sun placed by the clock (engine/scene/sun_position.h): a day of the year and a local solar
@@ -193,6 +216,7 @@ struct SceneEnvironment
     HeightFogSettings heightFog;
     CloudSettings clouds;
     TimeOfDaySettings timeOfDay;
+    WindSettings wind;
 
     bool operator==(const SceneEnvironment&) const = default;
 };

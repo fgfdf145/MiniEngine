@@ -8,6 +8,7 @@
 #include <engine/logic/editor_world.h>
 #include <engine/platform/file_dialog/file_dialog.h>
 #include <engine/scene/sun_position.h>
+#include <engine/scene/wind.h>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
@@ -257,6 +258,27 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
         ImGui::PopID();
     }
 
+    if (ImGui::CollapsingHeader("Wind"))
+    {
+        WindSettings& wind = environment.wind;
+        ImGui::PushID("Wind");
+        ImGui::DragFloat("Speed at 10 m (m/s)", &wind.speed, 0.1f, 0.0f, kWindMaxSpeed, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Rises with height through the boundary layer, %.2fx at %.0f m and above.",
+                              WindSpeedAt(WindSettings{1.0f, 0.0f}, kWindBoundaryLayerMeters), kWindBoundaryLayerMeters);
+        }
+        DragFloatInRange("From (deg)", &wind.fromDegrees, 0.0f, 360.0f, "%.0f", 1.0f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The bearing it blows from, clockwise from north (Time of day > North):\n0 a north wind, 90 east, 180 south, 270 west.");
+        }
+        const glm::vec3 toward = WindDirection(wind, environment.timeOfDay.northDegrees);
+        ImGui::TextDisabled("Toward world (%.2f, %.2f), %.1f m/s at the clouds", toward.x, toward.z,
+                            WindSpeedAt(wind, environment.clouds.baseAltitude + 0.5f * environment.clouds.thickness));
+        ImGui::PopID();
+    }
+
     if (environment.mode == EnvironmentMode::Atmosphere)
     {
         AtmosphereSettings& atmosphere = environment.atmosphere;
@@ -327,6 +349,22 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
             ImGui::DragFloat("Haze distance (m)", &clouds.hazeDistance, 100.0f, 1000.0f, 1000000.0f, "%.0f", kLog);
             DragFloatInRange("Diffusion", &clouds.diffusion, 0.0f, 1.0f, "%.2f");
             DragFloatInRange("Ambient occlusion", &clouds.ambientOcclusion, 0.0f, 1.0f, "%.2f");
+            ImGui::SeparatorText("Motion");
+            ImGui::DragFloat("Updraft (m/s)", &clouds.updraft, 0.05f, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("How fast the billows rise through the plumes. The wind (above) carries the layer.");
+            }
+            ImGui::DragFloat("Lifetime (min)", &clouds.lifetime, 0.5f, 1.0f, 240.0f, "%.1f", kLog);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("A mid-sized plume's life: it rises out of the base, stands and dissipates.\nThe large clusters live twice as long, the smallest plumes 0.7x.");
+            }
+            ImGui::DragFloat("Time scale##clouds", &clouds.timeScale, 0.1f, 0.0f, 3600.0f, "%.1fx", kLog);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("The clouds' seconds per real second; 0 holds them.");
+            }
             ImGui::PopID();
         }
     }

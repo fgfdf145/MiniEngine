@@ -7,8 +7,10 @@
 #include <engine/core/paths/engine_paths.h>
 #include <engine/renderer/volumetric_clouds.h>
 
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -341,7 +343,8 @@ void VulkanAtmosphere::Record(
     VkCommandBuffer commandBuffer,
     VkDescriptorSet frameDescriptorSet,
     const AtmosphereParameters* parameters,
-    uint32_t frameSlot)
+    uint32_t frameSlot,
+    const glm::vec4* cloudLife)
 {
     if (!m_imagesInitialized)
     {
@@ -386,7 +389,15 @@ void VulkanAtmosphere::Record(
         const VkClearColorValue lit{{1.0f, 1.0f, 1.0f, 1.0f}};
         vkCmdClearColorImage(commandBuffer, m_cloudShadow.image, VK_IMAGE_LAYOUT_GENERAL, &lit, 1, &range);
         vkCmdFillBuffer(commandBuffer, m_irradianceBuffer, 0, VK_WHOLE_SIZE, 0);
+        // The plume table, before the plume map is first built below.
+        const VkBufferCopy plumes{0, 0, static_cast<VkDeviceSize>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell)};
+        vkCmdCopyBuffer(commandBuffer, m_plumeStaging, m_plumeBuffer, 1, &plumes);
         m_imagesInitialized = true;
+    }
+    else if (m_plumeStaging != VK_NULL_HANDLE && ++m_plumeStagingAge > VulkanCommandContext::kMaxFramesInFlight)
+    {
+        // Recording this frame waited for the one that copied the table.
+        DestroyPlumeStaging();
     }
 
     // The previous frame's fragment reads (and this frame's clear) before this frame's writes.
@@ -418,6 +429,26 @@ void VulkanAtmosphere::Record(
         // The shadow map below reads the noise.
         GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         m_cloudNoiseBuilt = true;
+        m_cloudWeatherLife = cloudLife != nullptr ? *cloudLife : glm::vec4(-1.0f);
+    }
+    else if (cloudLife != nullptr && *cloudLife != m_cloudWeatherLife)
+    {
+        // The plumes have moved on in their lives (cloud_weather.comp reads the phases from the
+        // frame's uniforms); the barrier above ordered last frame's reads of the map before this.
+        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            m_pipelineLayout,
+            0,
+            static_cast<uint32_t>(sets.size()),
+            sets.data(),
+            0,
+            nullptr);
+        const uint32_t weatherGroups = GroupCount(kCloudNoiseSizes[kCloudWeather], 8);
+        Dispatch(commandBuffer, kCloudWeatherPipeline, weatherGroups, weatherGroups, 1);
+        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        m_cloudWeatherLife = *cloudLife;
     }
 
     if (parameters != nullptr)
@@ -625,6 +656,45 @@ void VulkanAtmosphere::CreateImages()
     CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_irradianceMemory), "Failed to allocate the sky irradiance buffer");
     CheckVulkan(vkBindBufferMemory(m_device, m_irradianceBuffer, m_irradianceMemory, 0), "Failed to bind the sky irradiance buffer");
 
+    // The plume table: drawn once on the CPU, staged, copied by the first Record.
+    {
+        const std::vector<CloudPlumeCell> table = BuildCloudPlumeTable();
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(table.size() * sizeof(CloudPlumeCell));
+        const auto createBuffer = [&](VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory, const char* name)
+        {
+            VkBufferCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            info.size = bytes;
+            info.usage = usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            CheckVulkan(vkCreateBuffer(m_device, &info, nullptr, &buffer), (std::string("Failed to create the ") + name).c_str());
+            VkMemoryRequirements bufferRequirements{};
+            vkGetBufferMemoryRequirements(m_device, buffer, &bufferRequirements);
+            VkMemoryAllocateInfo allocate{};
+            allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocate.allocationSize = bufferRequirements.size;
+            allocate.memoryTypeIndex = FindMemoryType(bufferRequirements.memoryTypeBits, properties);
+            CheckVulkan(vkAllocateMemory(m_device, &allocate, nullptr, &memory), (std::string("Failed to allocate the ") + name).c_str());
+            CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), (std::string("Failed to bind the ") + name).c_str());
+        };
+        createBuffer(
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_plumeBuffer,
+            m_plumeMemory,
+            "cloud plume table");
+        createBuffer(
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            m_plumeStaging,
+            m_plumeStagingMemory,
+            "cloud plume staging buffer");
+        void* mapped = nullptr;
+        CheckVulkan(vkMapMemory(m_device, m_plumeStagingMemory, 0, bytes, 0, &mapped), "Failed to map the cloud plume staging buffer");
+        std::memcpy(mapped, table.data(), static_cast<size_t>(bytes));
+        vkUnmapMemory(m_device, m_plumeStagingMemory);
+    }
+
     m_readbacks.resize(VulkanCommandContext::kMaxFramesInFlight);
     for (Readback& readback : m_readbacks)
     {
@@ -650,18 +720,32 @@ void VulkanAtmosphere::CreateImages()
     }
 }
 
+void VulkanAtmosphere::DestroyPlumeStaging()
+{
+    if (m_plumeStaging != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_plumeStaging, nullptr);
+        m_plumeStaging = VK_NULL_HANDLE;
+    }
+    if (m_plumeStagingMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_plumeStagingMemory, nullptr);
+        m_plumeStagingMemory = VK_NULL_HANDLE;
+    }
+}
+
 void VulkanAtmosphere::CreateDescriptors()
 {
     // 0-3 the LUTs as storage images, 4-5 the transmittance and multiple-scattering LUTs sampled,
     // 6 the SH buffer, 7-8 the clouds' billow volumes, 9 their shadow map, 10 their plume map, 11
-    // the march's samples and 12 the resolved clouds as storage images, and 13 the clouds' history
-    // sampled.
-    std::array<VkDescriptorSetLayoutBinding, 14> bindings{};
+    // the march's samples and 12 the resolved clouds as storage images, 13 the clouds' history
+    // sampled, and 14 their plume table.
+    std::array<VkDescriptorSetLayoutBinding, 15> bindings{};
     for (uint32_t binding = 0; binding < bindings.size(); ++binding)
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = (binding < 4 || (binding >= 7 && binding < 13)) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-                                           : binding == 6                                  ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                           : binding == 6 || binding == 14                 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
                                                                                            : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -675,7 +759,7 @@ void VulkanAtmosphere::CreateDescriptors()
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10},
         VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 1;
@@ -690,7 +774,7 @@ void VulkanAtmosphere::CreateDescriptors()
     allocateInfo.pSetLayouts = &m_setLayout;
     CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_descriptorSet), "Failed to allocate the atmosphere descriptor set");
 
-    std::array<VkDescriptorImageInfo, 14> infos{};
+    std::array<VkDescriptorImageInfo, 15> infos{};
     for (size_t lut = 0; lut < kLutCount; ++lut)
     {
         infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
@@ -705,7 +789,8 @@ void VulkanAtmosphere::CreateDescriptors()
     infos[12] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
     infos[13] = VkDescriptorImageInfo{m_sampler, m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
-    std::array<VkWriteDescriptorSet, 14> writes{};
+    const VkDescriptorBufferInfo plumeInfo{m_plumeBuffer, 0, VK_WHOLE_SIZE};
+    std::array<VkWriteDescriptorSet, 15> writes{};
     for (uint32_t binding = 0; binding < writes.size(); ++binding)
     {
         writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -713,9 +798,9 @@ void VulkanAtmosphere::CreateDescriptors()
         writes[binding].dstBinding = binding;
         writes[binding].descriptorCount = 1;
         writes[binding].descriptorType = bindings[binding].descriptorType;
-        if (binding == 6)
+        if (binding == 6 || binding == 14)
         {
-            writes[binding].pBufferInfo = &irradianceInfo;
+            writes[binding].pBufferInfo = binding == 6 ? &irradianceInfo : &plumeInfo;
         }
         else
         {
@@ -820,6 +905,17 @@ void VulkanAtmosphere::DestroyHandles()
     {
         vkDestroyBuffer(m_device, m_irradianceBuffer, nullptr);
         m_irradianceBuffer = VK_NULL_HANDLE;
+    }
+    DestroyPlumeStaging();
+    if (m_plumeBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(m_device, m_plumeBuffer, nullptr);
+        m_plumeBuffer = VK_NULL_HANDLE;
+    }
+    if (m_plumeMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(m_device, m_plumeMemory, nullptr);
+        m_plumeMemory = VK_NULL_HANDLE;
     }
     if (m_irradianceMemory != VK_NULL_HANDLE)
     {

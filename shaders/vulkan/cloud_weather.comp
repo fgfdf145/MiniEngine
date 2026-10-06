@@ -1,90 +1,75 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-// The volumetric clouds' plume map, built once (VulkanAtmosphere::Record)
-// (docs/design/2026-10-06-cumulus-generation-design.md). One tile of fair-weather cumulus: per
+#include "scene_common.glsl"
+
+// The volumetric clouds' plume map, rebuilt whenever the plumes' lives move on
+// (VulkanAtmosphere::Record; docs/design/2026-10-06-cumulus-generation-design.md,
+// 2026-10-07-dynamic-clouds-design.md). One tile of fair-weather cumulus: per
 // texel, the top of the tallest plume above the layer's base as a share of the thickness (r,
 // stored as (top - WEATHER_FLOOR) / (1 - WEATHER_FLOOR)) and how steeply it falls, |d top / d uv|
 // over WEATHER_SLOPE_SCALE (g). The plumes are domes t (1 - (d / r)^2) on four jittered grids, joined by a smooth maximum,
 // four times as many per halving of size; the two larger scales are clusters of turrets. Outside
 // every plume the top runs on below the base, down to the floor, so the surface distance keeps
-// falling away from a cloud's side. Line for line CloudWeatherTexel in
+// falling away from a cloud's side. Each plume lives on its own phase of its scale's clock
+// (ubo.cloudLife): it rises out of the base, stands and sinks back (PlumeLife), and a cluster's
+// turrets bob within it. Line for line CloudWeatherTexel in
 // engine/renderer/volumetric_clouds.cpp, which the tests measure.
 layout(local_size_x = 8, local_size_y = 8) in;
 
-// Set 1 binding 10 of the atmosphere's compute set.
+// Set 1 binding 10 of the atmosphere's compute set: the map; binding 14 the plume table, every
+// cell of every scale drawn once on the CPU (BuildCloudPlumeTable), so a rebuild only shapes the
+// domes for the plumes' current lives.
 layout(set = 1, binding = 10, rg16) uniform writeonly image2D weatherOut;
 
+// Must match CloudPlumeCell in engine/renderer/volumetric_clouds.h.
+struct PlumeCell
+{
+    vec4 core;       // xy centre from the cell's corner, z radius (cells), w height; w < 0 no plume
+    vec4 life;       // x the life's start phase, y turret count
+    vec4 turrets[5]; // xy centre from the plume's, z radius, w height
+    vec4 bobs[2];    // each turret's bob start: 0-3 in bobs[0], 4 in bobs[1].x
+};
+layout(set = 1, binding = 14, std430) readonly buffer CloudPlumes
+{
+    PlumeCell plumeCells[];
+};
+
 // Must match kCloudWeatherSize, kCloudWeatherFloor, kCloudWeatherSlopeScale, kCloudDomeExponent,
-// kCloudPlumeHeightPerUv and kCloudPlumeLevels in engine/renderer/volumetric_clouds.h.
+// kCloudDomeBlend, kCloudPlumeLevels' cells and kCloudPlumeTableOffsets in
+// engine/renderer/volumetric_clouds.h.
 const int WEATHER_SIZE = 1024;
 const float WEATHER_FLOOR = -0.25;
 const float WEATHER_SLOPE_SCALE = 256.0;
 const float DOME_EXPONENT = 2.0;
 const float DOME_BLEND = 0.06;
-const float PLUME_HEIGHT_PER_UV = 16.0;
 const int PLUME_LEVELS = 4;
 const float LEVEL_CELLS[PLUME_LEVELS] = float[](16.0, 32.0, 64.0, 128.0);
-const float LEVEL_PROBABILITY[PLUME_LEVELS] = float[](0.55, 0.55, 0.55, 0.55);
-const vec2 LEVEL_RADIUS[PLUME_LEVELS] = vec2[](vec2(0.30, 0.45), vec2(0.28, 0.45), vec2(0.25, 0.45), vec2(0.25, 0.45));
-const vec2 LEVEL_ASPECT[PLUME_LEVELS] = vec2[](vec2(0.45, 0.80), vec2(0.40, 0.75), vec2(0.35, 0.70), vec2(0.30, 0.60));
-const bool LEVEL_TURRETS[PLUME_LEVELS] = bool[](true, true, false, false);
-
-const uint WEATHER_SEED = 211u;
-const uint WEATHER_HEIGHT_SEED = 223u;
-const uint CLUSTER_SEED = 101u;
+const int LEVEL_OFFSET[PLUME_LEVELS] = int[](0, 256, 1280, 5376);
+// Must match kCloudLifeGrowth, kCloudLifeDecayStart and kCloudTurretLowest.
+const float LIFE_GROWTH = 0.3;
+const float LIFE_DECAY_START = 0.55;
+const float TURRET_LOWEST = 0.6;
 const float PI = 3.14159265358979323846;
-
-uvec3 Pcg3d(uvec3 v)
-{
-    // Jarzynski and Olano 2020.
-    v = v * 1664525u + 1013904223u;
-    v.x += v.y * v.z;
-    v.y += v.z * v.x;
-    v.z += v.x * v.y;
-    v ^= v >> 16u;
-    v.x += v.y * v.z;
-    v.y += v.z * v.x;
-    v.z += v.x * v.y;
-    return v;
-}
-
-vec3 WeatherRandom(ivec2 cell, uint slot, uint seed)
-{
-    uvec3 v = Pcg3d(uvec3(uint(cell.x), uint(cell.y), slot) + uvec3(seed, seed * 7u, seed * 13u));
-    return vec3(v & 0xffffu) / 65535.0;
-}
 
 ivec2 Wrap(ivec2 cell, int period)
 {
     return (cell % period + period) % period;
 }
 
-// Smooth value noise over period cells of the tile, wrapping.
-float WeatherValueNoise(vec2 uv, int period, uint seed)
+// How much of its full height a plume has at a phase of its life: rising, standing, sinking away.
+float PlumeLife(float phase)
 {
-    vec2 grid = uv * float(period);
-    ivec2 cell = ivec2(floor(grid));
-    vec2 f = grid - vec2(cell);
-    f = f * f * (3.0 - 2.0 * f);
-    float a = WeatherRandom(Wrap(cell, period), 0u, seed).x;
-    float b = WeatherRandom(Wrap(cell + ivec2(1, 0), period), 0u, seed).x;
-    float c = WeatherRandom(Wrap(cell + ivec2(0, 1), period), 0u, seed).x;
-    float d = WeatherRandom(Wrap(cell + ivec2(1, 1), period), 0u, seed).x;
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    float p = fract(phase);
+    return smoothstep(0.0, LIFE_GROWTH, p) * (1.0 - smoothstep(LIFE_DECAY_START, 1.0, p));
 }
 
-// Where the plumes gather: two octaves of smooth noise, 10 and 5 km across on the 40 km tile.
-float WeatherCluster(vec2 uv)
-{
-    return 0.6 * WeatherValueNoise(uv, 4, CLUSTER_SEED) + 0.4 * WeatherValueNoise(uv, 8, CLUSTER_SEED + 2u);
-}
-
-// One dome of radius and height (grid units, share of the thickness) at centre, joined to the top
-// so far by the smooth maximum; its slope per uv follows.
-void WeatherDome(vec2 grid, vec2 centre, float radius, float height, float cells, inout float top, inout float slope)
+// One dome of radius and height (grid units, share of the thickness) at centre, sunk by the share
+// 1 - life of its height, joined to the top so far by the smooth maximum; its slope per uv follows.
+void WeatherDome(vec2 grid, vec2 centre, float radius, float height, float life, float cells, inout float top, inout float slope)
 {
     float d = length(grid - centre) / radius;
-    float dome = height * (1.0 - pow(d, DOME_EXPONENT));
+    float dome = height * (life - pow(d, DOME_EXPONENT));
     float domeSlope = height * DOME_EXPONENT * pow(d, DOME_EXPONENT - 1.0) / radius * cells;
     // Polynomial smooth maximum; the slope follows the blend.
     float blend = clamp(0.5 + 0.5 * (dome - top) / DOME_BLEND, 0.0, 1.0);
@@ -114,33 +99,23 @@ void main()
             {
                 ivec2 cell = base + ivec2(dx, dy);
                 ivec2 wrapped = Wrap(cell, cells);
-                uint slot = uint(level) * 8u;
-                vec3 placement = WeatherRandom(wrapped, slot, WEATHER_SEED);
-                vec2 centre = vec2(cell) + placement.yz;
-                float cluster = WeatherCluster(fract(centre / cellsF));
-                if (placement.x > LEVEL_PROBABILITY[level] * (0.4 + 1.2 * cluster))
+                int index = LEVEL_OFFSET[level] + wrapped.y * cells + wrapped.x;
+                vec4 core = plumeCells[index].core;
+                if (core.w < 0.0)
                 {
                     continue;
                 }
-                vec3 shape = WeatherRandom(wrapped, slot + 1u, WEATHER_SEED);
-                float radius = mix(LEVEL_RADIUS[level].x, LEVEL_RADIUS[level].y, shape.x);
-                float height = min(mix(LEVEL_ASPECT[level].x, LEVEL_ASPECT[level].y, shape.y) * 2.0 * radius / cellsF * PLUME_HEIGHT_PER_UV, 1.0);
-                WeatherDome(grid, centre, LEVEL_TURRETS[level] ? 0.7 * radius : radius, height, cellsF, top, slope);
-                if (!LEVEL_TURRETS[level])
-                {
-                    continue;
-                }
-                int turrets = 3 + int(shape.z * 2.999);
+                vec4 lifeInfo = plumeCells[index].life;
+                vec2 centre = vec2(cell) + core.xy;
+                float phase = fract(ubo.cloudLife[level] + lifeInfo.x);
+                float life = PlumeLife(phase);
+                WeatherDome(grid, centre, core.z, core.w, life, cellsF, top, slope);
+                int turrets = int(lifeInfo.y);
                 for (int turret = 0; turret < turrets; ++turret)
                 {
-                    uint turretSlot = slot + 2u + uint(turret);
-                    vec3 draw = WeatherRandom(wrapped, turretSlot, WEATHER_SEED);
-                    float turretHeight = WeatherRandom(wrapped, turretSlot, WEATHER_HEIGHT_SEED).x;
-                    float turretRadius = radius * mix(0.4, 0.65, draw.x);
-                    float angle = draw.y * 2.0 * PI;
-                    float offset = mix(0.2, 1.0, draw.z) * (radius - turretRadius);
-                    WeatherDome(grid, centre + vec2(cos(angle), sin(angle)) * offset, turretRadius,
-                                min(height * mix(0.65, 1.05, turretHeight), 1.0), cellsF, top, slope);
+                    vec4 shape = plumeCells[index].turrets[turret];
+                    float bob = 0.5 + 0.5 * cos(2.0 * PI * fract(2.0 * phase + plumeCells[index].bobs[turret / 4][turret % 4]));
+                    WeatherDome(grid, centre + shape.xy, shape.z, shape.w, life * mix(TURRET_LOWEST, 1.0, bob), cellsF, top, slope);
                 }
             }
         }

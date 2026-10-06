@@ -1,4 +1,5 @@
 #include <engine/renderer/volumetric_clouds.h>
+#include <engine/scene/wind.h>
 
 #include <glm/glm.hpp>
 
@@ -52,6 +53,9 @@ void ClampsSettings()
     wild.hazeDistance = 0.0f;
     wild.diffusion = 2.0f;
     wild.ambientOcclusion = -1.0f;
+    wild.updraft = 50.0f;
+    wild.lifetime = 0.0f;
+    wild.timeScale = -2.0f;
     const CloudSettings clamped = ClampCloudSettings(wild);
     Require(clamped.coverage == 1.0f && clamped.baseAltitude == 100.0f && clamped.thickness == 10000.0f, "coverage and layer clamped");
     Require(clamped.density == 0.001f, "density clamped above zero");
@@ -60,6 +64,7 @@ void ClampsSettings()
     Require(clamped.backWeight == 1.0f && clamped.albedo == 1.0f && clamped.ambientScale == 0.0f && clamped.hazeDistance == 1000.0f,
             "weights clamped");
     Require(clamped.diffusion == 1.0f && clamped.ambientOcclusion == 0.0f, "diffusion and ambient occlusion clamped");
+    Require(clamped.updraft == 10.0f && clamped.lifetime == 1.0f && clamped.timeScale == 0.0f, "motion clamped");
     Require(ClampCloudSettings(CloudSettings{}) == CloudSettings{}, "the defaults are inside the ranges");
 }
 
@@ -111,6 +116,27 @@ void CoverageOffsetMatchesTheMap()
         }
         const float share = static_cast<float>(covered) / static_cast<float>(tops.size());
         Require(Near(share, coverage, 0.04f), "coverage " + std::to_string(coverage) + " covers " + std::to_string(share));
+    }
+    // Whenever it is measured: the plumes are at other stages of their lives, the cover the same.
+    for (const glm::vec4& phases : {glm::vec4(0.21f, 0.83f, 0.56f, 0.04f), glm::vec4(0.7f, 0.3f, 0.95f, 0.5f)})
+    {
+        std::vector<float> later;
+        later.reserve(tops.size());
+        for (int y = 0; y < kSamples; ++y)
+        {
+            for (int x = 0; x < kSamples; ++x)
+            {
+                later.push_back(
+                    CloudWeatherTexel(glm::vec2((static_cast<float>(x) + 0.5f) / kSamples, (static_cast<float>(y) + 0.5f) / kSamples), phases).x);
+            }
+        }
+        for (float coverage : {0.1f, 0.3f, 0.45f, 0.75f})
+        {
+            const float offset = CloudCoverageOffset(coverage);
+            const float share = static_cast<float>(std::count_if(later.begin(), later.end(), [offset](float top) { return top > offset; })) /
+                                static_cast<float>(later.size());
+            Require(Near(share, coverage, 0.04f), "later, coverage " + std::to_string(coverage) + " covers " + std::to_string(share));
+        }
     }
     Require(CloudCoverageOffset(0.0f) > 0.65f, "coverage 0 lowers every top below the base");
     Require(CloudCoverageOffset(1.0f) < kCloudWeatherFloor, "coverage 1 closes the layer");
@@ -429,6 +455,125 @@ void ShadowMapProjection()
     Require(Near(CloudShadowEdgeWeight(glm::vec2(0.5f, kCloudShadowEdgeFade * 0.5f)), 0.5f, 1e-5f), "fading over the outer tenth");
 }
 
+void PlumeLives()
+{
+    Require(CloudPlumeLife(0.0f) == 0.0f && CloudPlumeLife(1.0f) == 0.0f, "born from nothing, gone at the end");
+    Require(CloudPlumeLife(kCloudLifeGrowth) == 1.0f && CloudPlumeLife(kCloudLifeDecayStart) == 1.0f, "full height between growth and decay");
+    Require(CloudPlumeLife(0.15f) > 0.3f && CloudPlumeLife(0.15f) < 0.7f, "half grown halfway up");
+    float previous = 0.0f;
+    float biggestStep = 0.0f;
+    for (int step = 1; step <= 1000; ++step)
+    {
+        const float life = CloudPlumeLife(static_cast<float>(step) / 1000.0f);
+        biggestStep = std::max(biggestStep, std::abs(life - previous));
+        previous = life;
+    }
+    Require(biggestStep < 0.01f, "a life runs smoothly, also across the wrap");
+
+    // The map moves on with the phases: plumes grow and sink, and the map still wraps.
+    int changed = 0;
+    for (int y = 0; y < 32; ++y)
+    {
+        for (int x = 0; x < 32; ++x)
+        {
+            const glm::vec2 uv((static_cast<float>(x) + 0.5f) / 32.0f, (static_cast<float>(y) + 0.5f) / 32.0f);
+            const glm::vec4 phases(0.1f, 0.2f, 0.3f, 0.4f);
+            const glm::vec2 now = CloudWeatherTexel(uv, phases);
+            const glm::vec2 later = CloudWeatherTexel(uv, phases + glm::vec4(0.05f));
+            changed += std::abs(later.x - now.x) > 1e-3f ? 1 : 0;
+            Require(Near(CloudWeatherTexel(uv + glm::vec2(-1.0f, 1.0f), phases).x, now.x, 1e-4f), "the living map still wraps");
+            // A whole life later every plume is where it was.
+            Require(Near(CloudWeatherTexel(uv, phases + glm::vec4(1.0f)).x, now.x, 1e-4f), "a whole life later, the same map");
+        }
+    }
+    Require(changed > 200, "a twentieth of a life changes much of the map");
+}
+
+void Motion()
+{
+    SceneEnvironment environment;
+    environment.clouds.enabled = true;
+    environment.wind.speed = 5.0f;
+    environment.wind.fromDegrees = 270.0f;
+    environment.timeOfDay.northDegrees = 0.0f;
+    // A west wind blows toward the east, +X; at the layer's middle (2.75 km) faster than at 10 m.
+    const glm::vec2 velocity = CloudWindVelocity(environment);
+    Require(velocity.x > 5.0f * 1.9f && Near(velocity.y, 0.0f, 1e-4f), "a west wind carries the clouds east, faster aloft");
+
+    CloudMotion motion;
+    for (int frame = 0; frame < 60; ++frame)
+    {
+        motion = AdvanceCloudMotion(motion, environment, 1.0f / 60.0f);
+    }
+    Require(Near(static_cast<float>(motion.windKm.x), velocity.x * 0.001f, 1e-6f) && Near(static_cast<float>(motion.windKm.y), 0.0f, 1e-7f),
+            "a second carries the layer a second's wind");
+    Require(Near(static_cast<float>(motion.riseKm), environment.clouds.updraft * 0.001f, 1e-7f), "and lifts the billows a second's updraft");
+    Require(Near(motion.stepMeters.x, velocity.x / 60.0f, 1e-4f), "the last step, for the reprojection");
+    const float midLives = 1.0f / (environment.clouds.lifetime * 60.0f);
+    Require(Near(static_cast<float>(motion.lives[2]), midLives, 1e-6f) && Near(static_cast<float>(motion.lives[0]), midLives / kCloudPlumeLifeScale[0], 1e-6f),
+            "each scale's clock runs at its own life");
+    // The map follows the clocks every tenth of a second, not every frame.
+    Require(std::abs(CloudLifePhases(motion)[2] - midLives) <= midLives * 0.1f + 1e-7f, "the map's lives lag by under a refresh");
+    const CloudMotion nextFrame = AdvanceCloudMotion(motion, environment, 1.0f / 60.0f);
+    Require(CloudLifePhases(nextFrame) == CloudLifePhases(motion) && nextFrame.lives != motion.lives, "between refreshes the map holds");
+    CloudMotion refreshed = nextFrame;
+    for (int frame = 0; frame < 6; ++frame)
+    {
+        refreshed = AdvanceCloudMotion(refreshed, environment, 1.0f / 60.0f);
+    }
+    Require(CloudLifePhases(refreshed) != CloudLifePhases(motion), "a tenth of a second later it moves on");
+
+    const CloudMotion hitch = AdvanceCloudMotion(CloudMotion{}, environment, 10.0f);
+    Require(Near(static_cast<float>(hitch.seconds), 0.25f, 1e-6f), "a long hitch counts as a quarter second");
+    environment.clouds.timeScale = 0.0f;
+    const CloudMotion held = AdvanceCloudMotion(motion, environment, 1.0f / 60.0f);
+    Require(held.windKm == motion.windKm && held.lives == motion.lives && held.stepMeters == glm::vec2(0.0f), "time scale 0 holds the clouds");
+    environment.clouds.timeScale = 60.0f;
+    const CloudMotion fast = AdvanceCloudMotion(CloudMotion{}, environment, 1.0f / 60.0f);
+    Require(Near(static_cast<float>(fast.seconds), 1.0f, 1e-6f), "time scale 60 runs a minute a second");
+    // The phases wrap, so the clock keeps its precision however long it runs.
+    environment.clouds.timeScale = 3600.0f;
+    CloudMotion longRun;
+    for (int frame = 0; frame < 1000; ++frame)
+    {
+        longRun = AdvanceCloudMotion(longRun, environment, 0.25f);
+    }
+    for (int level = 0; level < 4; ++level)
+    {
+        Require(longRun.lives[level] >= 0.0 && longRun.lives[level] < 1.0, "lives wrap into [0, 1)");
+    }
+}
+
+void Wind()
+{
+    WindSettings wind;
+    wind.speed = 10.0f;
+    Require(Near(WindSpeedAt(wind, kWindReferenceHeightMeters), 10.0f, 1e-5f), "the given speed at 10 m");
+    Require(WindSpeedAt(wind, 100.0f) > WindSpeedAt(wind, 10.0f) && WindSpeedAt(wind, 2.0f) < 10.0f, "faster aloft, slower near the ground");
+    Require(Near(WindSpeedAt(wind, 5000.0f), WindSpeedAt(wind, kWindBoundaryLayerMeters), 1e-5f), "steady above the boundary layer");
+    Require(Near(WindSpeedAt(wind, kWindBoundaryLayerMeters), 10.0f * std::pow(100.0f, 1.0f / 7.0f), 1e-4f), "the 1/7 power law");
+    Require(WindSpeedAt(wind, -5.0f) > 0.0f, "never asked below the lowest height");
+
+    // From the north (north along -Z) it blows toward +Z; from the east toward -X.
+    wind.fromDegrees = 0.0f;
+    Require(glm::length(WindDirection(wind, 0.0f) - glm::vec3(0.0f, 0.0f, 1.0f)) < 1e-5f, "a north wind blows south");
+    wind.fromDegrees = 90.0f;
+    Require(glm::length(WindDirection(wind, 0.0f) - glm::vec3(-1.0f, 0.0f, 0.0f)) < 1e-5f, "an east wind blows west");
+    // North turned 90 degrees about +Y lies along -X; a north wind then blows toward +X.
+    wind.fromDegrees = 0.0f;
+    Require(glm::length(WindDirection(wind, 90.0f) - glm::vec3(1.0f, 0.0f, 0.0f)) < 1e-5f, "the bearing follows the scene's north");
+
+    WindSettings wild;
+    wild.speed = 500.0f;
+    wild.fromDegrees = -90.0f;
+    const WindSettings clamped = ClampWindSettings(wild);
+    Require(clamped.speed == kWindMaxSpeed && Near(clamped.fromDegrees, 270.0f, 1e-4f), "speed clamped, bearing wrapped");
+    Require(ClampWindSettings(WindSettings{}) == WindSettings{}, "the default wind is inside the ranges");
+    SceneEnvironment environment;
+    environment.wind.speed = 0.0f;
+    Require(WindVelocity(environment, 100.0f) == glm::vec3(0.0f), "calm");
+}
+
 int main()
 {
     try
@@ -446,6 +591,9 @@ int main()
         ShellFromTheGround();
         ShellFromInsideAndAbove();
         ShadowMapProjection();
+        PlumeLives();
+        Motion();
+        Wind();
     }
     catch (const std::exception& error)
     {

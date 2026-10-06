@@ -102,9 +102,23 @@ struct EnvironmentUniformData
     // The clouds' diffusion and ambient occlusion (volumetric_clouds.h): x diffusion, y ambient
     // occlusion, z the diffusion field's decay kappa, w the dual lobe's mean cosine.
     glm::vec4 cloudLighting{0.0f};
+    // The clouds' motion (CloudMotion, SetCloudMotion), as offsets in tiles so they keep their
+    // precision however long the clock runs: xyz how far the large billows have moved (the wind
+    // and their rise) in their tiles, w the plume map's u offset; the same for the small billows,
+    // w the plume map's v offset.
+    glm::vec4 cloudShapeMotion{0.0f};
+    glm::vec4 cloudDetailMotion{0.0f};
+    // Each plume scale's phase of life, CloudLifePhases.
+    glm::vec4 cloudLife{0.0f};
+    // xy this frame's wind displacement of the layer, world x, z in metres, for the reprojection; w
+    // the clouds' clock in seconds. All of it changes every frame: CaptureKey leaves it out.
+    glm::vec4 cloudMotionStep{0.0f};
+    // The scene's wind (engine/scene/wind.h): xyz the world direction it blows toward, w its speed
+    // at 10 m, m/s; shaders scale it with height as WindSpeedAt does.
+    glm::vec4 wind{0.0f};
 };
-inline constexpr size_t kEnvironmentUniformVec4Count = 27;
-static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay twenty-seven vec4s");
+inline constexpr size_t kEnvironmentUniformVec4Count = 32;
+static_assert(sizeof(EnvironmentUniformData) == kEnvironmentUniformVec4Count * 16, "EnvironmentUniformData must stay thirty-two vec4s");
 
 // mode is the mode the frame renders with, which differs from environment.mode while an HDRI is
 // still loading. hdriSh is the loaded HDRI's unrotated radiance SH, or null. With no sun the illuminance is zero and the sky is black.
@@ -115,4 +129,10 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     const std::optional<AtmosphereSun>& sun,
     const glm::vec3& cameraPositionMeters,
     const ShCoefficients* hdriSh);
+
+struct CloudMotion;
+
+// Puts the clouds' motion into data: the billows' and the plume map's offsets in their tiles, the
+// plume lives and this frame's step (the tile sizes from environment.clouds, clamped).
+void SetCloudMotion(EnvironmentUniformData& data, const SceneEnvironment& environment, const CloudMotion& motion);
 }

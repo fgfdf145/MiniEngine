@@ -39,11 +39,14 @@ class VulkanAtmosphere
     // carries the same parameters in its camera block.
     // frameSlot picks the host-visible copy of the sky's SH this frame leaves for the CPU (see
     // GetSkyAverageRadiance).
+    // cloudLife is the plumes' phases of life the frame's uniforms carry (EnvironmentUniformData::
+    // cloudLife), or null with the clouds off: the plume map is rebuilt whenever they move on.
     void Record(
         VkCommandBuffer commandBuffer,
         VkDescriptorSet frameDescriptorSet,
         const AtmosphereParameters* parameters,
-        uint32_t frameSlot);
+        uint32_t frameSlot,
+        const glm::vec4* cloudLife = nullptr);
 
     // The sky's average radiance (its SH's L0 band), as the frame last recorded in this slot left
     // it, for auto exposure and white balance. Call after the slot's fence has signaled; empty when
@@ -121,6 +124,7 @@ class VulkanAtmosphere
     void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void DestroyHandles();
+    void DestroyPlumeStaging();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -146,11 +150,21 @@ class VulkanAtmosphere
     // Steps the marched pixel through each 2 x 2 block, every frame, with TAA or without.
     uint32_t m_cloudFrame = 0;
     bool m_cloudNoiseBuilt = false;
+    // The phases of life the plume map was last built at.
+    glm::vec4 m_cloudWeatherLife{0.0f};
     std::array<VkPipeline, kPipelineCount> m_pipelines{};
     // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0
     // binding 7. Shared by the frames in flight like the LUTs.
     VkBuffer m_irradianceBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_irradianceMemory = VK_NULL_HANDLE;
+    // The clouds' plume table (BuildCloudPlumeTable), device local, read by cloud_weather.comp
+    // through set 1 binding 14; filled from the host-visible staging copy by the first Record,
+    // which is freed once that frame has surely finished.
+    VkBuffer m_plumeBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_plumeMemory = VK_NULL_HANDLE;
+    VkBuffer m_plumeStaging = VK_NULL_HANDLE;
+    VkDeviceMemory m_plumeStagingMemory = VK_NULL_HANDLE;
+    uint32_t m_plumeStagingAge = 0;
     // One host-visible copy of the SH per frame in flight, copied after the projection so the CPU
     // reads a finished frame's sky instead of racing the shared buffer.
     struct Readback

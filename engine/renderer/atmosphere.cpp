@@ -4,6 +4,7 @@
 #include "volumetric_clouds.h"
 
 #include <engine/scene/sun_position.h>
+#include <engine/scene/wind.h>
 
 #include <algorithm>
 #include <cmath>
@@ -149,6 +150,28 @@ EnvironmentUniformData BuildEnvironmentUniformData(
     const float meanCosine = CloudMeanCosine(clouds.forwardAnisotropy, clouds.backAnisotropy, clouds.backWeight);
     const glm::vec2 diffusion = CloudDiffusionParameters(clouds.albedo, meanCosine);
     data.cloudLighting = glm::vec4(clouds.diffusion, clouds.ambientOcclusion, diffusion.x, meanCosine);
+    const WindSettings wind = ClampWindSettings(environment.wind);
+    data.wind = glm::vec4(WindDirection(wind, environment.timeOfDay.northDegrees), wind.speed);
     return data;
+}
+
+void SetCloudMotion(EnvironmentUniformData& data, const SceneEnvironment& environment, const CloudMotion& motion)
+{
+    const CloudSettings clouds = ClampCloudSettings(environment.clouds);
+    // Sampling at p - offset moves the pattern by +offset. The billows rise along world y, which
+    // is the planet's up near the scene; the offsets in tiles are wrapped in double precision.
+    const auto tiles = [](const glm::dvec3& km, double tileMeters)
+    {
+        const glm::dvec3 t = km * (1000.0 / tileMeters);
+        return glm::vec3(t - glm::floor(t));
+    };
+    const glm::dvec3 shapeKm(motion.windKm.x, motion.riseKm, motion.windKm.y);
+    const glm::dvec3 detailKm(motion.windKm.x, motion.riseKm * kCloudDetailRiseScale, motion.windKm.y);
+    const glm::dvec2 weather = motion.windKm * (1000.0 / clouds.weatherScale);
+    const glm::vec2 weatherTiles(weather - glm::floor(weather));
+    data.cloudShapeMotion = glm::vec4(tiles(shapeKm, clouds.shapeScale), weatherTiles.x);
+    data.cloudDetailMotion = glm::vec4(tiles(detailKm, clouds.detailScale), weatherTiles.y);
+    data.cloudLife = CloudLifePhases(motion);
+    data.cloudMotionStep = glm::vec4(motion.stepMeters, 0.0f, static_cast<float>(motion.seconds));
 }
 }

@@ -41,6 +41,7 @@
 #include "video_readback.h"
 
 #include <engine/editor/editor_backend_base.h>
+#include <engine/renderer/volumetric_clouds.h>
 #include <engine/asset/texture_preparation.h>
 #include <engine/core/threading/render_thread.h>
 #include <engine/renderer/cpu_stage_timer.h>
@@ -477,6 +478,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     float m_taaHistoryPreExposure = 0.0f;
     // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
     uint32_t m_taaFrameIndex = 0;
+    // How far the clouds have moved, run on by every frame's time (engine/renderer/volumetric_clouds.h).
+    CloudMotion m_cloudMotion;
     // Seeds the AO trace's noise; advances once per recorded frame.
     uint32_t m_aoFrameIndex = 0;
     // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes

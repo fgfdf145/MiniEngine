@@ -1025,6 +1025,10 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The clouds' march jitter steps with the TAA sequence, which averages it; without TAA the
     // index stands still and so does the noise.
     environmentData.cloudParams.w = static_cast<float>(m_taaFrameIndex % 64u);
+    // The wind carries the clouds, their billows rise and their plumes live and die on the clouds'
+    // own clock.
+    m_cloudMotion = AdvanceCloudMotion(m_cloudMotion, environment, packet.deltaSeconds);
+    SetCloudMotion(environmentData, environment, m_cloudMotion);
 
     if (environmentMode == EnvironmentMode::Hdri)
     {
@@ -1474,7 +1478,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   commandBuffer,
                                                   frame.frameDescriptorSet,
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
-                                                  frame.frameSlot);
+                                                  frame.frameSlot,
+                                                  environmentData.cloudLayer.w > 0.0f ? &environmentData.cloudLife : nullptr);
                                               m_gpuTimer->Mark(commandBuffer, "Atmosphere");
                                               // The clouds, marched and resolved, after the LUTs and the noise they
                                               // read and before the sky pass composites them.

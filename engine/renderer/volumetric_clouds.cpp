@@ -2,6 +2,8 @@
 
 #include "height_fog.h"
 
+#include <engine/scene/wind.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -80,12 +82,12 @@ float WeatherCluster(const glm::vec2& uv)
     return 0.6f * WeatherValueNoise(uv, 4, kClusterSeed) + 0.4f * WeatherValueNoise(uv, 8, kClusterSeed + 2u);
 }
 
-// One dome of radius and height (grid units, share of the thickness) at centre, joined to the top
-// so far by the smooth maximum; its slope per uv follows.
-void WeatherDome(const glm::vec2& grid, const glm::vec2& centre, float radius, float height, float cells, float& top, float& slope)
+// One dome of radius and height (grid units, share of the thickness) at centre, sunk by the share
+// 1 - life of its height, joined to the top so far by the smooth maximum; its slope per uv follows.
+void WeatherDome(const glm::vec2& grid, const glm::vec2& centre, float radius, float height, float life, float cells, float& top, float& slope)
 {
     const float d = glm::length(grid - centre) / radius;
-    const float dome = height * (1.0f - std::pow(d, kCloudDomeExponent));
+    const float dome = height * (life - std::pow(d, kCloudDomeExponent));
     const float domeSlope = height * kCloudDomeExponent * std::pow(d, kCloudDomeExponent - 1.0f) / radius * cells;
     // Polynomial smooth maximum; the slope follows the blend.
     const float blend = std::clamp(0.5f + 0.5f * (dome - top) / kCloudDomeBlend, 0.0f, 1.0f);
@@ -94,20 +96,22 @@ void WeatherDome(const glm::vec2& grid, const glm::vec2& centre, float radius, f
 }
 
 // CloudCoverageOffset's knots: (share of the ground under a plume, how far the tops are lowered),
-// measured over the 1024^2 map (tests/volumetric_clouds_tests.cpp, CoverageOffsetMatchesTheMap).
+// measured over the 512^2 map at four sets of life phases pooled (tests/volumetric_clouds_tests.cpp,
+// CoverageOffsetMatchesTheMap): the plumes at every stage of their lives cover the same share of
+// the ground whenever it is measured, within a share of 0.03 at 5 % coverage and far less above.
 // Below the floor the whole layer closes.
 constexpr std::array<glm::vec2, 12> kCoverageKnots = {
     glm::vec2(0.00f, 0.7000f),
-    glm::vec2(0.05f, 0.3298f),
-    glm::vec2(0.10f, 0.2108f),
-    glm::vec2(0.20f, 0.1014f),
-    glm::vec2(0.30f, 0.0544f),
-    glm::vec2(0.40f, 0.0297f),
-    glm::vec2(0.50f, 0.0107f),
-    glm::vec2(0.60f, -0.0114f),
-    glm::vec2(0.70f, -0.0392f),
-    glm::vec2(0.80f, -0.0784f),
-    glm::vec2(0.90f, -0.1469f),
+    glm::vec2(0.05f, 0.1898f),
+    glm::vec2(0.10f, 0.1018f),
+    glm::vec2(0.20f, 0.0408f),
+    glm::vec2(0.30f, 0.0169f),
+    glm::vec2(0.40f, -0.0011f),
+    glm::vec2(0.50f, -0.0190f),
+    glm::vec2(0.60f, -0.0405f),
+    glm::vec2(0.70f, -0.0680f),
+    glm::vec2(0.80f, -0.1068f),
+    glm::vec2(0.90f, -0.1751f),
     glm::vec2(1.00f, -0.3000f),
 };
 }
@@ -131,7 +135,55 @@ CloudSettings ClampCloudSettings(const CloudSettings& settings)
     clamped.hazeDistance = std::clamp(settings.hazeDistance, 1000.0f, 1000000.0f);
     clamped.diffusion = std::clamp(settings.diffusion, 0.0f, 1.0f);
     clamped.ambientOcclusion = std::clamp(settings.ambientOcclusion, 0.0f, 1.0f);
+    clamped.updraft = std::clamp(settings.updraft, 0.0f, 10.0f);
+    clamped.lifetime = std::clamp(settings.lifetime, 1.0f, 240.0f);
+    clamped.timeScale = std::clamp(settings.timeScale, 0.0f, 3600.0f);
     return clamped;
+}
+
+glm::vec2 CloudWindVelocity(const SceneEnvironment& environment)
+{
+    const CloudSettings clouds = ClampCloudSettings(environment.clouds);
+    const glm::vec3 velocity = WindVelocity(environment, clouds.baseAltitude + 0.5f * clouds.thickness);
+    return glm::vec2(velocity.x, velocity.z);
+}
+
+CloudMotion AdvanceCloudMotion(const CloudMotion& motion, const SceneEnvironment& environment, float deltaSeconds)
+{
+    const CloudSettings clouds = ClampCloudSettings(environment.clouds);
+    const double seconds =
+        std::isfinite(deltaSeconds) ? static_cast<double>(std::clamp(deltaSeconds, 0.0f, 0.25f)) * clouds.timeScale : 0.0;
+    CloudMotion next = motion;
+    const glm::vec2 wind = CloudWindVelocity(environment);
+    next.stepMeters = wind * static_cast<float>(seconds);
+    next.windKm += glm::dvec2(wind) * (seconds * 0.001);
+    next.riseKm += static_cast<double>(clouds.updraft) * seconds * 0.001;
+    const double lifeSeconds = static_cast<double>(clouds.lifetime) * 60.0;
+    for (size_t level = 0; level < kCloudPlumeLifeScale.size(); ++level)
+    {
+        const int index = static_cast<int>(level);
+        // Whole lives fall away: only the phase matters, and it keeps its precision.
+        const double lives = next.lives[index] + seconds / (lifeSeconds * kCloudPlumeLifeScale[level]);
+        next.lives[index] = lives - std::floor(lives);
+    }
+    next.seconds += seconds;
+    if (next.seconds - next.mapSeconds >= kCloudMapRefreshSeconds)
+    {
+        next.mapLives = next.lives;
+        next.mapSeconds = next.seconds;
+    }
+    return next;
+}
+
+glm::vec4 CloudLifePhases(const CloudMotion& motion)
+{
+    return glm::vec4(glm::fract(motion.mapLives));
+}
+
+float CloudPlumeLife(float phase)
+{
+    const float p = glm::fract(phase);
+    return glm::smoothstep(0.0f, kCloudLifeGrowth, p) * (1.0f - glm::smoothstep(kCloudLifeDecayStart, 1.0f, p));
 }
 
 float CloudRemap(float x, float a, float b, float c, float d)
@@ -140,7 +192,57 @@ float CloudRemap(float x, float a, float b, float c, float d)
     return span == 0.0f ? c : c + (x - a) / span * (d - c);
 }
 
-glm::vec2 CloudWeatherTexel(const glm::vec2& uv)
+CloudPlumeCell CloudPlumeCellAt(size_t level, const glm::ivec2& cell)
+{
+    const CloudPlumeLevel& plumes = kCloudPlumeLevels[level];
+    const uint32_t slot = static_cast<uint32_t>(level) * 8u;
+    const glm::vec3 placement = WeatherRandom(cell, slot, kWeatherSeed);
+    CloudPlumeCell plume;
+    const float cluster = WeatherCluster(glm::fract((glm::vec2(cell) + glm::vec2(placement.y, placement.z)) / plumes.cells));
+    if (placement.x > plumes.probability * (0.4f + 1.2f * cluster))
+    {
+        return plume;
+    }
+    const glm::vec3 shape = WeatherRandom(cell, slot + 1u, kWeatherSeed);
+    const float radius = glm::mix(plumes.radiusMin, plumes.radiusMax, shape.x);
+    const float height =
+        std::min(glm::mix(plumes.aspectMin, plumes.aspectMax, shape.y) * 2.0f * radius / plumes.cells * kCloudPlumeHeightPerUv, 1.0f);
+    plume.core = glm::vec4(placement.y, placement.z, plumes.turrets ? 0.7f * radius : radius, height);
+    const int turrets = plumes.turrets ? 3 + static_cast<int>(shape.z * 2.999f) : 0;
+    plume.life = glm::vec4(WeatherRandom(cell, slot + 7u, kWeatherHeightSeed).x, static_cast<float>(turrets), 0.0f, 0.0f);
+    for (int turret = 0; turret < turrets; ++turret)
+    {
+        const uint32_t turretSlot = slot + 2u + static_cast<uint32_t>(turret);
+        const glm::vec3 draw = WeatherRandom(cell, turretSlot, kWeatherSeed);
+        const glm::vec3 turretDraw = WeatherRandom(cell, turretSlot, kWeatherHeightSeed);
+        const float turretRadius = radius * glm::mix(0.4f, 0.65f, draw.x);
+        const float angle = draw.y * 2.0f * kPi;
+        const float offset = glm::mix(0.2f, 1.0f, draw.z) * (radius - turretRadius);
+        plume.turrets[static_cast<size_t>(turret)] = glm::vec4(
+            std::cos(angle) * offset, std::sin(angle) * offset, turretRadius, std::min(height * glm::mix(0.65f, 1.05f, turretDraw.x), 1.0f));
+        plume.bobs[static_cast<size_t>(turret / 4)][turret % 4] = turretDraw.y;
+    }
+    return plume;
+}
+
+std::vector<CloudPlumeCell> BuildCloudPlumeTable()
+{
+    std::vector<CloudPlumeCell> table(kCloudPlumeTableSize);
+    for (size_t level = 0; level < kCloudPlumeLevels.size(); ++level)
+    {
+        const int cells = static_cast<int>(kCloudPlumeLevels[level].cells);
+        for (int y = 0; y < cells; ++y)
+        {
+            for (int x = 0; x < cells; ++x)
+            {
+                table[kCloudPlumeTableOffsets[level] + static_cast<uint32_t>(y * cells + x)] = CloudPlumeCellAt(level, glm::ivec2(x, y));
+            }
+        }
+    }
+    return table;
+}
+
+glm::vec2 CloudWeatherTexel(const glm::vec2& uv, const glm::vec4& lifePhases)
 {
     float top = kCloudWeatherFloor;
     float slope = 0.0f;
@@ -155,41 +257,21 @@ glm::vec2 CloudWeatherTexel(const glm::vec2& uv)
             for (int dx = -1; dx <= 1; ++dx)
             {
                 const glm::ivec2 cell = base + glm::ivec2(dx, dy);
-                const glm::ivec2 wrapped = (cell % cells + cells) % cells;
-                const uint32_t slot = static_cast<uint32_t>(level) * 8u;
-                const glm::vec3 placement = WeatherRandom(wrapped, slot, kWeatherSeed);
-                const glm::vec2 centre = glm::vec2(cell) + glm::vec2(placement.y, placement.z);
-                const float cluster = WeatherCluster(glm::fract(centre / plumes.cells));
-                if (placement.x > plumes.probability * (0.4f + 1.2f * cluster))
+                const CloudPlumeCell plume = CloudPlumeCellAt(level, (cell % cells + cells) % cells);
+                if (plume.core.w < 0.0f)
                 {
                     continue;
                 }
-                const glm::vec3 shape = WeatherRandom(wrapped, slot + 1u, kWeatherSeed);
-                const float radius = glm::mix(plumes.radiusMin, plumes.radiusMax, shape.x);
-                const float height =
-                    std::min(glm::mix(plumes.aspectMin, plumes.aspectMax, shape.y) * 2.0f * radius / plumes.cells * kCloudPlumeHeightPerUv, 1.0f);
-                WeatherDome(grid, centre, plumes.turrets ? 0.7f * radius : radius, height, plumes.cells, top, slope);
-                if (!plumes.turrets)
-                {
-                    continue;
-                }
-                const int turrets = 3 + static_cast<int>(shape.z * 2.999f);
+                const glm::vec2 centre = glm::vec2(cell) + glm::vec2(plume.core);
+                const float phase = glm::fract(lifePhases[static_cast<int>(level)] + plume.life.x);
+                const float life = CloudPlumeLife(phase);
+                WeatherDome(grid, centre, plume.core.z, plume.core.w, life, plumes.cells, top, slope);
+                const int turrets = static_cast<int>(plume.life.y);
                 for (int turret = 0; turret < turrets; ++turret)
                 {
-                    const uint32_t turretSlot = slot + 2u + static_cast<uint32_t>(turret);
-                    const glm::vec3 draw = WeatherRandom(wrapped, turretSlot, kWeatherSeed);
-                    const float turretHeight = WeatherRandom(wrapped, turretSlot, kWeatherHeightSeed).x;
-                    const float turretRadius = radius * glm::mix(0.4f, 0.65f, draw.x);
-                    const float angle = draw.y * 2.0f * kPi;
-                    const float offset = glm::mix(0.2f, 1.0f, draw.z) * (radius - turretRadius);
-                    WeatherDome(
-                        grid,
-                        centre + glm::vec2(std::cos(angle), std::sin(angle)) * offset,
-                        turretRadius,
-                        std::min(height * glm::mix(0.65f, 1.05f, turretHeight), 1.0f),
-                        plumes.cells,
-                        top,
-                        slope);
+                    const glm::vec4 shape = plume.turrets[static_cast<size_t>(turret)];
+                    const float bob = 0.5f + 0.5f * std::cos(2.0f * kPi * glm::fract(2.0f * phase + plume.bobs[static_cast<size_t>(turret / 4)][turret % 4]));
+                    WeatherDome(grid, centre + glm::vec2(shape), shape.z, shape.w, life * glm::mix(kCloudTurretLowest, 1.0f, bob), plumes.cells, top, slope);
                 }
             }
         }

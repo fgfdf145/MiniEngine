@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace me
 {
@@ -43,6 +44,31 @@ inline constexpr float kCloudDomeBlend = 0.06f;
 // A plume's height (share of the thickness) per unit of its diameter in uv: the 40 km tile over
 // the 2.5 km layer the plume sizes were drawn for, so an aspect of 1 is as tall as wide there.
 inline constexpr float kCloudPlumeHeightPerUv = 16.0f;
+
+// The plume table (CloudPlumeCellAt): one entry per cell of every scale, the scales one after the
+// other, so the weather map's per-frame rebuild reads each plume instead of drawing it again. A
+// cluster has at most this many turrets.
+inline constexpr int kCloudMaxTurrets = 5;
+inline constexpr std::array<uint32_t, 4> kCloudPlumeTableOffsets = {0u, 16u * 16u, 16u * 16u + 32u * 32u, 16u * 16u + 32u * 32u + 64u * 64u};
+inline constexpr uint32_t kCloudPlumeTableSize = kCloudPlumeTableOffsets[3] + 128u * 128u;
+
+// The plumes' lives (docs/design/2026-10-07-dynamic-clouds-design.md): every plume runs through its
+// life on its own phase, a random start on the clock of its scale. Over the life's first share it
+// rises out of the base to its full height, stands, and over the last share sinks back and is gone;
+// a paraboloid sinking through the base shrinks its footprint with it. The large scales live longer
+// than CloudSettings::lifetime, the small ones less (per kCloudPlumeLevels). A cluster's turrets bob
+// on their own phases, twice per the cluster's life, between a share of its height and all of it.
+inline constexpr float kCloudLifeGrowth = 0.3f;
+inline constexpr float kCloudLifeDecayStart = 0.55f;
+inline constexpr std::array<float, 4> kCloudPlumeLifeScale = {2.0f, 1.4f, 1.0f, 0.7f};
+inline constexpr float kCloudTurretLowest = 0.6f;
+// The plume map is rebuilt for the plumes' lives this often, in the clouds' seconds: a top rises or
+// sinks at most ~7 m/s, so between rebuilds it moves under a metre, under a pixel from 1.5 km. At
+// real time that is every sixth frame or so; a fast time scale rebuilds every frame.
+inline constexpr double kCloudMapRefreshSeconds = 0.1;
+// The small billows rise this many times faster than the large ones: the eddies on a turret churn
+// over the slower swell beneath them.
+inline constexpr float kCloudDetailRiseScale = 2.0f;
 
 // One scale of plumes on a jittered grid: each cell holds one with the probability (raised where
 // the clustering field is high), of radius and aspect (height over diameter) drawn from the
@@ -120,12 +146,71 @@ inline constexpr float kCloudShadowEdgeFade = 0.1f;
 // The settings held to the ranges the editor offers, as BuildEnvironmentUniformData uploads them.
 CloudSettings ClampCloudSettings(const CloudSettings& settings);
 
+// How far the clouds have moved, integrated frame by frame on the clouds' own clock so a change of
+// wind, updraft or lifetime turns the motion rather than jumping it.
+struct CloudMotion
+{
+    // World x, z the wind has carried the layer, km.
+    glm::dvec2 windKm{0.0};
+    // How far the large billows have risen through the plumes, km (the small ones,
+    // kCloudDetailRiseScale times as far).
+    double riseKm = 0.0;
+    // Each plume scale's clock, in lives, from kCloudPlumeLifeScale.
+    glm::dvec4 lives{0.0};
+    // The clocks as the plume map was last asked for, and the seconds then: they move on once
+    // kCloudMapRefreshSeconds have passed.
+    glm::dvec4 mapLives{0.0};
+    double mapSeconds = 0.0;
+    // The clouds' seconds so far.
+    double seconds = 0.0;
+    // The last advance's wind displacement, world x, z in metres: the clouds' own motion, which the
+    // temporal resolve reprojects with.
+    glm::vec2 stepMeters{0.0f};
+};
+
+// The wind at the middle of the layer, world x, z in m/s: the scene's wind (engine/scene/wind.h).
+glm::vec2 CloudWindVelocity(const SceneEnvironment& environment);
+
+// motion run on by deltaSeconds of real time (a long hitch counts as at most a quarter second),
+// times the settings' time scale.
+CloudMotion AdvanceCloudMotion(const CloudMotion& motion, const SceneEnvironment& environment, float deltaSeconds);
+
+// Each plume scale's phase in [0, 1) as the plume map is to show it: the share of its life the clock
+// had run at the last refresh (kCloudMapRefreshSeconds).
+glm::vec4 CloudLifePhases(const CloudMotion& motion);
+
+// How much of its full height a plume has at a phase of its life, [0, 1]: rising over
+// kCloudLifeGrowth, standing, sinking from kCloudLifeDecayStart to none at 1.
+float CloudPlumeLife(float phase);
+
 // Maps x from [a, b] to [c, d], unclamped; a == b maps everything to c.
 float CloudRemap(float x, float a, float b, float c, float d);
 
-// The weather map's texel at uv in [0, 1)^2, as cloud_weather.comp computes it: x the top
-// (share of the thickness, kCloudWeatherFloor outside every plume), y |d top / d uv|.
-glm::vec2 CloudWeatherTexel(const glm::vec2& uv);
+// One cell of a plume scale, all of it drawn once: std430 as cloud_weather.comp reads it (nine vec4).
+struct CloudPlumeCell
+{
+    // xy the plume's centre from the cell's corner, z its radius (both in cells), w its height
+    // (share of the thickness); w below zero when the cell holds no plume.
+    glm::vec4 core{0.0f, 0.0f, 0.0f, -1.0f};
+    // x where in its life the plume's clock starts, y how many turrets the cluster has.
+    glm::vec4 life{0.0f};
+    // Each turret: xy its centre from the plume's (cells), z its radius, w its height.
+    std::array<glm::vec4, kCloudMaxTurrets> turrets{};
+    // Where each turret's bob starts: turrets 0-3 in bobs[0], 4 in bobs[1].x.
+    std::array<glm::vec4, 2> bobs{};
+};
+static_assert(sizeof(CloudPlumeCell) == 9 * 16, "CloudPlumeCell must stay nine vec4s for std430");
+
+// The plume in cell (wrapped into the scale's grid) of plume scale level.
+CloudPlumeCell CloudPlumeCellAt(size_t level, const glm::ivec2& cell);
+
+// Every cell of every scale, at kCloudPlumeTableOffsets[level] + y * cells + x.
+std::vector<CloudPlumeCell> BuildCloudPlumeTable();
+
+// The weather map's texel at uv in [0, 1)^2, as cloud_weather.comp computes it with the plume scales
+// at lifePhases (CloudLifePhases): x the top (share of the thickness, kCloudWeatherFloor outside
+// every plume), y |d top / d uv|.
+glm::vec2 CloudWeatherTexel(const glm::vec2& uv, const glm::vec4& lifePhases = glm::vec4(0.0f));
 
 // How far the plume tops are lowered so a share coverage of the ground lies under a cloud: the
 // weather map's measured cover, inverted. Lowering them shrinks every plume and drops the

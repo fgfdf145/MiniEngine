@@ -333,7 +333,7 @@ float CloudPlumeDistance(vec3 positionKm, float heightFraction, out float column
         return -1e3;
     }
     float thicknessKm = ubo.cloudLayer.y;
-    vec2 weather = textureLod(cloudWeatherMap, positionKm.xz * ubo.cloudScales.z, 0.0).rg;
+    vec2 weather = textureLod(cloudWeatherMap, positionKm.xz * ubo.cloudScales.z - vec2(ubo.cloudShapeMotion.w, ubo.cloudDetailMotion.w), 0.0).rg;
     float top = weather.r * (1.0 - CLOUD_WEATHER_FLOOR) + CLOUD_WEATHER_FLOOR;
     columnTopKm = clamp((top - ubo.cloudLayer.z) * thicknessKm, 0.0, thicknessKm);
     return CloudSurfaceDistance(top, weather.g * CLOUD_WEATHER_SLOPE_SCALE, ubo.cloudLayer.z, thicknessKm, ubo.cloudScales.z, heightFraction * thicknessKm);
@@ -359,8 +359,9 @@ float CloudExtinction(vec3 positionKm, float heightFraction, float detail, out f
         return 0.0;
     }
     float heightKm = heightFraction * ubo.cloudLayer.y;
-    vec4 shape = textureLod(cloudShapeNoise, positionKm * ubo.cloudScales.x, 0.0);
-    vec4 fine = detail > 0.0 ? textureLod(cloudDetailNoise, positionKm * ubo.cloudScales.y, 0.0) : vec4(CLOUD_BILLOW_MEAN);
+    // The wind carries the billows with the plumes, and they rise through them (CloudMotion).
+    vec4 shape = textureLod(cloudShapeNoise, positionKm * ubo.cloudScales.x - ubo.cloudShapeMotion.xyz, 0.0);
+    vec4 fine = detail > 0.0 ? textureLod(cloudDetailNoise, positionKm * ubo.cloudScales.y - ubo.cloudDetailMotion.xyz, 0.0) : vec4(CLOUD_BILLOW_MEAN);
     float shapeTileKm = 1.0 / ubo.cloudScales.x;
     float detailTileKm = 1.0 / ubo.cloudScales.y;
     distanceKm += CloudBillows(shape, fine, shapeTileKm, detailTileKm, ubo.cloudScales.w, detail, heightKm);

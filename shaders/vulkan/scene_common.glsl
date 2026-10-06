@@ -75,6 +75,11 @@ layout(set = 0, binding = 0) uniform CameraBuffer
     vec4 cloudParams;                // x ambient scale, y haze distance km, z deck weight, w frame index
     vec4 nightSky;                   // rgb moonless night sky luminance cd/m^2, added above the horizon
     vec4 cloudLighting;              // x diffusion, y ambient occlusion, z diffusion decay kappa, w mean cosine
+    vec4 cloudShapeMotion;           // xyz large billows' offset in tiles, w plume map's u offset
+    vec4 cloudDetailMotion;          // xyz small billows' offset in tiles, w plume map's v offset
+    vec4 cloudLife;                  // each plume scale's phase of life (cloud_weather.comp)
+    vec4 cloudMotionStep;            // xy this frame's wind displacement, world x, z metres; w cloud clock seconds
+    vec4 wind;                       // xyz world direction the wind blows toward, w speed at 10 m, m/s (engine/scene/wind.h)
 
     // proj * view without the TAA jitter that proj and invViewProj carry; motion vectors use it.
     mat4 viewProjNoJitter;

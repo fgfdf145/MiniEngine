@@ -290,6 +290,18 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         clouds.hazeDistance = cloudNode["haze_distance"].as<float>(clouds.hazeDistance);
         clouds.diffusion = cloudNode["diffusion"].as<float>(clouds.diffusion);
         clouds.ambientOcclusion = cloudNode["ambient_occlusion"].as<float>(clouds.ambientOcclusion);
+        clouds.updraft = cloudNode["updraft"].as<float>(clouds.updraft);
+        clouds.lifetime = cloudNode["lifetime"].as<float>(clouds.lifetime);
+        clouds.timeScale = cloudNode["time_scale"].as<float>(clouds.timeScale);
+    }
+
+    // Scenes saved before the wind existed have no node and take the default breeze.
+    const YAML::Node windNode = node["wind"];
+    if (windNode && windNode.IsMap())
+    {
+        WindSettings& wind = environment.wind;
+        wind.speed = windNode["speed"].as<float>(wind.speed);
+        wind.fromDegrees = windNode["from_degrees"].as<float>(wind.fromDegrees);
     }
 
     // Scenes saved before the time of day existed have no node and keep their sun where it was.
@@ -363,6 +375,13 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
     emitter << YAML::Key << "haze_distance" << YAML::Value << clouds.hazeDistance;
     emitter << YAML::Key << "diffusion" << YAML::Value << clouds.diffusion;
     emitter << YAML::Key << "ambient_occlusion" << YAML::Value << clouds.ambientOcclusion;
+    emitter << YAML::Key << "updraft" << YAML::Value << clouds.updraft;
+    emitter << YAML::Key << "lifetime" << YAML::Value << clouds.lifetime;
+    emitter << YAML::Key << "time_scale" << YAML::Value << clouds.timeScale;
+    emitter << YAML::EndMap;
+    emitter << YAML::Key << "wind" << YAML::Value << YAML::BeginMap;
+    emitter << YAML::Key << "speed" << YAML::Value << environment.wind.speed;
+    emitter << YAML::Key << "from_degrees" << YAML::Value << environment.wind.fromDegrees;
     emitter << YAML::EndMap;
     emitter << YAML::Key << "time_of_day" << YAML::Value << YAML::BeginMap;
     const TimeOfDaySettings& time = environment.timeOfDay;

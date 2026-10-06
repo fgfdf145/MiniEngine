@@ -45,6 +45,10 @@ uint32_t GroupCount(uint32_t size)
 // sees of it. The HDRI ignores the camera; the atmosphere's sky-view depends on the altitude only
 // (the planet is round, but a kilometre's walk turns it by a hundredth of a degree), kept to the
 // metre. The height fog is left out: the capture is never fogged. The clouds are in it.
+// How often, in the clouds' seconds, the capture takes the moving clouds afresh: at 10 m/s they
+// move 20 m, a hundredth of a degree from 1.5 km below, between captures.
+constexpr float kCloudCaptureSeconds = 2.0f;
+
 EnvironmentUniformData CaptureKey(const EnvironmentUniformData& environment)
 {
     EnvironmentUniformData key = environment;
@@ -53,6 +57,12 @@ EnvironmentUniformData CaptureKey(const EnvironmentUniformData& environment)
     key.heightFogParams = glm::vec4(0.0f);
     // The clouds' jitter index changes every frame; the capture does not jitter.
     key.cloudParams.w = 0.0f;
+    // The clouds move every frame (CloudMotion): the capture follows them once per
+    // kCloudCaptureSeconds of their clock, not every frame.
+    key.cloudShapeMotion = glm::vec4(0.0f);
+    key.cloudDetailMotion = glm::vec4(0.0f);
+    key.cloudLife = glm::vec4(0.0f);
+    key.cloudMotionStep = glm::vec4(0.0f, 0.0f, 0.0f, std::floor(environment.cloudMotionStep.w / kCloudCaptureSeconds));
     const bool hdri = static_cast<EnvironmentMode>(static_cast<uint32_t>(environment.sunDirectionAndMode.w)) == EnvironmentMode::Hdri;
     const float altitudeMeters = hdri ? 0.0f : std::round(glm::length(glm::vec3(environment.cameraPositionKm)) * 1000.0f);
     key.cameraPositionKm = glm::vec4(0.0f, altitudeMeters, 0.0f, 0.0f);

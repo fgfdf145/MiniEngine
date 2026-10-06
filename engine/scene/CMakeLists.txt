@@ -9,6 +9,8 @@ add_library(engine_scene
     sun_position.cpp
     sun_position.h
     scene_world.h
+    wind.cpp
+    wind.h
     world_units.h
 )
 miniengine_group_target_sources(engine_scene)
