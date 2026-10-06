@@ -1,21 +1,29 @@
-# San Andreas (GTA SA), streamed: the drawn map comes in 500 m cells from
-# assets/models/gtasa_stream/gtasa.stream.yaml, high detail within 700 m of the camera (or the car being
-# driven) and the game's own LOD models elsewhere (docs/design/2026-10-05-world-streaming-design.md). What
-# is always loaded: the game's collision (one model per region of the map: Los Santos, San Fierro, Las
-# Venturas, the countryside and the sea bed), its water (data/water.dat, with open sea beyond the map;
-# cars float, fill and sink below it), the Skyline R34 on Grove Street facing west, and the sun.
+# The three GTA maps side by side, streamed: San Andreas in the middle, Liberty City (GTA III) to its
+# west and Vice City to its east, with open sea between. A map's game position (x, y, z) is moved by its
+# offset (C:\Project\GTASA MAP\tools\gta_map.py, world_offset): San Andreas (0, 0, 0), Liberty City
+# (-6000, 0, 0), Vice City (6000, 0, -6), which also brings Vice City's sea, 6 m up in its game, to 0
+# like the others'. glTF is Y-up: a moved game position (x, y, z) is (x, z, -y) here, and north is -Z.
+# Here Liberty City's Portland is about (-5090, 9, 230) and Staunton Island (-5760, 16, 180); Vice City's
+# Ocean Drive (6250, 5, 1260) and Downtown (5310, 5, -1280).
+#
+# The drawn maps come in 500 m cells from one streaming manifest per game (assets/models/gtasa_stream,
+# gta3_stream, gtavc_stream), high detail within 700 m of the camera (or the car being driven) and the
+# games' own LOD models elsewhere (docs/design/2026-10-05-world-streaming-design.md). What is always
+# loaded: each game's collision (San Andreas one model per region: Los Santos, San Fierro, Las Venturas,
+# the countryside and the sea bed; Liberty City and Vice City one each), the water of all three
+# (SA's data/water.dat, III and VC's data/waterpro.dat, open sea everywhere else; cars float, fill and
+# sink below it, but not in a tunnel under it), the Skyline R34 on Grove Street facing west, and the sun.
 # In the middle of the Grove Street cul-de-sac (game (2485, -1668), flat road at 12.344 m) stands the
 # seven-post rig of suspension_rig.yaml, turned to face west, with a second R34 on its pads: select that car and open
 # Window > Suspension Rigs for its Live Rig tab. The driven car stays the first R34 in the list.
-# Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py, tools/water.py)
-# and is not in git; the car is imported from Assetto Corsa at assets/skyline_r34_vspec. The minimap is the
-# game's radar map (tools/radar_map.py -> out/radar_map.png, copied to assets/maps/gtasa_radar.png, also not
-# in git): 6 km square, game (-3000, 3000) at its top left.
-# glTF is Y-up: a game position (x, y, z) is (x, z, -y) here, and the game's north is -Z.
+# Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py with GTA_GAME=sa,
+# iii or vc; tools/water.py) and is not in git; the car is imported from Assetto Corsa at
+# assets/skyline_r34_vspec. The minimap is the three games' radar maps placed the same way
+# (tools/world_radar.py -> out/gta_radar.png, copied to assets/maps/gta_radar.png, also not in git).
 scene:
   version: 3
   selected_entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
-  selected_entity: 6
+  selected_entity: 8
 entities:
   - entity_uuid: c42332ab-2274-43e5-9c1e-94e0e483be21
     tag: Los Santos collision
@@ -77,12 +85,36 @@ entities:
       translation: [0, 0, 0]
       rotation: [0, 0, 0]
       scale: [1, 1, 1]
+  - entity_uuid: 255f05b0-0a88-465b-af15-dc9e2ab172d4
+    tag: Liberty City collision
+    model:
+      display_name: gta3_collision.gltf
+      source_path: assets/models/gta3_collision/gta3_collision.gltf
+      source_uuid: 29edfdef-e6b3-4724-bb20-5302ad986fb6
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 36233a6e-37fa-47d3-9851-8ec8360ff3d8
+    tag: Vice City collision
+    model:
+      display_name: gtavc_collision.gltf
+      source_path: assets/models/gtavc_collision/gtavc_collision.gltf
+      source_uuid: e088c89b-bd67-42c6-8ad2-a12804f905b4
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
   - entity_uuid: 09058514-2ece-4ecc-979d-35a9c1997059
     tag: Water
     model:
-      display_name: gtasa_water.gltf
-      source_path: assets/models/gtasa_water/gtasa_water.gltf
-      source_uuid: a4479793-4833-44ab-92fd-10b366d87f0b
+      display_name: gta_water.gltf
+      source_path: assets/models/gta_water/gta_water.gltf
+      source_uuid: bc8bd19d-46dd-45dc-badd-d6998e170698
       base_color_texture_override: ""
       base_color_texture_override_uuid: ""
     transform:
@@ -246,10 +278,16 @@ streaming:
   - manifest: assets/models/gtasa_stream/gtasa.stream.yaml
     load_radius: 700
     unload_radius: 900
+  - manifest: assets/models/gta3_stream/gta3.stream.yaml
+    load_radius: 700
+    unload_radius: 900
+  - manifest: assets/models/gtavc_stream/gtavc.stream.yaml
+    load_radius: 700
+    unload_radius: 900
 minimap:
-  image: assets/maps/gtasa_radar.png
-  world_min: [-3000, -3000]
-  world_max: [3000, 3000]
+  image: assets/maps/gta_radar.png
+  world_min: [-8500, -3500]
+  world_max: [8500, 3500]
 editor:
   gizmo:
     operation: combined
