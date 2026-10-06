@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 
 namespace me
 {
@@ -76,6 +77,13 @@ std::vector<StreamedCell> WorldStreamingService::ReadCells(const SceneStreamingW
         cell.loadRadius = world.loadRadius;
         cell.unloadRadius = world.unloadRadius;
         cell.farOnly = node["far_only"].as<bool>(false);
+        if (world.highDetailOnly)
+        {
+            // Within any distance: the high detail always, the LOD never (a far-only one is gone too).
+            cell.lodPath.clear();
+            cell.loadRadius = std::numeric_limits<float>::infinity();
+            cell.unloadRadius = std::numeric_limits<float>::infinity();
+        }
         cells.push_back(std::move(cell));
     }
     return cells;

@@ -393,6 +393,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             world.manifest = worldNode["manifest"].as<std::string>(world.manifest);
             world.loadRadius = std::max(worldNode["load_radius"].as<float>(world.loadRadius), 1.0f);
             world.unloadRadius = std::max(worldNode["unload_radius"].as<float>(world.unloadRadius), world.loadRadius);
+            world.highDetailOnly = worldNode["high_detail_only"].as<bool>(world.highDetailOnly);
             if (!world.manifest.empty())
             {
                 sceneData.streaming.push_back(world);
@@ -549,6 +550,10 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
             emitter << YAML::Key << "manifest" << YAML::Value << world.manifest;
             emitter << YAML::Key << "load_radius" << YAML::Value << world.loadRadius;
             emitter << YAML::Key << "unload_radius" << YAML::Value << world.unloadRadius;
+            if (world.highDetailOnly)
+            {
+                emitter << YAML::Key << "high_detail_only" << YAML::Value << true;
+            }
             emitter << YAML::EndMap;
         }
         emitter << YAML::EndSeq;

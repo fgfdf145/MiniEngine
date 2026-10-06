@@ -16,6 +16,9 @@ struct SceneStreamingWorld
     // and goes back to its LOD once it is farther than unloadRadius.
     float loadRadius = 700.0f;
     float unloadRadius = 900.0f;
+    // Every cell shows its high detail wherever the focus is, and no LOD model is ever loaded: a cell
+    // with only a LOD (or whose high detail failed to load) shows nothing. The radii are then unused.
+    bool highDetailOnly = false;
 
     bool operator==(const SceneStreamingWorld&) const = default;
 };

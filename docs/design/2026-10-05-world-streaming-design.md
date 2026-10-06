@@ -37,6 +37,8 @@ streaming:
   - manifest: assets/models/gtasa_stream/gtasa.stream.yaml
     load_radius: 700     # 焦点到格子包围盒的水平距离小于它时载入高模
     unload_radius: 900   # 大于它时退回 LOD（滞回，防止边界来回切换）
+    high_detail_only: true  # 可选（2026-10-07）：不论远近所有格子都用高模，从不载入 LOD；
+                            # 只有 LOD 的格子（含 far_only）不显示，半径不再起作用
 ```
 
 ### WorldStreamingService（engine/editor/services）

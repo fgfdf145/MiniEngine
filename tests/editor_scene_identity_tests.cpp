@@ -111,6 +111,7 @@ int main()
         streamedSettings.manifest = "assets/models/world/world.stream.yaml";
         streamedSettings.loadRadius = 650.0f;
         streamedSettings.unloadRadius = 950.0f;
+        streamedSettings.highDetailOnly = true;
         streamedWorld->SetStreamingWorlds({streamedSettings});
         SceneMinimap minimap;
         minimap.image = "assets/maps/world_radar.png";
