@@ -1,4 +1,5 @@
 ﻿#include <engine/editor/editor_ui.h>
+#include "editor_gt7_hud.h"
 #include "editor_suspension_rigs.h"
 #include "editor_ui_internal.h"
 
@@ -110,7 +111,40 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
     rect.drawList->AddRect(rect.origin, max, IM_COL32(255, 255, 255, 48), 0.0f, 1.0f);
 }
 
-void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, double secondsSinceEntered, const VehicleDriveStatus& vehicle)
+// The driven car as the driving HUD shows it. The pedals are what the car takes: pulling the throttle
+// back brakes, except in the automatic's reverse, where it drives and pushing it brakes.
+Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
+{
+    const VehicleTelemetry& telemetry = vehicle.telemetry;
+    const VehicleControls& controls = vehicle.controls;
+    Gt7HudInput input;
+    input.speedKmh = std::abs(telemetry.forwardSpeed) * 3.6f;
+    input.rpm = telemetry.engineRpm;
+    input.maxRpm = vehicle.engineMaxRpm;
+    input.gear = telemetry.gear;
+    input.manualGearbox = vehicle.manualGearbox;
+    const bool reversing = telemetry.gear < 0 && !vehicle.manualGearbox;
+    const float drive = reversing ? -controls.throttle : controls.throttle;
+    input.throttle = std::clamp(drive, 0.0f, 1.0f);
+    input.brake = std::clamp(std::max(controls.brake, -drive), 0.0f, 1.0f);
+    input.steering = controls.steering;
+    input.handBrake = controls.handBrake > 0.05f;
+    input.absFitted = vehicle.absFitted;
+    input.absActive = telemetry.absActive;
+    input.tcsFitted = vehicle.tractionControlFitted;
+    input.tcsActive = telemetry.tractionControlCut;
+    input.counterSteerAssist = vehicle.counterSteerAssist;
+    input.turbo = vehicle.turbo;
+    input.boostBar = telemetry.turboBoost;
+    input.odometerKm = vehicle.odometerMetres / 1000.0;
+    input.frontTyre = vehicle.frontTyre;
+    input.rearTyre = vehicle.rearTyre;
+    input.time = time;
+    return input;
+}
+
+void DrawFullscreenViewportHud(
+    const ViewportOverlayRect& rect, float uiScale, double secondsSinceEntered, const VehicleDriveStatus& vehicle, bool drivingHud)
 {
     ImDrawList* drawList = rect.drawList;
     const float margin = kOverlayTextMarginPixels * uiScale;
@@ -129,8 +163,8 @@ void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, d
         drawText(ImVec2(rect.origin.x + margin, rect.origin.y + margin), "F11 or Esc: leave fullscreen");
     }
 
-    // While driving, the speed and gear at the bottom right.
-    if (vehicle.active)
+    // While driving without the driving HUD, the speed and gear at the bottom right.
+    if (vehicle.active && !drivingHud)
     {
         const VehicleTelemetry& telemetry = vehicle.telemetry;
         const std::string gear = telemetry.gear < 0 ? "R" : telemetry.gear == 0 ? "N" : std::to_string(telemetry.gear);
@@ -140,16 +174,17 @@ void DrawFullscreenViewportHud(const ViewportOverlayRect& rect, float uiScale, d
     }
 }
 
-// The scene's map (SceneMinimap) at the viewport's bottom left, centred on the player and turned so the
-// way they face is up, as a game's radar: an arrow at the centre for the player, N on the border towards
-// north.
+// The scene's map (SceneMinimap) at the viewport's bottom left (top right when `topRight`, clear of the
+// driving HUD), centred on the player and turned so the way they face is up, as a game's radar: an
+// arrow at the centre for the player, N on the border towards north.
 void DrawMinimap(
     const ViewportOverlayRect& rect,
     float uiScale,
     ImTextureID texture,
     const SceneMinimap& minimap,
     const glm::vec3& position,
-    const glm::vec3& heading)
+    const glm::vec3& heading,
+    bool topRight = false)
 {
     ImDrawList* drawList = rect.drawList;
     if (drawList == nullptr || !texture || !minimap.IsValid())
@@ -164,7 +199,8 @@ void DrawMinimap(
     }
     const float margin = kMinimapMarginPixels * uiScale;
     const float half = size * 0.5f;
-    const ImVec2 center(rect.origin.x + margin + half, rect.origin.y + rect.size.y - margin - half);
+    const ImVec2 center = topRight ? ImVec2(rect.origin.x + rect.size.x - margin - half, rect.origin.y + margin + half)
+                                   : ImVec2(rect.origin.x + margin + half, rect.origin.y + rect.size.y - margin - half);
 
     // Screen up is the heading across the ground, screen right is its right. The picture's u runs with
     // world X and its v with world Z, so "right" is the heading turned a quarter clockwise in (x, z).
@@ -1140,6 +1176,12 @@ void EditorUiController::DrawViewportPanel(
                 *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleRigStatus.linkage, m_effectiveUiScale);
         }
         DrawVideoRecordingIndicator(viewportRect, m_effectiveUiScale, m_videoRecording);
+        // GT7's driving HUD along the bottom while a car is driven.
+        const bool drivingHud = m_vehicleStatus.active && m_commandState.drivingHud;
+        if (drivingHud && viewportRect.drawList != nullptr)
+        {
+            DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(m_vehicleStatus, ImGui::GetTime()));
+        }
         // Centred on the car while one is driven, else on the camera.
         if (m_vehicleStatus.active)
         {
@@ -1149,7 +1191,8 @@ void EditorUiController::DrawViewportPanel(
                 m_minimapTexture,
                 scene.GetMinimap(),
                 m_vehicleStatus.pose.position,
-                m_vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f));
+                m_vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
+                drivingHud);
         }
         else
         {
@@ -1157,7 +1200,7 @@ void EditorUiController::DrawViewportPanel(
         }
         if (fullscreen)
         {
-            DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus);
+            DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus, drivingHud);
             ImGui::End();
             ImGui::PopStyleVar(2);
             return;

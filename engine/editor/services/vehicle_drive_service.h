@@ -92,6 +92,19 @@ struct VehicleDriveStatus
     // How much of real time the physics kept up with over the last second or so (1 is real time;
     // less when the build or the car is too slow and the drive runs in slow motion).
     float realTimeShare = 1.0f;
+    // For the driving HUD: the controls the car took this frame (after the steering assist), the
+    // gearbox, the rev limit, which assists the car has, whether it has turbos, the tyres' compound
+    // initials (front, rear; empty without the car's data) and how far it has driven since the start.
+    VehicleControls controls;
+    bool manualGearbox = false;
+    float engineMaxRpm = 7000.0f;
+    bool absFitted = false;
+    bool tractionControlFitted = false;
+    bool counterSteerAssist = false;
+    bool turbo = false;
+    std::string frontTyre;
+    std::string rearTyre;
+    double odometerMetres = 0.0;
     std::string lastError;
 };
 
@@ -165,6 +178,14 @@ struct VehicleDriveSession
     float engineMinRpm = 1000.0f;
     float engineMaxRpm = 7000.0f;
     VehicleHapticsState haptics;
+    // What the driving HUD shows of the car (see VehicleDriveStatus).
+    VehicleControls controls;
+    bool absFitted = false;
+    bool tractionControlFitted = false;
+    bool turbo = false;
+    std::string frontTyre;
+    std::string rearTyre;
+    double odometerMetres = 0.0;
 };
 
 struct VehicleDriveState

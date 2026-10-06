@@ -58,6 +58,9 @@ struct EditorCommandState
     bool rayTracing = false;
     bool wireframe = false;
     bool gizmos = true;
+    // While a car is driven, the viewport shows Gran Turismo 7's driving HUD (speed, revs, gear, pedals,
+    // assists) along its bottom, and the minimap moves to the top right.
+    bool drivingHud = true;
     // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
     // The editor UI turns the window fullscreen and back.
     bool viewportFullscreen = false;

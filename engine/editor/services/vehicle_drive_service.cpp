@@ -223,6 +223,20 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
     session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
     session->frontPeakSlipDegrees = settings.frontTyres.peakSlipAngleDegrees > 0.0f ? settings.frontTyres.peakSlipAngleDegrees : 7.0f;
+    session->absFitted = settings.useAbs && settings.absSlipRatioLimit > 0.0f;
+    session->tractionControlFitted = (settings.useTractionControl && settings.tcSlipRatioLimit > 0.0f) || settings.tractionControlGrip > 0.0f;
+    session->turbo = !settings.turbos.empty();
+    if (tuning.useCarData && modelData && modelData->carSpec.has_value())
+    {
+        const VehicleCarSpec& spec = *modelData->carSpec;
+        if (spec.defaultTyreCompound.has_value() && *spec.defaultTyreCompound >= 0 &&
+            static_cast<size_t>(*spec.defaultTyreCompound) < spec.tyreCompounds.size())
+        {
+            const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
+            session->frontTyre = compound.front.shortName;
+            session->rearTyre = compound.rear.shortName;
+        }
+    }
 
     glm::vec3 carWorldMin = session->startPose.position;
     glm::vec3 carWorldMax = session->startPose.position;
@@ -449,6 +463,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     session->recoverHeld = recoverDown;
 
     session->physics->SetVehicleControls(session->vehicle, controls);
+    session->controls = controls;
     if (!session->paused)
     {
         // At most this long on physics a frame, so a world too slow for real time slows down rather
@@ -457,6 +472,9 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         // A scripted drive runs every step, so it is the same however slowly the frames come.
         const auto stepStart = std::chrono::steady_clock::now();
         const int steps = session->physics->Update(deltaSeconds, scripted.has_value() ? 0.0f : kPhysicsBudgetSeconds);
+        // The odometer runs on simulated time, as the car moves.
+        session->odometerMetres += std::abs(static_cast<double>(session->physics->GetVehicleTelemetry(session->vehicle).forwardSpeed)) *
+                                   steps * PhysicsWorld::kFixedStepSeconds;
         session->scriptedPhysicsMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stepStart).count();
         if (deltaSeconds > 0.0f)
         {
@@ -566,6 +584,16 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.staticBodyCount = session->physics->GetStaticBodyCount();
         status.staticTriangleCount = session->physics->GetStaticTriangleCount();
         status.realTimeShare = session->realTimeShare;
+        status.controls = session->controls;
+        status.manualGearbox = state.vehicleDrive.manualGearbox;
+        status.engineMaxRpm = session->engineMaxRpm;
+        status.absFitted = session->absFitted;
+        status.tractionControlFitted = session->tractionControlFitted;
+        status.counterSteerAssist = state.vehicleDrive.steeringAssist.enabled && state.vehicleDrive.steeringAssist.counterSteerAssist;
+        status.turbo = session->turbo;
+        status.frontTyre = session->frontTyre;
+        status.rearTyre = session->rearTyre;
+        status.odometerMetres = session->odometerMetres;
     }
     return status;
 }

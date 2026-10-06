@@ -37,6 +37,9 @@
     model_loader.h
     model_post_process.cpp
     model_post_process.h
+    svg_document.h
+    svg_font.cpp
+    svg_font.h
     svg_icon.cpp
     svg_icon.h
     texture_compression.cpp

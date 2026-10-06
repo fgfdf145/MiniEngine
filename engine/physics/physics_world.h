@@ -143,6 +143,10 @@ struct VehicleTelemetry
     // below about 2 m/s, where a ratio against a crawling road says nothing.
     float lockSlip = 0.0f;
     float spinSlip = 0.0f;
+    // The car's anti-lock brakes have a wheel's brake off, and its traction control has the throttle cut,
+    // in the last step.
+    bool absActive = false;
+    bool tractionControlCut = false;
     // Water (PhysicsWorld::AddWaterSurface): the share of the body's shape below the surface, how far
     // the car has filled (0 dry, 1 full: it floats while it fills and then sinks), and whether the water
     // has reached the engine, which then gives no more drive.

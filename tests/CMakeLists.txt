@@ -1898,6 +1898,35 @@ add_test(
 
 set_target_properties(miniengine_asset_browser_window_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_gt7_hud_tests
+    gt7_hud_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_gt7_hud_tests)
+
+target_link_libraries(miniengine_gt7_hud_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_gt7_hud_tests PRIVATE "${Stb_INCLUDE_DIR}")
+target_compile_definitions(miniengine_gt7_hud_tests PRIVATE "MINIENGINE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_gt7_hud_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_gt7_hud_tests>
+            $<TARGET_FILE_DIR:miniengine_gt7_hud_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.gt7_hud
+    COMMAND miniengine_gt7_hud_tests
+)
+
+set_target_properties(miniengine_gt7_hud_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_svg_icon_tests
     svg_icon_tests.cpp
     imgui_software_raster.h

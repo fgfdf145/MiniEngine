@@ -272,6 +272,16 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
         {
             return state.gizmos;
         });
+    Add(
+        registry, "view.driving_hud", "Driving HUD", "View/Driving HUD", ICON_PH_GAUGE, ImGuiMod_Alt | ImGuiKey_H,
+        [&state]
+        {
+            state.drivingHud = !state.drivingHud;
+        },
+        [&state]
+        {
+            return state.drivingHud;
+        });
 }
 
 void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)

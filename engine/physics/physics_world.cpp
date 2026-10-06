@@ -2597,6 +2597,11 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     {
         telemetry.turboBoost += boost;
     }
+    telemetry.absActive = std::ranges::any_of(vehicle.absReleased, [](bool released)
+                                              {
+                                                  return released;
+                                              });
+    telemetry.tractionControlCut = vehicle.tcCut;
     constexpr float kSlipMinSpeed = 2.0f;
     if (std::abs(telemetry.forwardSpeed) >= kSlipMinSpeed)
     {

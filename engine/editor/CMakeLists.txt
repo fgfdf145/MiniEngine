@@ -34,6 +34,8 @@ add_library(engine_editor
     services/world_streaming_service.h
     ui/editor_asset_browser_panel.cpp
     ui/editor_dockspace.cpp
+    ui/editor_gt7_hud.cpp
+    ui/editor_gt7_hud.h
     ui/editor_material_graph.cpp
     ui/editor_material_graph.h
     ui/editor_menu_toolbar.cpp
@@ -73,6 +75,32 @@ add_custom_command(
 )
 target_sources(engine_editor PRIVATE "${_editor_icon_font_source}")
 source_group("Generated" FILES "${_editor_icon_font_source}")
+
+# The GT7 driving HUD's fonts and icons (SVG, written by tools/gt7_hud/make_gt7_hud_svgs.py), built in
+# the same way.
+set(_gt7_hud_svgs
+    fonts/gt7_meter fonts/gt7_sans fonts/gt7_sans_bold
+    icons/abs icons/arrow_left icons/arrow_right icons/brake_assist icons/car_lines icons/car_markers icons/car_top
+    icons/countersteer icons/fuel icons/handbrake icons/headlight icons/steering icons/tcs icons/throttle
+    icons/turbo icons/warning icons/water)
+foreach(_svg IN LISTS _gt7_hud_svgs)
+    get_filename_component(_svg_name "${_svg}" NAME)
+    set(_svg_input "${CMAKE_CURRENT_SOURCE_DIR}/ui/gt7_hud/${_svg}.svg")
+    set(_svg_source "${CMAKE_CURRENT_BINARY_DIR}/generated/gt7_hud_${_svg_name}_svg.cpp")
+    add_custom_command(
+        OUTPUT "${_svg_source}"
+        COMMAND ${CMAKE_COMMAND}
+            "-DINPUT=${_svg_input}"
+            "-DOUTPUT=${_svg_source}"
+            "-DSYMBOL=kGt7HudSvg_${_svg_name}"
+            -P "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
+        DEPENDS "${_svg_input}" "${PROJECT_SOURCE_DIR}/cmake/MiniEngineEmbedFile.cmake"
+        COMMENT "Embedding gt7_hud/${_svg}.svg"
+        VERBATIM
+    )
+    target_sources(engine_editor PRIVATE "${_svg_source}")
+    source_group("Generated" FILES "${_svg_source}")
+endforeach()
 
 target_include_directories(engine_editor
     PUBLIC

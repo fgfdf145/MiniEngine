@@ -58,10 +58,15 @@ class SvgIcon
     // Exposed for tests: the path data `d` as subpaths.
     static std::vector<Subpath> ParsePathData(std::string_view data);
 
+    // An icon of paths read elsewhere (an SVG font's glyph); null without a drawable path.
+    static std::optional<SvgIcon> FromPaths(ImVec2 viewBoxMin, ImVec2 viewBoxSize, std::vector<Path> paths);
+
   private:
     ImVec2 m_viewBoxMin{0.0f, 0.0f};
     ImVec2 m_viewBoxSize{1.0f, 1.0f};
     std::vector<Path> m_paths;
-    mutable std::map<int, Mesh> m_meshes; // by height in quarter pixels
+    // By height in quarter pixels; emptied when it holds too many sizes (a viewport being resized
+    // draws a scaled HUD at a new size every frame).
+    mutable std::map<int, Mesh> m_meshes;
 };
 }

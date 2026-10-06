@@ -1,4 +1,5 @@
 #include "svg_icon.h"
+#include "svg_document.h"
 
 #include <algorithm>
 #include <cctype>
@@ -300,7 +301,10 @@ class PathBuilder
     bool m_open = false;
 };
 
-// The value of attribute `name` in the tag text `tag` ("<path d='...' ...>"), if present.
+}
+
+namespace svg
+{
 std::optional<std::string_view> Attribute(std::string_view tag, std::string_view name)
 {
     size_t search = 0;
@@ -345,7 +349,6 @@ std::optional<std::string_view> Attribute(std::string_view tag, std::string_view
     }
 }
 
-// The text of each element `<name ...>` in the document, up to its closing '>'.
 std::vector<std::string_view> Tags(std::string_view document, std::string_view name)
 {
     std::vector<std::string_view> tags;
@@ -373,6 +376,17 @@ std::vector<std::string_view> Tags(std::string_view document, std::string_view n
     }
     return tags;
 }
+
+bool ParseNumber(std::string_view text, float& value)
+{
+    return Scanner(text).Number(value);
+}
+}
+
+namespace
+{
+using svg::Attribute;
+using svg::Tags;
 
 // Drops the points where a closed outline goes straight on or turns straight back ("H448H64H448"
 // in some icon sets' paths): they add nothing to the fill, and the anti-aliasing outline would
@@ -732,12 +746,34 @@ std::optional<SvgIcon> SvgIcon::Parse(std::string_view svg)
     return icon;
 }
 
+std::optional<SvgIcon> SvgIcon::FromPaths(ImVec2 viewBoxMin, ImVec2 viewBoxSize, std::vector<Path> paths)
+{
+    std::erase_if(paths, [](const Path& path)
+                  {
+                      return path.subpaths.empty();
+                  });
+    if (paths.empty() || viewBoxSize.x <= 0.0f || viewBoxSize.y <= 0.0f)
+    {
+        return std::nullopt;
+    }
+    SvgIcon icon;
+    icon.m_viewBoxMin = viewBoxMin;
+    icon.m_viewBoxSize = viewBoxSize;
+    icon.m_paths = std::move(paths);
+    return icon;
+}
+
 const SvgIcon::Mesh& SvgIcon::MeshAt(float height) const
 {
     const int key = std::max(1, static_cast<int>(std::lround(height * 4.0f)));
     if (const auto found = m_meshes.find(key); found != m_meshes.end())
     {
         return found->second;
+    }
+    constexpr size_t kMaxCachedSizes = 24;
+    if (m_meshes.size() >= kMaxCachedSizes)
+    {
+        m_meshes.clear();
     }
 
     const float scale = (static_cast<float>(key) * 0.25f) / m_viewBoxSize.y;
