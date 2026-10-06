@@ -108,9 +108,12 @@ class VulkanRayScene
     bool HasFinishedBuild() const;
     void InstallBuild();
 
-    // This frame's instances: models is parallel to the submeshes of the installed content, moving
+    // This frame's instances: models is parallel to the submeshes of the last SetContent, moving
     // flags the instances probe rays leave out and visibility rays still see (kRayInstanceDynamic).
-    // Writes the frame slot's instance and top-level buffers.
+    // While a newer content builds, the installed one keeps tracing: each of its submeshes follows the
+    // newer content's submesh with the same draw slot and mesh, and rays skip the ones it no longer
+    // holds (what it added casts nothing until it installs). Writes the frame slot's instance and
+    // top-level buffers.
     void UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> moving);
 
     // Averages the ray materials when content changed; builds the acceleration structures new content
@@ -259,6 +262,14 @@ class VulkanRayScene
     std::vector<uint64_t> m_slotGenerations;
     std::vector<uint32_t> m_submeshMeshes;
     std::vector<uint8_t> m_installedBlend;
+    // The installed content's submeshes, and for each the index of the same submesh in m_submeshes
+    // (kNoSubmesh when the content after it dropped it).
+    static constexpr uint32_t kNoSubmesh = ~0u;
+    std::vector<RaySceneSubmesh> m_installedSubmeshes;
+    std::vector<uint32_t> m_installedToCurrent;
+    // Each installed submesh's last model matrix: a dropped one stays where it was, skipped.
+    std::vector<glm::mat4> m_installedModels;
+    void MapInstalledSubmeshes();
     // How many mesh nodes and triangles the installed build's buffers hold.
     size_t m_meshNodeCount = 0;
     size_t m_meshTriangleCount = 0;

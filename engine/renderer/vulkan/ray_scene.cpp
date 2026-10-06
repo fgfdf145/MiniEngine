@@ -189,7 +189,9 @@ void VulkanRayScene::SetContent(
     {
         m_staleBuilds.push_back(std::move(m_pendingBuild));
     }
-    m_ready = false;
+    // The installed content stays traceable meanwhile (UpdateInstances): streaming changes the content
+    // every few seconds, and every effect falling back to its raster version (DDGI to none) until each
+    // build installs made the shadows and the indirect light flicker.
 
     // Slots that lost their submesh give their sets back; a slot placed again below gets a new one.
     for (const uint32_t index : released)
@@ -332,6 +334,7 @@ void VulkanRayScene::SetContent(
     }
 
     m_submeshes = std::move(submeshes);
+    MapInstalledSubmeshes();
     WriteSets();
 
     // What the hardware may treat as opaque: the materials whose coverage the averaging sets to 1.
@@ -508,6 +511,11 @@ void VulkanRayScene::InstallBuild()
     DropFinishedStaleBuilds();
     m_submeshMeshes = std::move(build.submeshMeshes);
     m_installedBlend = std::move(build.blend);
+    // Only the build of the last SetContent installs (the others are stale), so its submeshes are
+    // m_submeshes.
+    m_installedSubmeshes = m_submeshes;
+    m_installedModels.assign(m_installedSubmeshes.size(), glm::mat4(1.0f));
+    MapInstalledSubmeshes();
     // The old content goes off the frame's thread, as a superseded build does.
     Build previous;
     previous.scene = std::move(m_scene);
@@ -565,23 +573,55 @@ void VulkanRayScene::InstallBuild()
     m_ready = true;
 }
 
+void VulkanRayScene::MapInstalledSubmeshes()
+{
+    // A draw slot holds one submesh at a time; the same slot with the same mesh is the same draw.
+    std::vector<uint32_t> currentBySlot(m_materialCapacity, kNoSubmesh);
+    for (uint32_t index = 0; index < static_cast<uint32_t>(m_submeshes.size()); ++index)
+    {
+        if (m_submeshes[index].slot < currentBySlot.size())
+        {
+            currentBySlot[m_submeshes[index].slot] = index;
+        }
+    }
+    m_installedToCurrent.assign(m_installedSubmeshes.size(), kNoSubmesh);
+    for (size_t index = 0; index < m_installedSubmeshes.size(); ++index)
+    {
+        const RaySceneSubmesh& installed = m_installedSubmeshes[index];
+        if (installed.slot < currentBySlot.size())
+        {
+            const uint32_t current = currentBySlot[installed.slot];
+            if (current != kNoSubmesh && m_submeshes[current].mesh == installed.mesh)
+            {
+                m_installedToCurrent[index] = current;
+            }
+        }
+    }
+}
+
 void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> movingInstances)
 {
-    if (!m_ready || models.size() != m_submeshMeshes.size())
+    if (!m_ready || models.size() != m_submeshes.size() || m_installedToCurrent.size() != m_submeshMeshes.size())
     {
         return;
     }
     std::vector<RayInstanceInput> inputs;
-    inputs.reserve(models.size());
-    for (uint32_t index = 0; index < static_cast<uint32_t>(models.size()); ++index)
+    inputs.reserve(m_submeshMeshes.size());
+    for (uint32_t index = 0; index < static_cast<uint32_t>(m_submeshMeshes.size()); ++index)
     {
+        const uint32_t current = m_installedToCurrent[index];
         // Blend surfaces are decals laid over others (New Sponza's dirt) or glass: thin layers that
         // add little to the light between surfaces, and that a coverage decision per ray turns into
-        // noise on everything they lie on. Rays pass through them.
+        // noise on everything they lie on. Rays pass through them. So do submeshes streamed out since
+        // this content installed.
         const bool blend = index < m_installedBlend.size() && m_installedBlend[index] != 0;
-        const bool moving = index < movingInstances.size() && movingInstances[index] != 0;
-        const uint32_t flags = blend ? kRayInstanceSkip : moving ? kRayInstanceDynamic : 0u;
-        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], models[index], m_submeshes[index].slot, flags});
+        const bool moving = current != kNoSubmesh && current < movingInstances.size() && movingInstances[current] != 0;
+        const uint32_t flags = blend || current == kNoSubmesh ? kRayInstanceSkip : moving ? kRayInstanceDynamic : 0u;
+        if (current != kNoSubmesh)
+        {
+            m_installedModels[index] = models[current];
+        }
+        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], m_installedModels[index], m_installedSubmeshes[index].slot, flags});
     }
     // Rebuilt only where something moved (IncrementalTopLevel), and copied to a frame slot only when the
     // slot holds an older one.
