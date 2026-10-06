@@ -429,29 +429,24 @@ float StaticWheelLoad(const VehicleSettings& settings, bool front)
     return 0.5f * std::max(settings.massKg, 1.0f) * 9.81f * (front ? frontShare : 1.0f - frontShare);
 }
 
-// A wheel's brush tyre from its axle's tyre figures: the peak grip at the load it carries standing
-// still (a road tyre's 1.1 without data), the slip angle of the lateral peak (7 degrees without), the
-// share of grip left well past the peak, the wheel's size and the axle's tyre rate.
+// A wheel's brush tyre from its axle's tyre figures: the peak grip along and across the wheel at the load
+// it carries standing still (a road tyre's 1.1 without data; one alone stands for both), the slip angle of
+// the lateral peak (7 degrees without) and the slip ratio of the longitudinal one, the share of grip left
+// well past the peak, the wheel's size and the axle's tyre rate.
 tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settings, size_t index)
 {
     const bool front = index < 2;
     const VehicleTyreSettings& tyres = front ? settings.frontTyres : settings.rearTyres;
     const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
     const VehicleWheelGeometry mount = GetVehicleWheelMount(settings, index);
-    double grip = 1.1;
-    if (tyres.longitudinalGrip > 0.0f && tyres.lateralGrip > 0.0f)
-    {
-        // The bristles share one friction coefficient: the two directions' mean.
-        grip = 0.5 * (tyres.longitudinalGrip + tyres.lateralGrip);
-    }
-    else if (tyres.lateralGrip > 0.0f || tyres.longitudinalGrip > 0.0f)
-    {
-        grip = std::max(tyres.lateralGrip, tyres.longitudinalGrip);
-    }
+    const double lateralGrip = tyres.lateralGrip > 0.0f ? tyres.lateralGrip : (tyres.longitudinalGrip > 0.0f ? tyres.longitudinalGrip : 1.1);
+    const double longitudinalGrip = tyres.longitudinalGrip > 0.0f ? tyres.longitudinalGrip : lateralGrip;
     tyre::BrushTyreFigures figures;
-    figures.peakFriction = grip;
+    figures.peakFriction = lateralGrip;
+    figures.longitudinalPeakFriction = longitudinalGrip;
     figures.referenceLoad = StaticWheelLoad(settings, front);
     figures.peakSlipAngle = (tyres.peakSlipAngleDegrees > 0.0f ? tyres.peakSlipAngleDegrees : 7.0f) * std::numbers::pi / 180.0;
+    figures.peakSlipRatio = tyres.peakSlipRatio;
     figures.kineticShare = tyres.postPeakShare > 0.0f ? tyres.postPeakShare : 0.85f;
     figures.radius = std::max(mount.radius, 0.05f);
     figures.sectionWidth = std::max(mount.width, 0.05f);
@@ -462,9 +457,13 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     figures.longitudinalStiffnessRatio = tyres.longitudinalStiffnessRatio;
     tyre::BrushTyreParameters parameters = tyre::MakeBrushTyreParameters(figures);
     // The data's load sensitivity; the bristles are fitted at the static load, where it changes nothing.
-    if (tyres.loadExponent > 0.0f)
+    if (tyres.longitudinalLoadExponent > 0.0f)
     {
-        parameters.loadExponent = tyres.loadExponent;
+        parameters.loadExponent[0] = tyres.longitudinalLoadExponent;
+    }
+    if (tyres.lateralLoadExponent > 0.0f)
+    {
+        parameters.loadExponent[1] = tyres.lateralLoadExponent;
     }
     if (settings.brushTyreRibs > 0)
     {
@@ -798,6 +797,8 @@ struct PhysicsWorld::Impl
             bool contact = false;
         };
         std::array<BrushWheel, kVehicleWheelCount> brushWheels{};
+        // The turns the physics engine left out (ApplyDroppedRotation), rad about world axes.
+        std::array<double, 3> droppedRotation{};
     };
 
     void BuildCorners(Vehicle& vehicle) const
@@ -1439,12 +1440,14 @@ struct PhysicsWorld::Impl
             }
             if (wheel.inContact)
             {
-                float hold = wheel.longitudinalPeakFriction * std::max(wheel.suspensionForce, 0.0f);
+                const float load = std::max(wheel.suspensionForce, 0.0f);
+                float hold = wheel.longitudinalPeakFriction * load;
                 if (wheel.brushTyre)
                 {
-                    // The brush tyre shares one friction circle between the two directions: what
+                    // The brush tyre shares one friction ellipse between the two directions: what
                     // cornering takes is not there for the drive.
-                    hold = std::sqrt(std::max(hold * hold - wheel.lateralForce * wheel.lateralForce, 0.0f));
+                    const float cornering = wheel.lateralPeakFriction * load > 0.0f ? wheel.lateralForce / (wheel.lateralPeakFriction * load) : 1.0f;
+                    hold *= std::sqrt(std::max(1.0f - cornering * cornering, 0.0f));
                     brush = true;
                     worstSlip = std::max(worstSlip, (std::abs(wheel.angularVelocity) * wheel.radius - carSpeed) / std::max(carSpeed, 3.0f));
                 }
@@ -1626,9 +1629,254 @@ struct PhysicsWorld::Impl
         }
     }
 
+    // The normal forces the wheels' suspensions will push with in the coming step, as the physics engine's
+    // solver finds them (VehicleConstraint::SetupVelocityConstraint, solved to convergence). Each spring is
+    // a soft constraint (Catto, "Soft constraints", GDC 2011), implicit in the step:
+    //
+    //   F_i = k_i x_i + (c_i + dt k_i)(v_i - b_i - dt sum_j W_ij F_j),
+    //
+    // with x the spring's compression at the length the step's collision just found, b the anti-roll bar's
+    // bias, v the closing speed along the contact normal once the step has pulled the body by gravity and
+    // the forces on it (the other parts' already added, the tyres' as they pushed in the last step) and W
+    // the body's inverse mass matrix between the force points along their normals, through which the four
+    // springs push on one another. The four equations are solved together, a spring that would pull let go.
+    // The last step's impulse instead is a step old; it stands in where the solver will also push the wheel
+    // against its bump stop, which cannot be foretold, and wherever the ground cannot be read.
+    std::array<float, kVehicleWheelCount> PredictSuspensionForces(const Vehicle& vehicle, const JPH::VehicleConstraint& constraint,
+                                                                  const JPH::PhysicsStepListenerContext& context) const
+    {
+        const float dt = context.mDeltaTime;
+        const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+        const size_t count = std::min<size_t>(wheels.size(), kVehicleWheelCount);
+        std::array<float, kVehicleWheelCount> loads{};
+        for (size_t index = 0; index < count; ++index)
+        {
+            loads[index] = wheels[index]->HasContact() ? std::max(wheels[index]->GetSuspensionLambda() / dt, 0.0f) : 0.0f;
+        }
+        const JPH::Body& body = *constraint.GetVehicleBody();
+        if (!body.IsDynamic())
+        {
+            return loads;
+        }
+        const JPH::RMat44 transform = body.GetWorldTransform();
+        const JPH::RVec3 com = body.GetCenterOfMassPosition();
+        const JPH::MotionProperties& motion = *body.GetMotionProperties();
+        const JPH::Mat44 inverseInertia = body.GetInverseInertia();
+        const float inverseMass = motion.GetInverseMass();
+
+        // The body's velocity once the step has applied gravity and the forces on it, as the solver starts.
+        JPH::Vec3 force = body.GetAccumulatedForce();
+        JPH::Vec3 torque = body.GetAccumulatedTorque();
+        for (size_t index = 0; index < count && index < vehicle.brushTyres.size(); ++index)
+        {
+            const Vehicle::BrushWheel& last = vehicle.brushWheels[index];
+            if (last.contact && wheels[index]->HasContact())
+            {
+                force += last.force;
+                torque += JPH::Vec3(wheels[index]->GetContactPosition() - com).Cross(last.force) + wheels[index]->GetContactNormal() * static_cast<float>(last.out.Mz);
+            }
+        }
+        const JPH::Vec3 linear = body.GetLinearVelocity() + (context.mPhysicsSystem->GetGravity() * motion.GetGravityFactor() + force * inverseMass) * dt;
+        const JPH::Vec3 angular = body.GetAngularVelocity() + inverseInertia.Multiply3x3(torque) * dt;
+
+        // A spring off the ground pushes nothing; one whose force is known (the last step's) or let go
+        // (nothing) still pushes on the others through the body; the rest are solved for.
+        enum class Push
+        {
+            None,
+            Known,
+            Solved,
+        };
+        struct Spring
+        {
+            Push push = Push::None;
+            JPH::Vec3 normal, arm; // the contact normal and the force point's arm about the centre of mass
+            float soft = 0.0f, inverseGround = 0.0f, rightSide = 0.0f;
+        };
+        std::array<Spring, kVehicleWheelCount> springs{};
+        for (size_t index = 0; index < count; ++index)
+        {
+            const JPH::Wheel& wheel = *wheels[index];
+            const JPH::WheelSettings& settings = *wheel.GetSettings();
+            if (!wheel.HasContact())
+            {
+                continue;
+            }
+            Spring& spring = springs[index];
+            spring.push = Push::Known;
+            spring.normal = wheel.GetContactNormal();
+            const JPH::RVec3 point = settings.mEnableSuspensionForcePoint ? transform * settings.mSuspensionForcePoint : wheel.GetContactPosition();
+            spring.arm = JPH::Vec3(point - com);
+            if (!(settings.mSuspensionMaxLength > settings.mSuspensionMinLength) || wheel.GetSuspensionLength() < settings.mSuspensionMinLength)
+            {
+                continue;
+            }
+
+            float stiffness = settings.mSuspensionSpring.mStiffness;
+            float damping = settings.mSuspensionSpring.mDamping;
+            if (settings.mSuspensionSpring.mMode == JPH::ESpringMode::FrequencyAndDamping)
+            {
+                const JPH::Vec3 forcePoint = settings.mEnableSuspensionForcePoint
+                                                 ? settings.mSuspensionForcePoint
+                                                 : settings.mPosition + 0.5f * (settings.mSuspensionMinLength + settings.mSuspensionMaxLength) * settings.mSuspensionDirection;
+                const JPH::Vec3 arm = forcePoint.Cross(-constraint.GetLocalUp());
+                const float mass = 1.0f / (inverseMass + arm.Dot(motion.GetLocalSpaceInverseInertia().Multiply3x3(arm)));
+                const float omega = 2.0f * JPH::JPH_PI * settings.mSuspensionSpring.mFrequency;
+                stiffness = mass * omega * omega;
+                damping = 2.0f * mass * settings.mSuspensionSpring.mDamping * omega;
+            }
+            const float cosine = std::max(0.1f, transform.Multiply3x3(settings.mSuspensionDirection).Dot(-spring.normal));
+            stiffness /= cosine;
+            damping /= cosine;
+            if (!(stiffness > 0.0f))
+            {
+                continue;
+            }
+            spring.soft = damping + dt * stiffness;
+
+            // The ground's velocity at the point and, when it moves, its own give.
+            JPH::Vec3 groundVelocity = wheel.GetContactPointVelocity();
+            {
+                JPH::BodyLockRead lock(context.mPhysicsSystem->GetBodyLockInterfaceNoLock(), wheel.GetContactBodyID());
+                if (!lock.Succeeded())
+                {
+                    continue;
+                }
+                const JPH::Body& ground = lock.GetBody();
+                groundVelocity = ground.GetPointVelocity(point);
+                if (ground.IsDynamic())
+                {
+                    const JPH::Vec3 groundArm = JPH::Vec3(point - ground.GetCenterOfMassPosition()).Cross(spring.normal);
+                    spring.inverseGround = ground.GetMotionProperties()->GetInverseMass() + groundArm.Dot(ground.GetInverseInertia().Multiply3x3(groundArm));
+                }
+            }
+            const float closing = -spring.normal.Dot(linear + angular.Cross(spring.arm) - groundVelocity);
+
+            // The anti-roll bar's bias, as the physics engine is about to set it from the two wheels' lengths.
+            float bias = 0.0f;
+            for (const JPH::VehicleAntiRollBar& bar : constraint.GetAntiRollBars())
+            {
+                if (bar.mLeftWheel != index && bar.mRightWheel != index)
+                {
+                    continue;
+                }
+                const JPH::Wheel& left = *wheels[bar.mLeftWheel];
+                const JPH::Wheel& right = *wheels[bar.mRightWheel];
+                if (left.HasContact() && right.HasContact())
+                {
+                    const float impulse = (right.GetSuspensionLength() - left.GetSuspensionLength()) * bar.mStiffness * dt;
+                    bias += bar.mLeftWheel == index ? -impulse : impulse;
+                }
+            }
+            const float compression = settings.mSuspensionMaxLength + settings.mSuspensionPreloadLength - wheel.GetSuspensionLength();
+            spring.rightSide = stiffness * compression + spring.soft * (closing - bias);
+            spring.push = Push::Solved;
+        }
+
+        // The body's inverse mass between two springs' force points along their normals.
+        const auto coupling = [&](const Spring& a, const Spring& b)
+        {
+            const JPH::Vec3 armA = a.arm.Cross(a.normal);
+            const JPH::Vec3 armB = b.arm.Cross(b.normal);
+            return inverseMass * a.normal.Dot(b.normal) + armA.Dot(inverseInertia.Multiply3x3(armB));
+        };
+        // (1 + dt soft_i W_ii) F_i + dt soft_i sum_j W_ij F_j = right side, springs that would pull let go
+        // and the rest solved again.
+        for (int round = 0; round < static_cast<int>(kVehicleWheelCount); ++round)
+        {
+            std::array<size_t, kVehicleWheelCount> unknown{};
+            size_t n = 0;
+            for (size_t index = 0; index < count; ++index)
+            {
+                if (springs[index].push == Push::Solved)
+                {
+                    unknown[n++] = index;
+                }
+            }
+            if (n == 0)
+            {
+                break;
+            }
+            std::array<std::array<double, kVehicleWheelCount + 1>, kVehicleWheelCount> m{};
+            for (size_t r = 0; r < n; ++r)
+            {
+                const Spring& a = springs[unknown[r]];
+                const double scale = static_cast<double>(dt) * a.soft;
+                double right = a.rightSide;
+                for (size_t index = 0; index < count; ++index)
+                {
+                    if (springs[index].push == Push::Known)
+                    {
+                        right -= scale * coupling(a, springs[index]) * loads[index];
+                    }
+                }
+                for (size_t c = 0; c < n; ++c)
+                {
+                    const Spring& b = springs[unknown[c]];
+                    m[r][c] = scale * (coupling(a, b) + (r == c ? a.inverseGround : 0.0f)) + (r == c ? 1.0 : 0.0);
+                }
+                m[r][n] = right;
+            }
+            // Gaussian elimination with partial pivoting.
+            for (size_t col = 0; col < n; ++col)
+            {
+                size_t pivot = col;
+                for (size_t r = col + 1; r < n; ++r)
+                {
+                    if (std::abs(m[r][col]) > std::abs(m[pivot][col]))
+                    {
+                        pivot = r;
+                    }
+                }
+                std::swap(m[col], m[pivot]);
+                if (!(std::abs(m[col][col]) > 1e-12))
+                {
+                    return loads;
+                }
+                for (size_t r = col + 1; r < n; ++r)
+                {
+                    const double factor = m[r][col] / m[col][col];
+                    for (size_t c = col; c <= n; ++c)
+                    {
+                        m[r][c] -= factor * m[col][c];
+                    }
+                }
+            }
+            std::array<double, kVehicleWheelCount> solution{};
+            for (size_t r = n; r-- > 0;)
+            {
+                double value = m[r][n];
+                for (size_t c = r + 1; c < n; ++c)
+                {
+                    value -= m[r][c] * solution[c];
+                }
+                solution[r] = value / m[r][r];
+            }
+            bool pulling = false;
+            for (size_t r = 0; r < n; ++r)
+            {
+                if (solution[r] < 0.0)
+                {
+                    springs[unknown[r]].push = Push::Known; // let go, at nothing
+                    loads[unknown[r]] = 0.0f;
+                    pulling = true;
+                }
+                else
+                {
+                    loads[unknown[r]] = static_cast<float>(solution[r]);
+                }
+            }
+            if (!pulling)
+            {
+                break;
+            }
+        }
+        return loads;
+    }
+
     // The brush tyres, called by the vehicle constraint once it has found the ground and before the
     // controller turns the engine and brakes the wheels. Each tyre reads the wheel's motion over the
-    // ground in the contact frame, the load the suspension carried in the last step and the camber to
+    // ground in the contact frame, the load the suspension will carry in this step and the camber to
     // the road, steps its carcass, and puts the road's force and aligning moment on the body at the
     // contact and the force's moment about the axle on the wheel's spin. The physics engine's own tyre
     // friction is off (its impulse limits are zero).
@@ -1643,6 +1891,8 @@ struct PhysicsWorld::Impl
         JPH::BodyInterface& bodies = context.mPhysicsSystem->GetBodyInterfaceNoLock();
         const JPH::Quat rotation = body.GetRotation();
         const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+        // All four loads before any tyre pushes: each spring's depends on the others' through the body.
+        const std::array<float, kVehicleWheelCount> loads = PredictSuspensionForces(vehicle, constraint, context);
         for (size_t index = 0; index < vehicle.brushTyres.size() && index < wheels.size(); ++index)
         {
             auto& wheel = *static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
@@ -1663,7 +1913,7 @@ struct PhysicsWorld::Impl
             in.forwardVelocity = velocity.Dot(longitudinal);
             in.lateralVelocity = velocity.Dot(left);
             in.yawRate = body.GetAngularVelocity().Dot(normal);
-            in.load = std::max(wheel.GetSuspensionLambda() / dt, 0.0f);
+            in.load = index < loads.size() ? loads[index] : std::max(wheel.GetSuspensionLambda() / dt, 0.0f);
             // Camber to the road from the wheel's axle (its right, steered): positive top right.
             JPH::Vec3 forward, up, right;
             constraint.GetWheelLocalBasis(&wheel, forward, up, right);
@@ -1689,6 +1939,41 @@ struct PhysicsWorld::Impl
             state.load = static_cast<float>(in.load);
             state.contact = true;
         }
+    }
+
+    // The physics engine does not turn a body through a step's rotation of 1e-6 rad or less
+    // (Body::AddRotationStep), so at the 1 ms step a car turning slower than 1e-3 rad/s never turns while it
+    // still moves. Standing braked on a slope the car then rolled over its tyres as a ball would: their
+    // contacts stood still (the body turning about them) and the tyres held nothing back, while the turn
+    // never came and the whole car moved up the slope instead, 0.2 mm/s. The turns left out are summed
+    // here and made about the centre of mass, as the physics engine would, once they add up past its limit.
+    void ApplyDroppedRotation(Vehicle& vehicle)
+    {
+        constexpr float kSmallestTurn = 1.0e-6f;
+        const JPH::Body& body = *vehicle.body;
+        if (!body.IsActive())
+        {
+            return;
+        }
+        const JPH::Vec3 turn = body.GetAngularVelocity() * kFixedStepSeconds;
+        if (turn.Length() > kSmallestTurn)
+        {
+            return;
+        }
+        std::array<double, 3>& dropped = vehicle.droppedRotation;
+        dropped[0] += turn.GetX();
+        dropped[1] += turn.GetY();
+        dropped[2] += turn.GetZ();
+        const double angle = std::sqrt(dropped[0] * dropped[0] + dropped[1] * dropped[1] + dropped[2] * dropped[2]);
+        if (angle <= kSmallestTurn)
+        {
+            return;
+        }
+        const JPH::Vec3 axis(static_cast<float>(dropped[0] / angle), static_cast<float>(dropped[1] / angle), static_cast<float>(dropped[2] / angle));
+        const JPH::Quat rotation = (JPH::Quat::sRotation(axis, static_cast<float>(angle)) * body.GetRotation()).Normalized();
+        const JPH::RVec3 origin = body.GetCenterOfMassPosition() - rotation * body.GetShape()->GetCenterOfMass();
+        physicsSystem.GetBodyInterface().SetPositionAndRotation(body.GetID(), origin, rotation, JPH::EActivation::DontActivate);
+        dropped = {};
     }
 
     // The turbos' boost follows the steady level the revs and throttle ask of each, by the game's lag (a
@@ -2018,6 +2303,7 @@ struct PhysicsWorld::Impl
                         state.brushRibs[static_cast<size_t>(rib)] = {static_cast<float>(contact.y), static_cast<float>(contact.length), static_cast<float>(contact.stuckLength)};
                     }
                     const float load = std::max(brush.load, 1.0f);
+                    state.tyreLoad = brush.load;
                     state.longitudinalForce = static_cast<float>(brush.out.Fx);
                     state.lateralForce = static_cast<float>(-brush.out.Fy);
                     state.aligningTorque = static_cast<float>(brush.out.Mz);
@@ -2026,8 +2312,8 @@ struct PhysicsWorld::Impl
                     state.slipAngleDegrees = static_cast<float>(brush.out.slipAngle * 180.0 / std::numbers::pi);
                     state.longitudinalFriction = static_cast<float>(std::abs(brush.out.Fx)) / load;
                     state.lateralFriction = static_cast<float>(std::abs(brush.out.Fy)) / load;
-                    state.longitudinalPeakFriction = static_cast<float>(brush.out.peakFriction);
-                    state.lateralPeakFriction = static_cast<float>(brush.out.peakFriction);
+                    state.longitudinalPeakFriction = static_cast<float>(brush.out.peakFrictionX);
+                    state.lateralPeakFriction = static_cast<float>(brush.out.peakFrictionY);
                 }
             }
             snapshot.wheels.push_back(state);
@@ -2688,6 +2974,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
 
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
+            impl.ApplyDroppedRotation(vehicle);
             vehicle.previous = std::move(vehicle.current);
             vehicle.current = impl.Capture(vehicle);
         }

@@ -431,8 +431,8 @@ void TestBrushRelaxesOverTheGivenLength()
         const double lateral = RelaxationDistance(p, 4200.0, true);
         const double longitudinal = RelaxationDistance(p, 4200.0, false);
         std::cout << "  brush: relaxation length " << length << " m asked, " << lateral << " m sideways, " << longitudinal << " m fore and aft\n";
-        RequireNear(lateral, length, 0.25 * length, "sideways relaxation length");
-        RequireNear(longitudinal, length, 0.25 * length, "fore-aft relaxation length");
+        RequireNear(lateral, length, 0.03 * length, "sideways relaxation length");
+        RequireNear(longitudinal, length, 0.03 * length, "fore-aft relaxation length");
     }
 }
 
@@ -448,7 +448,7 @@ void TestRigidBrushMatchesTheClosedForm()
     p.pressureConvexity = 12.0;
     p.pressureShift = 0.0;
     p.kineticShare = 1.0;
-    p.loadExponent = 1.0;
+    p.loadExponent = {1.0, 1.0};
     p.lowSpeed = 1e-4;
     p.carcassStiffness = {1e12, 1e12, 1e12};
     p.camberSpinShare = 0.0;
@@ -456,12 +456,12 @@ void TestRigidBrushMatchesTheClosedForm()
     const double load = 4000.0;
     const double deflection = load / p.verticalRate;
     const double a = std::sqrt((2.0 * (p.unloadedRadius - p.transitionRadius) - deflection) * deflection);
-    const double theta = 2.0 * p.bristleStiffnessY * p.width * a * a / (3.0 * p.staticFriction * load);
+    const double theta = 2.0 * p.bristleStiffnessY * p.width * a * a / (3.0 * p.staticFriction[1] * load);
     const auto closed = [&](double s)
     {
         const double ts = std::min(std::abs(theta * s), 1.0);
         const double f = std::abs(theta * s) >= 1.0 ? 1.0 : 3.0 * ts * (1.0 - ts + ts * ts / 3.0);
-        return p.staticFriction * load * f;
+        return p.staticFriction[1] * load * f;
     };
     for (double degrees : {0.5, 1.0, 2.0, 3.0, 5.0, 10.0})
     {
@@ -476,22 +476,29 @@ void TestRigidBrushMatchesTheClosedForm()
     }
 }
 
-// The road's force never passes the friction circle, whatever the slips (local friction is at most mu_s).
-void TestBrushStaysInsideTheFrictionCircle()
+// The road's force never passes the friction ellipse, whatever the slips (local friction is at most mu_s
+// each way), on a tyre with one friction and on one gripping more along the wheel than across it.
+void TestBrushStaysInsideTheFrictionEllipse()
 {
-    const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
-    const BrushTyre tyre(p);
-    for (double slip : {-0.6, -0.15, -0.04, 0.0, 0.03, 0.1, 0.5})
+    BrushTyreFigures figures = Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0);
+    for (double along : {0.0, 1.3})
     {
-        for (double degrees : {-20.0, -6.0, -1.0, 0.0, 2.0, 8.0, 25.0})
+        figures.longitudinalPeakFriction = along;
+        const BrushTyreParameters p = MakeBrushTyreParameters(figures);
+        const BrushTyre tyre(p);
+        for (double slip : {-0.6, -0.15, -0.04, 0.0, 0.03, 0.1, 0.5})
         {
-            for (double camber : {-3.0, 0.0, 4.0})
+            for (double degrees : {-20.0, -6.0, -1.0, 0.0, 2.0, 8.0, 25.0})
             {
-                BrushTyreInput in = Rolling(p, 4000.0, degrees * kDeg, slip);
-                in.camber = camber * kDeg;
-                const BrushTyreOutput o = tyre.Steady(in);
-                Require(o.converged, "steady balance converges at slip " + std::to_string(slip) + ", " + std::to_string(degrees) + " deg");
-                Require(std::hypot(o.Fx, o.Fy) <= o.peakFriction * 4000.0 * 1.001, "inside the friction circle at slip " + std::to_string(slip) + ", " + std::to_string(degrees) + " deg");
+                for (double camber : {-3.0, 0.0, 4.0})
+                {
+                    BrushTyreInput in = Rolling(p, 4000.0, degrees * kDeg, slip);
+                    in.camber = camber * kDeg;
+                    const BrushTyreOutput o = tyre.Steady(in);
+                    Require(o.converged, "steady balance converges at slip " + std::to_string(slip) + ", " + std::to_string(degrees) + " deg");
+                    Require(std::hypot(o.Fx / o.peakFrictionX, o.Fy / o.peakFrictionY) <= 4000.0 * 1.001,
+                            "inside the friction ellipse at slip " + std::to_string(slip) + ", " + std::to_string(degrees) + " deg");
+                }
             }
         }
     }
@@ -568,7 +575,7 @@ void TestBrushForceBuildsOverItsRelaxationLength()
         const BrushTyreOutput o = tyre.Step(in, 1e-3);
         evaluations += o.evaluations;
         Require(o.converged, "each step's balance converges");
-        Require(std::abs(o.Fy) >= std::abs(previous) - 1e-6, "the force builds without overshoot");
+        Require(std::abs(o.Fy) >= std::abs(previous) - 1e-5 * std::abs(steady), "the force builds without overshoot");
         if (step == 1)
         {
             Require(std::abs(o.Fy) < 0.2 * std::abs(steady), "not all at once: first millisecond " + std::to_string(o.Fy / steady));
@@ -584,8 +591,9 @@ void TestBrushForceBuildsOverItsRelaxationLength()
     Require(distanceTo63 > 0.02 && distanceTo63 < 0.6, "a relaxation length of centimetres to decimetres, got " + std::to_string(distanceTo63) + " m");
 }
 
-// Standing still the tyre makes no force and does not drift; pushed a little it holds like a spring and
-// lets go slowly (the low-speed creep), staying within friction, finite and balanced.
+// Standing still the tyre makes no force and does not drift. Pushed a few millimetres it holds like a
+// spring within friction, and held there it keeps holding: the bristles keep their bend, so nothing
+// creeps. Pushed on past friction it slides and, stopped, holds what friction leaves.
 void TestBrushStandsAndHolds()
 {
     const BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0));
@@ -606,16 +614,126 @@ void TestBrushStandsAndHolds()
         const BrushTyreOutput o = tyre.Step(pushed, 1e-3);
         Require(std::isfinite(o.Fx) && std::isfinite(o.Fy), "finite");
         most = std::max(most, std::hypot(o.Fx, o.Fy));
-        Require(std::hypot(o.Fx, o.Fy) <= o.peakFriction * 4000.0 * 1.001, "within friction while pushed");
+        Require(std::hypot(o.Fx / o.peakFrictionX, o.Fy / o.peakFrictionY) <= 4000.0 * 1.001, "within friction while pushed");
     }
     Require(most > 500.0, "a 5 mm push is held by a spring's force, got " + std::to_string(most) + " N");
-    Require(tyre.Step(pushed, 1e-3).Fx < 0.0, "the force resists the push");
-    double last = most;
+    const BrushTyreOutput held = tyre.Step(still, 1e-3);
+    Require(held.Fx < 0.0 && held.Fy < 0.0, "the force resists the push");
+    BrushTyreOutput later = held;
     for (int step = 0; step < 3000; ++step)
     {
-        last = std::hypot(tyre.Step(still, 1e-3).Fx, tyre.Step(still, 1e-3).Fy);
+        later = tyre.Step(still, 1e-3);
     }
-    Require(last < 0.2 * most, "let go, the carcass creeps back: " + std::to_string(last) + " N left");
+    std::cout << "  brush: held after a 5 mm push " << std::hypot(held.Fx, held.Fy) << " N, 3 s later " << std::hypot(later.Fx, later.Fy) << " N\n";
+    RequireNear(std::hypot(later.Fx, later.Fy), std::hypot(held.Fx, held.Fy), 0.05 * std::hypot(held.Fx, held.Fy), "held still, the force stays: no creep");
+
+    // Dragged 10 cm sideways the tread slides at friction; stopped, it holds no more than friction.
+    BrushTyreInput dragged = still;
+    dragged.lateralVelocity = 0.2;
+    BrushTyreOutput sliding;
+    for (int step = 0; step < 500; ++step)
+    {
+        sliding = tyre.Step(dragged, 1e-3);
+    }
+    Require(sliding.slidingShare > 0.9, "dragged, the tread slides: " + std::to_string(sliding.slidingShare));
+    RequireNear(-sliding.Fy, sliding.peakFrictionY * 4000.0, 0.1 * sliding.peakFrictionY * 4000.0, "at about friction");
+    BrushTyreOutput stopped;
+    for (int step = 0; step < 1000; ++step)
+    {
+        stopped = tyre.Step(still, 1e-3);
+    }
+    Require(std::hypot(stopped.Fx / stopped.peakFrictionX, stopped.Fy / stopped.peakFrictionY) <= 4000.0 * 1.001, "stopped, within friction");
+    Require(-stopped.Fy > 0.5 * stopped.peakFrictionY * 4000.0, "and still holding what the slide bent: " + std::to_string(stopped.Fy));
+}
+
+// Friction along the wheel apart from across it: without any fall from sliding, the tread sliding
+// throughout pushes with each friction along its own axis, and on the ellipse between them.
+void TestBrushGripsEachWayItsOwn()
+{
+    BrushTyreFigures figures = Figures(1.0, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0);
+    figures.longitudinalPeakFriction = 1.3;
+    figures.kineticShare = 1.0;
+    figures.longitudinalStiffnessRatio = 1.0;
+    BrushTyreParameters p = MakeBrushTyreParameters(figures);
+    p.loadExponent = {1.0, 1.0};
+    const BrushTyre tyre(p);
+    const BrushTyreOutput along = tyre.Steady(Rolling(p, 4000.0, 0.0, 0.5));
+    const BrushTyreOutput across = tyre.Steady(Rolling(p, 4000.0, 25.0 * kDeg));
+    BrushTyreInput both = Rolling(p, 4000.0, 0.0, 0.3);
+    both.lateralVelocity = 0.5 * (both.wheelSpeed * (p.unloadedRadius - 4000.0 / p.verticalRate / 3.0) - both.forwardVelocity);
+    const BrushTyreOutput combined = tyre.Steady(both);
+    std::cout << "  brush: mu 1.3 along, 1.0 across: sliding Fx/Fz " << along.Fx / 4000.0 << ", Fy/Fz " << -across.Fy / 4000.0 << ", combined on the ellipse at "
+              << std::hypot(combined.Fx / 1.3, combined.Fy / 1.0) / 4000.0 << "\n";
+    RequireNear(along.Fx, 1.3 * 4000.0, 0.01 * 1.3 * 4000.0, "along the wheel, its own friction");
+    RequireNear(-across.Fy, 1.0 * 4000.0, 0.01 * 4000.0, "across it, its own");
+    RequireNear(std::hypot(combined.Fx / 1.3, combined.Fy / 1.0), 4000.0, 0.01 * 4000.0, "between them, the ellipse");
+    Require(combined.Fx > 0.0 && combined.Fy < 0.0, "pushing against the sliding");
+}
+
+// Without the data's stiffness ratio the tread's fore-aft stiffness puts the longitudinal peak at the
+// slip ratio asked for; with it, the ratio stands. (At 20 m/s the sliding friction's fall holds the
+// peak below about 0.2 however soft the tread.)
+void TestBrushPeaksAtTheSlipRatioAskedFor()
+{
+    for (double asked : {0.06, 0.1, 0.15})
+    {
+        BrushTyreFigures figures = Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0);
+        figures.peakSlipRatio = asked;
+        const BrushTyreParameters p = MakeBrushTyreParameters(figures);
+        const BrushTyre tyre(p);
+        const double radius = p.unloadedRadius - 4000.0 / p.verticalRate / 3.0;
+        double best = 0.0;
+        double bestRatio = 0.0;
+        for (double ratio = 0.002; ratio <= 0.8; ratio += 0.002)
+        {
+            BrushTyreInput in = Rolling(p, 4000.0, 0.0);
+            in.wheelSpeed = 20.0 * (1.0 + ratio) / radius;
+            const double fx = tyre.Steady(in).Fx;
+            if (fx > best)
+            {
+                best = fx;
+                bestRatio = ratio;
+            }
+        }
+        std::cout << "  brush: longitudinal peak asked at " << asked << ", got " << bestRatio << " (fore-aft over sideways stiffness "
+                  << p.bristleStiffnessX / p.bristleStiffnessY << ")\n";
+        RequireNear(bestRatio, asked, 0.04 * asked + 0.004, "the longitudinal peak's slip ratio");
+    }
+    BrushTyreFigures figures = Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0);
+    figures.peakSlipRatio = 0.08;
+    figures.longitudinalStiffnessRatio = 1.04;
+    const BrushTyreParameters p = MakeBrushTyreParameters(figures);
+    RequireNear(p.bristleStiffnessX / p.bristleStiffnessY, 1.04, 1e-9, "the data's stiffness ratio stands");
+}
+
+// A tyre that loses no grip sliding has no peak to put at the angle asked for: it is fitted to reach its
+// limit there instead, and its bristles stay those of a tyre that does fall.
+void TestBrushWithoutFalloffReachesItsLimitWhereAsked()
+{
+    BrushTyreFigures figures = Figures(1.1, 4000.0, 7.0 * kDeg, 0.32, 0.225, 250000.0);
+    const BrushTyreParameters falls = MakeBrushTyreParameters(figures);
+    figures.kineticShare = 1.0;
+    const BrushTyreParameters p = MakeBrushTyreParameters(figures);
+    const BrushTyre tyre(p);
+    double limit = 0.0;
+    for (double degrees = 0.1; degrees <= 25.0; degrees += 0.1)
+    {
+        limit = std::max(limit, std::abs(tyre.Steady(Rolling(p, 4000.0, degrees * kDeg)).Fy));
+    }
+    double reached = 0.0;
+    for (double degrees = 0.1; degrees <= 25.0; degrees += 0.1)
+    {
+        if (std::abs(tyre.Steady(Rolling(p, 4000.0, degrees * kDeg)).Fy) >= 0.999 * limit)
+        {
+            reached = degrees;
+            break;
+        }
+    }
+    std::cout << "  brush without fall: at its limit from " << reached << " deg (asked 7), bristles " << p.bristleStiffnessY / falls.bristleStiffnessY
+              << " times a falling tyre's\n";
+    RequireNear(reached, 7.0, 0.6, "reaches its limit at the angle asked for");
+    Require(p.bristleStiffnessY < 2.0 * falls.bristleStiffnessY && p.bristleStiffnessY > 0.5 * falls.bristleStiffnessY,
+            "bristles near a falling tyre's, not inflated");
 }
 }
 
@@ -637,12 +755,15 @@ int main()
         {"TestZeroLoadGivesNothing", TestZeroLoadGivesNothing},
         {"ReportCost", ReportCost},
         {"TestRigidBrushMatchesTheClosedForm", TestRigidBrushMatchesTheClosedForm},
-        {"TestBrushStaysInsideTheFrictionCircle", TestBrushStaysInsideTheFrictionCircle},
+        {"TestBrushStaysInsideTheFrictionEllipse", TestBrushStaysInsideTheFrictionEllipse},
         {"TestFittedBrushPeaksWhereAskedAndPointsTheRightWay", TestFittedBrushPeaksWhereAskedAndPointsTheRightWay},
         {"TestBrushPatchFollowsTheInflationPressure", TestBrushPatchFollowsTheInflationPressure},
         {"TestBrushRelaxesOverTheGivenLength", TestBrushRelaxesOverTheGivenLength},
         {"TestBrushForceBuildsOverItsRelaxationLength", TestBrushForceBuildsOverItsRelaxationLength},
         {"TestBrushStandsAndHolds", TestBrushStandsAndHolds},
+        {"TestBrushGripsEachWayItsOwn", TestBrushGripsEachWayItsOwn},
+        {"TestBrushPeaksAtTheSlipRatioAskedFor", TestBrushPeaksAtTheSlipRatioAskedFor},
+        {"TestBrushWithoutFalloffReachesItsLimitWhereAsked", TestBrushWithoutFalloffReachesItsLimitWhereAsked},
     };
     int failures = 0;
     for (const auto& test : tests)

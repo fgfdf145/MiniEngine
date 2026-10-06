@@ -470,7 +470,8 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     if (spec.defaultTyreCompound.has_value() && *spec.defaultTyreCompound >= 0 && static_cast<size_t>(*spec.defaultTyreCompound) < spec.tyreCompounds.size())
     {
         const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
-        const auto exponent = [](const VehicleTyreData& tyre)
+        // LS_EXPX along the wheel, LS_EXPY across it; one alone stands for both.
+        const auto exponents = [](const VehicleTyreData& tyre, VehicleTyreSettings& out)
         {
             const auto read = [&](const char* key)
             {
@@ -479,16 +480,14 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
             };
             const float x = read("LS_EXPX");
             const float y = read("LS_EXPY");
-            return x > 0.0f && y > 0.0f ? 0.5f * (x + y) : std::max(x, y);
+            if (x > 0.0f || y > 0.0f)
+            {
+                out.longitudinalLoadExponent = std::min(x > 0.0f ? x : y, 1.0f);
+                out.lateralLoadExponent = std::min(y > 0.0f ? y : x, 1.0f);
+            }
         };
-        if (const float front = exponent(compound.front); front > 0.0f)
-        {
-            settings.frontTyres.loadExponent = std::min(front, 1.0f);
-        }
-        if (const float rear = exponent(compound.rear); rear > 0.0f)
-        {
-            settings.rearTyres.loadExponent = std::min(rear, 1.0f);
-        }
+        exponents(compound.front, settings.frontTyres);
+        exponents(compound.rear, settings.rearTyres);
         // The brush tyre's build: RIM_RADIUS, PRESSURE_STATIC (psi), RELAXATION_LENGTH and CX_MULT.
         const auto build = [](const VehicleTyreData& tyre, VehicleTyreSettings& out)
         {

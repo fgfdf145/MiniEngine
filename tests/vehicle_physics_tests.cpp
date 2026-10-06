@@ -854,8 +854,10 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     RequireNear(settings.limitedSlipLock, 0.5f, 1e-6f, "the lock under power");
     RequireNear(settings.limitedSlipCoast, 0.3f, 1e-6f, "on the overrun");
     RequireNear(settings.limitedSlipPreload, 10.0f, 1e-6f, "and the preload");
-    RequireNear(settings.frontTyres.loadExponent, 0.87f, 1e-5f, "the front tyres' load sensitivity, the mean of the two");
-    RequireNear(settings.rearTyres.loadExponent, 0.8f, 1e-6f, "the rear's, the one given");
+    RequireNear(settings.frontTyres.longitudinalLoadExponent, 0.9f, 1e-6f, "the front tyres' load sensitivity along the wheel");
+    RequireNear(settings.frontTyres.lateralLoadExponent, 0.84f, 1e-6f, "and across it");
+    RequireNear(settings.rearTyres.longitudinalLoadExponent, 0.8f, 1e-6f, "the rear's, the one given for both");
+    RequireNear(settings.rearTyres.lateralLoadExponent, 0.8f, 1e-6f, "the rear's across");
     // The brush tyre's build from the same compound: the pressure from psi.
     RequireNear(settings.frontTyres.rimRadius, 0.254f, 1e-6f, "the rim's radius");
     RequireNear(settings.frontTyres.inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");

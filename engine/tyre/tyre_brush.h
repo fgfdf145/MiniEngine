@@ -5,8 +5,9 @@
 namespace me::tyre
 {
 
-// The most ribs a brush tyre is cut into.
+// The most ribs a brush tyre is cut into, and the most segments along each rib's contact.
 inline constexpr int kBrushMaxRibs = 32;
+inline constexpr int kBrushMaxSegments = 32;
 
 // One rib's contact where the last step left it, for drawing the patch: its place across the tread
 // (m, left positive), its contact length, and how far from the leading edge its bristles stick to the
@@ -28,11 +29,15 @@ struct BrushRibContact
 //
 // held by springs K and (here) dampers D. The bristles stick to the road from the leading edge until
 // their pull reaches static friction (48), then slide with a friction that falls with sliding speed.
+// Friction may differ along and across the wheel: the bristles then hold to a friction ellipse.
 //
 // Where the paper solves the carcass's static balance K c = F(c), this model keeps the carcass's
 // velocity in the bristles' kinematics (the paper's slips (21), (22) carry x_c', y_c', theta_c')
 // and steps K c + D c' = F(c, c') implicitly, so the force builds over the carcass's relaxation
-// length and holds the car standing still. dt <= 0 gives the paper's steady state.
+// length. Stepped, the bristles also keep their bend: each step a bristle bends by what its root moved
+// over the road since the last (the bend it had where the tread then was, carried along the patch at the
+// tread's speed), so a stopped tyre holds like a spring and does not creep. dt <= 0 gives the paper's
+// steady state, where the bend is the root's speed times the time the bristle has spent in the patch.
 //
 // Axes: ISO 8855 at the contact centre (x forward along the wheel, y left, z up the road's normal).
 // Forces and moments are the road's on the tyre, which the carcass passes to the rim.
@@ -42,7 +47,7 @@ struct BrushTyreParameters
     double unloadedRadius = 0.32; // R0, m
     double width = 0.22;          // tread width, m
     int ribs = 10;
-    int segmentsPerRib = 20;
+    int segmentsPerRib = 20; // stepped, at most kBrushMaxSegments
     // R_l of (6): the belt's stiffness shortens the contact length below the plain intersection's.
     double transitionRadius = 0.14; // m
     double verticalRate = 250000.0; // N/m, gives the deflection that sizes the patch
@@ -56,13 +61,14 @@ struct BrushTyreParameters
     double bristleStiffnessX = 3.0e7;
     double bristleStiffnessY = 3.0e7;
 
-    // Friction: the static coefficient at referenceLoad, scaled by (Fz / referenceLoad)^(loadExponent - 1);
-    // sliding falls from it to kineticShare of it with sliding speed (a Stribeck curve, speed v_mu).
-    double staticFriction = 1.1;
+    // Friction along (x) and across (y) the wheel: the static coefficients at referenceLoad, each scaled
+    // by (Fz / referenceLoad)^(loadExponent - 1); sliding falls from them to kineticShare of them with
+    // sliding speed (a Stribeck curve, speed v_mu). Between the two the limit is the ellipse through both.
+    std::array<double, 2> staticFriction{1.1, 1.1};
     double kineticShare = 0.85;
     double stribeckVelocity = 3.0; // m/s
     double referenceLoad = 4000.0; // N
-    double loadExponent = 1.0;
+    std::array<double, 2> loadExponent{1.0, 1.0};
 
     // The carcass: stiffnesses (N/m, N/m, N m/rad), dampers (N s/m, N s/m, N m s/rad), the bending
     // shape factor Psi (1/m^2 in the parabola above), and the bottoming of (14)-(15): past these
@@ -82,13 +88,27 @@ struct BrushTyreParameters
     double camberSpinShare = 0.3;
     // Rolling resistance: a moment opposing the wheel's roll of coefficient * Fz * radius.
     double rollingResistance = 0.012;
-    // Below this speed of the tread through the patch (m/s) the bristles' transport is held to it,
-    // and sliding directions are regularised over a tenth of it: the tyre then creeps under a steady
-    // pull at about F / (C / v0) instead of dividing by zero.
+    // Below this speed of the tread through the patch (m/s) the steady state's transport is held to it
+    // (instead of dividing by zero), and sliding directions are regularised over a tenth of it. Stepped,
+    // the bristles' kept bend needs no such floor.
     double lowSpeed = 0.3;
 };
 
-// The tyre's moving parts between steps: the carcass's deflection and the last Jacobian of its balance.
+// Each rib's bristles at the segments' ends, from the front of the contact (+x) to the back: their bend
+// and their roots' velocity over the road (m, m/s, along and across the wheel), and the contact length
+// they were kept over (0 for none).
+struct BrushBristles
+{
+    struct Node
+    {
+        std::array<double, 2> bend{};
+        std::array<double, 2> rootVelocity{};
+    };
+    std::array<std::array<Node, kBrushMaxSegments + 1>, kBrushMaxRibs> nodes{};
+    std::array<double, kBrushMaxRibs> length{};
+};
+
+// The carcass between steps: its deflection and the last Jacobian of its balance.
 struct BrushTyreState
 {
     std::array<double, 3> carcass{0.0, 0.0, 0.0}; // x_c, y_c (m), theta_c (rad)
@@ -123,7 +143,9 @@ struct BrushTyreOutput
     double effectiveRadius = 0.0; // R0 - deflection / 3 at the middle rib (23)
     double contactLength = 0.0;   // the longest rib's, m
     double slidingShare = 0.0;    // of the load, on sliding bristles
-    double peakFriction = 0.0;    // the static coefficient at this load and road
+    // The static coefficients along and across the wheel at this load and road.
+    double peakFrictionX = 0.0;
+    double peakFrictionY = 0.0;
     double slipRatio = 0.0;       // diagnostics: (omega R_e - V_x) / |V_x|
     double slipAngle = 0.0;       // rad, atan(V_y / |V_x|) as MF-Tyre's (positive moving left)
     int evaluations = 0;
@@ -147,6 +169,11 @@ class BrushTyre
     {
         return m_state;
     }
+    // The bristles' bend the last step left.
+    const BrushBristles& Bristles() const
+    {
+        return m_bristles[m_kept];
+    }
     void Reset();
 
     // One step of dt seconds: the carcass moves to its implicit balance and the forces are the road's
@@ -163,14 +190,22 @@ class BrushTyre
   private:
     BrushTyreParameters m_p;
     BrushTyreState m_state;
+    // The bristles' bend the last step left (m_bristles[m_kept]) and two buffers for the next step's
+    // iterates, taking turns.
+    std::array<BrushBristles, 3> m_bristles{};
+    int m_kept = 0;
 };
 
 // What a car's data says about a tyre. Each 0 keeps the default named.
 struct BrushTyreFigures
 {
-    double peakFriction = 1.1;
+    double peakFriction = 1.1;             // across the wheel
+    double longitudinalPeakFriction = 0.0; // along it (peakFriction)
     double referenceLoad = 4000.0; // N, where the friction and the patch are fitted
     double peakSlipAngle = 0.0;    // rad, of the lateral force (6 degrees)
+    // The slip ratio of the longitudinal force's peak, for a tyre without a stiffness ratio (the bristles
+    // as stiff along the wheel as across it).
+    double peakSlipRatio = 0.0;
     double kineticShare = 0.0;     // of the grip left well past the peak (0.85)
     double radius = 0.32;          // unloaded, m
     double sectionWidth = 0.22;    // m
@@ -188,7 +223,9 @@ struct BrushTyreFigures
 //   transition radius R_l of (6). Pacejka (2006, Table 9.1) measures a 205/60R15 at 4 kN and 2.2 bar
 //   with a 107 mm patch; this rule gives 108 mm;
 // - the bristles' sideways stiffness puts the steady lateral peak at the angle asked for, their fore-aft
-//   one is that times the ratio;
+//   one is that times the ratio, or without a ratio puts the longitudinal peak at the slip ratio asked
+//   for. A curve that does not fall past its peak (no grip lost sliding) peaks where it first comes
+//   within 0.1 % of its limit;
 // - the carcass's stiffnesses give the relaxation lengths, sigma = C' / K, with C' the slip stiffness
 //   of the tyre on its flexible carcass (Svendenius 2007, (4.82)).
 BrushTyreParameters MakeBrushTyreParameters(const BrushTyreFigures& figures);

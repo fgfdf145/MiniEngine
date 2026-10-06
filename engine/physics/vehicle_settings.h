@@ -74,9 +74,11 @@ struct VehicleTyreSettings
     float postPeakShare = 0.0f;
     // The wheel's moment of inertia with its tyre, kg m^2.
     float inertia = 0.0f;
-    // The brush tyre's load sensitivity: its friction scales as (load / static load)^(loadExponent - 1),
-    // so the peak force grows as the load to this power (0 keeps the brush tyre's 0.9).
-    float loadExponent = 0.0f;
+    // The brush tyre's load sensitivity along and across the wheel: each friction scales as
+    // (load / static load)^(exponent - 1), so that peak force grows as the load to this power (0 keeps the
+    // brush tyre's 0.9).
+    float longitudinalLoadExponent = 0.0f;
+    float lateralLoadExponent = 0.0f;
     // The brush tyre's build, each 0 for its default: the rim's radius (the shoulders come off the section
     // width by the sidewall's height), the inflation pressure (Pa, the patch's mean pressure), the
     // relaxation length (m) its carcass is stiffened to, and its tread's fore-aft stiffness over its

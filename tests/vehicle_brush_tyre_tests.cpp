@@ -149,8 +149,8 @@ void TestCarStandsStill(const char* car, const VehicleSettings& settings)
     Require(glm::length(later - settled) < 0.01f, std::string(car) + " stands still on flat ground");
 }
 
-// On a 10 degree slope with the hand brake and the brakes on, the car holds; the brush tyre creeps only
-// as fast as its low-speed regularisation lets a steady pull through.
+// On a 10 degree slope with the hand brake and the brakes on, the car holds. The brush tyre's bristles
+// keep their bend standing still, so once its tyres have taken up the pull it does not creep at all.
 void TestCarHoldsOnASlope(const char* car, const VehicleSettings& settings)
 {
     PhysicsWorld world;
@@ -163,11 +163,62 @@ void TestCarHoldsOnASlope(const char* car, const VehicleSettings& settings)
     world.SetVehicleControls(id, controls);
     Simulate(world, 2.0f);
     const glm::vec3 start = world.GetVehiclePose(id).position;
-    Simulate(world, 5.0f);
+    Simulate(world, 2.5f);
+    const glm::vec3 middle = world.GetVehiclePose(id).position;
+    Simulate(world, 2.5f);
     const float slid = glm::length(world.GetVehiclePose(id).position - start);
-    std::cout << car << " (" << Name(settings.tyreModel) << ") on a 10 deg slope, braked: slid " << slid * 1000.0f << " mm in 5 s\n";
+    const float late = glm::length(world.GetVehiclePose(id).position - middle);
+    std::cout << car << " (" << Name(settings.tyreModel) << ") on a 10 deg slope, braked: slid " << slid * 1000.0f << " mm in 5 s, "
+              << late * 1000.0f << " mm of it in the last 2.5 s\n";
     Require(Finite(world.GetVehiclePose(id).position), "the car's position stays finite");
     Require(slid < 0.05f, std::string(car) + " holds on the slope");
+    if (settings.tyreModel == VehicleTyreModel::Brush)
+    {
+        Require(late < 1e-4f, std::string(car) + " does not creep on the brush tyre, moved " + std::to_string(late * 1000.0f) + " mm");
+    }
+}
+
+// ---- Load ----
+
+// The brush tyre works with the load the suspension is about to push with in the step, not the last
+// step's: as the brakes go on at speed and the load moves forward, what each tyre took is nearer what the
+// physics engine's solver then pushed with than the step before's push is.
+void TestTyreLoadIsTheSteps(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(id, controls);
+    Simulate(world, 3.0f);
+    controls.throttle = 0.0f;
+    controls.brake = 1.0f;
+    world.SetVehicleControls(id, controls);
+    double foreseen = 0.0;
+    double stepOld = 0.0;
+    double total = 0.0;
+    std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
+    for (int step = 0; step < 400; ++step)
+    {
+        world.Update(PhysicsWorld::kFixedStepSeconds);
+        const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
+        for (size_t index = 0; index < wheels.size(); ++index)
+        {
+            if (!wheels[index].inContact || !before[index].inContact)
+            {
+                continue;
+            }
+            foreseen += std::abs(wheels[index].tyreLoad - wheels[index].suspensionForce);
+            stepOld += std::abs(before[index].suspensionForce - wheels[index].suspensionForce);
+            total += wheels[index].suspensionForce;
+        }
+        before = wheels;
+    }
+    std::cout << car << " braking from speed: the tyre's load off the solver's push by " << 100.0 * foreseen / total << " % on average, the step before's by "
+              << 100.0 * stepOld / total << " %\n";
+    Require(foreseen < 0.5 * stepOld, std::string(car) + " foresees the step's load better than the step before's push does");
 }
 
 // ---- Driving ----
@@ -526,6 +577,10 @@ int main()
         run(prefix + "holds on a slope", [&]
             {
                 TestCarHoldsOnASlope(car.name, brush);
+            });
+        run(prefix + "tyre load is the step's", [&]
+            {
+                TestTyreLoadIsTheSteps(car.name, brush);
             });
         run(prefix + "launches", [&]
             {
