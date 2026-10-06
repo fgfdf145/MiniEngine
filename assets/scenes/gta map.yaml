@@ -16,6 +16,8 @@
 # In the middle of the Grove Street cul-de-sac (game (2485, -1668), flat road at 12.344 m) stands the
 # seven-post rig of suspension_rig.yaml, turned to face west, with a second R34 on its pads: select that car and open
 # Window > Suspension Rigs for its Live Rig tab. The driven car stays the first R34 in the list.
+# Two more R34s face west on straight roads: in Liberty City's Portland (game (1061.2, -631.8), road at
+# 13.78 m) and in Vice City (game (-379.5, -479), road at 4.04 m after the offset).
 # Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py with GTA_GAME=sa,
 # iii or vc; tools/water.py) and is not in git; the car is imported from Assetto Corsa at
 # assets/skyline_r34_vspec. The minimap is the three games' radar maps placed the same way
@@ -241,6 +243,30 @@ entities:
       translation: [2485.9, 12.8405, 1668]
       rotation: [0, 90, 0]
       scale: [0.12, 0.3931, 0.12]
+  - entity_uuid: abd2bf79-6640-4f9f-b803-1b3e4e81990f
+    tag: Skyline R34 (Liberty City)
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-4938.8, 13.8, 631.8]
+      rotation: [0, 90, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: ea1c4071-808e-4cf5-b097-5c44e09d5924
+    tag: Skyline R34 (Vice City)
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [5620.5, 4.06, 479]
+      rotation: [0, 90, 0]
+      scale: [1, 1, 1]
 lights:
   - entity_uuid: 41b8d4af-b0a9-4c60-8804-999f21e90086
     tag: Sun
