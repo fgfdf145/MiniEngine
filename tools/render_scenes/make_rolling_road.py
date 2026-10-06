@@ -96,7 +96,9 @@ def write_scene():
     rig = open(RIG_SCENE).read()
     tail = rig[rig.index("lights:"):]
     car = re.search(r"  - entity_uuid: fdea4903.*?scale: \[1, 1, 1\]\n", rig, re.S).group(0)
-    car = car.replace("translation: [0, 0.6506, 0]", "translation: [0, 0.0006, -10]")
+    # The imported R34 faces -Z in its model; turned half round it faces +Z, over the waves (unturned it
+    # would drive off the ground's 30 cm end at z = -40).
+    car = car.replace("translation: [0, 0.6506, 0]", "translation: [0, 0.0006, -10]").replace("rotation: [0, 0, 0]", "rotation: [0, 180, 0]")
     road = """  - entity_uuid: 9b3e7c14-52a8-4d60-8f1e-0a6d4c2e5b97
     tag: Rolling road
     model:
@@ -113,7 +115,8 @@ def write_scene():
     header = (
         "# The Nissan Skyline R34 V-Spec on gently undulating ground (a few centimetres: swells\n"
         "# that heave and pitch the body, shorter waves that move the wheels, crests tilted across the road\n"
-        "# so the body rolls too), for testing the suspension by driving. The car stands on the flat start, facing +Z.\n"
+        "# so the body rolls too), for testing the suspension by driving. The car stands on the flat start, turned\n"
+        "# half round (its model faces -Z) so that it faces +Z, over the waves.\n"
         "# The ground comes from tools/render_scenes/make_rolling_road.py. Needs the car imported from Assetto\n"
         "# Corsa at assets/skyline_r34_vspec (not in git), run from the repository's root.\n"
         "scene:\n  version: 3\n  selected_entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155\n  selected_entity: 1\nentities:\n"
