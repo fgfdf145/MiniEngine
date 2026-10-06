@@ -1085,20 +1085,23 @@ vec3 EvaluateSheenAmbient(vec3 worldPosition, vec3 N, vec3 V, SheenParams sheen)
 // The coat's share of the ambient term: its lobe's directional albedo (0.04 A + B) times what the
 // environment sends along the coat's reflection, the same split sum the base's specular uses. Under
 // the uniform ambient that is the ambient luminance itself, weighted by the table as the base is.
-vec3 EvaluateCoatAmbient(vec3 worldPosition, CoatParams coat, vec3 V)
+// The environment is occluded as the base's is (SpecularAmbientRadiance: the AO through
+// SpecularOcclusion at the coat's roughness, the geometric horizon), and the screen-space
+// reflection replaces it where the trace followed the coat (SsrTracesCoat); otherwise reflection
+// is zero. On car paint the coat is the mirror lobe: without this it reflected the sky where the
+// road and the scene around the car should be.
+vec3 EvaluateCoatAmbient(vec3 worldPosition, CoatParams coat, vec3 geoNormal, vec3 V, float ao, vec4 reflection)
 {
     float NdV = max(dot(coat.normal, V), 0.0);
-    if (EnvironmentMode() == ENVIRONMENT_NONE)
-    {
-        vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
-        vec3 uniformR = reflect(-V, coat.normal);
-        return (COAT_F0 * environmentBrdf.x + environmentBrdf.y) * SceneSpecularEnvironment(worldPosition, coat.normal, uniformR, V, SceneAmbientAlong(uniformR));
-    }
     vec2 environmentBrdf = SampleEnvironmentBrdf(coat.roughness, NdV);
     vec3 coatAlbedo = COAT_F0 * environmentBrdf.x + environmentBrdf.y;
     vec3 R = reflect(-V, coat.normal);
-    vec3 sky = textureLod(prefilteredEnvironment, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
-    return coatAlbedo * SceneSpecularEnvironment(worldPosition, coat.normal, R, V, sky + SceneLightsAmbientAlong(R));
+    vec3 environment = EnvironmentMode() == ENVIRONMENT_NONE
+                           ? SceneSpecularEnvironment(worldPosition, coat.normal, R, V, SceneAmbientAlong(R))
+                           : SceneSpecularEnvironment(
+                                 worldPosition, coat.normal, R, V,
+                                 textureLod(prefilteredEnvironment, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
+    return coatAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, coat.roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 
 // Darkens a local light's contributions by its shadow, where it has a tile and lights anything:
@@ -1142,9 +1145,13 @@ vec3 ShadeSurface(
     // irradiance takes the fallback's place.
     // The AO darkens the diffuse lobe directly and the specular one through SpecularOcclusion; a
     // screen-space reflection (reflection.a > 0) replaces the occluded environment where it is trusted.
+    // The reflection was traced for the coat's lobe where SsrTracesCoat says so; the base then sees
+    // the environment alone.
+    bool coatTakesReflection = SsrTracesCoat(coat.factor, coat.roughness, roughness);
+    vec4 baseReflection = coatTakesReflection ? vec4(0.0) : reflection;
     vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
-                       ? EvaluateUniformAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, specular, ao, reflection)
-                       : EvaluateSkyAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, reflection);
+                       ? EvaluateUniformAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, specular, ao, baseReflection)
+                       : EvaluateSkyAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, baseReflection);
 
     // One factor for every direct light: it depends only on the surface and the view. It comes
     // from the DFG table, which integrates the same height-correlated lobe the direct lights draw,
@@ -1265,7 +1272,7 @@ vec3 ShadeSurface(
     if (coat.factor > 0.0)
     {
         float coatFresnel = FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
-        vec3 coatAmbient = EvaluateCoatAmbient(worldPosition, coat, V) * ao;
+        vec3 coatAmbient = EvaluateCoatAmbient(worldPosition, coat, geoNormal, V, ao, coatTakesReflection ? reflection : vec4(0.0));
         color = color * (1.0 - coat.factor * coatFresnel) + coat.factor * (coatAmbient + coatAccum);
     }
     return color;

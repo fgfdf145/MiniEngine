@@ -22,6 +22,9 @@ layout(set = 1, binding = 4) uniform sampler2D velocityTexture;
 layout(set = 1, binding = 5) uniform sampler2D historyTexture; // linear
 layout(set = 1, binding = 6, rgba16f) uniform writeonly image2D historyImage;
 layout(set = 1, binding = 7, rgba16f) uniform writeonly image2D reflectionsImage;
+layout(set = 1, binding = 8) uniform sampler2D coatTexture;       // GB6, nearest
+
+#include "ssr_lobe.glsl"
 
 // Must match SsrResolvePushConstants in engine/renderer/vulkan/ssr_pass.cpp.
 layout(push_constant) uniform SsrResolveConstants
@@ -81,8 +84,10 @@ void main()
     }
 
     float distanceToCamera = -ViewZFromDepth(depth);
-    vec3 N = DecodeNormalOctahedral(texelFetch(normalTexture, pixel, 0).rg);
-    float roughness = clamp(texelFetch(surfaceTexture, pixel, 0).g, 0.04, 1.0);
+    // The lobe the trace followed (ssr_lobe.glsl): the coat's on car paint.
+    SsrLobe lobe = ReadSsrLobe(pixel);
+    vec3 N = lobe.normal;
+    float roughness = lobe.roughness;
     float tentRadius = mix(MIRROR_TENT_RADIUS, ROUGH_TENT_RADIUS, clamp(roughness / FULL_FOOTPRINT_ROUGHNESS, 0.0, 1.0));
 
     // The trace ran at half resolution (ssr_half_res.glsl): gather the 3x3 half-resolution samples
@@ -119,7 +124,7 @@ void main()
                 continue;
             }
             float neighborDistance = -ViewZFromDepth(neighborDepth);
-            vec3 neighborNormal = DecodeNormalOctahedral(texelFetch(normalTexture, source, 0).rg);
+            vec3 neighborNormal = ReadSsrLobe(source).normal;
             float weight = distanceWeight *
                            max(0.0, 1.0 - abs(neighborDistance - distanceToCamera) / (DEPTH_TOLERANCE * distanceToCamera)) *
                            pow(max(dot(N, neighborNormal), 0.0), NORMAL_POWER);

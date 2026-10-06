@@ -21,10 +21,10 @@ namespace me
 //  - the node hierarchy one for one (a car's empty nodes are its wheel centres, suspension
 //    pickups and hinges), under a root that turns AC's axes (+X left, +Z forward) into glTF's;
 //  - the livery: textures come from the car's skins/<name>/ folder, as the game loads them;
-//  - AC's Blinn-Phong parameters as metallic-roughness: the specular exponent and intensity
-//    become roughness, txMaps' specular mask a per-pixel roughness, a flat txDetail the paint
-//    colour, fresnelMaxLevel KHR_materials_specular and car paint's sun lobe
-//    KHR_materials_clearcoat;
+//  - AC's Blinn-Phong parameters as metallic-roughness (docs/design/
+//    2026-10-06-car-paint-correctness-design.md): the exponent, times txMaps' gloss, becomes
+//    roughness; ksSpecular or fresnelMaxLevel, masked by txMaps, KHR_materials_specular; a flat
+//    txDetail the paint colour; car paint's reflection KHR_materials_clearcoat;
 //  - runtime variants (*_BLUR, *_DAMAGE, the low-res half of an in-file LOD pair) dropped;
 //  - CSP-encrypted files refused: their plain section is decoys;
 //  - a track's layout: models.ini / models_<layout>.ini place several kn5 in one scene, and the
@@ -209,8 +209,8 @@ std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames);
 // translation.
 std::array<float, 16> LayoutModelMatrix(const std::array<float, 3>& position, const std::array<float, 3>& rotationDegrees);
 
-// A Blinn-Phong exponent (already scaled by the specular intensity) as GGX roughness,
-// sqrt(2 / (n + 2)), clamped to [0.04, 1].
+// A Blinn-Phong exponent as glTF (perceptual) GGX roughness: alpha = sqrt(2 / (n + 2)), and
+// roughness = sqrt(alpha), clamped to [0.04, 1].
 float SpecularExponentToRoughness(float exponent);
 
 // The painted materials (a txDetail slot the shader samples, useDetail > 0), most body-like first:
@@ -222,9 +222,10 @@ std::vector<size_t> RankPaintedMaterials(
     const std::vector<bool>& painted,
     const std::vector<size_t>& triangles);
 
-// A texture that is one colour everywhere (every channel within 6 levels), as AC's txDetail
-// paints it: the colour doubled (a detail map is neutral at mid-grey) in gamma space, then made
-// linear. nullopt for a map that varies - a grain or a flake pattern, not a paint colour.
-std::optional<std::array<float, 3>> FlatDetailTint(const std::vector<std::uint8_t>& rgba, int width, int height);
+// A texture whose colour is one everywhere (every channel within 6 levels), as AC's txDetail
+// paints it: the colour doubled (a detail map is neutral at mid-grey), in gamma space and not
+// clamped, since AC multiplies it into the diffuse before anything clamps. nullopt for a map that
+// varies - a grain or a weave, not a paint colour. The alpha is not looked at.
+std::optional<std::array<float, 3>> FlatDetailColor(const std::vector<std::uint8_t>& rgba, int width, int height);
 }
 }

@@ -428,7 +428,7 @@ std::vector<std::uint8_t> BuildCarKn5(int version)
     std::vector<std::array<std::uint8_t, 4>> mapTexels;
     for (int texel = 0; texel < 16; ++texel)
     {
-        mapTexels.push_back({static_cast<std::uint8_t>(texel * 17), 255, 0, 255});
+        mapTexels.push_back({static_cast<std::uint8_t>(texel * 17), 255, 136, 255});
     }
     std::vector<std::array<std::uint8_t, 4>> leafTexels;
     for (int texel = 0; texel < 16; ++texel)
@@ -453,7 +453,7 @@ std::vector<std::uint8_t> BuildCarKn5(int version)
     }
 
     const std::vector<FixtureMaterial> materials{
-        {"EXT_Carpaint", "ksPerPixelMultiMap_damage_dirt", false, false, {{"ksSpecular", 1.0f}, {"ksSpecularEXP", 50.0f}, {"useDetail", 1.0f}, {"fresnelMaxLevel", 0.6f}, {"sunSpecular", 12.0f}, {"sunSpecularEXP", 1500.0f}}, {{"txDiffuse", "Skin_00.dds"}, {"txDetail", "metal_detail.dds"}, {"txMaps", "car_MAP.dds"}, {"txNormal", "Car_Damage_NM.dds"}}},
+        {"EXT_Carpaint", "ksPerPixelMultiMap_damage_dirt", false, false, {{"ksSpecular", 0.6f}, {"ksSpecularEXP", 80.0f}, {"useDetail", 1.0f}, {"detailUVMultiplier", 40.0f}, {"fresnelC", 0.07f}, {"fresnelEXP", 3.5f}, {"fresnelMaxLevel", 0.6f}, {"isAdditive", 2.0f}, {"sunSpecular", 10.0f}, {"sunSpecularEXP", 2000.0f}}, {{"txDiffuse", "Skin_00.dds"}, {"txDetail", "metal_detail.dds"}, {"txMaps", "car_MAP.dds"}, {"txNormal", "Car_Damage_NM.dds"}}},
         {"Leaves", "ksTree", false, true, {{"ksSpecular", 0.0f}, {"ksAlphaRef", 0.0f}}, {{"txDiffuse", "leaf.dds"}}},
         {"Glass", "ksPerPixel", true, false, {{"ksSpecular", 0.5f}, {"ksSpecularEXP", 200.0f}}, {{"txDiffuse", "INT_Decals.dds"}}},
         {"Lamp", "ksPerPixel", false, false, {{"ksEmissive", 3.0f}}, {{"txDiffuse", "stub.dds"}}},
@@ -499,8 +499,13 @@ std::filesystem::path WriteCarFolder(const std::filesystem::path& root, int vers
     const std::filesystem::path kn5 = car / "fixture_lod_a.kn5";
     WriteFile(kn5, BuildCarKn5(version));
     // Upper-case file name on purpose: the game matches liveries ignoring case.
-    WriteFile(car / "skins" / "00_soul_red" / "METAL_DETAIL.dds", DdsFlat(4, {126, 1, 0, 255}));
-    WriteFile(car / "skins" / "01_arctic_white" / "metal_detail.dds", DdsFlat(4, {213, 210, 208, 255}));
+    WriteFile(car / "skins" / "00_soul_red" / "METAL_DETAIL.dds", DdsFlat(4, {126, 1, 0, 69}));
+    std::vector<std::array<std::uint8_t, 4>> flakes;
+    for (int texel = 0; texel < 16; ++texel)
+    {
+        flakes.push_back({213, 210, 208, static_cast<std::uint8_t>(texel % 2 == 0 ? 30 : 110)});
+    }
+    WriteFile(car / "skins" / "01_arctic_white" / "metal_detail.dds", DdsBgra(4, 4, flakes));
     return kn5;
 }
 
@@ -534,6 +539,17 @@ int PngChannels(const std::filesystem::path& path)
     return channels;
 }
 
+// The texels of a PNG the import wrote, as RGBA.
+std::vector<std::uint8_t> ReadPngRgba(const std::string& path, int& width, int& height)
+{
+    int channels = 0;
+    stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+    Require(pixels != nullptr, "readable png " + path);
+    std::vector<std::uint8_t> rgba(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+    stbi_image_free(pixels);
+    return rgba;
+}
+
 void ReaderParsesTheContainer()
 {
     for (int version : {5, 6})
@@ -544,7 +560,7 @@ void ReaderParsesTheContainer()
         Require(model.textures.size() == 7 && model.materials.size() == 4, "texture and material tables");
         Require(!Kn5Reader::IsEncrypted(bytes), "a plain kn5 is not encrypted");
         Require(model.materials[1].alphaTested && model.materials[2].alphaBlend, "alpha flags");
-        RequireNear(model.materials[0].Property("sunSpecularEXP", 0.0f), 1500.0f, 0.0f, "material property");
+        RequireNear(model.materials[0].Property("sunSpecularEXP", 0.0f), 2000.0f, 0.0f, "material property");
         Require(model.root.name == "ROOT" && model.root.children.size() == 8, "root and its children");
         // The skinned node is followed by another node: reading past it would have desynced.
         const Kn5Node& gear = model.root.children[6];
@@ -620,20 +636,25 @@ void RulesMatchTheConverter()
     Require(match.key == "WALL", "a name no surface matches is its own, without the digits around it");
     RequireNear(match.friction, kUnknownSurfaceFriction, 1e-6f, "at the unknown surface's friction");
 
+    // Perceptual roughness: alpha = sqrt(2 / (n + 2)) is Blinn-Phong's width, and the shader squares
+    // the roughness to get alpha.
     RequireNear(Kn5Importer::SpecularExponentToRoughness(0.0f), 1.0f, 1e-6f, "exponent 0 is fully rough");
-    RequireNear(Kn5Importer::SpecularExponentToRoughness(100.0f), 0.140028f, 1e-5f, "exponent 100");
+    RequireNear(Kn5Importer::SpecularExponentToRoughness(100.0f), 0.37420f, 1e-4f, "exponent 100");
+    RequireNear(Kn5Importer::SpecularExponentToRoughness(2000.0f), 0.17778f, 1e-4f, "a paint's sun exponent");
     RequireNear(Kn5Importer::SpecularExponentToRoughness(1e6f), 0.04f, 1e-6f, "roughness floor");
 
-    // Ceramic Metallic (148,148,148) doubles past white; Soul Red (126,1,0) does not.
+    // Ceramic Metallic (148,148,148) doubles past white and is not clamped: AC multiplies it into
+    // the template first. Soul Red (126,1,0) stays below 1.
     std::vector<std::uint8_t> grey(4 * 4, 148);
-    const auto white = Kn5Importer::FlatDetailTint(grey, 2, 2);
-    Require(white.has_value() && (*white)[0] == 1.0f, "a mid-grey detail doubles to white");
+    const auto white = Kn5Importer::FlatDetailColor(grey, 2, 2);
+    Require(white.has_value(), "a flat grey is a colour");
+    RequireNear((*white)[0], 1.16078f, 1e-4f, "a mid-grey detail doubles past white");
     std::vector<std::uint8_t> red{126, 1, 0, 255, 128, 2, 1, 255};
-    const auto soulRed = Kn5Importer::FlatDetailTint(red, 2, 1);
+    const auto soulRed = Kn5Importer::FlatDetailColor(red, 2, 1);
     Require(soulRed.has_value(), "within 6 levels is one colour");
-    RequireNear((*soulRed)[0], 0.99110f, 1e-4f, "red is doubled in gamma space, then linearised");
+    RequireNear((*soulRed)[0], 0.99608f, 1e-4f, "red is doubled in gamma space");
     std::vector<std::uint8_t> pattern{0, 0, 0, 255, 60, 0, 0, 255};
-    Require(!Kn5Importer::FlatDetailTint(pattern, 2, 1).has_value(), "a pattern is not a paint colour");
+    Require(!Kn5Importer::FlatDetailColor(pattern, 2, 1).has_value(), "a pattern is not a paint colour");
 }
 
 void ConversionReportsProgressToCompletion()
@@ -741,9 +762,25 @@ void ConvertsHierarchyGeometryAndMaterials()
     RequireNear(paint.roughnessFactor, 1.0f, 0.0f, "a per-pixel roughness takes over from the factor");
     Require(!paint.roughnessTexturePath.empty() && std::filesystem::exists(folder / paint.roughnessTexturePath),
             "txMaps is baked to a roughness map");
-    RequireNear(paint.specularFactor, 0.6f, 1e-4f, "fresnelMaxLevel is KHR_materials_specular");
-    RequireNear(paint.clearcoatFactor, 0.6f, 1e-4f, "sunSpecular 12 is clearcoat 0.6");
-    RequireNear(paint.clearcoatRoughnessFactor, 0.0365f, 1e-4f, "sunSpecularEXP 1500 is a tight clearcoat");
+    // Car paint (isAdditive 2): the base keeps the ksSpecular lobe, masked by txMaps' R; the
+    // reflection is the coat.
+    RequireNear(paint.specularFactor, 0.6f, 1e-4f, "ksSpecular is the paint base's specular level");
+    Require(paint.specularTexturePath == paint.roughnessTexturePath, "one baked map is roughness and specular mask");
+    RequireNear(paint.specularColorFactor[0], 0.2706f, 1e-3f, "a solid livery's detail alpha (69) scales F0");
+    Require(paint.specularColorTexturePath.empty(), "no flake map for a flat alpha");
+    int width = 0;
+    int height = 0;
+    const std::vector<std::uint8_t> base = ReadPngRgba((folder / paint.roughnessTexturePath).string(), width, height);
+    Require(width == 4 && height == 4, "the base map keeps txMaps' size");
+    Require(base[1] == 100, "full gloss at exponent 80 (80 + 1 in AC) is roughness 0.394");
+    Require(base[2] == 0, "dielectric");
+    Require(base[5 * 4 + 3] == 85, "the specular mask is txMaps' R");
+    RequireNear(paint.clearcoatFactor, 1.0f, 0.0f, "the coat's weight is in its map");
+    Require(!paint.clearcoatTexturePath.empty() && paint.clearcoatRoughnessTexturePath == paint.clearcoatTexturePath,
+            "one baked map is the coat's weight and roughness");
+    const std::vector<std::uint8_t> coat = ReadPngRgba((folder / paint.clearcoatTexturePath).string(), width, height);
+    Require(coat[0] == 238, "fresnelC 0.07 x reflection 136/255 over the coat's 0.04 is weight 0.93");
+    Require(coat[1] == 45, "the sun exponent 2000 at full gloss is coat roughness 0.178");
     Require(paint.normalTexturePath.empty(), "a damage dent map is not bound as a normal map");
     Require(paint.alphaMode == MaterialAlphaMode::Opaque, "paint is opaque");
     Require(std::filesystem::exists(folder / paint.baseColorTexturePath), "diffuse written");
@@ -752,13 +789,16 @@ void ConvertsHierarchyGeometryAndMaterials()
     const ModelMaterialData& leaves = model.materials[1];
     Require(leaves.alphaMode == MaterialAlphaMode::Mask, "alpha-tested is MASK");
     RequireNear(leaves.alphaCutoff, 0.5f, 0.0f, "ksAlphaRef 0 falls back to 0.5");
-    RequireNear(leaves.roughnessFactor, 0.91287f, 1e-4f, "ksSpecular 0 is matte");
+    RequireNear(leaves.roughnessFactor, 0.54912f, 1e-4f, "the default exponent 20");
+    RequireNear(leaves.specularFactor, 0.0f, 0.0f, "ksSpecular 0 reflects nothing");
+    RequireNear(leaves.clearcoatFactor, 0.0f, 0.0f, "only car paint has a coat");
     Require(PngChannels(folder / leaves.baseColorTexturePath) == 4, "an alpha-tested diffuse keeps its alpha");
 
     const ModelMaterialData& glass = model.materials[2];
     Require(glass.alphaMode == MaterialAlphaMode::Blend, "alpha-blended is BLEND");
     Require(!glass.baseColorTexturePath.empty(), "a texture named in a different case still resolves");
-    RequireNear(glass.roughnessFactor, 0.14003f, 1e-4f, "exponent 200 at intensity 0.5");
+    RequireNear(glass.roughnessFactor, 0.31544f, 1e-4f, "exponent 200, whatever the intensity");
+    RequireNear(glass.specularFactor, 0.5f, 1e-6f, "the intensity is the specular level");
     Require(PngChannels(folder / glass.baseColorTexturePath) == 3, "a uniformly opaque alpha is dropped");
 
     const ModelMaterialData& lamp = model.materials[3];
@@ -776,12 +816,27 @@ void SkinChoiceChangesThePaint()
     const Kn5ImportReport template_ = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "none", embedded);
     Require(template_.skin.empty(), "'none' keeps the kn5's textures");
     const LoadedModelData grey = ModelLoader::LoadModel(template_.gltfPath.string());
-    RequireNear(grey.materials[0].baseColor[0], 1.0f, 1e-6f, "the grey template doubles to white");
+    // The kn5's grey detail (148) doubles to 1.16: above 1, so the product is baked, 174 x 1.16.
+    RequireNear(grey.materials[0].baseColor[0], 1.0f, 1e-6f, "a baked paint has no factor");
+    int width = 0;
+    int height = 0;
+    const std::filesystem::path greyFolder = template_.gltfPath.parent_path();
+    const std::vector<std::uint8_t> greyPaint =
+        ReadPngRgba((greyFolder / grey.materials[0].baseColorTexturePath).string(), width, height);
+    Require(greyPaint[0] == 202, "the template times the doubled grey, unclamped until the product");
 
     Kn5ImportOptions white;
     white.skin = "01_ARCTIC_WHITE";
     const Kn5ImportReport chosen = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "white", white);
     Require(chosen.skin == "01_arctic_white", "skins match ignoring case");
+    const LoadedModelData arctic = ModelLoader::LoadModel(chosen.gltfPath.string());
+    const ModelMaterialData& whitePaint = arctic.materials[0];
+    Require(!whitePaint.specularColorTexturePath.empty(), "a metallic livery's alpha noise is the flake map");
+    RequireNear(whitePaint.textureTransforms[static_cast<size_t>(MaterialTextureSlot::SpecularColor)].scale[0], 40.0f, 1e-6f,
+                "the flakes tile like the detail");
+    const std::vector<std::uint8_t> flakes =
+        ReadPngRgba((chosen.gltfPath.parent_path() / whitePaint.specularColorTexturePath).string(), width, height);
+    Require(flakes[0] == 96 && flakes[4] == 175, "alpha 30 and 110, sRGB encoded for the colour slot");
 
     Kn5ImportOptions missing;
     missing.skin = "02_nope";
@@ -1714,13 +1769,15 @@ void ImportsMultilayerSurfacesAsDetailLayers()
 
     Require(!named("wall").detailLayers.IsEnabled(), "a plain material has no detail layers");
 
-    // Ground is never a tight lobe: exponent 15 at intensity 1.2 is roughness 0.32, raised to the
-    // multilayer floor; the sheen multiplier no longer sharpens it. A plain material keeps its own
-    // (0.577 for the wall), and a matte multilayer one is above the floor already.
+    // Ground is never a tight lobe: exponent 15 is roughness 0.586, raised to the multilayer floor;
+    // the sheen multiplier does not sharpen it. A plain material keeps its own (0.549 for the
+    // wall's default exponent 20).
     RequireNear(named("glossy_tarmac").roughnessFactor, 0.7f, 1e-6f, "multilayer roughness has a floor");
     RequireNear(named("glossy_tarmac").specularFactor, 1.0f, 1e-6f, "fresnelMaxLevel still caps the specular at 1");
-    RequireNear(named("wall").roughnessFactor, 0.57735f, 1e-4f, "the floor is for multilayer surfaces only");
-    RequireNear(named("asph").roughnessFactor, 0.91287f, 1e-4f, "a matte multilayer surface stays matte");
+    RequireNear(named("wall").roughnessFactor, 0.54912f, 1e-4f, "the floor is for multilayer surfaces only");
+    RequireNear(named("wall").specularFactor, 0.2f, 1e-6f, "ksSpecular without a reflection is the specular level");
+    RequireNear(named("asph").roughnessFactor, 0.7f, 1e-6f, "the default exponent is raised to the floor too");
+    RequireNear(named("asph").specularFactor, 0.0f, 0.0f, "ksSpecular 0 reflects nothing");
 }
 
 // A cockpit's ksPerPixelMultiMap materials: leather on an alpha-0 diffuse (alpha-tested, as the
@@ -1779,17 +1836,6 @@ std::vector<std::uint8_t> BuildCockpitKn5()
     WriteMesh(writer, "GRILLE", 2, 3.0f);
     WriteMesh(writer, "PANEL", 3, 4.0f);
     return writer.Bytes();
-}
-
-// The texels of a PNG the import wrote, as RGBA.
-std::vector<std::uint8_t> ReadPngRgba(const std::string& path, int& width, int& height)
-{
-    int channels = 0;
-    stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
-    Require(pixels != nullptr, "readable png " + path);
-    std::vector<std::uint8_t> rgba(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
-    stbi_image_free(pixels);
-    return rgba;
 }
 
 void ImportsMultiMapDetailAsDetailLayers()

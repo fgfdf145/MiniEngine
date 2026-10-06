@@ -21,6 +21,15 @@ float SpecularOcclusion(float NdV, float ao, float roughness)
     return clamp(pow(NdV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
 }
 
+// Which lobe the one screen-space ray a pixel follows: the coat's where the pixel has a coat at least
+// as smooth as its base (car paint: a mirror lacquer over a rough base), the base's otherwise. The
+// trace, the resolve and the lighting all ask this, with roughness clamped at 0.04 as each reads it,
+// so the reflection lands on the lobe it was traced for.
+bool SsrTracesCoat(float coatFactor, float coatRoughness, float baseRoughness)
+{
+    return coatFactor > 0.0f && coatRoughness <= baseRoughness;
+}
+
 // 1 away from the screen's border, 0 at it: a hit near the edge is about to leave the screen, and
 // cutting it off would draw a hard line across the reflection.
 float SsrEdgeFade(vec2 uv)

@@ -48,6 +48,8 @@ constexpr int kElementArrayBuffer = 34963;
 constexpr size_t kStubTextureBytes = 128;
 // The least roughness a ksMultilayer surface (tarmac, grass, sand, kerbs) is imported with.
 constexpr float kMultilayerMinRoughness = 0.7f;
+// The clear coat's reflectance at normal incidence (KHR_materials_clearcoat: IOR 1.5).
+constexpr float kCoatF0 = 0.04f;
 // The glTF node extension that marks a mesh as collision only (see ModelCollisionMesh).
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
 // The glTF extension, on the document, that carries a car's own figures (see VehicleCarSpec).
@@ -76,6 +78,18 @@ float Round(float value, int digits)
 {
     const float scale = std::pow(10.0f, static_cast<float>(digits));
     return std::round(value * scale) / scale;
+}
+
+float SrgbToLinear(float value)
+{
+    return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
+
+std::uint8_t LinearToSrgb8(float value)
+{
+    const float clamped = std::clamp(value, 0.0f, 1.0f);
+    const float encoded = clamped <= 0.0031308f ? clamped * 12.92f : 1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f;
+    return static_cast<std::uint8_t>(std::lround(encoded * 255.0f));
 }
 
 Json PointsToJson(const std::vector<glm::vec2>& points)
@@ -787,7 +801,7 @@ class GltfBuilder
             {
                 continue;
             }
-            if (!m_plainTextures.count(key) && !m_multilayerTextures.count(key) && DetailTint(model, texture.name).has_value())
+            if (!m_plainTextures.count(key) && !m_multilayerTextures.count(key) && DetailColor(model, texture.name).has_value())
             {
                 continue; // a flat txDetail: a base-colour factor, not a map
             }
@@ -1121,7 +1135,7 @@ class GltfBuilder
     }
 
     // ksPerPixelMultiMap's txDetail when it is a pattern (cloth weave, leather grain, carbon) and not
-    // a flat colour, which DetailTint folds into the base colour instead.
+    // a flat colour, which DetailColor folds into the base colour instead.
     bool HasTiledDetail(const Kn5Model& model, const Kn5Material& material)
     {
         if (IsMultilayer(material) || material.Property("useDetail", 0.0f) <= 0.0f)
@@ -1130,7 +1144,7 @@ class GltfBuilder
         }
         const std::string detail = material.Texture("txDetail");
         const Kn5Texture* texture = detail.empty() ? nullptr : FindTexture(model, detail);
-        return texture != nullptr && texture->data.size() >= kStubTextureBytes && !DetailTint(model, detail).has_value();
+        return texture != nullptr && texture->data.size() >= kStubTextureBytes && !DetailColor(model, detail).has_value();
     }
 
     // Decodes one texture and writes it as PNG under m_textureDirectory / fileName; false, with a
@@ -1212,43 +1226,47 @@ class GltfBuilder
         return found == m_textureUris.end() ? std::nullopt : TextureIndexForUri(found->second);
     }
 
-    // txDetail as a base-colour factor when it is a flat colour. On Kunos road cars this is where
-    // the paint lives: the diffuse is a grey panel/AO template shared by every livery and the
-    // shader multiplies the one-colour detail map over it.
-    std::optional<std::array<float, 3>> DetailTint(const Kn5Model& model, const std::string& textureName)
+    // txDetail's colour when it is one flat colour, doubled and in gamma space (FlatDetailColor). On
+    // Kunos road cars this is where the paint lives: the diffuse is a grey panel/AO template shared
+    // by every livery and the shader multiplies the one-colour detail map over it.
+    std::optional<std::array<float, 3>> DetailColor(const Kn5Model& model, const std::string& textureName)
     {
         const auto cached = m_tintCache.find(textureName);
         if (cached != m_tintCache.end())
         {
             return cached->second;
         }
-        std::optional<std::array<float, 3>> tint;
+        std::optional<std::array<float, 3>> color;
         const Kn5Texture* texture = FindTexture(model, textureName);
         if (texture != nullptr && texture->data.size() >= kStubTextureBytes)
         {
             if (const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name))
             {
-                tint = Kn5Importer::FlatDetailTint(image->pixels, image->width, image->height);
+                color = Kn5Importer::FlatDetailColor(image->pixels, image->width, image->height);
             }
         }
-        m_tintCache[textureName] = tint;
-        return tint;
+        m_tintCache[textureName] = color;
+        return color;
     }
 
-    // txMaps as a metallic-roughness image. Its red channel is the per-pixel specular intensity,
-    // which scales the Blinn lobe the way the exponent does, so it folds into the same
-    // exponent-to-roughness conversion; at full intensity it reproduces the constant exactly.
-    // Metallic (blue) is 0: AC has no metallic workflow to map from.
-    std::optional<std::string> BakeRoughness(const Kn5Model& model, const std::string& textureName, float exponent)
+    // The paint on its template, baked: AC multiplies the diffuse by lerp(colour, 1, diffuse alpha)
+    // in gamma space and nothing clamps before the product. A factor cannot carry a doubled colour
+    // above 1 (white, red and yellow liveries) and ignores the alpha mask, so the product is written
+    // as the base colour map, clamped only at the end. keepAlpha keeps the diffuse's alpha for a
+    // material that blends or tests it.
+    std::optional<std::string> BakePaint(
+        const Kn5Model& model, const std::string& diffuseName, const std::array<float, 3>& color, bool keepAlpha)
     {
-        const std::string key = textureName + "|" + std::to_string(static_cast<int>(std::lround(exponent * 100.0f)));
-        const auto cached = m_bakeCache.find(key);
-        if (cached != m_bakeCache.end())
+        const std::string key = ToLowerAscii(diffuseName) + "|" + std::to_string(std::lround(color[0] * 1000.0f)) + "," +
+                                std::to_string(std::lround(color[1] * 1000.0f)) + "," +
+                                std::to_string(std::lround(color[2] * 1000.0f)) + (keepAlpha ? "|a" : "");
+        const auto cached = m_paintCache.find(key);
+        if (cached != m_paintCache.end())
         {
             return cached->second;
         }
-        m_bakeCache[key] = std::nullopt;
-        const Kn5Texture* texture = FindTexture(model, textureName);
+        m_paintCache[key] = std::nullopt;
+        const Kn5Texture* texture = FindTexture(model, diffuseName);
         if (texture == nullptr || texture->data.size() < kStubTextureBytes)
         {
             return std::nullopt;
@@ -1258,61 +1276,269 @@ class GltfBuilder
         {
             return std::nullopt;
         }
+        const size_t channels = keepAlpha ? 4 : 3;
+        const size_t texels = static_cast<size_t>(image->width) * static_cast<size_t>(image->height);
+        std::vector<std::uint8_t> pixels(texels * channels);
+        for (size_t texel = 0; texel < texels; ++texel)
+        {
+            const float alpha = static_cast<float>(image->pixels[texel * 4 + 3]) / 255.0f;
+            for (size_t channel = 0; channel < 3; ++channel)
+            {
+                const float diffuse = static_cast<float>(image->pixels[texel * 4 + channel]) / 255.0f;
+                const float multiplier = color[channel] + (1.0f - color[channel]) * alpha;
+                pixels[texel * channels + channel] =
+                    static_cast<std::uint8_t>(std::lround(std::clamp(diffuse * multiplier, 0.0f, 1.0f) * 255.0f));
+            }
+            if (keepAlpha)
+            {
+                pixels[texel * 4 + 3] = image->pixels[texel * 4 + 3];
+            }
+        }
+        const std::string fileName = UniqueFileName(SafeStem(diffuseName) + "_paint", ".png");
+        WritePng(m_textureDirectory / fileName, image->width, image->height, static_cast<int>(channels), pixels.data());
+        m_paintCache[key] = "textures/" + fileName;
+        return m_paintCache[key];
+    }
 
-        std::array<std::uint8_t, 256> lut{};
-        for (int value = 0; value < 256; ++value)
+    // What a ksPerPixelMultiMap's txMaps becomes (docs/design/2026-10-06-car-paint-correctness-design.md).
+    // AC reads it as R = specular, G = gloss, B = reflection; each lobe's exponent is G x EXP + 1.
+    struct MapsBakeRequest
+    {
+        // The base lobe's exponent, before the gloss.
+        float baseExponent = 0.0f;
+        // The channel that masks the base's specular: 0 (R) or 2 (B).
+        size_t maskChannel = 0;
+        // Car paint: the coat's exponent, before the gloss, and its weight per unit of reflection
+        // mask (fresnelC / kCoatF0); no coat map when the weight is 0.
+        float coatExponent = 0.0f;
+        float coatWeight = 0.0f;
+    };
+
+    struct BakedMaps
+    {
+        // R 0, G the base's roughness, B 0 (metallic), A the specular mask: the material's
+        // metallicRoughnessTexture and KHR_materials_specular's specularTexture.
+        std::optional<std::string> base;
+        // R the coat's weight, G its roughness: clearcoatTexture and clearcoatRoughnessTexture.
+        std::optional<std::string> coat;
+    };
+
+    BakedMaps BakeMaps(const Kn5Model& model, const std::string& textureName, const MapsBakeRequest& request)
+    {
+        const std::string key = ToLowerAscii(textureName) + "|" + std::to_string(std::lround(request.baseExponent * 100.0f)) + "|" +
+                                std::to_string(request.maskChannel) + "|" + std::to_string(std::lround(request.coatExponent * 100.0f)) +
+                                "|" + std::to_string(std::lround(request.coatWeight * 10000.0f));
+        const auto cached = m_bakeCache.find(key);
+        if (cached != m_bakeCache.end())
         {
-            const float intensity = std::max(static_cast<float>(value) / 255.0f, 0.02f);
-            lut[value] = static_cast<std::uint8_t>(
-                std::lround(Kn5Importer::SpecularExponentToRoughness(exponent * intensity) * 255.0f));
+            return cached->second;
         }
-        std::vector<std::uint8_t> rgb(static_cast<size_t>(image->width) * static_cast<size_t>(image->height) * 3, 0);
-        for (size_t pixel = 0; pixel < rgb.size() / 3; ++pixel)
+        m_bakeCache[key] = BakedMaps{};
+        const Kn5Texture* texture = FindTexture(model, textureName);
+        if (texture == nullptr || texture->data.size() < kStubTextureBytes)
         {
-            rgb[pixel * 3 + 1] = lut[image->pixels[pixel * 4]];
+            return {};
         }
-        const std::string fileName = UniqueFileName(
-            SafeStem(textureName) + "_rough" + std::to_string(static_cast<int>(exponent)), ".png");
-        WritePng(m_textureDirectory / fileName, image->width, image->height, 3, rgb.data());
-        m_bakeCache[key] = "textures/" + fileName;
-        return m_bakeCache[key];
+        const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name);
+        if (!image.has_value())
+        {
+            return {};
+        }
+
+        // Per channel level: the base's and the coat's roughness at that gloss (exponent G x EXP + 1,
+        // as Kunos' shader raises N.H to it), the coat's weight at that reflection mask.
+        std::array<std::uint8_t, 256> baseRoughness{};
+        std::array<std::uint8_t, 256> coatRoughness{};
+        std::array<std::uint8_t, 256> coatWeight{};
+        for (size_t value = 0; value < 256; ++value)
+        {
+            const float level = static_cast<float>(value) / 255.0f;
+            baseRoughness[value] = static_cast<std::uint8_t>(
+                std::lround(Kn5Importer::SpecularExponentToRoughness(request.baseExponent * level + 1.0f) * 255.0f));
+            coatRoughness[value] = static_cast<std::uint8_t>(
+                std::lround(Kn5Importer::SpecularExponentToRoughness(request.coatExponent * level + 1.0f) * 255.0f));
+            coatWeight[value] = static_cast<std::uint8_t>(std::lround(std::clamp(request.coatWeight * level, 0.0f, 1.0f) * 255.0f));
+        }
+        const size_t texels = static_cast<size_t>(image->width) * static_cast<size_t>(image->height);
+        const bool hasCoat = request.coatWeight > 0.0f;
+        std::vector<std::uint8_t> base(texels * 4, 0);
+        std::vector<std::uint8_t> coat(hasCoat ? texels * 3 : 0, 0);
+        for (size_t texel = 0; texel < texels; ++texel)
+        {
+            const std::uint8_t* maps = &image->pixels[texel * 4];
+            base[texel * 4 + 1] = baseRoughness[maps[1]];
+            base[texel * 4 + 3] = maps[request.maskChannel];
+            if (hasCoat)
+            {
+                coat[texel * 3] = coatWeight[maps[2]];
+                coat[texel * 3 + 1] = coatRoughness[maps[1]];
+            }
+        }
+        BakedMaps baked;
+        const std::string stem = SafeStem(textureName);
+        const std::string baseName = UniqueFileName(
+            stem + "_base" + std::to_string(std::lround(request.baseExponent)) + (request.maskChannel == 2 ? "b" : "r"), ".png");
+        WritePng(m_textureDirectory / baseName, image->width, image->height, 4, base.data());
+        baked.base = "textures/" + baseName;
+        if (hasCoat)
+        {
+            const std::string coatName = UniqueFileName(stem + "_coat" + std::to_string(std::lround(request.coatExponent)), ".png");
+            WritePng(m_textureDirectory / coatName, image->width, image->height, 3, coat.data());
+            baked.coat = "textures/" + coatName;
+        }
+        m_bakeCache[key] = baked;
+        return baked;
+    }
+
+    // A flat paint detail's alpha: AC multiplies the specular by it where the detail applies, and
+    // on metallic liveries it is the flake noise (tiled by detailUVMultiplier; a solid colour's is
+    // one value). mean is its average; texture, when it varies, a grey map of it, sRGB encoded for
+    // KHR_materials_specular's specularColorTexture.
+    struct DetailFlake
+    {
+        float mean = 1.0f;
+        std::optional<std::string> texture;
+    };
+
+    DetailFlake BakeDetailFlake(const Kn5Model& model, const std::string& detailName)
+    {
+        const std::string key = ToLowerAscii(detailName);
+        const auto cached = m_flakeCache.find(key);
+        if (cached != m_flakeCache.end())
+        {
+            return cached->second;
+        }
+        DetailFlake flake;
+        m_flakeCache[key] = flake;
+        const Kn5Texture* texture = FindTexture(model, detailName);
+        if (texture == nullptr || texture->data.size() < kStubTextureBytes)
+        {
+            return flake;
+        }
+        const std::optional<TextureData> image = DecodeTextureBlob(texture->data, texture->name);
+        if (!image.has_value())
+        {
+            return flake;
+        }
+        const size_t texels = static_cast<size_t>(image->width) * static_cast<size_t>(image->height);
+        if (texels == 0)
+        {
+            return flake;
+        }
+        std::uint8_t low = 255;
+        std::uint8_t high = 0;
+        double sum = 0.0;
+        for (size_t texel = 0; texel < texels; ++texel)
+        {
+            const std::uint8_t alpha = image->pixels[texel * 4 + 3];
+            low = std::min(low, alpha);
+            high = std::max(high, alpha);
+            sum += alpha;
+        }
+        flake.mean = Round(static_cast<float>(sum / static_cast<double>(texels) / 255.0), 4);
+        if (high - low > 6)
+        {
+            std::vector<std::uint8_t> grey(texels * 3);
+            for (size_t texel = 0; texel < texels; ++texel)
+            {
+                const std::uint8_t value = LinearToSrgb8(static_cast<float>(image->pixels[texel * 4 + 3]) / 255.0f);
+                grey[texel * 3] = value;
+                grey[texel * 3 + 1] = value;
+                grey[texel * 3 + 2] = value;
+            }
+            const std::string fileName = UniqueFileName(SafeStem(detailName) + "_flake", ".png");
+            WritePng(m_textureDirectory / fileName, image->width, image->height, 3, grey.data());
+            flake.texture = "textures/" + fileName;
+        }
+        m_flakeCache[key] = flake;
+        return flake;
     }
 
     Json ConvertMaterial(const Kn5Model& model, const Kn5Material& material)
     {
-        const float exponent = std::max(material.Property("ksSpecularEXP", 20.0f), 1.0f);
-        // ksSpecular is the intensity: 0 means no highlight at all in AC (grass, trees).
-        const float specular = material.Property("ksSpecular", 1.0f);
-        const float effectiveExponent = exponent * std::max(specular, 0.02f);
-        const bool multilayer = ToLowerAscii(material.shader).find("multilayer") != std::string::npos;
+        // AC's lobes as GGX ones (docs/design/2026-10-06-car-paint-correctness-design.md): the
+        // exponent is the lobe's width and becomes roughness; ksSpecular is its height, which a lobe
+        // of that width spends as reflectance (KHR_materials_specular), not as width.
+        const std::string shader = ToLowerAscii(material.shader);
+        const bool multilayer = shader.find("multilayer") != std::string::npos;
+        const float exponent = std::max(material.Property("ksSpecularEXP", 20.0f), 0.0f);
+        const float specular = std::clamp(material.Property("ksSpecular", 1.0f), 0.0f, 1.0f);
+        const float fresnelMax = material.Property("fresnelMaxLevel", 0.0f);
+        // Car paint: isAdditive 2 on a multi-map shader (Content Manager's IsCarpaint). Its
+        // reflection, Fresnel-weighted from fresnelC up to fresnelMaxLevel, is the lacquer over the
+        // base coat and becomes KHR_materials_clearcoat; the base keeps the ksSpecular lobe. Every
+        // other surface's reflection is its base's specular, capped by fresnelMaxLevel.
+        const bool carPaint = shader.find("multimap") != std::string::npos &&
+                              std::lround(material.Property("isAdditive", 0.0f)) == 2 && fresnelMax > 0.0f;
+        const float coatWeight = carPaint ? std::max(material.Property("fresnelC", 0.0f), 0.0f) / kCoatF0 : 0.0f;
+        // The coat's exponent: the sun lobe's, AC's sharp second lobe on painted panels (the base's
+        // where a paint has none).
+        const float sunExponent = material.Property("sunSpecularEXP", 0.0f);
+        const float coatExponent = sunExponent > 0.0f ? sunExponent : exponent;
 
         const bool useDetail = material.Property("useDetail", 0.0f) > 0.0f;
-        const std::optional<std::array<float, 3>> tint =
-            useDetail ? DetailTint(model, material.Texture("txDetail")) : std::nullopt;
+        const std::string detailName = material.Texture("txDetail");
+        const std::optional<std::array<float, 3>> paint = useDetail ? DetailColor(model, detailName) : std::nullopt;
 
         Json pbr = Json::object();
-        pbr["baseColorFactor"] = tint.has_value() ? Json::array({(*tint)[0], (*tint)[1], (*tint)[2], 1.0f})
-                                                  : Json::array({1.0f, 1.0f, 1.0f, 1.0f});
+        pbr["baseColorFactor"] = Json::array({1.0f, 1.0f, 1.0f, 1.0f});
         pbr["metallicFactor"] = 0.0f;
-        float roughness = Kn5Importer::SpecularExponentToRoughness(effectiveExponent);
+        const std::string diffuseName = material.Texture("txDiffuse");
+        std::optional<size_t> baseColor = TextureIndexForKn5(diffuseName);
+        if (paint.has_value())
+        {
+            // A doubled colour above 1, or a diffuse whose alpha keeps the template somewhere, needs
+            // the product baked; otherwise the colour is the factor.
+            const float brightest = std::max({(*paint)[0], (*paint)[1], (*paint)[2]});
+            const std::optional<std::pair<std::uint8_t, std::uint8_t>> alpha = AlphaRange(model, diffuseName);
+            std::optional<std::string> baked;
+            if (baseColor.has_value() && (brightest > 1.0f || (alpha.has_value() && alpha->second > 0)))
+            {
+                baked = BakePaint(model, diffuseName, *paint, material.alphaBlend || AlphaTestCutsOut(model, material));
+            }
+            if (baked.has_value())
+            {
+                baseColor = TextureIndexForUri(*baked);
+            }
+            else
+            {
+                pbr["baseColorFactor"] = Json::array({Round(SrgbToLinear(std::min((*paint)[0], 1.0f)), 5),
+                                                      Round(SrgbToLinear(std::min((*paint)[1], 1.0f)), 5),
+                                                      Round(SrgbToLinear(std::min((*paint)[2], 1.0f)), 5),
+                                                      1.0f});
+            }
+        }
+        if (baseColor.has_value())
+        {
+            pbr["baseColorTexture"] = {{"index", *baseColor}};
+        }
+
+        float roughness = Kn5Importer::SpecularExponentToRoughness(exponent);
         if (multilayer)
         {
             // Ground is dry and rough at any scale a lobe can show. AC's exponent is a broad Blinn
-            // lobe plus a faint Fresnel sheen; converted to GGX (and scaled by
-            // tarmacSpecularMultiplier, which the shader spends on the sheen's intensity) it came
-            // out at 0.2 to 0.4, and the road read as wet plastic with a sun glare.
+            // lobe plus a faint Fresnel sheen (tarmacSpecularMultiplier, which the shader spends on
+            // the sheen's intensity): converted alone it leaves tarmac glossier than the game shows.
             roughness = std::max(roughness, kMultilayerMinRoughness);
         }
         pbr["roughnessFactor"] = Round(roughness, 4);
-        if (const std::optional<size_t> diffuse = TextureIndexForKn5(material.Texture("txDiffuse")))
-        {
-            pbr["baseColorTexture"] = {{"index", *diffuse}};
-        }
-        if (const std::optional<std::string> baked =
-                BakeRoughness(model, material.Texture("txMaps"), effectiveExponent))
+
+        // The base's specular level: ksSpecular on car paint and on surfaces without a reflection,
+        // fresnelMaxLevel (which caps the reflection) on the others; txMaps masks it per pixel with
+        // the matching channel, R (specular) or B (reflection).
+        const bool reflective = !carPaint && fresnelMax > 0.0f;
+        const float specularLevel = reflective ? std::min(fresnelMax, 1.0f) : specular;
+        MapsBakeRequest request;
+        request.baseExponent = exponent;
+        request.maskChannel = reflective ? 2 : 0;
+        request.coatExponent = carPaint ? coatExponent : 0.0f;
+        request.coatWeight = coatWeight;
+        const std::string mapsName = material.Texture("txMaps");
+        const BakedMaps maps = mapsName.empty() ? BakedMaps{} : BakeMaps(model, mapsName, request);
+        if (maps.base.has_value())
         {
             // glTF multiplies factor and texture, so the per-pixel value takes over.
-            pbr["metallicRoughnessTexture"] = {{"index", *TextureIndexForUri(*baked)}};
+            pbr["metallicRoughnessTexture"] = {{"index", *TextureIndexForUri(*maps.base)}};
             pbr["roughnessFactor"] = 1.0f;
         }
 
@@ -1321,26 +1547,63 @@ class GltfBuilder
         out["pbrMetallicRoughness"] = std::move(pbr);
         out["doubleSided"] = false;
 
-        // fresnelMaxLevel caps how much a surface reflects, which is what KHR_materials_specular's
-        // factor is. Uncapped, near-black trim and glass render as nothing but sky.
-        const float fresnelMax = material.Property("fresnelMaxLevel", 0.0f);
-        if (fresnelMax > 0.0f)
+        // KHR_materials_specular: F0 = 0.04 x colour x level, F90 = level. Uncapped, near-black trim
+        // and glass render as nothing but sky.
+        Json specularExtension = Json::object();
+        if (specularLevel < 1.0f)
         {
-            out["extensions"]["KHR_materials_specular"] = {{"specularFactor", Round(std::min(fresnelMax, 1.0f), 4)}};
+            specularExtension["specularFactor"] = Round(specularLevel, 4);
+        }
+        if (maps.base.has_value())
+        {
+            specularExtension["specularTexture"] = {{"index", *TextureIndexForUri(*maps.base)}};
+        }
+        if (carPaint && paint.has_value())
+        {
+            // The paint detail's alpha scales the specular where it applies: a metallic livery's
+            // flakes, tiled like the detail. As the colour, it weighs F0 only.
+            const DetailFlake flake = BakeDetailFlake(model, detailName);
+            const float tiling = material.Property("detailUVMultiplier", 1.0f);
+            if (flake.texture.has_value() && tiling > 0.0f)
+            {
+                specularExtension["specularColorTexture"] = {
+                    {"index", *TextureIndexForUri(*flake.texture)},
+                    {"extensions", {{"KHR_texture_transform", {{"scale", {Round(tiling, 6), Round(tiling, 6)}}}}}}};
+                m_extensionsUsed.insert("KHR_texture_transform");
+            }
+            else if (flake.mean < 1.0f)
+            {
+                specularExtension["specularColorFactor"] = {flake.mean, flake.mean, flake.mean};
+            }
+        }
+        if (!specularExtension.empty())
+        {
+            out["extensions"]["KHR_materials_specular"] = std::move(specularExtension);
             m_extensionsUsed.insert("KHR_materials_specular");
         }
 
-        // Car paint's second, much tighter lobe (sunSpecular / sunSpecularEXP) is the lacquer
-        // over the base coat. Only painted panels set it.
-        const float sunSpecular = material.Property("sunSpecular", 0.0f);
-        if (sunSpecular > 0.0f)
+        // Car paint's lacquer: AC's reflection is fresnelC at normal incidence times txMaps' B, laid
+        // over the lit paint (lerp by the Fresnel, isAdditive 2), the coat's 0.04 times its weight,
+        // so the weight is fresnelC x B / 0.04; its roughness is the sun lobe's exponent with the
+        // gloss. AC's own reflection of paint is mirror sharp: one lobe cannot be both, and the
+        // physical conversion of the sun lobe is the one kept.
+        if (carPaint && coatWeight > 0.0f)
         {
-            const float sunExponent = std::max(material.Property("sunSpecularEXP", 1500.0f), 1.0f);
-            const float clearcoatRoughness =
-                std::clamp(std::sqrt(2.0f / (sunExponent + 2.0f)), 0.02f, 1.0f);
-            out["extensions"]["KHR_materials_clearcoat"] = {
-                {"clearcoatFactor", Round(std::min(sunSpecular / 20.0f, 1.0f), 4)},
-                {"clearcoatRoughnessFactor", Round(clearcoatRoughness, 4)}};
+            Json coat = Json::object();
+            if (maps.coat.has_value())
+            {
+                const size_t coatIndex = *TextureIndexForUri(*maps.coat);
+                coat = {{"clearcoatFactor", 1.0f},
+                        {"clearcoatTexture", {{"index", coatIndex}}},
+                        {"clearcoatRoughnessFactor", 1.0f},
+                        {"clearcoatRoughnessTexture", {{"index", coatIndex}}}};
+            }
+            else
+            {
+                coat = {{"clearcoatFactor", Round(std::min(coatWeight, 1.0f), 4)},
+                        {"clearcoatRoughnessFactor", Round(Kn5Importer::SpecularExponentToRoughness(coatExponent), 4)}};
+            }
+            out["extensions"]["KHR_materials_clearcoat"] = std::move(coat);
             m_extensionsUsed.insert("KHR_materials_clearcoat");
         }
 
@@ -1410,7 +1673,7 @@ class GltfBuilder
 
         const float normalBlend = material.Property("detailNormalBlend", 0.0f);
         const std::string ownNormal = material.Texture("txNormal");
-        const bool ownNormalFlat = !out.contains("normalTexture") || DetailTint(model, ownNormal).has_value();
+        const bool ownNormalFlat = !out.contains("normalTexture") || DetailColor(model, ownNormal).has_value();
         if (normalBlend > 0.0f && ownNormalFlat)
         {
             if (const std::optional<size_t> normal = TextureIndexForKn5(material.Texture("txNormalDetail")))
@@ -1728,7 +1991,9 @@ class GltfBuilder
     std::unordered_map<std::string, std::string> m_textureUris;
     std::unordered_map<std::string, size_t> m_textureIndices;
     std::unordered_map<std::string, std::optional<std::array<float, 3>>> m_tintCache;
-    std::unordered_map<std::string, std::optional<std::string>> m_bakeCache;
+    std::unordered_map<std::string, BakedMaps> m_bakeCache;
+    std::unordered_map<std::string, std::optional<std::string>> m_paintCache;
+    std::unordered_map<std::string, DetailFlake> m_flakeCache;
     std::unordered_map<std::string, std::optional<std::pair<std::uint8_t, std::uint8_t>>> m_alphaRangeCache;
     std::unordered_map<std::string, std::optional<DetailMask>> m_detailMaskCache;
     std::string m_neutralDetailUri;
@@ -1883,26 +2148,25 @@ std::set<std::string> LowResTwins(const std::vector<std::string>& nodeNames)
 
 float SpecularExponentToRoughness(float exponent)
 {
-    return std::clamp(std::sqrt(2.0f / (exponent + 2.0f)), 0.04f, 1.0f);
+    // Walter et al. 2007: a Blinn-Phong exponent n has Beckmann's (and near enough GGX's) alpha
+    // sqrt(2 / (n + 2)). glTF's roughness is perceptual, alpha = roughness^2.
+    return std::clamp(std::pow(2.0f / (std::max(exponent, 0.0f) + 2.0f), 0.25f), 0.04f, 1.0f);
 }
 
-std::optional<std::array<float, 3>> FlatDetailTint(const std::vector<std::uint8_t>& rgba, int width, int height)
+std::optional<std::array<float, 3>> FlatDetailColor(const std::vector<std::uint8_t>& rgba, int width, int height)
 {
     const std::optional<std::array<float, 3>> middle = FlatColorMiddle(rgba, width, height);
     if (!middle.has_value())
     {
         return std::nullopt;
     }
-    std::array<float, 3> linear{};
+    std::array<float, 3> doubled{};
     for (size_t channel = 0; channel < 3; ++channel)
     {
-        // Doubled in gamma space, then linearised: the order is AC's, and on a mid-grey paint
-        // the two orders differ by a stop and a half.
-        const float doubled = std::min(2.0f * (*middle)[channel], 1.0f);
-        linear[channel] = Round(
-            doubled <= 0.04045f ? doubled / 12.92f : std::pow((doubled + 0.055f) / 1.055f, 2.4f), 5);
+        // Doubled in gamma space, unclamped: AC multiplies it into the diffuse first.
+        doubled[channel] = Round(2.0f * (*middle)[channel], 5);
     }
-    return linear;
+    return doubled;
 }
 
 std::vector<size_t> RankPaintedMaterials(

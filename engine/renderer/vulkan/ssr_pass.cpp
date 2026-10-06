@@ -107,15 +107,17 @@ VulkanSsrTracePass::VulkanSsrTracePass(
     {
         m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
         m_linearSampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 5> kTypes = {
+        static constexpr std::array<VkDescriptorType, 7> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "ssr_trace.comp.spv", sizeof(SsrPushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 1);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 6, 1);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -137,10 +139,14 @@ ScenePassId VulkanSsrTracePass::Id() const
 
 RenderPassIo VulkanSsrTracePass::Io() const
 {
-    static constexpr std::array<RenderTargetId, 3> kReads = {
+    // The coat target and the velocity target's coat normal: a coated pixel traces its coat's lobe
+    // (ssr_lobe.glsl).
+    static constexpr std::array<RenderTargetId, 5> kReads = {
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferNormal,
-        RenderTargetId::GBufferSurface};
+        RenderTargetId::GBufferSurface,
+        RenderTargetId::GBufferCoat,
+        RenderTargetId::GBufferVelocity};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SsrRaw};
     RenderPassIo io{};
     io.reads = kReads;
@@ -216,12 +222,16 @@ void VulkanSsrTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
             const VkDescriptorImageInfo surfaceInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
             const VkDescriptorImageInfo historyInfo{m_linearSampler, m_taa.GetHistoryView(historyIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo rawInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SsrRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 5> writes = {
+            const VkDescriptorImageInfo coatInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const std::array<VkWriteDescriptorSet, 7> writes = {
                 ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
                 ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
                 ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &surfaceInfo),
                 ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyInfo),
-                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &rawInfo)};
+                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &rawInfo),
+                ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &coatInfo),
+                ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo)};
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
     }
@@ -250,7 +260,7 @@ VulkanSsrResolvePass::VulkanSsrResolvePass(
     {
         m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
         m_linearSampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 8> kTypes = {
+        static constexpr std::array<VkDescriptorType, 9> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -258,10 +268,11 @@ VulkanSsrResolvePass::VulkanSsrResolvePass(
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "ssr_resolve.comp.spv", sizeof(SsrResolvePushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 6, 2);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 7, 2);
         m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
@@ -284,12 +295,13 @@ ScenePassId VulkanSsrResolvePass::Id() const
 
 RenderPassIo VulkanSsrResolvePass::Io() const
 {
-    static constexpr std::array<RenderTargetId, 5> kReads = {
+    static constexpr std::array<RenderTargetId, 6> kReads = {
         RenderTargetId::SsrRaw,
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
-        RenderTargetId::GBufferVelocity};
+        RenderTargetId::GBufferVelocity,
+        RenderTargetId::GBufferCoat};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneReflections};
     RenderPassIo io{};
     io.reads = kReads;
@@ -350,7 +362,8 @@ void VulkanSsrResolvePass::CreateDescriptorSets(const SceneRenderTargets& target
             const VkDescriptorImageInfo historyReadInfo{m_linearSampler, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo reflectionsInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneReflections, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 8> writes = {
+            const VkDescriptorImageInfo coatInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
+            const std::array<VkWriteDescriptorSet, 9> writes = {
                 ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &rawInfo),
                 ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
                 ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
@@ -358,7 +371,8 @@ void VulkanSsrResolvePass::CreateDescriptorSets(const SceneRenderTargets& target
                 ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
                 ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyReadInfo),
                 ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &reflectionsInfo)};
+                ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &reflectionsInfo),
+                ImageWrite(set, 8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &coatInfo)};
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
     }
