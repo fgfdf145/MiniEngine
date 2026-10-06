@@ -45,6 +45,8 @@ class VulkanDdgiDebugPass : public IScenePass
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
+    // ddgi_debug_ray_query.comp, when the ray scene has hardware ray tracing.
+    VkPipeline m_rayQueryPipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
 };
 }

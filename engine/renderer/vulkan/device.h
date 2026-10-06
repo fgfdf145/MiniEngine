@@ -15,8 +15,9 @@ class VulkanDevice
     using OptionalExtensions = std::function<std::vector<std::string>(VkPhysicalDevice)>;
 
     // optionalExtensions' extensions are enabled where the device offers them; whether all of them
-    // were is OptionalExtensionsEnabled.
-    VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions = {});
+    // were is OptionalExtensionsEnabled. allowRayQuery false leaves hardware ray tracing off whatever
+    // the device offers.
+    VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions = {}, bool allowRayQuery = true);
     ~VulkanDevice();
 
     VulkanDevice(const VulkanDevice&) = delete;
@@ -37,6 +38,10 @@ class VulkanDevice
     // stay forward shaded Blend items.
     bool SupportsIndependentBlend() const;
     bool OptionalExtensionsEnabled() const;
+    // Whether hardware ray tracing is on: VK_KHR_acceleration_structure and VK_KHR_ray_query with
+    // bufferDeviceAddress, enabled when the device offers all of them on Vulkan 1.2 or later. Without
+    // it every ray walks the ray scene's own hierarchies in compute (ray_tracing_common.glsl).
+    bool SupportsRayQuery() const;
 
   private:
     bool IsSuitable(VkPhysicalDevice device) const;
@@ -53,5 +58,6 @@ class VulkanDevice
     bool m_supportsBlockCompression = false;
     bool m_supportsIndependentBlend = false;
     bool m_optionalExtensionsEnabled = true;
+    bool m_supportsRayQuery = false;
 };
 }

@@ -154,6 +154,8 @@ add_library(engine_renderer
     vulkan/pipeline_set.cpp
     vulkan/pipeline_set.h
     vulkan/reverse_depth.h
+    vulkan/ray_acceleration.cpp
+    vulkan/ray_acceleration.h
     vulkan/ray_scene.cpp
     vulkan/ray_scene.h
     vulkan/render_pass.cpp
@@ -313,9 +315,32 @@ function(miniengine_add_shaders shader_target)
         )
         list(APPEND spv_outputs "${shader_output}")
     endforeach()
+    # The hardware ray tracing variants (ray_tracing_common.glsl): name.comp -> name_ray_query.comp.spv,
+    # ray queries need SPIR-V 1.4, so Vulkan 1.2.
+    foreach(shader_name IN LISTS MINIENGINE_RAY_QUERY_SHADERS)
+        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
+        get_filename_component(shader_stem "${shader_name}" NAME_WE)
+        get_filename_component(shader_extension "${shader_name}" LAST_EXT)
+        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_stem}_ray_query${shader_extension}.spv")
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}" ${shader_includes}
+            COMMENT "Compiling ${shader_name} (ray query)"
+            VERBATIM
+        )
+        list(APPEND spv_outputs "${shader_output}")
+    endforeach()
 
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
+
+# Shaders that trace the ray scene, compiled a second time for hardware ray tracing.
+set(MINIENGINE_RAY_QUERY_SHADERS
+    ddgi_trace.comp
+    ddgi_debug.comp
+)
 
 miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})
 

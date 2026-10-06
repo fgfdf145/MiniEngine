@@ -47,12 +47,19 @@ uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
     throw std::runtime_error("Failed to find a suitable Vulkan memory type");
 }
 
-VkDeviceMemory AllocateMemory(VkDevice device, VkDeviceSize size, uint32_t memoryTypeIndex)
+VkDeviceMemory AllocateMemory(VkDevice device, VkDeviceSize size, uint32_t memoryTypeIndex, VulkanMemoryPool::Resource resource)
 {
     VkMemoryAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocateInfo.allocationSize = size;
     allocateInfo.memoryTypeIndex = memoryTypeIndex;
+    VkMemoryAllocateFlagsInfo flagsInfo{};
+    flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    if (resource == VulkanMemoryPool::Resource::AddressableBuffer)
+    {
+        allocateInfo.pNext = &flagsInfo;
+    }
     VkDeviceMemory memory = VK_NULL_HANDLE;
     CheckVulkan(vkAllocateMemory(device, &allocateInfo, nullptr, &memory), "Failed to allocate Vulkan device memory");
     return memory;
@@ -72,7 +79,7 @@ VulkanPooledMemory VulkanMemoryPool::Allocate(
     result.size = requirements.size;
     if (requirements.size >= kDedicatedThreshold)
     {
-        result.memory = AllocateMemory(device, requirements.size, memoryTypeIndex);
+        result.memory = AllocateMemory(device, requirements.size, memoryTypeIndex, resource);
         return result;
     }
 
@@ -96,7 +103,7 @@ VulkanPooledMemory VulkanMemoryPool::Allocate(
     block->device = device;
     block->memoryTypeIndex = memoryTypeIndex;
     block->resource = resource;
-    block->memory = AllocateMemory(device, kBlockSize, memoryTypeIndex);
+    block->memory = AllocateMemory(device, kBlockSize, memoryTypeIndex, resource);
     const std::optional<uint64_t> offset = block->ranges.Allocate(requirements.size, requirements.alignment);
     if (!offset)
     {

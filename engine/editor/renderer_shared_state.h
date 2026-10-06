@@ -141,6 +141,9 @@ struct RendererSharedState
     // Large draw lists are recorded on the task system into secondary command buffers; off
     // (--no-parallel-recording), the render thread records them all itself.
     bool parallelRecording = true;
+    // The device enables hardware ray tracing when the GPU has it; off (--no-ray-query), it never
+    // does, as on a GPU without it.
+    bool rayQuery = true;
     InputState input;
     Camera camera;
     ViewportMatrices viewportMatrices;

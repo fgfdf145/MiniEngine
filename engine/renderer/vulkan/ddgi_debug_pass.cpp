@@ -45,6 +45,10 @@ VulkanDdgiDebugPass::VulkanDdgiDebugPass(
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, m_rayScene.GetSetLayout(), m_setLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "ddgi_debug.comp.spv", sizeof(DdgiDebugConstants), m_pipelineLayout, m_pipeline);
+        if (m_rayScene.HasHardwareRayTracing())
+        {
+            m_rayQueryPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "ddgi_debug_ray_query.comp.spv");
+        }
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 3, 1);
         CreateDescriptorSets(targets);
     }
@@ -91,7 +95,8 @@ void VulkanDdgiDebugPass::Record(
     constants.frameIndex = frame.frameIndex;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneGi, frame.imageIndex, frame.frameSlot);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
+    const bool rayQuery = frame.hardwareRays && m_rayQueryPipeline != VK_NULL_HANDLE;
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, rayQuery ? m_rayQueryPipeline : m_pipeline);
     const std::array<VkDescriptorSet, 3> sets = {frame.frameDescriptorSet, m_rayScene.GetSet(frame.frameSlot), m_descriptorSets.at(slot)};
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
@@ -129,10 +134,13 @@ void VulkanDdgiDebugPass::CreateDescriptorSets(const SceneRenderTargets& targets
 
 void VulkanDdgiDebugPass::DestroyHandles()
 {
-    if (m_pipeline != VK_NULL_HANDLE)
+    for (VkPipeline* pipeline : {&m_pipeline, &m_rayQueryPipeline})
     {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
+        if (*pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device, *pipeline, nullptr);
+            *pipeline = VK_NULL_HANDLE;
+        }
     }
     if (m_pipelineLayout != VK_NULL_HANDLE)
     {

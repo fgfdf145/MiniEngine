@@ -49,6 +49,8 @@ struct EditorApplicationOptions
     // the DDGI probes off.
     std::optional<GBufferDebugView> debugView;
     bool ddgiDisabled = false;
+    // --software-rays: the ray scene's compute walk even where hardware ray tracing exists.
+    bool softwareRays = false;
     // --ddgi-spacing METRES: the finest DDGI level's probe spacing (DdgiSettings::baseSpacing).
     std::optional<float> ddgiSpacing;
     // --reference PREFIX: after the last frame, compares the DDGI irradiance (with --debug-view 15)
@@ -80,6 +82,8 @@ struct EditorApplicationOptions
     bool renderThread = true;
     // --no-parallel-recording: the render thread records every draw itself (comparisons).
     bool parallelRecording = true;
+    // --no-ray-query: the device leaves hardware ray tracing off, as a GPU without it would.
+    bool rayQuery = true;
     // --task-threads N: the task system's worker threads; 0 takes the logical processors less two.
     uint32_t taskThreads = 0;
     EnginePaths::Overrides paths;

@@ -251,6 +251,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--no-ray-query")
+        {
+            options.rayQuery = false;
+            continue;
+        }
+
         if (argument == "--task-threads")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -279,6 +285,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--no-ddgi")
         {
             options.ddgiDisabled = true;
+            continue;
+        }
+
+        if (argument == "--software-rays")
+        {
+            options.softwareRays = true;
             continue;
         }
 
@@ -407,11 +419,13 @@ int EditorApplication::Run()
     auto sharedState = std::make_shared<RendererSharedState>();
     sharedState->renderThread = m_options.renderThread;
     sharedState->parallelRecording = m_options.parallelRecording;
+    sharedState->rayQuery = m_options.rayQuery;
     // A scripted run renders what its options say, not what the editor was last left at, and does
     // not save the camera or render settings its options changed.
     sharedState->viewSettingsFromCommandLine =
         m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
-        m_options.debugView.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value();
+        m_options.debugView.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
+        m_options.softwareRays;
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
     if (m_options.statePath.has_value())
@@ -449,6 +463,10 @@ int EditorApplication::Run()
     if (m_options.ddgiDisabled)
     {
         sharedState->editorUi.EditRenderDebug().ddgi.enabled = false;
+    }
+    if (m_options.softwareRays)
+    {
+        sharedState->editorUi.EditRenderDebug().hardwareRayTracing = false;
     }
     if (m_options.ddgiSpacing.has_value())
     {

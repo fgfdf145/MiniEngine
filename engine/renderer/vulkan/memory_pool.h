@@ -21,7 +21,8 @@ struct VulkanPooledMemory
 // submeshes (three buffers each) and 7,000 textures ran an 8 GB GPU out of memory with about 1 GB
 // actually requested. Blocks are 64 MiB; a request of 16 MiB or more gets its own allocation.
 // Buffers and images come from separate blocks, which keeps linear and optimal-tiling resources
-// apart without having to honour bufferImageGranularity. Thread-safe. A block is freed as soon as
+// apart without having to honour bufferImageGranularity; buffers whose device address shaders or
+// acceleration structure builds use come from blocks allocated with the device address flag. Thread-safe. A block is freed as soon as
 // its last range is, so nothing is left to release before the device is destroyed.
 namespace VulkanMemoryPool
 {
@@ -29,6 +30,8 @@ enum class Resource
 {
     Buffer,
     Image,
+    // A buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT (needs bufferDeviceAddress).
+    AddressableBuffer,
 };
 
 VulkanPooledMemory Allocate(

@@ -30,7 +30,8 @@ class VulkanDdgi
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout frameSetLayout,
         VkDescriptorSetLayout raySetLayout,
-        uint32_t frameCount);
+        uint32_t frameCount,
+        bool rayQuery);
     ~VulkanDdgi();
 
     VulkanDdgi(const VulkanDdgi&) = delete;
@@ -56,7 +57,8 @@ class VulkanDdgi
         uint32_t frameIndex,
         float hysteresis,
         uint32_t lightingEpoch,
-        uint32_t geometryEpoch);
+        uint32_t geometryEpoch,
+        bool rayQuery);
 
     TextureDescriptorBinding GetIrradianceBinding() const;
     TextureDescriptorBinding GetVisibilityBinding() const;
@@ -103,6 +105,9 @@ class VulkanDdgi
     std::vector<VkDescriptorSet> m_sets;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_tracePipeline = VK_NULL_HANDLE;
+    // ddgi_trace_ray_query.comp, made when the ray set has hardware ray tracing (the constructor's
+    // rayQuery); Record's rayQuery picks it per frame.
+    VkPipeline m_rayQueryTracePipeline = VK_NULL_HANDLE;
     VkPipeline m_updatePipeline = VK_NULL_HANDLE;
     bool m_cleared = false;
 };

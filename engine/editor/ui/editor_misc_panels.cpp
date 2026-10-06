@@ -178,6 +178,13 @@ void EditorUiController::DrawGraphicsDebugPanel()
         // Off, every pixel loops over every light: the path clustering must match pixel for pixel.
         ImGui::Checkbox("Clustered lighting", &m_renderDebug.clusteredLighting);
         ImGui::Checkbox("Local light shadows", &m_renderDebug.localLightShadows);
+        // Off, or on a GPU without ray queries, rays walk the ray scene's hierarchies in compute: the
+        // same hits, found more slowly.
+        ImGui::Checkbox("Hardware ray tracing", &m_renderDebug.hardwareRayTracing);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("DDGI probe rays use ray queries when the GPU has them (see the log); off uses the compute walk");
+        }
         DragFloatInRange("Shadow distance (m)", &m_renderDebug.shadowDistance, 10.0f, 5000.0f, "%.0f");
         // The forward-only order has no motion vectors, so TAA is off there whatever this says; DLSS
         // takes its place while it resolves.

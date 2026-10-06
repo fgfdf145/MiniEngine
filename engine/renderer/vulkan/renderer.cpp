@@ -525,7 +525,8 @@ VulkanRenderer::VulkanRenderer(
         [instance](VkPhysicalDevice physicalDevice)
         {
             return VulkanDlss::RequiredDeviceExtensions(instance, physicalDevice);
-        });
+        },
+        State().rayQuery);
     m_dlss = std::make_unique<VulkanDlss>(
         instance,
         m_device->GetPhysicalDevice(),
@@ -1044,7 +1045,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     if (m_rayScene->HasFinishedBuild())
     {
         m_commandContext->WaitForAllFrames();
+        m_cpuStages.Mark("RayInstallWait");
         m_rayScene->InstallBuild();
+        m_cpuStages.Mark("RayInstall");
         // The probes keep the light they hold: most of it still holds (a streamed cell far away
         // changes nothing here), and each probe whose light the new content changes notices at its
         // next update and starts its average over (ddgi_update.comp). They judge whether they are
@@ -1263,6 +1266,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     frame.imageIndex = imageIndex;
     frame.frameSlot = m_commandContext->GetCurrentFrame();
     frame.recorder = m_parallelRecorder.get();
+    frame.hardwareRays = m_rayScene->HasHardwareRayTracing() && packet.renderDebug.hardwareRayTracing;
 
     m_referenceFrame.viewProjection = viewProjection;
     m_referenceFrame.cameraPosition = packet.camera.position;
@@ -1485,7 +1489,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               m_gpuTimer->Mark(commandBuffer, "EnvironmentProbe");
                                               // The ray materials, when content changed, and the barrier that
                                               // makes the ray scene visible to every trace after it.
-                                              m_rayScene->Record(commandBuffer);
+                                              m_rayScene->Record(commandBuffer, frame.frameSlot, frame.hardwareRays);
                                               m_gpuTimer->Mark(commandBuffer, "RayScene");
                                               // The probes trace the ray scene and must be current before
                                               // any surface samples them.
@@ -1497,7 +1501,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   m_ddgiFrameIndex++,
                                                   ddgiHysteresis,
                                                   ddgiLightingEpoch,
-                                                  ddgiGeometryEpoch);
+                                                  ddgiGeometryEpoch,
+                                                  frame.hardwareRays);
                                               m_gpuTimer->Mark(commandBuffer, "Ddgi");
 
                                               m_cpuStages.Mark("RecordPrePasses");
@@ -1770,14 +1775,16 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_pipelineCache,
-        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
+        m_device->SupportsRayQuery());
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle(),
         m_rayScene->GetSetLayout(),
-        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
+        m_rayScene->HasHardwareRayTracing());
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),

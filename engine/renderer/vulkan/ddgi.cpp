@@ -50,7 +50,8 @@ VulkanDdgi::VulkanDdgi(
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout raySetLayout,
-    uint32_t frameCount)
+    uint32_t frameCount,
+    bool rayQuery)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_frameCount(frameCount)
@@ -120,6 +121,10 @@ VulkanDdgi::VulkanDdgi(
 
         const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, raySetLayout, m_setLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "ddgi_trace.comp.spv", sizeof(DdgiConstants), m_pipelineLayout, m_tracePipeline);
+        if (rayQuery)
+        {
+            m_rayQueryTracePipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "ddgi_trace_ray_query.comp.spv");
+        }
         m_updatePipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "ddgi_update.comp.spv");
     }
     catch (...)
@@ -173,7 +178,8 @@ void VulkanDdgi::Record(
     uint32_t frameIndex,
     float hysteresis,
     uint32_t lightingEpoch,
-    uint32_t geometryEpoch)
+    uint32_t geometryEpoch,
+    bool rayQuery)
 {
     if (!m_cleared)
     {
@@ -242,7 +248,8 @@ void VulkanDdgi::Record(
     const std::array<VkDescriptorSet, 3> sets = {frameSet, raySet, m_sets[frameSlot]};
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipeline);
+    const bool useRayQuery = rayQuery && m_rayQueryTracePipeline != VK_NULL_HANDLE;
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, useRayQuery ? m_rayQueryTracePipeline : m_tracePipeline);
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     vkCmdDispatch(commandBuffer, count, 1, 1);
 
@@ -365,7 +372,7 @@ VulkanDdgi::Buffer VulkanDdgi::CreateBuffer(VkDeviceSize size, VkBufferUsageFlag
 
 void VulkanDdgi::DestroyHandles()
 {
-    for (VkPipeline* pipeline : {&m_tracePipeline, &m_updatePipeline})
+    for (VkPipeline* pipeline : {&m_tracePipeline, &m_rayQueryTracePipeline, &m_updatePipeline})
     {
         if (*pipeline != VK_NULL_HANDLE)
         {

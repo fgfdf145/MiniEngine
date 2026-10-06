@@ -41,27 +41,31 @@ VkDeviceSize AtLeastOne(VkDeviceSize size)
 }
 }
 
-VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount)
+VulkanRayScene::VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount, bool hardwareRayTracing)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_frameCount(frameCount)
 {
     try
     {
-        constexpr std::array<VkDescriptorType, 5> kTypes = {
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
+        if (hardwareRayTracing)
+        {
+            m_acceleration = std::make_unique<VulkanRayAcceleration>(m_physicalDevice, m_device, m_frameCount);
+        }
+        std::vector<VkDescriptorType> types(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 * m_frameCount}};
+        if (m_acceleration)
+        {
+            types.push_back(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
+            poolSizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, m_frameCount});
+        }
+        m_setLayout = CreateComputeSetLayout(m_device, types);
 
-        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<uint32_t>(kTypes.size()) * m_frameCount};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.maxSets = m_frameCount;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
         CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create the ray scene descriptor pool");
         m_sets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, m_frameCount);
 
@@ -202,6 +206,16 @@ void VulkanRayScene::SetContent(
     m_submeshes = std::move(submeshes);
     WriteSets();
 
+    // What the hardware may treat as opaque: the materials whose coverage the averaging sets to 1.
+    m_opaqueMaterials.assign(m_materialCapacity, 0u);
+    for (uint32_t index = 0; index < m_materialCapacity; ++index)
+    {
+        const MaterialSlot& slot = m_materialSlots[index];
+        const GpuMaterialData& material = slot.source.material;
+        const bool transmits = (material.shadingModel[0] & kShadingFlagTransmission) != 0u && material.transmissionFactors[0] > 0.0f;
+        m_opaqueMaterials[index] = slot.set != VK_NULL_HANDLE && slot.source.alphaMode == MaterialAlphaMode::Opaque && !transmits ? 1u : 0u;
+    }
+
     // The hierarchies, on a worker: only meshes not built before cost anything. The previous
     // content's hierarchies go in with it and come back out pruned to what this content uses.
     std::vector<std::shared_ptr<const MeshData>> meshes;
@@ -269,6 +283,12 @@ void VulkanRayScene::SetContent(
             for (size_t index = 0; index < distinct.size(); ++index)
             {
                 AppendMesh(build.scene, *bvhs[index]);
+            }
+            // The bottom-level acceleration structures of meshes that have none, made here and built on
+            // the GPU when this content installs.
+            if (m_acceleration)
+            {
+                build.blas = m_acceleration->Prepare(distinct, bvhs);
             }
             {
                 // Into the cache for the builds after this one; hierarchies of meshes nobody holds any
@@ -356,6 +376,13 @@ void VulkanRayScene::InstallBuild()
     }
 
     const size_t instanceCount = m_submeshMeshes.size();
+    if (m_acceleration)
+    {
+        // The bottom levels only the old content held are freed off the frame's thread too.
+        Build released;
+        released.blas = m_acceleration->Install(std::move(build.blas), m_scene.meshes, IncrementalTopLevel::MaxInstances(instanceCount));
+        DiscardBuild(std::move(released));
+    }
     for (uint32_t slot = 0; slot < m_frameCount; ++slot)
     {
         DestroyBuffer(m_instances[slot]);
@@ -401,6 +428,10 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
         }
         ++m_topLevelGeneration;
     }
+    if (m_acceleration)
+    {
+        m_acceleration->UpdateTopLevel(frameSlot, m_scene, m_topLevelGeneration, m_opaqueMaterials);
+    }
     if (frameSlot < m_slotGenerations.size() && m_slotGenerations[frameSlot] == m_topLevelGeneration)
     {
         return;
@@ -413,7 +444,7 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
     }
 }
 
-void VulkanRayScene::Record(VkCommandBuffer commandBuffer)
+void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool hardwareRays)
 {
     if (!m_dirtyMaterialSlots.empty() && m_materialPipeline != VK_NULL_HANDLE)
     {
@@ -460,6 +491,13 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer)
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+    // The acceleration structures read only what the worker and UpdateInstances wrote from the host,
+    // which a submission makes visible by itself.
+    if (m_acceleration)
+    {
+        m_acceleration->Record(commandBuffer, frameSlot, hardwareRays && m_ready);
+    }
 }
 
 void VulkanRayScene::DiscardBuild(Build build)
@@ -495,6 +533,11 @@ void VulkanRayScene::DropFinishedStaleBuilds()
 bool VulkanRayScene::IsReady() const
 {
     return m_ready;
+}
+
+bool VulkanRayScene::HasHardwareRayTracing() const
+{
+    return m_acceleration != nullptr;
 }
 
 bool VulkanRayScene::IsBuilding() const
@@ -623,6 +666,23 @@ void VulkanRayScene::WriteSets()
             writes[binding].pBufferInfo = &infos[binding];
         }
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+
+        if (m_acceleration)
+        {
+            const VkAccelerationStructureKHR topLevel = m_acceleration->GetTopLevel(slot);
+            VkWriteDescriptorSetAccelerationStructureKHR accelerationInfo{};
+            accelerationInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+            accelerationInfo.accelerationStructureCount = 1;
+            accelerationInfo.pAccelerationStructures = &topLevel;
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.pNext = &accelerationInfo;
+            write.dstSet = m_sets[slot];
+            write.dstBinding = 5;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        }
     }
 }
 

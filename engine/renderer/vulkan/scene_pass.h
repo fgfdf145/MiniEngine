@@ -119,6 +119,9 @@ struct ScenePassFrameContext
     ToneMapper toneMapper = ToneMapper::Gt7;
     // Increments once per recorded frame; seeds the AO trace's noise.
     uint32_t frameIndex = 0;
+    // Passes that trace the ray scene use its ray-query variants: the device supports them and the
+    // hardware ray tracing switch is on (RenderDebugSettings::hardwareRayTracing).
+    bool hardwareRays = false;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
     // exposure histogram meters, unlike the flat background of EnvironmentMode::None.
     bool physicalSky = false;

@@ -1,5 +1,9 @@
-#version 450
+#version 460
 #extension GL_GOOGLE_include_directive : require
+#ifdef RAY_QUERY
+// The hardware variant of ray_tracing_common.glsl's TraceSceneRay.
+#extension GL_EXT_ray_query : require
+#endif
 
 // The DDGI probe rays: one workgroup per scheduled probe, one invocation per ray. Each ray leaves the
 // probe along a spherical Fibonacci direction turned by this frame's rotation and returns the

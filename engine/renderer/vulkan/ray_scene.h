@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "descriptor_pool_list.h"
+#include "ray_acceleration.h"
 #include "uniform_buffer.h"
 
 #include <engine/asset/mesh.h>
@@ -50,11 +51,14 @@ struct RayMaterialSource
 // every frame from the submeshes' model matrices. Device lifetime. Its descriptor set layout (the ray
 // set) is what every tracing pass binds as set 1:
 //   0 mesh nodes, 1 mesh triangles, 2 instances, 3 top-level nodes, 4 ray materials,
-// all storage buffers. Nothing is traceable until the first build installs (IsReady).
+// all storage buffers, and with hardware ray tracing 5, the frame slot's top-level acceleration
+// structure over the same instances (VulkanRayAcceleration), which the shaders' RAY_QUERY variants
+// trace instead of walking 0 to 3. Nothing is traceable until the first build installs (IsReady).
 class VulkanRayScene
 {
   public:
-    VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount);
+    // hardwareRayTracing: the device supports ray queries (VulkanDevice::SupportsRayQuery).
+    VulkanRayScene(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount, bool hardwareRayTracing);
     ~VulkanRayScene();
 
     VulkanRayScene(const VulkanRayScene&) = delete;
@@ -85,11 +89,14 @@ class VulkanRayScene
     // instance and top-level buffers.
     void UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> skipped);
 
-    // Averages the ray materials when content changed; afterwards makes every buffer visible to
-    // compute. Record before any pass that traces.
-    void Record(VkCommandBuffer commandBuffer);
+    // Averages the ray materials when content changed; builds the acceleration structures new content
+    // or moved instances need, the frame slot's top level only when hardwareRays says this frame's
+    // traces use it; afterwards makes everything visible to compute. Record before any pass that traces.
+    void Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool hardwareRays);
 
     bool IsReady() const;
+    // The set has binding 5 and the passes may trace with ray queries.
+    bool HasHardwareRayTracing() const;
     // A build started by SetContent has not been installed yet.
     bool IsBuilding() const;
     VkDescriptorSetLayout GetSetLayout() const;
@@ -143,6 +150,9 @@ class VulkanRayScene
         size_t meshNodeCount = 0;
         size_t meshTriangleCount = 0;
         IncrementalTopLevel topLevel;
+        // Each mesh's bottom-level acceleration structure (RayScene::meshes order), with hardware ray
+        // tracing only.
+        std::vector<std::shared_ptr<RayBlas>> blas;
     };
     // A build that will never be installed (or the content a new build replaces) is released on a
     // background task: freeing its hierarchies, hundreds of megabytes of mapped GPU memory on a map, took
@@ -212,5 +222,10 @@ class VulkanRayScene
     size_t m_meshNodeCount = 0;
     size_t m_meshTriangleCount = 0;
     bool m_ready = false;
+
+    // Null without hardware ray tracing.
+    std::unique_ptr<VulkanRayAcceleration> m_acceleration;
+    // By draw slot, 1 where the ray material stops every ray (Opaque, no transmission).
+    std::vector<uint8_t> m_opaqueMaterials;
 };
 }

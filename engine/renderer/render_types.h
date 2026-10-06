@@ -202,6 +202,10 @@ struct RenderDebugSettings
     // Shadow maps for point, spot and area lights (the local shadow atlas). Off, no local light
     // casts a shadow, as before they existed.
     bool localLightShadows = true;
+    // Rays through the ray scene (DDGI's probes and its debug views) use the GPU's ray queries against
+    // acceleration structures when the device has them. Off, or without them, they walk the ray
+    // scene's own hierarchies in compute: the comparison path, which must find the same hits.
+    bool hardwareRayTracing = true;
     // How far from the camera the sun's cascaded shadows reach, in metres (ShadowCascadeSettings::
     // maxDistance). The same four cascades cover it, so a longer reach gives coarser shadows.
     float shadowDistance = 80.0f;

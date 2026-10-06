@@ -17,6 +17,12 @@ const std::vector<const char*> kRequiredExtensions = {
 // The spec requires enabling this extension whenever the device advertises it (MoltenVK does).
 constexpr const char* kPortabilitySubsetExtensionName = "VK_KHR_portability_subset";
 
+// Hardware ray tracing, all or none (SupportsRayQuery).
+const std::vector<const char*> kRayQueryExtensions = {
+    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+    VK_KHR_RAY_QUERY_EXTENSION_NAME,
+    VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME};
+
 std::vector<VkExtensionProperties> EnumerateDeviceExtensions(VkPhysicalDevice device)
 {
     uint32_t extensionCount = 0;
@@ -29,7 +35,7 @@ std::vector<VkExtensionProperties> EnumerateDeviceExtensions(VkPhysicalDevice de
 }
 }
 
-VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions)
+VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const OptionalExtensions& optionalExtensions, bool allowRayQuery)
     : m_surface(surface)
 {
     uint32_t deviceCount = 0;
@@ -158,26 +164,74 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
         LOG_INFO("Enabling device extension: {}", name);
         wantsBufferDeviceAddress = wantsBufferDeviceAddress || name.find("buffer_device_address") != std::string::npos;
     }
-    VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress{};
-    bufferDeviceAddress.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+
+    // The Vulkan 1.2 features and hardware ray tracing's, queried through one chain.
+    VkPhysicalDeviceProperties deviceProperties{};
+    vkGetPhysicalDeviceProperties(m_physicalDevice, &deviceProperties);
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+    rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationFeatures{};
+    accelerationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceVulkan12Features vulkan12Features{};
+    vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    const bool rayQueryExtensions =
+        allowRayQuery && deviceProperties.apiVersion >= VK_API_VERSION_1_2 &&
+        std::all_of(kRayQueryExtensions.begin(), kRayQueryExtensions.end(), isAvailable);
+    if (rayQueryExtensions)
+    {
+        accelerationFeatures.pNext = &rayQueryFeatures;
+        vulkan12Features.pNext = &accelerationFeatures;
+    }
+    // Below Vulkan 1.2 there is no 1.2 block, and neither buffer device address nor ray tracing.
+    if (deviceProperties.apiVersion >= VK_API_VERSION_1_2)
+    {
+        VkPhysicalDeviceFeatures2 query{};
+        query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        query.pNext = &vulkan12Features;
+        vkGetPhysicalDeviceFeatures2(m_physicalDevice, &query);
+    }
     if (wantsBufferDeviceAddress)
     {
-        VkPhysicalDeviceBufferDeviceAddressFeatures supported{};
-        supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
-        VkPhysicalDeviceFeatures2 features2{};
-        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2.pNext = &supported;
-        vkGetPhysicalDeviceFeatures2(m_physicalDevice, &features2);
-        bufferDeviceAddress.bufferDeviceAddress = supported.bufferDeviceAddress;
-        m_optionalExtensionsEnabled = m_optionalExtensionsEnabled && supported.bufferDeviceAddress == VK_TRUE;
+        m_optionalExtensionsEnabled = m_optionalExtensionsEnabled && vulkan12Features.bufferDeviceAddress == VK_TRUE;
+    }
+    m_supportsRayQuery = rayQueryExtensions && vulkan12Features.bufferDeviceAddress == VK_TRUE &&
+                         accelerationFeatures.accelerationStructure == VK_TRUE && rayQueryFeatures.rayQuery == VK_TRUE;
+    LOG_INFO(
+        "Hardware ray tracing: {}",
+        m_supportsRayQuery ? "ray queries"
+        : allowRayQuery    ? "unsupported, rays walk the compute hierarchies"
+                           : "off (--no-ray-query), rays walk the compute hierarchies");
+
+    // Only the features the engine uses go into the chain it enables. One Vulkan 1.2 block carries
+    // buffer device address for both (it may not be chained beside the standalone feature struct).
+    VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQuery{};
+    enabledRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    enabledRayQuery.rayQuery = VK_TRUE;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAcceleration{};
+    enabledAcceleration.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    enabledAcceleration.accelerationStructure = VK_TRUE;
+    enabledAcceleration.pNext = &enabledRayQuery;
+    VkPhysicalDeviceVulkan12Features enabled12{};
+    enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    enabled12.bufferDeviceAddress = (wantsBufferDeviceAddress || m_supportsRayQuery) ? vulkan12Features.bufferDeviceAddress : VK_FALSE;
+    VkPhysicalDeviceFeatures2 enabledFeatures{};
+    enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    enabledFeatures.features = deviceFeatures;
+    if (m_supportsRayQuery)
+    {
+        enabledExtensions.insert(enabledExtensions.end(), kRayQueryExtensions.begin(), kRayQueryExtensions.end());
+        enabled12.pNext = &enabledAcceleration;
+    }
+    if (wantsBufferDeviceAddress || m_supportsRayQuery)
+    {
+        enabledFeatures.pNext = &enabled12;
     }
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pNext = wantsBufferDeviceAddress ? &bufferDeviceAddress : nullptr;
+    createInfo.pNext = &enabledFeatures;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
-    createInfo.pEnabledFeatures = &deviceFeatures;
     createInfo.enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size());
     createInfo.ppEnabledExtensionNames = enabledExtensions.data();
 
@@ -214,6 +268,11 @@ bool VulkanDevice::SupportsBlockCompression() const
 bool VulkanDevice::SupportsIndependentBlend() const
 {
     return m_supportsIndependentBlend;
+}
+
+bool VulkanDevice::SupportsRayQuery() const
+{
+    return m_supportsRayQuery;
 }
 
 VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const

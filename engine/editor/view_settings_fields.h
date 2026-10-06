@@ -19,6 +19,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "forward_only", settings.forwardOnly);
     visit("", "clustered_lighting", settings.clusteredLighting);
     visit("", "local_light_shadows", settings.localLightShadows);
+    visit("", "hardware_ray_tracing", settings.hardwareRayTracing);
     visit("", "shadow_distance", settings.shadowDistance);
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);
