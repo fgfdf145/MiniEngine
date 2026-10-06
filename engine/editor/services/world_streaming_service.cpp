@@ -51,8 +51,9 @@ glm::vec3 ReadVec3(const YAML::Node& node)
     }
     return glm::vec3(node[0].as<float>(), node[1].as<float>(), node[2].as<float>());
 }
+}
 
-std::vector<StreamedCell> ReadCells(const SceneStreamingWorld& world)
+std::vector<StreamedCell> WorldStreamingService::ReadCells(const SceneStreamingWorld& world)
 {
     const std::filesystem::path manifestPath = EnginePaths::ResolveProjectPath(world.manifest);
     const YAML::Node root = YAML::LoadFile(manifestPath.string());
@@ -74,11 +75,14 @@ std::vector<StreamedCell> ReadCells(const SceneStreamingWorld& world)
         cell.boundsMax = ReadVec3(node["bounds_max"]);
         cell.loadRadius = world.loadRadius;
         cell.unloadRadius = world.unloadRadius;
+        cell.farOnly = node["far_only"].as<bool>(false);
         cells.push_back(std::move(cell));
     }
     return cells;
 }
 
+namespace
+{
 void DestroyCellEntity(IEditorWorld& world, StreamedCell& cell)
 {
     if (cell.entity != entt::null && world.IsValidEntity(cell.entity))
@@ -109,6 +113,10 @@ float WorldStreamingService::HorizontalDistance(const glm::vec3& point, const gl
 
 StreamedCell::Shown WorldStreamingService::TargetOf(const StreamedCell& cell)
 {
+    if (cell.wantHighDetail && cell.farOnly)
+    {
+        return StreamedCell::Shown::None;
+    }
     if (cell.wantHighDetail && !cell.highDetailPath.empty())
     {
         return StreamedCell::Shown::HighDetail;
@@ -168,7 +176,7 @@ bool WorldStreamingService::Tick(RendererSharedState& state)
         {
             try
             {
-                std::vector<StreamedCell> cells = ReadCells(streamed);
+                std::vector<StreamedCell> cells = WorldStreamingService::ReadCells(streamed);
                 LOG_INFO("Streaming {} cells from '{}'", cells.size(), streamed.manifest);
                 streaming.cells.insert(streaming.cells.end(), std::make_move_iterator(cells.begin()), std::make_move_iterator(cells.end()));
             }

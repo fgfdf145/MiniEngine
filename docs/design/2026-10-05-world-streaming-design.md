@@ -22,6 +22,8 @@ GTA SA 全图（5 个区域）一次性载入：31k submesh、19k 贴图、820 �
 | `textures/<txd>/<纹理>.png` | 所有格子共用的贴图（硬链接） |
 | `gtasa.stream.yaml` | 清单：每个格子的 hd/lod 路径与世界空间包围盒 |
 
+只有 LOD、没有 HD 的格子在近处也一直显示 LOD。格子可以标 `far_only: true`（2026-10-06）：只在半径以外显示 LOD，半径以内什么都不显示。用于 GTA3 的整岛 LOD（IslandLOD*）：包围盒就是整座岛，只要岛上任何一个格子是高模，整岛 LOD 就不显示，不会盖在街道上。
+
 碰撞另出 `gtasa_collision_<区域>`（只有 `MINIENGINE_collision` 节点、不绘制），作为普通实体放进场景。
 
 ## 引擎

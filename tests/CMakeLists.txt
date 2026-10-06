@@ -1418,6 +1418,34 @@ add_test(
 
 set_target_properties(miniengine_command_registry_tests PROPERTIES FOLDER "Tests")
 
+# The streamed world's manifest and what a cell shows near and far (WorldStreamingService). Links
+# engine_editor for the service; nothing is drawn.
+add_executable(miniengine_world_streaming_tests
+    world_streaming_tests.cpp
+)
+miniengine_group_target_sources(miniengine_world_streaming_tests)
+
+target_link_libraries(miniengine_world_streaming_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_world_streaming_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_world_streaming_tests>
+            $<TARGET_FILE_DIR:miniengine_world_streaming_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.world_streaming
+    COMMAND miniengine_world_streaming_tests
+)
+
+set_target_properties(miniengine_world_streaming_tests PROPERTIES FOLDER "Tests")
+
 # The editor's video recording: the AVI it writes, its pacing and its file splits. engine_core only.
 add_executable(miniengine_video_recorder_tests
     video_recorder_tests.cpp

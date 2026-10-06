@@ -8,8 +8,9 @@
 #
 # The drawn maps come in 500 m cells from one streaming manifest per game (assets/models/gtasa_stream,
 # gta3_stream, gtavc_stream), high detail within 700 m of the camera (or the car being driven) and the
-# games' own LOD models elsewhere (docs/design/2026-10-05-world-streaming-design.md). What is always
-# loaded: each game's collision (San Andreas one model per region: Los Santos, San Fierro, Las Venturas,
+# games' own LOD models elsewhere (docs/design/2026-10-05-world-streaming-design.md). Liberty City is
+# small (1.4 million triangles in high detail): all of it is in high detail within 3.5 km, and its
+# whole-island LOD models show only from farther away. What is always loaded: each game's collision (San Andreas one model per region: Los Santos, San Fierro, Las Venturas,
 # the countryside and the sea bed; Liberty City and Vice City one each), the water of all three
 # (SA's data/water.dat, III and VC's data/waterpro.dat, open sea everywhere else; cars float, fill and
 # sink below it, but not in a tunnel under it), the Skyline R34 on Grove Street facing west, and the sun.
@@ -305,8 +306,8 @@ streaming:
     load_radius: 700
     unload_radius: 900
   - manifest: assets/models/gta3_stream/gta3.stream.yaml
-    load_radius: 700
-    unload_radius: 900
+    load_radius: 3500
+    unload_radius: 3700
   - manifest: assets/models/gtavc_stream/gtavc.stream.yaml
     load_radius: 700
     unload_radius: 900

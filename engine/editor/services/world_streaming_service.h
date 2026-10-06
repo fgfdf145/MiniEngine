@@ -35,6 +35,10 @@ struct StreamedCell
     glm::vec3 boundsMax{0.0f};
     float loadRadius = 700.0f;
     float unloadRadius = 900.0f;
+    // The manifest's far_only: the cell shows its LOD only from beyond its radius and nothing within it.
+    // For a LOD that other cells replace up close, such as GTA III's whole-island models, whose bounds
+    // are the island's: whenever any cell of the island is in high detail, the island's LOD is gone.
+    bool farOnly = false;
 
     bool wantHighDetail = false;
     Shown shown = Shown::None;
@@ -72,6 +76,10 @@ namespace WorldStreamingService
 {
 // True when it changed the scene's renderables.
 bool Tick(RendererSharedState& state);
+
+// The cells of a streamed world's manifest (docs/design/2026-10-05-world-streaming-design.md), their
+// model paths resolved against the manifest's folder. Throws when the manifest cannot be read.
+std::vector<StreamedCell> ReadCells(const SceneStreamingWorld& world);
 
 // Horizontal distance from a point to a box: what the radii are measured by.
 float HorizontalDistance(const glm::vec3& point, const glm::vec3& boundsMin, const glm::vec3& boundsMax);
