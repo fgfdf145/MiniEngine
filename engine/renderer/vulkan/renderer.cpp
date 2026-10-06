@@ -1691,6 +1691,7 @@ void VulkanRenderer::CreateSwapchainResources()
             swapchainImageCount);
     }
     m_activeDlssMode = DlssMode::Off;
+    m_activeDlssPreset = DlssPreset::Default;
     m_dlssResetPending = true;
     // The clouds' targets follow the scene's extent; the descriptor sets built after this name the
     // target, and the device is idle here.
@@ -2470,10 +2471,12 @@ VulkanRenderer::SceneExtents VulkanRenderer::ResolveSceneExtents(RenderExtent vi
     if (renderDebug.dlssMode != DlssMode::Off && !renderDebug.forwardOnly && m_dlss->IsAvailable())
     {
         const std::optional<VkExtent2D> render = m_dlss->RenderExtentFor(extents.output, renderDebug.dlssMode);
-        if (render.has_value() && m_dlss->EnsureFeature(*render, extents.output, renderDebug.dlssMode))
+        if (render.has_value() &&
+            m_dlss->EnsureFeature(*render, extents.output, renderDebug.dlssMode, renderDebug.dlssPreset))
         {
             extents.render = *render;
             extents.dlss = renderDebug.dlssMode;
+            extents.dlssPreset = renderDebug.dlssPreset;
             return extents;
         }
     }
@@ -2489,11 +2492,12 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
     }
 
     const SceneExtents extents = ResolveSceneExtents(viewportExtent, renderDebug);
-    if (extents.dlss != m_activeDlssMode)
+    if (extents.dlss != m_activeDlssMode || extents.dlssPreset != m_activeDlssPreset)
     {
-        // Another resolve, or DLSS at another quality: no history carries over.
+        // Another resolve, or DLSS at another quality or with another model: no history carries over.
         LOG_INFO("Temporal resolve: {}", extents.dlss == DlssMode::Off ? "TAA" : "DLSS");
         m_activeDlssMode = extents.dlss;
+        m_activeDlssPreset = extents.dlssPreset;
         m_dlssResetPending = true;
         m_taaHistory.Reset();
     }

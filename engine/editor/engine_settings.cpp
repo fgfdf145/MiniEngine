@@ -250,6 +250,9 @@ void LoadViewSettings(const YAML::Node& cameraNode, const YAML::Node& renderNode
         uint32_t dlssMode = static_cast<uint32_t>(view.renderDebug.dlssMode);
         ReadValue(renderNode["dlss_mode"], dlssMode);
         view.renderDebug.dlssMode = static_cast<DlssMode>(std::min(dlssMode, static_cast<uint32_t>(DlssMode::UltraPerformance)));
+        uint32_t dlssPreset = static_cast<uint32_t>(view.renderDebug.dlssPreset);
+        ReadValue(renderNode["dlss_preset"], dlssPreset);
+        view.renderDebug.dlssPreset = static_cast<DlssPreset>(std::min(dlssPreset, static_cast<uint32_t>(DlssPreset::M)));
         ReadFields(renderNode, [&](auto&& visit)
                    {
                        VisitRenderDebugFields(view.renderDebug, visit);
@@ -364,6 +367,7 @@ void WriteViewSettings(std::ostream& output, const EngineViewSettings& settings)
     JsonFieldWriter render;
     render("", "tone_mapper", static_cast<uint32_t>(view.renderDebug.toneMapper));
     render("", "dlss_mode", static_cast<uint32_t>(view.renderDebug.dlssMode));
+    render("", "dlss_preset", static_cast<uint32_t>(view.renderDebug.dlssPreset));
     VisitRenderDebugFields(view.renderDebug, render);
     output << "  \"render\": ";
     render.Write(output, 4);

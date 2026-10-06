@@ -184,6 +184,19 @@ enum class DlssMode : uint32_t
     UltraPerformance = 5
 };
 
+// The DLSS model (NGX's render preset) every mode runs. Default leaves the choice to DLSS: K for DLAA,
+// Quality and Balanced, M for Performance and L for Ultra Performance in SDK 310.9. J and K are the
+// first transformer models, L and M the second. The values are what the settings files store, not
+// NGX's numbers.
+enum class DlssPreset : uint32_t
+{
+    Default = 0,
+    J = 1,
+    K = 2,
+    L = 3,
+    M = 4
+};
+
 // Saved in miniengine.settings.json (EngineViewSettings), all but the G-buffer view: a debug view
 // left on should not survive a restart.
 struct RenderDebugSettings
@@ -235,5 +248,6 @@ struct RenderDebugSettings
     float renderScale = 1.0f;
     // Replaces TAA, in the deferred order, where the device runs DLSS.
     DlssMode dlssMode = DlssMode::Off;
+    DlssPreset dlssPreset = DlssPreset::Default;
 };
 }

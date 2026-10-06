@@ -46,6 +46,8 @@ void StateRoundTrips()
     written.camera.autoWhiteBalance.targetKelvin = 5200.0f;
     written.renderDebug.gbufferView = GBufferDebugView::DdgiIrradiance;
     written.renderDebug.toneMapper = ToneMapper::PbrNeutral;
+    written.renderDebug.dlssMode = DlssMode::Performance;
+    written.renderDebug.dlssPreset = DlssPreset::K;
     written.renderDebug.taa = false;
     written.renderDebug.renderScale = 0.5f;
     written.renderDebug.ssr.maxDistance = 12.0f;
@@ -69,6 +71,7 @@ void StateRoundTrips()
     Require(read.camera.autoWhiteBalance.targetKelvin == 5200.0f, "white balance target");
     Require(read.renderDebug.gbufferView == GBufferDebugView::DdgiIrradiance, "debug view");
     Require(read.renderDebug.toneMapper == ToneMapper::PbrNeutral, "tone mapper");
+    Require(read.renderDebug.dlssMode == DlssMode::Performance && read.renderDebug.dlssPreset == DlssPreset::K, "DLSS");
     Require(!read.renderDebug.taa && read.renderDebug.renderScale == 0.5f, "top-level switches");
     Require(read.renderDebug.ssr.maxDistance == 12.0f && read.renderDebug.ao.stepCount == 5 && !read.renderDebug.gi.enabled, "groups");
     Require(read.renderDebug.ddgi.levels == 3 && read.renderDebug.ddgi.baseSpacing == 0.5f && read.renderDebug.ddgi.hysteresis == 0.9f, "DDGI");

@@ -123,6 +123,59 @@ NVSDK_NGX_Resource_VK ToResource(const DlssImage& image, bool readWrite)
         image.extent.height,
         readWrite);
 }
+
+NVSDK_NGX_DLSS_Hint_Render_Preset ToRenderPreset(DlssPreset preset)
+{
+    switch (preset)
+    {
+    case DlssPreset::J:
+        return NVSDK_NGX_DLSS_Hint_Render_Preset_J;
+    case DlssPreset::K:
+        return NVSDK_NGX_DLSS_Hint_Render_Preset_K;
+    case DlssPreset::L:
+        return NVSDK_NGX_DLSS_Hint_Render_Preset_L;
+    case DlssPreset::M:
+        return NVSDK_NGX_DLSS_Hint_Render_Preset_M;
+    case DlssPreset::Default:
+        break;
+    }
+    return NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
+}
+
+const char* PresetName(DlssPreset preset)
+{
+    switch (preset)
+    {
+    case DlssPreset::J:
+        return "J";
+    case DlssPreset::K:
+        return "K";
+    case DlssPreset::L:
+        return "L";
+    case DlssPreset::M:
+        return "M";
+    case DlssPreset::Default:
+        break;
+    }
+    return "default";
+}
+
+// NGX reads one preset hint per quality when it makes a feature; the parameters outlive features, so
+// every hint is set each time, Default included, rather than only the mode's own.
+void SetRenderPresetHints(NVSDK_NGX_Parameter* parameters, DlssPreset preset)
+{
+    const unsigned int value = ToRenderPreset(preset);
+    for (const char* name : {
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced,
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance,
+             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraQuality})
+    {
+        NVSDK_NGX_Parameter_SetUI(parameters, name, value);
+    }
+}
 }
 
 struct VulkanDlss::Ngx
@@ -136,10 +189,12 @@ struct VulkanDlss::Ngx
     VkExtent2D featureRender{};
     VkExtent2D featureOutput{};
     DlssMode featureMode = DlssMode::Off;
+    DlssPreset featurePreset = DlssPreset::Default;
     // The last feature NGX would not make, so a failing size is not retried every frame.
     VkExtent2D failedRender{};
     VkExtent2D failedOutput{};
     DlssMode failedMode = DlssMode::Off;
+    DlssPreset failedPreset = DlssPreset::Default;
     // The last optimal-settings answer, asked again only when the output size or mode changes.
     VkExtent2D optimalOutput{};
     DlssMode optimalMode = DlssMode::Off;
@@ -329,18 +384,19 @@ std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D output, DlssMod
     return m_ngx->optimalRender;
 }
 
-bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode)
+bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode, DlssPreset preset)
 {
     if (!IsAvailable())
     {
         return false;
     }
-    if (m_ngx->feature != nullptr && m_ngx->featureMode == mode && SameExtent(m_ngx->featureRender, render) &&
-        SameExtent(m_ngx->featureOutput, output))
+    if (m_ngx->feature != nullptr && m_ngx->featureMode == mode && m_ngx->featurePreset == preset &&
+        SameExtent(m_ngx->featureRender, render) && SameExtent(m_ngx->featureOutput, output))
     {
         return true;
     }
-    if (m_ngx->failedMode == mode && SameExtent(m_ngx->failedRender, render) && SameExtent(m_ngx->failedOutput, output))
+    if (m_ngx->failedMode == mode && m_ngx->failedPreset == preset && SameExtent(m_ngx->failedRender, render) &&
+        SameExtent(m_ngx->failedOutput, output))
     {
         return false;
     }
@@ -358,6 +414,7 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
                                   NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
                                   NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
                                   NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+    SetRenderPresetHints(m_ngx->parameters, preset);
 
     VulkanUploadBatch batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
     const NVSDK_NGX_Result result =
@@ -369,6 +426,7 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
         m_ngx->failedRender = render;
         m_ngx->failedOutput = output;
         m_ngx->failedMode = mode;
+        m_ngx->failedPreset = preset;
         LOG_WARN(
             "DLSS: could not create the feature for {}x{} -> {}x{} ({})",
             render.width,
@@ -381,7 +439,8 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
     m_ngx->featureRender = render;
     m_ngx->featureOutput = output;
     m_ngx->featureMode = mode;
-    LOG_INFO("DLSS: {}x{} -> {}x{}", render.width, render.height, output.width, output.height);
+    m_ngx->featurePreset = preset;
+    LOG_INFO("DLSS: {}x{} -> {}x{}, preset {}", render.width, render.height, output.width, output.height, PresetName(preset));
     return true;
 }
 
@@ -474,7 +533,7 @@ std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D, DlssMode)
     return std::nullopt;
 }
 
-bool VulkanDlss::EnsureFeature(VkExtent2D, VkExtent2D, DlssMode)
+bool VulkanDlss::EnsureFeature(VkExtent2D, VkExtent2D, DlssMode, DlssPreset)
 {
     return false;
 }

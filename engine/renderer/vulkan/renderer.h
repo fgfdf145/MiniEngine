@@ -218,6 +218,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         VkExtent2D render{};
         VkExtent2D output{};
         DlssMode dlss = DlssMode::Off;
+        DlssPreset dlssPreset = DlssPreset::Default;
     };
     SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
@@ -309,6 +310,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The DLSS mode the scene targets were last sized for (Off while the engine's TAA resolves), and
     // whether DLSS's next evaluation throws its history away.
     DlssMode m_activeDlssMode = DlssMode::Off;
+    DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_dlssResetPending = true;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.

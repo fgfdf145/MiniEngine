@@ -110,6 +110,7 @@ void CaptureStateService::Write(const std::filesystem::path& path, const Capture
     out << YAML::Key << "gbuffer_view" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.gbufferView);
     out << YAML::Key << "tone_mapper" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.toneMapper);
     out << YAML::Key << "dlss_mode" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.dlssMode);
+    out << YAML::Key << "dlss_preset" << YAML::Value << static_cast<uint32_t>(copy.renderDebug.dlssPreset);
     EmitGroups(out, [&](auto&& visit)
                {
                    VisitRenderDebugFields(copy.renderDebug, visit);
@@ -172,6 +173,9 @@ CaptureState CaptureStateService::Read(const std::filesystem::path& path)
     uint32_t dlssMode = 0;
     ReadField(renderDebug, "dlss_mode", dlssMode);
     state.renderDebug.dlssMode = static_cast<DlssMode>(std::min(dlssMode, static_cast<uint32_t>(DlssMode::UltraPerformance)));
+    uint32_t dlssPreset = 0;
+    ReadField(renderDebug, "dlss_preset", dlssPreset);
+    state.renderDebug.dlssPreset = static_cast<DlssPreset>(std::min(dlssPreset, static_cast<uint32_t>(DlssPreset::M)));
     ReadGroups(renderDebug, [&](auto&& visit)
                {
                    VisitRenderDebugFields(state.renderDebug, visit);

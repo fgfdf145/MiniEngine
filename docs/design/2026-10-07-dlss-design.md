@@ -93,5 +93,6 @@ DLSS 生效时，原 TAA pass 不再执行 resolve，改为下面四步：
 
 - Blend 材质（玻璃、粒子）不写运动向量，沿用下层表面的速度，快速运动时可能有轻微拖影。之后可以用 reactive / transparency mask 处理。
 - DLSS 只在 deferred 管线下生效，forward-only 对照管线没有运动向量。
-- 没有接 OTA 更新（`NVSDK_NGX_UpdateFeature`），也没有提供 preset 选择，都用 DLSS 默认值。
+- 没有接 OTA 更新（`NVSDK_NGX_UpdateFeature`）。
+- Preset 可以在 Graphics Debug 的 “DLSS preset” 里选（Default / J / K / L / M，存为 `dlss_preset`），对所有档位生效，换 preset 会重建 feature 并清掉历史。Default 交给 DLSS：SDK 310.9 下 DLAA/Quality/Balanced 是 K，Performance 是 M，Ultra Performance 是 L。NGX 没有接口读回实际在用的 preset，所以 Default 后面括号里的名字是按 SDK 头文件的注释写的。
 - 帧生成、Reflex 和 Ray Reconstruction 见目标一节。

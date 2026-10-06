@@ -76,9 +76,9 @@ class VulkanDlss
     // itself for DLAA. Empty when unavailable or the mode is off.
     std::optional<VkExtent2D> RenderExtentFor(VkExtent2D output, DlssMode mode);
 
-    // Makes the DLSS feature for these sizes and mode, unless the current one already is; waits for
-    // the GPU. False, with Status() saying why, when it cannot.
-    bool EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode);
+    // Makes the DLSS feature for these sizes, mode and preset, unless the current one already is;
+    // waits for the GPU. False, with Status() saying why, when it cannot.
+    bool EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode, DlssPreset preset);
     void ReleaseFeature();
     bool HasFeature() const;
 

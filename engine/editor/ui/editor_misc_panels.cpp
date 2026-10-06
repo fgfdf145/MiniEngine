@@ -171,6 +171,25 @@ void EditorUiController::DrawGraphicsDebugPanel()
             m_renderDebug.dlssMode = static_cast<DlssMode>(dlssMode);
         }
         ImGui::EndDisabled();
+        // The model DLSS runs. Default names the one DLSS picks for the current mode (SDK 310.9).
+        const char* defaultPresetName = m_renderDebug.dlssMode == DlssMode::Performance        ? "Default (M)"
+                                        : m_renderDebug.dlssMode == DlssMode::UltraPerformance ? "Default (L)"
+                                                                                               : "Default (K)";
+        const std::array<const char*, 5> dlssPresetNames = {defaultPresetName, "J", "K", "L", "M"};
+        int dlssPreset = static_cast<int>(m_renderDebug.dlssPreset);
+        ImGui::BeginDisabled(!DlssResolves());
+        if (ImGui::Combo("DLSS preset", &dlssPreset, dlssPresetNames.data(), static_cast<int>(dlssPresetNames.size())))
+        {
+            m_renderDebug.dlssPreset = static_cast<DlssPreset>(dlssPreset);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip(
+                "K: transformer, best image quality at a higher cost; the default for DLAA, Quality and Balanced.\n"
+                "J: like K, slightly less ghosting but more flicker.\n"
+                "M: the default for Performance.  L: the default for Ultra Performance.");
+        }
         if (!m_dlssAvailable)
         {
             ImGui::TextDisabled("DLSS: %s", m_dlssStatus.c_str());
