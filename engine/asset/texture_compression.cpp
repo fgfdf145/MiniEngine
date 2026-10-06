@@ -6,11 +6,11 @@
 #include <bc7enc.h>
 #include <rgbcx.h>
 
+#include <engine/core/threading/task_system.h>
+
 #include <algorithm>
-#include <future>
 #include <mutex>
 #include <stdexcept>
-#include <thread>
 
 namespace me
 {
@@ -95,28 +95,10 @@ CompressedTextureLevel EncodeLevel(const TextureData& level, TextureUsage usage,
 
     // Blocks are independent, so large levels are split into bands of rows encoded concurrently.
     // Callers may compress several textures in parallel as well; a model with one or two large
-    // textures would otherwise encode each on a single thread. Small levels are not worth a thread.
+    // textures would otherwise encode each on a single thread. Small levels are not worth a task.
+    // Not frame work: the frame's own parallel loops go first.
     constexpr uint32_t kMinRowsPerBand = 16;
-    const uint32_t hardwareThreads = std::max(1u, std::thread::hardware_concurrency());
-    const uint32_t bandCount = std::min(hardwareThreads, blocksY / kMinRowsPerBand);
-    if (bandCount <= 1)
-    {
-        encodeRows(0, blocksY);
-        return encoded;
-    }
-
-    std::vector<std::future<void>> bands;
-    bands.reserve(bandCount);
-    for (uint32_t band = 0; band < bandCount; ++band)
-    {
-        const uint32_t firstRow = blocksY * band / bandCount;
-        const uint32_t endRow = blocksY * (band + 1) / bandCount;
-        bands.push_back(std::async(std::launch::async, encodeRows, firstRow, endRow));
-    }
-    for (std::future<void>& band : bands)
-    {
-        band.get();
-    }
+    TaskSystem::ParallelFor(blocksY, kMinRowsPerBand, encodeRows, TaskPriority::Medium);
     return encoded;
 }
 }

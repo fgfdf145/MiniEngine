@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <thread>
 #include <cstring>
 #include <stdexcept>
 
@@ -94,13 +93,13 @@ VulkanRayScene::~VulkanRayScene()
         DestroyBuffer(pending.meshNodes);
         DestroyBuffer(pending.meshTriangles);
     }
-    for (std::future<Build>& stale : m_staleBuilds)
+    for (TaskFuture<Build>& stale : m_staleBuilds)
     {
         Build build = stale.get();
         DestroyBuffer(build.meshNodes);
         DestroyBuffer(build.meshTriangles);
     }
-    for (std::future<void>& release : m_releases)
+    for (TaskFuture<void>& release : m_releases)
     {
         release.wait();
     }
@@ -215,9 +214,9 @@ void VulkanRayScene::SetContent(
         blend.push_back(submesh.blend ? 1u : 0u);
         slots.push_back(submesh.slot);
     }
-    // The worker uses this only to make its buffers, which the destructor waits for.
-    m_pendingBuild = std::async(
-        std::launch::async,
+    // The task uses this only to make its buffers, which the destructor waits for.
+    m_pendingBuild = RunAsync(
+        TaskPriority::Medium,
         [this, meshes = std::move(meshes), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache]() mutable
         {
             const auto start = std::chrono::steady_clock::now();
@@ -243,37 +242,29 @@ void VulkanRayScene::SetContent(
                 bvhs.push_back(cached != cache->meshes.end() && cached->second.mesh.lock() == mesh ? cached->second.bvh : nullptr);
             }
 
-            std::atomic<size_t> next{0};
             std::atomic<size_t> newTriangles{0};
-            const auto worker = [&]()
-            {
-                for (size_t index = next++; index < distinct.size(); index = next++)
+            // Below the frame's own parallel loops, which the task system runs first.
+            TaskSystem::ParallelFor(
+                static_cast<uint32_t>(distinct.size()),
+                1,
+                [&](uint32_t begin, uint32_t end)
                 {
-                    if (bvhs[index])
+                    for (uint32_t index = begin; index < end; ++index)
                     {
-                        continue;
+                        if (bvhs[index])
+                        {
+                            continue;
+                        }
+                        const std::shared_ptr<const MeshData>& mesh = distinct[index];
+                        const std::vector<glm::vec3> positions =
+                            mesh && !mesh->vertices.empty()
+                                ? GatherPositions(mesh->vertices.front().position, mesh->vertices.size(), sizeof(Vertex))
+                                : std::vector<glm::vec3>{};
+                        bvhs[index] = std::make_shared<const MeshBvh>(mesh ? BuildMeshBvh(positions, mesh->indices) : MeshBvh{});
+                        newTriangles += bvhs[index]->triangles.size();
                     }
-                    const std::shared_ptr<const MeshData>& mesh = distinct[index];
-                    const std::vector<glm::vec3> positions =
-                        mesh && !mesh->vertices.empty()
-                            ? GatherPositions(mesh->vertices.front().position, mesh->vertices.size(), sizeof(Vertex))
-                            : std::vector<glm::vec3>{};
-                    bvhs[index] = std::make_shared<const MeshBvh>(mesh ? BuildMeshBvh(positions, mesh->indices) : MeshBvh{});
-                    newTriangles += bvhs[index]->triangles.size();
-                }
-            };
-            // Half the hardware threads, as the texture workers take: the frame loop keeps the rest.
-            const unsigned threadCount = std::max(1u, std::thread::hardware_concurrency() / 2);
-            std::vector<std::thread> threads;
-            for (unsigned thread = 1; thread < threadCount; ++thread)
-            {
-                threads.emplace_back(worker);
-            }
-            worker();
-            for (std::thread& thread : threads)
-            {
-                thread.join();
-            }
+                },
+                TaskPriority::Medium);
 
             for (size_t index = 0; index < distinct.size(); ++index)
             {
@@ -473,12 +464,12 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer)
 
 void VulkanRayScene::DiscardBuild(Build build)
 {
-    std::erase_if(m_releases, [](std::future<void>& release)
+    std::erase_if(m_releases, [](const TaskFuture<void>& release)
                   {
                       return release.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
                   });
-    m_releases.push_back(std::async(
-        std::launch::async,
+    m_releases.push_back(RunAsync(
+        TaskPriority::Low,
         [this, build = std::move(build)]() mutable
         {
             DestroyBuffer(build.meshNodes);

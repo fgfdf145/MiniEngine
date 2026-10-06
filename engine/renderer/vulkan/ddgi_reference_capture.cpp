@@ -6,6 +6,7 @@
 #include "viewport_capture.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/threading/task_system.h>
 #include <engine/renderer/ddgi_volume.h>
 #include <engine/renderer/reference_path_tracer.h>
 
@@ -22,7 +23,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace me
@@ -31,6 +31,20 @@ namespace me
 namespace
 {
 constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
+
+// Runs work once on each of the task system's threads at the same time; work takes its share of the
+// job from a counter it shares with the others.
+template <typename Work>
+void RunOnEveryTaskThread(const Work& work)
+{
+    TaskSystem::ParallelFor(TaskSystem::ThreadCount(), 1, [&](uint32_t begin, uint32_t end)
+                            {
+                                for (uint32_t share = begin; share < end; ++share)
+                                {
+                                    work();
+                                }
+                            });
+}
 
 // Portable Float Map, RGB, rows from the bottom as the format has them.
 void WritePfm(const std::filesystem::path& path, const std::vector<glm::vec3>& pixels, uint32_t width, uint32_t height)
@@ -308,15 +322,7 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
             }
         }
     };
-    std::vector<std::thread> threads;
-    for (uint32_t thread = 0; thread < std::max(std::thread::hardware_concurrency(), 1u); ++thread)
-    {
-        threads.emplace_back(work);
-    }
-    for (std::thread& thread : threads)
-    {
-        thread.join();
-    }
+    RunOnEveryTaskThread(work);
 
     std::ofstream csv(prefix.string() + "_probes.csv");
     csv << "x,y,z,axis,probe,reference\n";
@@ -452,16 +458,7 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
             nextRow = height;
         }
     };
-    std::vector<std::thread> threads;
-    const uint32_t threadCount = std::max(std::thread::hardware_concurrency(), 1u);
-    for (uint32_t thread = 0; thread < threadCount; ++thread)
-    {
-        threads.emplace_back(work);
-    }
-    for (std::thread& thread : threads)
-    {
-        thread.join();
-    }
+    RunOnEveryTaskThread(work);
     if (!failure.empty())
     {
         throw std::runtime_error("The reference path tracer failed: " + failure);

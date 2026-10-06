@@ -9,6 +9,7 @@
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/model_import_target.h>
 #include <engine/asset/model_loader.h>
+#include <engine/core/threading/task_future.h>
 #include <engine/logic/gizmo_settings.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/rhi/backend.h>
@@ -22,7 +23,6 @@
 #include <array>
 #include <chrono>
 #include <deque>
-#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -380,7 +380,7 @@ class EditorUiController
     {
         std::string sourcePath;
         std::string destinationDirectory;
-        std::future<Kn5ModelSummary> survey;
+        TaskFuture<Kn5ModelSummary> survey;
         std::optional<Kn5ModelSummary> summary;
         std::string error;
         size_t selectedSkin = 0;
@@ -392,7 +392,7 @@ class EditorUiController
     bool m_openKn5ImportModal = false;
     // Surveys of dialogs cancelled before they finished, kept until done so cancelling never
     // waits on one.
-    std::vector<std::future<Kn5ModelSummary>> m_abandonedKn5Surveys;
+    std::vector<TaskFuture<Kn5ModelSummary>> m_abandonedKn5Surveys;
     std::deque<std::string> m_droppedFiles; // queued by QueueDroppedFile, drained by the asset browser
     bool m_showCameraWindow = true;
     RenderDebugSettings m_renderDebug;

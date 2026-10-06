@@ -224,10 +224,10 @@ void EditorUiController::RequestModelImport(
         PendingKn5Import pending;
         pending.sourcePath = sourcePath;
         pending.destinationDirectory = destination;
-        pending.survey = std::async(std::launch::async, [sourcePath]()
-                                    {
-                                        return Kn5Importer::Inspect(sourcePath);
-                                    });
+        pending.survey = RunAsync(TaskPriority::Low, [sourcePath]()
+                                  {
+                                      return Kn5Importer::Inspect(sourcePath);
+                                  });
         m_pendingKn5Import = std::move(pending);
         m_openKn5ImportModal = true;
         return;
@@ -340,7 +340,7 @@ void EditorUiController::DrawKn5ImportModal(EditorUiFrameResult& result)
 
     // Surveys of cancelled dialogs are let go once they finish.
     m_abandonedKn5Surveys.erase(
-        std::remove_if(m_abandonedKn5Surveys.begin(), m_abandonedKn5Surveys.end(), [](const std::future<Kn5ModelSummary>& survey)
+        std::remove_if(m_abandonedKn5Surveys.begin(), m_abandonedKn5Surveys.end(), [](const TaskFuture<Kn5ModelSummary>& survey)
                        {
                            return survey.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
                        }),

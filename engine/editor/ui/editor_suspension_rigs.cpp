@@ -617,7 +617,7 @@ void SuspensionRigWindow::StartRun()
     Run* state = run.get();
     const suspension::CarModel car = *m_car;
     const suspension::RigReportOptions options = m_options;
-    state->result = std::async(std::launch::async, [state, car, options] {
+    state->result = RunAsync(TaskPriority::Low, [state, car, options] {
         return suspension::RunRigReport(car, options, [state](double done, const char* stage) {
             state->progress = done;
             const std::lock_guard lock(state->mutex);

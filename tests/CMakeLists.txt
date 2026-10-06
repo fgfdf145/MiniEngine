@@ -2096,3 +2096,57 @@ add_test(
 )
 
 set_target_properties(miniengine_imgui_frame_snapshot_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_task_future_tests
+    task_future_tests.cpp
+)
+miniengine_group_target_sources(miniengine_task_future_tests)
+
+target_link_libraries(miniengine_task_future_tests
+    PRIVATE
+        engine_core
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_task_future_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_task_future_tests>
+            $<TARGET_FILE_DIR:miniengine_task_future_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.task_future
+    COMMAND miniengine_task_future_tests
+)
+
+set_target_properties(miniengine_task_future_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_task_job_system_tests
+    task_job_system_tests.cpp
+)
+miniengine_group_target_sources(miniengine_task_job_system_tests)
+
+target_link_libraries(miniengine_task_job_system_tests
+    PRIVATE
+        engine_physics
+        engine_core
+        Jolt::Jolt
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_task_job_system_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_task_job_system_tests>
+            $<TARGET_FILE_DIR:miniengine_task_job_system_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.task_job_system
+    COMMAND miniengine_task_job_system_tests
+)
+
+set_target_properties(miniengine_task_job_system_tests PROPERTIES FOLDER "Tests")

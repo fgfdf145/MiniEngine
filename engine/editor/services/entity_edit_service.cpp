@@ -136,15 +136,15 @@ void LoadSelectedModel(RendererSharedState& state, const std::string& path, bool
     load.previousDisplayName = previousModel.displayName;
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
-    load.future = std::async(std::launch::async, [p = path, progress = load.progress]()
-                             {
-                                 auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
-                                                                                                      {
-                                                                                                          progress->store(fraction);
-                                                                                                      }));
-                                 ModelCache::Store(p, std::move(data));
-                                 progress->store(1.0f);
-                             });
+    load.future = RunAsync(TaskPriority::Low, [p = path, progress = load.progress]()
+                           {
+                               auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+                                                                                                    {
+                                                                                                        progress->store(fraction);
+                                                                                                    }));
+                               ModelCache::Store(p, std::move(data));
+                               progress->store(1.0f);
+                           });
 
     LOG_INFO("Started async load for: {}", path);
 }
@@ -212,15 +212,15 @@ void PlaceModelIntoScene(RendererSharedState& state, const std::string& path, co
     load.previousDisplayName.clear();
     load.progress = std::make_shared<std::atomic<float>>(0.0f);
 
-    load.future = std::async(std::launch::async, [p = modelPath.string(), progress = load.progress]()
-                             {
-                                 auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
-                                                                                                      {
-                                                                                                          progress->store(fraction);
-                                                                                                      }));
-                                 ModelCache::Store(p, std::move(data));
-                                 progress->store(1.0f);
-                             });
+    load.future = RunAsync(TaskPriority::Low, [p = modelPath.string(), progress = load.progress]()
+                           {
+                               auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(p, [&progress](float fraction)
+                                                                                                    {
+                                                                                                        progress->store(fraction);
+                                                                                                    }));
+                               ModelCache::Store(p, std::move(data));
+                               progress->store(1.0f);
+                           });
 
     LOG_INFO("Started async load for: {}", modelPath.string());
 }
@@ -544,7 +544,7 @@ bool PumpAsyncModelLoad(RendererSharedState& state)
         LOG_ERROR("Async model load failed for '{}': {}", load.path, error.what());
     }
 
-    load.future = std::future<void>{}; // consume / reset
+    load.future = TaskFuture<void>{}; // consume / reset
     state.lastFrameTime = std::chrono::steady_clock::now();
     return renderablesDirty;
 }

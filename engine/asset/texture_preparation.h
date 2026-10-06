@@ -3,7 +3,8 @@
 #include "texture_compression.h"
 #include "texture_loader.h"
 
-#include <condition_variable>
+#include <engine/core/threading/task_future.h>
+
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -11,7 +12,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -56,15 +56,16 @@ struct TexturePreparationResult
     std::string error;
 };
 
-// Prepares textures on a fixed pool of worker threads so the frame loop never waits on decoding or
-// compression. Requests run in the order given; results are collected with TakeCompleted.
+// Prepares textures as tasks of the task system, at most workerCount at a time, so the frame loop
+// never waits on decoding or compression. Requests start in the order given; results are collected
+// with TakeCompleted.
 class TexturePreparationQueue
 {
   public:
     using PrepareFunction = std::function<PreparedTexture(const std::string& path, TextureUsage usage)>;
 
     TexturePreparationQueue(PrepareFunction prepare, uint32_t workerCount);
-    // Discards requests not yet started, waits for the running ones and joins the workers.
+    // Discards requests not yet started and waits for the running ones.
     ~TexturePreparationQueue();
 
     TexturePreparationQueue(const TexturePreparationQueue&) = delete;
@@ -82,16 +83,19 @@ class TexturePreparationQueue
     size_t PendingCount() const;
 
   private:
-    void WorkerLoop();
+    // A task's body: prepares queued requests until there are none.
+    void Drain();
 
     PrepareFunction m_prepare;
+    uint32_t m_maxDrainers = 1;
     mutable std::mutex m_mutex;
-    std::condition_variable m_wake;
     std::deque<TexturePreparationRequest> m_queued;
     std::deque<TexturePreparationResult> m_completed;
     std::unordered_set<std::string> m_pendingKeys;
     size_t m_running = 0;
     bool m_stopping = false;
-    std::vector<std::thread> m_workers;
+    // Drain tasks still running, and the futures of all not yet collected.
+    uint32_t m_drainers = 0;
+    std::vector<TaskFuture<void>> m_drainTasks;
 };
 }

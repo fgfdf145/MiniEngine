@@ -1,4 +1,5 @@
 #include "physics_world.h"
+#include "task_job_system.h"
 #include "water_surface.h"
 #include "vehicle_suspension.h"
 
@@ -222,6 +223,19 @@ constexpr JPH::uint kBodyMutexCount = 0; // Jolt's default
 constexpr JPH::uint kMaxBodyPairs = 65536;
 constexpr JPH::uint kMaxContactConstraints = 10240;
 constexpr size_t kTempAllocatorBytes = 16 * 1024 * 1024;
+
+// The engine's task system when it runs; tests and tools that never start it get Jolt's own pool.
+std::unique_ptr<JPH::JobSystem> MakePhysicsJobSystem()
+{
+    if (TaskSystem::IsRunning())
+    {
+        return std::make_unique<TaskJobSystem>(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
+    }
+    return std::make_unique<JPH::JobSystemThreadPool>(
+        JPH::cMaxPhysicsJobs,
+        JPH::cMaxPhysicsBarriers,
+        static_cast<int>(std::max(1u, std::thread::hardware_concurrency()) - 1));
+}
 
 void JoltTrace(const char* format, ...)
 {
@@ -2135,10 +2149,7 @@ struct PhysicsWorld::Impl
 
     Impl()
         : tempAllocator(kTempAllocatorBytes),
-          jobSystem(
-              JPH::cMaxPhysicsJobs,
-              JPH::cMaxPhysicsBarriers,
-              static_cast<int>(std::max(1u, std::thread::hardware_concurrency()) - 1))
+          jobSystem(MakePhysicsJobSystem())
     {
         // The filter table reads the layer mappings when it is built, so they go in first.
         broadPhaseLayers = std::make_unique<JPH::BroadPhaseLayerInterfaceTable>(ObjectLayers::kCount, BroadPhaseLayers::kCount);
@@ -2329,7 +2340,7 @@ struct PhysicsWorld::Impl
     // Declared before the physics system, so they outlive it.
     JPH::TempAllocatorImpl tempAllocator;
     WaterSurface water;
-    JPH::JobSystemThreadPool jobSystem;
+    std::unique_ptr<JPH::JobSystem> jobSystem;
     std::unique_ptr<JPH::BroadPhaseLayerInterfaceTable> broadPhaseLayers;
     std::unique_ptr<JPH::ObjectLayerPairFilterTable> objectLayerPairs;
     std::unique_ptr<JPH::ObjectVsBroadPhaseLayerFilterTable> objectVsBroadPhase;
@@ -2966,7 +2977,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         }
 
         const JPH::EPhysicsUpdateError error =
-            impl.physicsSystem.Update(kFixedStepSeconds, 1, &impl.tempAllocator, &impl.jobSystem);
+            impl.physicsSystem.Update(kFixedStepSeconds, 1, &impl.tempAllocator, impl.jobSystem.get());
         if (error != JPH::EPhysicsUpdateError::None)
         {
             JoltTrace("PhysicsSystem::Update reported error flags 0x%x", static_cast<unsigned>(error));

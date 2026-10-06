@@ -121,46 +121,46 @@ void StartAsyncSceneLoad(RendererSharedState& state, const std::string& path)
     // Parse the scene file and pre-warm the model cache for every referenced model
     // in the background; ApplySceneData/RebuildSceneRenderables still run on the main
     // thread once this is ready, but they'll hit the cache instead of parsing on the UI thread.
-    load.future = std::async(std::launch::async, [path, progress = load.progress]() -> SerializedSceneData
-                             {
-                                 constexpr float kSceneFileParsedFraction = 0.1f;
+    load.future = RunAsync(TaskPriority::Low, [path, progress = load.progress]() -> SerializedSceneData
+                           {
+                               constexpr float kSceneFileParsedFraction = 0.1f;
 
-                                 SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
-                                 ResolveSceneAssetReferences(sceneData);
-                                 progress->store(kSceneFileParsedFraction);
+                               SerializedSceneData sceneData = LoadEditorSceneDataFromFile(path);
+                               ResolveSceneAssetReferences(sceneData);
+                               progress->store(kSceneFileParsedFraction);
 
-                                 std::vector<std::string> modelPathsToLoad;
-                                 for (const SerializedEntityData& entity : sceneData.entities)
-                                 {
-                                     const std::string& modelPath = entity.modelSourcePath;
-                                     const bool alreadyQueued =
-                                         std::find(modelPathsToLoad.begin(), modelPathsToLoad.end(), modelPath) != modelPathsToLoad.end();
-                                     if (!modelPath.empty() && !alreadyQueued && !ModelCache::IsCached(modelPath))
-                                     {
-                                         modelPathsToLoad.push_back(modelPath);
-                                     }
-                                 }
+                               std::vector<std::string> modelPathsToLoad;
+                               for (const SerializedEntityData& entity : sceneData.entities)
+                               {
+                                   const std::string& modelPath = entity.modelSourcePath;
+                                   const bool alreadyQueued =
+                                       std::find(modelPathsToLoad.begin(), modelPathsToLoad.end(), modelPath) != modelPathsToLoad.end();
+                                   if (!modelPath.empty() && !alreadyQueued && !ModelCache::IsCached(modelPath))
+                                   {
+                                       modelPathsToLoad.push_back(modelPath);
+                                   }
+                               }
 
-                                 // Each pending model gets an equal slice of the remaining progress range.
-                                 const float modelSlice = modelPathsToLoad.empty()
-                                                              ? 0.0f
-                                                              : (1.0f - kSceneFileParsedFraction) / static_cast<float>(modelPathsToLoad.size());
-                                 for (size_t modelIndex = 0; modelIndex < modelPathsToLoad.size(); ++modelIndex)
-                                 {
-                                     const std::string& modelPath = modelPathsToLoad[modelIndex];
-                                     const float sliceStart = kSceneFileParsedFraction + modelSlice * static_cast<float>(modelIndex);
-                                     auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(
-                                         modelPath,
-                                         [&progress, sliceStart, modelSlice](float fraction)
-                                         {
-                                             progress->store(sliceStart + modelSlice * fraction);
-                                         }));
-                                     ModelCache::Store(modelPath, std::move(data));
-                                 }
+                               // Each pending model gets an equal slice of the remaining progress range.
+                               const float modelSlice = modelPathsToLoad.empty()
+                                                            ? 0.0f
+                                                            : (1.0f - kSceneFileParsedFraction) / static_cast<float>(modelPathsToLoad.size());
+                               for (size_t modelIndex = 0; modelIndex < modelPathsToLoad.size(); ++modelIndex)
+                               {
+                                   const std::string& modelPath = modelPathsToLoad[modelIndex];
+                                   const float sliceStart = kSceneFileParsedFraction + modelSlice * static_cast<float>(modelIndex);
+                                   auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(
+                                       modelPath,
+                                       [&progress, sliceStart, modelSlice](float fraction)
+                                       {
+                                           progress->store(sliceStart + modelSlice * fraction);
+                                       }));
+                                   ModelCache::Store(modelPath, std::move(data));
+                               }
 
-                                 progress->store(1.0f);
-                                 return sceneData;
-                             });
+                               progress->store(1.0f);
+                               return sceneData;
+                           });
 
     LOG_INFO("Started async load for scene: {}", path);
 }
@@ -191,7 +191,7 @@ bool PumpAsyncSceneLoad(RendererSharedState& state)
         LOG_ERROR("Failed to load scene '{}': {}", sceneLoad.path, error.what());
     }
 
-    sceneLoad.future = std::future<SerializedSceneData>{}; // consume / reset
+    sceneLoad.future = TaskFuture<SerializedSceneData>{}; // consume / reset
     state.lastFrameTime = std::chrono::steady_clock::now();
     return renderablesDirty;
 }

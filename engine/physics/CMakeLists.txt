@@ -3,6 +3,8 @@ add_library(engine_physics
     collision_filter.h
     physics_world.cpp
     physics_world.h
+    task_job_system.cpp
+    task_job_system.h
     vehicle_settings.cpp
     vehicle_settings.h
     vehicle_suspension.cpp
@@ -20,12 +22,13 @@ target_include_directories(engine_physics
 )
 
 # Jolt stays private: its headers and compile definitions (SIMD level, asserts, debug renderer)
-# only reach physics_world.cpp, and the public headers speak glm.
+# only reach physics_world.cpp and task_job_system.cpp, and the public headers speak glm.
 target_link_libraries(engine_physics
     PUBLIC
         glm::glm
         engine_suspension
     PRIVATE
+        engine_core
         engine_tyre
         Jolt::Jolt
 )

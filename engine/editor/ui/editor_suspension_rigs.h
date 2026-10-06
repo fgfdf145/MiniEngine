@@ -1,12 +1,12 @@
 #pragma once
 
+#include <engine/core/threading/task_future.h>
 #include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/suspension/suspension_kinematics.h>
 #include <engine/suspension/suspension_rig_report.h>
 
 #include <array>
 #include <atomic>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -87,7 +87,7 @@ private:
         std::atomic<bool> cancel{false};
         std::mutex mutex;
         std::string stage; // guarded by mutex
-        std::future<std::optional<suspension::RigReport>> result;
+        TaskFuture<std::optional<suspension::RigReport>> result;
     };
 
     void DrawCarSource(const IEditorWorld& scene);

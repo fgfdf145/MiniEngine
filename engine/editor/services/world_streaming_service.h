@@ -1,12 +1,12 @@
 #pragma once
 
+#include <engine/core/threading/task_future.h>
 #include <engine/scene/scene_streaming.h>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
 #include <chrono>
-#include <future>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -53,7 +53,7 @@ struct WorldStreamingState
     std::vector<StreamedCell> cells;
     // The model being parsed in the background, one at a time (the model loader does not take two
     // reads of one file at once, and one keeps the disk to the nearest cell first).
-    std::future<void> load;
+    TaskFuture<void> load;
     std::string loadingPath;
     std::unordered_set<std::string> failedPaths;
     // Every cell shows what the focus wants of it, and nothing is loading.

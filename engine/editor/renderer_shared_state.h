@@ -13,11 +13,11 @@
 #include <engine/audio/audio_engine.h>
 #include <engine/logic/editor_world.h>
 #include <engine/core/input/input.h>
+#include <engine/core/threading/task_future.h>
 
 #include <atomic>
 #include <chrono>
 #include <deque>
-#include <future>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -34,12 +34,13 @@ struct ViewportDragPreviewState
     std::string modelPath;
 };
 
-// A background task's future and what callers ask of it.
+// A background task's future and what callers ask of it. The tasks run at TaskPriority::Low, below
+// the frame's own parallel work.
 template <typename Result>
 struct AsyncTask
 {
     // Valid while the task runs, and after it finished until its result is consumed.
-    std::future<Result> future;
+    TaskFuture<Result> future;
 
     bool IsActive() const
     {

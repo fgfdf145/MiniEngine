@@ -47,21 +47,14 @@ PreparedTexture PrepareTexture(
 }
 
 TexturePreparationQueue::TexturePreparationQueue(PrepareFunction prepare, uint32_t workerCount)
-    : m_prepare(std::move(prepare))
+    : m_prepare(std::move(prepare)),
+      m_maxDrainers(std::max(workerCount, 1u))
 {
-    const uint32_t count = std::max(workerCount, 1u);
-    m_workers.reserve(count);
-    for (uint32_t worker = 0; worker < count; ++worker)
-    {
-        m_workers.emplace_back([this]()
-                               {
-                                   WorkerLoop();
-                               });
-    }
 }
 
 TexturePreparationQueue::~TexturePreparationQueue()
 {
+    std::vector<TaskFuture<void>> drainTasks;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_stopping = true;
@@ -70,25 +63,33 @@ TexturePreparationQueue::~TexturePreparationQueue()
             m_pendingKeys.erase(request.key);
         }
         m_queued.clear();
+        drainTasks = std::move(m_drainTasks);
     }
-    m_wake.notify_all();
-    for (std::thread& worker : m_workers)
-    {
-        worker.join();
-    }
+    // Waits for the preparations in hand, outside the lock their tasks finish under.
+    drainTasks.clear();
 }
 
 bool TexturePreparationQueue::Enqueue(TexturePreparationRequest request)
 {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_stopping || !m_pendingKeys.insert(request.key).second)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_stopping || !m_pendingKeys.insert(request.key).second)
-        {
-            return false;
-        }
-        m_queued.push_back(std::move(request));
+        return false;
     }
-    m_wake.notify_one();
+    m_queued.push_back(std::move(request));
+    if (m_drainers < m_maxDrainers)
+    {
+        ++m_drainers;
+        // A finished task's future goes; one about to finish waits for this lock and is not ready.
+        std::erase_if(m_drainTasks, [](const TaskFuture<void>& task)
+                      {
+                          return task.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+                      });
+        m_drainTasks.push_back(RunAsync(TaskPriority::Medium, [this]()
+                                        {
+                                            Drain();
+                                        }));
+    }
     return true;
 }
 
@@ -123,19 +124,16 @@ size_t TexturePreparationQueue::PendingCount() const
     return m_pendingKeys.size();
 }
 
-void TexturePreparationQueue::WorkerLoop()
+void TexturePreparationQueue::Drain()
 {
     for (;;)
     {
         TexturePreparationRequest request;
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_wake.wait(lock, [this]()
-                        {
-                            return m_stopping || !m_queued.empty();
-                        });
-            if (m_stopping)
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_stopping || m_queued.empty())
             {
+                --m_drainers;
                 return;
             }
             request = std::move(m_queued.front());
@@ -144,7 +142,7 @@ void TexturePreparationQueue::WorkerLoop()
         }
 
         // The prepare function runs without the lock: it is the slow part, and the whole point is
-        // that the frame loop can keep enqueuing and taking while it does.
+        // that the render thread can keep enqueuing and taking while it does.
         TexturePreparationResult result{};
         result.key = request.key;
         result.usage = request.usage;

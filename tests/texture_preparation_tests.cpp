@@ -1,4 +1,5 @@
 #include <engine/asset/texture_preparation.h>
+#include <engine/core/threading/task_system.h>
 
 #include <atomic>
 #include <chrono>
@@ -163,17 +164,28 @@ void DestructionDiscardsQueuedWork()
     releaser.join();
     Require(calls == 1, "queued requests must be discarded on destruction, prepared " + std::to_string(calls.load()));
 }
+
+void RunAll()
+{
+    CompletesAndIsTakenOnce();
+    DuplicateKeyIsRefusedWhilePending();
+    ThrowingPrepareBecomesAFailedResult();
+    NotIdleUntilTaken();
+    DestructionDiscardsQueuedWork();
+}
 }
 
 int main()
 {
     try
     {
-        CompletesAndIsTakenOnce();
-        DuplicateKeyIsRefusedWhilePending();
-        ThrowingPrepareBecomesAFailedResult();
-        NotIdleUntilTaken();
-        DestructionDiscardsQueuedWork();
+        // Without the task system the queue's tasks get threads of their own; with it, its workers.
+        RunAll();
+        TaskSystem::Settings settings;
+        settings.workerThreads = 4;
+        TaskSystem::Initialize(settings);
+        RunAll();
+        TaskSystem::Shutdown();
     }
     catch (const std::exception& error)
     {

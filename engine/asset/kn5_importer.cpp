@@ -7,6 +7,7 @@
 
 #include <engine/core/log/log.h>
 #include <engine/core/text/ascii.h>
+#include <engine/core/threading/task_system.h>
 
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
@@ -20,7 +21,6 @@
 #include <fstream>
 #include <exception>
 #include <functional>
-#include <future>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -866,39 +866,18 @@ class GltfBuilder
             }
         };
 
-        // The calling thread is one of the writers.
-        std::vector<std::future<void>> helpers;
-        for (size_t helper = 1; helper < threadCount; ++helper)
-        {
-            helpers.push_back(std::async(std::launch::async, work));
-        }
-        std::exception_ptr error;
-        try
-        {
-            work();
-        }
-        catch (...)
-        {
-            error = std::current_exception();
-        }
-        for (std::future<void>& helper : helpers)
-        {
-            try
+        // The writers, as tasks; the calling thread is one of them. An import is background work.
+        TaskSystem::ParallelFor(
+            static_cast<uint32_t>(threadCount),
+            1,
+            [&](uint32_t begin, uint32_t end)
             {
-                helper.get();
-            }
-            catch (...)
-            {
-                if (!error)
+                for (uint32_t writer = begin; writer < end; ++writer)
                 {
-                    error = std::current_exception();
+                    work();
                 }
-            }
-        }
-        if (error)
-        {
-            std::rethrow_exception(error);
-        }
+            },
+            TaskPriority::Low);
 
         for (const Job& job : jobs)
         {

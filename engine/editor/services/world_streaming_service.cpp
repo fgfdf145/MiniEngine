@@ -246,11 +246,11 @@ bool WorldStreamingService::Tick(RendererSharedState& state)
             if (!streaming.load.valid() && !otherLoaderBusy)
             {
                 streaming.loadingPath = path;
-                streaming.load = std::async(std::launch::async, [path]()
-                                            {
-                                                auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(path));
-                                                ModelCache::Store(path, std::move(data));
-                                            });
+                streaming.load = RunAsync(TaskPriority::Low, [path]()
+                                          {
+                                              auto data = std::make_shared<LoadedModelData>(ModelLoader::LoadModel(path));
+                                              ModelCache::Store(path, std::move(data));
+                                          });
             }
             continue;
         }

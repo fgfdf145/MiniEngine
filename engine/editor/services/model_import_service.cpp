@@ -181,8 +181,8 @@ void StartAsyncImport(
     state.asyncImport.sourcePath = sourcePath;
     state.asyncImport.destinationDirectory = destinationDirectory;
     state.asyncImport.progress = std::make_shared<std::atomic<float>>(0.0f);
-    state.asyncImport.future = std::async(
-        std::launch::async,
+    state.asyncImport.future = RunAsync(
+        TaskPriority::Low,
         [sourcePath, destinationDirectory, policy, kn5Options, progress = state.asyncImport.progress]()
         {
             return ImportModelIntoAssetDirectory(

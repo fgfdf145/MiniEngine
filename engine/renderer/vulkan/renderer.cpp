@@ -17,6 +17,7 @@
 #include <engine/asset/texture_preparation.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
+#include <engine/core/threading/task_system.h>
 #include <engine/platform/window/window.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -262,17 +263,23 @@ constexpr const char* kOutOfMemoryReport =
 
 // Logs a frame long enough to have stalled the editor. Texture work belongs on the preparation
 // queue; this is where a regression back onto the frame loop shows up.
-// A key that changes whenever the shadow casters do: which meshes, where, and how they alpha test.
-// FNV-1a over the fields that reach the shadow map. Not the material descriptor set, which is one
-// per swapchain image and would change the key every frame.
-uint64_t HashShadowCasters(std::span<const ShadowDrawItem> items)
+// The frame's loops over every render submesh run in ranges of this many on the task system.
+constexpr uint32_t kSubmeshesPerTask = 512;
+
+void MixHashWord(uint64_t& hash, uint64_t word)
+{
+    hash ^= word + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    hash *= 0xff51afd7ed558ccdull;
+}
+
+// HashShadowCasters' hash of one run of casters.
+uint64_t HashShadowCasterRange(std::span<const ShadowDrawItem> items)
 {
     // Eight bytes a step: a byte at a time took milliseconds over a map's tens of thousands of casters.
     uint64_t hash = 14695981039346656037ull;
     const auto mixWord = [&hash](uint64_t word)
     {
-        hash ^= word + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
-        hash *= 0xff51afd7ed558ccdull;
+        MixHashWord(hash, word);
     };
     const auto mix = [&mixWord](const void* data, size_t size)
     {
@@ -302,6 +309,32 @@ uint64_t HashShadowCasters(std::span<const ShadowDrawItem> items)
             mix(item.baseColorTransform, sizeof(item.baseColorTransform));
         }
     }
+    return hash;
+}
+
+// A key that changes whenever the shadow casters do: which meshes, where, and how they alpha test.
+// FNV-1a over the fields that reach the shadow map. Not the material descriptor set, which is one
+// per swapchain image and would change the key every frame. Hashed in chunks of a fixed size on the
+// task system, then the chunks in order, so the key does not depend on how the work was split.
+uint64_t HashShadowCasters(std::span<const ShadowDrawItem> items)
+{
+    constexpr size_t kCastersPerChunk = 1024;
+    const uint32_t chunkCount = static_cast<uint32_t>((items.size() + kCastersPerChunk - 1) / kCastersPerChunk);
+    std::vector<uint64_t> chunkHashes(chunkCount);
+    TaskSystem::ParallelFor(chunkCount, 1, [&](uint32_t begin, uint32_t end)
+                            {
+                                for (uint32_t chunk = begin; chunk < end; ++chunk)
+                                {
+                                    const size_t first = chunk * kCastersPerChunk;
+                                    chunkHashes[chunk] = HashShadowCasterRange(items.subspan(first, std::min(kCastersPerChunk, items.size() - first)));
+                                }
+                            });
+    uint64_t hash = 14695981039346656037ull;
+    for (const uint64_t chunkHash : chunkHashes)
+    {
+        MixHashWord(hash, chunkHash);
+    }
+    MixHashWord(hash, items.size());
     return hash;
 }
 
@@ -858,18 +891,20 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     m_cpuStages.Mark("Lights");
     // Every draw's model matrix, once, for the shadow casters, the motion vectors, the ray scene and
     // the draw items.
-    std::vector<glm::mat4> models;
-    std::vector<MotionKey> motionKeys;
-    std::vector<uint32_t> drawSlots;
-    models.reserve(m_renderSubmeshes.size());
-    motionKeys.reserve(m_renderSubmeshes.size());
-    drawSlots.reserve(m_renderSubmeshes.size());
-    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
-    {
-        models.push_back(packet.transforms.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
-        motionKeys.push_back(renderSubmesh->motionKey);
-        drawSlots.push_back(renderSubmesh->drawSlot);
-    }
+    const uint32_t submeshCount = static_cast<uint32_t>(m_renderSubmeshes.size());
+    std::vector<glm::mat4> models(submeshCount);
+    std::vector<MotionKey> motionKeys(submeshCount);
+    std::vector<uint32_t> drawSlots(submeshCount);
+    TaskSystem::ParallelFor(submeshCount, kSubmeshesPerTask, [&](uint32_t begin, uint32_t end)
+                            {
+                                for (uint32_t index = begin; index < end; ++index)
+                                {
+                                    const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[index];
+                                    models[index] = packet.transforms.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
+                                    motionKeys[index] = renderSubmesh.motionKey;
+                                    drawSlots[index] = renderSubmesh.drawSlot;
+                                }
+                            });
     m_cpuStages.Mark("Models");
     const std::vector<ShadowDrawItem> shadowDrawItems = BuildShadowDrawItems(imageIndex, models);
     m_cpuStages.Mark("ShadowDrawItems");
@@ -2044,8 +2079,8 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
         return;
     }
     m_pendingEnvironmentMapPath = wanted;
-    m_pendingEnvironmentMap = std::async(
-        std::launch::async,
+    m_pendingEnvironmentMap = RunAsync(
+        TaskPriority::Medium,
         [path = wanted]()
         {
             PreparedEnvironmentMap prepared{};
@@ -3101,51 +3136,33 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
     const glm::mat4& viewProjection,
     const glm::mat4& view) const
 {
+    const ViewFrustum frustum(viewProjection);
+    // Culled and keyed in chunks on the task system; the chunks joined in order are the list one loop
+    // over every submesh makes.
+    const uint32_t chunkCount = (static_cast<uint32_t>(m_renderSubmeshes.size()) + kSubmeshesPerTask - 1) / kSubmeshesPerTask;
+    std::vector<std::vector<VulkanDrawItem>> chunkItems(chunkCount);
+    std::vector<std::vector<MaterialDrawSortKey>> chunkKeys(chunkCount);
+    TaskSystem::ParallelFor(chunkCount, 1, [&](uint32_t firstChunk, uint32_t endChunk)
+                            {
+                                for (uint32_t chunk = firstChunk; chunk < endChunk; ++chunk)
+                                {
+                                    const size_t begin = static_cast<size_t>(chunk) * kSubmeshesPerTask;
+                                    const size_t end = std::min(begin + kSubmeshesPerTask, m_renderSubmeshes.size());
+                                    for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
+                                    {
+                                        AppendDrawItem(
+                                            *m_renderSubmeshes[submeshIndex], models[submeshIndex], frustum, view, chunkItems[chunk], chunkKeys[chunk]);
+                                    }
+                                }
+                            });
     std::vector<VulkanDrawItem> unsorted;
     std::vector<MaterialDrawSortKey> sortKeys;
     unsorted.reserve(m_renderSubmeshes.size());
     sortKeys.reserve(m_renderSubmeshes.size());
-    const ViewFrustum frustum(viewProjection);
-
-    for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
+    for (uint32_t chunk = 0; chunk < chunkCount; ++chunk)
     {
-        const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-        const glm::mat4& model = models[submeshIndex];
-        const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
-        const float worldRadius =
-            renderSubmesh.localBoundsRadius *
-            std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2]))});
-        if (!frustum.IntersectsSphere(worldCenter, worldRadius))
-        {
-            continue;
-        }
-        ObjectPushConstants drawConstants{};
-        drawConstants.model = model;
-        const MaterialPipelineKey pipelineKey{
-            renderSubmesh.alphaMode,
-            renderSubmesh.doubleSided};
-        const glm::vec4 viewCenter =
-            view *
-            drawConstants.model *
-            glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
-        const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
-                                   (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
-        const bool transmissive = forwardShaded && (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u;
-        sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded, transmissive});
-        unsorted.push_back(VulkanDrawItem{
-            renderSubmesh.buffer->GetVertexHandle(),
-            renderSubmesh.buffer->GetIndexHandle(),
-            renderSubmesh.buffer->GetIndexCount(),
-            renderSubmesh.materialSet,
-            drawConstants,
-            pipelineKey,
-            // The draw slot, where this submesh's material, texture transforms and previous model
-            // matrix are.
-            renderSubmesh.drawSlot,
-            forwardShaded,
-            transmissive,
-            MaterialScatters(renderSubmesh.material),
-            renderSubmesh.decal});
+        unsorted.insert(unsorted.end(), std::make_move_iterator(chunkItems[chunk].begin()), std::make_move_iterator(chunkItems[chunk].end()));
+        sortKeys.insert(sortKeys.end(), chunkKeys[chunk].begin(), chunkKeys[chunk].end());
     }
 
     std::vector<VulkanDrawItem> ordered;
@@ -3157,53 +3174,150 @@ std::vector<VulkanDrawItem> VulkanRenderer::BuildDrawItems(
     return ordered;
 }
 
+void VulkanRenderer::AppendDrawItem(
+    const RenderSubmesh& renderSubmesh,
+    const glm::mat4& model,
+    const ViewFrustum& frustum,
+    const glm::mat4& view,
+    std::vector<VulkanDrawItem>& items,
+    std::vector<MaterialDrawSortKey>& sortKeys)
+{
+    const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+    const float worldRadius =
+        renderSubmesh.localBoundsRadius *
+        std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2]))});
+    if (!frustum.IntersectsSphere(worldCenter, worldRadius))
+    {
+        return;
+    }
+    ObjectPushConstants drawConstants{};
+    drawConstants.model = model;
+    const MaterialPipelineKey pipelineKey{
+        renderSubmesh.alphaMode,
+        renderSubmesh.doubleSided};
+    const glm::vec4 viewCenter =
+        view *
+        drawConstants.model *
+        glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
+    const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
+                               (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
+    const bool transmissive = forwardShaded && (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u;
+    sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded, transmissive});
+    items.push_back(VulkanDrawItem{
+        renderSubmesh.buffer->GetVertexHandle(),
+        renderSubmesh.buffer->GetIndexHandle(),
+        renderSubmesh.buffer->GetIndexCount(),
+        renderSubmesh.materialSet,
+        drawConstants,
+        pipelineKey,
+        // The draw slot, where this submesh's material, texture transforms and previous model
+        // matrix are.
+        renderSubmesh.drawSlot,
+        forwardShaded,
+        transmissive,
+        MaterialScatters(renderSubmesh.material),
+        renderSubmesh.decal});
+}
+
 std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
 {
-    std::vector<ShadowDrawItem> items;
-    items.reserve(m_renderSubmeshes.size());
-    for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
+    // Opaque casters first, then alpha-tested ones, so the pass switches pipeline once. On the task
+    // system in chunks: each chunk counts its casters of either kind, which places them in the list,
+    // then writes them there, in the order one loop over every submesh would give.
+    const uint32_t chunkCount = (static_cast<uint32_t>(m_renderSubmeshes.size()) + kSubmeshesPerTask - 1) / kSubmeshesPerTask;
+    const auto forEachChunk = [&](const auto& body)
     {
-        const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-        // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
-        // wrong more often than none, so they cast none.
-        // Transmissive surfaces let most light through; they cast none either.
-        if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend ||
-            (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u)
-        {
-            continue;
-        }
-
-        ShadowDrawItem item{};
-        item.vertexBuffer = renderSubmesh.buffer->GetVertexHandle();
-        item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
-        item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
-        item.indexCount = renderSubmesh.buffer->GetIndexCount();
-        item.model = models[submeshIndex];
-        item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
-        // The largest axis scale keeps the sphere enclosing under non-uniform scale.
-        item.worldBoundsRadius =
-            renderSubmesh.localBoundsRadius *
-            std::max({glm::length(glm::vec3(item.model[0])),
-                      glm::length(glm::vec3(item.model[1])),
-                      glm::length(glm::vec3(item.model[2]))});
-        item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
-        item.materialDescriptorSet = renderSubmesh.materialSet;
-        std::memcpy(item.material.baseColorFactor, renderSubmesh.material.baseColorFactor, sizeof(item.material.baseColorFactor));
-        std::memcpy(item.material.nodeGraphFactors, renderSubmesh.material.nodeGraphFactors, sizeof(item.material.nodeGraphFactors));
-        item.material.alphaCutoff = renderSubmesh.material.alphaCutoff;
-        // The alpha test samples the base colour where the main passes do.
-        std::memcpy(item.baseColorTransform, &renderSubmesh.textureTransforms.rows[0], sizeof(item.baseColorTransform));
-        items.push_back(item);
+        TaskSystem::ParallelFor(chunkCount, 1, [&](uint32_t firstChunk, uint32_t endChunk)
+                                {
+                                    for (uint32_t chunk = firstChunk; chunk < endChunk; ++chunk)
+                                    {
+                                        const size_t begin = static_cast<size_t>(chunk) * kSubmeshesPerTask;
+                                        body(chunk, begin, std::min(begin + kSubmeshesPerTask, m_renderSubmeshes.size()));
+                                    }
+                                });
+    };
+    std::vector<uint32_t> opaqueCounts(chunkCount, 0);
+    std::vector<uint32_t> maskedCounts(chunkCount, 0);
+    forEachChunk([&](uint32_t chunk, size_t begin, size_t end)
+                 {
+                     for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
+                     {
+                         const ShadowCaster caster = ClassifyShadowCaster(*m_renderSubmeshes[submeshIndex]);
+                         if (caster == ShadowCaster::Opaque)
+                         {
+                             ++opaqueCounts[chunk];
+                         }
+                         else if (caster == ShadowCaster::Masked)
+                         {
+                             ++maskedCounts[chunk];
+                         }
+                     }
+                 });
+    std::vector<uint32_t> opaqueFirst(chunkCount);
+    std::vector<uint32_t> maskedFirst(chunkCount);
+    uint32_t count = 0;
+    for (uint32_t chunk = 0; chunk < chunkCount; ++chunk)
+    {
+        opaqueFirst[chunk] = count;
+        count += opaqueCounts[chunk];
     }
-    // Opaque first, then mask, so the pass switches pipeline once.
-    std::stable_partition(
-        items.begin(),
-        items.end(),
-        [](const ShadowDrawItem& item)
-        {
-            return !item.alphaMask;
-        });
+    for (uint32_t chunk = 0; chunk < chunkCount; ++chunk)
+    {
+        maskedFirst[chunk] = count;
+        count += maskedCounts[chunk];
+    }
+    std::vector<ShadowDrawItem> items(count);
+    forEachChunk([&](uint32_t chunk, size_t begin, size_t end)
+                 {
+                     uint32_t nextOpaque = opaqueFirst[chunk];
+                     uint32_t nextMasked = maskedFirst[chunk];
+                     for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
+                     {
+                         const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
+                         const ShadowCaster caster = ClassifyShadowCaster(renderSubmesh);
+                         if (caster != ShadowCaster::None)
+                         {
+                             FillShadowDrawItem(renderSubmesh, models[submeshIndex], items[caster == ShadowCaster::Opaque ? nextOpaque++ : nextMasked++]);
+                         }
+                     }
+                 });
     return items;
+}
+
+VulkanRenderer::ShadowCaster VulkanRenderer::ClassifyShadowCaster(const RenderSubmesh& renderSubmesh)
+{
+    // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
+    // wrong more often than none, so they cast none.
+    // Transmissive surfaces let most light through; they cast none either.
+    if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend ||
+        (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u)
+    {
+        return ShadowCaster::None;
+    }
+    return renderSubmesh.alphaMode == MaterialAlphaMode::Mask ? ShadowCaster::Masked : ShadowCaster::Opaque;
+}
+
+void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item)
+{
+    item.vertexBuffer = renderSubmesh.buffer->GetVertexHandle();
+    item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
+    item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
+    item.indexCount = renderSubmesh.buffer->GetIndexCount();
+    item.model = model;
+    item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+    // The largest axis scale keeps the sphere enclosing under non-uniform scale.
+    item.worldBoundsRadius =
+        renderSubmesh.localBoundsRadius *
+        std::max({glm::length(glm::vec3(item.model[0])),
+                  glm::length(glm::vec3(item.model[1])),
+                  glm::length(glm::vec3(item.model[2]))});
+    item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
+    item.materialDescriptorSet = renderSubmesh.materialSet;
+    std::memcpy(item.material.baseColorFactor, renderSubmesh.material.baseColorFactor, sizeof(item.material.baseColorFactor));
+    std::memcpy(item.material.nodeGraphFactors, renderSubmesh.material.nodeGraphFactors, sizeof(item.material.nodeGraphFactors));
+    item.material.alphaCutoff = renderSubmesh.material.alphaCutoff;
+    // The alpha test samples the base colour where the main passes do.
+    std::memcpy(item.baseColorTransform, &renderSubmesh.textureTransforms.rows[0], sizeof(item.baseColorTransform));
 }
 
 void VulkanRenderer::RecordTransitions(

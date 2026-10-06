@@ -5,6 +5,7 @@
 #include "uniform_buffer.h"
 
 #include <engine/asset/mesh.h>
+#include <engine/core/threading/task_future.h>
 #include <engine/renderer/material.h>
 #include <engine/renderer/ray_tracing_bvh.h>
 #include <engine/renderer/reference_path_tracer.h>
@@ -148,7 +149,7 @@ class VulkanRayScene
     // tens of milliseconds of the frame. The caller has waited for every frame that may read it.
     void DiscardBuild(Build build);
     // The release tasks, waited for before the device goes; finished ones are dropped as new ones come.
-    std::vector<std::future<void>> m_releases;
+    std::vector<TaskFuture<void>> m_releases;
 
     Buffer CreateBuffer(VkDeviceSize size) const;
     void DestroyBuffer(Buffer& buffer) const;
@@ -193,10 +194,10 @@ class VulkanRayScene
     std::vector<RaySceneSubmesh> m_submeshes;
     // Hierarchies already built, by mesh, kept while any content uses them.
     std::shared_ptr<BuildCache> m_buildCache = std::make_shared<BuildCache>();
-    std::future<Build> m_pendingBuild;
+    TaskFuture<Build> m_pendingBuild;
     // Builds for content that was replaced before they finished, left to finish on their own (a
-    // std::async future waits in its destructor); dropped once done.
-    std::vector<std::future<Build>> m_staleBuilds;
+    // TaskFuture waits in its destructor); dropped once done.
+    std::vector<TaskFuture<Build>> m_staleBuilds;
     void DropFinishedStaleBuilds();
     // The installed build's mesh ranges and each submesh's mesh; the per-frame top level starts from
     // them.

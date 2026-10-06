@@ -42,6 +42,7 @@
 #include <engine/core/threading/render_thread.h>
 #include <engine/renderer/cpu_stage_timer.h>
 #include <engine/renderer/taa_jitter.h>
+#include <engine/renderer/view_frustum.h>
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 
@@ -244,6 +245,23 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::mat4& viewProjection,
         const glm::mat4& view) const;
     std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
+    // One submesh's draw item and sort key, unless the frustum culls it; BuildDrawItems' loop body.
+    static void AppendDrawItem(
+        const RenderSubmesh& renderSubmesh,
+        const glm::mat4& model,
+        const ViewFrustum& frustum,
+        const glm::mat4& view,
+        std::vector<VulkanDrawItem>& items,
+        std::vector<MaterialDrawSortKey>& sortKeys);
+    // How a submesh casts shadows, and its caster: BuildShadowDrawItems' two passes.
+    enum class ShadowCaster
+    {
+        None,
+        Opaque,
+        Masked,
+    };
+    static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh);
+    static void FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item);
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         const RenderPassIo& io,
@@ -352,7 +370,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         FloatTextureData image;
         ShCoefficients sh{};
     };
-    std::future<PreparedEnvironmentMap> m_pendingEnvironmentMap;
+    TaskFuture<PreparedEnvironmentMap> m_pendingEnvironmentMap;
     // The loaded HDRI's unrotated radiance SH, at intensity 1.
     ShCoefficients m_environmentMapSh{};
     std::string m_pendingEnvironmentMapPath;
