@@ -1089,6 +1089,20 @@ VehicleCarSpec BuildSpec(const AcdArchive::Files& files)
         spec.steeringWheelLockDegrees = *lock;
         spec.maxSteerAngleDegrees = std::clamp(*lock / std::abs(*ratio), 8.0f, 60.0f);
     }
+    // The driver's eyes, in the kn5's frame (+X left, +Z forward, the ground at 0): the R34's sit 0.29 m
+    // over and 0.59 m behind its STEER_HR. The import turns that frame half round about Y (AddRoot),
+    // so the model's own has X and Z the other way. (BONNET_ and BUMPER_CAMERA_POS are not read: they
+    // are not in this frame, the R34's bonnet camera would be inside its dashboard.)
+    if (const std::optional<std::string> eyes = car.Text("GRAPHICS", "DRIVEREYES"))
+    {
+        if (const std::optional<std::vector<float>> xyz = ParseNumberList(*eyes, 3))
+        {
+            VehicleCameraMount mount;
+            mount.position = glm::vec3(-(*xyz)[0], (*xyz)[1], -(*xyz)[2]);
+            mount.pitchDegrees = std::clamp(car.Number("GRAPHICS", "ON_BOARD_PITCH_ANGLE").value_or(0.0f), -30.0f, 30.0f);
+            spec.cockpitCamera = mount;
+        }
+    }
 
     ReadEngine(files, spec);
     ReadDrivetrain(files, spec);

@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -28,7 +29,24 @@ class RendererWorld;
 class ISceneWorld;
 struct RendererSharedState;
 
-// The camera behind a driven car.
+// The cameras a driven car is seen from, in the order Gran Turismo 7's view button goes through them:
+// behind the car, the driver's eyes, over the bonnet, and on the front bumper. All but the chase
+// camera are fixed to the body, so they pitch and roll with it.
+enum class VehicleCameraView : uint8_t
+{
+    Chase,
+    Cockpit,
+    Bonnet,
+    Bumper,
+};
+inline constexpr size_t kVehicleCameraViewCount = 4;
+// The cameras fixed to the body: every view but the chase camera, in order.
+inline constexpr size_t kVehicleMountedViewCount = kVehicleCameraViewCount - 1;
+
+const char* VehicleCameraViewName(VehicleCameraView view);
+VehicleCameraView NextVehicleCameraView(VehicleCameraView view);
+
+// The cameras on a driven car.
 struct VehicleCameraSettings
 {
     bool follow = true;
@@ -39,10 +57,20 @@ struct VehicleCameraSettings
     // Letting go leaves it where it is when this is 0; above 0 it comes back behind the car at this
     // rate per second (higher is quicker).
     float lookRecenterRate = 0.0f;
+    // The views fixed to the body: their vertical field of view (degrees), the cockpit's own and the
+    // bonnet's and bumper's. The lens is put back as it was on leaving them.
+    float cockpitFovDegrees = 55.0f;
+    float exteriorFovDegrees = 50.0f;
+    // Moves the driver's eyes from where the car's data or its steering wheel puts them (metres: to the
+    // car's right, up, forward).
+    glm::vec3 seatOffset{0.0f};
+    // Looking round from inside the car (or off the bonnet or bumper) turns the head, and the head comes
+    // back to the road at this rate per second once let go of, as GT7's does.
+    float headLookRecenterRate = 12.0f;
 };
 
-// How far the driver has looked around the car with the right mouse button, added to the chase
-// camera's place behind it.
+// How far the driver has looked around with the right mouse button: for the chase camera, swung round
+// the car from its place behind it; for a camera on the body, the head turned from looking ahead.
 struct VehicleCameraOrbit
 {
     float yawDegrees = 0.0f;   // positive swings the camera to the car's right, so the view turns left
@@ -105,6 +133,8 @@ struct VehicleDriveStatus
     std::string frontTyre;
     std::string rearTyre;
     double odometerMetres = 0.0;
+    // The view the car is seen from (also while nothing is driven: the next drive starts in it).
+    VehicleCameraView cameraView = VehicleCameraView::Chase;
     std::string lastError;
 };
 
@@ -151,6 +181,16 @@ struct VehicleDriveSession
     // The share of real time the physics has kept up with, smoothed over about a second.
     float realTimeShare = 1.0f;
     Camera cameraBeforeDriving;
+    // Where the cockpit, bonnet and bumper cameras sit on the body (ComputeCameraMounts, before the
+    // seat offset), in vehicle space.
+    std::array<VehicleCameraMount, kVehicleMountedViewCount> cameraMounts{};
+    // The lens a view on the body changed (field of view, near plane, up), to put back on leaving it.
+    bool mountedLensApplied = false;
+    float fovBeforeMounted = 45.0f;
+    float nearPlaneBeforeMounted = 0.1f;
+    glm::vec3 upBeforeMounted{0.0f, 1.0f, 0.0f};
+    // The view button held in the last frame: the view changes once per press.
+    bool viewButtonHeld = false;
     std::unique_ptr<PhysicsWorld> physics;
     VehicleId vehicle = 0;
     // Set when the model defines its wheels.
@@ -198,6 +238,8 @@ struct VehicleDriveState
     // its pose once a simulated second.
     std::optional<VehicleControls> scriptedControls;
     VehicleCameraSettings camera;
+    // The view the car is seen from; it stays for the next drive.
+    VehicleCameraView cameraView = VehicleCameraView::Chase;
     VehicleHapticsSettings haptics;
     VehicleSteeringAssistSettings steeringAssist;
     std::string lastError;
@@ -219,6 +261,8 @@ void Reset(RendererSharedState& state);
 // that has rolled over or got stuck on its side.
 void Recover(RendererSharedState& state);
 void SetPaused(RendererSharedState& state, bool paused);
+// Sees the car from `view`, the head looking ahead again; the next drive starts in it too.
+void SetCameraView(RendererSharedState& state, VehicleCameraView view);
 // The driven car's brush tyres recut into this many ribs (0 for the tyre's own count), at once.
 void SetBrushTyreRibs(RendererSharedState& state, int ribs);
 // While paused: advances the simulation by one fixed step.
@@ -235,7 +279,8 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state);
 void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void()>& action);
 
 // Keyboard: W/S or the arrow keys for throttle and reverse, A/D or left/right to steer, Space for the
-// hand brake, E/Q to change up/down and N (held) for the clutch. Gamepad: right and left trigger, left
+// hand brake, E/Q to change up/down and N (held) for the clutch (V and the right stick's click change
+// the view, which Tick reads). Gamepad: right and left trigger, left
 // stick, East button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change
 // up/down and South (Cross, held) for the clutch. With `manualGearbox` the gear buttons change gear, once per press:
 // `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,
@@ -262,9 +307,31 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     const glm::quat& vehicleToModel,
     const glm::vec3& scale);
 
-// Turns the orbit by a mouse movement (degrees), or, with `lookHeld` false, eases it back to zero.
-// Pitch is kept between looking a little up from below and straight down.
-void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, const VehicleCameraSettings& settings, float deltaSeconds);
+// Turns the orbit by a mouse movement (degrees), or, with `lookHeld` false, eases it back to zero at
+// `recenterRate` per second (0: it stays). Pitch is kept between looking a little up from below and
+// straight down.
+void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, float recenterRate, float deltaSeconds);
+
+// Where the cockpit, bonnet and bumper cameras sit on a car, in vehicle space (+Z forward, +X to the
+// car's left, from the body's origin), from what is known of it:
+// - the cockpit: the driver's eyes from the car's data (`eyes`, vehicle space), else 0.59 m behind and
+//   0.29 m over the steering wheel's centre (`steeringWheel`, as the R34's DRIVEREYES sit from its
+//   STEER_HR), else on the centre line where a driver's eyes sit in the body's box.
+// - the bonnet: on the centre line, 45% of the way from the eyes to the front, a little over the
+//   highest point of the body there (`heightAt`, nullopt where there is none: then under the eyes).
+// - the bumper: just ahead of the front, low, as GT7's.
+// `boundsMin` and `boundsMax` are the body's box in vehicle space.
+std::array<VehicleCameraMount, kVehicleMountedViewCount> ComputeCameraMounts(
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    const std::optional<VehicleCameraMount>& eyes,
+    const std::optional<glm::vec3>& steeringWheel,
+    const std::function<std::optional<float>(float z)>& heightAt);
+
+// Puts the camera at `mount` on the body (vehicle space), looking along the body's forward pitched by
+// the mount, the head turned by `look` (positive yaw looks left, positive pitch down); its up is the
+// body's, so it rolls with the car.
+void UpdateMountedCamera(Camera& camera, const PhysicsPose& vehiclePose, const VehicleCameraMount& mount, const VehicleCameraOrbit& look = {});
 
 // Eases the camera towards its place behind the car, looking at it, turned round the car by `orbit`.
 // With deltaSeconds of zero it jumps straight there.

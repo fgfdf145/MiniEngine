@@ -322,6 +322,13 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     {
         out["fuelTankPosition"] = Json::array({Round(spec.fuelTankPosition->x, 4), Round(spec.fuelTankPosition->y, 4), Round(spec.fuelTankPosition->z, 4)});
     }
+    if (spec.cockpitCamera.has_value())
+    {
+        const VehicleCameraMount& eyes = *spec.cockpitCamera;
+        out["cockpitCamera"] = Json{
+            {"position", Json::array({Round(eyes.position.x, 4), Round(eyes.position.y, 4), Round(eyes.position.z, 4)})},
+            {"pitchDegrees", Round(eyes.pitchDegrees, 3)}};
+    }
 
     if (!spec.aeroWings.empty())
     {

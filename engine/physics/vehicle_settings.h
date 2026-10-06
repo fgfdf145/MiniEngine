@@ -549,6 +549,14 @@ struct VehicleErs
     std::vector<VehicleErsProfile> profiles;
 };
 
+// A camera fixed to the car: where it sits in the model's own frame (m) and how far it looks up from
+// the body's forward (degrees, negative looks down).
+struct VehicleCameraMount
+{
+    glm::vec3 position{0.0f};
+    float pitchDegrees = 0.0f;
+};
+
 // What a car's own data says, in SI units, for the fields it knows (Assetto Corsa's data.acd, read by
 // the kn5 import). Whatever it leaves out stays as the tuning has it.
 struct VehicleCarSpec
@@ -638,6 +646,8 @@ struct VehicleCarSpec
     // WithStartingFuel adds it.
     std::optional<float> fuelLitres;
     std::optional<glm::vec3> fuelTankPosition;
+    // The driver's eyes, where the cockpit view sits ([GRAPHICS] DRIVEREYES, ON_BOARD_PITCH_ANGLE).
+    std::optional<VehicleCameraMount> cockpitCamera;
 };
 
 // Fuel's mass per litre. [Not checked against the game: petrol is 0.72 to 0.77.]

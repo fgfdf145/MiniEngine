@@ -17,6 +17,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <filesystem>
 #include <iostream>
@@ -170,6 +171,28 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--drive-controls")
         {
             options.driveControls = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
+        if (argument == "--drive-view")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            for (size_t view = 0; view < kVehicleCameraViewCount && !options.driveView.has_value(); ++view)
+            {
+                std::string name = VehicleCameraViewName(static_cast<VehicleCameraView>(view));
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
+                               {
+                                   return static_cast<char>(std::tolower(c));
+                               });
+                if (value == name)
+                {
+                    options.driveView = static_cast<VehicleCameraView>(view);
+                }
+            }
+            if (!options.driveView.has_value())
+            {
+                throw std::runtime_error("--drive-view takes chase, cockpit, bonnet or bumper");
+            }
             continue;
         }
 
@@ -529,6 +552,10 @@ int EditorApplication::Run()
         controls.throttle = std::clamp((*m_options.driveControls)[0], -1.0f, 1.0f);
         controls.steering = std::clamp((*m_options.driveControls)[1], -1.0f, 1.0f);
         sharedState->vehicleDrive.scriptedControls = controls;
+    }
+    if (m_options.driveView.has_value())
+    {
+        sharedState->vehicleDrive.cameraView = *m_options.driveView;
     }
 
     // Keeps the frame coming while a window edge is dragged, so the area the drag exposes is drawn

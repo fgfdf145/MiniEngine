@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -47,6 +48,33 @@ constexpr float kGroundPlaneHalfThickness = 0.5f;
 // How far the right mouse button may tilt the chase camera down onto the car and up from below.
 constexpr float kOrbitMaxRaiseDegrees = 60.0f;
 constexpr float kOrbitMaxLowerDegrees = 10.0f;
+// The driver's eyes from the steering wheel's centre, as the R34's DRIVEREYES sit from its STEER_HR,
+// and how far they look down when the car's data does not say (Kunos' cars: 0 to 5 degrees).
+constexpr float kEyesBehindSteeringWheel = 0.59f;
+constexpr float kEyesOverSteeringWheel = 0.29f;
+constexpr float kCockpitPitchDegrees = -3.0f;
+// Without a steering wheel: the eyes' place in the body's box, by height from its bottom and from its
+// middle back along its length (Kunos' cars: 0.80 to 0.83 of the height, 0.04 to 0.13 of the length).
+constexpr float kEyesHeightShare = 0.81f;
+constexpr float kEyesBehindMiddleShare = 0.08f;
+// The bonnet camera: this share of the way from the eyes to the front, this far over the body there,
+// looking down this much at the road over the bonnet.
+constexpr float kBonnetShareToFront = 0.45f;
+constexpr float kBonnetCameraLift = 0.12f;
+constexpr float kBonnetPitchDegrees = -1.5f;
+// The bumper camera: this far ahead of the front, at this share of the body's height (within these
+// heights), level.
+constexpr float kBumperCameraAhead = 0.05f;
+constexpr float kBumperHeightShare = 0.35f;
+constexpr float kBumperMinHeight = 0.3f;
+constexpr float kBumperMaxHeight = 0.6f;
+// The body's height along its centre line: points this close to it, in bins this long, read over this
+// far each side of where it is asked for.
+constexpr float kProfileHalfWidth = 0.3f;
+constexpr float kProfileBinLength = 0.05f;
+constexpr float kProfileWindow = 0.1f;
+// A camera on the body may be inside it, close to the dashboard and the pillars.
+constexpr float kMountedNearPlane = 0.05f;
 
 float MoveTowards(float value, float target, float maxDelta)
 {
@@ -129,10 +157,127 @@ void RestoreCamera(Camera& camera, const Camera& saved)
     camera.yawDegrees = saved.yawDegrees;
     camera.pitchDegrees = saved.pitchDegrees;
 }
+
+// The lens of a view on the body: its field of view, a near plane close enough for the dashboard, and
+// the body's up (UpdateMountedCamera). What it replaces is kept to put back.
+void ApplyMountedLens(Camera& camera, VehicleDriveSession& session, float fovDegrees)
+{
+    if (!session.mountedLensApplied)
+    {
+        session.fovBeforeMounted = camera.fovDegrees;
+        session.nearPlaneBeforeMounted = camera.nearPlane;
+        session.upBeforeMounted = camera.worldUp;
+        session.mountedLensApplied = true;
+    }
+    camera.fovDegrees = std::clamp(fovDegrees, WorldUnits::kUiCameraFovMinDegrees, WorldUnits::kUiCameraFovMaxDegrees);
+    camera.nearPlane = std::min(session.nearPlaneBeforeMounted, kMountedNearPlane);
+}
+
+void RestoreMountedLens(Camera& camera, VehicleDriveSession& session)
+{
+    if (!session.mountedLensApplied)
+    {
+        return;
+    }
+    camera.fovDegrees = session.fovBeforeMounted;
+    camera.nearPlane = session.nearPlaneBeforeMounted;
+    camera.worldUp = session.upBeforeMounted;
+    session.mountedLensApplied = false;
+}
+
+// The highest point of the car's own surfaces near its centre line (x = centreX), by distance along it,
+// in vehicle space: what the bonnet camera sits over.
+std::function<std::optional<float>(float)> BodyHeightProfile(
+    const RendererWorld& renderWorld, entt::entity entity, const glm::quat& modelToVehicle, const glm::vec3& scale, float centreX)
+{
+    std::map<int, float> highest;
+    for (const std::shared_ptr<const CpuRenderSubmesh>& entry : renderWorld.GetRenderSubmeshes())
+    {
+        const CpuRenderSubmesh& submesh = *entry;
+        if (submesh.entity != entity || !submesh.mesh || submesh.decal || submesh.water)
+        {
+            continue;
+        }
+        for (const Vertex& vertex : submesh.mesh->vertices)
+        {
+            const glm::vec3 point = modelToVehicle * (glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]) * scale);
+            if (std::abs(point.x - centreX) > kProfileHalfWidth)
+            {
+                continue;
+            }
+            const auto [bin, inserted] = highest.try_emplace(static_cast<int>(std::floor(point.z / kProfileBinLength)), point.y);
+            if (!inserted)
+            {
+                bin->second = std::max(bin->second, point.y);
+            }
+        }
+    }
+    return [highest = std::move(highest)](float z) -> std::optional<float>
+    {
+        std::optional<float> top;
+        const auto end = highest.upper_bound(static_cast<int>(std::floor((z + kProfileWindow) / kProfileBinLength)));
+        for (auto bin = highest.lower_bound(static_cast<int>(std::floor((z - kProfileWindow) / kProfileBinLength))); bin != end; ++bin)
+        {
+            top = top.has_value() ? std::max(*top, bin->second) : bin->second;
+        }
+        return top;
+    };
+}
+
+// The seat offset (right, up, forward) in vehicle space, where +X is the car's left.
+glm::vec3 SeatOffsetInVehicleSpace(const glm::vec3& seatOffset)
+{
+    return glm::vec3(-seatOffset.x, seatOffset.y, seatOffset.z);
+}
+}
+
+const char* VehicleCameraViewName(VehicleCameraView view)
+{
+    switch (view)
+    {
+    case VehicleCameraView::Chase:
+        return "Chase";
+    case VehicleCameraView::Cockpit:
+        return "Cockpit";
+    case VehicleCameraView::Bonnet:
+        return "Bonnet";
+    case VehicleCameraView::Bumper:
+        return "Bumper";
+    }
+    return "Chase";
+}
+
+VehicleCameraView NextVehicleCameraView(VehicleCameraView view)
+{
+    return static_cast<VehicleCameraView>((static_cast<size_t>(view) + 1) % kVehicleCameraViewCount);
 }
 
 namespace VehicleDriveService
 {
+
+namespace
+{
+// Puts the camera where the view the car is seen from has it, looking round by the session's orbit.
+// With deltaSeconds of zero the chase camera jumps straight to its place.
+void PlaceCamera(RendererSharedState& state, VehicleDriveSession& session, const PhysicsPose& pose, float deltaSeconds)
+{
+    const VehicleCameraSettings& settings = state.vehicleDrive.camera;
+    const VehicleCameraView view = state.vehicleDrive.cameraView;
+    if (view == VehicleCameraView::Chase)
+    {
+        RestoreMountedLens(state.camera, session);
+        UpdateChaseCamera(state.camera, pose, settings, deltaSeconds, session.orbit);
+        return;
+    }
+    ApplyMountedLens(state.camera, session, view == VehicleCameraView::Cockpit ? settings.cockpitFovDegrees : settings.exteriorFovDegrees);
+    VehicleCameraMount mount = session.cameraMounts[static_cast<size_t>(view) - 1];
+    if (view == VehicleCameraView::Cockpit)
+    {
+        mount.position += SeatOffsetInVehicleSpace(settings.seatOffset);
+    }
+    UpdateMountedCamera(state.camera, pose, mount, session.orbit);
+}
+}
 
 VehicleSettings DefaultTuning()
 {
@@ -218,6 +363,33 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     const VehicleSettings settings = FitVehicleSettingsToBounds(
         glm::min(cornerA, cornerB), glm::max(cornerA, cornerB), fitTuning, rig != nullptr ? &wheelLayout : nullptr);
 
+    // The cameras on the body: the driver's eyes from the car's data (an Assetto Corsa car's DRIVEREYES),
+    // else from its steering wheel; the bonnet's over the body's own surfaces.
+    {
+        const glm::vec3 boundsMin = glm::min(cornerA, cornerB);
+        const glm::vec3 boundsMax = glm::max(cornerA, cornerB);
+        std::optional<VehicleCameraMount> eyes;
+        if (modelData && modelData->carSpec.has_value() && modelData->carSpec->cockpitCamera.has_value())
+        {
+            eyes = *modelData->carSpec->cockpitCamera;
+            eyes->position = modelToVehicle * (eyes->position * session->scale);
+        }
+        std::optional<glm::vec3> steeringWheel;
+        if (modelData && modelData->steeringWheel.has_value())
+        {
+            steeringWheel = modelToVehicle * (modelData->steeringWheel->center * session->scale);
+        }
+        session->cameraMounts = ComputeCameraMounts(
+            boundsMin, boundsMax, eyes, steeringWheel,
+            BodyHeightProfile(state.rendererWorld, entity, modelToVehicle, session->scale, (boundsMin.x + boundsMax.x) * 0.5f));
+        const glm::vec3& cockpit = session->cameraMounts[0].position;
+        LOG_INFO(
+            "'{}': the driver's eyes at ({:.2f}, {:.2f}, {:.2f}) from {}",
+            session->name, cockpit.x, cockpit.y, cockpit.z,
+            eyes.has_value() ? "the car's data" : steeringWheel.has_value() ? "its steering wheel"
+                                                                            : "its bounds");
+    }
+
     session->engineMinRpm = settings.minRpm;
     session->engineMaxRpm = settings.maxRpm;
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
@@ -270,7 +442,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 
     if (state.vehicleDrive.camera.follow)
     {
-        UpdateChaseCamera(state.camera, session->startPose, state.vehicleDrive.camera, 0.0f);
+        PlaceCamera(state, *session, session->startPose, 0.0f);
     }
     state.vehicleDrive.session = std::move(session);
     state.vehicleDrive.lastError.clear();
@@ -292,6 +464,7 @@ void Stop(RendererSharedState& state)
         world.EditTransform(session->entity) = session->startTransform;
         world.MarkTransformDirty(session->entity);
     }
+    RestoreMountedLens(state.camera, *session);
     if (state.vehicleDrive.camera.follow)
     {
         RestoreCamera(state.camera, session->cameraBeforeDriving);
@@ -355,6 +528,16 @@ void SetPaused(RendererSharedState& state, bool paused)
     }
 }
 
+void SetCameraView(RendererSharedState& state, VehicleCameraView view)
+{
+    state.vehicleDrive.cameraView = view;
+    if (VehicleDriveSession* session = state.vehicleDrive.session.get())
+    {
+        // GT7 changes view looking ahead again.
+        session->orbit = VehicleCameraOrbit{};
+    }
+}
+
 void SetBrushTyreRibs(RendererSharedState& state, int ribs)
 {
     if (VehicleDriveSession* session = state.vehicleDrive.session.get())
@@ -412,6 +595,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     {
         // Deleted, or the scene was replaced under it: there is nothing left to put back.
         LOG_WARN("Stopped driving '{}': its entity is gone", session->name);
+        RestoreMountedLens(state.camera, *session);
         state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
         state.input.ClearGamepadFeedback();
         state.vehicleDrive.session.reset();
@@ -461,6 +645,17 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         Recover(state);
     }
     session->recoverHeld = recoverDown;
+    // V, or the right stick's click, changes the view: chase, cockpit, bonnet, bumper and round again.
+    const bool viewDown =
+        !keyboardCaptured &&
+        (state.input.IsKeyDown(KeyCode(SDL_SCANCODE_V)) ||
+         (state.input.GetFirstConnectedGamepadIndex() >= 0 &&
+          state.input.IsGamepadButtonDown(GamepadButton::RightStick, static_cast<uint32_t>(state.input.GetFirstConnectedGamepadIndex()))));
+    if (viewDown && !session->viewButtonHeld)
+    {
+        SetCameraView(state, NextVehicleCameraView(state.vehicleDrive.cameraView));
+    }
+    session->viewButtonHeld = viewDown;
 
     session->physics->SetVehicleControls(session->vehicle, controls);
     session->controls = controls;
@@ -536,9 +731,14 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
                 session->vehicleToModel,
                 session->scale));
     }
-    if (state.vehicleDrive.camera.follow)
+    if (!state.vehicleDrive.camera.follow)
+    {
+        RestoreMountedLens(state.camera, *session);
+    }
+    else
     {
         // Holding the right mouse button looks around the car: dragging right swings the camera to its left side, as if turning the view to the right.
+        // From a camera on the body it turns the head the same way: dragging right looks right, dragging down looks down.
         // The right stick does the same, pushed right like a drag to the right and down like a drag down.
         float lookYaw = 0.0f;
         float lookPitch = 0.0f;
@@ -561,8 +761,11 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
                 lookPitch += stickY * kGamepadOrbitDegreesPerSecond * deltaSeconds;
             }
         }
-        UpdateCameraOrbit(session->orbit, lookHeld, lookYaw, lookPitch, state.vehicleDrive.camera, deltaSeconds);
-        UpdateChaseCamera(state.camera, pose, state.vehicleDrive.camera, deltaSeconds, session->orbit);
+        const VehicleCameraSettings& camera = state.vehicleDrive.camera;
+        const bool chase = state.vehicleDrive.cameraView == VehicleCameraView::Chase;
+        UpdateCameraOrbit(
+            session->orbit, lookHeld, lookYaw, lookPitch, chase ? camera.lookRecenterRate : camera.headLookRecenterRate, deltaSeconds);
+        PlaceCamera(state, *session, pose, deltaSeconds);
     }
     return true;
 }
@@ -571,6 +774,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
 {
     VehicleDriveStatus status;
     status.lastError = state.vehicleDrive.lastError;
+    status.cameraView = state.vehicleDrive.cameraView;
     if (const VehicleDriveSession* session = state.vehicleDrive.session.get())
     {
         status.active = true;
@@ -877,7 +1081,7 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     return transforms;
 }
 
-void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, const VehicleCameraSettings& settings, float deltaSeconds)
+void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, float recenterRate, float deltaSeconds)
 {
     if (lookHeld)
     {
@@ -885,7 +1089,7 @@ void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaD
         orbit.pitchDegrees = std::clamp(orbit.pitchDegrees + pitchDeltaDegrees, -kOrbitMaxLowerDegrees, kOrbitMaxRaiseDegrees);
         return;
     }
-    const float keep = std::exp(-std::max(settings.lookRecenterRate, 0.0f) * std::max(deltaSeconds, 0.0f));
+    const float keep = std::exp(-std::max(recenterRate, 0.0f) * std::max(deltaSeconds, 0.0f));
     orbit.yawDegrees *= keep;
     orbit.pitchDegrees *= keep;
 }
@@ -931,6 +1135,71 @@ void UpdateChaseCamera(
         camera.yawDegrees = glm::degrees(std::atan2(direction.z, direction.x));
         camera.pitchDegrees = glm::degrees(std::asin(std::clamp(direction.y, -1.0f, 1.0f)));
     }
+}
+
+std::array<VehicleCameraMount, kVehicleMountedViewCount> ComputeCameraMounts(
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    const std::optional<VehicleCameraMount>& eyes,
+    const std::optional<glm::vec3>& steeringWheel,
+    const std::function<std::optional<float>(float z)>& heightAt)
+{
+    const glm::vec3 size = glm::max(boundsMax - boundsMin, glm::vec3(0.1f));
+    const float centreX = (boundsMin.x + boundsMax.x) * 0.5f;
+
+    VehicleCameraMount cockpit;
+    if (eyes.has_value())
+    {
+        cockpit = *eyes;
+    }
+    else if (steeringWheel.has_value())
+    {
+        cockpit.position = *steeringWheel + glm::vec3(0.0f, kEyesOverSteeringWheel, -kEyesBehindSteeringWheel);
+        cockpit.pitchDegrees = kCockpitPitchDegrees;
+    }
+    else
+    {
+        cockpit.position = glm::vec3(
+            centreX,
+            boundsMin.y + size.y * kEyesHeightShare,
+            (boundsMin.z + boundsMax.z) * 0.5f - size.z * kEyesBehindMiddleShare);
+        cockpit.pitchDegrees = kCockpitPitchDegrees;
+    }
+
+    // Over the bonnet towards the windscreen, a little above the body there, so the bonnet shows at the
+    // bottom of the view. Never above the eyes: a profile that caught the roof would put it there.
+    VehicleCameraMount bonnet;
+    bonnet.position.x = centreX;
+    bonnet.position.z = cockpit.position.z + (boundsMax.z - cockpit.position.z) * kBonnetShareToFront;
+    const std::optional<float> body = heightAt ? heightAt(bonnet.position.z) : std::nullopt;
+    bonnet.position.y = std::min(body.has_value() ? *body + kBonnetCameraLift : cockpit.position.y - kBonnetCameraLift, cockpit.position.y);
+    bonnet.pitchDegrees = kBonnetPitchDegrees;
+
+    // Low, just ahead of the nose: the car is out of the view.
+    VehicleCameraMount bumper;
+    bumper.position = glm::vec3(
+        centreX,
+        boundsMin.y + std::clamp(size.y * kBumperHeightShare, kBumperMinHeight, kBumperMaxHeight),
+        boundsMax.z + kBumperCameraAhead);
+    bumper.pitchDegrees = 0.0f;
+
+    return {cockpit, bonnet, bumper};
+}
+
+void UpdateMountedCamera(Camera& camera, const PhysicsPose& vehiclePose, const VehicleCameraMount& mount, const VehicleCameraOrbit& look)
+{
+    // In vehicle space (+Z forward, +X the car's left): the head turned about the body's up, then nodded.
+    const float yaw = glm::radians(look.yawDegrees);
+    const float pitch = glm::radians(std::clamp(mount.pitchDegrees - look.pitchDegrees, -89.0f, 89.0f));
+    const glm::vec3 forward(std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch));
+    const glm::vec3 up(-std::sin(yaw) * std::sin(pitch), std::cos(pitch), -std::cos(yaw) * std::sin(pitch));
+
+    // Fixed to the body with no smoothing, so it pitches and rolls with it as GT7's cockpit view does.
+    camera.position = vehiclePose.position + vehiclePose.rotation * mount.position;
+    camera.worldUp = glm::normalize(vehiclePose.rotation * up);
+    const glm::vec3 direction = glm::normalize(vehiclePose.rotation * forward);
+    camera.yawDegrees = glm::degrees(std::atan2(direction.z, direction.x));
+    camera.pitchDegrees = glm::degrees(std::asin(std::clamp(direction.y, -1.0f, 1.0f)));
 }
 }
 }

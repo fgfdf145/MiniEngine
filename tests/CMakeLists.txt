@@ -1844,6 +1844,33 @@ add_test(
 
 set_target_properties(miniengine_vehicle_overlay_tests PROPERTIES FOLDER "Tests")
 
+# The cameras on a driven car: the cockpit, bonnet and bumper views, where they sit and how they turn.
+add_executable(miniengine_vehicle_camera_tests
+    vehicle_camera_tests.cpp
+)
+miniengine_group_target_sources(miniengine_vehicle_camera_tests)
+
+target_link_libraries(miniengine_vehicle_camera_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_vehicle_camera_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_vehicle_camera_tests>
+            $<TARGET_FILE_DIR:miniengine_vehicle_camera_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.vehicle_camera
+    COMMAND miniengine_vehicle_camera_tests
+)
+
+set_target_properties(miniengine_vehicle_camera_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_gamepad_feedback_tests
     gamepad_feedback_tests.cpp
 )

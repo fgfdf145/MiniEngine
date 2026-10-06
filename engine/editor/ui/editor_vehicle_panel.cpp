@@ -292,10 +292,11 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
             ImGui::TextUnformatted("E/Q: change up/down    N (held): clutch");
         }
         ImGui::TextUnformatted("Backspace: reset the car    R: flip upright where it is    F5: stop");
-        ImGui::TextUnformatted("Hold the right mouse button: look around the car");
-        ImGui::TextDisabled("Gamepad (DualSense / Xbox): R2/L2 (RT/LT), left stick, right stick looks around the car,");
+        ImGui::TextUnformatted("V: change view (chase, cockpit, bonnet, bumper)");
+        ImGui::TextUnformatted("Hold the right mouse button: look around the car, or turn your head from inside it");
+        ImGui::TextDisabled("Gamepad (DualSense / Xbox): R2/L2 (RT/LT), left stick, right stick looks around,");
         ImGui::TextDisabled("Circle (B) hand brake, R1/L1 (RB/LB) change up/down, Cross (A, held) clutch,");
-        ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is");
+        ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is, R3 (right stick click) change view");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 
@@ -328,14 +329,44 @@ void EditorUiController::DrawVehiclePanel(const IEditorWorld& scene, EditorUiFra
         ImGui::EndDisabled();
     }
 
-    if (ImGui::CollapsingHeader("Chase Camera", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::Checkbox("Follow the Car", &m_vehicleCamera.follow);
         ImGui::BeginDisabled(!m_vehicleCamera.follow);
+        static const char* const kViewLabels[] = {"Chase", "Cockpit", "Bonnet", "Bumper"};
+        static_assert(IM_ARRAYSIZE(kViewLabels) == kVehicleCameraViewCount);
+        int view = static_cast<int>(status.cameraView);
+        if (ImGui::Combo("View", &view, kViewLabels, IM_ARRAYSIZE(kViewLabels)))
+        {
+            result.actions.vehicleCameraView = static_cast<VehicleCameraView>(view);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "As GT7's views (V or R3 goes to the next): behind the car; the driver's eyes; over the bonnet; on the front bumper.\n"
+                "The cockpit, bonnet and bumper cameras are fixed to the body and pitch and roll with it.\n"
+                "The driver's eyes come from an Assetto Corsa car's DRIVEREYES, else from the steering wheel (STEER_HR), else the car's size.");
+        }
+        ImGui::SeparatorText("Chase");
         DragFloatInRange("Distance (m)", &m_vehicleCamera.distance, 2.0f, 30.0f, "%.1f", 0.05f);
         DragFloatInRange("Height (m)", &m_vehicleCamera.height, 0.2f, 15.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Height (m)", &m_vehicleCamera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Recentre Rate", &m_vehicleCamera.lookRecenterRate, 0.0f, 20.0f, "%.1f", 0.1f);
+        ImGui::SeparatorText("Cockpit, Bonnet and Bumper");
+        DragFloatInRange("Cockpit FOV (deg)", &m_vehicleCamera.cockpitFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
+        DragFloatInRange("Bonnet and Bumper FOV (deg)", &m_vehicleCamera.exteriorFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
+        DragFloatInRange("Seat Right (m)", &m_vehicleCamera.seatOffset.x, -0.5f, 0.5f, "%.2f", 0.005f);
+        DragFloatInRange("Seat Up (m)", &m_vehicleCamera.seatOffset.y, -0.5f, 0.5f, "%.2f", 0.005f);
+        DragFloatInRange("Seat Forward (m)", &m_vehicleCamera.seatOffset.z, -0.5f, 0.5f, "%.2f", 0.005f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Moves the driver's eyes in the cockpit view from where the car's data or its steering wheel puts them.");
+        }
+        DragFloatInRange("Head Recentre Rate", &m_vehicleCamera.headLookRecenterRate, 0.0f, 30.0f, "%.1f", 0.1f);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("How quickly the head turns back to the road after looking round (0: it stays where it was turned).");
+        }
         ImGui::EndDisabled();
     }
 

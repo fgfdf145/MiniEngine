@@ -2265,6 +2265,24 @@ std::vector<float> VehicleNumbers(const tinygltf::Value& object, const char* key
     return numbers;
 }
 
+std::optional<VehicleCameraMount> VehicleCamera(const tinygltf::Value& object, const char* key)
+{
+    if (!object.IsObject() || !object.Has(key) || !object.Get(key).IsObject())
+    {
+        return std::nullopt;
+    }
+    const tinygltf::Value& camera = object.Get(key);
+    const std::vector<float> position = VehicleNumbers(camera, "position");
+    if (position.size() != 3)
+    {
+        return std::nullopt;
+    }
+    VehicleCameraMount mount;
+    mount.position = glm::vec3(position[0], position[1], position[2]);
+    mount.pitchDegrees = VehicleNumber(camera, "pitchDegrees").value_or(0.0f);
+    return mount;
+}
+
 std::map<std::string, float> VehicleNumberMap(const tinygltf::Value& object, const char* key)
 {
     std::map<std::string, float> numbers;
@@ -2655,6 +2673,7 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
     {
         spec.fuelTankPosition = glm::vec3(tank[0], tank[1], tank[2]);
     }
+    spec.cockpitCamera = VehicleCamera(extension, "cockpitCamera");
     return spec;
 }
 

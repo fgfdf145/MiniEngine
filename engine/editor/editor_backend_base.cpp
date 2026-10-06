@@ -324,6 +324,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleDriveService::Recover(State());
     }
+    if (actions.vehicleCameraView.has_value())
+    {
+        VehicleDriveService::SetCameraView(State(), *actions.vehicleCameraView);
+    }
 
     RunUiAction(modelError, "update viewport model preview", [&]
                 {
