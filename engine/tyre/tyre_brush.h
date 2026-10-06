@@ -7,7 +7,7 @@ namespace me::tyre
 {
 
 // The most ribs a brush tyre is cut into, and the most segments along each rib's contact when stepped.
-// The cost of a step grows with ribs times segments (10 x 20 is the default).
+// The cost of a step grows with ribs times segments (50 x 20 is the default).
 inline constexpr int kBrushMaxRibs = 128;
 inline constexpr int kBrushMaxSegments = 128;
 
@@ -48,7 +48,7 @@ struct BrushTyreParameters
     // Geometry.
     double unloadedRadius = 0.32; // R0, m
     double width = 0.22;          // tread width, m
-    int ribs = 10;
+    int ribs = 50;
     int segmentsPerRib = 20; // at least 2; stepped, at most kBrushMaxSegments
     // R_l of (6): the belt's stiffness shortens the contact length below the plain intersection's.
     double transitionRadius = 0.14; // m

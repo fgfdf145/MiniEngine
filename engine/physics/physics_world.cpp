@@ -1959,7 +1959,7 @@ struct PhysicsWorld::Impl
                 outputs[index] = vehicle.brushTyres[index].Step(inputs[index], dt);
             }
         };
-        // Finely cut tyres are worth the tasks' wake-up; the default cut (10 x 20) steps inline.
+        // Finely cut tyres (the default 50 x 20 among them) are worth the tasks' wake-up; coarse cuts step inline.
         constexpr int kParallelSegments = 400;
         const tyre::BrushTyreParameters& cut = vehicle.brushTyres.front().Parameters();
         if (count > 1 && cut.ribs * cut.segmentsPerRib >= kParallelSegments)

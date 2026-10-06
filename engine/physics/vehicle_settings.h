@@ -371,7 +371,7 @@ struct VehicleSettings
     VehicleTyreSettings frontTyres;
     VehicleTyreSettings rearTyres;
     VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
-    // How many ribs the brush tyre is cut into across its tread (0 keeps the brush tyre's own 10; at most
+    // How many ribs the brush tyre is cut into across its tread (0 keeps the brush tyre's own 50; at most
     // tyre::kBrushMaxRibs), and how many segments along each rib's contact (0 keeps its own 20; 2 to
     // tyre::kBrushMaxSegments). Its cost grows about in step with ribs times segments.
     int brushTyreRibs = 0;
