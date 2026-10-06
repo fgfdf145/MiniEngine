@@ -6,8 +6,9 @@ param(
     [string]$Config,
     [int]$Jobs = 0,
     # Logical processors the build may run on, as a mask; 0 means all. Defaults to the
-    # MINIENGINE_BUILD_AFFINITY environment variable, else 0xFF: the i9-14900HX's eight
-    # performance cores (CPUs 0-7, no hyper-threading), leaving the slow efficiency cores out.
+    # MINIENGINE_BUILD_AFFINITY environment variable, else 0: every core. On the i9-14900HX a clean
+    # Debug build took 18.6 s on all 24 cores against 23 s on the eight performance cores alone
+    # (0xFF, CPUs 0-7).
     [long]$Affinity = -1
 )
 
@@ -63,7 +64,7 @@ $configurePreset = Resolve-ConfigurePreset $Preset
 $buildDir = Join-Path $repoRoot "out\build\$configurePreset"
 if ($Affinity -lt 0)
 {
-    $Affinity = if ($env:MINIENGINE_BUILD_AFFINITY) { [Convert]::ToInt64($env:MINIENGINE_BUILD_AFFINITY, 16) } else { 0xFF }
+    $Affinity = if ($env:MINIENGINE_BUILD_AFFINITY) { [Convert]::ToInt64($env:MINIENGINE_BUILD_AFFINITY, 16) } else { 0 }
 }
 $allProcessors = [System.Environment]::ProcessorCount
 if ($Affinity -ne 0)
@@ -73,11 +74,12 @@ if ($Affinity -ne 0)
     {
         Fail("The affinity mask names none of this machine's $allProcessors logical processors.")
     }
-    # Child processes (cmake, MSBuild, ninja, the compilers) inherit this process's affinity. MSBuild
-    # would otherwise hand work to nodes left running by an earlier build, which kept theirs.
+    # Child processes (cmake, MSBuild, ninja, the compilers) inherit this process's affinity.
     [System.Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]$Affinity
-    $env:MSBUILDDISABLENODEREUSE = "1"
 }
+# MSBuild would otherwise hand work to nodes left running by an earlier build, which kept that
+# build's affinity.
+$env:MSBUILDDISABLENODEREUSE = "1"
 $usableProcessors = if ($Affinity -ne 0) { [System.Numerics.BitOperations]::PopCount([uint64]$Affinity) } else { $allProcessors }
 $resolvedJobs = if ($Jobs -gt 0)
 {

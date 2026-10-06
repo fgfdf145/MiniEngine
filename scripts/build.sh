@@ -16,7 +16,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
 # On Windows (Git Bash / MSYS) the PowerShell script does the work: it resolves the configure preset
-# and keeps the build on the performance cores (see its -Affinity).
+# and can pin the build to a set of cores (see its -Affinity; all of them by default).
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         ps_args=()

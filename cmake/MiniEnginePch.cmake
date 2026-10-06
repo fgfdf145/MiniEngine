@@ -4,9 +4,10 @@ include_guard(GLOBAL)
 # standard library, glm, EnTT, ImGui and spdlog again (code generation is a few percent in Debug),
 # so cmake/miniengine_pch.h is compiled once and reused.
 #
-# Two shared PCHs are built: miniengine_pch_spdlog for the targets that link spdlog (most of them;
-# it brings FMT_SHARED, /utf-8 and the vcpkg include directory) and miniengine_pch_plain, the
-# standard library alone, for those that link nothing that adds to the command line. A target
+# Two shared PCHs are built: miniengine_pch_engine with engine_core's usage requirements, which
+# nearly every target links (spdlog's FMT_SHARED and /utf-8, enkiTS's definitions, the vcpkg
+# include directory), and miniengine_pch_plain, the standard library alone, for the targets that
+# link nothing that adds to the command line. A target
 # whose compile definitions and options match neither (engine_core's path macros, KTX, Jolt, a
 # test's fixture directory) gets its own PCH when it has enough sources to pay for it, else none.
 # MSVC warns (C4605/C4651) when a PCH is used with different macros, which the check avoids.
@@ -72,12 +73,12 @@ function(_miniengine_add_pch_hosts)
     if(TARGET miniengine_pch_plain)
         return()
     endif()
-    foreach(_host IN ITEMS plain spdlog)
+    foreach(_host IN ITEMS plain engine)
         add_library(miniengine_pch_${_host} STATIC "${PROJECT_SOURCE_DIR}/cmake/miniengine_pch_host.cpp")
         target_precompile_headers(miniengine_pch_${_host} PRIVATE "${MINIENGINE_PCH_HEADER}")
         set_target_properties(miniengine_pch_${_host} PROPERTIES FOLDER "CMake/PCH")
     endforeach()
-    target_link_libraries(miniengine_pch_spdlog PRIVATE spdlog::spdlog)
+    target_link_libraries(miniengine_pch_engine PRIVATE engine_core)
 endfunction()
 
 # Gives target_name a shared PCH, its own, or none (see the top of this file).
@@ -88,7 +89,7 @@ function(miniengine_target_pch target_name)
     _miniengine_add_pch_hosts()
 
     _miniengine_compile_usage(${target_name} _target_usage)
-    foreach(_host IN ITEMS miniengine_pch_spdlog miniengine_pch_plain)
+    foreach(_host IN ITEMS miniengine_pch_engine miniengine_pch_plain)
         _miniengine_compile_usage(${_host} _host_usage)
         if(_target_usage STREQUAL _host_usage)
             target_precompile_headers(${target_name} REUSE_FROM ${_host})
