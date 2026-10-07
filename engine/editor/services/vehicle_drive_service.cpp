@@ -144,31 +144,35 @@ void RestoreCamera(Camera& camera, const Camera& saved)
     camera.pitchDegrees = saved.pitchDegrees;
 }
 
-// The lens of a view on the body: its field of view, a near plane close enough for the dashboard, and
-// the body's up (UpdateMountedCamera). What it replaces is kept to put back.
-void ApplyMountedLens(Camera& camera, VehicleDriveSession& session, float fovDegrees)
+// The lens of a view while driving: its field of view and, on the body, a near plane close enough for
+// the dashboard and the body's up (UpdateMountedCamera). What it replaces is kept to put back.
+void ApplyDriveLens(Camera& camera, VehicleDriveSession& session, float fovDegrees, bool mounted)
 {
-    if (!session.mountedLensApplied)
+    if (!session.driveLensApplied)
     {
-        session.fovBeforeMounted = camera.fovDegrees;
-        session.nearPlaneBeforeMounted = camera.nearPlane;
-        session.upBeforeMounted = camera.worldUp;
-        session.mountedLensApplied = true;
+        session.fovBeforeDriving = camera.fovDegrees;
+        session.nearPlaneBeforeDriving = camera.nearPlane;
+        session.upBeforeDriving = camera.worldUp;
+        session.driveLensApplied = true;
     }
     camera.fovDegrees = std::clamp(fovDegrees, WorldUnits::kUiCameraFovMinDegrees, WorldUnits::kUiCameraFovMaxDegrees);
-    camera.nearPlane = std::min(session.nearPlaneBeforeMounted, kMountedNearPlane);
+    camera.nearPlane = mounted ? std::min(session.nearPlaneBeforeDriving, kMountedNearPlane) : session.nearPlaneBeforeDriving;
+    if (!mounted)
+    {
+        camera.worldUp = session.upBeforeDriving;
+    }
 }
 
-void RestoreMountedLens(Camera& camera, VehicleDriveSession& session)
+void RestoreDriveLens(Camera& camera, VehicleDriveSession& session)
 {
-    if (!session.mountedLensApplied)
+    if (!session.driveLensApplied)
     {
         return;
     }
-    camera.fovDegrees = session.fovBeforeMounted;
-    camera.nearPlane = session.nearPlaneBeforeMounted;
-    camera.worldUp = session.upBeforeMounted;
-    session.mountedLensApplied = false;
+    camera.fovDegrees = session.fovBeforeDriving;
+    camera.nearPlane = session.nearPlaneBeforeDriving;
+    camera.worldUp = session.upBeforeDriving;
+    session.driveLensApplied = false;
 }
 
 // The highest point of the car's own surfaces near its centre line (x = centreX), by distance along it,
@@ -264,11 +268,11 @@ void PlaceCamera(RendererSharedState& state, VehicleDriveSession& session, const
     const VehicleCameraView view = state.vehicleDrive.cameraView;
     if (view == VehicleCameraView::Chase)
     {
-        RestoreMountedLens(state.camera, session);
+        ApplyDriveLens(state.camera, session, settings.chaseFovDegrees, false);
         UpdateChaseCamera(state.camera, pose, settings, deltaSeconds, session.orbit);
         return;
     }
-    ApplyMountedLens(state.camera, session, view == VehicleCameraView::Cockpit ? settings.cockpitFovDegrees : settings.exteriorFovDegrees);
+    ApplyDriveLens(state.camera, session, view == VehicleCameraView::Cockpit ? settings.cockpitFovDegrees : settings.exteriorFovDegrees, true);
     VehicleCameraMount mount = session.cameraMounts[static_cast<size_t>(view) - 1];
     if (view == VehicleCameraView::Cockpit)
     {
@@ -469,7 +473,7 @@ void Stop(RendererSharedState& state)
         world.EditTransform(session->entity) = session->startTransform;
         world.MarkTransformDirty(session->entity);
     }
-    RestoreMountedLens(state.camera, *session);
+    RestoreDriveLens(state.camera, *session);
     if (state.vehicleDrive.camera.follow)
     {
         RestoreCamera(state.camera, session->cameraBeforeDriving);
@@ -677,7 +681,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     {
         // Deleted, or the scene was replaced under it: there is nothing left to put back.
         LOG_WARN("Stopped driving '{}': its entity is gone", session->name);
-        RestoreMountedLens(state.camera, *session);
+        RestoreDriveLens(state.camera, *session);
         state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
         state.input.ClearGamepadFeedback();
         state.vehicleDrive.session.reset();
@@ -831,7 +835,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
     if (!state.vehicleDrive.camera.follow)
     {
-        RestoreMountedLens(state.camera, *session);
+        RestoreDriveLens(state.camera, *session);
     }
     else
     {
