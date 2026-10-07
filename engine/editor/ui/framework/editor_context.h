@@ -77,10 +77,13 @@ struct EditorSharedState
     // Graphics Debug: kept applying while its window is closed.
     RenderDebugSettings renderDebug;
     EngineAudioSettings audio;
+    platform::process::ProcessAllocation process;
     EditorVehicleSettings vehicle;
 
     // Set by the backend before each frame.
     std::string audioStatus;
+    // The priority and CPUs the process runs at, or why they could not be set.
+    std::string processStatus;
     VehicleDriveStatus vehicleStatus;
     VehicleRigStatus vehicleRigStatus;
     std::unordered_map<entt::entity, std::string> driverProblems;

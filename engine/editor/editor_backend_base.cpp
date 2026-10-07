@@ -18,6 +18,7 @@
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/threading/render_thread.h>
 #include <engine/logic/world_bounds.h>
+#include <engine/platform/process/process_allocation.h>
 #include <engine/platform/window/window.h>
 #include <engine/scene/world_units.h>
 
@@ -264,6 +265,15 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     if (AudioEngine* const audio = State().audio.get())
     {
         audio->SetMasterVolume(uiFrame.audio.EffectiveVolume());
+    }
+    if (uiFrame.processAllocation.has_value())
+    {
+        // The task workers keep their number, sized at start-up for the CPUs given then.
+        const platform::process::ProcessorTopology topology = platform::process::QueryProcessorTopology();
+        const platform::process::ProcessAllocationResult applied =
+            platform::process::ApplyProcessAllocation(*uiFrame.processAllocation, topology);
+        State().processStatus = platform::process::DescribeProcessAllocation(*uiFrame.processAllocation, applied, topology);
+        LOG_INFO("Process: {}", State().processStatus);
     }
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,
@@ -804,6 +814,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
+    State().editorUi.SetProcessStatus(State().processStatus);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

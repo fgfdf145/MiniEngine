@@ -4,11 +4,13 @@
 #include <engine/core/log/log.h>
 #include <engine/core/threading/task_system.h>
 #include <engine/core/version/engine_version.h>
+#include <engine/editor/engine_settings.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/capture_state.h>
 #include <engine/editor/services/scene_io_service.h>
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/renderer/rhi/factory.h>
+#include <engine/platform/process/process_allocation.h>
 #include <engine/platform/process/process_scheduling.h>
 #include <engine/platform/window/window.h>
 
@@ -293,6 +295,34 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--priority")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            options.processPriority = platform::process::ParseProcessPriority(value);
+            if (!options.processPriority.has_value())
+            {
+                throw std::runtime_error("--priority requires below-normal, normal, above-normal or high");
+            }
+            continue;
+        }
+
+        if (argument == "--cpus")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            options.cpuSelection = platform::process::ParseCpuSelection(value);
+            if (!options.cpuSelection.has_value() || *options.cpuSelection == platform::process::CpuSelection::Custom)
+            {
+                const std::optional<std::vector<uint32_t>> cpus = platform::process::ParseCpuList(value);
+                if (!cpus.has_value())
+                {
+                    throw std::runtime_error("--cpus requires all, performance or a list of CPUs such as 0,2,4-7");
+                }
+                options.cpuSelection = platform::process::CpuSelection::Custom;
+                options.customCpus = *cpus;
+            }
+            continue;
+        }
+
         if (argument == "--wait-for-scene")
         {
             options.waitForScene = true;
@@ -403,13 +433,59 @@ EditorApplication::EditorApplication(EditorApplicationOptions options)
 {
 }
 
+std::vector<uint32_t> EditorApplication::ApplyStartupProcessAllocation()
+{
+    EngineSettings settings;
+    std::string settingsError;
+    if (!LoadEngineSettings(BuildEngineSettingsPath(), settings, settingsError))
+    {
+        // The editor reports the broken file when it loads it; run at the defaults meanwhile.
+        settings = EngineSettings{};
+    }
+    platform::process::ProcessAllocation allocation = settings.process;
+    if (m_options.processPriority.has_value())
+    {
+        allocation.priority = *m_options.processPriority;
+    }
+    if (m_options.cpuSelection.has_value())
+    {
+        allocation.cpus = *m_options.cpuSelection;
+        allocation.customCpus = m_options.customCpus;
+    }
+
+    const platform::process::ProcessorTopology topology = platform::process::QueryProcessorTopology();
+    const platform::process::ProcessAllocationResult result = platform::process::ApplyProcessAllocation(allocation, topology);
+    m_processStatus = platform::process::DescribeProcessAllocation(allocation, result, topology);
+    if (m_options.processPriority.has_value() || m_options.cpuSelection.has_value())
+    {
+        m_processStatus += " (command line)";
+    }
+    if (result.error.empty())
+    {
+        LOG_INFO("Process: {}", m_processStatus);
+    }
+    else
+    {
+        LOG_WARN("Process: {}", m_processStatus);
+    }
+    return result.cpus;
+}
+
 int EditorApplication::Run()
 {
     // Before any thread starts, so the workers inherit it.
     platform::process::RequestFullSpeedScheduling();
+    // Resolve the directory roots before any subsystem touches the filesystem.
+    EnginePaths::Initialize(m_options.paths);
+    // The priority and CPUs, before the task system sizes its workers to those CPUs. The editor
+    // loads the rest of the settings later; a change in the Preferences window applies at once.
+    const std::vector<uint32_t> processCpus = ApplyStartupProcessAllocation();
     // Before anything runs tasks; stopped after everything that does (the renderer) is gone.
     TaskSystem::Settings taskSettings;
-    taskSettings.workerThreads = m_options.taskThreads;
+    // One CPU each is left to the main thread and the render thread.
+    const uint32_t processCpuCount = static_cast<uint32_t>(processCpus.size());
+    taskSettings.workerThreads =
+        m_options.taskThreads > 0 ? m_options.taskThreads : (processCpuCount > 2 ? processCpuCount - 2 : 1u);
     TaskSystem::Initialize(taskSettings);
     struct TaskSystemShutdown
     {
@@ -418,8 +494,6 @@ int EditorApplication::Run()
             TaskSystem::Shutdown();
         }
     } taskSystemShutdown;
-    // Resolve the directory roots before any subsystem touches the filesystem.
-    EnginePaths::Initialize(m_options.paths);
     LOG_INFO(
         "Roots: project='{}' assets='{}' cache='{}' shaders='{}'",
         EnginePaths::ProjectRoot().string(),
@@ -440,6 +514,7 @@ int EditorApplication::Run()
     }
 
     auto sharedState = std::make_shared<RendererSharedState>();
+    sharedState->processStatus = m_processStatus;
     sharedState->renderThread = m_options.renderThread;
     sharedState->parallelRecording = m_options.parallelRecording;
     sharedState->rayQuery = m_options.rayQuery;

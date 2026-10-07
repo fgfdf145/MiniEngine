@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <imgui.h>
+#include <engine/platform/process/process_allocation.h>
 #include <engine/platform/ui/ui_scale.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
@@ -79,6 +80,8 @@ struct EngineSettings
     int version = 1;
     EditorUiSettings editorUi;
     EngineAudioSettings audio;
+    // The Preferences window's Process section: the priority class and the CPUs the engine runs on.
+    platform::process::ProcessAllocation process;
     EngineViewSettings view;
 };
 

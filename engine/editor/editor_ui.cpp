@@ -175,6 +175,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
     {
         m_style.ApplySettings(settings.editorUi);
         m_state.audio = settings.audio;
+        m_state.process = settings.process;
         m_windows.ApplyOpenState(settings.editorUi.windows);
         m_hasAppliedEngineSettings = true;
     }
@@ -187,6 +188,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
 {
     settings.version = 1;
     settings.audio = m_state.audio;
+    settings.process = m_state.process;
     m_windows.WriteOpenState(settings.editorUi.windows);
     m_style.WriteSettings(settings.editorUi);
 }
@@ -228,6 +230,7 @@ EditorUiFrameResult EditorUiController::Draw(
 
     const float previousUiScale = m_style.UiScaleMultiplier();
     const EngineAudioSettings previousAudio = m_state.audio;
+    const platform::process::ProcessAllocation previousProcess = m_state.process;
     // Every panel's open state, to save the settings when one opens or closes.
     const std::vector<bool> previousOpen = m_windows.CapturePanelOpenState();
 
@@ -272,10 +275,15 @@ EditorUiFrameResult EditorUiController::Draw(
     // The Theme panel sets engineSettingsChanged itself when the palette changes.
     result.engineSettingsChanged = result.engineSettingsChanged ||
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
-                                   windowToggled || previousAudio != m_state.audio;
+                                   windowToggled || previousAudio != m_state.audio ||
+                                   previousProcess != m_state.process;
 
     result.renderDebug = m_state.renderDebug;
     result.audio = m_state.audio;
+    if (previousProcess != m_state.process)
+    {
+        result.processAllocation = m_state.process;
+    }
     result.vehicleTuning = m_state.vehicle.tuning;
     result.vehicleCamera = m_state.vehicle.camera;
     result.vehicleHaptics = m_state.vehicle.haptics;

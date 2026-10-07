@@ -165,6 +165,8 @@ struct EditorUiFrameResult
     RenderDebugSettings renderDebug;
     // The Preferences window's master volume and mute.
     EngineAudioSettings audio;
+    // The Preferences window's priority and CPUs, set only in the frame they changed.
+    std::optional<platform::process::ProcessAllocation> processAllocation;
     // The Vehicle panel's tuning, which the next drive starts with, and its chase camera.
     VehicleSettings vehicleTuning;
     VehicleCameraSettings vehicleCamera;
@@ -291,6 +293,11 @@ class EditorUiController
     void SetAudioStatus(std::string status)
     {
         m_state.audioStatus = std::move(status);
+    }
+    // What the process runs at now, for the Preferences window.
+    void SetProcessStatus(std::string status)
+    {
+        m_state.processStatus = std::move(status);
     }
 
   private:

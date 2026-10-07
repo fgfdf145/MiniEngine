@@ -24,6 +24,7 @@ MiniEngine 是一个以 C++20 编写、基于 SDL3、Vulkan、Dear ImGui 与 EnT
 - 渲染：Cook-Torrance PBR（含多次散射能量补偿）、材质贴图、场景视口、多类型灯光（Directional、Point、Spot、Area、Ambient、Hemisphere，最多 1024 盏，局部灯按分簇查找）及灯光 gizmo；最亮的方向光投射 4 级级联阴影（CSM，每级 2048²，3×3 双线性 PCF），点光、聚光与面光从 4096² 阴影图集取阴影（每块 512²，共 64 块）。
 - 后台任务：模型和场景使用异步加载状态机，资产导入在后台执行；主线程在逐帧阶段泵送结果并刷新 UI 或 CPU Renderable。
 - 音频（`engine/audio`，miniaudio 0.11）：`AudioEngine` 封装 miniaudio 的 `ma_engine`（一个混音器、一个听者），读 `.wav`、`.mp3`、`.flac` 与 `.ogg`（Vorbis 经 stb_vorbis）；声音可整段解码（同一文件的样本共享）或边播边解码，可循环、调音量与音高，可放在世界里按反距离衰减、按听者朝向声像定位并带多普勒。听者每帧跟随相机（驾驶时即追车相机）。资产浏览器里双击声音文件或点 “Play / Stop” 试听（一次一个，再点停止）。Preferences 窗口的 Audio 一节调主音量与静音，并显示输出设备；`--frames` 的脚本运行不打开设备，`--no-audio` 完全关闭。设计见 [docs/design/2026-10-06-miniaudio-design.md](docs/design/2026-10-06-miniaudio-design.md)。
+- 进程分配（`engine/platform/process`）：Preferences 窗口的 Process 一节选进程优先级（默认 High）与可用的 CPU 核心（全部、混合架构的 P 核、或逐个勾选），改动立即生效并保存；启动时在任务系统建线程之前应用，工作线程数按可用核心数定。命令行 `--priority`、`--cpus` 覆盖本次运行。设计见 [docs/design/2026-10-07-process-allocation-design.md](docs/design/2026-10-07-process-allocation-design.md)。
 - 编辑器设置：`miniengine.settings.json` 保存界面缩放、窗口可见性、主题与音量等设置。
 
 ## 3. 架构与运行流程
@@ -158,6 +159,8 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --record <file.mp4|file.avi> 把视口录成视频（.mp4 为 H.264，仅 Windows；.avi 为 MJPEG）：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
 --record-fps <n>    --record 的视频帧率，默认 30
 --no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
+--priority <级别>    本次运行的进程优先级：below-normal、normal、above-normal 或 high（默认取 Preferences > Process，初始为 high）
+--cpus <核心>        本次运行可用的逻辑处理器：all、performance（混合架构的 P 核）或列表如 0,2,4-7；任务系统的工作线程数随之取核心数减二
 --drive <名称>      场景加载完成后像 Play 一样驾驶这个名称的模型实体
 --drive-controls <油门>,<转向>  与 --drive 一起使用：保持这组输入（-1 到 1）代替键盘和手柄，每帧固定推进 1/60 s 仿真，每仿真秒记录一次车的位置、速度、着地轮数和倾角（无人值守的试驾）
 --drive-view <视角>  与 --drive 一起使用：chase（追尾）、cockpit（车内第一人称）、bonnet（引擎盖）或 bumper（车头保险杠）

@@ -97,6 +97,33 @@ void TestAudioSettingsSurviveTheSettingsFile()
     Require(loaded.audio.masterVolume == 1.0f && !loaded.audio.muted, "without audio settings the volume is full");
 }
 
+// The Preferences window's priority and CPUs survive the settings file; a file from before they existed
+// runs at high priority on every CPU, and a value this build does not know keeps the default.
+void TestProcessSettingsSurviveTheSettingsFile()
+{
+    EngineSettings saved;
+    saved.process.priority = platform::process::ProcessPriority::AboveNormal;
+    saved.process.cpus = platform::process::CpuSelection::Custom;
+    saved.process.customCpus = {0, 2, 3, 17};
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_process_settings_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    Require(loaded.process == saved.process, "the priority and CPUs come back");
+
+    std::ofstream(path) << "{ \"version\": 1 }";
+    Require(LoadEngineSettings(path, loaded, error), ("the old settings load: " + error).c_str());
+    Require(loaded.process == platform::process::ProcessAllocation{}, "without process settings the defaults apply");
+    Require(loaded.process.priority == platform::process::ProcessPriority::High, "the default priority is high");
+
+    std::ofstream(path, std::ios::trunc) << R"({"version": 1, "process": {"priority": "realtime", "cpus": "performance"}})";
+    Require(LoadEngineSettings(path, loaded, error), ("the odd settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.process.priority == platform::process::ProcessPriority::High, "an unknown priority keeps high");
+    Require(loaded.process.cpus == platform::process::CpuSelection::Performance, "a known selection still reads");
+}
+
 // Only the theme colours the user changed are saved and come back; a file from before the theme had a
 // version holds the whole palette it was saved with, and is not read, so the built-in palette applies.
 void TestThemeKeepsOnlyChangedColours()
@@ -528,6 +555,7 @@ int main()
         TestThemeKeepsOnlyChangedColours();
         TestViewSettingsSurviveTheSettingsFile();
         TestAudioSettingsSurviveTheSettingsFile();
+        TestProcessSettingsSurviveTheSettingsFile();
     }
     catch (const std::exception& error)
     {

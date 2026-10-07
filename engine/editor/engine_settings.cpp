@@ -85,6 +85,53 @@ float ReadFloatOrDefault(const YAML::Node& node, float defaultValue)
     return node.as<float>(defaultValue);
 }
 
+// A value the file does not hold, or holds in a form this build does not know, keeps its default.
+void LoadProcessSettings(const YAML::Node& node, platform::process::ProcessAllocation& process)
+{
+    if (!node || !node.IsMap())
+    {
+        return;
+    }
+    if (const auto priority = platform::process::ParseProcessPriority(node["priority"].as<std::string>("")))
+    {
+        process.priority = *priority;
+    }
+    if (const auto cpus = platform::process::ParseCpuSelection(node["cpus"].as<std::string>("")))
+    {
+        process.cpus = *cpus;
+    }
+    if (const YAML::Node custom = node["custom_cpus"]; custom && custom.IsSequence())
+    {
+        process.customCpus.clear();
+        for (const YAML::Node& cpu : custom)
+        {
+            try
+            {
+                process.customCpus.push_back(cpu.as<uint32_t>());
+            }
+            catch (const YAML::Exception&)
+            {
+            }
+        }
+        std::sort(process.customCpus.begin(), process.customCpus.end());
+        process.customCpus.erase(std::unique(process.customCpus.begin(), process.customCpus.end()), process.customCpus.end());
+    }
+}
+
+void WriteProcessSettings(std::ostream& output, const platform::process::ProcessAllocation& process)
+{
+    output << "  \"process\": {\n";
+    output << "    \"priority\": \"" << platform::process::ProcessPriorityKey(process.priority) << "\",\n";
+    output << "    \"cpus\": \"" << platform::process::CpuSelectionKey(process.cpus) << "\",\n";
+    output << "    \"custom_cpus\": [";
+    for (size_t index = 0; index < process.customCpus.size(); ++index)
+    {
+        output << (index > 0 ? ", " : "") << process.customCpus[index];
+    }
+    output << "]\n";
+    output << "  },\n";
+}
+
 bool ReadBoolOrDefault(const YAML::Node& node, bool defaultValue)
 {
     if (!node || !node.IsScalar())
@@ -451,6 +498,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
                 std::clamp(ReadFloatOrDefault(audioNode["master_volume"], settings.audio.masterVolume), 0.0f, 1.0f);
             settings.audio.muted = ReadBoolOrDefault(audioNode["muted"], settings.audio.muted);
         }
+        LoadProcessSettings(root["process"], settings.process);
 
         return true;
     }
@@ -537,6 +585,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "    \"master_volume\": " << std::fixed << std::setprecision(3) << settings.audio.masterVolume << ",\n";
         output << "    \"muted\": " << JsonBool(settings.audio.muted) << "\n";
         output << "  },\n";
+        WriteProcessSettings(output, settings.process);
         WriteViewSettings(output, settings.view);
         output << "}\n";
 

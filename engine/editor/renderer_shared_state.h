@@ -209,5 +209,7 @@ struct RendererSharedState
     std::unique_ptr<AudioEngine> audio;
     // What the Preferences window says of it: the device and format, or why there is none.
     std::string audioStatus;
+    // The priority and CPUs the process runs at (ApplyProcessAllocation), for the Preferences window.
+    std::string processStatus;
 };
 }

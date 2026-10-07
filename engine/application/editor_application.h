@@ -2,6 +2,7 @@
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/render_backend_type.h>
+#include <engine/platform/process/process_allocation.h>
 #include <engine/renderer/render_types.h>
 
 #include <glm/glm.hpp>
@@ -88,8 +89,14 @@ struct EditorApplicationOptions
     bool parallelRecording = true;
     // --no-ray-query: the device leaves hardware ray tracing off, as a GPU without it would.
     bool rayQuery = true;
-    // --task-threads N: the task system's worker threads; 0 takes the logical processors less two.
+    // --task-threads N: the task system's worker threads; 0 takes the CPUs the process was given
+    // (--cpus, or the Preferences window's) less two.
     uint32_t taskThreads = 0;
+    // --priority below-normal|normal|above-normal|high and --cpus all|performance|LIST (LIST as
+    // 0,2,4-7): for this run, over the Preferences window's Process settings (High, all CPUs by default).
+    std::optional<platform::process::ProcessPriority> processPriority;
+    std::optional<platform::process::CpuSelection> cpuSelection;
+    std::vector<uint32_t> customCpus;
     EnginePaths::Overrides paths;
 };
 
@@ -103,6 +110,12 @@ class EditorApplication final
     int Run();
 
   private:
+    // Sets the saved priority and CPUs (the Preferences window's), as --priority and --cpus change
+    // them; returns the CPUs the process runs on.
+    std::vector<uint32_t> ApplyStartupProcessAllocation();
+
     EditorApplicationOptions m_options;
+    // What ApplyStartupProcessAllocation did, for the Preferences window.
+    std::string m_processStatus;
 };
 }
