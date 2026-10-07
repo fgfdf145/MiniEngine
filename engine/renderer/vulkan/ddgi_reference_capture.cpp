@@ -366,9 +366,14 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
     {
         throw std::runtime_error("No frame has been drawn to compare");
     }
-    if (frame.view != GBufferDebugView::DdgiIrradiance || !frame.ddgiEnabled)
+    // A path traced frame is checked the same way: SceneGi holds its diffuse light, demodulated, which
+    // is the irradiance / pi the reference computes.
+    const bool pathTraced = frame.pathTraced;
+    const char* const subject = pathTraced ? "path tracer" : "probes";
+    if (!pathTraced && (frame.view != GBufferDebugView::DdgiIrradiance || !frame.ddgiEnabled))
     {
-        throw std::runtime_error("The DDGI reference needs the last frame to show the DDGI irradiance view (--debug-view 15) with DDGI on");
+        throw std::runtime_error(
+            "The DDGI reference needs the last frame to show the DDGI irradiance view (--debug-view 15) with DDGI on, or to be path traced");
     }
     if (!frame.uniformSky)
     {
@@ -403,7 +408,7 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
     request.layout = m_layoutTracker.GetLayout(RenderTargetId::SceneGi);
     if (request.layout == VK_IMAGE_LAYOUT_UNDEFINED)
     {
-        throw std::runtime_error("The last frame did not write the DDGI irradiance");
+        throw std::runtime_error("The last frame did not write the DDGI irradiance or the path traced light");
     }
     const std::vector<glm::vec4> texels = ReadImageHalfFloats(request);
 
@@ -540,7 +545,10 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
         throw std::runtime_error("Failed to write '" + comparePath + "'");
     }
 
-    CompareDdgiProbes(prefix, request, samples);
+    if (!pathTraced)
+    {
+        CompareDdgiProbes(prefix, request, samples);
+    }
     {
         const int column = reference.explainColumn;
         const int row = reference.explainRow;
@@ -559,11 +567,13 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
     }
 
     LOG_INFO(
-        "DDGI against the reference ({} points, {} paths each, {:.1f} s): probes / reference {:.3f}; relative error median {:.3f}, "
+        "{} against the reference ({} points, {} paths each, {:.1f} s): {} / reference {:.3f}; relative error median {:.3f}, "
         "90th percentile {:.3f}; {:.1f}% within 25%. Written to '{}'",
+        pathTraced ? "Path tracing" : "DDGI",
         count,
         samples,
         seconds,
+        subject,
         probeSum / referenceSum,
         percentile(0.5f),
         percentile(0.9f),

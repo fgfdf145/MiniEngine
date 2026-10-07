@@ -37,6 +37,8 @@ add_library(engine_render_core
     material_pipeline.h
     motion_history.cpp
     motion_history.h
+    path_tracing.cpp
+    path_tracing.h
     reference_path_tracer.cpp
     reference_path_tracer.h
     render_transform_snapshot.cpp
@@ -119,6 +121,8 @@ add_library(engine_renderer
     vulkan/ddgi_debug_pass.h
     vulkan/rt_shadow_pass.cpp
     vulkan/rt_shadow_pass.h
+    vulkan/path_trace_pass.cpp
+    vulkan/path_trace_pass.h
     vulkan/ddgi_reference_capture.cpp
     vulkan/common.h
     vulkan/device.cpp
@@ -258,6 +262,8 @@ set(MINIENGINE_SHADER_SOURCES
     ssr_resolve.comp
     rt_shadow_temporal.comp
     rt_shadow_filter.comp
+    path_trace_temporal.comp
+    path_trace_filter.comp
     transmission_copy.comp
     ray_material_average.comp
     ddgi_debug.comp
@@ -306,6 +312,7 @@ set(MINIENGINE_SHADER_INCLUDES
     ray_tracing_common.glsl
     ray_hit_common.glsl
     rt_shadow_common.glsl
+    path_trace_common.glsl
     ddgi_common.glsl
     ground_plane.glsl
 )
@@ -378,6 +385,7 @@ set(MINIENGINE_HARDWARE_RAY_SHADERS
     rt_occlusion.comp
     rt_shadow_trace.comp
     rt_reflection_trace.comp
+    path_trace.comp
 )
 
 miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})

@@ -27,6 +27,14 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("ray_tracing", "reflections", settings.rayTracing.reflections);
     visit("ray_tracing", "local_shadows", settings.rayTracing.localShadows);
     visit("ray_tracing", "denoise", settings.rayTracing.denoise);
+    visit("path_tracing", "enabled", settings.pathTracing.enabled);
+    visit("path_tracing", "max_bounces", settings.pathTracing.maxBounces);
+    visit("path_tracing", "firefly_clamp", settings.pathTracing.fireflyClamp);
+    visit("path_tracing", "light_candidates", settings.pathTracing.lightCandidates);
+    visit("path_tracing", "accumulate", settings.pathTracing.accumulate);
+    visit("path_tracing", "motion_frames", settings.pathTracing.motionFrames);
+    visit("path_tracing", "max_frames", settings.pathTracing.maxFrames);
+    visit("path_tracing", "denoise", settings.pathTracing.denoise);
     visit("", "shadow_distance", settings.shadowDistance);
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);

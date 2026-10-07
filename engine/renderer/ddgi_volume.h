@@ -179,9 +179,13 @@ class DdgiMovingInstances
     // and every instance starts out still. The result, one flag per instance (non-zero: skip), stays
     // valid until the next call.
     std::span<const uint8_t> Update(std::span<const glm::mat4> models);
+    // Whether the last Update saw an instance move or the count change: the path tracer's still
+    // image starts over then.
+    bool MovedThisFrame() const;
 
   private:
     std::vector<glm::mat4> m_previous;
+    bool m_movedThisFrame = false;
     // Frames since each instance's matrix last changed, saturating at kDdgiMovingInstanceFrames.
     std::vector<uint32_t> m_stillFrames;
     std::vector<uint8_t> m_skipped;

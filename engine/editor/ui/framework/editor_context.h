@@ -88,6 +88,9 @@ struct EditorSharedState
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    // Whether the backend can path trace (hardware ray tracing), and what it says of path tracing.
+    bool pathTracingAvailable = false;
+    std::string pathTracingStatus;
 
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
     // size itself, so the viewport asks for every display pixel whatever the render scale says.
