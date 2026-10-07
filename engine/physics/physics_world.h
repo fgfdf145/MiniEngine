@@ -131,6 +131,9 @@ struct VehicleTelemetry
 {
     float forwardSpeed = 0.0f; // metres per second along the car's +Z, negative when reversing
     float rightSpeed = 0.0f;   // metres per second to the car's right (its -X)
+    // The front axle's centre to the car's right (m/s): the body's sideways speed plus what its yaw adds
+    // that far ahead, so atan2(frontAxleRightSpeed, forwardSpeed) is the way the front wheels travel.
+    float frontAxleRightSpeed = 0.0f;
     float engineRpm = 0.0f;
     int gear = 0; // negative reverse, 0 neutral, then the forward gears from 1
     // The clutch's friction from 0 (open, while the gears change) to 1 (shut, the drive connected).

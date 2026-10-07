@@ -697,6 +697,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         assist.request = controls.steering;
         assist.forwardSpeed = telemetry.forwardSpeed;
         assist.rightSpeed = telemetry.rightSpeed;
+        assist.frontRightSpeed = telemetry.frontAxleRightSpeed;
         assist.maxSteerDegrees = session->maxSteerDegrees;
         assist.wheelbase = session->wheelbase;
         assist.peakSlipDegrees = session->frontPeakSlipDegrees;

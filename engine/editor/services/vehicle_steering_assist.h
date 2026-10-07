@@ -6,7 +6,8 @@ namespace me
 // How a gamepad's stick (or the keyboard) steers the car, as Gran Turismo 7 does for a controller: the
 // stick asks for a share of the lock the car can use at its speed rather than of the rack's full lock,
 // the front wheels follow it at a limited rate, and that range is centred on where the car is going, so
-// a sliding car is caught with the stick held straight.
+// a sliding car is caught with the stick held straight. Last, the front wheels are held within the
+// tyres' peak slip angle of where the front axle is actually going.
 struct VehicleSteeringAssistSettings
 {
     bool enabled = true;
@@ -21,10 +22,18 @@ struct VehicleSteeringAssistSettings
     // `cornerGrip` g, plus the front tyres' peak slip angle: past that they only scrub.
     bool speedSensitive = true;
     float cornerGrip = 1.0f;
-    // Below this speed (m/s) the full lock is always there, for parking and hairpins.
+    // Below this speed (m/s) the full lock is always there, for parking and hairpins; the slip limit
+    // below fades in from it to twice it.
     float fullLockSpeed = 5.0f;
     // The least share of the full lock the stick can ask for at any speed.
     float minLockShare = 0.1f;
+    // Read back from the car each frame: the front wheels are kept within the front tyres' peak slip
+    // angle (times `slipLimitShare`) of the way the front axle travels, so however the car is loaded,
+    // slowed or pushing wide, turning further than the angle that still adds grip is not possible. It
+    // only ever takes lock away. The data's peak is the tyre's at its static load; the loaded outside
+    // tyre peaks later, and the R34 and the GT-R corner hardest at about 1.1 times it.
+    bool slipLimit = true;
+    float slipLimitShare = 1.1f;
     // The range is centred on the car's travel when it slides more than `counterSteerDeadZoneDegrees`
     // (the body's slip angle): let go and the wheels point where the car is going.
     bool counterSteerAssist = true;
@@ -39,6 +48,9 @@ struct VehicleSteeringAssistInput
     // The body's velocity along its forward axis and to its right (m/s).
     float forwardSpeed = 0.0f;
     float rightSpeed = 0.0f;
+    // The front axle's centre to the car's right (m/s), yaw included: with forwardSpeed, the way the
+    // front wheels travel.
+    float frontRightSpeed = 0.0f;
     // The front wheels' angle at full lock (degrees), the wheelbase (m), and the front tyres' peak slip
     // angle (degrees).
     float maxSteerDegrees = 35.0f;
@@ -55,6 +67,8 @@ struct VehicleSteeringAssistState
     float limited = 0.0f;
     // The share of the full lock the centre of the range sits at, smoothed.
     float centre = 0.0f;
+    // The way the front axle travels (radians, right positive), smoothed.
+    float frontTravel = 0.0f;
 };
 
 // What the stick's response curve makes of `request` (-1 to 1).

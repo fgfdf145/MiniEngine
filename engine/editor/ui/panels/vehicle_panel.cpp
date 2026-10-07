@@ -336,11 +336,22 @@ void VehiclePanel::OnGui(EditorContext& context)
         DragFloatInRange("Steer Time (s)", &assist.steerSeconds, 0.0f, 1.0f, "%.2f", 0.005f);
         DragFloatInRange("Return Time (s)", &assist.returnSeconds, 0.0f, 1.0f, "%.2f", 0.005f);
         DragFloatInRange("Smoothing (s)", &assist.smoothingSeconds, 0.0f, 0.3f, "%.3f", 0.001f);
+        DragFloatInRange("Full Lock Below (m/s)", &assist.fullLockSpeed, 0.5f, 20.0f, "%.1f", 0.05f);
         ImGui::Checkbox("Speed-Sensitive Lock", &assist.speedSensitive);
         ImGui::BeginDisabled(!assist.speedSensitive);
         DragFloatInRange("Corner Grip (g)", &assist.cornerGrip, 0.3f, 3.0f, "%.2f", 0.01f);
-        DragFloatInRange("Full Lock Below (m/s)", &assist.fullLockSpeed, 0.5f, 20.0f, "%.1f", 0.05f);
         DragFloatInRange("Least Lock Share", &assist.minLockShare, 0.0f, 1.0f, "%.2f", 0.005f);
+        ImGui::EndDisabled();
+        ImGui::Checkbox("Front Slip Limit", &assist.slipLimit);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Reads the car every frame: the front wheels stay within the front tyres' peak slip angle of the way\n"
+                "the front axle is travelling, so they cannot be turned past grip into a push (understeer).\n"
+                "Fades in from Full Lock Below to twice that speed.");
+        }
+        ImGui::BeginDisabled(!assist.slipLimit);
+        DragFloatInRange("Peak Slip Share", &assist.slipLimitShare, 0.5f, 2.0f, "%.2f", 0.005f);
         ImGui::EndDisabled();
         ImGui::Checkbox("Counter-Steer Assist", &assist.counterSteerAssist);
         ImGui::BeginDisabled(!assist.counterSteerAssist);
