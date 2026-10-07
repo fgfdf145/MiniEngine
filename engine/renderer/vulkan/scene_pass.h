@@ -20,6 +20,7 @@ namespace me
 
 class VulkanParallelRecorder;
 class VulkanDlss;
+class VulkanGpuTimer;
 
 // Which draw items the forward pass records, and whether it owns the frame. The deferred order
 // gives it only Blend items to composite over the lighting result; the forward-only comparison
@@ -142,10 +143,20 @@ struct ScenePassFrameContext
     // reconstruction denoises the raw paths. Its history as aoHistory is the AO resolve's; what that
     // history is multiplied by (this frame's pre-exposure over the one it was written with); and the
     // longest history a pixel may average this frame (PathTraceHistoryCap).
+    // With restir set, ReSTIR PT (restir_pt_pass.h) runs instead and the plain path tracer records
+    // nothing: whether last frame's reservoirs are this frame's history and which surface buffer is this
+    // frame's (writeIndex); last frame's camera position; how many frames its accumulate mode has
+    // averaged so far.
     PathTracingSettings pathTracing;
     TemporalHistoryFrame pathTraceHistory;
     float pathTraceHistoryScale = 1.0f;
     uint32_t pathTraceHistoryCap = 1;
+    TemporalHistoryFrame restirPtHistory;
+    glm::vec3 previousCameraPosition{0.0f};
+    uint32_t restirPtAccumulatedFrames = 0;
+    // The frame's GPU timer, for passes that time their own dispatches (a mark closes the section since
+    // the previous one; the renderer marks each pass after it records). Null without timestamps.
+    VulkanGpuTimer* gpuTimer = nullptr;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
     // exposure histogram meters, unlike the flat background of EnvironmentMode::None.
     bool physicalSky = false;

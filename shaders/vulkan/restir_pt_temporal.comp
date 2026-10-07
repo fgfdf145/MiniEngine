@@ -1,0 +1,130 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// ReSTIR PT's temporal reuse (restir_pt_common.glsl): the pixel's initial reservoir resampled with last
+// frame's final reservoir where its surface was, found through the motion vectors, or where a
+// disocclusion makes that a different surface, along the occluder's own motion (dual motion vectors,
+// Zeng et al. 2021; the paper's section 6.4). The history's confidence is capped by how many of its
+// neighbours shared its sample (the duplication map, section 5). Both paths are shifted into the other's
+// domain for the pairwise MIS weights: the initial one onto last frame's surface as last frame's camera
+// saw it. In place in the working reservoirs.
+
+#define RAY_TEXTURED_ALPHA
+#include "scene_common.glsl"
+#include "gbuffer_common.glsl"
+#include "pbr_common.glsl"
+#include "pre_exposure.glsl"
+#include "ray_tracing_common.glsl"
+#include "material_common.glsl"
+#include "material_uv.glsl"
+#include "ray_hit_common.glsl"
+#include "restir_pt_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// The history pixel whose surface matches s, -1 for none.
+int FindTemporalNeighbour(ivec2 pixel, PtSurface s, vec2 velocity, out PtSurface previous)
+{
+    previous = PtInvalidSurface();
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(pt.extent);
+    ivec2 q = ivec2(floor((uv - velocity) * vec2(pt.extent)));
+    if (!PtInside(q))
+    {
+        return -1;
+    }
+    vec2 occluderVelocity;
+    previous = PtLoadSurface(PtPixelIndex(q), true, occluderVelocity);
+    if (PtSimilarSurfaces(s, previous, pt.previousCamera.xyz, 0.9, 0.05))
+    {
+        return int(PtPixelIndex(q));
+    }
+    if (!PtFlag(PT_FLAG_DUAL_MOTION) || !previous.valid)
+    {
+        return -1;
+    }
+    // A disocclusion: what was in front last frame moved by its own motion; the surface uncovered now
+    // lay beside it then, as far behind as it moved.
+    ivec2 alternative = ivec2(floor((uv - occluderVelocity) * vec2(pt.extent)));
+    if (!PtInside(alternative) || alternative == q)
+    {
+        return -1;
+    }
+    vec2 unused;
+    previous = PtLoadSurface(PtPixelIndex(alternative), true, unused);
+    return PtSimilarSurfaces(s, previous, pt.previousCamera.xyz, 0.8, 0.1) ? int(PtPixelIndex(alternative)) : -1;
+}
+
+float MisWeight(float a, float b)
+{
+    return a + b > 0.0 ? a / (a + b) : 0.0;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (!PtInside(pixel) || !PtFlag(PT_FLAG_HISTORY_VALID))
+    {
+        return;
+    }
+    uint index = PtPixelIndex(pixel);
+    vec2 velocity;
+    PtSurface current = PtLoadSurface(index, false, velocity);
+    if (!current.valid)
+    {
+        return;
+    }
+    PtSurface previous;
+    int historyIndex = FindTemporalNeighbour(pixel, current, velocity, previous);
+    if (historyIndex < 0)
+    {
+        return;
+    }
+    PtReservoir history = PtLoadReservoir(uint(historyIndex), true);
+    if (PtReservoirEmpty(history) || history.M <= 0.0)
+    {
+        return;
+    }
+    PtReservoir canonical = PtLoadReservoir(index, false);
+    vec3 camera = ubo.cameraWorldPosition.xyz;
+    float canonicalM = max(canonical.M, 1.0);
+    float historyM = min(history.M, PtTemporalCap(uint(historyIndex)));
+
+    // The canonical sample in last frame's domain, and the history's in this pixel's.
+    PtShift toPrevious = PtShiftPath(canonical, previous, pt.previousCamera.xyz);
+    PtShift toCurrent = PtShiftPath(history, current, camera);
+
+    float canonicalTarget = PtLuminance(canonical.F);
+    float canonicalAtPrevious = toPrevious.valid ? PtLuminance(toPrevious.F) * toPrevious.jacobian : 0.0;
+    float canonicalWeight = MisWeight(canonicalM * canonicalTarget, historyM * canonicalAtPrevious) * canonicalTarget * canonical.W;
+
+    float historyWeight = 0.0;
+    float historyTarget = 0.0;
+    if (toCurrent.valid && toCurrent.jacobian > 0.0)
+    {
+        historyTarget = PtLuminance(toCurrent.F);
+        float historyAtPrevious = PtLuminance(history.F) / toCurrent.jacobian;
+        historyWeight = MisWeight(historyM * historyAtPrevious, canonicalM * historyTarget) * historyTarget * history.W * toCurrent.jacobian;
+    }
+    if (!(historyWeight > 0.0) || isinf(historyWeight))
+    {
+        historyWeight = 0.0;
+    }
+
+    float weightSum = canonicalWeight + historyWeight;
+    PtReservoir result = canonical;
+    float target = canonicalTarget;
+    if (historyWeight > 0.0 && PtRandom(PtPathSeed(pixel), 14u, 0u) * weightSum < historyWeight)
+    {
+        result = history;
+        result.F = toCurrent.F;
+        result.rcJacobian = toCurrent.rcJacobian;
+        target = historyTarget;
+    }
+    result.W = target > 0.0 ? weightSum / target : 0.0;
+    result.M = canonicalM + historyM;
+    PtStoreReservoir(index, result, false);
+}

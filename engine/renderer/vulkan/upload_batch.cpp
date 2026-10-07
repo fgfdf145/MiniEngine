@@ -117,6 +117,12 @@ void VulkanUploadBatch::ReleaseStagingChunks()
 
 VulkanUploadBatch::~VulkanUploadBatch()
 {
+    if (m_fence != VK_NULL_HANDLE)
+    {
+        // Submitted without a wait: its staging is read until the fence signals.
+        vkWaitForFences(m_device, 1, &m_fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(m_device, m_fence, nullptr);
+    }
     ReleaseStagingChunks();
     // Only reached with resources still tracked when an upload was abandoned without a final
     // Flush(). Their copies were recorded but never submitted, so nothing on the GPU reads them.
@@ -182,5 +188,45 @@ void VulkanUploadBatch::Flush()
 
     CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset upload batch command pool");
     BeginRecording();
+}
+
+void VulkanUploadBatch::SubmitWithoutWait()
+{
+    if (m_fence != VK_NULL_HANDLE)
+    {
+        throw std::logic_error("A VulkanUploadBatch is submitted without a wait only once");
+    }
+    // The uploads' own barriers name the stages they expect (a texture's, the fragment shader), and
+    // Flush's wait covered the rest; here every later command, of any stage, waits for the copies and
+    // layout changes and sees what they wrote.
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    vkCmdPipelineBarrier(
+        m_commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    CheckVulkan(vkEndCommandBuffer(m_commandBuffer), "Failed to end upload batch command buffer");
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    CheckVulkan(vkCreateFence(m_device, &fenceInfo, nullptr, &m_fence), "Failed to create an upload batch fence");
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_commandBuffer;
+    const VkResult submitted = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_fence);
+    if (submitted != VK_SUCCESS)
+    {
+        // Nothing reached the GPU: the destructor must not wait for it.
+        vkDestroyFence(m_device, m_fence, nullptr);
+        m_fence = VK_NULL_HANDLE;
+        CheckVulkan(submitted, "Failed to submit upload batch");
+    }
+    m_hasCommands = false;
+}
+
+bool VulkanUploadBatch::IsComplete() const
+{
+    return m_fence == VK_NULL_HANDLE || vkGetFenceStatus(m_device, m_fence) == VK_SUCCESS;
 }
 }

@@ -269,8 +269,9 @@ void VulkanGiResolvePass::Record(
     const ScenePassFrameContext& frame) const
 {
     // In path tracing mode SceneGi holds the path traced diffuse light, which stays for the indirect
-    // diffuse view and the reference comparison (--reference); nothing binds this pass's history.
-    if (frame.pathTracing.enabled)
+    // diffuse view and the reference comparison (--reference); nothing binds this pass's history. ReSTIR
+    // PT writes elsewhere, and GI is off then, so this writes the zero.
+    if (frame.pathTracing.enabled && !frame.pathTracing.restir)
     {
         return;
     }

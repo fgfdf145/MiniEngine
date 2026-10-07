@@ -57,6 +57,19 @@ VkDeviceSize AtLeastOne(VkDeviceSize size)
 {
     return std::max<VkDeviceSize>(size, sizeof(RayInstance));
 }
+
+// How many instances the frame slots' top-level buffers and acceleration structures hold. A streamed
+// world installs a slightly different count every few seconds, and remaking them for each cost ~45 ms
+// of allocation in one frame on the GTA map, so they keep a quarter of room to grow; they shrink only
+// once the content needs less than half of them (a small scene after a map).
+size_t InstanceCapacity(size_t current, size_t needed)
+{
+    if (needed <= current && needed * 2 >= current)
+    {
+        return current;
+    }
+    return needed + needed / 4;
+}
 }
 
 VulkanRayScene::VulkanRayScene(
@@ -187,8 +200,11 @@ void VulkanRayScene::SetContent(
     DropFinishedStaleBuilds();
     if (m_pendingBuild.valid())
     {
+        m_pendingSuperseded->store(true);
         m_staleBuilds.push_back(std::move(m_pendingBuild));
     }
+    auto superseded = std::make_shared<std::atomic<bool>>(false);
+    m_pendingSuperseded = superseded;
     // The installed content stays traceable meanwhile (UpdateInstances): streaming changes the content
     // every few seconds, and every effect falling back to its raster version (DDGI to none) until each
     // build installs made the shadows and the indirect light flicker.
@@ -364,7 +380,7 @@ void VulkanRayScene::SetContent(
     // The task uses this only to make its buffers, which the destructor waits for.
     m_pendingBuild = RunAsync(
         TaskPriority::Medium,
-        [this, meshes = std::move(meshes), buffers = std::move(buffers), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache]() mutable
+        [this, meshes = std::move(meshes), buffers = std::move(buffers), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache, superseded]() mutable
         {
             const auto start = std::chrono::steady_clock::now();
             Build build;
@@ -419,40 +435,6 @@ void VulkanRayScene::SetContent(
             {
                 AppendMesh(build.scene, *bvhs[index]);
             }
-            // The bottom-level acceleration structures of meshes that have none, made here and built on
-            // the GPU when this content installs.
-            if (m_acceleration)
-            {
-                std::vector<VkDeviceAddress> positionAddresses(distinct.size(), 0);
-                for (size_t index = 0; index < distinct.size(); ++index)
-                {
-                    positionAddresses[index] = build.meshBuffers[index] ? build.meshBuffers[index]->GetPositionAddress() : 0;
-                }
-                build.blas = m_acceleration->Prepare(distinct, bvhs, positionAddresses);
-
-                // Hit shading's view of the meshes: each one's buffer addresses, and each leaf
-                // triangle's index in its index list, laid out as the triangles are.
-                build.meshGeometry = CreateBuffer(AtLeastOne(sizeof(RayMeshGeometry) * distinct.size()), true);
-                auto* geometry = static_cast<RayMeshGeometry*>(build.meshGeometry.mapped);
-                size_t triangleCount = 0;
-                for (size_t index = 0; index < distinct.size(); ++index)
-                {
-                    const std::shared_ptr<const VulkanBuffer>& buffer = build.meshBuffers[index];
-                    geometry[index] = buffer ? RayMeshGeometry{buffer->GetVertexAddress(), buffer->GetIndexAddress()} : RayMeshGeometry{};
-                    triangleCount += bvhs[index]->sourceTriangles.size();
-                }
-                build.sourceTriangles = CreateBuffer(AtLeastOne(sizeof(uint32_t) * triangleCount), true);
-                auto* sources = static_cast<uint32_t*>(build.sourceTriangles.mapped);
-                for (size_t index = 0; index < distinct.size(); ++index)
-                {
-                    const std::vector<uint32_t>& meshSources = bvhs[index]->sourceTriangles;
-                    if (!meshSources.empty())
-                    {
-                        std::memcpy(sources, meshSources.data(), sizeof(uint32_t) * meshSources.size());
-                    }
-                    sources += meshSources.size();
-                }
-            }
             {
                 // Into the cache for the builds after this one; hierarchies of meshes nobody holds any
                 // more go, as their address may come back as another mesh's.
@@ -466,11 +448,57 @@ void VulkanRayScene::SetContent(
                                   return entry.second.mesh.expired();
                               });
             }
-            // The hierarchies into GPU buffers here rather than at install: hundreds of megabytes on a map.
+            // The bottom-level acceleration structures of meshes that have none, made here and built on
+            // the GPU when this content installs.
+            if (m_acceleration)
+            {
+                // A skinned mesh's is built over its buffer's posed positions and refitted every frame.
+                std::vector<VkDeviceAddress> positionAddresses(distinct.size(), 0);
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    positionAddresses[index] = build.meshBuffers[index] ? build.meshBuffers[index]->GetPositionAddress() : 0;
+                }
+                build.blas = m_acceleration->Prepare(distinct, bvhs, positionAddresses);
+            }
+            // Replaced by newer content while it ran: it is never installed, so what it built for the
+            // builds after it (the hierarchies, the bottom levels) is all it makes. When the content
+            // changes cell after cell, each replaced build used to fill hundreds of megabytes of buffers
+            // only to have them freed again, and those frees stalled the frame's thread.
+            if (superseded->load())
+            {
+                return build;
+            }
+            if (m_acceleration)
+            {
+                // Hit shading's view of the meshes: each one's buffer addresses, and each leaf
+                // triangle's index in its index list, laid out as the triangles are.
+                build.meshGeometry = AcquireBuffer(AtLeastOne(sizeof(RayMeshGeometry) * distinct.size()), true);
+                auto* geometry = static_cast<RayMeshGeometry*>(build.meshGeometry.mapped);
+                size_t triangleCount = 0;
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    const std::shared_ptr<const VulkanBuffer>& buffer = build.meshBuffers[index];
+                    geometry[index] = buffer ? RayMeshGeometry{buffer->GetVertexAddress(), buffer->GetIndexAddress()} : RayMeshGeometry{};
+                    triangleCount += bvhs[index]->sourceTriangles.size();
+                }
+                build.sourceTriangles = AcquireBuffer(AtLeastOne(sizeof(uint32_t) * triangleCount), true);
+                auto* sources = static_cast<uint32_t*>(build.sourceTriangles.mapped);
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    const std::vector<uint32_t>& meshSources = bvhs[index]->sourceTriangles;
+                    if (!meshSources.empty())
+                    {
+                        std::memcpy(sources, meshSources.data(), sizeof(uint32_t) * meshSources.size());
+                    }
+                    sources += meshSources.size();
+                }
+            }
+            // The hierarchies into GPU buffers here rather than at install: hundreds of megabytes on a map,
+            // in the buffers an earlier content gave back where they are large enough.
             build.meshNodeCount = build.scene.meshNodes.size();
             build.meshTriangleCount = build.scene.meshTriangles.size();
-            build.meshNodes = CreateBuffer(AtLeastOne(sizeof(BvhNode) * build.meshNodeCount));
-            build.meshTriangles = CreateBuffer(AtLeastOne(sizeof(BvhTriangle) * build.meshTriangleCount));
+            build.meshNodes = AcquireBuffer(AtLeastOne(sizeof(BvhNode) * build.meshNodeCount), false);
+            build.meshTriangles = AcquireBuffer(AtLeastOne(sizeof(BvhTriangle) * build.meshTriangleCount), false);
             if (build.meshNodeCount > 0)
             {
                 std::memcpy(build.meshNodes.mapped, build.scene.meshNodes.data(), sizeof(BvhNode) * build.meshNodeCount);
@@ -556,22 +584,26 @@ void VulkanRayScene::InstallBuild()
         m_scene.instances.push_back(dummy);
     }
 
-    const size_t instanceCount = m_submeshMeshes.size();
+    const size_t capacity = InstanceCapacity(m_instanceCapacity, m_submeshMeshes.size());
     if (m_acceleration)
     {
         // The bottom levels only the old content held are freed off the frame's thread too.
         Build released;
-        released.blas = m_acceleration->Install(std::move(build.blas), m_scene.meshes, IncrementalTopLevel::MaxInstances(instanceCount));
+        released.blas = m_acceleration->Install(std::move(build.blas), m_scene.meshes, IncrementalTopLevel::MaxInstances(capacity));
         DiscardBuild(std::move(released));
     }
-    for (uint32_t slot = 0; slot < m_frameCount; ++slot)
+    if (capacity != m_instanceCapacity)
     {
-        DestroyBuffer(m_instances[slot]);
-        DestroyBuffer(m_topNodes[slot]);
-        m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * IncrementalTopLevel::MaxInstances(instanceCount)), true);
-        m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * IncrementalTopLevel::MaxNodes(instanceCount)), true);
+        for (uint32_t slot = 0; slot < m_frameCount; ++slot)
+        {
+            DestroyBuffer(m_instances[slot]);
+            DestroyBuffer(m_topNodes[slot]);
+            m_instances[slot] = CreateBuffer(AtLeastOne(sizeof(RayInstance) * IncrementalTopLevel::MaxInstances(capacity)), true);
+            m_topNodes[slot] = CreateBuffer(AtLeastOne(sizeof(BvhNode) * IncrementalTopLevel::MaxNodes(capacity)), true);
+        }
+        m_instanceCapacity = capacity;
     }
-    // New buffers, which every frame slot copies the worker's top level into.
+    // A new top level, which every frame slot copies the worker's into.
     m_slotGenerations.assign(m_frameCount, 0);
     ++m_topLevelGeneration;
     WriteSets();
@@ -724,10 +756,10 @@ void VulkanRayScene::DiscardBuild(Build build)
         TaskPriority::Low,
         [this, build = std::move(build)]() mutable
         {
-            DestroyBuffer(build.meshNodes);
-            DestroyBuffer(build.meshTriangles);
-            DestroyBuffer(build.meshGeometry);
-            DestroyBuffer(build.sourceTriangles);
+            RecycleBuffer(build.meshNodes);
+            RecycleBuffer(build.meshTriangles);
+            RecycleBuffer(build.meshGeometry);
+            RecycleBuffer(build.sourceTriangles);
             build = Build{};
         }));
 }
@@ -860,6 +892,7 @@ VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size, bool near
 {
     Buffer result{};
     result.size = size;
+    result.nearGpu = nearGpu;
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
@@ -926,6 +959,53 @@ void VulkanRayScene::DestroyBuffer(Buffer& buffer) const
         vkFreeMemory(m_device, buffer.memory, nullptr);
     }
     buffer = Buffer{};
+}
+
+VulkanRayScene::Buffer VulkanRayScene::AcquireBuffer(VkDeviceSize size, bool nearGpu)
+{
+    {
+        const std::lock_guard lock(m_spareMutex);
+        // The smallest spare of the kind that holds it, unless it would waste more than it holds.
+        auto best = m_spareBuffers.end();
+        for (auto spare = m_spareBuffers.begin(); spare != m_spareBuffers.end(); ++spare)
+        {
+            if (spare->nearGpu == nearGpu && spare->size >= size && spare->size <= 2 * size &&
+                (best == m_spareBuffers.end() || spare->size < best->size))
+            {
+                best = spare;
+            }
+        }
+        if (best != m_spareBuffers.end())
+        {
+            const Buffer buffer = *best;
+            m_spareBuffers.erase(best);
+            return buffer;
+        }
+    }
+    // Room to grow, so the next content, a little larger, fits in it again.
+    return size >= kRecycledBufferBytes ? CreateBuffer(size + size / 4, nearGpu) : CreateBuffer(size, nearGpu);
+}
+
+void VulkanRayScene::RecycleBuffer(Buffer& buffer)
+{
+    if (buffer.buffer == VK_NULL_HANDLE || buffer.size < kRecycledBufferBytes)
+    {
+        DestroyBuffer(buffer);
+        return;
+    }
+    Buffer evicted;
+    {
+        const std::lock_guard lock(m_spareMutex);
+        m_spareBuffers.push_back(buffer);
+        // One content's worth: the oldest goes.
+        if (m_spareBuffers.size() > kMaxSpareBuffers)
+        {
+            evicted = m_spareBuffers.front();
+            m_spareBuffers.erase(m_spareBuffers.begin());
+        }
+    }
+    buffer = Buffer{};
+    DestroyBuffer(evicted);
 }
 
 void VulkanRayScene::WriteSets()
@@ -1028,6 +1108,11 @@ void VulkanRayScene::DestroyHandles()
     DestroyBuffer(m_meshTriangles);
     DestroyBuffer(m_meshGeometry);
     DestroyBuffer(m_sourceTriangles);
+    for (Buffer& buffer : m_spareBuffers)
+    {
+        DestroyBuffer(buffer);
+    }
+    m_spareBuffers.clear();
     m_meshBuffers.clear();
     DestroyBuffer(m_materials);
     if (m_texturePool != VK_NULL_HANDLE)

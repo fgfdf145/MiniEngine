@@ -361,6 +361,8 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     // The ray traced sun shadow, raw and filtered, at the render size.
     describeSsrTarget(RenderTargetId::ShadowRaw, "Ray traced shadow trace");
     describeSsrTarget(RenderTargetId::SceneShadow, "Ray traced shadow");
+    // ReSTIR PT's shading, at the render size.
+    describeSsrTarget(RenderTargetId::ScenePathTrace, "Path traced lighting");
 
     // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
     static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};

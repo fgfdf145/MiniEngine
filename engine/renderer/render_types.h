@@ -219,6 +219,47 @@ struct RayTracingSettings
     bool denoise = true;
 };
 
+// ReSTIR PT Enhanced (Lin, Kettunen and Wyman 2026; docs/design/2026-10-07-restir-pt-enhanced-design.md),
+// the path tracer's resampled mode: every opaque deferred pixel's reflected light, direct and indirect
+// in one reservoir, resampled across neighbours and frames. Its own switches; the bounces and light
+// candidates are PathTracingSettings'.
+struct RestirPtSettings
+{
+    bool operator==(const RestirPtSettings&) const = default;
+
+    // Resampling with last frame's reservoir and with three paired neighbours (the paper's section 3).
+    bool temporalReuse = true;
+    bool spatialReuse = true;
+    // The dual ray footprint test and single-vertex roughness test (section 4); off, Lin et al. 2022's
+    // distance and two-vertex roughness thresholds.
+    bool footprintReconnection = true;
+    // c in the paper's equation 5.
+    float footprintScale = 0.02f;
+    // The least roughness a vertex may reconnect from.
+    float roughnessThreshold = 0.2f;
+    // The old criterion's shortest reconnection, in metres.
+    float legacyDistance = 0.1f;
+    // The temporal confidence cap, lowered where neighbours share samples (section 5's duplication map):
+    // cap = lerp(cap, capMin, duplication ^ capGamma) while decorrelation is on.
+    bool decorrelation = true;
+    float cap = 20.0f;
+    float capMin = 1.0f;
+    float capGamma = 0.1f;
+    // Shading with the spatial reuse's vector-valued weights (section 6.3).
+    bool colorNoiseReduction = true;
+    // Disoccluded pixels look for a temporal neighbour along the occluder's motion (section 6.4).
+    bool dualMotionVectors = true;
+    // Russian roulette on the initial paths only (section 6.2.4).
+    bool russianRoulette = true;
+    // Averages the frames while the camera and scene stand still: with both reuses off, an unbiased
+    // reference to compare against.
+    bool accumulate = false;
+    // 0 the image; 1 the duplication map, 2 the reconnection vertex's index, 3 the confidence (log2),
+    // 4 the path length, 5 green where the pairing textures' links are mutual (restir_pt_common.glsl's
+    // PT_DEBUG_*).
+    int debugView = 0;
+};
+
 // GPU path tracing (docs/design/2026-10-07-path-tracing-design.md): every opaque deferred pixel's
 // indirect light, path traced from its G-buffer surface through the ray scene with hardware ray
 // queries, in place of the ambient terms (DDGI, the sky's split sum, reflections, AO and the
@@ -226,18 +267,21 @@ struct RayTracingSettings
 // camera and the scene stand still the frames accumulate toward a reference; DLSS ray reconstruction,
 // when it runs, denoises the raw paths instead of the engine's filters. The Render > Pipeline > Path
 // Tracing mode; it needs hardware ray tracing and falls back to the hybrid image without it.
+// With restir on, ReSTIR PT Enhanced (RestirPtSettings) runs instead and carries the direct light too.
 struct PathTracingSettings
 {
     bool operator==(const PathTracingSettings&) const = default;
 
     bool enabled = false;
-    // Surfaces a path visits after the G-buffer's: 1 is one bounce of indirect light.
+    // Surfaces a path visits after the G-buffer's: 1 is one bounce of indirect light (0 under ReSTIR PT
+    // is direct light only).
     int maxBounces = 3;
     // The most a path's vertex may add, in HDR target units (pre-exposed luminance): bright, rarely
     // found light (a small lamp a diffuse bounce happens to hit) otherwise shows as speckles for many
     // frames. 0 adds everything, as a reference should.
     float fireflyClamp = 32.0f;
-    // The local lights next event estimation picks one from, by resampling, at each path vertex.
+    // The local lights next event estimation picks one from, by resampling, at each path vertex
+    // (ReSTIR PT: at the first surface; deeper vertices take this / bounce^2, at least one).
     int lightCandidates = 8;
     // The temporal accumulation: frames reprojected through the motion vectors and averaged, up to
     // motionFrames while anything moves and up to maxFrames while everything stands still.
@@ -246,6 +290,10 @@ struct PathTracingSettings
     int maxFrames = 2048;
     // The edge-aware spatial filter after it, which fades out as a still image converges.
     bool denoise = true;
+    // ReSTIR PT Enhanced instead of the plain path tracer: direct and indirect light resampled across
+    // neighbours and frames (best with DLSS ray reconstruction, as the paper is evaluated).
+    bool restir = false;
+    RestirPtSettings restirPt;
 };
 
 // The operator the tone mapping pass applies to the shaded image (the G-buffer views pick their own).
@@ -311,7 +359,8 @@ struct RenderDebugSettings
     // The effects traced with hardware ray tracing; each falls back to its screen-space or shadow-map
     // counterpart without it.
     RayTracingSettings rayTracing;
-    // Path tracing in place of the ambient terms, where hardware rays run.
+    // Path tracing in place of the ambient terms (or, as ReSTIR PT, of all the lighting), where hardware
+    // rays run.
     PathTracingSettings pathTracing;
     // How far from the camera the sun's cascaded shadows reach, in metres (ShadowCascadeSettings::
     // maxDistance). The same four cascades cover it, so a longer reach gives coarser shadows.

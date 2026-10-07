@@ -55,6 +55,13 @@ class VulkanUploadBatch
     // buffers tracked since the last Flush(), and re-arms the batch for more recording.
     // No-op if nobody asked for the command buffer since the last Flush().
     void Flush();
+    // Submits everything recorded so far without waiting: a closing barrier orders the copies (and
+    // the layout changes) before every later submission to the queue, and the batch keeps its
+    // staging memory and command buffer until IsComplete. Nothing more can be recorded into it. Flush
+    // waits for the whole queue, frames in flight included: a frame that staged streamed textures
+    // spent ~10 ms of the frame's thread in it. The destructor waits for a batch still running.
+    void SubmitWithoutWait();
+    bool IsComplete() const;
 
   private:
     void BeginRecording();
@@ -77,5 +84,7 @@ class VulkanUploadBatch
     std::vector<StagingChunk> m_stagingChunks;
     VkDeviceSize m_stagedBytes = 0;
     bool m_hasCommands = false;
+    // Set by SubmitWithoutWait.
+    VkFence m_fence = VK_NULL_HANDLE;
 };
 }

@@ -28,6 +28,7 @@
 #include "path_trace_pass.h"
 #include "ray_scene.h"
 #include "rt_shadow_pass.h"
+#include "restir_pt_pass.h"
 #include "ddgi.h"
 #include "scene_render_targets.h"
 #include "selection_outline_pass.h"
@@ -364,6 +365,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Textures prepared and uploaded for a change that has not committed yet, by cache key. The
     // upload moves the ones it uses into m_textureStore.
     std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_stagedTextures;
+    // The batches that staged them, submitted without a wait and dropped once the GPU has run them.
+    // Clearing the list waits for the rest: before any staged texture is destroyed unused.
+    std::vector<std::unique_ptr<VulkanUploadBatch>> m_textureStagingBatches;
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
     bool m_sceneUploadPending = false;
@@ -517,6 +521,15 @@ class VulkanRenderer : public EditorRenderBackendBase
     TemporalHistory m_giHistory;
     TemporalHistory m_ssrHistory;
     TemporalHistory m_taaHistory;
+    // ReSTIR PT's reservoirs and surface records: whether last frame's are this frame's history, and
+    // which surface buffer is which. Reset with the others, and when the pass makes its buffers.
+    TemporalHistory m_restirPtHistory;
+    // Last frame's camera, which ReSTIR PT's temporal reuse shifts paths to, and what the accumulate
+    // mode compares to tell a still camera.
+    glm::vec3 m_previousCameraPosition{0.0f};
+    glm::mat4 m_restirPtAccumulationView{0.0f};
+    uint32_t m_restirPtAccumulatedFrames = 0;
+    uint64_t m_restirPtAccumulationEpochs = 0;
     // The pre-exposure the TAA history was written with; 0 before any frame wrote it.
     float m_taaHistoryPreExposure = 0.0f;
     // The path tracer's accumulation, the pre-exposure it was written with, and whether its image is
@@ -551,6 +564,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanScatterPass* m_scatterPass = nullptr;
     // Owned by m_scenePasses too; makes its images on the first path traced frame.
     VulkanPathTracePass* m_pathTracePass = nullptr;
+    // Owned by m_scenePasses too: the renderer makes its buffers the first frame it runs.
+    VulkanRestirPtPass* m_restirPtPass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
     // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
     std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;

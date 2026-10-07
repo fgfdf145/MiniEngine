@@ -621,8 +621,8 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Install(
     RebuildAddressMap();
     ++m_bottomEpoch;
 
-    // Sized for this content exactly: a map's capacity is large, and a small scene after it should not
-    // keep it.
+    // The ray scene's capacity, which has room for streamed content to grow and shrinks for a small scene
+    // after a map: remade only when it changes, as each remake costs milliseconds of allocation.
     const size_t capacity = std::max<size_t>(instanceCapacity, 1);
     for (TopLevel& topLevel : m_topLevels)
     {

@@ -33,7 +33,8 @@ layout(push_constant) uniform LightingConstants
     // x = 1 for the light cluster heat map instead of shading; y = 1 to take the sun's shadow from the
     // ray traced one (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows
     // (the ray query variant only); w = 1 for path tracing mode: the path traced light (SceneGi and
-    // SceneReflections, path_trace_pass.h) in place of every ambient term.
+    // SceneReflections, path_trace_pass.h) in place of every ambient term; w = 2 for ReSTIR PT: its light
+    // (scenePathTrace, restir_pt_pass.h) in place of all the shading.
     vec4 debug;
 }
 lightingData;
@@ -167,6 +168,20 @@ void main()
     if ((flags & SHADING_FLAG_FORWARD) != 0u)
     {
         outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    if (lightingData.debug.w > 1.5)
+    {
+        // ReSTIR PT (restir_pt_spatial.comp) carries all the light the surface reflects, direct and
+        // indirect; only the surface's own emission is added here. Its debug views (a = 1) show as they are.
+        vec4 traced = texture(scenePathTrace, fragTexCoord);
+        if (traced.a > 0.5)
+        {
+            outColor = vec4(traced.rgb, 1.0);
+            return;
+        }
+        vec3 tracedColor = emissive + traced.rgb * ubo.exposure.y;
+        outColor = vec4(ApplyAerialPerspective(tracedColor, worldPosition) * ubo.exposure.x, 1.0);
         return;
     }
     CoatParams coat = NoCoat();
