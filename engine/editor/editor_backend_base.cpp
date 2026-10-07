@@ -255,6 +255,7 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
     State().requestedViewportExtent = State().fixedViewportExtent.value_or(uiFrame.viewportExtent);
+    State().viewportOutputScale = uiFrame.viewportOutputScale;
     if (State().fixedViewportExtent.has_value())
     {
         // The viewport panel built its matrices for its own size; the scene renders at the fixed one.
@@ -455,7 +456,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         RunUiAction(modelError, "seat the selected model in a car", [&]
                     {
-                        EntityEditService::ApplySelectedModelDriver(State(), driver->vehicleUuid, driver->seatOffset);
+                        EntityEditService::ApplySelectedModelDriver(State(), driver->vehicleUuid, driver->seatOffset, driver->grip);
                     });
     }
     if (const auto& useModelLights = actions.selectedUseModelLights)
@@ -1021,6 +1022,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetDriverProblems(State().vehicleDrivers.problems);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     State().editorUi.SetQuadRecordingStatus(State().quadRecordingIndicator, State().quadRecordingTarget);
+    State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,

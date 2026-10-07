@@ -32,6 +32,15 @@ int FindTemporalNeighbour(ivec2 pixel, PtSurface s, vec2 velocity, out PtSurface
     previous = PtInvalidSurface();
     vec2 uv = (vec2(pixel) + 0.5) / vec2(pt.extent);
     ivec2 q = ivec2(floor((uv - velocity) * vec2(pt.extent)));
+    // Permutation sampling (RTXDI): this frame's history pixel is a neighbour in the 2 x 2 quad, the
+    // same swap for every pixel (a permutation: each history reservoir is still reused once). A pixel
+    // then no longer resamples its own history frame after frame, so a sample does not sit still on
+    // screen for its whole life, which DLSS ray reconstruction would keep as texture.
+    if (PtFlag(PT_FLAG_PERMUTATION))
+    {
+        uint permutation = PtHash(pt.frameIndex * 0x9E3779B1u + 0x2545f491u);
+        q ^= ivec2(int(permutation & 1u), int((permutation >> 1) & 1u));
+    }
     if (!PtInside(q))
     {
         return -1;

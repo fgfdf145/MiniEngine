@@ -481,7 +481,7 @@ void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& 
     model.springBones = springBones;
 }
 
-void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset)
+void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset, const DriverGripCalibration& grip)
 {
     // VehicleDriverService reads these every frame.
     IEditorWorld& world = state.GetEditorWorld();
@@ -497,6 +497,7 @@ void ApplySelectedModelDriver(RendererSharedState& state, const std::string& veh
     ModelComponent& model = world.EditModel(selected);
     model.driverVehicleUuid = vehicleUuid;
     model.driverSeatOffset = seatOffset;
+    model.driverGrip = grip;
 }
 
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)

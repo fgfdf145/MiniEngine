@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -63,7 +64,9 @@ struct ViewportOverlayRect
     bool focused = false;
 };
 
-ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool flipViewportImageY)
+// fixedAspect: the width over the height of a fixed output resolution, which the image keeps, as
+// large as fits and centred, with black bars round it. Unset, the image fills the panel.
+ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool flipViewportImageY, std::optional<float> fixedAspect)
 {
     ViewportOverlayRect rect{};
     rect.drawList = ImGui::GetWindowDrawList();
@@ -72,15 +75,30 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
     available.x = std::max(available.x, 1.0f);
     available.y = std::max(available.y, 1.0f);
 
+    ImVec2 imageSize = available;
+    if (fixedAspect.has_value() && *fixedAspect > 0.0f)
+    {
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        rect.drawList->AddRectFilled(cursor, ImVec2(cursor.x + available.x, cursor.y + available.y), IM_COL32(0, 0, 0, 255));
+        imageSize = available.x / available.y > *fixedAspect ? ImVec2(available.y * *fixedAspect, available.y)
+                                                               : ImVec2(available.x, available.x / *fixedAspect);
+        // Whole points, so the image's edges fall on pixels.
+        imageSize.x = std::max(std::floor(imageSize.x), 1.0f);
+        imageSize.y = std::max(std::floor(imageSize.y), 1.0f);
+        ImGui::SetCursorScreenPos(ImVec2(
+            cursor.x + std::floor((available.x - imageSize.x) * 0.5f),
+            cursor.y + std::floor((available.y - imageSize.y) * 0.5f)));
+    }
+
     if (viewportTextureId)
     {
         const ImVec2 uv0 = flipViewportImageY ? ImVec2(0.0f, 1.0f) : ImVec2(0.0f, 0.0f);
         const ImVec2 uv1 = flipViewportImageY ? ImVec2(1.0f, 0.0f) : ImVec2(1.0f, 1.0f);
-        ImGui::Image(viewportTextureId, available, uv0, uv1);
+        ImGui::Image(viewportTextureId, imageSize, uv0, uv1);
     }
     else
     {
-        ImGui::Dummy(available);
+        ImGui::Dummy(imageSize);
     }
 
     rect.origin = ImGui::GetItemRectMin();
@@ -96,6 +114,35 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
 RenderExtent BuildViewportExtent(const ViewportOverlayRect& rect, float renderScale)
 {
     return ScaleViewportExtent(rect.size.x, rect.size.y, ImGui::GetIO().DisplayFramebufferScale.x, renderScale);
+}
+
+// The size the scene renders at whatever the panel's size: the backend's (--viewport-size, a
+// recording) first, then the viewport resolution setting, scaled by the render scale. Unset, the
+// panel's size decides.
+std::optional<RenderExtent> ResolveFixedViewportExtent(const EditorSharedState& state, float renderScale)
+{
+    if (state.forcedViewportExtent.has_value() && state.forcedViewportExtent->IsValid())
+    {
+        return state.forcedViewportExtent;
+    }
+    return state.renderDebug.viewportResolution.Extent(renderScale);
+}
+
+// The aspect a fixed size is shown at: the setting's own, so the render scale's rounding does not
+// stretch it.
+std::optional<float> FixedViewportAspect(const EditorSharedState& state, const std::optional<RenderExtent>& fixedExtent)
+{
+    if (!fixedExtent.has_value())
+    {
+        return std::nullopt;
+    }
+    if (!state.forcedViewportExtent.has_value())
+    {
+        const ViewportResolutionSettings& resolution = state.renderDebug.viewportResolution;
+        return static_cast<float>(std::clamp(resolution.width, ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize)) /
+               static_cast<float>(std::clamp(resolution.height, ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize));
+    }
+    return static_cast<float>(fixedExtent->width) / static_cast<float>(fixedExtent->height);
 }
 
 void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTextureId)
@@ -1181,7 +1228,10 @@ void ViewportPanel::OnGui(EditorContext& context)
     const RenderBackendType currentBackendType = context.frame.backendType;
     const bool fullscreen = state.commands.viewportFullscreen;
     const bool flipViewportImageY = false;
-    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
+    const float renderScale = state.DlssResolves() ? 1.0f : std::clamp(state.renderDebug.renderScale, 0.25f, 1.0f);
+    const std::optional<RenderExtent> fixedExtent = ResolveFixedViewportExtent(state, renderScale);
+    const ViewportOverlayRect viewportRect =
+        BuildViewportOverlayRect(viewportTextureId, flipViewportImageY, FixedViewportAspect(state, fixedExtent));
     if (!fullscreen)
     {
         DrawViewportOverlay(viewportRect, viewportTextureId);
@@ -1215,8 +1265,10 @@ void ViewportPanel::OnGui(EditorContext& context)
         ImGui::EndDragDropTarget();
     }
 
-    result.viewportExtent =
-        BuildViewportExtent(viewportRect, state.DlssResolves() ? 1.0f : std::clamp(state.renderDebug.renderScale, 0.25f, 1.0f));
+    result.viewportExtent = fixedExtent.value_or(BuildViewportExtent(viewportRect, renderScale));
+    const float displayWidthPixels = viewportRect.size.x * ImGui::GetIO().DisplayFramebufferScale.x;
+    result.viewportOutputScale =
+        displayWidthPixels >= 1.0f ? static_cast<float>(result.viewportExtent.width) / displayWidthPixels : 1.0f;
     result.viewportInteractionRect = SDL_FRect{
         viewportRect.origin.x,
         viewportRect.origin.y,
@@ -1296,7 +1348,8 @@ void ViewportPanel::OnGui(EditorContext& context)
     ImGui::BeginGroup();
     ImGui::TextUnformatted("Viewport");
     ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, right click deselects, drag assets here to place");
-    ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
+    ImGui::Text(
+        "Render Size: %u x %u%s", result.viewportExtent.width, result.viewportExtent.height, fixedExtent.has_value() ? " (fixed)" : "");
     ImGui::Text("Viewport FPS: %.1f", ImGui::GetIO().Framerate);
     ImGui::EndGroup();
 }

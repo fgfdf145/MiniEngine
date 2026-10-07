@@ -90,6 +90,7 @@ SSR trace pass 的硬件变体，和 SSR 用同样的波瓣（`ssr_lobe.glsl`，
   （DDGI 环境光、所有灯光、一条朝太阳的光追阴影光线）。命中点在视锥外时 `shadeAllLocalLights`
   遍历所有局部光（cluster 网格只覆盖视锥）。单面网格的背面视为黑。
 - 只要开了 `reflections`（不依赖 SSR 的开关），但和 SSR 一样需要有效的 TAA 历史。
+- 光线重构运行时见第 10 节：全分辨率、白噪声，resolve 原样输出。
 
 ## 6. 局部光阴影（光照 pass 的 ray query 变体）
 
@@ -125,6 +126,26 @@ SSR trace pass 的硬件变体，和 SSR 用同样的波瓣（`ssr_lobe.glsl`，
 闪烁，间接光也跟着闪。现在已经装好的内容在新构建期间继续追踪：它的每个子网格按 draw slot + 网格
 对应到新内容里的同一个绘制，跟着新的模型矩阵走；新内容里已经没有的（流出的格子）光线跳过；新流入
 的格子在它的构建装好之前不投影（远处的格子先进来，影响很小）。
+
+## 10. 光线重构下的反射：全分辨率原始样本（2026-10-07 修复）
+
+用户在混合管线 + DLSS + 光线重构下看到 R34 车漆在移动时满是“锤纹”斑块；关反射或关 RR 都干净。原因和 ReSTIR PT
+的同类问题一样（`2026-10-07-restir-pt-enhanced-design.md`“光线重构下的车漆斑块”）：RR 拿到的不是每像素独立、每帧
+新鲜的噪声。反射是半分辨率（每 2×2 块一条，四帧轮换）、交错梯度噪声，再经过 resolve 的 3×3 双边空间滤波和
+1/8 指数时间累积（方差裁剪）。这样的信号里残留的是成块、慢慢变化的误差，RR 当作表面细节保留并放大。
+
+- RR 运行时（`frame.dlssRayReconstruction`）两种 trace（`ssr_trace.comp` 和 `rt_reflection_trace.comp`）都按
+  `SSR_TRACE_FLAG_FULL_RES` 全分辨率每像素一条光线，GGX 采样用 PCG 白噪声（`SsrWhiteNoise`，`ssr_half_res.glsl`）；
+  resolve 按 `SSR_FLAG_PASS_THROUGH` 把每个像素的原始样本（radiance、粗糙度渐隐的置信度）直接写给光照 pass，不做空间
+  和时间滤波，由 RR 降噪。历史图照样写（预乘），关掉 RR 时从它开始。和太阳阴影在 RR 下给原始光线是同一个原则。
+- `SsrRaw` 改为全尺寸分配（1080p 每份多约 12 MiB）；半分辨率时只用左上四分之一，读写坐标不变。
+- 不开 RR（TAA、DLSS 超分）时完全不变。
+- 结果（R34 + 滚动路面，1080p 输出，DLSS Performance preset K + RR，相机 0.6 m/s 移动）：斑块消失，和关掉反射的画面
+  一样干净，反射仍在（车门下沿反射地面，比关反射亮约 5/255）；静止时车漆平均颜色和修改前相差不到 1/255。trace
+  0.08 → 0.14 ms（内部分辨率 1114×626，光线数 ×4），resolve 0.08 → 0.02 ms；GTA Grove Street 0.13 → 0.29 ms。
+- 验证层（加载器强制 `VK_LAYER_KHRONOS_validation`）：RR 下的 4 条 `VUID-vkCmdDraw-None-09600`（光照 pass 绑定的某张
+  图仍是 UNDEFINED 布局）修改前就有，与本改动无关；TAA 下无消息。
+- 仍然没有给 RR 镜面命中距离（`pInSpecularHitDistance`）：光滑反射在快速移动时只能按表面运动矢量重投影，可以再做。
 
 ## 验证
 

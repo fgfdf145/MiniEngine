@@ -50,6 +50,7 @@ void StateRoundTrips()
     written.renderDebug.dlssPreset = DlssPreset::K;
     written.renderDebug.taa = false;
     written.renderDebug.renderScale = 0.5f;
+    written.renderDebug.viewportResolution = {true, 2560, 1440};
     written.renderDebug.ssr.maxDistance = 12.0f;
     written.renderDebug.ao.stepCount = 5;
     written.renderDebug.gi.enabled = false;
@@ -73,6 +74,7 @@ void StateRoundTrips()
     Require(read.renderDebug.toneMapper == ToneMapper::PbrNeutral, "tone mapper");
     Require(read.renderDebug.dlssMode == DlssMode::Performance && read.renderDebug.dlssPreset == DlssPreset::K, "DLSS");
     Require(!read.renderDebug.taa && read.renderDebug.renderScale == 0.5f, "top-level switches");
+    Require(read.renderDebug.viewportResolution == written.renderDebug.viewportResolution, "viewport resolution");
     Require(read.renderDebug.ssr.maxDistance == 12.0f && read.renderDebug.ao.stepCount == 5 && !read.renderDebug.gi.enabled, "groups");
     Require(read.renderDebug.ddgi.levels == 3 && read.renderDebug.ddgi.baseSpacing == 0.5f && read.renderDebug.ddgi.hysteresis == 0.9f, "DDGI");
 }

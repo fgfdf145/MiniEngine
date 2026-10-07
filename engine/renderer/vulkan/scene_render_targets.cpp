@@ -348,9 +348,9 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         description.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         description.bindToImGui = false;
     };
+    // Full size although the reflection trace usually runs at half resolution and fills only its
+    // top-left quarter (ssr_half_res.glsl): under DLSS ray reconstruction it traces every pixel.
     describeSsrTarget(RenderTargetId::SsrRaw, "SSR trace");
-    // The reflection trace runs at half resolution too (ssr_half_res.glsl).
-    Describe(RenderTargetId::SsrRaw).downscale = 2;
     describeSsrTarget(RenderTargetId::SceneReflections, "Reflections");
     // One-bounce indirect diffuse: rgb radiance, the same format and usage.
     describeSsrTarget(RenderTargetId::GiRaw, "GI trace");

@@ -835,7 +835,12 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.renderDebug = State().renderDebug;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
-    if (const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(GetWindow().GetSDLWindow())); mode != nullptr)
+    if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
+    {
+        // A fixed resolution stays as it is fullscreen: nothing to reserve room for.
+        packet.displayExtent = viewportExtent;
+    }
+    else if (const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(GetWindow().GetSDLWindow())); mode != nullptr)
     {
         const float density = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
         packet.displayExtent = {
@@ -853,6 +858,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.lights = world != nullptr ? CollectSceneLights(*world, State().rendererWorld) : CollectedSceneLights{};
     packet.selectedEntity = world != nullptr && world->HasSelection() ? world->GetSelectedEntity() : entt::null;
     packet.uiScale = State().editorUi.GetEffectiveUiScale();
+    packet.viewportOutputScale = State().viewportOutputScale;
 
     packet.contentChanged = contentChanged;
     packet.renderSubmeshes = State().rendererWorld.SnapshotRenderSubmeshes();
@@ -1941,9 +1947,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.selectionDrawItems = prepared->selectionDrawItems;
         frame.selectionViewProjection = viewProjection;
         // Blender's outline is about a pixel and a half at its UI scale; here in the output's pixels,
-        // which the render scale makes fewer than the screen's (DLSS outputs every one).
-        frame.selectionOutlineWidth =
-            1.5f * packet.uiScale * (dlssEnabled ? 1.0f : std::clamp(renderDebug.renderScale, 0.25f, 1.0f));
+        // which the render scale or a fixed resolution makes fewer or more than the screen's.
+        frame.selectionOutlineWidth = 1.5f * packet.uiScale * std::clamp(packet.viewportOutputScale, 0.1f, 8.0f);
     }
     return prepared;
 }

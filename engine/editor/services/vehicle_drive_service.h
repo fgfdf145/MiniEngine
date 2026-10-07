@@ -59,8 +59,10 @@ struct VehicleCameraSettings
     // Letting go leaves it where it is when this is 0; above 0 it comes back behind the car at this
     // rate per second (higher is quicker).
     float lookRecenterRate = 0.0f;
+    // The chase camera's vertical field of view (degrees) while driving.
+    float chaseFovDegrees = 40.0f;
     // The views fixed to the body: their vertical field of view (degrees), the cockpit's own and the
-    // bonnet's and bumper's. The lens is put back as it was on leaving them.
+    // bonnet's and bumper's. The lens is put back as it was on leaving the car.
     float cockpitFovDegrees = 55.0f;
     float exteriorFovDegrees = 50.0f;
     // Moves the driver's eyes from where the car's data or its steering wheel puts them (metres: to the
@@ -186,11 +188,11 @@ struct VehicleDriveSession
     // Where the cockpit, bonnet and bumper cameras sit on the body (ComputeCameraMounts, before the
     // seat offset), in vehicle space.
     std::array<VehicleCameraMount, kVehicleMountedViewCount> cameraMounts{};
-    // The lens a view on the body changed (field of view, near plane, up), to put back on leaving it.
-    bool mountedLensApplied = false;
-    float fovBeforeMounted = 45.0f;
-    float nearPlaneBeforeMounted = 0.1f;
-    glm::vec3 upBeforeMounted{0.0f, 1.0f, 0.0f};
+    // The lens the drive's views changed (field of view, near plane, up), to put back on leaving the car.
+    bool driveLensApplied = false;
+    float fovBeforeDriving = 45.0f;
+    float nearPlaneBeforeDriving = 0.1f;
+    glm::vec3 upBeforeDriving{0.0f, 1.0f, 0.0f};
     // The view button held in the last frame: the view changes once per press.
     bool viewButtonHeld = false;
     std::unique_ptr<PhysicsWorld> physics;

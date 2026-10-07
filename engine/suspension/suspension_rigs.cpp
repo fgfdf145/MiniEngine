@@ -135,9 +135,8 @@ std::unique_ptr<AxleSuspension> MakeAxleSuspension(const CarModel& car, int axle
         std::make_unique<SuspensionCorner>(right.definition, MakeCornerUnit(right), right.unitElement, right.slider));
 }
 
-void BalanceCar(CarModel& car, double frontAxleShareOfWeight)
+void BalanceCar(CarModel& car, double frontSprungShare)
 {
-    const double weight = car.mass * kGravity;
     double hubs = 0.0;
     for (const CarCorner& c : car.corners)
     {
@@ -149,8 +148,8 @@ void BalanceCar(CarModel& car, double frontAxleShareOfWeight)
     for (int i = 0; i < 4; ++i)
     {
         CarCorner& corner = car.corners[i];
-        const double axle = i < 2 ? frontAxleShareOfWeight : 1.0 - frontAxleShareOfWeight;
-        car.staticLoad[i] = 0.5 * weight * axle - corner.hubMass * kGravity;
+        const double axle = i < 2 ? frontSprungShare : 1.0 - frontSprungShare;
+        car.staticLoad[i] = 0.5 * car.sprungMass * kGravity * axle;
         // The unit's preload: the load over its motion ratio when it sits in the linkage.
         double ratio = 1.0;
         if (corner.unitElement != SuspensionCorner::kWheelTravel && !car.solidAxles[i / 2].has_value())

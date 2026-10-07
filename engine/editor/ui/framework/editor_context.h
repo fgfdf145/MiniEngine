@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -98,6 +99,9 @@ struct EditorSharedState
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
+    // recording's size while it runs); unset when the viewport's own settings decide.
+    std::optional<RenderExtent> forcedViewportExtent;
     // Whether the backend can path trace (hardware ray tracing), and what it says of path tracing.
     bool pathTracingAvailable = false;
     std::string pathTracingStatus;

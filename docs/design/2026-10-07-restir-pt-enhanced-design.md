@@ -110,8 +110,8 @@
   （ReSTIR：x1 上的 NEE 候选数，更深的顶点按 1/k² 减少）。
 - ReSTIR 自己的参数在 `render_debug.restir_pt.*`（`RestirPtSettings`）：`temporal_reuse`、`spatial_reuse`、
   `footprint_reconnection`（关 = Lin 2022 的距离 + 粗糙度判据）、`footprint_scale`(0.02)、`roughness_threshold`(0.2)、
-  `legacy_distance`(0.1 m)、`decorrelation`、`cap`(20)、`cap_min`(1)、`cap_gamma`(0.1)、`color_noise_reduction`、
-  `dual_motion_vectors`、`russian_roulette`、`accumulate`、`debug_view`（0 图像，1 复制图，2 重连顶点下标，
+  `legacy_distance`(0.1 m)、`decorrelation`、`cap`(4，原为论文的 20，见“光线重构下的车漆斑块”)、`cap_min`(1)、`cap_gamma`(0.1)、`color_noise_reduction`、
+  `dual_motion_vectors`、`permutation_sampling`、`russian_roulette`、`accumulate`、`debug_view`（0 图像，1 复制图，2 重连顶点下标，
   3 置信度 log2，4 路径长度，5 配对纹理互逆检查）。
 - 普通路径追踪的 `firefly_clamp`、`accumulate`/`motion_frames`/`max_frames`、`denoise` 对 ReSTIR 不起作用：
   ReSTIR 的输出交给 DLSS 光线重构（没有 DLSS 时只有 TAA，噪声明显）。
@@ -164,7 +164,41 @@
   之后从 2.63 降到约 2.47 ms（同样有占用）。
 - 质量（R34，DLAA + 光线重构，对 1500 帧累积的普通路径追踪参考的线性 RMSE，车身区域）：光栅 0.0917；ReSTIR PT
   0.0296（Cap 20）、0.0295（10）、0.0270（5）、0.0254（2）；不用空间复用 0.0418。静止的光滑车漆上较低的 Cap 斑驳更少，
-  默认仍按论文用 20（运动时 Cap 越低噪声越大），面板里可调。
+  默认仍按论文用 20（运动时 Cap 越低噪声越大），面板里可调。（之后改为 4，见下节。）
+
+## 光线重构下的车漆斑块（2026-10-07）
+
+用户在 GTA 地图里开 ReSTIR PT + DLSS（Performance）+ 光线重构，R34 车漆满是一块块“锤纹/脏污”，像纹理。
+
+- **原因是时间复用的样本寿命，不是偏差。** 静止相机、1080p、DLSS Performance + RR，逐项关闭：关掉时间复用（只留
+  空间复用）车漆干净；只留时间复用最脏；均值都与参考差 1~2%。时间复用在 Cap 20 下让一个像素的样本连续几十到上百帧
+  不换（亮的样本 W 每帧只按 M/(M+1) 衰减），像素间互相独立但**在时间上不动**的噪声被 RR 当成表面细节保留，再被它的
+  空间滤波连成斑块。只开时间复用、累积 1500 帧仍有颗粒（无复用的参考 1500 帧已平滑）可以直接看到这一点。重连判据
+  （足迹 / 旧判据 / 粗糙度阈值 0 或 1）、俄罗斯轮盘、弹射数都不影响；只有 Cap 影响。复制图在车漆上几乎为 0：它
+  检测的是空间上的同种子复制，检测不到时间上的停留。
+- **修正**（两项都默认开，`render_debug.restir_pt.*`）：
+  - `permutation_sampling`：时间复用的历史像素按每帧随机的 XOR 取 2×2 四邻中的一个（RTXDI 的 permutation sampling；
+    全屏同一个置换，每个历史储备池仍只被复用一次）。像素不再每帧重采样自己的历史，样本在屏幕上随帧移动，RR 能把它
+    当噪声平均掉。成对 MIS 不变：历史域就是被选中像素的表面，shift 照常处理。
+  - `cap` 默认 20 → 4。
+- **测量**（R34 + 滚动路面，1920×1080，DLSS Performance preset K + RR，对 1500 帧无复用累积参考的 8 bit RMSE；
+  GPU 被用户的编辑器占用，不报时间）：
+
+  | 配置 | 车门 | 引擎盖 | 车顶 | 全图 |
+  |---|---|---|---|---|
+  | Cap 20（旧默认） | 4.8 | 3.5 | 7.3 | 2.6 |
+  | Cap 8 | 3.5 | 2.3 | 5.9 | — |
+  | Cap 4 | 3.2 | 2.2 | 5.5 | — |
+  | Cap 4 + 置换（新默认） | 3.3 | 2.2 | 5.4 | 2.3 |
+  | 关掉时间复用 | 3.4 | 2.1 | 5.2 | 2.1 |
+
+  静止时 Cap 4 已接近关掉时间复用；相机以 0.6 m/s 移动时 Cap 4 仍有斑块，加置换后与关掉时间复用的画面看不出差别，
+  Cap 20 + 置换介于两者之间。GTA Grove Street（SA 流送 300 m，R34 + Yuki）结果相同。
+- **无偏性**（静止累积 1500 帧，DLSS 关）：新默认“时间 + 空间”全图均值差 −0.3/255、RMSE 0.9（旧默认 Cap 20 为 1.4，
+  车门 5.0 → 2.3）；只开时间复用 RMSE 1.0。
+- **注意**：设置文件里已保存的 `restir_pt.cap: 20` 会覆盖新默认，需要在 Graphics Debug 的 ReSTIR 一节点 Reset 或手动改为 4。
+- 混合管线（不开路径追踪）在移动时也有同样的斑块，来源是光追反射：半分辨率交错梯度噪声的光线，经 SSR resolve 的空间、
+  时间滤波后交给 RR。关反射或关 RR 都干净。已修：`2026-10-07-ray-traced-effects-design.md` 第 10 节。
 
 ## 未做 / 后续
 
@@ -173,3 +207,5 @@
 - 自发光三角形没有 NEE（只靠 BSDF 命中），小的发光体噪声大。
 - 次级顶点没有法线贴图、清漆、sheen；透射材质当不透明处理；Blend / 透射表面仍是前向光栅着色。
 - 夜间光栅比路径追踪亮很多：DDGI 里含有回退环境光，路径追踪的天空只有环境贴图 + 场景的环境光源。
+- 没有给 RR 镜面命中距离（`pInSpecularHitDistance`）或反射运动矢量：光滑车漆的反射在移动时只能按表面运动矢量重投影。
+  （混合管线反射的斑块另有原因，已修，见上节。）

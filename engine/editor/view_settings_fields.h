@@ -49,6 +49,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("restir_pt", "cap_gamma", restirPt.capGamma);
     visit("restir_pt", "color_noise_reduction", restirPt.colorNoiseReduction);
     visit("restir_pt", "dual_motion_vectors", restirPt.dualMotionVectors);
+    visit("restir_pt", "permutation_sampling", restirPt.permutationSampling);
     visit("restir_pt", "russian_roulette", restirPt.russianRoulette);
     visit("restir_pt", "accumulate", restirPt.accumulate);
     visit("restir_pt", "debug_view", restirPt.debugView);
@@ -60,6 +61,9 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);
+    visit("viewport_resolution", "fixed", settings.viewportResolution.fixed);
+    visit("viewport_resolution", "width", settings.viewportResolution.width);
+    visit("viewport_resolution", "height", settings.viewportResolution.height);
     visit("", "dlss_ray_reconstruction", settings.dlssRayReconstruction);
     visit("bloom", "enabled", settings.bloom.enabled);
     visit("bloom", "strength", settings.bloom.strength);

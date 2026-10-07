@@ -82,6 +82,11 @@ ModelSkeleton MakeHumanoid()
         const int32_t middle2 = AddNode(skeleton, "MiddleFinger2" + suffix, middle1, glm::vec3(0.045f * side, 0.0f, 0.0f));
         const int32_t middle3 = AddNode(skeleton, "MiddleFinger3" + suffix, middle2, glm::vec3(0.03f * side, 0.0f, 0.0f));
         AddNode(skeleton, "MiddleFinger4" + suffix, middle3, glm::vec3(0.025f * side, 0.0f, 0.0f));
+        // The thumb off the index side of the palm (forward, +Z), pointing out and forward.
+        const int32_t thumb1 = AddNode(skeleton, "ThumbFinger1" + suffix, wrist, glm::vec3(0.02f * side, -0.01f, 0.02f));
+        const int32_t thumb2 = AddNode(skeleton, "ThumbFinger2" + suffix, thumb1, glm::vec3(0.025f * side, 0.0f, 0.02f));
+        const int32_t thumb3 = AddNode(skeleton, "ThumbFinger3" + suffix, thumb2, glm::vec3(0.02f * side, 0.0f, 0.015f));
+        AddNode(skeleton, "ThumbFinger4" + suffix, thumb3, glm::vec3(0.018f * side, 0.0f, 0.012f));
     }
     return skeleton;
 }
@@ -151,6 +156,8 @@ void SeatedPoseReachesItsTargets()
             const float gap = fromRimSurface(at[static_cast<size_t>(rig->fingers[side][2][joint])]);
             Require(gap > -0.005f && gap < 0.02f, "a finger does not close on the rim");
         }
+        const float thumbGap = fromRimSurface(at[static_cast<size_t>(rig->fingers[side][0][3])]);
+        Require(thumbGap > -0.005f && thumbGap < 0.02f, "a thumb does not lie on the rim");
     }
     Require(result.eyes.y > at[static_cast<size_t>(rig->head)].y, "the eyes are not on the head");
 }
@@ -172,6 +179,38 @@ void HandsHoldWhereTheyAreTold()
     const std::vector<glm::vec3> turned = WorldPositions(skeleton, poses);
     Require(turned[static_cast<size_t>(rig.wrist[0])].y > leftLevel.y + 0.08f, "the left hand did not go up in a right turn");
     Require(turned[static_cast<size_t>(rig.wrist[1])].y < leftLevel.y - 0.08f, "the right hand did not go down in a right turn");
+}
+
+void GripCalibrationMovesTheHand()
+{
+    const ModelSkeleton skeleton = MakeHumanoid();
+    const DriverRig rig = *FindDriverRig(skeleton);
+    DriverPoseInput input;
+    input.hips = glm::vec3(0.0f, 0.5f, 0.0f);
+    input.wheelCenter = glm::vec3(0.0f, 0.8f, 0.38f);
+    input.wheelAxis = glm::vec3(0.0f, 0.0f, 1.0f);
+    std::vector<ModelNodePose> poses;
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> plain = WorldPositions(skeleton, poses);
+
+    // A palm gap takes the wrists out from the rim (the left to +X, the right to -X).
+    input.grip.palmGap = 0.02f;
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> apart = WorldPositions(skeleton, poses);
+    Require(apart[static_cast<size_t>(rig.wrist[0])].x - plain[static_cast<size_t>(rig.wrist[0])].x > 0.015f &&
+                plain[static_cast<size_t>(rig.wrist[1])].x - apart[static_cast<size_t>(rig.wrist[1])].x > 0.015f,
+            "the palm gap did not move both wrists out, mirrored");
+
+    // Pitching the hand (about the rim's run, upright at a quarter to three) swings the wrist round
+    // where the hand holds: as far back or forward for both hands, sideways in mirror.
+    input.grip.palmGap = 0.0f;
+    input.grip.handTurnDegrees = glm::vec3(30.0f, 0.0f, 0.0f);
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> pitched = WorldPositions(skeleton, poses);
+    const glm::vec3 left = pitched[static_cast<size_t>(rig.wrist[0])] - plain[static_cast<size_t>(rig.wrist[0])];
+    const glm::vec3 right = pitched[static_cast<size_t>(rig.wrist[1])] - plain[static_cast<size_t>(rig.wrist[1])];
+    Require(glm::length(left) > 0.01f && std::abs(left.z - right.z) < 0.005f && std::abs(left.x + right.x) < 0.005f,
+            "the hand pitch did not swing the wrists, mirrored");
 }
 
 void HiddenHeadShrinks()
@@ -339,7 +378,7 @@ void BodySwaysWithTheCar()
     {
         speed -= 8.0f / 60.0f;
         position.z += speed / 60.0f;
-        UpdateDriverSway(braking, glm::translate(glm::mat4(1.0f), position), 1.0f / 60.0f);
+        UpdateDriverSway(braking, glm::translate(glm::mat4(1.0f), position), glm::vec3(0.0f), 1.0f / 60.0f);
     }
     Require(braking.lean.y > 3.0f && std::abs(braking.lean.x) < 0.5f, "braking did not lean the body forward");
 
@@ -352,9 +391,26 @@ void BodySwaysWithTheCar()
         const glm::mat4 rotation = glm::mat4_cast(glm::angleAxis(-angle, glm::vec3(0.0f, 1.0f, 0.0f)));
         const glm::vec3 centre(-50.0f, 0.0f, 0.0f);
         const glm::vec3 onCircle = centre + glm::vec3(rotation * glm::vec4(50.0f, 0.0f, 0.0f, 0.0f));
-        UpdateDriverSway(turning, glm::translate(glm::mat4(1.0f), onCircle) * rotation, 1.0f / 60.0f);
+        UpdateDriverSway(turning, glm::translate(glm::mat4(1.0f), onCircle) * rotation, glm::vec3(0.0f), 1.0f / 60.0f);
     }
     Require(turning.lean.x > 3.0f, "a right turn did not lean the body to the left");
+
+    // The car's body rolling on its springs about its origin, standing still: felt a metre up, the body
+    // sways; felt at the origin, it hardly does.
+    VehicleDriverSway high;
+    VehicleDriverSway low;
+    float highMost = 0.0f;
+    float lowMost = 0.0f;
+    for (int frame = 0; frame < 120; ++frame)
+    {
+        const float roll = glm::radians(3.0f) * std::sin(glm::two_pi<float>() * 1.5f * static_cast<float>(frame) / 60.0f);
+        const glm::mat4 body = glm::mat4_cast(glm::angleAxis(roll, glm::vec3(0.0f, 0.0f, 1.0f)));
+        UpdateDriverSway(high, body, glm::vec3(0.0f, 1.0f, 0.0f), 1.0f / 60.0f);
+        UpdateDriverSway(low, body, glm::vec3(0.0f), 1.0f / 60.0f);
+        highMost = std::max(highMost, std::abs(high.lean.x));
+        lowMost = std::max(lowMost, std::abs(low.lean.x));
+    }
+    Require(highMost > 1.0f && highMost > lowMost * 2.0f, "the body did not sway with the car's roll");
 }
 
 void HairSwings()
@@ -398,6 +454,21 @@ void HairSwings()
         }
     }
     Require(tipForward > 0.05f, "the strand did not swing on when the head stopped");
+
+    // The frame pitching back and forth about its origin, which stays put: the strand, a metre and a half
+    // up, swings in it.
+    SpringBoneState pitched;
+    float swing = 0.0f;
+    for (int frame = 0; frame < 120; ++frame)
+    {
+        const float pitch = glm::radians(4.0f) * std::sin(glm::two_pi<float>() * 1.5f * static_cast<float>(frame) / 60.0f);
+        RestNodePoses(skeleton, poses);
+        SimulateSpringBones(skeleton, system, pitched, poses, glm::mat4_cast(glm::angleAxis(pitch, glm::vec3(1.0f, 0.0f, 0.0f))), 1.0f / 60.0f);
+        std::vector<glm::mat4> world;
+        ComputeNodeWorldMatrices(skeleton, poses, world);
+        swing = std::max(swing, std::abs(world.back()[3].z - world[static_cast<size_t>(first)][3].z));
+    }
+    Require(swing > 0.02f, "the strand did not swing with the frame's pitch");
 }
 
 void Print(const char* name, const glm::vec3& value)
@@ -473,6 +544,12 @@ void InspectorOffersTheCar()
     // The seat survives a save and a load.
     scene.EditModel(driverEntity).driverSeatOffset = glm::vec3(0.01f, -0.02f, 0.03f);
     scene.EditModel(driverEntity).springBones = false;
+    DriverGripCalibration grip;
+    grip.holdAtDegrees = 60.0f;
+    grip.palmGap = 0.01f;
+    grip.handTurnDegrees = glm::vec3(10.0f, -5.0f, 20.0f);
+    grip.thumbOnRim = false;
+    scene.EditModel(driverEntity).driverGrip = grip;
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "miniengine_driver_pose_tests.yaml";
     SaveEditorSceneDataToFile(scene.CaptureSceneData(), file.string());
     const SerializedSceneData loaded = LoadEditorSceneDataFromFile(file.string());
@@ -483,7 +560,7 @@ void InspectorOffersTheCar()
         if (entity.entityUuid == "driver-uuid")
         {
             found = entity.driverVehicleUuid == "car-uuid" && glm::distance(entity.driverSeatOffset, glm::vec3(0.01f, -0.02f, 0.03f)) < 1e-6f &&
-                    !entity.modelSpringBones;
+                    !entity.modelSpringBones && entity.driverGrip == grip;
         }
         else if (entity.entityUuid == "car-uuid")
         {
@@ -555,6 +632,8 @@ void PrintRealFit()
                     fromRim(at[static_cast<size_t>(rig->wrist[side])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][0])]),
                     fromRim(at[static_cast<size_t>(rig->fingers[side][2][1])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][2])]),
                     fromRim(at[static_cast<size_t>(rig->fingers[side][2][3])]));
+        std::printf("  thumb from the rim's middle: %.3f %.3f %.3f\n", fromRim(at[static_cast<size_t>(rig->fingers[side][0][1])]),
+                    fromRim(at[static_cast<size_t>(rig->fingers[side][0][2])]), fromRim(at[static_cast<size_t>(rig->fingers[side][0][3])]));
     }
 }
 }
@@ -573,6 +652,7 @@ int main()
         SeatedPoseReachesItsTargets();
         HandsHoldWhereTheyAreTold();
         HiddenHeadShrinks();
+        GripCalibrationMovesTheHand();
         HeldHandGoesToTheKnob();
         GearLeverGoesThroughTheGate();
         FeetWorkThePedals();

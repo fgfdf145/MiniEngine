@@ -36,6 +36,8 @@ layout(push_constant) uniform SsrConstants
     // Current over previous pre-exposure: the history holds last frame's values.
     float historyScale;
     uint frameIndex;
+    // SSR_TRACE_FLAG_* (ssr_half_res.glsl).
+    uint flags;
 }
 ssr;
 
@@ -60,13 +62,14 @@ float InterleavedGradientNoise(vec2 pixel)
 void main()
 {
     // Half resolution: this invocation traces one pixel of its 2x2 block (ssr_half_res.glsl) and
-    // writes its result at the block's place.
-    ivec2 halfPixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(halfPixel, SsrHalfResExtent(ivec2(ssr.extent)))))
+    // writes its result at the block's place. At full resolution (ray reconstruction) its own pixel.
+    bool fullResolution = (ssr.flags & SSR_TRACE_FLAG_FULL_RES) != 0u;
+    ivec2 rawPixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(rawPixel, fullResolution ? ivec2(ssr.extent) : SsrHalfResExtent(ivec2(ssr.extent)))))
     {
         return;
     }
-    ivec2 pixel = SsrHalfResSourcePixel(halfPixel, ssr.frameIndex, ivec2(ssr.extent));
+    ivec2 pixel = fullResolution ? rawPixel : SsrHalfResSourcePixel(rawPixel, ssr.frameIndex, ivec2(ssr.extent));
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
     // The coat's lobe on a coated pixel whose coat is the smoother (car paint), else the base's.
@@ -75,7 +78,7 @@ void main()
     float roughnessFade = SsrRoughnessFade(roughness, ssr.maxRoughness);
     if (IsFarDepth(depth) || roughnessFade <= 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -87,12 +90,13 @@ void main()
 
     // A fresh sample every frame: the pixel's noise shifted by a per-frame offset.
     vec2 frameOffset = vec2(float(ssr.frameIndex % 64u) * 5.588238, float(ssr.frameIndex % 64u) * 7.123);
-    vec2 u = vec2(InterleavedGradientNoise(vec2(pixel) + frameOffset), InterleavedGradientNoise(vec2(pixel.yx) + frameOffset * 1.37));
+    vec2 u = fullResolution ? SsrWhiteNoise(pixel, ssr.frameIndex)
+                            : vec2(InterleavedGradientNoise(vec2(pixel) + frameOffset), InterleavedGradientNoise(vec2(pixel.yx) + frameOffset * 1.37));
     vec3 H = SampleGgxVisibleNormal(N, V, roughness, u);
     vec3 R = reflect(-V, H);
     if (dot(R, N) <= 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -146,7 +150,7 @@ void main()
 
     if (hitT < 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -176,7 +180,7 @@ void main()
     vec3 hitNormal = DecodeNormalOctahedral(texelFetch(normalTexture, hitPixel, 0).rg);
     if (IsFarDepth(hitDepth) || dot(hitNormal, R) > 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -186,7 +190,7 @@ void main()
     vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
     if (previousClip.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) || any(greaterThan(previousUv, vec2(1.0))))
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -197,5 +201,5 @@ void main()
     }
     float confidence = roughnessFade * SsrEdgeFade(hitUv) * SsrEdgeFade(previousUv) *
                        (1.0 - smoothstep(LENGTH_FADE_START, 1.0, high));
-    imageStore(ssrRawImage, halfPixel, vec4(min(radiance, vec3(65504.0)), confidence));
+    imageStore(ssrRawImage, rawPixel, vec4(min(radiance, vec3(65504.0)), confidence));
 }

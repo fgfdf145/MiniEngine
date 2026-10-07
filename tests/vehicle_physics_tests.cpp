@@ -1781,9 +1781,10 @@ void TestSplitterGlidesOverTheSeamsOfSeparateCells()
 }
 
 // The GT-R as the editor drives it: its data through ApplyCarSpec, then fitted to its model's bounds and
-// wheel nodes (vehicle space). The centre of mass is the data's, not the model's middle: 55.5 % of the
-// weight on the front axle (CG_LOCATION) and 0.43 m up (tyre radius 0.355 - BASEY -0.075); at rest
-// the front tyres carry that share.
+// wheel nodes (vehicle space). The body's centre of mass is the data's, not the model's middle: 55.5 % of
+// the wheelbase ahead of the rear axle (CG_LOCATION) and 0.43 m up (tyre radius 0.355 - BASEY -0.075).
+// As in Assetto Corsa that is the body's alone: the hubs (part of the total mass) sit at the wheels, so at
+// rest the front tyres carry the body's 55.5 % and their own hubs.
 void TestCarDataPlacesTheCentreOfMass()
 {
     VehicleCarSpec spec = MakeGtrSpec();
@@ -1817,8 +1818,11 @@ void TestCarDataPlacesTheCentreOfMass()
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
     const float front = wheels[0].suspensionForce + wheels[1].suspensionForce;
     const float total = front + wheels[2].suspensionForce + wheels[3].suspensionForce;
-    std::cout << "GT-R at rest: the front tyres carry " << front / total * 100.0f << " % of " << total << " N\n";
-    RequireNear(front / total, 0.555f, 0.01f, "the front tyres carry the data's share");
+    const float hubs = 2.0f * (spec.frontSuspension->hubMass + spec.rearSuspension->hubMass);
+    const float frontShare = ((settings.massKg - hubs) * 0.555f + 2.0f * spec.frontSuspension->hubMass) / settings.massKg;
+    std::cout << "GT-R at rest: the front tyres carry " << front / total * 100.0f << " % of " << total << " N (expected "
+              << frontShare * 100.0f << " %)\n";
+    RequireNear(front / total, frontShare, 0.002f, "the front tyres carry the body's share and the front hubs");
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "and all of the weight");
 }
 
@@ -1940,9 +1944,10 @@ void TestPackersBringTheBumpStopIn()
     RequireNear(static_cast<float>(stopAt(0.06f, 0.04f, -0.03).second), 0.0f, 1e-6f, "and let go below their start");
 }
 
-// The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the centre of
-// mass: 1397.5 kg, the front's share from 55.5 % to 55.0 %, the centre of mass 2.4 mm lower. Applying it
-// twice adds nothing, and the car at rest carries it.
+// The GT-R's 30 litres of starting fuel (22.5 kg) in its tank 0.85 m behind and 0.15 m below the body's
+// centre of mass: 1397.5 kg; the fuel joins the body (1375 kg less its 250 kg of hubs), whose share moves
+// from 55.5 % to 54.9 % and centre of mass 2.9 mm lower. Applying it twice adds nothing, and the car at
+// rest carries it.
 void TestStartingFuelMovesTheMass()
 {
     VehicleCarSpec spec = MakeGtrSpec();
@@ -1956,8 +1961,10 @@ void TestStartingFuelMovesTheMass()
     const float fuel = 30.0f * kFuelKgPerLitre;
     RequireNear(*fuelled.massKg, 1375.0f + fuel, 1e-3f, "the fuel's mass");
     const float tankShare = 0.555f - 0.85f / 2.78f;
-    RequireNear(*fuelled.frontWeightShare, (0.555f * 1375.0f + tankShare * fuel) / (1375.0f + fuel), 1e-5f, "the weight split with the tank behind");
-    RequireNear(fuelled.frontSuspension->centerOfMassAboveWheel, 0.075f - fuel * 0.15f / (1375.0f + fuel), 1e-6f, "the centre of mass lower");
+    const float hubs = 2.0f * (spec.frontSuspension->hubMass + spec.rearSuspension->hubMass);
+    const float body = 1375.0f - hubs;
+    RequireNear(*fuelled.frontWeightShare, (0.555f * body + tankShare * fuel) / (body + fuel), 1e-5f, "the body's weight split with the tank behind");
+    RequireNear(fuelled.frontSuspension->centerOfMassAboveWheel, 0.075f - fuel * 0.15f / (body + fuel), 1e-6f, "the body's centre of mass lower");
     Require(!fuelled.fuelLitres.has_value(), "the fuel is counted once");
     const VehicleCarSpec twice = WithStartingFuel(fuelled);
     Require(*twice.massKg == *fuelled.massKg && *twice.frontWeightShare == *fuelled.frontWeightShare, "and applying it again adds nothing");
@@ -1983,8 +1990,86 @@ void TestStartingFuelMovesTheMass()
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
     const float front = wheels[0].suspensionForce + wheels[1].suspensionForce;
     const float total = front + wheels[2].suspensionForce + wheels[3].suspensionForce;
-    RequireNear(front / total, *fuelled.frontWeightShare, 0.01f, "the front tyres carry the fuelled share");
+    const float frontShare = ((settings.massKg - hubs) * *fuelled.frontWeightShare + 2.0f * spec.frontSuspension->hubMass) / settings.massKg;
+    RequireNear(front / total, frontShare, 0.002f, "the front tyres carry the fuelled body's share and the front hubs");
     RequireNear(total, settings.massKg * 9.81f, 0.01f * settings.massKg * 9.81f, "the tyres carry the fuel too");
+}
+
+// The hubs on their own tyre springs are part of the car's mass but sit at the wheels, not at the body's
+// centre of mass, and the car moves as the two together. Held by its brakes on a slope falling towards its
+// front (0.3 g along it, every mass loaded as braking would), the tyres' loads about that common centre of
+// mass balance the car's weight along the slope at its height. The GT-R with its body's centre of mass
+// raised to 0.6 m (hubs 250 of its 1375 kg, at 0.355 m): the common centre is about 0.555 m up.
+void TestHubsLoadTheTyresFromTheWheels()
+{
+    VehicleCarSpec spec = MakeGtrSpec();
+    spec.wheelbase = 2.78f;
+    spec.frontWeightShare = 0.555f;
+    spec.inertiaBox = glm::vec3(1.8f, 1.35f, 4.8f);
+    spec.frontSuspension->centerOfMassAboveWheel = 0.245f;
+    spec.rearSuspension->centerOfMassAboveWheel = 0.245f;
+    VehicleWheelLayout layout{};
+    layout[0] = {glm::vec3(0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[1] = {glm::vec3(-0.8583f, 0.2919f, 1.432f), 0.355f, 0.33f};
+    layout[2] = {glm::vec3(0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    layout[3] = {glm::vec3(-0.869f, 0.2919f, -1.3454f), 0.355f, 0.33f};
+    const VehicleSettings settings =
+        FitVehicleSettingsToBounds(glm::vec3(-1.031f, -0.066f, -2.401f), glm::vec3(1.031f, 1.357f, 2.453f), ApplyCarSpec(VehicleSettings{}, spec), &layout);
+
+    const float along = 0.3f;
+    const glm::quat slope = glm::angleAxis(std::asin(along), glm::vec3(1.0f, 0.0f, 0.0f));
+    std::vector<glm::vec3> vertices = {{-200.0f, 0.0f, -200.0f}, {-200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, -200.0f}};
+    for (glm::vec3& vertex : vertices)
+    {
+        vertex = slope * vertex;
+    }
+    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    PhysicsWorld world;
+    Require(world.AddStaticMesh(vertices, indices), "the slope builds");
+    const VehicleId car = world.AddVehicle(settings, {slope * glm::vec3(0.0f, 0.05f, 0.0f), slope});
+    VehicleControls hold;
+    hold.brake = 1.0f;
+    hold.handBrake = 1.0f;
+    world.SetVehicleControls(car, hold);
+    Simulate(world, 3.0f);
+
+    // Where the body's centre of mass and the hubs (the wheels' centres) stand, in the slope's frame: down it
+    // (the car's front) and up from it; and the tyres' loads about that common centre. The tyres' grip at a
+    // standstill flickers from step to step, so these are the mean over half a second.
+    const glm::vec3 down = slope * glm::vec3(0.0f, 0.0f, 1.0f);
+    const glm::vec3 up = slope * glm::vec3(0.0f, 1.0f, 0.0f);
+    const float hubs = 2.0f * (spec.frontSuspension->hubMass + spec.rearSuspension->hubMass);
+    const float weight = settings.massKg * 9.81f;
+    constexpr int kSteps = 500;
+    float moment = 0.0f;
+    float load = 0.0f;
+    float height = 0.0f;
+    float bodyHeight = 0.0f;
+    for (int step = 0; step < kSteps; ++step)
+    {
+        world.Update(PhysicsWorld::kFixedStepSeconds);
+        const PhysicsPose pose = world.GetVehiclePose(car);
+        const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
+        const glm::vec3 body = pose.position + pose.rotation * (settings.chassisCenter + settings.centerOfMassOffset);
+        glm::vec3 center = (settings.massKg - hubs) * body;
+        for (size_t index = 0; index < wheels.size(); ++index)
+        {
+            center += (index < 2 ? spec.frontSuspension->hubMass : spec.rearSuspension->hubMass) * wheels[index].pose.position;
+        }
+        center /= settings.massKg;
+        for (const VehicleWheelState& wheel : wheels)
+        {
+            moment += wheel.suspensionForce * glm::dot(wheel.contactPosition - center, down) / kSteps;
+            load += wheel.suspensionForce / kSteps;
+        }
+        height += glm::dot(center, up) / kSteps;
+        bodyHeight += glm::dot(body, up) / kSteps;
+    }
+    const float shift = moment / (weight * along);
+    std::cout << "GT-R braked on a 0.3 g slope: the tyres' loads balance it about the body and hubs' centre of mass as from " << shift * 1000.0f
+              << " mm up; that centre is " << height * 1000.0f << " mm up, the body's alone " << bodyHeight * 1000.0f << " mm\n";
+    RequireNear(load, weight * std::sqrt(1.0f - along * along), 0.01f * weight, "the tyres carry the car's weight into the slope");
+    RequireNear(shift, height, 0.003f, "the car turns about the body and hubs' centre of mass");
 }
 
 // The AE86 on its own data: struts in front, a live axle behind. It rests on its design position; in a
@@ -2995,6 +3080,7 @@ int main()
         TestDriveForceLoadsTheLinkageAtTheWheelCentre();
         TestPackersBringTheBumpStopIn();
         TestStartingFuelMovesTheMass();
+        TestHubsLoadTheTyresFromTheWheels();
         TestLiveAxleCarRestsAndCorners();
         TestLiveAxleTorqueReactionLoadsTheLeftRear();
         TestMultibodyCarCornersOnItsLinkage(false);

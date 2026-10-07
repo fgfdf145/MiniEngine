@@ -36,8 +36,9 @@ void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelL
 void ApplySelectedModelAnimation(
     RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed, bool springBones = true);
 // Seats the selected model in the car `vehicleUuid` as its driver (empty: in none), `seatOffset`
-// metres from where the seat is fitted (VehicleDriverService).
-void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset);
+// metres from where the seat is fitted, its hands holding the wheel as `grip` says (VehicleDriverService).
+void ApplySelectedModelDriver(
+    RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset, const DriverGripCalibration& grip = {});
 
 // Applies a finished async model load, if any. Returns true when renderables changed.
 bool PumpAsyncModelLoad(RendererSharedState& state);

@@ -383,6 +383,7 @@ void VehiclePanel::OnGui(EditorContext& context)
         DragFloatInRange("Height (m)", &vehicle.camera.height, 0.2f, 15.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Height (m)", &vehicle.camera.lookHeight, 0.0f, 5.0f, "%.1f", 0.05f);
         DragFloatInRange("Look Recentre Rate", &vehicle.camera.lookRecenterRate, 0.0f, 20.0f, "%.1f", 0.1f);
+        DragFloatInRange("Chase FOV (deg)", &vehicle.camera.chaseFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
         ImGui::SeparatorText("Cockpit, Bonnet and Bumper");
         DragFloatInRange("Cockpit FOV (deg)", &vehicle.camera.cockpitFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);
         DragFloatInRange("Bonnet and Bumper FOV (deg)", &vehicle.camera.exteriorFovDegrees, 30.0f, 100.0f, "%.0f", 0.25f);

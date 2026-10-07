@@ -474,6 +474,28 @@ bool HasUnsprungMass(const VehicleSuspensionAxle& axle)
     return axle.hubMass > 0.0f && axle.tyreRate > 0.0f;
 }
 
+// A wheel's hub mass when it rides on a tyre spring of its own (the multibody suspension's), else 0:
+// the body carries it.
+double SeparateHubMass(const VehicleSettings& settings, size_t index)
+{
+    const VehicleSuspensionAxle& axle = index < 2 ? settings.frontSuspension : settings.rearSuspension;
+    return HasSuspensionGeometry(settings) && HasUnsprungMass(axle) ? axle.hubMass : 0.0;
+}
+
+// The body's own mass: the car's (Assetto Corsa's TOTALMASS, which has the hubs in it) less the hubs
+// that ride on their own tyre springs, as the game takes its chassis' mass. The data's weight split,
+// centre of mass height and inertia box are this body's.
+double SprungMass(const VehicleSettings& settings)
+{
+    const double mass = std::max(settings.massKg, 1.0f);
+    double hubs = 0.0;
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        hubs += SeparateHubMass(settings, index);
+    }
+    return std::max(mass - hubs, 0.5 * mass);
+}
+
 // The physics engine's spring carries the tyre's force, which the suspension sets each step through
 // the preload; this stiffness only keeps the spring defined, small enough that the body's motion
 // within a step hardly changes the force.
@@ -488,8 +510,8 @@ glm::vec3 MultibodyRestCenter(const VehicleSettings& settings, size_t index)
     return GetVehicleWheelMount(settings, index).center - glm::vec3(0.0f, ComputeRestSuspensionLength(settings, 9.81f), 0.0f);
 }
 
-// What a wheel's spring carries at rest: its share of the weight by where the centre of mass sits
-// between the axles, less its hub's own weight (which goes straight to the tyre) when it has one.
+// What a wheel's spring carries at rest: its share of the body's weight by where the body's centre of
+// mass sits between the axles. A hub with a mass of its own puts its weight straight on the tyre.
 double MultibodySpringLoad(const VehicleSettings& settings, size_t index)
 {
     const glm::vec3 com = settings.chassisCenter + settings.centerOfMassOffset;
@@ -497,13 +519,7 @@ double MultibodySpringLoad(const VehicleSettings& settings, size_t index)
     const float rearZ = MultibodyRestCenter(settings, 2).z;
     const float frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com.z - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
     const bool front = index < 2;
-    const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
-    double load = 0.5 * std::max(settings.massKg, 1.0f) * 9.81 * (front ? frontShare : 1.0f - frontShare);
-    if (HasUnsprungMass(axle))
-    {
-        load -= axle.hubMass * 9.81;
-    }
-    return load;
+    return 0.5 * SprungMass(settings) * 9.81 * (front ? frontShare : 1.0f - frontShare);
 }
 
 // Where the wheel's centre is at the design position (travel 0, the hardpoints' reference): where the
@@ -514,7 +530,8 @@ glm::vec3 MultibodyDesignCenter(const VehicleSettings& settings, size_t index)
     return MultibodyRestCenter(settings, index) - VehicleRestWheelOffset(settings, index, MultibodySpringLoad(settings, index));
 }
 
-// The load each axle's wheel carries standing still, from where the centre of mass sits between the axles.
+// The load each axle's wheel carries standing still: the body's weight by where its centre of mass sits
+// between the axles, and the wheel's own hub.
 float StaticWheelLoad(const VehicleSettings& settings, bool front)
 {
     float frontShare = settings.frontWeightShare;
@@ -525,7 +542,8 @@ float StaticWheelLoad(const VehicleSettings& settings, bool front)
         const float rearZ = GetVehicleWheelMount(settings, 2).center.z;
         frontShare = std::abs(frontZ - rearZ) > 1e-3f ? std::clamp((com - rearZ) / (frontZ - rearZ), 0.05f, 0.95f) : 0.5f;
     }
-    return 0.5f * std::max(settings.massKg, 1.0f) * 9.81f * (front ? frontShare : 1.0f - frontShare);
+    const double body = 0.5 * SprungMass(settings) * (front ? frontShare : 1.0f - frontShare);
+    return static_cast<float>((body + SeparateHubMass(settings, front ? 0 : 2)) * 9.81);
 }
 
 // A wheel's brush tyre from its axle's tyre figures: the peak grip along and across the wheel at the load
@@ -753,6 +771,51 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
     controller->mDifferentialLimitedSlipRatio = limitedSlipRatio;
     vehicle->mController = controller;
     return vehicle;
+}
+
+bool HasInertiaBox(const VehicleSettings& settings)
+{
+    return settings.inertiaBox.x > 0.0f && settings.inertiaBox.y > 0.0f && settings.inertiaBox.z > 0.0f;
+}
+
+// The rigid body the physics engine moves: the car's body with the hubs that ride on their own tyre springs
+// fixed at their wheels' rest centres (their motion along the travel reaches it as a force,
+// StepUnsprungCorner). Its centre of mass (vehicle space, in outCenter) is theirs together, and its inertia
+// the body's (the data's box of the body's mass, else the shape's) with the hubs' as point masses.
+JPH::MassProperties VehicleBodyMassProperties(const VehicleSettings& settings, const JPH::Shape& chassis, glm::vec3& outCenter)
+{
+    const glm::vec3 body = settings.chassisCenter + settings.centerOfMassOffset;
+    const double sprung = SprungMass(settings);
+    double mass = sprung;
+    glm::dvec3 moment = glm::dvec3(body) * sprung;
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const double hub = SeparateHubMass(settings, index);
+        mass += hub;
+        moment += glm::dvec3(MultibodyRestCenter(settings, index)) * hub;
+    }
+    outCenter = glm::vec3(moment / mass);
+
+    JPH::MassProperties properties;
+    if (HasInertiaBox(settings))
+    {
+        properties.SetMassAndInertiaOfSolidBox(ToJolt(settings.inertiaBox), 1.0f);
+    }
+    else
+    {
+        properties = chassis.GetMassProperties();
+    }
+    properties.ScaleToMass(static_cast<float>(sprung));
+    properties.Translate(ToJolt(body - outCenter));
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const float hub = static_cast<float>(SeparateHubMass(settings, index));
+        const JPH::Vec3 arm = ToJolt(MultibodyRestCenter(settings, index) - outCenter);
+        properties.mInertia += hub * (JPH::Mat44::sScale(arm.Dot(arm)) - JPH::Mat44::sOuterProduct(arm, arm));
+    }
+    properties.mInertia.SetColumn4(3, JPH::Vec4(0, 0, 0, 1));
+    properties.mMass = static_cast<float>(mass);
+    return properties;
 }
 }
 
@@ -2694,10 +2757,9 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     Impl& impl = *m_impl;
 
     // The box sits where the settings put it in vehicle space, or the car's own body does (its boxes and
-    // shell, BuildChassisParts); the centre of mass is moved from the shape's own to where the settings put
-    // it, chassisCenter + centerOfMassOffset.
+    // shell, BuildChassisParts); the centre of mass is moved from the shape's own to the body's and its
+    // hubs' together (VehicleBodyMassProperties), the body's being chassisCenter + centerOfMassOffset.
     JPH::RefConst<JPH::Shape> chassis;
-    JPH::Vec3 centerOfMassOffset = ToJolt(settings.centerOfMassOffset);
     const VehicleChassisParts parts = BuildChassisParts(settings);
     if (!parts.boxes.empty())
     {
@@ -2727,7 +2789,6 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
             throw std::runtime_error(std::string("PhysicsWorld: failed to build the vehicle's body: ") + made.GetError().c_str());
         }
         chassis = made.Get();
-        centerOfMassOffset = ToJolt(settings.chassisCenter + settings.centerOfMassOffset) - chassis->GetCenterOfMass();
     }
     else
     {
@@ -2735,7 +2796,9 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         const JPH::RefConst<JPH::Shape> box = new JPH::BoxShape(halfExtents, std::min(0.05f, halfExtents.ReduceMin() * 0.5f));
         chassis = JPH::RotatedTranslatedShapeSettings(ToJolt(settings.chassisCenter), JPH::Quat::sIdentity(), box).Create().Get();
     }
-    const JPH::OffsetCenterOfMassShapeSettings chassisShape(centerOfMassOffset, chassis);
+    glm::vec3 centerOfMass{0.0f};
+    const JPH::MassProperties massProperties = VehicleBodyMassProperties(settings, *chassis, centerOfMass);
+    const JPH::OffsetCenterOfMassShapeSettings chassisShape(ToJolt(centerOfMass) - chassis->GetCenterOfMass(), chassis);
     const JPH::ShapeSettings::ShapeResult shape = chassisShape.Create();
     if (shape.HasError())
     {
@@ -2746,13 +2809,12 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         shape.Get(), ToJoltPosition(pose.position), ToJolt(pose.rotation), JPH::EMotionType::Dynamic, ObjectLayers::kMoving);
     bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     bodySettings.mMassPropertiesOverride.mMass = std::max(settings.massKg, 1.0f);
-    if (settings.inertiaBox.x > 0.0f && settings.inertiaBox.y > 0.0f && settings.inertiaBox.z > 0.0f)
+    if (HasInertiaBox(settings) || SprungMass(settings) < settings.massKg)
     {
-        // The car's data gives its inertia as a uniform box (width, height, length) of its mass about
-        // the centre of mass, not the collision box's.
+        // The car's data gives the body's inertia as a uniform box (width, height, length) of its mass about
+        // its centre of mass, not the collision box's; hubs of their own add theirs.
         bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
-        bodySettings.mMassPropertiesOverride.SetMassAndInertiaOfSolidBox(ToJolt(settings.inertiaBox), 1.0f);
-        bodySettings.mMassPropertiesOverride.ScaleToMass(std::max(settings.massKg, 1.0f));
+        bodySettings.mMassPropertiesOverride = massProperties;
     }
     bodySettings.mLinearDamping = std::max(settings.linearDamping, 0.0f);
     // The physics engine would also take 0.05 of the body's turning each second, a yaw and roll damping

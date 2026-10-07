@@ -190,8 +190,10 @@ void SimulateSpringBones(
     ComputeNodeWorldMatrices(skeleton, poses, model);
 
     // The particles live in the model's own frame, so that a model moving steadily (a driver in a car at
-    // speed) drags nothing behind it; what the frame does that is felt (its acceleration, gravity) acts on
-    // them as forces, turned into the frame and taken out of its scale.
+    // speed) drags nothing behind it; what the frame does that is felt acts on them as forces, turned
+    // into the frame and taken out of its scale: gravity, and the acceleration of each particle's own
+    // place in the frame as the frame moves (a car's body braking, turning, rolling and pitching on its
+    // springs: a point high in it swings further than its origin).
     const glm::vec3 origin(modelToWorld[3]);
     const float scale = std::max(std::cbrt(std::abs(glm::determinant(glm::mat3(modelToWorld)))), 1e-6f);
     const glm::mat3 axes = glm::mat3(modelToWorld) / scale;
@@ -208,16 +210,29 @@ void SimulateSpringBones(
         state.started = true;
         state.samples = 0;
     }
-    glm::vec3 inertia(0.0f);
+    const bool frameKnown = step > 0.0f && state.samples >= 2 && state.lastStep > 0.0f;
+    const glm::mat4 lastFrame = state.lastFrame;
+    const glm::mat4 frameBefore = state.frameBefore;
+    const float lastStep = state.lastStep;
+    // Where the frame carries a point of it, as a displacement over this step against the last.
+    const auto inertiaAt = [&](const glm::vec3& point)
+    {
+        if (!frameKnown)
+        {
+            return glm::vec3(0.0f);
+        }
+        const glm::vec3 now(modelToWorld * glm::vec4(point, 1.0f));
+        const glm::vec3 then(lastFrame * glm::vec4(point, 1.0f));
+        const glm::vec3 before(frameBefore * glm::vec4(point, 1.0f));
+        const glm::vec3 acceleration = ((now - then) / step - (then - before) / lastStep) / step;
+        return toModel * (-acceleration) * (step * step) / scale;
+    };
     if (step > 0.0f)
     {
-        const glm::vec3 velocity = (origin - state.lastOrigin) / step;
-        if (state.samples >= 2)
-        {
-            inertia = toModel * (-(velocity - state.lastVelocity) / step) * (step * step) / scale;
-        }
+        state.frameBefore = state.lastFrame;
+        state.lastFrame = modelToWorld;
+        state.lastStep = step;
         state.samples = std::min(state.samples + 1, 2);
-        state.lastVelocity = velocity;
     }
     state.lastOrigin = origin;
     const glm::vec3 down = toModel * glm::vec3(0.0f, -1.0f, 0.0f);
@@ -245,7 +260,7 @@ void SimulateSpringBones(
         if (step > 0.0f)
         {
             const SpringBoneSettings& settings = joint.settings;
-            next = current + (current - previous) * (1.0f - settings.drag) + inertia + (animated - head) / length * (settings.stiffness * step) +
+            next = current + (current - previous) * (1.0f - settings.drag) + inertiaAt(current) + (animated - head) / length * (settings.stiffness * step) +
                    down * (settings.gravity * step);
         }
         next = head + glm::normalize(next - head) * length;

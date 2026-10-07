@@ -193,6 +193,8 @@ struct RendererSharedState
     // The render thread's last measurement of GPU memory, which world streaming fits the scene in.
     GpuMemoryReport gpuMemory;
     RenderExtent requestedViewportExtent{};
+    // The scene's output pixels per display pixel in the viewport (EditorUiFrameResult).
+    float viewportOutputScale = 1.0f;
     // --viewport-size: the scene renders at this size whatever the viewport panel's size, so captures
     // do not depend on the editor's layout or the window manager. Unset, the panel decides.
     std::optional<RenderExtent> fixedViewportExtent;

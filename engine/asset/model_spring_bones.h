@@ -14,8 +14,8 @@ namespace me
 // SpringBone does it): each joint of such a chain points at its child, whose position is a particle
 // carried on by its own inertia, pulled back towards where the animation puts it, weighed down a
 // little, kept at the bone's length and pushed out of the body. It works in the model's own frame:
-// moving steadily drags nothing behind, while the frame's acceleration (a driver's car braking or
-// turning) and gravity act on the chains as forces.
+// moving steadily drags nothing behind, while how the frame carries each particle's place (a driver's
+// car braking, turning, rolling and pitching on its springs) and gravity act on the chains as forces.
 struct SpringBoneSettings
 {
     // Pull back towards the animated direction (per second), loss of velocity per step (0 to 1),
@@ -71,9 +71,12 @@ struct SpringBoneState
     std::vector<glm::vec3> current;
     std::vector<glm::vec3> previous;
     bool started = false;
-    // The model's origin in the world, and its velocity, for the frame's acceleration.
+    // The model's origin in the world (to tell a jump), and where the model was placed the last two steps
+    // and how long the last was, for the frame's motion.
     glm::vec3 lastOrigin{0.0f};
-    glm::vec3 lastVelocity{0.0f};
+    glm::mat4 lastFrame{1.0f};
+    glm::mat4 frameBefore{1.0f};
+    float lastStep = 0.0f;
     int samples = 0;
 };
 

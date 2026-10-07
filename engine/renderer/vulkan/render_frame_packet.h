@@ -44,7 +44,7 @@ struct RenderFramePacket
     // The size the scene renders at this frame.
     RenderExtent viewportExtent;
     // The window's display in pixels: the largest the viewport can become (fullscreen), which the GPU
-    // memory report reserves room for.
+    // memory report reserves room for. The viewport's own size when it has a fixed one.
     RenderExtent displayExtent;
     SceneEnvironment environment;
     // SceneMinimap::image when the minimap is valid, else empty.
@@ -54,6 +54,8 @@ struct RenderFramePacket
     entt::entity selectedEntity = entt::null;
     // The editor UI's scale, which the outline's width follows.
     float uiScale = 1.0f;
+    // The output's pixels per display pixel where the viewport shows them (EditorUiFrameResult).
+    float viewportOutputScale = 1.0f;
     // The renderables changed since the last frame: the render thread starts an upload.
     bool contentChanged = false;
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;
