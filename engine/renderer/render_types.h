@@ -378,10 +378,10 @@ struct RenderDebugSettings
     bool hdrOutput = false;
     float hdrPeakNits = 1000.0f;
     // The anime characters' brightness over the physical scene's, in EV (toon_pass.h). Their shading
-    // is display-referred in AnimateApp, where the lit albedo reaches the screen as it is; at 0 they
-    // are exposed as a white diffuse surface under the same light would be, which an auto exposure
-    // metering the whole scene leaves about a stop darker than that.
-    float toonExposureEv = 1.0f;
+    // is display-referred in AnimateApp, where the lit albedo reaches the screen as it is; at 0 their
+    // lit side is as bright as a white diffuse surface facing the same light, which keeps them in step
+    // with the scene round them (a stop up was brighter than anything white beside them).
+    float toonExposureEv = 0.0f;
     AoSettings ao;
     GiSettings gi;
     DdgiSettings ddgi;

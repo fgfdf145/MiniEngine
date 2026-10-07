@@ -81,6 +81,44 @@ ToonLight ToonMainLight(vec3 toCamera)
     return light;
 }
 
+// How far toward the sun the world's shadow is looked up from a character's surface: past the near
+// side of its own body, so the shadow map does not shade it with itself (NiloToon's receive-shadow
+// depth bias; its own shading comes from the cel ramp and the self shadow instead), but still under
+// the roof of the car or the building it is in.
+const float kToonWorldShadowLift = 0.2;
+
+// The head (the face, and the hair round it out to the first distance from the head's middle, fading
+// out by the second) takes the world's shadow as one, from a point this far above the head bone (about
+// the middle of the head) lifted this much further, past the head: a shadow's edge never crosses the
+// face or leaves a dark lock over it.
+const float kToonHeadCentreHeight = 0.1;
+const float kToonHeadRadius = 0.15;
+const vec2 kToonHeadReach = vec2(0.15, 0.3);
+
+// Puts the character in the world's light (the shader's has only the main light, a character in shade
+// would glow as if in the sun): the share of the sun that reaches it past everything else (the
+// cascades and the clouds), and its light, which that share of the sun turns from the ambient light
+// the scene's diffuse surfaces receive there (the DDGI probes, else the sky) toward the sun's. The
+// sun's share is returned for the cel shading and the rim light. Unchanged in full sun.
+float ToonApplyWorldLight(
+    inout ToonLight light, ToonMaterial material, float faceMask, vec3 worldPosition, vec3 ambientNormal, vec3 toCamera)
+{
+    if (!light.castsShadow)
+    {
+        return 1.0;
+    }
+    vec3 headCentre = ToonHeadPosition(material) + ToonFaceUp(material) * kToonHeadCentreHeight;
+    float head = max(faceMask, 1.0 - smoothstep(kToonHeadReach.x, kToonHeadReach.y, distance(worldPosition, headCentre)));
+    vec3 shadowPoint = mix(worldPosition, headCentre, head) + light.direction * (kToonWorldShadowLift + kToonHeadRadius * head);
+    float sun = EvaluateDirectionalShadow(shadowPoint, light.direction);
+    vec3 ambient = SceneDiffuseAmbient(worldPosition, ambientNormal, toCamera);
+    vec3 sunRadiance = light.color * light.luminance;
+    vec3 radiance = mix(ambient, max(sunRadiance, ambient), sun);
+    light.luminance = max(dot(radiance, vec3(0.2126, 0.7152, 0.0722)), 0.0);
+    light.color = light.luminance > 0.0 ? radiance / light.luminance : vec3(0.0);
+    return sun;
+}
+
 float ToonDepthAt(vec2 pixel)
 {
     ivec2 size = textureSize(toonLinearDepth, 0);
@@ -127,7 +165,8 @@ void main()
             discard;
         }
         vec3 albedo = ToonAlbedo(material, base.rgb, fragTexCoord, N, toCamera);
-        float lit = clamp(ToonCelShade(material, dot(N, light.direction), fragTexCoord), 0.0, 1.0);
+        float sun = ToonApplyWorldLight(light, material, faceMask, fragWorldPosition, N, toCamera);
+        float lit = clamp(ToonCelShade(material, dot(N, light.direction), fragTexCoord) * sun, 0.0, 1.0);
         vec3 color = mix(ToonShadowColor(material, albedo, faceMask, skinMask), albedo, lit) * light.color;
         color *= mix(material.outlineTint.rgb, material.outlineSkinOverride.rgb, material.outlineSkinOverride.a * skinMask);
         color = ApplyAerialPerspective(color * light.luminance, fragWorldPosition) * ubo.exposure.x * drawData.exposureScale;
@@ -159,6 +198,8 @@ void main()
     }
 
     float cel = ToonCelShade(material, NdotL, fragTexCoord);
+    // Before the rim light, which is the sun's and goes with it.
+    float sun = ToonApplyWorldLight(light, material, faceMask, fragWorldPosition, normalize(fragSmoothNormal), toCamera);
 
     // The face's shadow from its signed distance map: the light's angle about the face's up, against
     // the map (mirrored for light from the other side) read on the second UV set.
@@ -235,7 +276,7 @@ void main()
         rimMask = smoothstep(0.68, 0.72, rim);
     }
 
-    float lit = clamp(cel * ao, 0.0, 1.0);
+    float lit = clamp(cel * ao * sun, 0.0, 1.0);
     vec3 color = mix(ToonShadowColor(material, albedo, faceMask, skinMask), albedo, lit) * light.color;
     if (ToonHas(material, TOON_FEATURE_DEPTH_TEX_RIM_SHADOW))
     {
@@ -245,7 +286,7 @@ void main()
             faceMask);
         color *= mix(shadowTint, vec3(1.0), depthShadow);
     }
-    color += rimColor * rimMask;
+    color += rimColor * rimMask * sun;
     // The character's own rim (its render controller's), over every surface.
     color += pow(1.0 - NdotV, max(material.headPosition.w, 1.0)) * material.characterRim.rgb;
 

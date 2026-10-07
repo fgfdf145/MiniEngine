@@ -119,8 +119,13 @@
     → 全部描边（正面剔除）→ 透明项（SrcAlpha 混合，眼睛掩码模拟 stencil）。
   - 每帧 toon 材质放在 `VulkanToonMaterials`（每帧槽一个 host-visible SSBO，最多 512 个 draw），push constant 带索引和曝光倍数。
 - 光照单位：着色在 Unity 单位里算（主光颜色归一到亮度 1），再乘 `主光照度/π × exposure × 2^toonExposureEv`。
-  `RenderDebugSettings::toonExposureEv` 默认 +1 EV（Graphics Debug → Anime characters），因为自动曝光让阳光下的白色漫反射只到纸白的一半左右，
-  而原 app 的角色是 display-referred 的。主光取投影的平行光，没有则第一盏平行光，再没有用环境光。
+  `RenderDebugSettings::toonExposureEv`（Graphics Debug → Anime characters）原先默认 +1 EV（自动曝光让阳光下的白色漫反射只到纸白的一半左右，
+  而原 app 的角色是 display-referred 的）；Yuki 坐进 R34 后比身边任何白色表面都亮，2026-10-07 改为默认 0 EV：受光面 = 正对同一光源的白色漫反射。
+  主光取投影的平行光，没有则第一盏平行光，再没有用环境光。
+- 世界光照（2026-10-07，`ToonApplyWorldLight`）：原 shader 只有主光、没有环境光项，角色在车里/阴影里仍按全日照发亮。现在用级联阴影（含云影）
+  算太阳可见度，查询点沿光方向抬 0.2 m（越过自身近侧，类似 NiloToon 的 receive-shadow depth bias，避免被自己的阴影图遮住）；
+  头部（脸 + 离头中心 0.15 m 内的头发，0.3 m 处渐变回逐像素）统一用头中心（Head_M 上方 0.1 m）再多抬 0.15 m 的一个点，阴影边不会切过脸、刘海不会成黑块。
+  光的辐亮度 = mix(当地漫反射环境光（DDGI，否则天空 SH）, 太阳, 可见度)，cel 和边缘光乘可见度。全日照下与原来完全相同。
 - 自阴影用引擎的太阳级联阴影代替角色专用阴影图；附加光源（点/聚光）未实现。
 
 验证（Debug，1024²，headless）：
