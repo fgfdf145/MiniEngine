@@ -30,8 +30,31 @@
 4. **反打辅助**：车身侧偏角 β = atan2(rightSpeed, forwardSpeed)，去掉 2° 死区后除以 δ_max 作为范围中心
    （0.08 s 低通，前进速度 1.5–3 m/s 间渐入）。最终输出 `clamp(centre + request · share, -1, 1)`。
    松开摇杆时前轮指向车的行进方向，前轮无侧偏，等价于自动反打；正常过弯 β 在死区内，不受影响。
+5. **前轮侧偏闭环限制**（2026-10-07 加）：第 3 步是按车速算的开环值，假设 1 g 抓地，看不到刹车、
+   载荷转移、低附着或车已经在推头。这一步每帧读车：前轴中心的速度方向
+   θ_f = atan2(frontAxleRightSpeed, forwardSpeed)（`VehicleTelemetry::frontAxleRightSpeed`，
+   Jolt `GetPointVelocity` 取前轴两悬挂安装点中点，含横摆），前轮侧偏角就是 δ − θ_f。把 δ 限制在
+   `θ_f ± α_peak · slipLimitShare` 之内，0.04 s 低通 θ_f。只减舵、不加舵：上限取 `max(θ_f + α, 0)`，
+   下限取 `min(θ_f − α, 0)`，所以甩尾时不会自己把前轮打向反打方向（那是第 4 步的事，关掉反打辅助就
+   不该有反打）。在 `fullLockSpeed` 到 2 倍之间渐入，倒车不限。
+   - 遥测核对：GT-R 实车测试里 |δ − θ_f| 与轮胎自己算的侧偏角相差 < 0.3°。
+   - `slipLimitShare` 默认 1.1：数据里的峰值角（AC `FRICTION_LIMIT_ANGLE`）是静载下的，外侧重载轮
+     峰值更靠后，加上 Ackermann。R34 扫描（满舵阶跃，平均横向 g）：60 km/h 0.8→0.91 g、1.0→1.11、
+     1.1→1.17、1.2→1.17、1.4→1.16，不限 1.15；120 km/h 刹车 0.4：1.0→1.04、1.1→1.06，不限 1.03。
+
+### 实测（满舵阶跃，开环限角之外加/不加闭环）
+
+| 车 / 工况 | 前轮平均侧偏 | 横向 g | 掉速 |
+|---|---|---|---|
+| R34 60 km/h 干地（推头） | 12.4° → 7.5°（峰值 7.53°，share 1.0） | 1.15 → 1.11（share 1.1 时 1.17） | 7.8 → 4.4 km/h |
+| R34 120 km/h 刹车 0.4 | 10.9° → 7.8° | 1.03 → 1.04 | 42.7 → 41.2 km/h |
+| GT-R 60 km/h 干地（share 1.1，单测） | 8.36° → 6.43°（峰值 6.04°） | 1.43 → 1.45 | 4.4 → 1.5 km/h |
+
+120 km/h 满舵带油门时两台车都是转向过度甩尾（β 到 −11°～−19°），前轮在反打一侧，闭环基本不起作用，
+这是预期：它只管推头。
 
 ## 可调参数（面板）
 
-Stick Response Curve、Steer Time、Return Time、Smoothing、Speed-Sensitive Lock（Corner Grip、Full Lock Below、
-Least Lock Share）、Counter-Steer Assist（Slide Dead Zone）。关掉总开关即恢复原来的直接映射。
+Stick Response Curve、Steer Time、Return Time、Smoothing、Full Lock Below、Speed-Sensitive Lock（Corner Grip、
+Least Lock Share）、Front Slip Limit（Peak Slip Share）、Counter-Steer Assist（Slide Dead Zone）。关掉总开关即恢复
+原来的直接映射。

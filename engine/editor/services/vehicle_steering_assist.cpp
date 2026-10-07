@@ -59,7 +59,7 @@ float ComputeAssistedSteering(
     const float request = std::clamp(input.request, -1.0f, 1.0f);
     if (!settings.enabled)
     {
-        state = VehicleSteeringAssistState{request, request, 0.0f};
+        state = VehicleSteeringAssistState{request, request, 0.0f, 0.0f};
         return request;
     }
     const float dt = std::max(deltaSeconds, 0.0f);
@@ -82,7 +82,24 @@ float ComputeAssistedSteering(
         centreTarget = std::clamp(weight * beyond / (input.maxSteerDegrees * kRadiansPerDegree), -1.0f, 1.0f);
     }
     state.centre += (centreTarget - state.centre) * Blend(settings.smoothingSeconds * 2.0f, dt);
+    float steering = std::clamp(state.centre + state.request * ComputeSteeringLockShare(settings, input), -1.0f, 1.0f);
 
-    return std::clamp(state.centre + state.request * ComputeSteeringLockShare(settings, input), -1.0f, 1.0f);
+    // The front tyres' slip angle is the wheels' angle less the way the front axle travels: past the peak
+    // either side they only scrub. Unlike the speed-sensitive lock this reads the car, so it follows the
+    // grip that braking, a load change or a push wide leaves. It only takes lock away: in a slide it does
+    // not turn straight wheels into it (that is the counter-steer assist's to do).
+    const float travel = input.forwardSpeed > kSlipMinSpeed ? std::atan2(input.frontRightSpeed, input.forwardSpeed) : 0.0f;
+    state.frontTravel += (travel - state.frontTravel) * Blend(settings.smoothingSeconds, dt);
+    if (settings.slipLimit && input.maxSteerDegrees > 0.0f)
+    {
+        const float lock = input.maxSteerDegrees * kRadiansPerDegree;
+        const float slip = std::max(input.peakSlipDegrees, 0.0f) * std::max(settings.slipLimitShare, 0.0f) * kRadiansPerDegree;
+        const float most = std::max((state.frontTravel + slip) / lock, 0.0f);
+        const float least = std::min((state.frontTravel - slip) / lock, 0.0f);
+        const float limited = std::clamp(steering, least, most);
+        const float weight = std::clamp(input.forwardSpeed / std::max(settings.fullLockSpeed, 0.1f) - 1.0f, 0.0f, 1.0f);
+        steering = std::clamp(steering + (limited - steering) * weight, -1.0f, 1.0f);
+    }
+    return steering;
 }
 }
