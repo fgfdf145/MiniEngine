@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 
+#include <array>
 #include <vector>
 
 namespace me
@@ -16,6 +17,13 @@ inline constexpr ImTextureID kViewportTextureId = 0xFFFF'FFFF'FFFF'F001ull;
 inline constexpr ImTextureID kMinimapTextureId = 0xFFFF'FFFF'FFFF'F002ull;
 // The selection outline drawn over the viewport (selection_outline_pass.h), one per swapchain image.
 inline constexpr ImTextureID kSelectionOutlineTextureId = 0xFFFF'FFFF'FFFF'F003ull;
+// The quad recording's cameras (front, rear, left, right), each the tone mapped image of its view,
+// for the Quad Recording window's preview.
+inline constexpr std::array<ImTextureID, 4> kCaptureViewTextureIds = {
+    0xFFFF'FFFF'FFFF'F010ull,
+    0xFFFF'FFFF'FFFF'F011ull,
+    0xFFFF'FFFF'FFFF'F012ull,
+    0xFFFF'FFFF'FFFF'F013ull};
 
 // One frame's ImGui draw data, copied for the render thread to draw while the main thread builds
 // the next frame in the same ImGui context. Every texture reference is resolved to its ID while

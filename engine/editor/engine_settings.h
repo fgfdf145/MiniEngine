@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <imgui.h>
+#include <engine/editor/services/quad_recording.h>
 #include <engine/platform/ui/ui_scale.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
@@ -80,6 +81,8 @@ struct EngineSettings
     EditorUiSettings editorUi;
     EngineAudioSettings audio;
     EngineViewSettings view;
+    // The Quad Recording window's cameras and video.
+    QuadRecordingSettings quadRecording;
 };
 
 // Sets the camera's and the renderer's settings from the saved ones; the G-buffer view is left as it is.

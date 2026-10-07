@@ -103,6 +103,77 @@ int ReadIntOrDefault(const YAML::Node& node, int defaultValue)
     return node.as<int>(defaultValue);
 }
 
+glm::vec3 ReadVec3OrDefault(const YAML::Node& node, const glm::vec3& defaultValue)
+{
+    if (!node || !node.IsSequence() || node.size() != 3)
+    {
+        return defaultValue;
+    }
+    return glm::vec3(
+        ReadFloatOrDefault(node[0], defaultValue.x),
+        ReadFloatOrDefault(node[1], defaultValue.y),
+        ReadFloatOrDefault(node[2], defaultValue.z));
+}
+
+void LoadQuadRecordingSettings(const YAML::Node& node, QuadRecordingSettings& settings)
+{
+    if (!node || !node.IsMap())
+    {
+        return;
+    }
+    if (const YAML::Node layout = node["layout"]; layout && layout.IsScalar())
+    {
+        settings.layout = layout.as<std::string>() == "cross" ? VideoMosaicLayout::Cross : VideoMosaicLayout::Grid;
+    }
+    settings.framesPerSecond = static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["frames_per_second"], static_cast<int>(settings.framesPerSecond))));
+    settings.labels = ReadBoolOrDefault(node["labels"], settings.labels);
+    if (const YAML::Node cameras = node["cameras"]; cameras && cameras.IsSequence())
+    {
+        for (size_t index = 0; index < std::min<size_t>(cameras.size(), kQuadCameraCount); ++index)
+        {
+            const YAML::Node camera = cameras[index];
+            if (!camera.IsMap())
+            {
+                continue;
+            }
+            QuadCameraSettings& target = settings.cameras[index];
+            target.width = static_cast<uint32_t>(std::max(1, ReadIntOrDefault(camera["width"], static_cast<int>(target.width))));
+            target.height = static_cast<uint32_t>(std::max(1, ReadIntOrDefault(camera["height"], static_cast<int>(target.height))));
+            target.position = ReadVec3OrDefault(camera["position"], target.position);
+            target.target = ReadVec3OrDefault(camera["target"], target.target);
+            target.fovDegrees = ReadFloatOrDefault(camera["fov_degrees"], target.fovDegrees);
+            target.followBodyTilt = ReadBoolOrDefault(camera["follow_body_tilt"], target.followBodyTilt);
+        }
+    }
+    settings = ClampQuadRecordingSettings(settings);
+}
+
+void WriteQuadRecordingSettings(std::ostream& output, const QuadRecordingSettings& settings)
+{
+    const auto vec3 = [](const glm::vec3& value)
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(3) << "[" << value.x << ", " << value.y << ", " << value.z << "]";
+        return stream.str();
+    };
+    output << "  \"quad_recording\": {\n";
+    output << "    \"layout\": \"" << (settings.layout == VideoMosaicLayout::Cross ? "cross" : "grid") << "\",\n";
+    output << "    \"frames_per_second\": " << settings.framesPerSecond << ",\n";
+    output << "    \"labels\": " << JsonBool(settings.labels) << ",\n";
+    output << "    \"cameras\": [\n";
+    for (size_t index = 0; index < settings.cameras.size(); ++index)
+    {
+        const QuadCameraSettings& camera = settings.cameras[index];
+        output << "      {\"width\": " << camera.width << ", \"height\": " << camera.height
+               << ", \"position\": " << vec3(camera.position) << ", \"target\": " << vec3(camera.target)
+               << ", \"fov_degrees\": " << std::fixed << std::setprecision(3) << camera.fovDegrees
+               << ", \"follow_body_tilt\": " << JsonBool(camera.followBodyTilt) << "}"
+               << (index + 1 < settings.cameras.size() ? ",\n" : "\n");
+    }
+    output << "    ]\n";
+    output << "  },\n";
+}
+
 void LoadOptionalUiScale(const YAML::Node& node, std::optional<float>& value)
 {
     if (!node || !node.IsScalar())
@@ -451,6 +522,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
                 std::clamp(ReadFloatOrDefault(audioNode["master_volume"], settings.audio.masterVolume), 0.0f, 1.0f);
             settings.audio.muted = ReadBoolOrDefault(audioNode["muted"], settings.audio.muted);
         }
+        LoadQuadRecordingSettings(root["quad_recording"], settings.quadRecording);
 
         return true;
     }
@@ -537,6 +609,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "    \"master_volume\": " << std::fixed << std::setprecision(3) << settings.audio.masterVolume << ",\n";
         output << "    \"muted\": " << JsonBool(settings.audio.muted) << "\n";
         output << "  },\n";
+        WriteQuadRecordingSettings(output, settings.quadRecording);
         WriteViewSettings(output, settings.view);
         output << "}\n";
 

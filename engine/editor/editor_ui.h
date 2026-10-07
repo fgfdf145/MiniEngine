@@ -130,6 +130,8 @@ struct EditorUiActions
     bool captureViewport = false; // written as a PNG under ProjectRoot()/captures
     // Starts recording the viewport to an AVI under ProjectRoot()/captures, or stops.
     bool toggleVideoRecording = false;
+    // Starts filming the car from four sides into one video under ProjectRoot()/captures, or stops.
+    bool toggleQuadRecording = false;
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
@@ -170,6 +172,10 @@ struct EditorUiFrameResult
     // The Suspension Rigs window's settings for the live rig, taken while it runs. Unset when the
     // window has never been opened: the rig then keeps what it has.
     std::optional<VehicleRigExcitation> vehicleRigExcitation;
+    // The Quad Recording window's cameras, and whether it shows their pictures (the backend then
+    // renders them even while nothing is recorded).
+    QuadRecordingSettings quadRecording;
+    bool quadRecordingPreview = false;
 };
 
 // The editor shell, as Unreal's level editor or Unity's main window: the main menu, the toolbar, the
@@ -276,6 +282,13 @@ class EditorUiController
     void SetVideoRecordingStatus(VideoRecordingIndicator status)
     {
         m_state.videoRecording = std::move(status);
+    }
+    // The quad recording and what its cameras follow, for the Quad Recording window and Tools >
+    // Record Quad Cameras.
+    void SetQuadRecordingStatus(VideoRecordingIndicator status, std::string target)
+    {
+        m_state.quadRecordingStatus = std::move(status);
+        m_state.quadRecordingTarget = std::move(target);
     }
     // The audio output the Preferences window names: the device, or why there is none.
     void SetAudioStatus(std::string status)

@@ -156,7 +156,10 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --frames <count>    渲染指定正整数帧后退出
 --capture <file.png> 与 --frames 一起使用，退出前把最后一帧的视口（色调映射后的 LDR 图）保存为 PNG
 --record <file.mp4|file.avi> 把视口录成视频（.mp4 为 H.264，仅 Windows；.avi 为 MJPEG）：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
---record-fps <n>    --record 的视频帧率，默认 30
+--record-fps <n>    --record 和 --quad-record 的视频帧率，默认 30
+--quad-record <file.mp4|file.avi>
+                    从前后左右四个方向同时拍摄驾驶中的车（--drive，否则选中的模型），边拍边拼成一个视频；
+                    机位用 Window > Quad Recording 保存的设置
 --no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
 --drive <名称>      场景加载完成后像 Play 一样驾驶这个名称的模型实体
 --drive-controls <油门>,<转向>  与 --drive 一起使用：保持这组输入（-1 到 1）代替键盘和手柄，每帧固定推进 1/60 s 仿真，每仿真秒记录一次车的位置、速度、着地轮数和倾角（无人值守的试驾）

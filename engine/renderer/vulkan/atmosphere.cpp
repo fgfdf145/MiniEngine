@@ -51,6 +51,21 @@ VkExtent2D CloudMarchExtent(VkExtent2D sceneExtent)
     return VkExtent2D{std::max((sceneExtent.width + 1) / 2, 1u), std::max((sceneExtent.height + 1) / 2, 1u)};
 }
 
+// The set 1 bindings a view holds its own images in: the aerial perspective volume (storage), the
+// march's samples and the resolved clouds (storage), and the clouds' history (sampled).
+constexpr uint32_t kAerialPerspectiveBinding = 3;
+constexpr uint32_t kCloudTargetBinding = 11;
+constexpr uint32_t kCloudResolvedBinding = 12;
+constexpr uint32_t kCloudHistoryBinding = 13;
+constexpr uint32_t kAtmosphereBindingCount = 15;
+
+VkDescriptorType AtmosphereBindingType(uint32_t binding)
+{
+    return (binding < 4 || (binding >= 7 && binding < 13)) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+           : binding == 6 || binding == 14                 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                                           : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+}
+
 uint32_t GroupCount(uint32_t size, uint32_t groupSize)
 {
     return (size + groupSize - 1) / groupSize;
@@ -82,10 +97,9 @@ VulkanAtmosphere::VulkanAtmosphere(
     try
     {
         CreateImages();
-        // Placeholders until the renderer names the scene's extent (EnsureCloudTarget), so the
-        // descriptors are valid from the start.
-        CreateCloudTargets(VkExtent2D{1, 1});
         CreateDescriptors();
+        // The set Record's shared passes bind, whose view images are 1 x 1 and never read.
+        m_placeholderView = CreateView();
         CreatePipelines(pipelineCache, frameSetLayout);
     }
     catch (...)
@@ -110,9 +124,9 @@ TextureDescriptorBinding VulkanAtmosphere::GetSkyViewBinding() const
     return TextureDescriptorBinding{m_images[kSkyView].view, m_sampler};
 }
 
-TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding() const
+TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding(const View& view) const
 {
-    return TextureDescriptorBinding{m_images[kAerialPerspective].view, m_sampler};
+    return TextureDescriptorBinding{view.m_aerialPerspective.view, m_sampler};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudShapeNoiseBinding() const
@@ -135,31 +149,150 @@ TextureDescriptorBinding VulkanAtmosphere::GetCloudWeatherBinding() const
     return TextureDescriptorBinding{m_cloudNoise[kCloudWeather].view, m_cloudSampler};
 }
 
-TextureDescriptorBinding VulkanAtmosphere::GetCloudTargetBinding() const
+TextureDescriptorBinding VulkanAtmosphere::GetCloudTargetBinding(const View& view) const
 {
-    return TextureDescriptorBinding{m_cloudResolved.view, m_sampler};
+    return TextureDescriptorBinding{view.m_cloudResolved.view, m_sampler};
 }
 
-bool VulkanAtmosphere::EnsureCloudTarget(VkExtent2D sceneExtent)
+VulkanAtmosphere::View::View(VkDevice device)
+    : m_device(device)
+{
+}
+
+VulkanAtmosphere::View::~View()
+{
+    if (m_descriptorPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    }
+    for (LutImage* image : {&m_aerialPerspective, &m_cloudTarget, &m_cloudResolved, &m_cloudHistory})
+    {
+        DestroyImage(m_device, *image);
+    }
+}
+
+void VulkanAtmosphere::DestroyImage(VkDevice device, LutImage& image)
+{
+    if (image.view != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device, image.view, nullptr);
+    }
+    if (image.image != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device, image.image, nullptr);
+    }
+    if (image.memory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device, image.memory, nullptr);
+    }
+    image = LutImage{};
+}
+
+std::unique_ptr<VulkanAtmosphere::View> VulkanAtmosphere::CreateView()
+{
+    std::unique_ptr<View> view(new View(m_device));
+    CreateLutImage(view->m_aerialPerspective, kLutExtents[kAerialPerspective]);
+    // Placeholders until the renderer names the scene's extent (EnsureCloudTarget), so the
+    // descriptors are valid from the start.
+    CreateCloudTargets(*view, VkExtent2D{1, 1});
+
+    const std::array<VkDescriptorPoolSize, 3> poolSizes = {
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
+        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &view->m_descriptorPool), "Failed to create an atmosphere view's descriptor pool");
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = view->m_descriptorPool;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &m_setLayout;
+    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &view->m_descriptorSet), "Failed to allocate an atmosphere view's descriptor set");
+    WriteViewDescriptors(*view);
+    return view;
+}
+
+bool VulkanAtmosphere::EnsureCloudTarget(View& view, VkExtent2D sceneExtent)
 {
     const VkExtent2D extent{std::max(sceneExtent.width, 1u), std::max(sceneExtent.height, 1u)};
-    if (extent.width == m_cloudSceneExtent.width && extent.height == m_cloudSceneExtent.height)
+    if (extent.width == view.m_cloudSceneExtent.width && extent.height == view.m_cloudSceneExtent.height)
     {
         return false;
     }
-    DestroyCloudTargets();
-    CreateCloudTargets(extent);
-    WriteCloudTargetDescriptors();
+    for (LutImage* image : {&view.m_cloudTarget, &view.m_cloudResolved, &view.m_cloudHistory})
+    {
+        DestroyImage(m_device, *image);
+    }
+    CreateCloudTargets(view, extent);
+    WriteViewDescriptors(view);
     return true;
 }
 
-void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer)
+void VulkanAtmosphere::InitializeView(VkCommandBuffer commandBuffer, View& view)
 {
-    const bool historyValid = !m_cloudTargetFresh;
-    if (m_cloudTargetFresh)
+    if (view.m_initialized)
+    {
+        return;
+    }
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = view.m_aerialPerspective.image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    const VkClearColorValue black{};
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(commandBuffer, view.m_aerialPerspective.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
+    GlobalBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    view.m_initialized = true;
+}
+
+void VulkanAtmosphere::RecordView(
+    VkCommandBuffer commandBuffer,
+    View& view,
+    VkDescriptorSet frameDescriptorSet,
+    bool atmosphere,
+    VulkanGpuTimer* timer)
+{
+    InitializeView(commandBuffer, view);
+    if (atmosphere)
+    {
+        // The volume follows the view's frustum, so it is rebuilt every frame. The previous frame's
+        // reads of it came before Record's opening barrier.
+        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, view.m_descriptorSet};
+        vkCmdBindDescriptorSets(
+            commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+        Dispatch(commandBuffer, kAerialPerspective, GroupCount(32, 8), GroupCount(32, 8), 32);
+        GlobalBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_ACCESS_SHADER_READ_BIT);
+    }
+    RecordClouds(commandBuffer, view, frameDescriptorSet, timer);
+}
+
+void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer)
+{
+    const bool historyValid = !view.m_cloudTargetFresh;
+    if (view.m_cloudTargetFresh)
     {
         std::array<VkImageMemoryBarrier, 3> barriers{};
-        const std::array<VkImage, 3> images = {m_cloudTarget.image, m_cloudResolved.image, m_cloudHistory.image};
+        const std::array<VkImage, 3> images = {view.m_cloudTarget.image, view.m_cloudResolved.image, view.m_cloudHistory.image};
         for (size_t index = 0; index < barriers.size(); ++index)
         {
             VkImageMemoryBarrier& barrier = barriers[index];
@@ -183,7 +316,7 @@ void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorS
             nullptr,
             static_cast<uint32_t>(barriers.size()),
             barriers.data());
-        m_cloudTargetFresh = false;
+        view.m_cloudTargetFresh = false;
     }
     else
     {
@@ -197,22 +330,23 @@ void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorS
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     }
 
+    const VkExtent2D sceneExtent = view.m_cloudSceneExtent;
     // Must match CloudReconstruction in shaders/vulkan/cloud_reconstruction.glsl.
     const std::array<uint32_t, 4> constants = {
-        m_cloudFrame++ & 3u, historyValid ? 1u : 0u, m_cloudSceneExtent.width, m_cloudSceneExtent.height};
-    const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
+        view.m_cloudFrame++ & 3u, historyValid ? 1u : 0u, sceneExtent.width, sceneExtent.height};
+    const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, view.m_descriptorSet};
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
     vkCmdPushConstants(
         commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, static_cast<uint32_t>(sizeof(constants)), constants.data());
-    const VkExtent2D marchExtent = CloudMarchExtent(m_cloudSceneExtent);
+    const VkExtent2D marchExtent = CloudMarchExtent(sceneExtent);
     Dispatch(commandBuffer, kCloudMarchPipeline, GroupCount(marchExtent.width, 8), GroupCount(marchExtent.height, 8), 1);
     if (timer != nullptr)
     {
         timer->Mark(commandBuffer, "CloudMarch");
     }
     GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-    Dispatch(commandBuffer, kCloudResolvePipeline, GroupCount(m_cloudSceneExtent.width, 8), GroupCount(m_cloudSceneExtent.height, 8), 1);
+    Dispatch(commandBuffer, kCloudResolvePipeline, GroupCount(sceneExtent.width, 8), GroupCount(sceneExtent.height, 8), 1);
 
     // The resolved clouds become next frame's history; the resolve's reads of the old one come
     // first.
@@ -225,8 +359,8 @@ void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorS
     VkImageCopy copy{};
     copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.extent = VkExtent3D{m_cloudSceneExtent.width, m_cloudSceneExtent.height, 1};
-    vkCmdCopyImage(commandBuffer, m_cloudResolved.image, VK_IMAGE_LAYOUT_GENERAL, m_cloudHistory.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    copy.extent = VkExtent3D{sceneExtent.width, sceneExtent.height, 1};
+    vkCmdCopyImage(commandBuffer, view.m_cloudResolved.image, VK_IMAGE_LAYOUT_GENERAL, view.m_cloudHistory.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
     GlobalBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -269,55 +403,54 @@ void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkIm
     CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), (std::string("Failed to create the view of the ") + name).c_str());
 }
 
-void VulkanAtmosphere::CreateCloudTargets(VkExtent2D sceneExtent)
+void VulkanAtmosphere::CreateCloudTargets(View& view, VkExtent2D sceneExtent)
 {
-    CreateCloudImage(m_cloudTarget, CloudMarchExtent(sceneExtent), VK_IMAGE_USAGE_STORAGE_BIT, "cloud march target");
+    CreateCloudImage(view.m_cloudTarget, CloudMarchExtent(sceneExtent), VK_IMAGE_USAGE_STORAGE_BIT, "cloud march target");
     CreateCloudImage(
-        m_cloudResolved,
+        view.m_cloudResolved,
         sceneExtent,
         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         "resolved clouds");
-    CreateCloudImage(m_cloudHistory, sceneExtent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "cloud history");
-    m_cloudSceneExtent = sceneExtent;
-    m_cloudTargetFresh = true;
+    CreateCloudImage(view.m_cloudHistory, sceneExtent, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "cloud history");
+    view.m_cloudSceneExtent = sceneExtent;
+    view.m_cloudTargetFresh = true;
 }
 
-void VulkanAtmosphere::DestroyCloudTargets()
+void VulkanAtmosphere::WriteViewDescriptors(const View& view)
 {
-    for (LutImage* image : {&m_cloudTarget, &m_cloudResolved, &m_cloudHistory})
+    std::array<VkDescriptorImageInfo, kAtmosphereBindingCount> infos{};
+    for (size_t lut = 0; lut < kLutCount; ++lut)
     {
-        if (image->view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, image->view, nullptr);
-        }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
-        *image = LutImage{};
+        infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
     }
-    m_cloudSceneExtent = VkExtent2D{};
-}
-
-void VulkanAtmosphere::WriteCloudTargetDescriptors()
-{
-    const std::array<VkDescriptorImageInfo, 3> infos = {
-        VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL},
-        VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL},
-        VkDescriptorImageInfo{m_sampler, m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL}};
-    std::array<VkWriteDescriptorSet, 3> writes{};
-    for (uint32_t index = 0; index < writes.size(); ++index)
+    infos[kAerialPerspectiveBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_aerialPerspective.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[4] = VkDescriptorImageInfo{m_sampler, m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[5] = VkDescriptorImageInfo{m_sampler, m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[7] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudShape].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[8] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudDetail].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[9] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudShadow.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[10] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudWeather].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[kCloudTargetBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[kCloudResolvedBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[kCloudHistoryBinding] = VkDescriptorImageInfo{m_sampler, view.m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo plumeInfo{m_plumeBuffer, 0, VK_WHOLE_SIZE};
+    std::array<VkWriteDescriptorSet, kAtmosphereBindingCount> writes{};
+    for (uint32_t binding = 0; binding < writes.size(); ++binding)
     {
-        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[index].dstSet = m_descriptorSet;
-        writes[index].dstBinding = 11 + index;
-        writes[index].descriptorCount = 1;
-        writes[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[index].pImageInfo = &infos[index];
+        writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[binding].dstSet = view.m_descriptorSet;
+        writes[binding].dstBinding = binding;
+        writes[binding].descriptorCount = 1;
+        writes[binding].descriptorType = AtmosphereBindingType(binding);
+        if (binding == 6 || binding == 14)
+        {
+            writes[binding].pBufferInfo = binding == 6 ? &irradianceInfo : &plumeInfo;
+        }
+        else
+        {
+            writes[binding].pImageInfo = &infos[binding];
+        }
     }
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
@@ -348,7 +481,21 @@ void VulkanAtmosphere::Record(
 {
     if (!m_imagesInitialized)
     {
-        std::array<VkImageMemoryBarrier, kInitialImageCount> barriers{};
+        // The LUTs (the aerial perspective volume is each view's), the noise and the shadow map.
+        std::vector<VkImage> images;
+        for (const LutImage& image : m_images)
+        {
+            if (image.image != VK_NULL_HANDLE)
+            {
+                images.push_back(image.image);
+            }
+        }
+        for (const LutImage& image : m_cloudNoise)
+        {
+            images.push_back(image.image);
+        }
+        images.push_back(m_cloudShadow.image);
+        std::vector<VkImageMemoryBarrier> barriers(images.size());
         for (size_t index = 0; index < barriers.size(); ++index)
         {
             VkImageMemoryBarrier& barrier = barriers[index];
@@ -357,9 +504,7 @@ void VulkanAtmosphere::Record(
             barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = index < kNoiseImagesBegin   ? m_images[index].image
-                            : index < kShadowImageIndex ? m_cloudNoise[index - kNoiseImagesBegin].image
-                                                        : m_cloudShadow.image;
+            barrier.image = images[index];
             barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             barrier.srcAccessMask = 0;
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -379,6 +524,10 @@ void VulkanAtmosphere::Record(
         const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         for (const LutImage& image : m_images)
         {
+            if (image.image == VK_NULL_HANDLE)
+            {
+                continue;
+            }
             vkCmdClearColorImage(commandBuffer, image.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
         }
         for (const LutImage& image : m_cloudNoise)
@@ -392,6 +541,7 @@ void VulkanAtmosphere::Record(
         // The plume table, before the plume map is first built below.
         const VkBufferCopy plumes{0, 0, static_cast<VkDeviceSize>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell)};
         vkCmdCopyBuffer(commandBuffer, m_plumeStaging, m_plumeBuffer, 1, &plumes);
+        InitializeView(commandBuffer, *m_placeholderView);
         m_imagesInitialized = true;
     }
     else if (m_plumeStaging != VK_NULL_HANDLE && ++m_plumeStagingAge > VulkanCommandContext::kMaxFramesInFlight)
@@ -412,7 +562,7 @@ void VulkanAtmosphere::Record(
     {
         // The noise depends on nothing, so it is built once, whatever the mode; the barrier at the
         // end makes it visible to the sky and the probe.
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
+        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -435,7 +585,7 @@ void VulkanAtmosphere::Record(
     {
         // The plumes have moved on in their lives (cloud_weather.comp reads the phases from the
         // frame's uniforms); the barrier above ordered last frame's reads of the map before this.
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
+        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -453,7 +603,7 @@ void VulkanAtmosphere::Record(
 
     if (parameters != nullptr)
     {
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_descriptorSet};
+        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -475,7 +625,6 @@ void VulkanAtmosphere::Record(
         Dispatch(commandBuffer, kSkyView, GroupCount(192, 8), GroupCount(108, 8), 1);
         // Every frame, as the map follows the camera; all ones when the clouds are off.
         Dispatch(commandBuffer, kCloudShadowPipeline, GroupCount(kCloudShadowSize, 8), GroupCount(kCloudShadowSize, 8), 1);
-        Dispatch(commandBuffer, kAerialPerspective, GroupCount(32, 8), GroupCount(32, 8), 32);
         // The SH projection samples the sky-view LUT written above.
         GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
         Dispatch(commandBuffer, kIrradiancePipeline, 1, 1, 1);
@@ -504,44 +653,50 @@ void VulkanAtmosphere::Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, 
     vkCmdDispatch(commandBuffer, x, y, z);
 }
 
+void VulkanAtmosphere::CreateLutImage(LutImage& image, VkExtent3D extent)
+{
+    const bool volume = extent.depth > 1;
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = volume ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    imageInfo.extent = extent;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = kLutFormat;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create an atmosphere LUT");
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
+    VkMemoryAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = requirements.size;
+    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate an atmosphere LUT");
+    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind an atmosphere LUT");
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image.image;
+    viewInfo.viewType = volume ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = kLutFormat;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create an atmosphere LUT view");
+}
+
 void VulkanAtmosphere::CreateImages()
 {
+    // The aerial perspective volume is each view's (CreateView).
     for (size_t lut = 0; lut < kLutCount; ++lut)
     {
-        const VkExtent3D extent = kLutExtents[lut];
-        const bool volume = extent.depth > 1;
-        LutImage& image = m_images[lut];
-
-        VkImageCreateInfo imageInfo{};
-        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imageInfo.imageType = volume ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-        imageInfo.extent = extent;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.format = kLutFormat;
-        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create an atmosphere LUT");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate an atmosphere LUT");
-        CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind an atmosphere LUT");
-
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = image.image;
-        viewInfo.viewType = volume ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = kLutFormat;
-        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create an atmosphere LUT view");
+        if (lut != kAerialPerspective)
+        {
+            CreateLutImage(m_images[lut], kLutExtents[lut]);
+        }
     }
 
     for (size_t noise = 0; noise < kCloudNoiseCount; ++noise)
@@ -740,13 +895,11 @@ void VulkanAtmosphere::CreateDescriptors()
     // 6 the SH buffer, 7-8 the clouds' billow volumes, 9 their shadow map, 10 their plume map, 11
     // the march's samples and 12 the resolved clouds as storage images, 13 the clouds' history
     // sampled, and 14 their plume table.
-    std::array<VkDescriptorSetLayoutBinding, 15> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, kAtmosphereBindingCount> bindings{};
     for (uint32_t binding = 0; binding < bindings.size(); ++binding)
     {
         bindings[binding].binding = binding;
-        bindings[binding].descriptorType = (binding < 4 || (binding >= 7 && binding < 13)) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-                                           : binding == 6 || binding == 14                 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
-                                                                                           : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorType = AtmosphereBindingType(binding);
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
@@ -756,58 +909,6 @@ void VulkanAtmosphere::CreateDescriptors()
     layoutInfo.pBindings = bindings.data();
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create the atmosphere set layout");
 
-    const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create the atmosphere descriptor pool");
-
-    VkDescriptorSetAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = m_descriptorPool;
-    allocateInfo.descriptorSetCount = 1;
-    allocateInfo.pSetLayouts = &m_setLayout;
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_descriptorSet), "Failed to allocate the atmosphere descriptor set");
-
-    std::array<VkDescriptorImageInfo, 15> infos{};
-    for (size_t lut = 0; lut < kLutCount; ++lut)
-    {
-        infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
-    }
-    infos[4] = VkDescriptorImageInfo{m_sampler, m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[5] = VkDescriptorImageInfo{m_sampler, m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[7] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudShape].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[8] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudDetail].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[9] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudShadow.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[10] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudWeather].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[11] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[12] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[13] = VkDescriptorImageInfo{m_sampler, m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo plumeInfo{m_plumeBuffer, 0, VK_WHOLE_SIZE};
-    std::array<VkWriteDescriptorSet, 15> writes{};
-    for (uint32_t binding = 0; binding < writes.size(); ++binding)
-    {
-        writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[binding].dstSet = m_descriptorSet;
-        writes[binding].dstBinding = binding;
-        writes[binding].descriptorCount = 1;
-        writes[binding].descriptorType = bindings[binding].descriptorType;
-        if (binding == 6 || binding == 14)
-        {
-            writes[binding].pBufferInfo = binding == 6 ? &irradianceInfo : &plumeInfo;
-        }
-        else
-        {
-            writes[binding].pImageInfo = &infos[binding];
-        }
-    }
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout)
@@ -868,12 +969,7 @@ void VulkanAtmosphere::DestroyHandles()
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         m_pipelineLayout = VK_NULL_HANDLE;
     }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-        m_descriptorSet = VK_NULL_HANDLE;
-    }
+    m_placeholderView.reset();
     if (m_setLayout != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
@@ -935,7 +1031,6 @@ void VulkanAtmosphere::DestroyHandles()
         vkFreeMemory(m_device, m_cloudShadow.memory, nullptr);
     }
     m_cloudShadow = LutImage{};
-    DestroyCloudTargets();
     for (LutImage& image : m_cloudNoise)
     {
         if (image.view != VK_NULL_HANDLE)

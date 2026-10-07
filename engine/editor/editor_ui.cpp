@@ -8,6 +8,7 @@
 #include "ui/panels/asset_browser_panel.h"
 #include "ui/panels/camera_panel.h"
 #include "ui/panels/graphics_debug_panel.h"
+#include "ui/panels/quad_recording_panel.h"
 #include "ui/panels/input_monitor_panel.h"
 #include "ui/panels/scene_panel.h"
 #include "ui/panels/suspension_rigs_panel.h"
@@ -49,6 +50,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<InputMonitorPanel>();
     m_windows.Register<VehiclePanel>();
     m_windows.Register<SuspensionRigsPanel>();
+    m_windows.Register<QuadRecordingPanel>();
     m_windows.Register<ThemePanel>();
     // Floating tool windows, opened by commands or by other windows.
     m_windows.Register<ModelProcessorWindow>();
@@ -138,6 +140,10 @@ void EditorUiController::RegisterCommands()
     {
         m_commandActions.toggleVideoRecording = true;
     };
+    scene.toggleQuadRecording = [this]
+    {
+        m_commandActions.toggleQuadRecording = true;
+    };
     scene.stepSimulation = [this]
     {
         m_commandActions.stepVehicleDrive = true;
@@ -175,6 +181,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
     {
         m_style.ApplySettings(settings.editorUi);
         m_state.audio = settings.audio;
+        m_state.quadRecording = settings.quadRecording;
         m_windows.ApplyOpenState(settings.editorUi.windows);
         m_hasAppliedEngineSettings = true;
     }
@@ -187,6 +194,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
 {
     settings.version = 1;
     settings.audio = m_state.audio;
+    settings.quadRecording = m_state.quadRecording;
     m_windows.WriteOpenState(settings.editorUi.windows);
     m_style.WriteSettings(settings.editorUi);
 }
@@ -228,6 +236,9 @@ EditorUiFrameResult EditorUiController::Draw(
 
     const float previousUiScale = m_style.UiScaleMultiplier();
     const EngineAudioSettings previousAudio = m_state.audio;
+    const QuadRecordingSettings previousQuadRecording = m_state.quadRecording;
+    // The Quad Recording window asks for its preview again each frame it draws.
+    m_state.quadRecordingPreview = false;
     // Every panel's open state, to save the settings when one opens or closes.
     const std::vector<bool> previousOpen = m_windows.CapturePanelOpenState();
 
@@ -272,7 +283,8 @@ EditorUiFrameResult EditorUiController::Draw(
     // The Theme panel sets engineSettingsChanged itself when the palette changes.
     result.engineSettingsChanged = result.engineSettingsChanged ||
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
-                                   windowToggled || previousAudio != m_state.audio;
+                                   windowToggled || previousAudio != m_state.audio ||
+                                   previousQuadRecording != m_state.quadRecording;
 
     result.renderDebug = m_state.renderDebug;
     result.audio = m_state.audio;
@@ -281,6 +293,8 @@ EditorUiFrameResult EditorUiController::Draw(
     result.vehicleHaptics = m_state.vehicle.haptics;
     result.vehicleSteeringAssist = m_state.vehicle.steeringAssist;
     result.vehicleManualGearbox = m_state.vehicle.manualGearbox;
+    result.quadRecording = m_state.quadRecording;
+    result.quadRecordingPreview = m_state.quadRecordingPreview;
     return result;
 }
 
@@ -319,6 +333,7 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
                                     : m_state.renderDebug.hardwareRayTracing ? RenderPipelineMode::Hybrid
                                                                              : RenderPipelineMode::Rasterization;
     m_state.commands.videoRecording = m_state.videoRecording.active;
+    m_state.commands.quadRecording = m_state.quadRecordingStatus.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
     m_state.commands.playState = !m_state.vehicleStatus.active ? PlayState::Stopped
                                : m_state.vehicleStatus.paused ? PlayState::Paused

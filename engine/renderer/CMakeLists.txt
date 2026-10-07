@@ -48,6 +48,7 @@ add_library(engine_render_core
     render_types.h
     renderer_world.cpp
     renderer_world.h
+    scene_capture_view.h
     scene_lighting.cpp
     scene_lighting.h
     shadow_cascades.cpp
@@ -183,6 +184,7 @@ add_library(engine_renderer
     vulkan/sampler_settings.h
     vulkan/scene_render_targets.cpp
     vulkan/scene_render_targets.h
+    vulkan/scene_view.h
     vulkan/selection_outline_pass.cpp
     vulkan/selection_outline_pass.h
     vulkan/skinning_pass.cpp

@@ -6,6 +6,7 @@
 
 #include <engine/editor/editor_commands.h>
 #include <engine/editor/engine_settings.h>
+#include <engine/editor/services/quad_recording.h>
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/renderer/camera.h>
@@ -84,6 +85,13 @@ struct EditorSharedState
     VehicleRigStatus vehicleRigStatus;
     std::unordered_map<entt::entity, std::string> driverProblems;
     VideoRecordingIndicator videoRecording;
+    // The Quad Recording window: the cameras and the video (kept in the engine settings), whether
+    // the window shows their pictures this frame, and, from the backend, the recording and what the
+    // cameras follow (the driven car, else the selection; empty with neither).
+    QuadRecordingSettings quadRecording;
+    bool quadRecordingPreview = false;
+    VideoRecordingIndicator quadRecordingStatus;
+    std::string quadRecordingTarget;
     ImTextureID minimapTexture = ImTextureID{};
     ImTextureID selectionOutlineTexture = ImTextureID{};
     bool dlssAvailable = false;

@@ -37,6 +37,10 @@ struct EditorApplicationOptions
     // counts toward --frames, at --record-fps frames a second (30 by default).
     std::optional<std::filesystem::path> recordPath;
     uint32_t recordFramesPerSecond = 30;
+    // --quad-record FILE.mp4 or FILE.avi: films the driven car (--drive), else the selected model, from
+    // four sides at once into one video, its cameras as the Quad Recording window last saved them;
+    // starts and paces as --record does, at --record-fps.
+    std::optional<std::filesystem::path> quadRecordPath;
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;

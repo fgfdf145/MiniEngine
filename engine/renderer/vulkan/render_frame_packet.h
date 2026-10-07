@@ -7,6 +7,7 @@
 #include <engine/renderer/render_transform_snapshot.h>
 #include <engine/renderer/render_types.h>
 #include <engine/renderer/renderer_world.h>
+#include <engine/renderer/scene_capture_view.h>
 #include <engine/renderer/scene_lighting.h>
 #include <engine/scene/scene_environment.h>
 
@@ -58,6 +59,8 @@ struct RenderFramePacket
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;
     RenderTransformSnapshot transforms;
     ImGuiFrameSnapshot ui;
+    // The quad recording's cameras this frame, in the canvas's order; none while nothing films.
+    std::vector<SceneCaptureView> captureViews;
 };
 
 // What the render thread learned drawing a frame, for the main thread's next one.
