@@ -640,6 +640,7 @@ VulkanRenderer::~VulkanRenderer()
     m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textureStore.clear();
+    m_textureStagingBatches.clear();
     m_stagedTextures.clear();
     m_renderSubmeshes.clear();
     m_liveSubmeshes.clear();
@@ -3148,7 +3149,12 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious(const RenderFramePacket&
         return;
     }
 
-    // Staged textures the scene no longer needed are released with the change they were for.
+    // Staged textures the scene no longer needed are released with the change they were for, after
+    // their uploads (rarely any: a change stages only what it asks for).
+    if (!m_stagedTextures.empty())
+    {
+        m_textureStagingBatches.clear();
+    }
     m_stagedTextures.clear();
     m_failedTextureKeys.clear();
     m_texturesRequested = 0;
@@ -3195,12 +3201,16 @@ void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
 
 void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
 {
-    // A few per frame: each upload copies megabytes and waits for the queue, and the frame loop
-    // should keep its pace while a large scene streams in.
-    // Small map textures by the thousand (a streamed cell brings hundreds) are a memcpy into the batch's
-    // staging and a pooled image each; four a frame held a cell back for seconds.
+    // A few per frame: the frame loop should keep its pace while a large scene streams in. Small map
+    // textures by the thousand (a streamed cell brings hundreds) are a memcpy into the batch's staging
+    // and a pooled image each; four a frame held a cell back for seconds. Fewer a frame by a time budget
+    // starved the commit, which waits for every texture of the change while cells keep coming.
     constexpr size_t kStagedTexturesPerFrame = 64;
     std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerFrame);
+    std::erase_if(m_textureStagingBatches, [](const std::unique_ptr<VulkanUploadBatch>& batch)
+                  {
+                      return batch->IsComplete();
+                  });
 
     // Results of a change that was abandoned are dropped; a later change prepares what it needs
     // again, from the compressed texture cache.
@@ -3208,7 +3218,7 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
     {
         try
         {
-            VulkanUploadBatch uploadBatch(
+            auto uploadBatch = std::make_unique<VulkanUploadBatch>(
                 m_device->GetPhysicalDevice(),
                 m_device->GetHandle(),
                 m_device->GetQueueFamilies().graphicsFamily.value(),
@@ -3221,9 +3231,12 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
                     m_failedTextureKeys.insert(result.key);
                     continue;
                 }
-                m_stagedTextures[result.key] = UploadPreparedTexture(*result.texture, result.usage, uploadBatch);
+                m_stagedTextures[result.key] = UploadPreparedTexture(*result.texture, result.usage, *uploadBatch);
             }
-            uploadBatch.Flush();
+            // The frames after this one sample the textures only once the change commits, and the
+            // batch's barrier orders its copies before them: nothing here waits for the GPU.
+            uploadBatch->SubmitWithoutWait();
+            m_textureStagingBatches.push_back(std::move(uploadBatch));
         }
         catch (const std::exception& error)
         {
@@ -3260,9 +3273,10 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
 
 void VulkanRenderer::AbandonPendingTextures()
 {
-    // Staged textures were uploaded by batches that have completed and are referenced by no
-    // descriptor set, so they can go at once.
+    // Staged textures are referenced by no descriptor set; they go once the batches uploading them have
+    // run.
     m_sceneUploadPending = false;
+    m_textureStagingBatches.clear();
     m_stagedTextures.clear();
     m_failedTextureKeys.clear();
     m_texturesRequested = 0;
