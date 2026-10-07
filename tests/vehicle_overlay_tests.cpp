@@ -215,7 +215,7 @@ void TestOverlayDrawsTheBrushPatch()
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
     const VehicleWheelState& outer = wheels[0];
     Require(outer.brushTyre && outer.inContact, "the outer front tyre is a brush tyre on the ground");
-    Require(outer.brushRibCount == 10, "ten ribs");
+    Require(outer.brushRibCount == 50, "the default 50 ribs, got " + std::to_string(outer.brushRibCount));
     float sliding = 0.0f;
     for (int rib = 0; rib < outer.brushRibCount; ++rib)
     {
@@ -230,7 +230,7 @@ void TestOverlayDrawsTheBrushPatch()
     Require(sliding > 0.0f, "cornering hard, some bristles slide");
     Require(fy * outer.carcassDeflection.y > 0.0f, "the carcass is pushed the way the road pushes the tyre");
 
-    // Recut into more ribs while driving (the Vehicle panel's Brush Ribs): the patch shows them at once.
+    // Recut into fewer ribs while driving (the Vehicle panel's Brush Ribs): the patch shows them at once.
     world.SetVehicleBrushTyreBristles(car, 24, 0);
     Simulate(world, 0.2f);
     const VehicleWheelState recut = world.GetVehicleWheels(car)[0];
