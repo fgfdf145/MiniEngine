@@ -12,6 +12,7 @@
 #include <engine/renderer/reference_path_tracer.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -151,6 +152,8 @@ class VulkanRayScene
         VkDeviceMemory memory = VK_NULL_HANDLE;
         void* mapped = nullptr;
         VkDeviceSize size = 0;
+        // What CreateBuffer was asked for (it may have fallen back to system memory).
+        bool nearGpu = false;
     };
 
     // A built hierarchy and the mesh it was built from: an address alone could be a new mesh
@@ -203,6 +206,18 @@ class VulkanRayScene
     // Host visible and coherent, mapped. nearGpu puts it in video memory the CPU can write (resizable
     // BAR) when the device has such memory and room in it: for the small buffers every hit reads.
     Buffer CreateBuffer(VkDeviceSize size, bool nearGpu = false) const;
+    // A build's hierarchy buffers: a spare one of the kind that holds size, else a new one with room to
+    // grow. RecycleBuffer gives one back (the GPU done with it) for the next build, as freeing hundreds
+    // of megabytes of mapped memory held the driver for ~35 ms, which stalled the frame's thread for as
+    // long whenever a streamed map's content changed; small buffers are simply destroyed. Both run on
+    // the workers.
+    Buffer AcquireBuffer(VkDeviceSize size, bool nearGpu);
+    void RecycleBuffer(Buffer& buffer);
+    static constexpr VkDeviceSize kRecycledBufferBytes = VkDeviceSize{4} << 20;
+    // One content's large buffers (nodes, triangles, source triangles) and a little more.
+    static constexpr size_t kMaxSpareBuffers = 4;
+    std::mutex m_spareMutex;
+    std::vector<Buffer> m_spareBuffers;
     void DestroyBuffer(Buffer& buffer) const;
     void WriteSets();
     void CreateMaterialPipeline(VkPipelineCache pipelineCache);
@@ -224,9 +239,10 @@ class VulkanRayScene
     std::vector<std::shared_ptr<const VulkanBuffer>> m_meshBuffers;
     // Written by the material averaging, per content.
     Buffer m_materials;
-    // Per frame slot, sized for the installed content.
+    // Per frame slot, sized for m_instanceCapacity instances (InstanceCapacity in ray_scene.cpp).
     std::vector<Buffer> m_instances;
     std::vector<Buffer> m_topNodes;
+    size_t m_instanceCapacity = 0;
 
     // The material averaging: one set per occupied draw slot, made when the slot gets a submesh and
     // freed when it loses it, and one dispatch for each slot whose submesh changed.
@@ -249,6 +265,8 @@ class VulkanRayScene
     // Hierarchies already built, by mesh, kept while any content uses them.
     std::shared_ptr<BuildCache> m_buildCache = std::make_shared<BuildCache>();
     TaskFuture<Build> m_pendingBuild;
+    // Set when m_pendingBuild becomes stale, so it stops before making its buffers.
+    std::shared_ptr<std::atomic<bool>> m_pendingSuperseded;
     // Builds for content that was replaced before they finished, left to finish on their own (a
     // TaskFuture waits in its destructor); dropped once done.
     std::vector<TaskFuture<Build>> m_staleBuilds;

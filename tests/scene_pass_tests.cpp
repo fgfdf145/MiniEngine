@@ -253,46 +253,51 @@ void DeferredOrderRunsGeometryAoLightingForwardExposureThenTonemap()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(false);
 
-    Require(order.size() == 22, "the deferred order must contain twenty-two passes");
+    Require(order.size() == 25, "the deferred order must contain twenty-five passes");
     Require(order[0] == ScenePassId::Geometry, "the deferred order must start with the geometry pass");
     Require(order[1] == ScenePassId::RtShadow, "the traced sun shadow reads the finished G-buffer");
-    Require(order[2] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
-    Require(order[3] == ScenePassId::AoResolve, "the AO resolve filters the trace");
-    Require(order[4] == ScenePassId::SsrTrace, "the reflection trace reads the finished G-buffer");
-    Require(order[5] == ScenePassId::SsrResolve, "the reflection resolve filters the trace");
-    Require(order[6] == ScenePassId::PathTrace, "the path tracer writes over the resolved reflections it replaces");
-    Require(order[7] == ScenePassId::Lighting, "lighting reads the resolved AO and reflections, or the path traced light");
-    Require(order[8] == ScenePassId::GiTrace, "the indirect diffuse trace bounces the lit image");
-    Require(order[9] == ScenePassId::GiResolve, "the indirect diffuse resolve filters the trace");
-    Require(order[10] == ScenePassId::GiComposite, "the composite adds the bounce before anything is drawn over it");
-    Require(order[11] == ScenePassId::DdgiDebug, "the DDGI debug views overwrite SceneGi only once the composite has used it");
-    Require(order[12] == ScenePassId::Scatter, "the scatter pre-pass gathers the light the forward pass diffuses");
-    Require(order[13] == ScenePassId::Forward, "the forward pass (forward-shaded opaque, sky) must follow lighting");
-    Require(order[14] == ScenePassId::TransmissionCopy, "the scene behind transmissive surfaces is copied once it is complete");
-    Require(order[15] == ScenePassId::ForwardTranslucent, "transmissive and Blend surfaces draw over the copied scene");
-    Require(order[16] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
-    Require(order[17] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
-    Require(order[18] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
-    Require(order[19] == ScenePassId::Tonemap, "the deferred order must tone map the finished image");
-    Require(order[20] == ScenePassId::SelectionMask, "the selection outline draws the selected entity's depth");
-    Require(order[21] == ScenePassId::SelectionOutline, "the deferred order must end in the selection outline");
+    Require(order[2] == ScenePassId::RestirPt, "ReSTIR PT reads the finished G-buffer before lighting adds its result");
+    Require(order[3] == ScenePassId::AoTrace, "the AO trace reads the finished G-buffer");
+    Require(order[4] == ScenePassId::AoResolve, "the AO resolve filters the trace");
+    Require(order[5] == ScenePassId::SsrTrace, "the reflection trace reads the finished G-buffer");
+    Require(order[6] == ScenePassId::SsrResolve, "the reflection resolve filters the trace");
+    Require(order[7] == ScenePassId::PathTrace, "the path tracer writes over the resolved reflections it replaces");
+    Require(order[8] == ScenePassId::Lighting, "lighting reads the resolved AO and reflections, or the path traced light");
+    Require(order[9] == ScenePassId::GiTrace, "the indirect diffuse trace bounces the lit image");
+    Require(order[10] == ScenePassId::GiResolve, "the indirect diffuse resolve filters the trace");
+    Require(order[11] == ScenePassId::GiComposite, "the composite adds the bounce before anything is drawn over it");
+    Require(order[12] == ScenePassId::DdgiDebug, "the DDGI debug views overwrite SceneGi only once the composite has used it");
+    Require(order[13] == ScenePassId::Scatter, "the scatter pre-pass gathers the light the forward pass diffuses");
+    Require(order[14] == ScenePassId::Forward, "the forward pass (forward-shaded opaque, sky) must follow lighting");
+    Require(order[15] == ScenePassId::ToonPrepass, "the toon prepass draws the characters' depth texture over the finished opaque scene");
+    Require(order[16] == ScenePassId::Toon, "the toon pass shades the characters it prepared, before the transmission copy");
+    Require(order[17] == ScenePassId::TransmissionCopy, "the scene behind transmissive surfaces is copied once it is complete");
+    Require(order[18] == ScenePassId::ForwardTranslucent, "transmissive and Blend surfaces draw over the copied scene");
+    Require(order[19] == ScenePassId::Taa, "TAA resolves the finished HDR image, blend surfaces included");
+    Require(order[20] == ScenePassId::Bloom, "bloom spreads the resolved, stable image");
+    Require(order[21] == ScenePassId::ExposureHistogram, "the histogram must meter the finished image");
+    Require(order[22] == ScenePassId::Tonemap, "the deferred order must tone map the finished image");
+    Require(order[23] == ScenePassId::SelectionMask, "the selection outline draws the selected entity's depth");
+    Require(order[24] == ScenePassId::SelectionOutline, "the deferred order must end in the selection outline");
 }
 
 void ForwardOnlyOrderSkipsTheDeferredPasses()
 {
     const std::span<const ScenePassId> order = BuildScenePassOrder(true);
 
-    Require(order.size() == 10, "the forward-only order must contain ten passes");
+    Require(order.size() == 12, "the forward-only order must contain twelve passes");
     Require(order[0] == ScenePassId::Scatter, "the forward-only order must start with the scatter pre-pass");
     Require(order[1] == ScenePassId::Forward, "then the forward pass");
-    Require(order[2] == ScenePassId::TransmissionCopy, "both orders copy the scene for transmission");
-    Require(order[3] == ScenePassId::ForwardTranslucent, "both orders draw transmissive and Blend surfaces last");
-    Require(order[4] == ScenePassId::Taa, "both orders hand the image to TAA, which passes it through here");
-    Require(order[5] == ScenePassId::Bloom, "bloom needs no motion vectors, so both orders have it");
-    Require(order[6] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
-    Require(order[7] == ScenePassId::Tonemap, "both orders must tone map the same way");
-    Require(order[8] == ScenePassId::SelectionMask, "both orders outline the selection");
-    Require(order[9] == ScenePassId::SelectionOutline, "both orders must end in the same selection outline");
+    Require(order[2] == ScenePassId::ToonPrepass, "both orders prepare the anime characters after the forward pass");
+    Require(order[3] == ScenePassId::Toon, "both orders shade the anime characters before the transmission copy");
+    Require(order[4] == ScenePassId::TransmissionCopy, "both orders copy the scene for transmission");
+    Require(order[5] == ScenePassId::ForwardTranslucent, "both orders draw transmissive and Blend surfaces last");
+    Require(order[6] == ScenePassId::Taa, "both orders hand the image to TAA, which passes it through here");
+    Require(order[7] == ScenePassId::Bloom, "bloom needs no motion vectors, so both orders have it");
+    Require(order[8] == ScenePassId::ExposureHistogram, "both orders must meter the same way");
+    Require(order[9] == ScenePassId::Tonemap, "both orders must tone map the same way");
+    Require(order[10] == ScenePassId::SelectionMask, "both orders outline the selection");
+    Require(order[11] == ScenePassId::SelectionOutline, "both orders must end in the same selection outline");
 }
 
 void GBufferTargetsAreColorTargets()

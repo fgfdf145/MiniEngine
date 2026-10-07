@@ -1,0 +1,175 @@
+# ReSTIR PT Enhanced：实时路径追踪
+
+## 背景（2026-10-07）
+
+硬件光追（`2026-10-07-hardware-ray-tracing-design.md`）和光追效果（`2026-10-07-ray-traced-effects-design.md`）
+已经有 BLAS/TLAS、ray query、命中着色（`ray_hit_common.glsl`）和 DLSS 光线重构，但光照仍是“光栅 +
+逐项光追替换”：阴影、反射、AO、DDGI 各自近似。用户要求实现 ReSTIR PT Enhanced：
+
+> Daqi Lin, Markus Kettunen, Chris Wyman. *ReSTIR PT Enhanced: Algorithmic Advances for Faster and More
+> Robust ReSTIR Path Tracing.* Proc. ACM CGIT 9(1), Article 13, 2026（及补充材料）。
+
+论文在 ReSTIR PT（Lin et al. 2022，GRIS + hybrid shift）上做了这些改进：
+
+| 节 | 内容 | 本实现 |
+|---|---|---|
+| §3 | 配对空间复用（reciprocal neighbor selection）：A 复用 B 时 B 也复用 A，两次 shift 共享，空间复用开销减半；邻居来自高斯“配对纹理” | 做（3 张纹理 254/230/210，σ=16，CPU 生成，每帧随机翻转/转置/平移） |
+| §4 | 与场景无关的重连判据：双射线足迹阈值（式 5，c=0.02）+ 单顶点粗糙度阈值（α_min=0.2） | 做；旧的距离 + 双顶点粗糙度判据保留为对照开关 |
+| §5 | 复制图（duplication map）：17×17 内同种子的样本数 /288 → 自适应降低时间复用的 Cap | 做（Cap_default 20、Cap_min 1、γ 0.1） |
+| §6.1 | 直接光和间接光合并到同一个储备池（统一 DI+GI），x1 上的 NEE 用 RIS 选光 | 做（NEE 候选 RIS，x1 上 8 个、更深 8/k²） |
+| §6.2.1 | 代码微优化、64 字节储备池 | 储备池 64 字节（16 个 uint），见下 |
+| §6.2.2 | 随机重放的流压缩 | 未做（见“未做”） |
+| §6.2.3 | 强制重连到 NEE 光源顶点 | 做：找不到更早的重连顶点时重连到光源顶点，重放里没有光源采样 |
+| §6.2.4 | 俄罗斯轮盘只用于初始采样，PSS 定义不含轮盘维度 | 做 |
+| §6.3 | 颜色噪声：空间复用里累加向量权重 Σ m F W J 用于着色 | 做 |
+| §6.4 | 双运动矢量（Zeng 2021）减少去遮挡噪声 | 做（近似：用上一帧遮挡物自己的运动） |
+
+## 总体结构
+
+- Graphics Debug 的 Path tracing 一节里的 “ReSTIR PT Enhanced” 开关（见下文“与普通路径追踪的关系”），默认关。只有硬件光追
+  （ray query）、光追场景就绪、延迟渲染顺序、非 Khronos 参考视图时运行；否则一切照旧。
+- 主可见性仍然来自 G-buffer（x1 = 像素的主命中，x0 = 相机），路径从 x1 开始追踪。打开时：
+  - 光照 pass 只写自发光和大气透视的内散射（push constant `debug.w`）；
+  - 光追阴影 / AO / SSR / 光追反射 / 屏幕空间 GI 在这一帧关闭（它们的结果被路径追踪取代，省时间）；
+  - 新的 `VulkanRestirPtPass`（compute，光照之后）算出每个像素的反射光（直接 + 间接，统一储备池）；
+  - `VulkanRestirPtCompositePass`（全屏片元，ONE+ONE 混合）把它乘上大气透视的透射率加到 HDR 目标上，
+    和 GI composite 一样。
+- 前向着色的表面（Blend、透射、`SHADING_FLAG_FORWARD`）和 unlit 不变。
+- 降噪交给 DLSS 光线重构（论文也是这样评估的）；没有 DLSS 时 TAA。另有“Accumulate”参考模式：相机静止时
+  逐帧平均，关掉时空复用就是无偏的路径追踪参考，用来测偏差。
+
+## 路径空间与 BSDF
+
+- 顶点 x1…x_d；d ≤ maxBounces + 2。x1 的发光由光照 pass 加，不进入储备池。
+- **叶（lobe）索引路径**（补充材料 §1）：每个顶点只采样一个叶：1 漫反射（Lambert，(1−metallic)(1−F_d(N·V))），
+  2 基础 GGX 镜面（Schlick F、相关 Smith 可见性，VNDF 采样），3 清漆（GGX，F0=0.04，只在 x1，来自 GB6；
+  基础层乘 1−c·F_c）。叶选择概率按各叶在 N·V 处的反照率估计。NEE 用全部叶（索引 0）。
+- 次级命中的材质来自 `RayHitShadingOf`（基色、金属度、粗糙度、自发光），法线是插值顶点法线；单面网格的背面
+  终止路径。sheen、各向异性、KHR specular 在路径追踪里忽略（只影响 x1 的少数材质）。
+- **光源划分**（无需 MIS）：
+  - 解析光（方向光 = 太阳圆盘、点/聚光、矩形面光）只用 NEE：它们不在 BVH 里，BSDF 光线打不到；
+  - 自发光三角形和天空只用 BSDF 采样（未命中 → `prefilteredEnvironment` mip 0 + 环境光；捕获的天空本来就不含
+    太阳圆盘）。
+  两个集合不相交，各自的 MIS 权重都是 1。
+- **NEE RIS**：K 个候选从所有解析光里均匀抽取（p1 = 1/N），目标函数是不带可见性的贡献亮度，只对选中的光追可见性。
+  按补充材料 §5，PSS 仍按“单样本 NEE、pdf p1”定义，RIS 的 UCW 乘进初始样本的 UCW（W_RIS · p1）。
+  球形光源：可见性射向球面上均匀的一点（与着色点无关 → 重连雅可比为 1），亮度按到球心的距离衰减，和光栅一致。
+  太阳：圆锥内均匀方向，乘云影。
+- **俄罗斯轮盘**：从第二次弹射起，存活概率按吞吐量；只在初始采样用，生存概率进入初始 UCW（补充 §6），
+  重放时不做轮盘。
+
+## 混合 shift 与重连判据（§4）
+
+对每个相邻顶点对 (x_{k-1}, x_k)，可重连当且仅当：
+
+1. x_{k-1} 采样的叶的粗糙度 ≥ α_min（漫反射算 1）；
+2. `min(1/(p_{k-1}(ω_{k-1}) G(x_{k-1}→x_k)), 1/(p_k(ω_k) G(x_k→x_{k-1}))) ≥ (c/100)·|x0−x1|² / (cos θ_1 /(4π))`；
+   p 是全部叶的边缘 pdf（补充 §3）；x_k 是漫反射、发光终点或 NEE 方向时跳过第二项（按 BSDF 边缘 pdf 计 NEE 方向）；
+   x_k 在无穷远（天空）时只看条件 1。
+3. 光源顶点：找不到更早的重连顶点时强制重连（§6.2.3）。
+
+重连顶点 x_k 是路径上第一个可重连的顶点；之前是随机重放（同一组随机数，计数器式哈希 `rand(seed, bounce, dim)`），
+叶必须与基路径一致，且 y 的前缀里不能出现可重连对（可逆性）。PSS 雅可比按式 (2)：
+`|J| = p^y_{k-1}(ω') G(y_{k-1}→x_k) p^y_k(ω_k) / (p^x_{k-1}(ω) G(x_{k-1}→x_k) p^x_k(ω_k))`，
+分母作为一个 float 存在储备池里（补充 Alg. 1），x_k 为终点或 NEE 方向时 p_k = 1，光源顶点 |J| = 1。
+
+## 储备池（64 字节）
+
+`uvec4 ×4`：F.rgb（float）、W；种子、标志（d、k、重连类型、x1…x_{d-1} 的叶序列 2 bit 一个）、置信度 M（float）、
+缓存的雅可比分母；重连顶点位置/方向、法线（八面体 16 bit）；ω_k（八面体）、后缀辐亮度 L_suffix（RGB9E5，预缩放 2^-10）、
+重连顶点材质（反照率 rgb8 + 粗糙度 8，或光源下标）、金属度。
+重连顶点存世界坐标和材质，而不是实例/三角形编号：流式加载重排实例时也不会指错。
+
+每像素另存一个 32 字节的主表面记录（位置、两种法线、材质、清漆、本帧运动矢量），当前/上一帧两份，
+时间复用把当前样本 shift 到上一帧的主表面上（上一帧的相机位置）。
+
+## 每帧的 dispatch
+
+1. **initial**（`restir_pt_initial.comp`）：写主表面记录；从 x1 生成路径树（每个顶点 NEE + BSDF 延续），用 WRS
+   从全部候选路径（不同长度、互不相交的域）里选一条，确定重连顶点，写初始储备池。
+2. **temporal**（`restir_pt_temporal.comp`）：按运动矢量回投；失败时用双运动矢量再试；上一帧储备池的 M 截到
+   `lerp(Cap_default, Cap_min, s^γ)`（s 是上一帧复制图在回投点的值）。成对 MIS（规范样本 M=1）。
+3. **spatial shift**（`restir_pt_spatial_shift.comp`）：每个像素对 3 张配对纹理各自的伙伴做一次 shift
+   （自己的样本 → 伙伴的域），写 F、|J|、新的雅可比分母。
+4. **spatial**（`restir_pt_spatial.comp`）：配对复用，用伙伴算好的 shift（伙伴的样本 → 自己）和自己算好的
+   shift（自己的样本 → 伙伴，用于规范样本的 MIS），广义成对 MIS（带置信度）：
+   `m_i = s_i · M_i p̂_←i / (M_i p̂_←i + (M_c/k) p̂_c)`，`s_i = (M_i + M_c/k)/M_total`。
+   着色用向量权重之和（§6.3），储备池给下一帧。邻居拒绝（法线、平面距离）是对称的，A 拒绝 B 当且仅当 B 拒绝 A。
+5. **duplication**（`restir_pt_duplication.comp`）：17×17 共享内存瓦片里数同种子的储备池，/288。
+6. **composite**：见上。
+
+## 与普通路径追踪的关系、开关
+
+同一天另一项工作把普通路径追踪合进了 main（`2026-10-07-path-tracing-design.md`，`VulkanPathTracePass`）：
+只替换环境项、直接光仍由光照 pass 算，自带时间累积 + à-trous 降噪和静止参考图。两者合并为同一个
+“Path tracing” 模式（Render > Pipeline > Path Tracing / Graphics Debug 的 Path tracing 一节）：
+
+- `render_debug.path_tracing.restir`（默认关）选 ReSTIR PT Enhanced；关着时是普通路径追踪。二者互斥，
+  ReSTIR 运行时普通路径追踪 pass 不录制，光照 pass 的 push constant `debug.w` = 2（普通路径追踪为 1）。
+- 共用的参数：`enabled`、`max_bounces`（ReSTIR 最多取 5，储备池里路径长度占 3 bit）、`light_candidates`
+  （ReSTIR：x1 上的 NEE 候选数，更深的顶点按 1/k² 减少）。
+- ReSTIR 自己的参数在 `render_debug.restir_pt.*`（`RestirPtSettings`）：`temporal_reuse`、`spatial_reuse`、
+  `footprint_reconnection`（关 = Lin 2022 的距离 + 粗糙度判据）、`footprint_scale`(0.02)、`roughness_threshold`(0.2)、
+  `legacy_distance`(0.1 m)、`decorrelation`、`cap`(20)、`cap_min`(1)、`cap_gamma`(0.1)、`color_noise_reduction`、
+  `dual_motion_vectors`、`russian_roulette`、`accumulate`、`debug_view`（0 图像，1 复制图，2 重连顶点下标，
+  3 置信度 log2，4 路径长度，5 配对纹理互逆检查）。
+- 普通路径追踪的 `firefly_clamp`、`accumulate`/`motion_frames`/`max_frames`、`denoise` 对 ReSTIR 不起作用：
+  ReSTIR 的输出交给 DLSS 光线重构（没有 DLSS 时只有 TAA，噪声明显）。
+
+## 实现中的修正
+
+- **储备池里存的 F 必须和 shift 重新算出的一致**。最初的版本里，空间 shift 的结果用 RGB9E5 存，重连顶点的
+  材质用 8 bit 粗糙度、12 bit 法线：同一条路径“自己储备池里的目标值”和“shift 到同一表面后算出的目标值”不相等，
+  成对 MIS 不再是单位分解。单独的时间或空间复用看不出来（偏差 ±1%），两者串起来形成反馈后，暗处（康奈尔盒子外
+  的地面，F 接近 RGB9E5 的下限）每帧放大，几百帧后整片过曝。修正：
+  - 空间 shift 结果存完整 float（F、|J|），shift 后路径的雅可比项由 |J| × 原路径的推出，不再单独存；
+  - 初始路径的 F 按储备池里**量化后**的后缀和重连顶点（材质、法线、ω_k）重新算（`PtStoreSuffix`、
+    `rcCorrection`），即和恒等 shift 的结果一致；
+  - 重连顶点的着色法线改为 16+16 bit 八面体，粗糙度改为 10 bit 对数编码（放在 flags 的高位），金属度移到 rcMaterial。
+- **主表面的光线偏移**：G-buffer 重建的位置带深度误差，GTA 的贴花/路缘覆盖面还被转换器抬高了几毫米；只用 ulp 偏移时
+  从下层表面出发的光线全被上层挡住，人行道上出现黑块。改为和光追效果一样的 `0.002 + 0.0004 × 到相机距离`。
+- 配对纹理在 shader 里每帧随机翻转、转置、平移；`%` 对负数是未定义的，先加上尺寸的倍数再取模。调试视图 5
+  （Pairing check）逐像素验证链接互逆，全屏绿色。
+
+## 验证
+
+- 单元测试：`miniengine.restir_pairing`（链接互逆、无自链接、σ = 15.95、平均距离 20.0 像素 = 半径 30 的均匀圆盘），
+  scene pass 顺序测试更新。全部测试 111/113 通过；两个失败与本改动无关：`vehicle_overlay`（main 上 d530fab 把胎面默认
+  改为 50 条，测试仍期望 10 条）和已知的 `asset_browser_window` ImGui 字体断言。
+- Debug（验证层开）：所有 ReSTIR 阶段 + DLSS 光线重构 + 移动相机 + 累积模式，只有 NGX 自己的
+  `nv.ngx.dlssd.resource` 布局消息（和光追效果时一样）。
+- **无偏性**（康奈尔盒子 + 点光源，tone mapper None，线性值，700 帧累积，与关掉两种复用的普通路径追踪比较）：
+
+  | 配置 | 后墙 | 左墙 | 右墙 | 地板 | 天花板 |
+  |---|---|---|---|---|---|
+  | 只有时间复用 | −0.4% | +0.2% | +0.2% | +0.4% | +0.1% |
+  | 只有空间复用 | −0.1% | 0.0% | 0.0% | +0.2% | 0.0% |
+  | 时间 + 空间（无去相关） | −1.1% | −0.5% | −0.6% | −0.1% | −0.9% |
+  | 时间 + 空间 + 复制图去相关 | +0.8% | −1.7% | −1.1% | −0.8% | −0.8% |
+
+  去相关按论文所说引入小偏差（论文在困难场景里是 3.25%）。修正前“时间 + 空间”是 +190% ~ +5400%。
+- 直接光与光栅（关掉 DDGI）一致；夜景点/聚/面光的光斑与光栅一致，路径追踪多出车内、玻璃和车身的相互反射。
+
+## 结果（RTX 4070 笔记本，Release）
+
+测量时另一个会话的进程（`lag_final.exe`）间歇占用 GPU 40%~95%，以下取 GPU 较空闲时的数字：
+
+| 场景 | 分辨率 | 初始 | 时间 | 空间 shift | 空间 | 复制图 | ReSTIR 合计 | 整帧（关路径追踪） |
+|---|---|---|---|---|---|---|---|---|
+| R34 + 滚动路面 | 1280×720 | 0.91 | 0.90 | 0.83 | 1.15 | 0.27 | 4.06 ms | 6.15 ms（2.95） |
+| R34 + 滚动路面 | 1920×1080 | 2.24 | 2.23 | 2.03 | 2.63 | 0.54 | 9.67 ms | 12.97 ms（5.94） |
+| Liberty City 300 m（138 万三角形，GPU 被占用 42%） | 1280×720 | 3.91 | 2.78 | 3.25 | 1.30 | 0.27 | 11.5 ms | 18.5 ms（5.7） |
+
+- 空间重采样不发光线但受内存带宽限制（每像素约 370 字节）；只读储备池前半（32 字节）、邻居是否接受改由 shift 记录携带
+  之后从 2.63 降到约 2.47 ms（同样有占用）。
+- 质量（R34，DLAA + 光线重构，对 1500 帧累积的普通路径追踪参考的线性 RMSE，车身区域）：光栅 0.0917；ReSTIR PT
+  0.0296（Cap 20）、0.0295（10）、0.0270（5）、0.0254（2）；不用空间复用 0.0418。静止的光滑车漆上较低的 Cap 斑驳更少，
+  默认仍按论文用 20（运动时 Cap 越低噪声越大），面板里可调。
+
+## 未做 / 后续
+
+- §6.2.2 随机重放的流压缩、§6.2.1 的寄存器级微优化。
+- RIS 选光用全局均匀候选，没有论文的光源瓦片（RTXDI light tiles）；GTA 这种几百盏灯的场景候选效率低。
+- 自发光三角形没有 NEE（只靠 BSDF 命中），小的发光体噪声大。
+- 次级顶点没有法线贴图、清漆、sheen；透射材质当不透明处理；Blend / 透射表面仍是前向光栅着色。
+- 夜间光栅比路径追踪亮很多：DDGI 里含有回退环境光，路径追踪的天空只有环境贴图 + 场景的环境光源。

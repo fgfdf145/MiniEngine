@@ -299,6 +299,14 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
                               (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
         renderSubmesh.water = submesh.water;
         renderSubmesh.textureSamplers = material.textureSamplers;
+        // A toon material is the toon passes' to shade: the geometry pass still lays down its depth,
+        // normals and motion, and the forward flag keeps the lighting pass off its pixels.
+        if (material.toon && submesh.hasTexCoords)
+        {
+            renderSubmesh.toon = material.toon;
+            renderSubmesh.material.shadingModel[0] |= kShadingFlagForward;
+            renderSubmesh.decal = false;
+        }
         // The mask reads the first UV set, so without one there are no detail layers.
         if (submesh.hasTexCoords && material.detailLayers.IsEnabled())
         {

@@ -147,6 +147,17 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
     {
     }
 
+    // The suspension length (to the ground) past which the wheel can give no more (see Collide): with
+    // an unsprung mass where its rim meets the ground, which moves with its hub. 0 (the default) for
+    // the physics engine's own minimum.
+    void SetFaceLength(size_t wheelIndex, float length)
+    {
+        if (wheelIndex < m_faceLengths.size())
+        {
+            m_faceLengths[wheelIndex] = length;
+        }
+    }
+
     bool Collide(JPH::PhysicsSystem& system, const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction,
                  const JPH::BodyID& vehicleBody, JPH::Body*& outBody, JPH::SubShapeID& outSubShape, JPH::RVec3& outContactPosition, JPH::Vec3& outContactNormal,
                  float& outSuspensionLength) const override
@@ -161,12 +172,16 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
         {
             return false;
         }
-        // Past the hard stop (a kerb taller than the travel and the tyre take) the physics engine stops
-        // the wheel rigidly along the contact's normal. On a kerb's edge that normal leans back as far
-        // as 50 degrees, and the stop turned the car's speed into a leap: 9 m/s up at 60 km/h. The
-        // ground's own face is pushed along instead, so the stop lifts the car onto the kerb without
-        // throwing it. Within the travel the edge's normal stays: the tyre climbs it and is slowed.
-        if (outSuspensionLength < constraint.GetWheel(wheelIndex)->GetSettings()->mSuspensionMinLength && outBody != nullptr)
+        // Past what the wheel can give (a kerb taller than the travel and the tyre take) its stop, rigid
+        // or the rim's stiff spring, pushes along the contact's normal. On a kerb's edge that normal
+        // leans back as far as 50 degrees, and the stop turned the car's speed into a leap: 9 m/s up at
+        // 60 km/h. The ground's own face is pushed along instead, so the stop lifts the car onto the
+        // kerb without throwing it. Within the travel the edge's normal stays: the tyre climbs it and
+        // is slowed.
+        const float faceLength = wheelIndex < m_faceLengths.size() && m_faceLengths[wheelIndex] > 0.0f
+                                     ? m_faceLengths[wheelIndex]
+                                     : constraint.GetWheel(wheelIndex)->GetSettings()->mSuspensionMinLength;
+        if (outSuspensionLength < faceLength && outBody != nullptr)
         {
             const JPH::Vec3 face = outBody->GetWorldSpaceSurfaceNormal(outSubShape, outContactPosition);
             if (face.Dot(direction) < 0.0f)
@@ -188,6 +203,8 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
     }
 
   private:
+    std::array<float, kVehicleWheelCount> m_faceLengths{};
+
     // Moves the wheel along its suspension until the disc's lowest point toward the plane (through
     // `contact`, facing `normal`) lies on it; false when that is past full droop or the plane faces away.
     static bool TouchPlane(const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::RVec3Arg origin, JPH::Vec3Arg direction, JPH::RVec3& contact,
@@ -370,16 +387,84 @@ void ApplyTyres(JPH::WheelSettingsWV& wheel, const VehicleTyreSettings& tyres)
     }
 }
 
-// With an unsprung mass the ground may come this much closer to the mount than the wheel's full
-// bump: the tyre's own deflection.
-constexpr float kTyreDeflectionRoom = 0.05f;
+// How far a tyre deflects before its rim meets the ground through it, when the data gives no rim.
+constexpr float kDefaultRimDeflection = 0.05f;
+// Pinched between rim and ground, the tread and the folded sidewalls keep about this much (m).
+constexpr float kPinchedTyreThickness = 0.015f;
+
+// The ends of a hub's travel (the bump rubber pressed solid, the droop limit) and the rim's contact
+// with the ground through the tyre are springs this many times the tyre's rate: stiff enough that
+// against them the tyre takes the blow, soft enough to be stepped at 1 ms (their hub mode at
+// omega dt about 0.35). What lands on them is the body's corner, not the hub: damped to this ratio
+// against the corner's sprung mass, they give back some half of the speed they meet. With no data
+// on either, both are assumptions.
+constexpr double kEndStopTyreRates = 20.0;
+constexpr double kEndStopDampingRatio = 0.7;
+// The most those stiff springs give at their hardest (some 200 kN), kept clear before the physics
+// engine's rigid stop.
+constexpr float kEndStopGive = 0.03f;
+
+// An end stop's push (N) pressed `depth` (m) into it and closing at `closing` (m/s), with its slopes
+// along both. Its damping is held within its spring's force, as a rubber's loss follows its load: it
+// starts from nothing at the touch (in full, a rim meeting a kerb at 8 m/s took 200 kN from the
+// damper within the first 4 mm), and never pulls.
+struct EndStopPush
+{
+    double force = 0.0;
+    double stiffness = 0.0;
+    double damping = 0.0;
+};
+
+EndStopPush PushOfEndStop(double rate, double damping, double depth, double closing)
+{
+    const double spring = rate * depth;
+    const double damper = damping * closing;
+    if (damper >= spring)
+    {
+        return {2.0 * spring, 2.0 * rate, 0.0};
+    }
+    if (damper <= -spring)
+    {
+        return {};
+    }
+    return {spring + damper, rate, damping};
+}
+
+// How far the axle's tyre deflects before the rim meets the ground: its sidewall's height (radius
+// less the rim's) less what stays pinched between them.
+float RimDeflection(const VehicleSettings& settings, size_t wheelIndex)
+{
+    const VehicleTyreSettings& tyres = wheelIndex < 2 ? settings.frontTyres : settings.rearTyres;
+    const float radius = GetVehicleWheelMount(settings, wheelIndex).radius;
+    if (tyres.rimRadius <= 0.0f || tyres.rimRadius >= radius)
+    {
+        return kDefaultRimDeflection;
+    }
+    return std::max(radius - tyres.rimRadius - kPinchedTyreThickness, 0.02f);
+}
+
+// The hub's travel from the design position to the end of its bump: the bump stop's start and 4 cm
+// of rubber.
+float MultibodyBumpTravel(const VehicleSuspensionAxle& axle)
+{
+    return std::max(axle.bumpStopTravel, 0.03f) + 0.04f;
+}
+
+// With an unsprung mass the ground may come this much closer to the mount than the hub's full bump
+// before the physics engine's rigid stop: the tyre's deflection to its rim, and the give of the end
+// stops at the hub and the rim.
+float TyreDeflectionRoom(const VehicleSettings& settings, size_t wheelIndex)
+{
+    return RimDeflection(settings, wheelIndex) + 2.0f * kEndStopGive;
+}
 
 // The multibody suspension's straight-spring stand-in: the mount sits this far above the wheel's
 // design centre, enough for the bump travel of either axle and the tyre's deflection under it.
 float MultibodyDesignLength(const VehicleSettings& settings)
 {
-    const float bump = std::max(settings.frontSuspension.bumpStopTravel, settings.rearSuspension.bumpStopTravel);
-    return std::max(bump, 0.03f) + 0.04f + 0.05f + kTyreDeflectionRoom;
+    const float bump = std::max(MultibodyBumpTravel(settings.frontSuspension), MultibodyBumpTravel(settings.rearSuspension));
+    const float tyre = std::max({TyreDeflectionRoom(settings, 0), TyreDeflectionRoom(settings, 2), kDefaultRimDeflection});
+    return bump + 0.05f + tyre;
 }
 
 // The axle's wheels are masses of their own on tyre springs (the data gives hub mass and tyre rate):
@@ -537,7 +622,7 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
             // The multibody suspension sets the spring each step and steers through the rack: the
             // straight spring starts at its design length, and the wheels' own steering is off.
             const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
-            const float bump = std::max(axle.bumpStopTravel, 0.03f) + 0.04f;
+            const float bump = MultibodyBumpTravel(axle);
             const float droop = axle.reboundStopTravel > 0.0f ? axle.reboundStopTravel : 0.08f;
             const float designLength = MultibodyDesignLength(settings);
             const glm::vec3 center = MultibodyDesignCenter(settings, index);
@@ -547,9 +632,9 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
             wheel->mMaxSteerAngle = 0.0f;
             if (HasUnsprungMass(axle))
             {
-                // The hub stops itself at full bump; the ground may come closer by the tyre's
-                // deflection before the physics engine's hard stop.
-                wheel->mSuspensionMinLength = std::max(designLength - bump - kTyreDeflectionRoom, 0.0f);
+                // The hub's end stops and the rim's are its own springs (StepUnsprungCorner); the physics
+                // engine's rigid stop lies past them, for what they cannot hold.
+                wheel->mSuspensionMinLength = std::max(designLength - bump - TyreDeflectionRoom(settings, index), 0.0f);
                 wheel->mSuspensionSpring.mStiffness = kTyreCarrierStiffness;
                 wheel->mSuspensionSpring.mDamping = 0.0f;
             }
@@ -702,6 +787,7 @@ struct PhysicsWorld::Impl
         JPH::Body* body = nullptr;
         JPH::Ref<JPH::VehicleConstraint> constraint;
         JPH::Ref<JPH::VehicleCollisionTester> collisionTester;
+        VehicleCollisionTesterDisc* discTester = nullptr; // the same, owned by collisionTester
         std::unique_ptr<WheelBodyFilter> wheelFilter;
         VehicleControls controls;
         // In water (ApplyWater): the share of the body's shape under the surface, the seconds it has
@@ -783,6 +869,11 @@ struct PhysicsWorld::Impl
             double travelRate = 0.0;
             double bumpTravel = 0.0;
             double droopTravel = 0.0;
+            // The stiff springs past the travel's ends and past the rim's contact (kEndStopTyreRates):
+            // N/m and N s/m at the wheel, and the tyre's deflection where the rim meets the ground (m).
+            double endStopRate = 0.0;
+            double endStopDamping = 0.0;
+            double rimDeflection = 0.0;
             double designContactHeight = 0.0; // the unloaded tyre's lowest point at the design position
             double tyreDeflection = 0.0;
             glm::vec3 hubCenter{0.0f}; // vehicle space
@@ -851,6 +942,9 @@ struct PhysicsWorld::Impl
             corner.tyreDamping = std::max(axle.tyreDamping, 0.0f);
             corner.bumpTravel = setup.bumpTravel;
             corner.droopTravel = setup.droopTravel;
+            corner.endStopRate = kEndStopTyreRates * corner.tyreRate;
+            corner.endStopDamping = 2.0 * kEndStopDampingRatio * std::sqrt(corner.endStopRate * load / 9.81);
+            corner.rimDeflection = RimDeflection(settings, index);
             corner.hubCenter = MultibodyRestCenter(settings, index);
             if (axle.type == VehicleSuspensionType::SolidAxle)
             {
@@ -968,7 +1062,7 @@ struct PhysicsWorld::Impl
 
             if (c.unsprung)
             {
-                StepUnsprungCorner(vehicle, c, wheel, settings, out, in, arb, cosine);
+                StepUnsprungCorner(vehicle, index, wheel, settings, out, in, arb, cosine);
                 if (std::abs(c.travelRate) > kHubSettledRate)
                 {
                     // The physics engine judges sleep by the body alone: not while a hub still moves.
@@ -1078,15 +1172,18 @@ struct PhysicsWorld::Impl
     // with m_z = m_hub |dW/dz|^2 (W the wheel centre, P the contact point), F_t the tyre's vertical
     // force (rate and damping on its deflection, pushing only), G the springs, damper and stops, and f
     // the specific force (acceleration less gravity) of the body where the hub rides. It is stepped
-    // linearly implicit (the trapezoidal rule on the slopes), with hard stops at full bump and droop.
+    // linearly implicit (the trapezoidal rule on the slopes). Its travel's ends and the rim's contact
+    // with the ground are stiff springs, not rigid stops: a rigid stop took the hub's (or, through the
+    // physics engine's, the whole car's) speed away within a step, some 100 g on a 0.5 m drop.
     //
     // The physics engine's body is the whole car (hubs included). It receives the tyre's force through
     // its spring, set by the preload to exactly the force the hub took, and the hub's motion relative
     // to the body as -m_hub z'' dW/dz at the hub: together they leave the sprung mass with the
     // suspension's force, and the tyre's friction with the tyre's load.
-    void StepUnsprungCorner(Vehicle& vehicle, Vehicle::Corner& c, const JPH::Wheel& wheel, JPH::WheelSettingsWV& settings,
-                            const suspension::CornerOutput& out, const suspension::CornerInput& in, double arb, float cosine)
+    void StepUnsprungCorner(Vehicle& vehicle, size_t index, const JPH::Wheel& wheel, JPH::WheelSettingsWV& settings, const suspension::CornerOutput& out,
+                            const suspension::CornerInput& in, double arb, float cosine)
     {
+        Vehicle::Corner& c = vehicle.corners[index];
         constexpr double dt = kFixedStepSeconds;
         const JPH::Body& body = *vehicle.body;
         const JPH::Quat rotation = body.GetRotation();
@@ -1102,6 +1199,11 @@ struct PhysicsWorld::Impl
         double tyreRateSlope = 0.0;
         double length = settings.mSuspensionMaxLength;
         c.tyreDeflection = 0.0;
+        // Where the unloaded tyre would touch: the design length, less how far its lowest point has
+        // risen with the travel. The rim meets the ground its deflection closer: from there on a
+        // kerb's face, not its edge, is pushed along (VehicleCollisionTesterDisc).
+        const double rise = out.geometry.contactPoint.z - c.designContactHeight;
+        vehicle.discTester->SetFaceLength(index, static_cast<float>(std::max(c.designLength - rise - c.rimDeflection, 0.0)));
         if (wheel.HasContact())
         {
             const JPH::Vec3 normal = wheel.GetContactNormal();
@@ -1114,22 +1216,27 @@ struct PhysicsWorld::Impl
                 length -= normal.Dot(JPH::Vec3(mount - c.lastMount)) / along;
             }
             const double groundRate = -normal.Dot(body.GetPointVelocity(mount) - wheel.GetContactPointVelocity()) / along;
-            // Where the unloaded tyre would touch: the design length, less how far its lowest point
-            // has risen with the travel.
-            const double rise = out.geometry.contactPoint.z - c.designContactHeight;
             const double deflection = (c.designLength - rise) - length;
             if (deflection > 0.0)
             {
                 c.tyreDeflection = deflection;
-                tyre = c.tyreRate * deflection - c.tyreDamping * (perTravel * v + groundRate);
-                if (tyre > 0.0)
+                const double closing = perTravel * v + groundRate;
+                double rate = c.tyreRate;
+                double damping = c.tyreDamping;
+                double push = rate * deflection - damping * closing;
+                if (deflection > c.rimDeflection)
                 {
-                    tyreSlope = -c.tyreRate * perTravel;
-                    tyreRateSlope = -c.tyreDamping * perTravel;
+                    // The rim meets the ground through the pinched tyre: a stiff spring of its own.
+                    const EndStopPush rim = PushOfEndStop(c.endStopRate, c.endStopDamping, deflection - c.rimDeflection, -closing);
+                    push += rim.force;
+                    rate += rim.stiffness;
+                    damping += rim.damping;
                 }
-                else
+                if (push > 0.0)
                 {
-                    tyre = 0.0;
+                    tyre = push;
+                    tyreSlope = -rate * perTravel;
+                    tyreRateSlope = -damping * perTravel;
                 }
             }
         }
@@ -1149,26 +1256,31 @@ struct PhysicsWorld::Impl
         const double inertia = -c.hubMass * glm::dot(FromJolt(specific), hubPerTravelVehicle);
         const double mass = std::max(c.hubMass * glm::dot(hubPerTravel, hubPerTravel), 0.5 * c.hubMass);
 
-        const double force = tyre * perTravel + out.loadTravelForce + out.strutTravelForce + arb + inertia;
-        const double stiffness = out.strutTravelStiffness - c.antiRollBarRate + tyreSlope * perTravel;
-        const double damping = out.strutTravelDamping + tyreRateSlope * perTravel;
+        // Past either end of its travel the hub meets a stiff spring (the bump rubber pressed solid, the
+        // droop limit), which pushes it back but never holds it there.
+        double stop = 0.0;
+        double stopSlope = 0.0;
+        double stopRateSlope = 0.0;
+        if (z > c.bumpTravel || z < -c.droopTravel)
+        {
+            const bool bump = z > c.bumpTravel;
+            const EndStopPush end = bump ? PushOfEndStop(c.endStopRate, c.endStopDamping, z - c.bumpTravel, v)
+                                         : PushOfEndStop(c.endStopRate, c.endStopDamping, -c.droopTravel - z, -v);
+            stop = bump ? -end.force : end.force;
+            stopSlope = -end.stiffness;
+            stopRateSlope = -end.damping;
+        }
+
+        const double force = tyre * perTravel + out.loadTravelForce + out.strutTravelForce + arb + inertia + stop;
+        const double stiffness = out.strutTravelStiffness - c.antiRollBarRate + tyreSlope * perTravel + stopSlope;
+        const double damping = out.strutTravelDamping + tyreRateSlope * perTravel + stopRateSlope;
         // The trapezoidal rule on the slopes: second order and without backward Euler's numerical damping
         // (which took some 15 % off a lightly damped wheel hop's peak at the 1 ms step); stable for any step,
         // and at 1 ms the stiffest hub mode (tyre, spring and bump stop together) is far from where its
-        // lack of L-stability would show (omega dt about 0.1).
+        // lack of L-stability would show (omega dt about 0.1; some 0.5 with the hub on both end stops).
         const double change = dt * (force + 0.5 * dt * stiffness * v) / (mass - 0.5 * dt * damping - 0.25 * dt * dt * stiffness);
-        double rate = v + change;
-        double next = z + dt * (v + 0.5 * change);
-        if (next > c.bumpTravel)
-        {
-            next = c.bumpTravel;
-            rate = std::min(rate, 0.0);
-        }
-        else if (next < -c.droopTravel)
-        {
-            next = -c.droopTravel;
-            rate = std::max(rate, 0.0);
-        }
+        const double rate = v + change;
+        const double next = z + dt * (v + 0.5 * change);
         const double travelAccel = (rate - v) / dt;
         c.travel = next;
         c.travelRate = rate;
@@ -2674,7 +2786,8 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     }
     // Casting the wheels' cylinders rolls them over kerbs and seams a ray would catch on; they touch
     // the ground as discs (VehicleCollisionTesterDisc).
-    vehicle.collisionTester = new VehicleCollisionTesterDisc(ObjectLayers::kMoving);
+    vehicle.discTester = new VehicleCollisionTesterDisc(ObjectLayers::kMoving);
+    vehicle.collisionTester = vehicle.discTester;
     vehicle.wheelFilter = std::make_unique<WheelBodyFilter>(vehicle.body->GetID());
     vehicle.collisionTester->SetBodyFilter(vehicle.wheelFilter.get());
     vehicle.constraint->SetVehicleCollisionTester(vehicle.collisionTester);

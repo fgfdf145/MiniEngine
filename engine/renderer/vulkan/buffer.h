@@ -14,6 +14,9 @@ namespace me
 
 VkVertexInputBindingDescription GetVertexBindingDescription();
 std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions();
+// What toon.vert reads: position, UV 0, normal and UV 1 at their usual locations, and the toon
+// outline's smoothed normal (Vertex::outlineNormal) at location 6, which nothing else reads.
+std::array<VkVertexInputAttributeDescription, 5> GetToonVertexAttributeDescriptions();
 // The position-only stream (VulkanBuffer::GetPositionHandle): binding 0, location 0, 12 bytes a
 // vertex. Depth-only passes read it instead of the full vertex, a fifth of the bytes.
 VkVertexInputBindingDescription GetPositionBindingDescription();

@@ -361,6 +361,8 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     // The ray traced sun shadow, raw and filtered, at the render size.
     describeSsrTarget(RenderTargetId::ShadowRaw, "Ray traced shadow trace");
     describeSsrTarget(RenderTargetId::SceneShadow, "Ray traced shadow");
+    // ReSTIR PT's shading, at the render size.
+    describeSsrTarget(RenderTargetId::ScenePathTrace, "Path traced lighting");
 
     // TAA's output, written by compute. RGBA16F is in the core list of storage formats too.
     static constexpr std::array<VkFormat, 1> kTaaCandidates = {VK_FORMAT_R16G16B16A16_SFLOAT};
@@ -395,6 +397,19 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     selectionOutline.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     selectionOutline.bindToImGui = true;
     selectionOutline.outputSized = true;
+
+    // The toon prepass's targets: the characters' depth in the scene depth's format, their linear
+    // view depth in metres (R32F, a mandatory colour attachment and sampled format) and the eye mask
+    // (R8).
+    TargetDescription& toonDepth = Describe(RenderTargetId::ToonDepth);
+    toonDepth.format = depth.format;
+    toonDepth.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    toonDepth.aspect = depth.aspect;
+    toonDepth.bindToImGui = false;
+    static constexpr std::array<VkFormat, 1> kToonLinearDepthCandidates = {VK_FORMAT_R32_SFLOAT};
+    describeGBufferTarget(RenderTargetId::ToonLinearDepth, "toon linear depth", kToonLinearDepthCandidates);
+    static constexpr std::array<VkFormat, 1> kToonMaskCandidates = {VK_FORMAT_R8_UNORM};
+    describeGBufferTarget(RenderTargetId::ToonMask, "toon mask", kToonMaskCandidates);
 
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the

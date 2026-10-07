@@ -121,20 +121,70 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     {
         ImGui::SetTooltip("Local lights each path vertex resamples one from for its shadow ray");
     }
-    DragFloatInRange("Firefly clamp##pt", &pathTracing.fireflyClamp, 0.0f, 1000.0f, "%.1f");
+    // ReSTIR PT Enhanced in place of the plain path tracer: it carries the direct light too.
+    ImGui::Checkbox("ReSTIR PT Enhanced##pt", &pathTracing.restir);
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("The brightest a path vertex may add, in display units; 0 clamps nothing (reference)");
+        ImGui::SetTooltip("Direct and indirect light in one reservoir, resampled across paired neighbours and frames\n"
+                          "(Lin, Kettunen and Wyman 2026), instead of the lighting pass's lights and shadows.\n"
+                          "Best with DLSS ray reconstruction.");
     }
-    ImGui::Checkbox("Accumulate##pt", &pathTracing.accumulate);
-    ImGui::BeginDisabled(!pathTracing.accumulate);
-    DragIntInRange("Frames while moving##pt", &pathTracing.motionFrames, 1, 256);
-    DragIntInRange("Frames while still##pt", &pathTracing.maxFrames, 1, 2048);
-    ImGui::EndDisabled();
-    ImGui::Checkbox("Denoise##pt", &pathTracing.denoise);
+    if (pathTracing.restir)
+    {
+        RestirPtSettings& restirPt = pathTracing.restirPt;
+        ImGui::Indent();
+        ImGui::Checkbox("Temporal reuse##restir", &restirPt.temporalReuse);
+        ImGui::SameLine();
+        ImGui::Checkbox("Spatial reuse##restir", &restirPt.spatialReuse);
+        ImGui::Checkbox("Footprint reconnection##restir", &restirPt.footprintReconnection);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The paper's dual ray footprint test; off, a fixed distance and two-vertex roughness");
+        }
+        if (restirPt.footprintReconnection)
+        {
+            DragFloatInRange("Footprint scale c##restir", &restirPt.footprintScale, 0.001f, 1.0f, "%.3f");
+        }
+        else
+        {
+            DragFloatInRange("Shortest reconnection (m)##restir", &restirPt.legacyDistance, 0.0f, 10.0f, "%.2f");
+        }
+        DragFloatInRange("Roughness threshold##restir", &restirPt.roughnessThreshold, 0.0f, 1.0f, "%.2f");
+        DragFloatInRange("Confidence cap##restir", &restirPt.cap, 1.0f, 100.0f, "%.0f");
+        ImGui::Checkbox("Decorrelation##restir", &restirPt.decorrelation);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Lowers the temporal confidence where neighbours share a sample (duplication map)");
+        }
+        ImGui::Checkbox("Colour noise reduction##restir", &restirPt.colorNoiseReduction);
+        ImGui::Checkbox("Dual motion vectors##restir", &restirPt.dualMotionVectors);
+        ImGui::Checkbox("Russian roulette##restir", &restirPt.russianRoulette);
+        ImGui::Checkbox("Accumulate (still camera)##restir", &restirPt.accumulate);
+        static const char* kViews[] = {"Image", "Duplication map", "Reconnection vertex", "Confidence (log2)", "Path length", "Pairing check"};
+        ImGui::Combo("View##restir", &restirPt.debugView, kViews, IM_ARRAYSIZE(kViews));
+        if (ImGui::SmallButton("Reset##restir"))
+        {
+            restirPt = RestirPtSettings{};
+        }
+        ImGui::Unindent();
+    }
+    else
+    {
+        DragFloatInRange("Firefly clamp##pt", &pathTracing.fireflyClamp, 0.0f, 1000.0f, "%.1f");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The brightest a path vertex may add, in display units; 0 clamps nothing (reference)");
+        }
+        ImGui::Checkbox("Accumulate##pt", &pathTracing.accumulate);
+        ImGui::BeginDisabled(!pathTracing.accumulate);
+        DragIntInRange("Frames while moving##pt", &pathTracing.motionFrames, 1, 256);
+        DragIntInRange("Frames while still##pt", &pathTracing.maxFrames, 1, 2048);
+        ImGui::EndDisabled();
+        ImGui::Checkbox("Denoise##pt", &pathTracing.denoise);
+    }
     if (ImGui::SmallButton("Reset##pt"))
     {
-        pathTracing = PathTracingSettings{.enabled = pathTracing.enabled};
+        pathTracing = PathTracingSettings{.enabled = pathTracing.enabled, .restir = pathTracing.restir};
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
@@ -166,6 +216,10 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Max roughness##ssr", &debug.ssr.maxRoughness, 0.05f, 1.0f, "%.2f");
     DragFloatInRange("Max distance (m)##ssr", &debug.ssr.maxDistance, 1.0f, 200.0f, "%.0f");
     ImGui::EndDisabled();
+
+    // MINIENGINE_toon materials (anime characters) over the rest of the scene.
+    ImGui::SeparatorText("Anime characters");
+    DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
 
     ImGui::SeparatorText("Output");
     // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.

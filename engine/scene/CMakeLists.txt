@@ -9,6 +9,7 @@ add_library(engine_scene
     sun_position.cpp
     sun_position.h
     scene_world.h
+    toon_material.h
     wind.cpp
     wind.h
     world_units.h

@@ -6,12 +6,14 @@
 #include <engine/scene/material_graph.h>
 #include <engine/physics/vehicle_settings.h>
 #include <engine/scene/scene_components.h>
+#include <engine/scene/toon_material.h>
 #include <glm/glm.hpp>
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -90,6 +92,9 @@ struct ModelMaterialData
     bool unlit = false;
     // MaterialPbrSurfaceSettings::decal.
     bool decal = false;
+    // MINIENGINE_toon: shaded by the toon passes instead of the PBR model, its maps in the PBR texture
+    // slots ToonMaterialData names. Shared, as the parameters never change after loading.
+    std::shared_ptr<const ToonMaterialData> toon;
 };
 
 // What a car model's node says a submesh is, by Assetto Corsa's naming (kn5 imports keep the

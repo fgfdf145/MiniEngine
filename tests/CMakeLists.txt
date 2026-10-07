@@ -780,6 +780,32 @@ endif()
 
 set_target_properties(miniengine_taa_jitter_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_restir_pairing_tests
+    restir_pairing_tests.cpp
+)
+miniengine_group_target_sources(miniengine_restir_pairing_tests)
+
+target_link_libraries(miniengine_restir_pairing_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.restir_pairing
+    COMMAND miniengine_restir_pairing_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_restir_pairing_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_restir_pairing_tests>
+            $<TARGET_FILE_DIR:miniengine_restir_pairing_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_restir_pairing_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_specular_aa_tests
     specular_aa_tests.cpp
 )

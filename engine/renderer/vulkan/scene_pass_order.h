@@ -15,6 +15,8 @@ enum class ScenePassId
     Geometry,
     // The ray traced sun shadow (rt_shadow_pass.h), which the lighting pass reads.
     RtShadow,
+    // ReSTIR PT (restir_pt_pass.h): the path traced lighting the lighting pass adds while it runs.
+    RestirPt,
     AoTrace,
     AoResolve,
     SsrTrace,
@@ -34,6 +36,10 @@ enum class ScenePassId
     // pass that samples it.
     Scatter,
     Forward,
+    // The anime characters (toon_pass.h): their depth texture and eye mask, then their cel shading,
+    // outlines and see-through hair over the opaque scene, before the transmission copy takes it.
+    ToonPrepass,
+    Toon,
     TransmissionCopy,
     ForwardTranslucent,
     Taa,

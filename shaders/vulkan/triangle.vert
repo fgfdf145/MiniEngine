@@ -43,6 +43,11 @@ layout(location = 9) flat out vec3 fragModelScale;
 // The vertex in the model's space, which detail layers mapped by position tile by (detail_layers.glsl).
 layout(location = 10) out vec3 fragObjectPosition;
 
+// The toon pass (toon.vert) draws the anime characters' opaque surfaces again on the depth this
+// writes for them in the geometry pass, from the same expression: invariant in both, so the two agree
+// to the bit.
+invariant gl_Position;
+
 void main()
 {
     vec4 worldPosition = drawData.model * vec4(inPosition, 1.0);

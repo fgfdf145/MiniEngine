@@ -173,7 +173,8 @@ void VulkanPathTracePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    if (!frame.pathTracing.enabled || !m_imagesReady)
+    // ReSTIR PT (restir_pt_pass.h) runs in its place when pathTracing.restir is set.
+    if (!frame.pathTracing.enabled || frame.pathTracing.restir || !m_imagesReady)
     {
         return;
     }

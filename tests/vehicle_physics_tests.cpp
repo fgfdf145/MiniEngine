@@ -1499,6 +1499,46 @@ void TestUnsprungWheelsHangInTheAirAndLand()
     Require(mostLoad > 2.0f * quarter, "the landing loads the tyres");
 }
 
+// Dropped a metre, the GT-R lands on its hubs' end stops and its rims: stiff springs that cushion the
+// blow over some milliseconds. The rigid stops they replace (the hub's travel held at its end, the
+// physics engine's hard point past the tyre) took the body's speed within a step: some 150 g.
+void TestHardLandingIsCushioned()
+{
+    const VehicleSettings settings = GtrSettings();
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 1.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    constexpr float kStep = PhysicsWorld::kFixedStepSeconds;
+    float lastY = world.GetVehiclePose(car).position.y;
+    float lastRate = 0.0f;
+    float hardest = 0.0f;
+    float mostBump = 0.0f;
+    float mostRise = 0.0f;
+    for (float time = 0.0f; time < 3.0f; time += kStep)
+    {
+        world.Update(kStep);
+        const float y = world.GetVehiclePose(car).position.y;
+        const float rate = (y - lastY) / kStep;
+        hardest = std::max(hardest, (rate - lastRate) / kStep / 9.81f);
+        mostRise = std::max(mostRise, rate);
+        lastY = y;
+        lastRate = rate;
+        for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+        {
+            Require(std::isfinite(wheel.travel) && std::isfinite(wheel.suspensionForce), "the landing stays finite");
+            mostBump = std::max(mostBump, wheel.travel);
+        }
+    }
+    std::cout << "GT-R dropped 1 m: hardest " << hardest << " g, most bump " << mostBump * 1000.0f << " mm, rose again at up to " << mostRise << " m/s\n";
+    Require(hardest < 40.0f, "the end stops cushion the landing");
+    Require(mostBump < 0.2f, "the hubs stay near their end stops");
+    Require(mostRise < 3.0f, "the car is not thrown back up");
+    for (const VehicleWheelState& wheel : world.GetVehicleWheels(car))
+    {
+        Require(wheel.inContact && std::abs(wheel.travel) < 0.006f, "the car settles on its wheels");
+    }
+}
+
 // A 2 cm bump across the road at speed: the hubs ride over it (the front ones' travel and tyre loads
 // jump), the body hardly feels it, and the car goes on straight.
 void TestUnsprungCarTakesABump()
@@ -2945,6 +2985,7 @@ int main()
         TestMultibodyCarRestsAtItsDesignPosition(true);
         TestUnsprungCarStandsOnItsTyres();
         TestUnsprungWheelsHangInTheAirAndLand();
+        TestHardLandingIsCushioned();
         TestUnsprungCarTakesABump();
         TestSplitterRidesOverARoadSpike();
         TestWheelMountsATallKerbWithoutLeaping();
