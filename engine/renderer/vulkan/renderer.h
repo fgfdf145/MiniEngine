@@ -356,6 +356,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Textures prepared and uploaded for a change that has not committed yet, by cache key. The
     // upload moves the ones it uses into m_textureStore.
     std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_stagedTextures;
+    // The batches that staged them, submitted without a wait and dropped once the GPU has run them.
+    // Clearing the list waits for the rest: before any staged texture is destroyed unused.
+    std::vector<std::unique_ptr<VulkanUploadBatch>> m_textureStagingBatches;
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
     bool m_sceneUploadPending = false;
