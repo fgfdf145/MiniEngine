@@ -1,5 +1,9 @@
-﻿#include <engine/editor/editor_ui.h>
-#include "editor_ui_internal.h"
+﻿#include "scene_panel.h"
+
+#include <engine/editor/editor_ui.h>
+#include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/windows/model_processor_window.h>
 
 #include <engine/asset/asset_registry.h>
 #include <engine/asset/model_loader.h>
@@ -9,6 +13,7 @@
 #include <engine/platform/file_dialog/file_dialog.h>
 #include <engine/scene/sun_position.h>
 #include <engine/scene/wind.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
@@ -502,253 +507,188 @@ void DrawLightComponentEditor(LightComponent& light)
 }
 }
 
-void EditorUiController::DrawScenePanel(
-    IEditorWorld& scene,
-    const std::string& lastLoadError,
-    const std::string& lastSceneIoError,
-    const std::string& sceneUploadStatus,
-    EditorUiFrameResult& result)
+ScenePanel::ScenePanel()
+    : EditorPanel("scene", "Scene", ICON_PH_TREE_STRUCTURE, EditorDockSlot::Left)
 {
-    if (ImGui::Begin("Scene", &m_showSceneWindow))
+    Open();
+}
+
+void ScenePanel::OnGui(EditorContext& context)
+{
+    IEditorWorld& scene = context.scene;
+    EditorUiFrameResult& result = context.result;
+    const std::string& lastLoadError = context.frame.lastLoadError;
+    const std::string& lastSceneIoError = context.frame.lastSceneIoError;
+    const std::string& sceneUploadStatus = context.frame.sceneUploadStatus;
+
+    // Model loads and uploads fail without interrupting the editor, so this line is the only
+    // place the user learns that the scene on screen is not the one they asked for.
+    if (!lastLoadError.empty())
     {
-        // Model loads and uploads fail without interrupting the editor, so this line is the only
-        // place the user learns that the scene on screen is not the one they asked for.
-        if (!lastLoadError.empty())
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, ui_colors::kTextDanger);
-            ImGui::TextWrapped("Error: %s", lastLoadError.c_str());
-            ImGui::PopStyleColor();
-            ImGui::Separator();
-        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ui_colors::kTextDanger);
+        ImGui::TextWrapped("Error: %s", lastLoadError.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+    }
 
-        // Streamed cells come and go with the focus: they are counted, not listed.
-        const size_t streamedCount = scene.Registry().view<const StreamedComponent>().size();
-        const size_t modelCount = scene.Registry().view<const ModelComponent>().size() - streamedCount;
-        const size_t lightCount = scene.Registry().view<const LightComponent>().size();
-        if (streamedCount > 0)
-        {
-            ImGui::Text("Models: %u  Lights: %u  Streamed cells: %u",
-                        static_cast<unsigned int>(modelCount),
-                        static_cast<unsigned int>(lightCount),
-                        static_cast<unsigned int>(streamedCount));
-        }
-        else
-        {
-            ImGui::Text("Models: %u  Lights: %u",
-                        static_cast<unsigned int>(modelCount),
-                        static_cast<unsigned int>(lightCount));
-        }
-        // Texture files prepare in the background; the scene on screen changes once they are ready.
-        // The status shares the counts line: a line of its own would come and go with every scene
-        // update and push the whole panel down and back up.
-        if (!sceneUploadStatus.empty())
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", sceneUploadStatus.c_str());
-        }
-
-        if (ImGui::Button("Add Entity"))
-        {
-            result.actions.createSceneEntity = true;
-        }
+    // Streamed cells come and go with the focus: they are counted, not listed.
+    const size_t streamedCount = scene.Registry().view<const StreamedComponent>().size();
+    const size_t modelCount = scene.Registry().view<const ModelComponent>().size() - streamedCount;
+    const size_t lightCount = scene.Registry().view<const LightComponent>().size();
+    if (streamedCount > 0)
+    {
+        ImGui::Text("Models: %u  Lights: %u  Streamed cells: %u",
+                    static_cast<unsigned int>(modelCount),
+                    static_cast<unsigned int>(lightCount),
+                    static_cast<unsigned int>(streamedCount));
+    }
+    else
+    {
+        ImGui::Text("Models: %u  Lights: %u",
+                    static_cast<unsigned int>(modelCount),
+                    static_cast<unsigned int>(lightCount));
+    }
+    // Texture files prepare in the background; the scene on screen changes once they are ready.
+    // The status shares the counts line: a line of its own would come and go with every scene
+    // update and push the whole panel down and back up.
+    if (!sceneUploadStatus.empty())
+    {
         ImGui::SameLine();
+        ImGui::TextDisabled("%s", sceneUploadStatus.c_str());
+    }
 
-        // "Add Light" dropdown
-        if (ImGui::Button("Add Light"))
+    if (ImGui::Button("Add Entity"))
+    {
+        result.actions.createSceneEntity = true;
+    }
+    ImGui::SameLine();
+
+    // "Add Light" dropdown
+    if (ImGui::Button("Add Light"))
+    {
+        ImGui::OpenPopup("AddLightPopup");
+    }
+    if (ImGui::BeginPopup("AddLightPopup"))
+    {
+        const auto addLight = [&](LightType type, const char* name)
         {
-            ImGui::OpenPopup("AddLightPopup");
-        }
-        if (ImGui::BeginPopup("AddLightPopup"))
-        {
-            const auto addLight = [&](LightType type, const char* name)
+            if (ImGui::MenuItem(GetLightTypeLabel(type)))
             {
-                if (ImGui::MenuItem(GetLightTypeLabel(type)))
-                {
-                    result.actions.createLightEntity = EditorUiActions::LightCreate{
-                        std::string(name) + " Light",
-                        type};
-                }
-            };
-            addLight(LightType::Point, "Point");
-            addLight(LightType::Directional, "Directional");
-            addLight(LightType::Spot, "Spot");
-            addLight(LightType::Area, "Area");
-            addLight(LightType::Ambient, "Ambient");
-            addLight(LightType::Hemisphere, "Hemisphere");
-            ImGui::EndPopup();
-        }
+                result.actions.createLightEntity = EditorUiActions::LightCreate{
+                    std::string(name) + " Light",
+                    type};
+            }
+        };
+        addLight(LightType::Point, "Point");
+        addLight(LightType::Directional, "Directional");
+        addLight(LightType::Spot, "Spot");
+        addLight(LightType::Area, "Area");
+        addLight(LightType::Ambient, "Ambient");
+        addLight(LightType::Hemisphere, "Hemisphere");
+        ImGui::EndPopup();
+    }
 
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!scene.HasSelection());
-        if (ImGui::Button("Delete"))
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!scene.HasSelection());
+    if (ImGui::Button("Delete"))
+    {
+        result.actions.deleteSelectedSceneEntity = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+
+    // --- Model entity list ---
+    if (modelCount != 0u)
+    {
+        ImGui::TextDisabled("Models");
+    }
+    for (entt::entity entity : scene.GetSceneOrder())
+    {
+        if (!scene.HasModelComponent(entity) || scene.Registry().all_of<StreamedComponent>(entity))
         {
-            result.actions.deleteSelectedSceneEntity = true;
+            continue;
         }
-        ImGui::EndDisabled();
+        const TagComponent& tag = scene.GetTag(entity);
+        const std::string label = tag.name + "##model_" +
+                                  std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
+        if (ImGui::Selectable(label.c_str(), scene.IsSelected(entity)))
+        {
+            scene.SetSelectedEntity(entity);
+        }
+    }
+
+    // --- Light entity list ---
+    if (lightCount != 0u)
+    {
+        if (modelCount != 0u)
+            ImGui::Spacing();
+        ImGui::TextDisabled("Lights");
+    }
+    for (entt::entity entity : scene.GetSceneOrder())
+    {
+        if (!scene.HasLightComponent(entity))
+        {
+            continue;
+        }
+        const TagComponent& tag = scene.GetTag(entity);
+        const LightComponent& light = scene.GetLightComponent(entity);
+        const ImVec4 typeColor = ImGui::ColorConvertU32ToFloat4(GetLightTypeColor(light.type));
+        const std::string label = std::string("[") + GetLightTypeLabel(light.type)[0] + "] " +
+                                  tag.name + "##light_" +
+                                  std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
+        ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
+        const bool clicked = ImGui::Selectable(label.c_str(), scene.IsSelected(entity));
+        ImGui::PopStyleColor();
+        if (clicked)
+        {
+            scene.SetSelectedEntity(entity);
+        }
+    }
+
+    // --- Selected entity inspector ---
+    if (scene.HasSelection())
+    {
+        const entt::entity selectedEntity = scene.GetSelectedEntity();
+        const bool isLight = scene.HasLightComponent(selectedEntity);
+
+        TagComponent& tag = scene.EditTag(selectedEntity);
+        TransformComponent& transform = scene.EditTransform(selectedEntity);
 
         ImGui::Separator();
 
-        // --- Model entity list ---
-        if (modelCount != 0u)
+        ImGui::InputText("Name", &tag.name);
+        ImGui::TextDisabled("Entity UUID: %s", scene.GetEntityUuid(selectedEntity).c_str());
+
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::TextDisabled("Models");
-        }
-        for (entt::entity entity : scene.GetSceneOrder())
-        {
-            if (!scene.HasModelComponent(entity) || scene.Registry().all_of<StreamedComponent>(entity))
+            if (DrawTransformComponent(transform))
             {
-                continue;
+                scene.MarkTransformDirty(selectedEntity);
             }
-            const TagComponent& tag = scene.GetTag(entity);
-            const std::string label = tag.name + "##model_" +
-                                      std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
-            if (ImGui::Selectable(label.c_str(), scene.IsSelected(entity)))
+            if (ImGui::Button("Reset Transform"))
             {
-                scene.SetSelectedEntity(entity);
+                scene.ResetSelectedTransform();
             }
         }
 
-        // --- Light entity list ---
-        if (lightCount != 0u)
+        if (isLight)
         {
-            if (modelCount != 0u)
-                ImGui::Spacing();
-            ImGui::TextDisabled("Lights");
-        }
-        for (entt::entity entity : scene.GetSceneOrder())
-        {
-            if (!scene.HasLightComponent(entity))
+            LightComponent& light = scene.EditLightComponent(selectedEntity);
+            if (ImGui::CollapsingHeader("LightComponent", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                continue;
-            }
-            const TagComponent& tag = scene.GetTag(entity);
-            const LightComponent& light = scene.GetLightComponent(entity);
-            const ImVec4 typeColor = ImGui::ColorConvertU32ToFloat4(GetLightTypeColor(light.type));
-            const std::string label = std::string("[") + GetLightTypeLabel(light.type)[0] + "] " +
-                                      tag.name + "##light_" +
-                                      std::to_string(static_cast<uint32_t>(entt::to_integral(entity)));
-            ImGui::PushStyleColor(ImGuiCol_Text, typeColor);
-            const bool clicked = ImGui::Selectable(label.c_str(), scene.IsSelected(entity));
-            ImGui::PopStyleColor();
-            if (clicked)
-            {
-                scene.SetSelectedEntity(entity);
-            }
-        }
-
-        // --- Selected entity inspector ---
-        if (scene.HasSelection())
-        {
-            const entt::entity selectedEntity = scene.GetSelectedEntity();
-            const bool isLight = scene.HasLightComponent(selectedEntity);
-
-            TagComponent& tag = scene.EditTag(selectedEntity);
-            TransformComponent& transform = scene.EditTransform(selectedEntity);
-
-            ImGui::Separator();
-
-            ImGui::InputText("Name", &tag.name);
-            ImGui::TextDisabled("Entity UUID: %s", scene.GetEntityUuid(selectedEntity).c_str());
-
-            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                if (DrawTransformComponent(transform))
-                {
-                    scene.MarkTransformDirty(selectedEntity);
-                }
-                if (ImGui::Button("Reset Transform"))
-                {
-                    scene.ResetSelectedTransform();
-                }
+                DrawLightComponentEditor(light);
             }
 
-            if (isLight)
+            // Directional lights use the combined move/rotate gizmo.
+            GizmoSettings& gizmo = scene.GetGizmoSettings();
+            if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                LightComponent& light = scene.EditLightComponent(selectedEntity);
-                if (ImGui::CollapsingHeader("LightComponent", ImGuiTreeNodeFlags_DefaultOpen))
+                if (light.type == LightType::Point || light.type == LightType::Ambient)
                 {
-                    DrawLightComponentEditor(light);
+                    ImGui::TextDisabled("Translate only (no orientation for this light type)");
                 }
-
-                // Directional lights use the combined move/rotate gizmo.
-                GizmoSettings& gizmo = scene.GetGizmoSettings();
-                if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    if (light.type == LightType::Point || light.type == LightType::Ambient)
-                    {
-                        ImGui::TextDisabled("Translate only (no orientation for this light type)");
-                    }
-                    else
-                    {
-                        DrawGizmoControls(gizmo);
-                    }
-                }
-            }
-            else
-            {
-                const ModelComponent& model = scene.GetSelectedModel();
-                const ModelBoundsComponent& bounds = scene.GetSelectedModelBounds();
-                const EditorModelMetadataComponent& metadata = scene.GetSelectedModelMetadata();
-                GizmoSettings& gizmo = scene.GetGizmoSettings();
-
-                if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
-                    ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
-                    ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
-                    ImGui::Text("Submeshes: %u", metadata.submeshCount);
-
-                    if (bounds.hasBounds)
-                    {
-                        ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", bounds.minBounds.x, bounds.minBounds.y, bounds.minBounds.z);
-                        ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", bounds.maxBounds.x, bounds.maxBounds.y, bounds.maxBounds.z);
-                    }
-
-                    if (!metadata.materialVariants.empty())
-                    {
-                        const char* preview = model.materialVariant.empty() ? "Default" : model.materialVariant.c_str();
-                        if (ImGui::BeginCombo("Material Variant", preview))
-                        {
-                            if (ImGui::Selectable("Default", model.materialVariant.empty()) && !model.materialVariant.empty())
-                            {
-                                result.actions.selectedMaterialVariant = std::string{};
-                            }
-                            for (size_t index = 0; index < metadata.materialVariants.size(); ++index)
-                            {
-                                const std::string& name = metadata.materialVariants[index];
-                                const std::string label = name + "##variant_" + std::to_string(index);
-                                if (ImGui::Selectable(label.c_str(), name == model.materialVariant) && name != model.materialVariant)
-                                {
-                                    result.actions.selectedMaterialVariant = name;
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-                    }
-
-                    ImGui::BeginDisabled(model.sourcePath.empty());
-                    if (ImGui::Button("Edit Materials"))
-                    {
-                        RevertModelProcessorPreview(result);
-                        OpenModelProcessorWindow(model.sourcePath, true);
-                    }
-                    ImGui::SetItemTooltip("Opens the model's materials in Model Preview, its paint selected; edits show here as they are made.");
-                    ImGui::EndDisabled();
-
-                    if (metadata.modelLightCount > 0)
-                    {
-                        bool useModelLights = model.useModelLights;
-                        const std::string label = "Model Lights (" + std::to_string(metadata.modelLightCount) + ")";
-                        if (ImGui::Checkbox(label.c_str(), &useModelLights))
-                        {
-                            result.actions.selectedUseModelLights = useModelLights;
-                        }
-                    }
-
-                    DrawImportedModelInspector(metadata);
-                }
-
-                if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
+                else
                 {
                     DrawGizmoControls(gizmo);
                 }
@@ -756,45 +696,112 @@ void EditorUiController::DrawScenePanel(
         }
         else
         {
-            ImGui::TextUnformatted("No entity selected.");
-        }
+            const ModelComponent& model = scene.GetSelectedModel();
+            const ModelBoundsComponent& bounds = scene.GetSelectedModelBounds();
+            const EditorModelMetadataComponent& metadata = scene.GetSelectedModelMetadata();
+            GizmoSettings& gizmo = scene.GetGizmoSettings();
 
-        ImGui::Separator();
-        if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            DrawEnvironmentEditor(scene);
-        }
+            if (ImGui::CollapsingHeader("ModelComponent", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                ImGui::TextWrapped("Display Name: %s", model.displayName.c_str());
+                ImGui::TextWrapped("Source Path: %s", model.sourcePath.empty() ? "<builtin cube>" : model.sourcePath.c_str());
+                ImGui::Text("Imported Unit Scale: 1.0 = 1 meter");
+                ImGui::Text("Submeshes: %u", metadata.submeshCount);
 
-        // Scene I/O — always visible
-        ImGui::Separator();
-        ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
-        if (!lastSceneIoError.empty())
-        {
-            ImGui::TextColored(ui_colors::kTextDanger, "Error: %s", lastSceneIoError.c_str());
-        }
-        // Save goes to the current path if already set; otherwise it asks, like Save As.
-        const bool savePressed = ImGui::Button("Save Scene");
-        const bool saveToCurrentPath = savePressed && !scene.GetSceneFilePath().empty();
-        if (saveToCurrentPath)
-        {
-            result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
-        }
-        ImGui::SameLine();
-        const bool saveAsPressed = ImGui::Button("Save As...");
-        if (const std::optional<std::string> savePath =
-                PickFilePath(FileDialogType::SaveScene, (savePressed && !saveToCurrentPath) || saveAsPressed);
-            savePath.has_value())
-        {
-            result.actions.selectedSceneSavePath = *savePath;
-        }
-        ImGui::SameLine();
-        if (const std::optional<std::string> loadPath =
-                PickFilePath(FileDialogType::OpenScene, ImGui::Button("Load Scene"));
-            loadPath.has_value())
-        {
-            result.actions.selectedSceneLoadPath = *loadPath;
+                if (bounds.hasBounds)
+                {
+                    ImGui::Text("Bounds Min (m): %.2f %.2f %.2f", bounds.minBounds.x, bounds.minBounds.y, bounds.minBounds.z);
+                    ImGui::Text("Bounds Max (m): %.2f %.2f %.2f", bounds.maxBounds.x, bounds.maxBounds.y, bounds.maxBounds.z);
+                }
+
+                if (!metadata.materialVariants.empty())
+                {
+                    const char* preview = model.materialVariant.empty() ? "Default" : model.materialVariant.c_str();
+                    if (ImGui::BeginCombo("Material Variant", preview))
+                    {
+                        if (ImGui::Selectable("Default", model.materialVariant.empty()) && !model.materialVariant.empty())
+                        {
+                            result.actions.selectedMaterialVariant = std::string{};
+                        }
+                        for (size_t index = 0; index < metadata.materialVariants.size(); ++index)
+                        {
+                            const std::string& name = metadata.materialVariants[index];
+                            const std::string label = name + "##variant_" + std::to_string(index);
+                            if (ImGui::Selectable(label.c_str(), name == model.materialVariant) && name != model.materialVariant)
+                            {
+                                result.actions.selectedMaterialVariant = name;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+
+                ImGui::BeginDisabled(model.sourcePath.empty());
+                if (ImGui::Button("Edit Materials"))
+                {
+                    context.windows.Get<ModelProcessorWindow>().OpenModel(context, model.sourcePath, true);
+                }
+                ImGui::SetItemTooltip("Opens the model's materials in Model Preview, its paint selected; edits show here as they are made.");
+                ImGui::EndDisabled();
+
+                if (metadata.modelLightCount > 0)
+                {
+                    bool useModelLights = model.useModelLights;
+                    const std::string label = "Model Lights (" + std::to_string(metadata.modelLightCount) + ")";
+                    if (ImGui::Checkbox(label.c_str(), &useModelLights))
+                    {
+                        result.actions.selectedUseModelLights = useModelLights;
+                    }
+                }
+
+                DrawImportedModelInspector(metadata);
+            }
+
+            if (ImGui::CollapsingHeader("GizmoComponent", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                DrawGizmoControls(gizmo);
+            }
         }
     }
-    ImGui::End();
+    else
+    {
+        ImGui::TextUnformatted("No entity selected.");
+    }
+
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawEnvironmentEditor(scene);
+    }
+
+    // Scene I/O — always visible
+    ImGui::Separator();
+    ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+    if (!lastSceneIoError.empty())
+    {
+        ImGui::TextColored(ui_colors::kTextDanger, "Error: %s", lastSceneIoError.c_str());
+    }
+    // Save goes to the current path if already set; otherwise it asks, like Save As.
+    const bool savePressed = ImGui::Button("Save Scene");
+    const bool saveToCurrentPath = savePressed && !scene.GetSceneFilePath().empty();
+    if (saveToCurrentPath)
+    {
+        result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
+    }
+    ImGui::SameLine();
+    const bool saveAsPressed = ImGui::Button("Save As...");
+    if (const std::optional<std::string> savePath =
+            PickFilePath(FileDialogType::SaveScene, (savePressed && !saveToCurrentPath) || saveAsPressed);
+        savePath.has_value())
+    {
+        result.actions.selectedSceneSavePath = *savePath;
+    }
+    ImGui::SameLine();
+    if (const std::optional<std::string> loadPath =
+            PickFilePath(FileDialogType::OpenScene, ImGui::Button("Load Scene"));
+        loadPath.has_value())
+    {
+        result.actions.selectedSceneLoadPath = *loadPath;
+    }
 }
 }

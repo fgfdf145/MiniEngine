@@ -355,7 +355,7 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
 
 void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommands& window)
 {
-    for (const EditorPanel& panel : window.panels)
+    for (const EditorPanelMenuEntry& panel : window.panels)
     {
         bool* visible = panel.visible;
         Add(
@@ -372,7 +372,7 @@ void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommand
     registry.AddSeparator("Window");
 
     std::vector<bool*> visibleFlags;
-    for (const EditorPanel& panel : window.panels)
+    for (const EditorPanelMenuEntry& panel : window.panels)
     {
         visibleFlags.push_back(panel.visible);
     }

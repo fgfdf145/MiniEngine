@@ -80,8 +80,8 @@ struct EditorCommandState
     bool videoRecording = false;
 };
 
-// An editor panel the Window menu shows and hides.
-struct EditorPanel
+// A panel the Window menu shows and hides (see EditorWindowManager::BuildPanelMenuEntries).
+struct EditorPanelMenuEntry
 {
     std::string id;         // command id suffix: "window.<id>"
     std::string windowName; // the ImGui window's name
@@ -91,7 +91,7 @@ struct EditorPanel
 
 struct EditorWindowCommands
 {
-    std::span<const EditorPanel> panels;
+    std::span<const EditorPanelMenuEntry> panels;
     std::function<void()> resetLayout;
 };
 

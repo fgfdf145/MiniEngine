@@ -1,7 +1,11 @@
-﻿#include <engine/editor/editor_ui.h>
-#include "editor_ui_internal.h"
-#include "editor_material_graph.h"
-#include "editor_model_preview.h"
+﻿#include "model_processor_window.h"
+
+#include <engine/asset/asset_paths.h>
+#include <engine/editor/editor_ui.h>
+#include <engine/editor/ui/editor_material_graph.h>
+#include <engine/editor/ui/editor_model_preview.h>
+#include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
 
 #include <engine/asset/material_graph_runtime.h>
 #include <engine/asset/material_definition.h>
@@ -16,6 +20,7 @@
 #include <cmath>
 #include <filesystem>
 #include <stdexcept>
+#include <system_error>
 #include <string_view>
 #include <vector>
 
@@ -289,265 +294,293 @@ bool DrawMaterialQuickEdit(ModelImportedMaterialInfo& material, float& brightnes
 }
 }
 
-void EditorUiController::OpenModelProcessorWindow(const std::string& modelPath, bool preselectPaint)
+ModelProcessorWindow::ModelProcessorWindow()
+    : EditorWindow("model_preview", "Model Preview")
+{
+}
+
+void ModelProcessorWindow::OpenModel(EditorContext& context, const std::string& modelPath, bool preselectPaint)
+{
+    RevertScenePreview(context);
+    LoadModel(modelPath, preselectPaint);
+    context.windows.Open(*this);
+}
+
+void ModelProcessorWindow::LoadModel(const std::string& modelPath, bool preselectPaint)
 {
     const std::filesystem::path normalizedPath = NormalizeFilesystemPath(modelPath);
-    ResetMaterialShadedPreviewCache("ModelDraftPreviewCanvas");
-
-    m_showModelProcessorWindow = true;
-    m_modelProcessorModelPath = normalizedPath.string();
-    m_modelProcessorDisplayName = normalizedPath.filename().string();
-    m_modelProcessorStatusMessage.clear();
-    m_modelProcessorSelectedMaterialIndex = 0;
-    m_modelProcessorSelectedUvSubmeshIndex = 0;
-    m_modelProcessorDirty = false;
-    m_modelProcessorEditedSlots.clear();
-    m_modelProcessorScenePreviewed = false;
-    m_focusModelProcessorWindow = true;
+    Reset();
+    m_modelPath = normalizedPath.string();
+    m_displayName = normalizedPath.filename().string();
     m_quickEditBrightness = 0.0f;
-    m_modelProcessorLoadedModel = LoadedModelData{};
-    m_modelPreview = ModelPreviewCamera{};
+    m_modelPreview = PreviewCamera{};
     m_modelPreview.autoFramePending = true;
-    m_materialGraph = MaterialGraphCanvas{};
-    m_modelProcessorMaterials.clear();
 
     try
     {
-        const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelProcessorModelPath);
-        m_modelProcessorLoadedModel = loadedModel;
-        m_modelProcessorMaterials = BuildEditableMaterials(loadedModel);
+        const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelPath);
+        m_loadedModel = loadedModel;
+        m_materials = BuildEditableMaterials(loadedModel);
         if (preselectPaint)
         {
-            m_modelProcessorSelectedMaterialIndex = FindPaintSlot(m_modelProcessorMaterials);
+            m_selectedMaterialIndex = FindPaintSlot(m_materials);
         }
     }
     catch (const std::exception& error)
     {
-        m_modelProcessorStatusMessage = error.what();
+        m_statusMessage = error.what();
     }
 }
 
-void EditorUiController::CloseModelProcessorWindow()
+void ModelProcessorWindow::Reset()
 {
     ResetMaterialShadedPreviewCache("ModelDraftPreviewCanvas");
-    m_showModelProcessorWindow = false;
-    m_modelProcessorModelPath.clear();
-    m_modelProcessorDisplayName.clear();
-    m_modelProcessorStatusMessage.clear();
-    m_modelProcessorMaterials.clear();
-    m_modelProcessorSelectedMaterialIndex = 0;
-    m_modelProcessorDirty = false;
-    m_modelProcessorEditedSlots.clear();
-    m_modelProcessorScenePreviewed = false;
+    m_modelPath.clear();
+    m_displayName.clear();
+    m_statusMessage.clear();
+    m_loadedModel = LoadedModelData{};
+    m_materials.clear();
+    m_selectedMaterialIndex = 0;
+    m_selectedUvSubmeshIndex = 0;
+    m_dirty = false;
+    m_editedSlots.clear();
+    m_scenePreviewed = false;
     m_materialGraph = MaterialGraphCanvas{};
 }
 
-void EditorUiController::RevertModelProcessorPreview(EditorUiFrameResult& result)
+void ModelProcessorWindow::OnAssetRenamed(const std::string& oldPath, const std::string& newPath)
 {
-    if (m_modelProcessorScenePreviewed)
+    if (const std::optional<std::filesystem::path> rebased = AssetPaths::Rebase(m_modelPath, oldPath, newPath))
     {
-        result.actions.revertImportedModelMaterials = m_modelProcessorModelPath;
-        m_modelProcessorScenePreviewed = false;
+        m_modelPath = rebased->string();
+        m_displayName = rebased->filename().string();
     }
 }
 
-void EditorUiController::DrawModelProcessorPanel(IEditorWorld& scene, EditorUiFrameResult& result)
+void ModelProcessorWindow::RevertScenePreview(EditorContext& context)
 {
-    bool keepModelProcessorWindowOpen = m_showModelProcessorWindow;
-    bool requestCloseModelProcessorWindow = false;
-    bool requestReloadModelProcessorWindow = false;
-    const std::string modelProcessorReloadPath = m_modelProcessorModelPath;
-
-    ImGui::SetNextWindowSize(
-        ImVec2(560.0f * m_effectiveUiScale, 560.0f * m_effectiveUiScale),
-        ImGuiCond_FirstUseEver);
-    if (m_focusModelProcessorWindow)
+    if (m_scenePreviewed)
     {
-        ImGui::SetNextWindowFocus();
-        m_focusModelProcessorWindow = false;
+        context.result.actions.revertImportedModelMaterials = m_modelPath;
+        m_scenePreviewed = false;
     }
-    if (ImGui::Begin("Model Preview", &keepModelProcessorWindowOpen))
-    {
-        ImGui::TextWrapped("Model: %s", m_modelProcessorDisplayName.empty() ? "<unknown>" : m_modelProcessorDisplayName.c_str());
-        ImGui::TextWrapped("Asset Path: %s", m_modelProcessorModelPath.c_str());
-        ImGui::TextWrapped(
-            "Scene Target: %s",
-            scene.HasSelection() ? scene.GetSelectedTag().name.c_str() : "<no entity selected>");
+}
 
-        if (!m_modelProcessorStatusMessage.empty())
+void ModelProcessorWindow::Tick(EditorContext& context)
+{
+    static_cast<void>(context);
+    // Close once the model is gone. Checking the disk every frame is a filesystem call per frame
+    // for a file that rarely changes, so it is checked twice a second.
+    constexpr double kExistsCheckIntervalSeconds = 0.5;
+    const double now = ImGui::GetTime();
+    if (!IsOpen() || now - m_lastExistsCheckTime < kExistsCheckIntervalSeconds)
+    {
+        return;
+    }
+    m_lastExistsCheckTime = now;
+    std::error_code errorCode;
+    const std::filesystem::path modelPath(m_modelPath);
+    if (m_modelPath.empty() || !std::filesystem::exists(modelPath, errorCode) || errorCode ||
+        !IsSupportedModelAssetPath(modelPath))
+    {
+        // Nothing to read back from disk: the scene's copies went with the file.
+        m_scenePreviewed = false;
+        Close();
+    }
+}
+
+void ModelProcessorWindow::OnClose(EditorContext& context)
+{
+    RevertScenePreview(context);
+    Reset();
+}
+
+void ModelProcessorWindow::PreBegin(EditorContext& context)
+{
+    static_cast<void>(context);
+    ImGui::SetNextWindowSize(ImVec2(560.0f * UiScale(), 560.0f * UiScale()), ImGuiCond_FirstUseEver);
+}
+
+void ModelProcessorWindow::OnGui(EditorContext& context)
+{
+    IEditorWorld& scene = context.scene;
+    EditorUiFrameResult& result = context.result;
+    bool requestReload = false;
+    ImGui::TextWrapped("Model: %s", m_displayName.empty() ? "<unknown>" : m_displayName.c_str());
+    ImGui::TextWrapped("Asset Path: %s", m_modelPath.c_str());
+    ImGui::TextWrapped(
+        "Scene Target: %s",
+        scene.HasSelection() ? scene.GetSelectedTag().name.c_str() : "<no entity selected>");
+
+    if (!m_statusMessage.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextWrapped("Status: %s", m_statusMessage.c_str());
+    }
+
+    ImGui::BeginDisabled(!scene.HasSelection());
+    if (ImGui::Button("Load Into Selected Entity", ImVec2(220.0f * UiScale(), 0.0f)))
+    {
+        result.actions.selectedModelPath = m_modelPath;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Reload From Disk"))
+    {
+        requestReload = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close", ImVec2(140.0f * UiScale(), 0.0f)))
+    {
+        Close();
+    }
+
+    if (!m_loadedModel.submeshes.empty())
+    {
+        uint32_t previewTriangleCount = 0;
+        for (const ModelSubmeshData& submesh : m_loadedModel.submeshes)
         {
-            ImGui::Spacing();
-            ImGui::TextWrapped("Status: %s", m_modelProcessorStatusMessage.c_str());
+            previewTriangleCount += static_cast<uint32_t>(submesh.mesh.indices.size() / 3u);
         }
 
-        ImGui::BeginDisabled(!scene.HasSelection());
-        if (ImGui::Button("Load Into Selected Entity", ImVec2(220.0f * m_effectiveUiScale, 0.0f)))
+        ImGui::Spacing();
+        ImGui::SeparatorText("Live Draft Preview");
+        DrawMaterialShadedPreview(
+            m_loadedModel,
+            m_materials,
+            m_materials.empty() ? -1 : m_selectedMaterialIndex,
+            m_modelPreview.yaw,
+            m_modelPreview.pitch,
+            m_modelPreview.distance,
+            m_modelPreview.autoFramePending,
+            UiScale(),
+            "ModelDraftPreviewCanvas",
+            "Approximate PBR draft preview");
+        ImGui::Text(
+            "Submeshes: %u  Triangles: %u",
+            static_cast<unsigned int>(m_loadedModel.submeshes.size()),
+            static_cast<unsigned int>(previewTriangleCount));
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("UV Preview");
+        DrawModelUvPreview(
+            m_loadedModel,
+            m_selectedUvSubmeshIndex,
+            UiScale());
+    }
+
+    if (m_materials.empty())
+    {
+        ImGui::Spacing();
+        ImGui::TextDisabled("No material slots are available right now.");
+    }
+    else
+    {
+        m_selectedMaterialIndex = std::clamp(
+            m_selectedMaterialIndex,
+            0,
+            static_cast<int>(m_materials.size()) - 1);
+
+        const std::string currentSlotLabel = BuildMaterialSlotLabel(
+            m_materials[static_cast<size_t>(m_selectedMaterialIndex)],
+            static_cast<size_t>(m_selectedMaterialIndex));
+
+        if (ImGui::BeginCombo("Material Slot", currentSlotLabel.c_str()))
         {
-            result.actions.selectedModelPath = m_modelProcessorModelPath;
+            for (size_t materialIndex = 0; materialIndex < m_materials.size(); ++materialIndex)
+            {
+                const bool isSelected = static_cast<int>(materialIndex) == m_selectedMaterialIndex;
+                const std::string label =
+                    BuildMaterialSlotLabel(m_materials[materialIndex], materialIndex);
+                if (ImGui::Selectable(label.c_str(), isSelected))
+                {
+                    m_selectedMaterialIndex = static_cast<int>(materialIndex);
+                    m_quickEditBrightness = 0.0f;
+                }
+                if (isSelected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        const size_t selectedMaterialIndex = static_cast<size_t>(m_selectedMaterialIndex);
+        ModelImportedMaterialInfo& selectedMaterial = m_materials[selectedMaterialIndex];
+        ImGui::Text("Draft State: %s", m_dirty ? "Modified" : "Clean");
+        if (ImGui::Checkbox("Live Preview in Scene", &m_livePreview))
+        {
+            if (!m_livePreview)
+            {
+                RevertScenePreview(context);
+            }
+            else if (!m_editedSlots.empty())
+            {
+                EditorUiActions::ImportedModelMaterialPreview preview{m_modelPath, {}};
+                for (const uint32_t slot : m_editedSlots)
+                {
+                    preview.materials.emplace_back(slot, m_materials[slot]);
+                }
+                result.actions.previewImportedModelMaterial = std::move(preview);
+                m_scenePreviewed = true;
+            }
+        }
+        ImGui::SetItemTooltip("Show edits on the scene's copies of this model as they are made. Save writes them to disk; closing without saving drops them.");
+
+        bool materialChanged = DrawMaterialQuickEdit(selectedMaterial, m_quickEditBrightness);
+        materialChanged |= DrawMaterialGraphEditor(selectedMaterial, selectedMaterialIndex);
+        if (materialChanged)
+        {
+            const MaterialGraphCompileResult compileResult =
+                CompileMaterialShaderGraph(selectedMaterial);
+            m_dirty = true;
+            m_editedSlots.insert(static_cast<uint32_t>(selectedMaterialIndex));
+            if (!compileResult.message.empty())
+            {
+                m_statusMessage = compileResult.message;
+            }
+            if (m_livePreview)
+            {
+                result.actions.previewImportedModelMaterial = EditorUiActions::ImportedModelMaterialPreview{
+                    m_modelPath,
+                    {{static_cast<uint32_t>(selectedMaterialIndex), selectedMaterial}}};
+                m_scenePreviewed = true;
+            }
+        }
+
+        DrawResolvedMaterial(selectedMaterial);
+
+        ImGui::Spacing();
+        ImGui::BeginDisabled(!m_dirty);
+        if (ImGui::Button("Save Material Graph", ImVec2(220.0f * UiScale(), 0.0f)))
+        {
+            result.actions.updatedImportedModelMaterials = EditorUiActions::ImportedModelMaterialsUpdate{
+                m_modelPath,
+                m_materials,
+                std::vector<uint32_t>(m_editedSlots.begin(), m_editedSlots.end())};
+            m_dirty = false;
+            m_editedSlots.clear();
+            m_scenePreviewed = false;
+            m_statusMessage = "Saved material graph for slot: " + currentSlotLabel;
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Reload From Disk"))
+        if (ImGui::Button("Close", ImVec2(140.0f * UiScale(), 0.0f)))
         {
-            requestReloadModelProcessorWindow = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
-        {
-            requestCloseModelProcessorWindow = true;
-        }
-
-        if (!m_modelProcessorLoadedModel.submeshes.empty())
-        {
-            uint32_t previewTriangleCount = 0;
-            for (const ModelSubmeshData& submesh : m_modelProcessorLoadedModel.submeshes)
-            {
-                previewTriangleCount += static_cast<uint32_t>(submesh.mesh.indices.size() / 3u);
-            }
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("Live Draft Preview");
-            DrawMaterialShadedPreview(
-                m_modelProcessorLoadedModel,
-                m_modelProcessorMaterials,
-                m_modelProcessorMaterials.empty() ? -1 : m_modelProcessorSelectedMaterialIndex,
-                m_modelPreview.yaw,
-                m_modelPreview.pitch,
-                m_modelPreview.distance,
-                m_modelPreview.autoFramePending,
-                m_effectiveUiScale,
-                "ModelDraftPreviewCanvas",
-                "Approximate PBR draft preview");
-            ImGui::Text(
-                "Submeshes: %u  Triangles: %u",
-                static_cast<unsigned int>(m_modelProcessorLoadedModel.submeshes.size()),
-                static_cast<unsigned int>(previewTriangleCount));
-
-            ImGui::Spacing();
-            ImGui::SeparatorText("UV Preview");
-            DrawModelUvPreview(
-                m_modelProcessorLoadedModel,
-                m_modelProcessorSelectedUvSubmeshIndex,
-                m_effectiveUiScale);
-        }
-
-        if (m_modelProcessorMaterials.empty())
-        {
-            ImGui::Spacing();
-            ImGui::TextDisabled("No material slots are available right now.");
-        }
-        else
-        {
-            m_modelProcessorSelectedMaterialIndex = std::clamp(
-                m_modelProcessorSelectedMaterialIndex,
-                0,
-                static_cast<int>(m_modelProcessorMaterials.size()) - 1);
-
-            const std::string currentSlotLabel = BuildMaterialSlotLabel(
-                m_modelProcessorMaterials[static_cast<size_t>(m_modelProcessorSelectedMaterialIndex)],
-                static_cast<size_t>(m_modelProcessorSelectedMaterialIndex));
-
-            if (ImGui::BeginCombo("Material Slot", currentSlotLabel.c_str()))
-            {
-                for (size_t materialIndex = 0; materialIndex < m_modelProcessorMaterials.size(); ++materialIndex)
-                {
-                    const bool isSelected = static_cast<int>(materialIndex) == m_modelProcessorSelectedMaterialIndex;
-                    const std::string label =
-                        BuildMaterialSlotLabel(m_modelProcessorMaterials[materialIndex], materialIndex);
-                    if (ImGui::Selectable(label.c_str(), isSelected))
-                    {
-                        m_modelProcessorSelectedMaterialIndex = static_cast<int>(materialIndex);
-                        m_quickEditBrightness = 0.0f;
-                    }
-                    if (isSelected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            const size_t selectedMaterialIndex = static_cast<size_t>(m_modelProcessorSelectedMaterialIndex);
-            ModelImportedMaterialInfo& selectedMaterial = m_modelProcessorMaterials[selectedMaterialIndex];
-            ImGui::Text("Draft State: %s", m_modelProcessorDirty ? "Modified" : "Clean");
-            if (ImGui::Checkbox("Live Preview in Scene", &m_modelProcessorLivePreview))
-            {
-                if (!m_modelProcessorLivePreview)
-                {
-                    RevertModelProcessorPreview(result);
-                }
-                else if (!m_modelProcessorEditedSlots.empty())
-                {
-                    EditorUiActions::ImportedModelMaterialPreview preview{m_modelProcessorModelPath, {}};
-                    for (const uint32_t slot : m_modelProcessorEditedSlots)
-                    {
-                        preview.materials.emplace_back(slot, m_modelProcessorMaterials[slot]);
-                    }
-                    result.actions.previewImportedModelMaterial = std::move(preview);
-                    m_modelProcessorScenePreviewed = true;
-                }
-            }
-            ImGui::SetItemTooltip("Show edits on the scene's copies of this model as they are made. Save writes them to disk; closing without saving drops them.");
-
-            bool materialChanged = DrawMaterialQuickEdit(selectedMaterial, m_quickEditBrightness);
-            materialChanged |= DrawMaterialGraphEditor(selectedMaterial, selectedMaterialIndex);
-            if (materialChanged)
-            {
-                const MaterialGraphCompileResult compileResult =
-                    CompileMaterialShaderGraph(selectedMaterial);
-                m_modelProcessorDirty = true;
-                m_modelProcessorEditedSlots.insert(static_cast<uint32_t>(selectedMaterialIndex));
-                if (!compileResult.message.empty())
-                {
-                    m_modelProcessorStatusMessage = compileResult.message;
-                }
-                if (m_modelProcessorLivePreview)
-                {
-                    result.actions.previewImportedModelMaterial = EditorUiActions::ImportedModelMaterialPreview{
-                        m_modelProcessorModelPath,
-                        {{static_cast<uint32_t>(selectedMaterialIndex), selectedMaterial}}};
-                    m_modelProcessorScenePreviewed = true;
-                }
-            }
-
-            DrawResolvedMaterial(selectedMaterial);
-
-            ImGui::Spacing();
-            ImGui::BeginDisabled(!m_modelProcessorDirty);
-            if (ImGui::Button("Save Material Graph", ImVec2(220.0f * m_effectiveUiScale, 0.0f)))
-            {
-                result.actions.updatedImportedModelMaterials = EditorUiActions::ImportedModelMaterialsUpdate{
-                    m_modelProcessorModelPath,
-                    m_modelProcessorMaterials,
-                    std::vector<uint32_t>(m_modelProcessorEditedSlots.begin(), m_modelProcessorEditedSlots.end())};
-                m_modelProcessorDirty = false;
-                m_modelProcessorEditedSlots.clear();
-                m_modelProcessorScenePreviewed = false;
-                m_modelProcessorStatusMessage = "Saved material graph for slot: " + currentSlotLabel;
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            if (ImGui::Button("Close", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
-            {
-                requestCloseModelProcessorWindow = true;
-            }
+            Close();
         }
     }
-    ImGui::End();
 
-    if (requestReloadModelProcessorWindow && !requestCloseModelProcessorWindow && keepModelProcessorWindowOpen)
+    // The window closes through OnClose; a reload drops the previewed edits and starts over.
+    if (requestReload && IsOpen())
     {
-        RevertModelProcessorPreview(result);
-        OpenModelProcessorWindow(modelProcessorReloadPath);
-    }
-    if (!keepModelProcessorWindowOpen || requestCloseModelProcessorWindow)
-    {
-        RevertModelProcessorPreview(result);
-        CloseModelProcessorWindow();
+        const std::string modelPath = m_modelPath;
+        RevertScenePreview(context);
+        LoadModel(modelPath, false);
     }
 }
 
-bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& material, size_t materialIndex)
+bool ModelProcessorWindow::DrawMaterialGraphEditor(ModelImportedMaterialInfo& material, size_t materialIndex)
 {
     bool changed = false;
     EnsureMaterialShaderGraph(material.name, std::nullopt, material);
@@ -576,7 +609,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
     const MaterialShaderLink* selectedGraphLinkForActions =
         FindMaterialGraphLink(material.shaderGraph, m_materialGraph.selectedLinkId);
 
-    if (ImGui::Button("Add Node", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
+    if (ImGui::Button("Add Node", ImVec2(140.0f * UiScale(), 0.0f)))
     {
         m_materialGraph.openAddNodePopup = true;
     }
@@ -584,7 +617,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
     ImGui::BeginDisabled(
         selectedGraphNodeForActions == nullptr ||
         selectedGraphNodeForActions->type == MaterialShaderNodeType::Output);
-    if (ImGui::Button("Delete Selected Node", ImVec2(190.0f * m_effectiveUiScale, 0.0f)))
+    if (ImGui::Button("Delete Selected Node", ImVec2(190.0f * UiScale(), 0.0f)))
     {
         RemoveMaterialGraphNode(material.shaderGraph, m_materialGraph.selectedNodeId);
         if (m_materialGraph.nodeResizeActive &&
@@ -604,7 +637,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(selectedGraphLinkForActions == nullptr);
-    if (ImGui::Button("Delete Selected Link", ImVec2(180.0f * m_effectiveUiScale, 0.0f)))
+    if (ImGui::Button("Delete Selected Link", ImVec2(180.0f * UiScale(), 0.0f)))
     {
         RemoveMaterialGraphLink(material.shaderGraph, m_materialGraph.selectedLinkId);
         m_materialGraph.selectedLinkId = 0;
@@ -619,7 +652,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
             static_cast<unsigned int>(m_materialGraph.linkDragFromNodeId),
             m_materialGraph.linkDragFromSlot.c_str());
         ImGui::SameLine();
-        if (ImGui::Button("Cancel Link", ImVec2(140.0f * m_effectiveUiScale, 0.0f)))
+        if (ImGui::Button("Cancel Link", ImVec2(140.0f * UiScale(), 0.0f)))
         {
             m_materialGraph.CancelLinkDrag();
         }
@@ -658,7 +691,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
 
     if (ImGui::BeginChild(
             "MaterialShaderGraphCanvas",
-            ImVec2(0.0f, 660.0f * m_effectiveUiScale),
+            ImVec2(0.0f, 660.0f * UiScale()),
             true,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
     {
@@ -670,7 +703,7 @@ bool EditorUiController::DrawMaterialGraphEditor(ModelImportedMaterialInfo& mate
 
 // The canvas inside its child window: pan and zoom, the grid, the nodes and their links, and the
 // add-node menu. Returns whether the graph changed.
-bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& material, size_t materialIndex)
+bool ModelProcessorWindow::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& material, size_t materialIndex)
 {
     bool changed = false;
     ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
@@ -687,8 +720,8 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
             ImGui::GetWindowPos().y + ImGui::GetWindowContentRegionMax().y);
     const float visibleWidth = canvasMax.x - canvasOrigin.x;
     const float visibleHeight = canvasMax.y - canvasOrigin.y;
-    const float gridStep = 48.0f * m_effectiveUiScale * m_materialGraph.zoom;
-    const float nodeUiScale = m_effectiveUiScale * m_materialGraph.zoom;
+    const float gridStep = 48.0f * UiScale() * m_materialGraph.zoom;
+    const float nodeUiScale = UiScale() * m_materialGraph.zoom;
     const bool canPasteClipboardNode =
         CanPasteMaterialGraphNode(material.shaderGraph, m_materialGraphClipboardNode);
     const bool mouseOverGraphNode = IsMouseOverMaterialGraphNode(
@@ -773,7 +806,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
                 m_materialGraph.resizeStartPosition,
                 m_materialGraph.resizeStartSize,
                 resizeMouseDelta,
-                m_effectiveUiScale,
+                UiScale(),
                 m_materialGraph.zoom);
             graphNodeCapturedMouse = true;
             ImGui::SetMouseCursor(GetMaterialGraphResizeCursor(m_materialGraph.resizeEdges));
@@ -789,7 +822,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
         MaterialGraphNodeDrawResult drawResult = DrawMaterialGraphNode(
             material,
             node,
-            m_modelProcessorModelPath,
+            m_modelPath,
             static_cast<uint32_t>(materialIndex),
             canvasOrigin,
             m_materialGraph.viewOrigin,
@@ -801,7 +834,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
             canPasteClipboardNode,
             m_materialGraph.linkDragFromNodeId,
             m_materialGraph.linkDragFromSlot,
-            &m_modelProcessorStatusMessage);
+            &m_statusMessage);
         changed |= drawResult.changed;
         graphNodeCapturedMouse |= drawResult.capturesMouse;
         if (drawResult.selected)
@@ -823,7 +856,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
         if (drawResult.requestCopy)
         {
             m_materialGraphClipboardNode = node;
-            m_modelProcessorStatusMessage =
+            m_statusMessage =
                 "Copied " + std::string(GetMaterialGraphNodeTypeLabel(node.type)) + " node.";
         }
         if (drawResult.requestPaste)
@@ -968,7 +1001,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
             m_materialGraph.selectedNodeId = pastedNode->id;
             m_materialGraph.selectedLinkId = 0;
             changed = true;
-            m_modelProcessorStatusMessage =
+            m_statusMessage =
                 "Pasted " + std::string(GetMaterialGraphNodeTypeLabel(pastedNode->type)) + " node copy.";
         }
         pendingPasteNodePosition.reset();
@@ -977,7 +1010,7 @@ bool EditorUiController::DrawMaterialGraphCanvas(ModelImportedMaterialInfo& mate
 }
 
 // Middle-drag pans the canvas; the wheel zooms about the cursor.
-void EditorUiController::UpdateMaterialGraphView(const ImVec2& canvasOrigin, bool canvasBackgroundHovered)
+void ModelProcessorWindow::UpdateMaterialGraphView(const ImVec2& canvasOrigin, bool canvasBackgroundHovered)
 {
     if (canvasBackgroundHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
     {
@@ -1021,7 +1054,7 @@ void EditorUiController::UpdateMaterialGraphView(const ImVec2& canvasOrigin, boo
 
 // The background context menu: add a node where it was opened, or paste the copied one there.
 // Returns whether the graph changed; a paste is left in `pendingPasteNodePosition`.
-bool EditorUiController::DrawMaterialGraphAddNodePopup(
+bool ModelProcessorWindow::DrawMaterialGraphAddNodePopup(
     ModelImportedMaterialInfo& material,
     bool canPasteClipboardNode,
     std::optional<MaterialGraphNodePosition>& pendingPasteNodePosition)
@@ -1040,7 +1073,7 @@ bool EditorUiController::DrawMaterialGraphAddNodePopup(
                 m_materialGraph.selectedNodeId = newNode->id;
                 m_materialGraph.selectedLinkId = 0;
                 changed = true;
-                m_modelProcessorStatusMessage =
+                m_statusMessage =
                     "Added " + std::string(GetMaterialGraphNodeTypeLabel(type)) + " node.";
             }
             ImGui::CloseCurrentPopup();

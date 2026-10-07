@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include <engine/core/threading/task_future.h>
+#include <engine/editor/ui/framework/editor_panel.h>
 #include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/suspension/suspension_kinematics.h>
 #include <engine/suspension/suspension_rig_report.h>
@@ -17,20 +18,21 @@ namespace me
 class IEditorWorld;
 struct EditorUiFrameResult;
 
-// The Suspension Rigs window: the virtual K&C rig and seven-post rig (engine/suspension) run on the
+// The Suspension Rigs panel: the virtual K&C rig and seven-post rig (engine/suspension) run on the
 // selected car's own data (its model's MINIENGINE_vehicle), plotted, with a view of the linkage
 // that moves with travel, roll and steering.
-class SuspensionRigWindow
+class SuspensionRigsPanel final : public EditorPanel
 {
 public:
-    SuspensionRigWindow() = default;
-    ~SuspensionRigWindow();
-    SuspensionRigWindow(const SuspensionRigWindow&) = delete;
-    SuspensionRigWindow& operator=(const SuspensionRigWindow&) = delete;
+    SuspensionRigsPanel();
+    ~SuspensionRigsPanel() override;
 
-    // `live` is the running rig's record; the window asks to start or stop it through `result`,
-    // which also takes its live settings.
-    void Draw(const IEditorWorld& scene, bool* open, const VehicleRigStatus& live, EditorUiFrameResult& result);
+    // Hands the live rig its settings, and takes the car off it once the panel is closed.
+    void Tick(EditorContext& context) override;
+
+    // The panel's contents, drawn into the current window. `live` is the running rig's record; the
+    // panel asks to start or stop it through `result`, which also takes its live settings.
+    void DrawContents(const IEditorWorld& scene, const VehicleRigStatus& live, EditorUiFrameResult& result);
 
     // What the window's own controls do, for callers that drive it (and its tests).
     enum Tab
@@ -79,6 +81,10 @@ public:
         m_animation = 0;
     }
 
+protected:
+    void OnGui(EditorContext& context) override;
+    void PreBegin(EditorContext& context) override;
+
 private:
     // A run of the rigs on a worker thread; the window polls it each frame.
     struct Run
@@ -113,6 +119,8 @@ private:
     std::string m_runError;
 
     int m_requestedTab = -1;
+    // Drawn at least once: until then the live rig keeps the settings it has.
+    bool m_shown = false;
 
     // Live rig tab.
     VehicleRigExcitation m_excitation;

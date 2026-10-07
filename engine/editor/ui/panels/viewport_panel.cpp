@@ -1,13 +1,16 @@
-﻿#include <engine/editor/editor_ui.h>
-#include "editor_gt7_hud.h"
-#include "editor_suspension_rigs.h"
-#include "editor_ui_internal.h"
+﻿#include "viewport_panel.h"
 
-#include "editor_vehicle_overlay.h"
+#include <engine/editor/editor_ui.h>
+#include <engine/editor/ui/editor_gt7_hud.h>
+#include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/editor_vehicle_overlay.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/panels/suspension_rigs_panel.h>
 
 #include <engine/core/log/log.h>
 #include <engine/logic/editor_world.h>
 #include <engine/logic/world_bounds.h>
+#include <IconsPhosphor.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <glm/ext/matrix_transform.hpp>
@@ -1106,152 +1109,187 @@ glm::vec3 UnprojectToGroundPlane(
 }
 }
 
-void EditorUiController::DrawViewportPanel(
-    Camera& camera,
-    ViewportMatrices& matrices,
-    IEditorWorld& scene,
-    ImTextureID viewportTextureId,
-    RenderBackendType currentBackendType,
-    EditorUiFrameResult& result)
+ViewportPanel::ViewportPanel()
+    : EditorPanel("viewport", "Viewport", ICON_PH_MONITOR, EditorDockSlot::Center)
 {
-    // Fullscreen: a window of its own over the whole screen with nothing of the editor around it, so the
-    // docked "Viewport" keeps its place in the layout.
-    const bool fullscreen = m_commandState.viewportFullscreen;
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_None;
-    if (fullscreen)
+    Open();
+}
+
+bool ViewportPanel::ShouldDraw(const EditorContext& context) const
+{
+    return IsOpen() || context.state.commands.viewportFullscreen;
+}
+
+// Fullscreen: a window of its own over the whole screen with nothing of the editor around it, so the
+// docked "Viewport" keeps its place in the layout.
+const char* ViewportPanel::GetImGuiName(const EditorContext& context) const
+{
+    return context.state.commands.viewportFullscreen ? "Viewport##Fullscreen" : GetTitle().c_str();
+}
+
+bool ViewportPanel::IsClosable(const EditorContext& context) const
+{
+    return !context.state.commands.viewportFullscreen;
+}
+
+ImGuiWindowFlags ViewportPanel::GetWindowFlags(const EditorContext& context) const
+{
+    if (!context.state.commands.viewportFullscreen)
+    {
+        return ImGuiWindowFlags_None;
+    }
+    return ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+           ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse;
+}
+
+void ViewportPanel::PreBegin(EditorContext& context)
+{
+    m_pushedStyleVars = 1;
+    if (context.state.commands.viewportFullscreen)
     {
         const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(mainViewport->Pos);
         ImGui::SetNextWindowSize(mainViewport->Size);
-        windowFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ++m_pushedStyleVars;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    if (ImGui::Begin(fullscreen ? "Viewport##Fullscreen" : "Viewport", fullscreen ? nullptr : &m_showViewportWindow, windowFlags))
-    {
-        const bool flipViewportImageY = false;
-        const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
-        if (!fullscreen)
-        {
-            DrawViewportOverlay(viewportRect, viewportTextureId);
-            // Under every other overlay, as in Blender.
-            DrawViewportSelectionOutline(viewportRect, m_selectionOutlineTexture);
-        }
+}
 
-        if (const ImGuiPayload* dragPayload = ImGui::GetDragDropPayload();
-            dragPayload != nullptr && dragPayload->IsDataType("ASSET_MODEL_PATH") && viewportRect.hovered)
+void ViewportPanel::PostEnd(EditorContext& context)
+{
+    static_cast<void>(context);
+    ImGui::PopStyleVar(m_pushedStyleVars);
+    m_pushedStyleVars = 0;
+}
+
+void ViewportPanel::OnGui(EditorContext& context)
+{
+    EditorSharedState& state = context.state;
+    Camera& camera = context.camera;
+    ViewportMatrices& matrices = context.matrices;
+    IEditorWorld& scene = context.scene;
+    EditorUiFrameResult& result = context.result;
+    const ImTextureID viewportTextureId = context.frame.viewportTextureId;
+    const RenderBackendType currentBackendType = context.frame.backendType;
+    const bool fullscreen = state.commands.viewportFullscreen;
+    const bool flipViewportImageY = false;
+    const ViewportOverlayRect viewportRect = BuildViewportOverlayRect(viewportTextureId, flipViewportImageY);
+    if (!fullscreen)
+    {
+        DrawViewportOverlay(viewportRect, viewportTextureId);
+        // Under every other overlay, as in Blender.
+        DrawViewportSelectionOutline(viewportRect, state.selectionOutlineTexture);
+    }
+
+    if (const ImGuiPayload* dragPayload = ImGui::GetDragDropPayload();
+        dragPayload != nullptr && dragPayload->IsDataType("ASSET_MODEL_PATH") && viewportRect.hovered)
+    {
+        const std::string hoveredPath = ReadDragDropPayloadString(*dragPayload);
+        if (!hoveredPath.empty())
         {
-            const std::string hoveredPath = ReadDragDropPayloadString(*dragPayload);
-            if (!hoveredPath.empty())
+            result.actions.hoveredViewportModel = EditorUiActions::ViewportModelPlacement{
+                hoveredPath,
+                UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)};
+        }
+    }
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_PATH"))
+        {
+            const std::string droppedPath = ReadDragDropPayloadString(*payload);
+            if (!droppedPath.empty())
             {
-                result.actions.hoveredViewportModel = EditorUiActions::ViewportModelPlacement{
-                    hoveredPath,
+                result.actions.droppedViewportModel = EditorUiActions::ViewportModelPlacement{
+                    droppedPath,
                     UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)};
             }
         }
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_PATH"))
-            {
-                const std::string droppedPath = ReadDragDropPayloadString(*payload);
-                if (!droppedPath.empty())
-                {
-                    result.actions.droppedViewportModel = EditorUiActions::ViewportModelPlacement{
-                        droppedPath,
-                        UnprojectToGroundPlane(ImGui::GetIO().MousePos, viewportRect, matrices, camera)};
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
+        ImGui::EndDragDropTarget();
+    }
 
-        result.viewportExtent =
-            BuildViewportExtent(viewportRect, DlssResolves() ? 1.0f : std::clamp(m_renderDebug.renderScale, 0.25f, 1.0f));
-        result.viewportInteractionRect = SDL_FRect{
-            viewportRect.origin.x,
-            viewportRect.origin.y,
-            viewportRect.size.x,
-            viewportRect.size.y};
-        result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
-        // While driving, R puts the car back on its wheels rather than switching the gizmo.
-        if (!m_vehicleStatus.active)
-        {
-            HandleViewportShortcuts(scene, viewportRect);
-        }
-        RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-        if (m_vehicleStatus.active)
-        {
-            DrawVehiclePhysicsOverlay(
-                *viewportRect.drawList,
-                viewportRect.origin,
-                viewportRect.size,
-                matrices.projection * matrices.view,
-                m_vehicleStatus.wheels,
-                m_vehicleOverlay,
-                m_effectiveUiScale);
-            if (m_vehicleOverlay.enabled && m_vehicleOverlay.linkage)
-            {
-                DrawVehicleLinkageOverlay(
-                    *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleStatus.linkage, m_effectiveUiScale);
-            }
-        }
-        if (m_vehicleRigStatus.active && m_suspensionRigs && m_suspensionRigs->ShowLinkage())
+    result.viewportExtent =
+        BuildViewportExtent(viewportRect, state.DlssResolves() ? 1.0f : std::clamp(state.renderDebug.renderScale, 0.25f, 1.0f));
+    result.viewportInteractionRect = SDL_FRect{
+        viewportRect.origin.x,
+        viewportRect.origin.y,
+        viewportRect.size.x,
+        viewportRect.size.y};
+    result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
+    // While driving, R puts the car back on its wheels rather than switching the gizmo.
+    if (!state.vehicleStatus.active)
+    {
+        HandleViewportShortcuts(scene, viewportRect);
+    }
+    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+    if (state.vehicleStatus.active)
+    {
+        DrawVehiclePhysicsOverlay(
+            *viewportRect.drawList,
+            viewportRect.origin,
+            viewportRect.size,
+            matrices.projection * matrices.view,
+            state.vehicleStatus.wheels,
+            state.vehicle.overlay,
+            UiScale());
+        if (state.vehicle.overlay.enabled && state.vehicle.overlay.linkage)
         {
             DrawVehicleLinkageOverlay(
-                *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, m_vehicleRigStatus.linkage, m_effectiveUiScale);
+                *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleStatus.linkage, UiScale());
         }
-        DrawVideoRecordingIndicator(viewportRect, m_effectiveUiScale, m_videoRecording);
-        // GT7's driving HUD along the bottom while a car is driven.
-        const bool drivingHud = m_vehicleStatus.active && m_commandState.drivingHud;
-        if (drivingHud && viewportRect.drawList != nullptr)
-        {
-            DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(m_vehicleStatus, ImGui::GetTime()));
-        }
-        // Centred on the car while one is driven, else on the camera.
-        if (m_vehicleStatus.active)
-        {
-            DrawMinimap(
-                viewportRect,
-                m_effectiveUiScale,
-                m_minimapTexture,
-                scene.GetMinimap(),
-                m_vehicleStatus.pose.position,
-                m_vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
-                drivingHud);
-        }
-        else
-        {
-            DrawMinimap(viewportRect, m_effectiveUiScale, m_minimapTexture, scene.GetMinimap(), camera.position, camera.GetForward());
-        }
-        if (fullscreen)
-        {
-            DrawFullscreenViewportHud(viewportRect, m_effectiveUiScale, ImGui::GetTime() - m_fullscreenEnteredTime, m_vehicleStatus, drivingHud);
-            ImGui::End();
-            ImGui::PopStyleVar(2);
-            return;
-        }
-        DrawViewManipulator(camera, matrices, viewportRect, m_effectiveUiScale);
-        RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-        // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
-        if (m_commandState.gizmos)
-        {
-            DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, m_effectiveUiScale);
-            DrawLightGizmos(scene, matrices, viewportRect, m_effectiveUiScale);
-        }
-        std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
-        AppendLightProjectedCenters(scene, matrices, viewportRect, m_effectiveUiScale, projectedCenters);
-        HandleViewportSelection(scene, projectedCenters, viewportRect, m_effectiveUiScale);
-        DrawViewportSelectionOverlay(scene, matrices, viewportRect, m_effectiveUiScale, static_cast<bool>(m_selectionOutlineTexture));
-        const float textMargin = kOverlayTextMarginPixels * m_effectiveUiScale;
-        ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
-        ImGui::BeginGroup();
-        ImGui::TextUnformatted("Viewport");
-        ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, right click deselects, drag assets here to place");
-        ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
-        ImGui::Text("Viewport FPS: %.1f", ImGui::GetIO().Framerate);
-        ImGui::EndGroup();
     }
-    ImGui::End();
-    ImGui::PopStyleVar(fullscreen ? 2 : 1);
+    if (state.vehicleRigStatus.active && context.windows.Get<SuspensionRigsPanel>().ShowLinkage())
+    {
+        DrawVehicleLinkageOverlay(
+            *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleRigStatus.linkage, UiScale());
+    }
+    DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
+    // GT7's driving HUD along the bottom while a car is driven.
+    const bool drivingHud = state.vehicleStatus.active && state.commands.drivingHud;
+    if (drivingHud && viewportRect.drawList != nullptr)
+    {
+        DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus, ImGui::GetTime()));
+    }
+    // Centred on the car while one is driven, else on the camera.
+    if (state.vehicleStatus.active)
+    {
+        DrawMinimap(
+            viewportRect,
+            UiScale(),
+            state.minimapTexture,
+            scene.GetMinimap(),
+            state.vehicleStatus.pose.position,
+            state.vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
+            drivingHud);
+    }
+    else
+    {
+        DrawMinimap(viewportRect, UiScale(), state.minimapTexture, scene.GetMinimap(), camera.position, camera.GetForward());
+    }
+    if (fullscreen)
+    {
+        DrawFullscreenViewportHud(viewportRect, UiScale(), ImGui::GetTime() - state.fullscreenEnteredTime, state.vehicleStatus, drivingHud);
+        return;
+    }
+    DrawViewManipulator(camera, matrices, viewportRect, UiScale());
+    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+    // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
+    if (state.commands.gizmos)
+    {
+        DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, UiScale());
+        DrawLightGizmos(scene, matrices, viewportRect, UiScale());
+    }
+    std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
+    AppendLightProjectedCenters(scene, matrices, viewportRect, UiScale(), projectedCenters);
+    HandleViewportSelection(scene, projectedCenters, viewportRect, UiScale());
+    DrawViewportSelectionOverlay(scene, matrices, viewportRect, UiScale(), static_cast<bool>(state.selectionOutlineTexture));
+    const float textMargin = kOverlayTextMarginPixels * UiScale();
+    ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("Viewport");
+    ImGui::TextUnformatted("F to frame, R toggles combined/scale gizmo, right click deselects, drag assets here to place");
+    ImGui::Text("Render Size: %u x %u", result.viewportExtent.width, result.viewportExtent.height);
+    ImGui::Text("Viewport FPS: %.1f", ImGui::GetIO().Framerate);
+    ImGui::EndGroup();
 }
 }

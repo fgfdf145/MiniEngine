@@ -34,7 +34,6 @@ add_library(engine_editor
     services/vehicle_steering_assist.h
     services/world_streaming_service.cpp
     services/world_streaming_service.h
-    ui/editor_asset_browser_panel.cpp
     ui/editor_dockspace.cpp
     ui/editor_gt7_hud.cpp
     ui/editor_gt7_hud.h
@@ -42,20 +41,54 @@ add_library(engine_editor
     ui/editor_material_graph.h
     ui/editor_menu_toolbar.cpp
     ui/editor_menu_toolbar.h
-    ui/editor_misc_panels.cpp
     ui/editor_model_preview.cpp
     ui/editor_model_preview.h
-    ui/editor_model_processor_panel.cpp
-    ui/editor_scene_panel.cpp
-    ui/editor_theme_panel.cpp
     ui/editor_ui_internal.h
     ui/editor_ui_shared.cpp
     ui/editor_vehicle_overlay.cpp
     ui/editor_vehicle_overlay.h
-    ui/editor_suspension_rigs.cpp
-    ui/editor_suspension_rigs.h
-    ui/editor_vehicle_panel.cpp
-    ui/editor_viewport_panel.cpp
+    ui/framework/editor_context.h
+    ui/framework/editor_modal.cpp
+    ui/framework/editor_modal.h
+    ui/framework/editor_panel.h
+    ui/framework/editor_style.cpp
+    ui/framework/editor_style.h
+    ui/framework/editor_window.cpp
+    ui/framework/editor_window.h
+    ui/framework/editor_window_manager.cpp
+    ui/framework/editor_window_manager.h
+    ui/modals/about_modal.cpp
+    ui/modals/about_modal.h
+    ui/modals/import_conflict_modal.cpp
+    ui/modals/import_conflict_modal.h
+    ui/modals/kn5_import_modal.cpp
+    ui/modals/kn5_import_modal.h
+    ui/modals/scene_reset_modal.cpp
+    ui/modals/scene_reset_modal.h
+    ui/panels/asset_browser_panel.cpp
+    ui/panels/asset_browser_panel.h
+    ui/panels/camera_panel.cpp
+    ui/panels/camera_panel.h
+    ui/panels/graphics_debug_panel.cpp
+    ui/panels/graphics_debug_panel.h
+    ui/panels/input_monitor_panel.cpp
+    ui/panels/input_monitor_panel.h
+    ui/panels/scene_panel.cpp
+    ui/panels/scene_panel.h
+    ui/panels/suspension_rigs_panel.cpp
+    ui/panels/suspension_rigs_panel.h
+    ui/panels/theme_panel.cpp
+    ui/panels/theme_panel.h
+    ui/panels/vehicle_panel.cpp
+    ui/panels/vehicle_panel.h
+    ui/panels/viewport_panel.cpp
+    ui/panels/viewport_panel.h
+    ui/windows/keyboard_shortcuts_window.cpp
+    ui/windows/keyboard_shortcuts_window.h
+    ui/windows/model_processor_window.cpp
+    ui/windows/model_processor_window.h
+    ui/windows/preferences_window.cpp
+    ui/windows/preferences_window.h
     ui_colors.h
     view_settings_fields.h
 )

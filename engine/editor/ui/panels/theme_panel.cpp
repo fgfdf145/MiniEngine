@@ -1,6 +1,8 @@
-﻿#include <engine/editor/editor_ui.h>
-#include "editor_ui_internal.h"
+﻿#include "theme_panel.h"
 
+#include <engine/editor/editor_ui.h>
+
+#include <IconsPhosphor.h>
 #include <imgui.h>
 
 #include <array>
@@ -96,55 +98,28 @@ constexpr std::array<ThemeColorEntry, 8> kThemeFeedbackEntries = {{{"Text Select
 constexpr std::array<ThemeColorEntry, 1> kThemeFeedbackActiveEntries = {{{"Separator Active", ImGuiCol_SeparatorActive}}};
 }
 
-void EditorUiController::CaptureDefaultThemeColors()
+ThemePanel::ThemePanel()
+    : EditorPanel("theme", "Theme", ICON_PH_PALETTE)
 {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
-    {
-        m_defaultThemeColors[static_cast<size_t>(colorIndex)] = style.Colors[colorIndex];
-    }
+    Open();
 }
 
-void EditorUiController::SyncBaseStyleColorsFromCurrentStyle()
+void ThemePanel::OnGui(EditorContext& context)
 {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
-    {
-        m_baseStyle.Colors[colorIndex] = style.Colors[colorIndex];
-    }
-}
-
-void EditorUiController::ResetThemeColorsToDefault()
-{
-    ImGuiStyle& style = ImGui::GetStyle();
-    for (int colorIndex = 0; colorIndex < ImGuiCol_COUNT; ++colorIndex)
-    {
-        style.Colors[colorIndex] = m_defaultThemeColors[static_cast<size_t>(colorIndex)];
-    }
-    SyncBaseStyleColorsFromCurrentStyle();
-}
-
-bool EditorUiController::DrawThemeEditorWindow()
-{
-    if (!ImGui::Begin("Theme", &m_showThemeWindow))
-    {
-        ImGui::End();
-        return false;
-    }
-
+    EditorStyle& style = context.style;
     ImGui::TextWrapped("Edit the editor palette live. Changes apply immediately and remain stable when UI scale changes.");
     ImGui::Separator();
 
     bool changed = false;
     if (ImGui::Button("Reset Theme Colors"))
     {
-        ResetThemeColorsToDefault();
+        style.ResetThemeColorsToDefault();
         changed = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("Re-capture Current As Default"))
     {
-        CaptureDefaultThemeColors();
+        style.CaptureDefaultThemeColors();
     }
 
     ImGui::Spacing();
@@ -160,10 +135,9 @@ bool EditorUiController::DrawThemeEditorWindow()
 
     if (changed)
     {
-        SyncBaseStyleColorsFromCurrentStyle();
+        style.SyncBaseStyleColorsFromCurrentStyle();
+        // The palette is saved with the editor settings.
+        context.result.engineSettingsChanged = true;
     }
-
-    ImGui::End();
-    return changed;
 }
 }
