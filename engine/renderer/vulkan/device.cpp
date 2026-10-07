@@ -233,6 +233,8 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
         enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         enabled12.descriptorBindingPartiallyBound = VK_TRUE;
         enabled12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        m_supportsUpdateUnusedWhilePending = vulkan12Features.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+        enabled12.descriptorBindingUpdateUnusedWhilePending = m_supportsUpdateUnusedWhilePending ? VK_TRUE : VK_FALSE;
     }
     VkPhysicalDeviceFeatures2 enabledFeatures{};
     enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -324,6 +326,11 @@ bool VulkanDevice::SupportsIndependentBlend() const
 bool VulkanDevice::SupportsRayQuery() const
 {
     return m_supportsRayQuery;
+}
+
+bool VulkanDevice::SupportsUpdateUnusedWhilePending() const
+{
+    return m_supportsUpdateUnusedWhilePending;
 }
 
 VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const

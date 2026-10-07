@@ -132,7 +132,7 @@ void VulkanMaterialSetCache::Release(VkDescriptorSet set)
     }
 }
 
-void VulkanMaterialSetCache::FreeUnreferenced()
+void VulkanMaterialSetCache::FreeUnreferenced(const std::function<void(std::function<void()>)>& retire)
 {
     for (const VkDescriptorSet set : m_unreferenced)
     {
@@ -144,9 +144,13 @@ void VulkanMaterialSetCache::FreeUnreferenced()
         const auto entry = m_entries.find(key->second);
         if (entry != m_entries.end() && entry->second.references == 0 && !entry->second.pending)
         {
-            Free(entry->second);
+            const Entry freed = entry->second;
             m_entries.erase(entry);
             m_keyOfSet.erase(key);
+            retire([this, freed]()
+                   {
+                       Free(freed);
+                   });
         }
     }
     m_unreferenced.clear();

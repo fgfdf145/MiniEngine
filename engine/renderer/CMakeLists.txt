@@ -166,6 +166,7 @@ add_library(engine_renderer
     vulkan/ray_acceleration.h
     vulkan/ray_scene.cpp
     vulkan/ray_scene.h
+    vulkan/retire_queue.h
     vulkan/render_pass.cpp
     vulkan/render_pass.h
     vulkan/render_target_layout.cpp

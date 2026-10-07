@@ -305,40 +305,47 @@ void VulkanRayAcceleration::RebuildAddressMap()
 void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
 {
     CompactionQueries& queries = m_compactionQueries[frameSlot];
-    if (queries.structures.empty())
+    if (!queries.structures.empty())
     {
-        return;
-    }
-    // The slot's last frame wrote these queries, and its fence has signalled.
-    const uint32_t count = static_cast<uint32_t>(queries.structures.size());
-    std::vector<uint64_t> sizes(count, 0);
-    const VkResult result = vkGetQueryPoolResults(
-        m_device,
-        queries.pool,
-        0,
-        count,
-        sizeof(uint64_t) * count,
-        sizes.data(),
-        sizeof(uint64_t),
-        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-    std::vector<std::shared_ptr<RayBlas>> structures = std::move(queries.structures);
-    queries.structures.clear();
-    if (result != VK_SUCCESS)
-    {
-        LOG_WARN("Ray acceleration: compacted sizes unavailable ({}); structures stay uncompacted", static_cast<int>(result));
-        return;
+        // The slot's last frame wrote these queries, and its fence has signalled.
+        const uint32_t count = static_cast<uint32_t>(queries.structures.size());
+        std::vector<uint64_t> sizes(count, 0);
+        const VkResult result = vkGetQueryPoolResults(
+            m_device,
+            queries.pool,
+            0,
+            count,
+            sizeof(uint64_t) * count,
+            sizes.data(),
+            sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        std::vector<std::shared_ptr<RayBlas>> structures = std::move(queries.structures);
+        queries.structures.clear();
+        if (result != VK_SUCCESS)
+        {
+            LOG_WARN("Ray acceleration: compacted sizes unavailable ({}); structures stay uncompacted", static_cast<int>(result));
+        }
+        else
+        {
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                m_compactionBacklog.emplace_back(std::move(structures[index]), sizes[index]);
+            }
+        }
     }
 
     bool replaced = false;
-    for (uint32_t index = 0; index < count; ++index)
+    for (size_t done = 0; done < kCompactionsPerFrame && !m_compactionBacklog.empty(); ++done)
     {
+        const std::shared_ptr<RayBlas> structure = std::move(m_compactionBacklog.front().first);
+        const VkDeviceSize compactedSize = m_compactionBacklog.front().second;
+        m_compactionBacklog.pop_front();
         // No content holds it any more: it goes with this list.
-        if (structures[index].use_count() == 1)
+        if (structure.use_count() == 1)
         {
             continue;
         }
-        RayBlas& blas = *structures[index];
-        const VkDeviceSize compactedSize = sizes[index];
+        RayBlas& blas = *structure;
         blas.compacted = true;
         if (compactedSize == 0 || blas.handle == VK_NULL_HANDLE ||
             static_cast<double>(compactedSize) > static_cast<double>(blas.memory.size) * (1.0 - kCompactionMinimumSaving))
@@ -366,7 +373,7 @@ void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
         CheckVulkan(
             m_functions->createAccelerationStructure(m_device, &createInfo, nullptr, &compact.handle),
             "Failed to create a compacted acceleration structure");
-        m_compactionCopies.push_back(CompactionCopy{blas.handle, structures[index]});
+        m_compactionCopies.push_back(CompactionCopy{blas.handle, structure});
         m_compactedFrom += blas.memory.size;
         m_compactedTo += compact.memory.size;
 
@@ -393,7 +400,7 @@ void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
     }
     if (m_pendingNext >= m_pending.size() && !m_compactionCopies.empty())
     {
-        bool waiting = false;
+        bool waiting = !m_compactionBacklog.empty();
         for (const CompactionQueries& slotQueries : m_compactionQueries)
         {
             waiting = waiting || !slotQueries.structures.empty();

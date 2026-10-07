@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <memory>
@@ -83,17 +84,28 @@ class VulkanRayScene
         VkPipelineCache pipelineCache,
         uint32_t frameCount,
         bool hardwareRayTracing,
-        TextureDescriptorBinding defaultTexture = {});
+        TextureDescriptorBinding defaultTexture = {},
+        bool updateUnusedWhilePending = false);
     ~VulkanRayScene();
 
     VulkanRayScene(const VulkanRayScene&) = delete;
     VulkanRayScene& operator=(const VulkanRayScene&) = delete;
 
+    // How what the frames in flight may still use is freed: release runs once they have finished
+    // (VulkanRetireQueue). Without it everything is freed at once, and every content change must wait
+    // for the frames in flight.
+    void SetRetire(std::function<void(std::function<void()>)> retire);
+    // Whether SetContent needs the frames in flight finished even when slotCapacity does not grow:
+    // without a retire function, or when the texture table cannot take descriptors while in use.
+    bool ContentChangeWaitsForFrames() const;
+
     // New content: starts building the hierarchies of meshes not built before (on a worker) and
     // queues the averaging of the ray materials whose slot changed hands. Slots run below
     // slotCapacity. The textures must stay alive until the next SetContent; the renderer keeps them for
-    // as long as the content is live. The caller has waited for every frame in flight (material
-    // descriptors are rewritten and freed).
+    // as long as the content is live. Placed slots must be ones no frame in flight reads. The caller
+    // has waited for every frame in flight when slotCapacity grows (every slot's descriptors are
+    // written again) or ContentChangeWaitsForFrames says so; otherwise only placed slots' descriptors
+    // are written, and released slots' are left as they are (no ray reaches them any more).
     // placed are the slots that got a submesh with this content, released those that lost theirs; a
     // slot in neither keeps its averaged material.
     // models is each submesh's model matrix now, which the worker builds the top level over.
@@ -104,10 +116,13 @@ class VulkanRayScene
         std::span<const RayMaterialSource> placed,
         std::span<const uint32_t> released);
 
-    // Whether a finished build waits to be installed; the caller then waits for every frame in
-    // flight and calls InstallBuild, which replaces the buffers the descriptor sets name.
+    // Whether a finished build waits to be installed. InstallBuild makes it the content rays trace: each
+    // frame slot's set names its buffers from that slot's next UpdateInstances, and the content it
+    // replaces is retired (SetRetire), so the frames in flight trace on undisturbed. Only when the
+    // instance capacity changes, which replaces the slots' own buffers and top levels, does it call
+    // waitForFrames first.
     bool HasFinishedBuild() const;
-    void InstallBuild();
+    void InstallBuild(const std::function<void()>& waitForFrames);
 
     // This frame's instances: models is parallel to the submeshes of the last SetContent, moving
     // flags the instances probe rays leave out and visibility rays still see (kRayInstanceDynamic).
@@ -216,10 +231,17 @@ class VulkanRayScene
     static constexpr VkDeviceSize kRecycledBufferBytes = VkDeviceSize{4} << 20;
     // One content's large buffers (nodes, triangles, source triangles) and a little more.
     static constexpr size_t kMaxSpareBuffers = 4;
+    std::function<void(std::function<void()>)> m_retire;
+    // The texture table's binding has VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT.
+    bool m_updateUnusedWhilePending = false;
     std::mutex m_spareMutex;
     std::vector<Buffer> m_spareBuffers;
     void DestroyBuffer(Buffer& buffer) const;
+    // Every slot's set (the frames in flight finished), or one slot's (its last frame finished).
     void WriteSets();
+    void WriteSet(uint32_t slot);
+    // Runs release now, or once the frames in flight have finished when there is a retire function.
+    void Retire(std::function<void()> release);
     void CreateMaterialPipeline(VkPipelineCache pipelineCache);
     void DestroyHandles();
 
@@ -261,7 +283,10 @@ class VulkanRayScene
     VkPipelineLayout m_materialPipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_materialPipeline = VK_NULL_HANDLE;
 
-    std::vector<RaySceneSubmesh> m_submeshes;
+    // The last SetContent's submeshes, shared with its build and, once installed, as
+    // m_installedSubmeshes: tens of thousands on a map, never copied.
+    using SubmeshList = std::shared_ptr<const std::vector<RaySceneSubmesh>>;
+    SubmeshList m_submeshes = std::make_shared<const std::vector<RaySceneSubmesh>>();
     // Hierarchies already built, by mesh, kept while any content uses them.
     std::shared_ptr<BuildCache> m_buildCache = std::make_shared<BuildCache>();
     TaskFuture<Build> m_pendingBuild;
@@ -278,12 +303,15 @@ class VulkanRayScene
     // Bumped whenever the top level changes; a frame slot's buffers hold the generation it last copied.
     uint64_t m_topLevelGeneration = 1;
     std::vector<uint64_t> m_slotGenerations;
+    // What the sets should name changes with each install; a slot's set is written when its frame comes.
+    uint64_t m_setsGeneration = 0;
+    std::vector<uint64_t> m_slotSetsGenerations;
     std::vector<uint32_t> m_submeshMeshes;
     std::vector<uint8_t> m_installedBlend;
     // The installed content's submeshes, and for each the index of the same submesh in m_submeshes
     // (kNoSubmesh when the content after it dropped it).
     static constexpr uint32_t kNoSubmesh = ~0u;
-    std::vector<RaySceneSubmesh> m_installedSubmeshes;
+    SubmeshList m_installedSubmeshes = m_submeshes;
     std::vector<uint32_t> m_installedToCurrent;
     // Each installed submesh's last model matrix: a dropped one stays where it was, skipped.
     std::vector<glm::mat4> m_installedModels;

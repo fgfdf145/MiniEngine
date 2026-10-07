@@ -2,11 +2,47 @@
 
 #include "common.h"
 
+#include <mutex>
 #include <utility>
 #include <vector>
 
 namespace me
 {
+
+// One of an upload batch's staging buffers, mapped for as long as it lives.
+struct VulkanStagingChunk
+{
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    unsigned char* mapped = nullptr;
+    VkDeviceSize size = 0;
+    VkDeviceSize used = 0;
+};
+
+// Staging chunks of VulkanUploadBatch::kStagingChunkBytes kept between batches. Making one, a 32 MB
+// mapped allocation, cost about a millisecond of every batch, and a streamed map stages textures in
+// nearly every frame while it loads. Holds at most kMaxChunks; the device must outlive it.
+class VulkanStagingChunkPool
+{
+  public:
+    static constexpr size_t kMaxChunks = 3;
+
+    explicit VulkanStagingChunkPool(VkDevice device);
+    ~VulkanStagingChunkPool();
+
+    VulkanStagingChunkPool(const VulkanStagingChunkPool&) = delete;
+    VulkanStagingChunkPool& operator=(const VulkanStagingChunkPool&) = delete;
+
+    // A kept chunk, emptied; false when there is none.
+    bool Take(VulkanStagingChunk& chunk);
+    // Keeps a chunk the GPU no longer reads; false (the caller frees it) when the pool is full.
+    bool Give(const VulkanStagingChunk& chunk);
+
+  private:
+    VkDevice m_device = VK_NULL_HANDLE;
+    std::mutex m_mutex;
+    std::vector<VulkanStagingChunk> m_chunks;
+};
 
 // Accumulates GPU upload commands (buffer-to-buffer and buffer-to-image copies, image layout
 // transitions) from many resource uploads into a single command buffer, so the caller submits
@@ -62,6 +98,10 @@ class VulkanUploadBatch
     // spent ~10 ms of the frame's thread in it. The destructor waits for a batch still running.
     void SubmitWithoutWait();
     bool IsComplete() const;
+    // Nothing recorded or staged since the last Flush.
+    bool IsEmpty() const;
+    // Stage takes its chunks from this pool, and they go back to it once the GPU has read them.
+    void SetChunkPool(VulkanStagingChunkPool* pool);
 
   private:
     void BeginRecording();
@@ -71,15 +111,9 @@ class VulkanUploadBatch
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_stagingResources;
-    struct StagingChunk
-    {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        unsigned char* mapped = nullptr;
-        VkDeviceSize size = 0;
-        VkDeviceSize used = 0;
-    };
+    using StagingChunk = VulkanStagingChunk;
     void ReleaseStagingChunks();
+    VulkanStagingChunkPool* m_chunkPool = nullptr;
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     std::vector<StagingChunk> m_stagingChunks;
     VkDeviceSize m_stagedBytes = 0;

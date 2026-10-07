@@ -51,6 +51,16 @@ VulkanUploadBatch::StagingSlice VulkanUploadBatch::Stage(const void* data, VkDev
     const VkDeviceSize mask = std::max<VkDeviceSize>(alignment, 1) - 1;
     StagingChunk* chunk = m_stagingChunks.empty() ? nullptr : &m_stagingChunks.back();
     VkDeviceSize offset = chunk != nullptr ? (chunk->used + mask) & ~mask : 0;
+    if ((chunk == nullptr || offset + size > chunk->size) && size <= kStagingChunkBytes && m_chunkPool != nullptr)
+    {
+        StagingChunk pooled;
+        if (m_chunkPool->Take(pooled))
+        {
+            m_stagingChunks.push_back(pooled);
+            chunk = &m_stagingChunks.back();
+            offset = 0;
+        }
+    }
     if (chunk == nullptr || offset + size > chunk->size)
     {
         StagingChunk created;
@@ -104,6 +114,10 @@ void VulkanUploadBatch::ReleaseStagingChunks()
 {
     for (const StagingChunk& chunk : m_stagingChunks)
     {
+        if (m_chunkPool != nullptr && chunk.size == kStagingChunkBytes && chunk.mapped != nullptr && m_chunkPool->Give(chunk))
+        {
+            continue;
+        }
         if (chunk.mapped != nullptr)
         {
             vkUnmapMemory(m_device, chunk.memory);
@@ -228,5 +242,54 @@ void VulkanUploadBatch::SubmitWithoutWait()
 bool VulkanUploadBatch::IsComplete() const
 {
     return m_fence == VK_NULL_HANDLE || vkGetFenceStatus(m_device, m_fence) == VK_SUCCESS;
+}
+
+bool VulkanUploadBatch::IsEmpty() const
+{
+    return !m_hasCommands && m_stagingResources.empty() && m_stagingChunks.empty();
+}
+
+void VulkanUploadBatch::SetChunkPool(VulkanStagingChunkPool* pool)
+{
+    m_chunkPool = pool;
+}
+
+VulkanStagingChunkPool::VulkanStagingChunkPool(VkDevice device)
+    : m_device(device)
+{
+}
+
+VulkanStagingChunkPool::~VulkanStagingChunkPool()
+{
+    for (const VulkanStagingChunk& chunk : m_chunks)
+    {
+        vkUnmapMemory(m_device, chunk.memory);
+        vkDestroyBuffer(m_device, chunk.buffer, nullptr);
+        vkFreeMemory(m_device, chunk.memory, nullptr);
+    }
+}
+
+bool VulkanStagingChunkPool::Take(VulkanStagingChunk& chunk)
+{
+    const std::lock_guard lock(m_mutex);
+    if (m_chunks.empty())
+    {
+        return false;
+    }
+    chunk = m_chunks.back();
+    chunk.used = 0;
+    m_chunks.pop_back();
+    return true;
+}
+
+bool VulkanStagingChunkPool::Give(const VulkanStagingChunk& chunk)
+{
+    const std::lock_guard lock(m_mutex);
+    if (m_chunks.size() >= kMaxChunks)
+    {
+        return false;
+    }
+    m_chunks.push_back(chunk);
+    return true;
 }
 }
