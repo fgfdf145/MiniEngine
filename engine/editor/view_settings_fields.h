@@ -61,6 +61,9 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);
+    visit("viewport_resolution", "fixed", settings.viewportResolution.fixed);
+    visit("viewport_resolution", "width", settings.viewportResolution.width);
+    visit("viewport_resolution", "height", settings.viewportResolution.height);
     visit("", "dlss_ray_reconstruction", settings.dlssRayReconstruction);
     visit("bloom", "enabled", settings.bloom.enabled);
     visit("bloom", "strength", settings.bloom.strength);

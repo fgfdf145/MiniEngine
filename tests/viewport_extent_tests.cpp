@@ -35,6 +35,15 @@ int main()
         Expect(ScaleViewportExtent(100.4f, 99.6f, 1.0f, 1.0f), 100, 100, "fractional sizes round");
         Expect(ScaleViewportExtent(0.0f, -5.0f, 2.0f, 1.0f), 1, 1, "an empty panel still renders one pixel");
         Expect(ScaleViewportExtent(640.0f, 480.0f, 2.0f, 0.0f), 1, 1, "a zero scale renders one pixel");
+
+        ViewportResolutionSettings resolution;
+        Require(!resolution.Extent(1.0f).has_value(), "off, the panel's size decides");
+        resolution.fixed = true;
+        Expect(*resolution.Extent(1.0f), 1920, 1080, "a fixed resolution renders at its size");
+        Expect(*resolution.Extent(0.5f), 960, 540, "the render scale applies to it");
+        resolution.width = 100000;
+        resolution.height = 0;
+        Expect(*resolution.Extent(1.0f), ViewportResolutionSettings::kMaxSize, ViewportResolutionSettings::kMinSize, "sizes clamp");
     }
     catch (const std::exception& error)
     {

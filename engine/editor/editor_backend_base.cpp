@@ -254,6 +254,7 @@ bool EditorRenderBackendBase::ProcessPendingOperations()
 void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
 {
     State().requestedViewportExtent = State().fixedViewportExtent.value_or(uiFrame.viewportExtent);
+    State().viewportOutputScale = uiFrame.viewportOutputScale;
     if (State().fixedViewportExtent.has_value())
     {
         // The viewport panel built its matrices for its own size; the scene renders at the fixed one.
@@ -801,6 +802,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
     State().editorUi.SetDriverProblems(State().vehicleDrivers.problems);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
+    State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,

@@ -156,6 +156,9 @@ struct EditorUiFrameResult
 {
     EditorUiActions actions;
     RenderExtent viewportExtent{1, 1};
+    // The scene's output pixels per display pixel the viewport shows them on: the render scale, or a
+    // fixed resolution's size over the size it is shown at.
+    float viewportOutputScale = 1.0f;
     SDL_FRect viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool viewportAllowsMouseInteraction = false;
     bool engineSettingsChanged = false;
@@ -272,6 +275,12 @@ class EditorUiController
     bool DlssResolves() const
     {
         return m_state.DlssResolves();
+    }
+    // The size the backend renders the scene at whatever the viewport asks, which the viewport then
+    // shows at its own aspect (RendererSharedState::fixedViewportExtent).
+    void SetForcedViewportExtent(std::optional<RenderExtent> extent)
+    {
+        m_state.forcedViewportExtent = extent;
     }
     // Whether the viewport is being recorded, for Tools > Record Viewport and the viewport's REC sign.
     void SetVideoRecordingStatus(VideoRecordingIndicator status)

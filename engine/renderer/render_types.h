@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace me
 {
@@ -340,6 +341,35 @@ enum class DlssPreset : uint32_t
     M = 4
 };
 
+// The viewport's output resolution. Off, it is the viewport panel's own size in display pixels and
+// follows the panel as the editor's layout or the window changes. On, the scene renders at width x
+// height whatever the panel's size, shown whole in the panel at its own aspect, with bars round it.
+struct ViewportResolutionSettings
+{
+    bool operator==(const ViewportResolutionSettings&) const = default;
+
+    static constexpr int kMinSize = 16;
+    static constexpr int kMaxSize = 8192;
+
+    bool fixed = false;
+    int width = 1920;
+    int height = 1080;
+
+    // The size with the render scale applied (see ScaleViewportExtent); unset when it follows the panel.
+    std::optional<RenderExtent> Extent(float renderScale) const
+    {
+        if (!fixed)
+        {
+            return std::nullopt;
+        }
+        return ScaleViewportExtent(
+            static_cast<float>(std::clamp(width, kMinSize, kMaxSize)),
+            static_cast<float>(std::clamp(height, kMinSize, kMaxSize)),
+            1.0f,
+            renderScale);
+    }
+};
+
 // Saved in miniengine.settings.json (EngineViewSettings), all but the G-buffer view: a debug view
 // left on should not survive a restart.
 struct RenderDebugSettings
@@ -400,6 +430,7 @@ struct RenderDebugSettings
     // to 1: below 1 it renders fewer pixels and is stretched to fill the panel. DLSS, when it runs,
     // picks the render size itself and outputs every pixel of the viewport.
     float renderScale = 1.0f;
+    ViewportResolutionSettings viewportResolution;
     // Replaces TAA, in the deferred order, where the device runs DLSS.
     DlssMode dlssMode = DlssMode::Off;
     DlssPreset dlssPreset = DlssPreset::Default;

@@ -8,6 +8,7 @@
 #include <imgui.h>
 
 #include <array>
+#include <optional>
 
 namespace me
 {
@@ -85,6 +86,83 @@ bool PipelineCheckbox(const char* label, bool* value, bool runs, const char* rea
     }
     return changed;
 }
+
+// The viewport's output resolution: the panel's size, or a fixed one that does not change with the
+// editor's layout or the window (shown at its own aspect, with bars round it).
+void DrawViewportResolution(ViewportResolutionSettings& resolution, const std::optional<RenderExtent>& forced)
+{
+    struct Preset
+    {
+        const char* name;
+        int width;
+        int height;
+    };
+    static constexpr std::array<Preset, 7> kPresets = {{
+        {"1280 x 720", 1280, 720},
+        {"1600 x 900", 1600, 900},
+        {"1920 x 1080", 1920, 1080},
+        {"2560 x 1080", 2560, 1080},
+        {"2560 x 1440", 2560, 1440},
+        {"3440 x 1440", 3440, 1440},
+        {"3840 x 2160", 3840, 2160},
+    }};
+    const auto presetIndex = [&]() -> int
+    {
+        for (size_t i = 0; i < kPresets.size(); ++i)
+        {
+            if (kPresets[i].width == resolution.width && kPresets[i].height == resolution.height)
+            {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const int customItem = static_cast<int>(kPresets.size()) + 1;
+    // Item 0 follows the panel, then the presets, then Custom.
+    static bool customChosen = false;
+    const int found = presetIndex();
+    int item = !resolution.fixed ? 0 : (found >= 0 && !customChosen ? found + 1 : customItem);
+    std::array<const char*, kPresets.size() + 2> names{};
+    names[0] = "Fit viewport panel";
+    for (size_t i = 0; i < kPresets.size(); ++i)
+    {
+        names[i + 1] = kPresets[i].name;
+    }
+    names[customItem] = "Custom";
+
+    ImGui::BeginDisabled(forced.has_value());
+    if (ImGui::Combo("Viewport resolution", &item, names.data(), static_cast<int>(names.size())))
+    {
+        resolution.fixed = item != 0;
+        customChosen = item == customItem;
+        if (item > 0 && item < customItem)
+        {
+            resolution.width = kPresets[static_cast<size_t>(item - 1)].width;
+            resolution.height = kPresets[static_cast<size_t>(item - 1)].height;
+        }
+    }
+    if (resolution.fixed && item == customItem)
+    {
+        int size[2] = {resolution.width, resolution.height};
+        if (ImGui::InputInt2("Width x height", size, ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            resolution.width = std::clamp(size[0], ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize);
+            resolution.height = std::clamp(size[1], ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize);
+        }
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            "Fit: the scene renders at the viewport panel's size and follows it.\n"
+            "A fixed resolution renders at that size whatever the panel's or the window's size,\n"
+            "shown whole at its own aspect. The render scale and DLSS apply to it as to the panel's size.");
+    }
+    if (forced.has_value())
+    {
+        ImGui::TextDisabled("Fixed at %u x %u by --viewport-size or a recording", forced->width, forced->height);
+    }
+}
 }
 
 GraphicsDebugPanel::GraphicsDebugPanel()
@@ -118,6 +196,7 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
         debug.renderScale = renderScalePercent / 100.0f;
     }
     ImGui::EndDisabled();
+    DrawViewportResolution(debug.viewportResolution, state.forcedViewportExtent);
     // NVIDIA DLSS replaces TAA in the deferred order: DLAA at the viewport's size, or super
     // resolution from a smaller render size. Where it cannot run, TAA resolves instead.
     static constexpr std::array<const char*, 6> kDlssModeNames = {
