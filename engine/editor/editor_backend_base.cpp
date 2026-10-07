@@ -1030,6 +1030,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
     State().editorUi.SetDriverProblems(State().vehicleDrivers.problems);
+    State().editorUi.SetDriverGrips(State().vehicleDrivers.grips);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     State().editorUi.SetQuadRecordingStatus(State().quadRecordingIndicator, State().quadRecordingTarget);
     State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);

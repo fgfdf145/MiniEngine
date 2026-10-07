@@ -16,8 +16,10 @@ constexpr glm::vec3 kUp{0.0f, 1.0f, 0.0f};
 constexpr glm::vec3 kForward{0.0f, 0.0f, 1.0f};
 constexpr glm::vec3 kLeft{1.0f, 0.0f, 0.0f};
 
-// The hands: the palm's skin is this far from the line of the hand's bones (where the rim lies across
-// the hand, and how the hand is turned on it, are DriverGripCalibration's).
+// The hands: the rim lies across the base of the fingers (this share of the way from the wrist to the
+// knuckles), against the palm, whose skin is this far from the line of the hand's bones; a calibration
+// (DriverGripCalibration) moves the wrist from there.
+constexpr float kRimAlongHand = 1.05f;
 constexpr float kPalmThickness = 0.018f;
 // The fingers bend at each of their three joints until they touch what the hand holds (a finger is about
 // this thick about its bones), up to these bends; in steps this fine. Holding nothing they close this
@@ -427,20 +429,23 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         HandTarget& target = targets[side];
         target.direction = glm::normalize(wheelAxis - radial * 0.25f);
         target.palm = -radial;
-        // Turned as calibrated about where it holds: pitch about the rim's run, yaw about the rim's
-        // radius, roll about the hand's length; mirrored for the right hand.
-        {
-            const float mirror = side == 0 ? 1.0f : -1.0f;
-            const glm::vec3 along = glm::normalize(glm::cross(wheelAxis, radial));
-            const glm::vec3 turns = glm::radians(input.grip.handTurnDegrees);
-            const glm::quat turn = glm::angleAxis(turns.z * mirror, target.direction) * glm::angleAxis(turns.y * mirror, radial) *
-                                   glm::angleAxis(turns.x, along);
-            target.direction = turn * target.direction;
-            target.palm = turn * target.palm;
-        }
-        const glm::vec3 wheelWrist = grip - target.direction * (rest.handLength[side] * input.grip.alongHand) -
-                                     target.palm * (input.wheelTubeRadius + kPalmThickness + input.grip.palmGap);
+        const glm::vec3 fitted =
+            grip - target.direction * (rest.handLength[side] * kRimAlongHand) - target.palm * (input.wheelTubeRadius + kPalmThickness);
+        // Moved and turned about the wrist as calibrated, in the grip's frame: out from the wheel's centre,
+        // along the rim, along the column; the right hand's mirrors the left's (along the rim the other way).
+        const glm::vec3 alongRim = glm::normalize(glm::cross(wheelAxis, radial)) * (side == 0 ? 1.0f : -1.0f);
+        const glm::mat3 frame(radial, alongRim, wheelAxis);
+        const glm::mat3 turn = frame * glm::mat3_cast(glm::quat(glm::radians(input.grip.wristTurnDegrees))) * glm::transpose(frame);
+        target.direction = glm::normalize(turn * target.direction);
+        target.palm = glm::normalize(turn * target.palm);
+        const glm::vec3 wheelWrist = fitted + frame * input.grip.wristOffset;
         target.wrist = wheelWrist;
+        if (result != nullptr)
+        {
+            result->gripOnRim[side] = input.holds[side].weight <= 0.0f;
+            result->gripOrigin[side] = fitted;
+            result->gripFrame[side] = frame;
+        }
         const DriverHandHold& hold = input.holds[side];
         if (hold.weight > 0.0f)
         {

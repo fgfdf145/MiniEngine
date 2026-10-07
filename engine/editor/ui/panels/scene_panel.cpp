@@ -207,9 +207,10 @@ void DrawModelDriverControls(
     const IEditorWorld& scene,
     entt::entity entity,
     const ModelComponent& model,
-    const std::unordered_map<entt::entity, std::string>& problems,
+    EditorSharedState& state,
     EditorUiFrameResult& result)
 {
+    const std::unordered_map<entt::entity, std::string>& problems = state.driverProblems;
     if (model.sourcePath.empty())
     {
         return;
@@ -273,19 +274,35 @@ void DrawModelDriverControls(
     {
         // The left hand's; the right hand mirrors it.
         DriverGripCalibration& grip = choice.grip;
+        // The transform gizmo on a wrist, instead of on the entity: move and turn it in the viewport.
+        const bool canGizmo = state.driverGrips.count(entity) != 0;
+        ImGui::BeginDisabled(!canGizmo);
+        for (int side = 0; side < 2; ++side)
+        {
+            if (side == 1)
+            {
+                ImGui::SameLine();
+            }
+            const bool active = state.driverWristGizmo == side;
+            const char* label = side == 0 ? (active ? "Done##leftwrist" : "Move Left Wrist") : (active ? "Done##rightwrist" : "Move Right Wrist");
+            if (ImGui::Button(label))
+            {
+                state.driverWristGizmo = active ? -1 : side;
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Puts the transform gizmo on that wrist: move and turn the hand on the wheel in the viewport (the other hand mirrors it).");
         changed |= ImGui::SliderFloat("Hold At (deg)", &grip.holdAtDegrees, 30.0f, 150.0f, "%.0f");
         ImGui::SetItemTooltip("Where the hands hold the rim at rest, from the top: 90 is a quarter to three, 60 ten to two.");
-        changed |= ImGui::SliderFloat("Rim Along Hand", &grip.alongHand, 0.5f, 1.5f, "%.2f");
-        ImGui::SetItemTooltip("Where the rim crosses the hand, from the wrist (0) to the knuckles (1).");
-        float palmGapCm = grip.palmGap * 100.0f;
-        if (ImGui::SliderFloat("Palm Gap (cm)", &palmGapCm, -3.0f, 3.0f, "%.1f"))
+        glm::vec3 offsetCm = grip.wristOffset * 100.0f;
+        if (ImGui::DragFloat3("Wrist Offset (cm)", &offsetCm.x, 0.1f, -20.0f, 20.0f, "%.1f"))
         {
-            grip.palmGap = palmGapCm / 100.0f;
+            grip.wristOffset = offsetCm / 100.0f;
             changed = true;
         }
-        ImGui::SetItemTooltip("Moves the palm off the rim (negative presses it in).");
-        changed |= ImGui::SliderFloat3("Hand Turn (deg)", &grip.handTurnDegrees.x, -90.0f, 90.0f, "%.0f");
-        ImGui::SetItemTooltip("Turns the hand about where it holds: pitch tips the fingers over the rim, yaw tilts the hand along it, roll twists the palm.");
+        ImGui::SetItemTooltip("Moves the wrist from where the grip is fitted: out from the wheel's centre, along the rim, along the column.");
+        changed |= ImGui::DragFloat3("Wrist Turn (deg)", &grip.wristTurnDegrees.x, 0.5f, -180.0f, 180.0f, "%.0f");
+        ImGui::SetItemTooltip("Turns the hand about the wrist, about the same three directions.");
         changed |= ImGui::SliderFloat("Finger Curl (deg)", &grip.fingerCurlDegrees, -45.0f, 45.0f, "%.0f");
         ImGui::SetItemTooltip("Added to every finger joint's bend; negative opens the hand.");
         changed |= ImGui::Checkbox("Thumb on Rim", &grip.thumbOnRim);
@@ -913,7 +930,7 @@ void ScenePanel::OnGui(EditorContext& context)
                 }
 
                 DrawModelAnimationControls(model, result);
-                DrawModelDriverControls(scene, selectedEntity, model, context.state.driverProblems, result);
+                DrawModelDriverControls(scene, selectedEntity, model, context.state, result);
 
                 ImGui::BeginDisabled(model.sourcePath.empty());
                 if (ImGui::Button("Edit Materials"))

@@ -469,9 +469,14 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
                 {
                     DriverGripCalibration& grip = entityData.driverGrip;
                     grip.holdAtDegrees = gripNode["hold_at"].as<float>(grip.holdAtDegrees);
-                    grip.alongHand = gripNode["along_hand"].as<float>(grip.alongHand);
-                    grip.palmGap = gripNode["palm_gap"].as<float>(grip.palmGap);
-                    grip.handTurnDegrees = ReadVec3(gripNode["hand_turn"], grip.handTurnDegrees);
+                    grip.wristOffset = ReadVec3(gripNode["wrist_offset"], grip.wristOffset);
+                    grip.wristTurnDegrees = ReadVec3(gripNode["wrist_turn"], grip.wristTurnDegrees);
+                    // The first calibration's keys, near enough: a palm gap out from the rim, the rim
+                    // further along a hand of about 76 mm, the hand turned about the same axes.
+                    grip.wristOffset.x += gripNode["palm_gap"].as<float>(0.0f);
+                    grip.wristOffset.z -= (gripNode["along_hand"].as<float>(1.05f) - 1.05f) * 0.076f;
+                    const glm::vec3 handTurn = ReadVec3(gripNode["hand_turn"], glm::vec3(0.0f));
+                    grip.wristTurnDegrees += glm::vec3(handTurn.y, handTurn.x, handTurn.z);
                     grip.fingerCurlDegrees = gripNode["finger_curl"].as<float>(grip.fingerCurlDegrees);
                     grip.thumbOnRim = gripNode["thumb_on_rim"].as<bool>(grip.thumbOnRim);
                 }
@@ -570,9 +575,8 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
                 const DriverGripCalibration& grip = entity.driverGrip;
                 emitter << YAML::Key << "grip" << YAML::Value << YAML::BeginMap;
                 emitter << YAML::Key << "hold_at" << YAML::Value << grip.holdAtDegrees;
-                emitter << YAML::Key << "along_hand" << YAML::Value << grip.alongHand;
-                emitter << YAML::Key << "palm_gap" << YAML::Value << grip.palmGap;
-                EmitVec3(emitter, "hand_turn", grip.handTurnDegrees);
+                EmitVec3(emitter, "wrist_offset", grip.wristOffset);
+                EmitVec3(emitter, "wrist_turn", grip.wristTurnDegrees);
                 emitter << YAML::Key << "finger_curl" << YAML::Value << grip.fingerCurlDegrees;
                 emitter << YAML::Key << "thumb_on_rim" << YAML::Value << grip.thumbOnRim;
                 emitter << YAML::EndMap;

@@ -8,6 +8,7 @@
 #include <engine/editor/engine_settings.h>
 #include <engine/editor/services/quad_recording.h>
 #include <engine/editor/services/vehicle_drive_service.h>
+#include <engine/editor/services/vehicle_driver_service.h>
 #include <engine/editor/services/vehicle_rig_service.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/rhi/backend.h>
@@ -88,6 +89,10 @@ struct EditorSharedState
     VehicleDriveStatus vehicleStatus;
     VehicleRigStatus vehicleRigStatus;
     std::unordered_map<entt::entity, std::string> driverProblems;
+    // The seated drivers' grip frames, and which wrist of the selected one the transform gizmo moves
+    // instead of the entity (0 left, 1 right; -1 none).
+    std::unordered_map<entt::entity, DriverGripFrames> driverGrips;
+    int driverWristGizmo = -1;
     VideoRecordingIndicator videoRecording;
     // The Quad Recording window: the cameras and the video (kept in the engine settings), whether
     // the window shows their pictures this frame, and, from the backend, the recording and what the

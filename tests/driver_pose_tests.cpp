@@ -12,6 +12,7 @@
 #include <engine/editor/ui/framework/editor_style.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
 #include <engine/editor/ui/panels/scene_panel.h>
+#include <engine/editor/ui/panels/viewport_panel.h>
 #include <engine/logic/editor_scene.h>
 
 #include <imgui.h>
@@ -193,24 +194,51 @@ void GripCalibrationMovesTheHand()
     PoseDriver(skeleton, rig, input, poses);
     const std::vector<glm::vec3> plain = WorldPositions(skeleton, poses);
 
-    // A palm gap takes the wrists out from the rim (the left to +X, the right to -X).
-    input.grip.palmGap = 0.02f;
+    // Moved out from the wheel's centre and up the rim (clockwise for the left hand, so the right one
+    // moves up too): both wrists go out, mirrored, and up.
+    input.grip.wristOffset = glm::vec3(0.02f, 0.02f, 0.0f);
     PoseDriver(skeleton, rig, input, poses);
-    const std::vector<glm::vec3> apart = WorldPositions(skeleton, poses);
-    Require(apart[static_cast<size_t>(rig.wrist[0])].x - plain[static_cast<size_t>(rig.wrist[0])].x > 0.015f &&
-                plain[static_cast<size_t>(rig.wrist[1])].x - apart[static_cast<size_t>(rig.wrist[1])].x > 0.015f,
-            "the palm gap did not move both wrists out, mirrored");
+    const std::vector<glm::vec3> moved = WorldPositions(skeleton, poses);
+    const glm::vec3 left = moved[static_cast<size_t>(rig.wrist[0])] - plain[static_cast<size_t>(rig.wrist[0])];
+    const glm::vec3 right = moved[static_cast<size_t>(rig.wrist[1])] - plain[static_cast<size_t>(rig.wrist[1])];
+    Require(left.x > 0.015f && right.x < -0.015f && std::abs(left.x + right.x) < 0.005f, "the offset did not move both wrists out, mirrored");
+    Require(left.y > 0.015f && std::abs(left.y - right.y) < 0.005f, "the offset along the rim did not mirror");
 
-    // Pitching the hand (about the rim's run, upright at a quarter to three) swings the wrist round
-    // where the hand holds: as far back or forward for both hands, sideways in mirror.
-    input.grip.palmGap = 0.0f;
-    input.grip.handTurnDegrees = glm::vec3(30.0f, 0.0f, 0.0f);
+    // Turned about the wrist: the wrist stays, the knuckles swing, mirrored.
+    input.grip.wristOffset = glm::vec3(0.0f);
+    input.grip.wristTurnDegrees = glm::vec3(0.0f, 30.0f, 0.0f);
     PoseDriver(skeleton, rig, input, poses);
-    const std::vector<glm::vec3> pitched = WorldPositions(skeleton, poses);
-    const glm::vec3 left = pitched[static_cast<size_t>(rig.wrist[0])] - plain[static_cast<size_t>(rig.wrist[0])];
-    const glm::vec3 right = pitched[static_cast<size_t>(rig.wrist[1])] - plain[static_cast<size_t>(rig.wrist[1])];
-    Require(glm::length(left) > 0.01f && std::abs(left.z - right.z) < 0.005f && std::abs(left.x + right.x) < 0.005f,
-            "the hand pitch did not swing the wrists, mirrored");
+    const std::vector<glm::vec3> turned = WorldPositions(skeleton, poses);
+    const glm::vec3 leftKnuckle = turned[static_cast<size_t>(rig.handEnd[0])] - plain[static_cast<size_t>(rig.handEnd[0])];
+    const glm::vec3 rightKnuckle = turned[static_cast<size_t>(rig.handEnd[1])] - plain[static_cast<size_t>(rig.handEnd[1])];
+    Require(glm::distance(turned[static_cast<size_t>(rig.wrist[0])], plain[static_cast<size_t>(rig.wrist[0])]) < 0.002f,
+            "turning the hand moved the wrist");
+    Require(glm::length(leftKnuckle) > 0.02f && std::abs(leftKnuckle.x + rightKnuckle.x) < 0.005f &&
+                std::abs(leftKnuckle.z - rightKnuckle.z) < 0.005f,
+            "turning the hand did not swing the knuckles, mirrored");
+}
+
+void WristGizmoRoundTrips()
+{
+    // A left grip frame (right-handed) and its mirror for the right hand (left-handed).
+    DriverGripFrames frames;
+    const glm::mat3 left = glm::mat3_cast(glm::angleAxis(0.4f, glm::normalize(glm::vec3(0.2f, 1.0f, 0.3f))));
+    const glm::mat3 mirror(glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    frames.onRim = {true, true};
+    frames.frame = {left, mirror * left};
+    frames.origin = {glm::vec3(0.2f, 0.8f, 0.4f), glm::vec3(-0.2f, 0.8f, 0.4f)};
+    DriverGripCalibration grip;
+    grip.wristOffset = glm::vec3(0.01f, -0.02f, 0.03f);
+    grip.wristTurnDegrees = glm::vec3(10.0f, -20.0f, 30.0f);
+    for (size_t side = 0; side < 2; ++side)
+    {
+        const glm::mat4 wrist = DriverWristTransform(frames, side, grip);
+        Require(glm::determinant(glm::mat3(wrist)) > 0.99f, "the wrist's gizmo transform is not a rotation");
+        const DriverGripCalibration back = DriverGripFromWrist(frames, side, wrist, grip);
+        Require(glm::distance(back.wristOffset, grip.wristOffset) < 1e-4f &&
+                    glm::distance(back.wristTurnDegrees, grip.wristTurnDegrees) < 0.05f,
+                "the wrist's gizmo transform does not give its calibration back");
+    }
 }
 
 void HiddenHeadShrinks()
@@ -546,8 +574,8 @@ void InspectorOffersTheCar()
     scene.EditModel(driverEntity).springBones = false;
     DriverGripCalibration grip;
     grip.holdAtDegrees = 60.0f;
-    grip.palmGap = 0.01f;
-    grip.handTurnDegrees = glm::vec3(10.0f, -5.0f, 20.0f);
+    grip.wristOffset = glm::vec3(0.01f, 0.0f, -0.005f);
+    grip.wristTurnDegrees = glm::vec3(10.0f, -5.0f, 20.0f);
     grip.thumbOnRim = false;
     scene.EditModel(driverEntity).driverGrip = grip;
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "miniengine_driver_pose_tests.yaml";
@@ -569,6 +597,81 @@ void InspectorOffersTheCar()
         }
     }
     Require(found, "the driver's seat or its physics switch was not saved and loaded");
+}
+
+// The viewport with the transform gizmo on the selected driver's left wrist: it draws there (the
+// viewport's draw list grows by the gizmo), and with MINIENGINE_UI_SNAPSHOT_DIR set it is written there
+// as driver_wrist_gizmo.png.
+void ViewportPutsTheGizmoOnTheWrist()
+{
+    auto driverModel = std::make_shared<LoadedModelData>();
+    driverModel->skeleton = std::make_shared<ModelSkeleton>(MakeHumanoid());
+    auto carModel = std::make_shared<LoadedModelData>();
+    carModel->steeringWheel = ModelSteeringWheel{glm::vec3(0.4f, 0.8f, -0.4f), glm::vec3(0.0f, -0.36f, -0.93f)};
+    ModelCache::Store("test/gizmo_driver.glb", driverModel);
+    ModelCache::Store("test/gizmo_car.gltf", carModel);
+    EditorScene scene;
+    SerializedEntityData car;
+    car.entityUuid = "gizmo-car";
+    car.modelSourcePath = "test/gizmo_car.gltf";
+    scene.CreateEntity(car);
+    SerializedEntityData driver;
+    driver.entityUuid = "gizmo-driver";
+    driver.modelSourcePath = "test/gizmo_driver.glb";
+    driver.driverVehicleUuid = "gizmo-car";
+    const entt::entity driverEntity = scene.CreateEntity(driver);
+    scene.SetSelectedEntity(driverEntity);
+
+    Camera camera;
+    camera.position = glm::vec3(1.0f, 1.0f, 1.4f);
+    camera.yawDegrees = -128.7f;
+    camera.pitchDegrees = -8.8f;
+    ViewportMatrices matrices;
+    EditorFrameInput frame;
+    EditorUiFrameResult result;
+    EditorSharedState state;
+    EditorStyle style;
+    EditorWindowManager windows;
+    CommandRegistry commands;
+    state.commands.gizmos = true;
+    DriverGripFrames grip;
+    grip.onRim = {true, true};
+    grip.origin = {glm::vec3(0.2f, 0.8f, 0.4f), glm::vec3(-0.2f, 0.8f, 0.4f)};
+    windows.Register<ViewportPanel>();
+    constexpr int kWidth = 640;
+    constexpr int kHeight = 480;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(kWidth), static_cast<float>(kHeight));
+    const auto drawFrame = [&](int wristGizmo)
+    {
+        state.driverGrips = {{driverEntity, grip}};
+        state.driverWristGizmo = wristGizmo;
+        size_t vertices = 0;
+        for (int index = 0; index < 3; ++index)
+        {
+            io.DeltaTime = 1.0f / 60.0f;
+            result = EditorUiFrameResult{};
+            EditorContext context{scene, camera, matrices, frame, result, state, style, windows, commands};
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            windows.TickAndDraw(context, false);
+            ImGui::Render();
+            test::ServeTextures(*ImGui::GetDrawData());
+            vertices = static_cast<size_t>(ImGui::GetDrawData()->TotalVtxCount);
+        }
+        return vertices;
+    };
+    const size_t withoutWrist = drawFrame(-1);
+    const size_t withWrist = drawFrame(0);
+    if (const char* folder = std::getenv("MINIENGINE_UI_SNAPSHOT_DIR"))
+    {
+        std::filesystem::create_directories(folder);
+        test::WritePng(test::Rasterise(*ImGui::GetDrawData(), kWidth, kHeight), kWidth, kHeight,
+                       std::filesystem::path(folder) / "driver_wrist_gizmo.png");
+    }
+    Require(state.driverWristGizmo == 0, "the wrist gizmo was switched off");
+    Require(withWrist > 0 && withoutWrist > 0, "the viewport drew nothing");
 }
 
 // With MINIENGINE_DRIVER_MODEL and MINIENGINE_DRIVER_CAR set (a character's and a car's glTF), fits the
@@ -653,6 +756,7 @@ int main()
         HandsHoldWhereTheyAreTold();
         HiddenHeadShrinks();
         GripCalibrationMovesTheHand();
+        WristGizmoRoundTrips();
         HeldHandGoesToTheKnob();
         GearLeverGoesThroughTheGate();
         FeetWorkThePedals();
@@ -660,6 +764,7 @@ int main()
         BodySwaysWithTheCar();
         HairSwings();
         InspectorOffersTheCar();
+        ViewportPutsTheGizmoOnTheWrist();
         PrintRealFit();
     }
     catch (const std::exception& error)

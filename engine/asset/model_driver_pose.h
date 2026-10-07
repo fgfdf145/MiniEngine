@@ -108,6 +108,12 @@ struct DriverPoseResult
     // How far each wrist has to reach for the wheel, as a share of its arm's length (shoulder to
     // elbow to wrist): above 1 the hand falls short of the rim.
     std::array<float, 2> armStretch{0.0f, 0.0f};
+    // Each hand's grip frame, which DriverGripCalibration moves the wrist in: where the wrist is fitted
+    // on the rim, and the frame's axes (out from the wheel's centre, along the rim, along the column; the
+    // right hand's mirrors the left's, so it is left-handed). Set while the hand holds the rim.
+    std::array<bool, 2> gripOnRim{false, false};
+    std::array<glm::vec3, 2> gripOrigin{};
+    std::array<glm::mat3, 2> gripFrame{glm::mat3(1.0f), glm::mat3(1.0f)};
 };
 
 // The joints' local poses for a driver seated at `input`: the pelvis and back leaned back on the

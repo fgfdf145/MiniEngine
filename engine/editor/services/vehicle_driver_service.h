@@ -155,6 +155,24 @@ DriverPoseInput DriverPoseFromSeat(
     const VehicleDriverMotion* motion = nullptr,
     const DriverGripCalibration& grip = {});
 
+// A seated driver's grip frames in the world, as the last pose had them (DriverPoseResult::gripFrame),
+// for the transform gizmo on a wrist: per hand, whether it holds the rim, where its wrist is fitted, and
+// the frame's axes (the right hand's left-handed, mirroring the left's).
+struct DriverGripFrames
+{
+    std::array<bool, 2> onRim{false, false};
+    std::array<glm::vec3, 2> origin{};
+    std::array<glm::mat3, 2> frame{glm::mat3(1.0f), glm::mat3(1.0f)};
+};
+
+// The wrist's place and turn in the world for a grip frame and a calibration: a rigid transform whose
+// axes are the frame's turned by the calibration (made right-handed for the right hand, so a gizmo can
+// work on it).
+glm::mat4 DriverWristTransform(const DriverGripFrames& frames, size_t side, const DriverGripCalibration& grip);
+// The calibration that puts the wrist at `wrist` (a transform as DriverWristTransform makes), the rest
+// of `grip` kept.
+DriverGripCalibration DriverGripFromWrist(const DriverGripFrames& frames, size_t side, const glm::mat4& wrist, const DriverGripCalibration& grip);
+
 struct VehicleDriverState
 {
     struct FittedSeat
@@ -174,6 +192,8 @@ struct VehicleDriverState
     std::unordered_map<std::string, entt::entity> entitiesById;
     // Why a model with a car to drive is not sitting in it; no entry when it is.
     std::unordered_map<entt::entity, std::string> problems;
+    // Each seated driver's grip frames, for the transform gizmo on a wrist.
+    std::unordered_map<entt::entity, DriverGripFrames> grips;
 };
 
 namespace VehicleDriverService

@@ -250,6 +250,11 @@ class EditorUiController
     {
         m_state.driverProblems = std::move(problems);
     }
+    // The seated drivers' grip frames (VehicleDriverState::grips), for the gizmo on a wrist.
+    void SetDriverGrips(std::unordered_map<entt::entity, DriverGripFrames> grips)
+    {
+        m_state.driverGrips = std::move(grips);
+    }
     // The scene's minimap picture as the backend registered it with ImGui; null when there is none.
     void SetMinimapTexture(ImTextureID texture)
     {

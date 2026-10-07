@@ -827,6 +827,62 @@ void DrawGizmoOverlay(
     scene.ApplyTransformMatrix(selectedEntity, matrices.model);
 }
 
+// The transform gizmo on a seated driver's wrist (EditorSharedState::driverWristGizmo) instead of on
+// the entity: moving and turning it calibrates the grip (DriverGripCalibration), which both hands take,
+// mirrored. False when no wrist is being moved, and the entity's gizmo is drawn instead.
+bool DrawDriverWristGizmo(
+    IEditorWorld& scene,
+    EditorSharedState& state,
+    ViewportMatrices& matrices,
+    const ViewportOverlayRect& viewportRect,
+    float uiScale,
+    EditorUiFrameResult& result)
+{
+    if (state.driverWristGizmo < 0 || !scene.HasSelection())
+    {
+        return false;
+    }
+    const entt::entity entity = scene.GetSelectedEntity();
+    const auto frames = state.driverGrips.find(entity);
+    if (!scene.HasModelComponent(entity) || scene.GetModel(entity).driverVehicleUuid.empty() || frames == state.driverGrips.end())
+    {
+        state.driverWristGizmo = -1;
+        return false;
+    }
+    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
+    {
+        return true;
+    }
+    const size_t side = static_cast<size_t>(state.driverWristGizmo);
+    // A hand away from the rim (changing gear, going hand over hand) has nothing to calibrate just now.
+    if (!frames->second.onRim[side])
+    {
+        return true;
+    }
+    const ModelComponent& model = scene.GetModel(entity);
+    glm::mat4 wrist = DriverWristTransform(frames->second, side, model.driverGrip);
+    const GizmoSettings& gizmo = scene.GetGizmoSettings();
+
+    ApplyImGuizmoStyleScale(uiScale);
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetID(static_cast<int>(entt::to_integral(entity)) * 2 + static_cast<int>(side) + 0x5752);
+    ImGuizmo::SetDrawlist(viewportRect.drawList);
+    ImGuizmo::SetRect(viewportRect.origin.x, viewportRect.origin.y, viewportRect.size.x, viewportRect.size.y);
+    // Moved and turned; a wrist has no scale.
+    ImGuizmo::Manipulate(
+        glm::value_ptr(matrices.view),
+        glm::value_ptr(matrices.projection),
+        static_cast<ImGuizmo::OPERATION>(ImGuizmo::TRANSLATE | ImGuizmo::ROTATE),
+        gizmo.mode,
+        glm::value_ptr(wrist));
+    if (ImGuizmo::IsUsing())
+    {
+        result.actions.selectedModelDriver = EditorUiActions::ModelDriverChoice{
+            model.driverVehicleUuid, model.driverSeatOffset, DriverGripFromWrist(frames->second, side, wrist, model.driverGrip)};
+    }
+    return true;
+}
+
 // ---- Light scene gizmos and viewport helpers ------------------------------
 
 // Project a light's world icon position and optionally add to projected center list.
@@ -1336,7 +1392,10 @@ void ViewportPanel::OnGui(EditorContext& context)
     // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
     if (state.commands.gizmos)
     {
-        DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, UiScale());
+        if (!DrawDriverWristGizmo(scene, state, matrices, viewportRect, UiScale(), result))
+        {
+            DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, UiScale());
+        }
         DrawLightGizmos(scene, matrices, viewportRect, UiScale());
     }
     std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);

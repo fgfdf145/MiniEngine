@@ -776,6 +776,36 @@ DriverPoseInput DriverPoseFromSeat(
     return input;
 }
 
+namespace
+{
+// The frame made right-handed: the right hand's (left-handed) has its along-the-rim axis turned round.
+glm::mat3 RightHanded(const glm::mat3& frame)
+{
+    return glm::determinant(frame) < 0.0f ? glm::mat3(frame[0], -frame[1], frame[2]) : frame;
+}
+}
+
+glm::mat4 DriverWristTransform(const DriverGripFrames& frames, size_t side, const DriverGripCalibration& grip)
+{
+    const glm::mat3& frame = frames.frame[side];
+    const glm::mat3 turn = frame * glm::mat3_cast(glm::quat(glm::radians(grip.wristTurnDegrees))) * glm::transpose(frame);
+    glm::mat4 wrist(turn * RightHanded(frame));
+    wrist[3] = glm::vec4(frames.origin[side] + frame * grip.wristOffset, 1.0f);
+    return wrist;
+}
+
+DriverGripCalibration DriverGripFromWrist(const DriverGripFrames& frames, size_t side, const glm::mat4& wrist, const DriverGripCalibration& grip)
+{
+    const glm::mat3& frame = frames.frame[side];
+    DriverGripCalibration result = grip;
+    result.wristOffset = glm::transpose(frame) * (glm::vec3(wrist[3]) - frames.origin[side]);
+    // The turn in the world, back into the frame (its axes are orthonormal, either handedness).
+    const glm::mat3 axes(glm::normalize(glm::vec3(wrist[0])), glm::normalize(glm::vec3(wrist[1])), glm::normalize(glm::vec3(wrist[2])));
+    const glm::mat3 turn = axes * glm::transpose(RightHanded(frame));
+    result.wristTurnDegrees = glm::degrees(glm::eulerAngles(glm::normalize(glm::quat_cast(glm::transpose(frame) * turn * frame))));
+    return result;
+}
+
 namespace VehicleDriverService
 {
 
@@ -783,6 +813,7 @@ void Tick(RendererSharedState& state, float deltaSeconds)
 {
     VehicleDriverState& drivers = state.vehicleDrivers;
     drivers.problems.clear();
+    drivers.grips.clear();
     if (!state.editorWorld)
     {
         drivers.posed.clear();
@@ -891,6 +922,19 @@ void Tick(RendererSharedState& state, float deltaSeconds)
         }
         state.modelAnimation.SetDriverPose(entity, input);
         posed.insert(entity);
+        // The grip frames in the world, as the last pose had them.
+        if (const DriverPoseResult* const result = state.modelAnimation.GetDriverPoseResult(entity))
+        {
+            DriverGripFrames& frames = drivers.grips[entity];
+            const glm::mat3 linear(matrix);
+            const float scale = std::max(std::cbrt(std::abs(glm::determinant(linear))), 1e-6f);
+            for (size_t side = 0; side < 2; ++side)
+            {
+                frames.onRim[side] = result->gripOnRim[side];
+                frames.origin[side] = glm::vec3(matrix * glm::vec4(result->gripOrigin[side], 1.0f));
+                frames.frame[side] = linear / scale * result->gripFrame[side];
+            }
+        }
         if (driven && !sessionHasDriver)
         {
             if (const DriverPoseResult* const result = state.modelAnimation.GetDriverPoseResult(entity))
