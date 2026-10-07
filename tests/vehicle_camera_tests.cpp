@@ -47,7 +47,7 @@ PhysicsPose LeaningCar()
 // A point on the body (vehicle space: +Z forward, +X the car's left) in the world.
 glm::vec3 OnBody(const PhysicsPose& pose, const glm::vec3& point)
 {
-    return pose.position + pose.rotation * point;
+    return glm::vec3(pose.position + glm::dvec3(pose.rotation * point));
 }
 
 // The cockpit camera sits on the body and turns with it: what is straight ahead of the eyes is in the

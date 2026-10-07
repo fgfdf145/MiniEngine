@@ -909,7 +909,7 @@ std::optional<EditorRenderBackendBase::QuadRecordingTarget> EditorRenderBackendB
     const entt::entity entity = world.GetSelectedEntity();
     const glm::mat4 model = world.GetModelMatrix(entity);
     PhysicsPose pose;
-    pose.position = glm::vec3(model[3]);
+    pose.position = glm::dvec3(glm::vec3(model[3]));
     const glm::mat3 axes(glm::normalize(glm::vec3(model[0])), glm::normalize(glm::vec3(model[1])), glm::normalize(glm::vec3(model[2])));
     pose.rotation = glm::normalize(glm::quat_cast(axes));
     return QuadRecordingTarget{pose, world.GetTag(entity).name};

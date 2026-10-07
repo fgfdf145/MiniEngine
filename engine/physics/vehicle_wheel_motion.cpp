@@ -13,7 +13,8 @@ VehicleWheelMotion ComputeVehicleWheelMotion(
 {
     const glm::quat bodyInverse = glm::conjugate(body.rotation);
     const glm::quat modelToVehicle = glm::conjugate(vehicleToModel);
-    const glm::vec3 offsetInVehicle = bodyInverse * (wheel.position - body.position);
+    // The offset in double, where the two world positions still differ in every digit; small, it fits a float.
+    const glm::vec3 offsetInVehicle = bodyInverse * glm::vec3(wheel.position - body.position);
     const glm::quat rotationInVehicle = bodyInverse * wheel.rotation;
 
     // The steering turns the axle about Y and the roll leaves it alone, so the axle's heading is the
