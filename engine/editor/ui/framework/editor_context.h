@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 namespace me
 {
@@ -81,6 +82,7 @@ struct EditorSharedState
     std::string audioStatus;
     VehicleDriveStatus vehicleStatus;
     VehicleRigStatus vehicleRigStatus;
+    std::unordered_map<entt::entity, std::string> driverProblems;
     VideoRecordingIndicator videoRecording;
     ImTextureID minimapTexture = ImTextureID{};
     ImTextureID selectionOutlineTexture = ImTextureID{};

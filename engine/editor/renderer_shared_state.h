@@ -3,6 +3,7 @@
 #include "editor_ui.h"
 #include "engine_settings.h"
 #include "services/vehicle_drive_service.h"
+#include "services/vehicle_driver_service.h"
 #include "services/model_animation_service.h"
 #include "services/vehicle_rig_service.h"
 #include "services/world_streaming_service.h"
@@ -153,6 +154,8 @@ struct RendererSharedState
     RendererWorld rendererWorld;
     // The skinned models' animations, which ModelAnimationPlayback::Tick advances every frame.
     ModelAnimationPlayback modelAnimation;
+    // The models seated in cars as their drivers (VehicleDriverService).
+    VehicleDriverState vehicleDrivers;
     ViewportDragPreviewState viewportDragPreview;
     AsyncModelLoad asyncLoad;
     AsyncSceneLoad asyncSceneLoad;

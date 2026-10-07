@@ -196,6 +196,12 @@ struct VehicleDriveSession
     VehicleId vehicle = 0;
     // Set when the model defines its wheels.
     std::optional<VehicleWheelAnimation> wheels;
+    // How far the steering wheel has turned about its column (ModelSteeringWheel::axis), radians
+    // (SteeringWheelTurn).
+    float steeringWheelTurn = 0.0f;
+    // A character driving the car (VehicleDriverService): its eyes in vehicle space, where the
+    // cockpit camera sits instead of the car's own.
+    std::optional<glm::vec3> driverEyes;
     bool paused = false;
     bool stepRequested = false;
     // The keyboard's steering, eased towards full lock rather than jumping to it.
@@ -256,6 +262,10 @@ struct VehicleDriveState
 
 namespace VehicleDriveService
 {
+// Turns vehicle space (+Z forward, +X the car's left) into the model's own for a model facing `front`.
+glm::quat VehicleToModelRotation(VehicleModelFront front);
+// The way a model faces, from where its wheels are: the front wheels' Z against the rear's.
+VehicleModelFront ModelFrontFromWheels(const ModelWheelRig& rig);
 // The Vehicle panel's tuning before the user changes it: the defaults, on the brush tyre.
 VehicleSettings DefaultTuning();
 // Drives this model entity as a car: a physics world is built from every other loaded model's
@@ -304,6 +314,16 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
 // less the glass, decals and ground cover (IsGroundCover) a car should drive over. Returns the lowest
 // vertex height, or `fallbackFloor` when nothing was added.
 float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld, const ISceneWorld& scene, entt::entity exclude, float fallbackFloor);
+
+// How far the steering wheel has turned about its column (ModelSteeringWheel::axis), radians, for
+// the front wheels at `wheels`: clockwise for the driver, looking along the column, when the car
+// steers right, and steeringWheelLockDegrees at the front wheels' full lock.
+float SteeringWheelTurn(
+    const VehicleWheelAnimation& animation,
+    const PhysicsPose& body,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::quat& vehicleToModel,
+    const glm::vec3& scale);
 
 // The local transform of each of the model's submeshes (in the order of its submeshes) for a car
 // whose wheels are at `wheels`: the wheel's own parts steer, roll and ride the suspension, its brake

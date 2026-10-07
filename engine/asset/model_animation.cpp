@@ -10,14 +10,6 @@ namespace me
 
 namespace
 {
-struct NodePose
-{
-    glm::vec3 translation{0.0f};
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-    glm::vec3 scale{1.0f};
-    bool animated = false;
-};
-
 glm::quat ToQuat(const glm::vec4& value)
 {
     return glm::quat(value.w, value.x, value.y, value.z);
@@ -100,9 +92,19 @@ int32_t ModelSkeleton::FindNode(const std::string& name) const
     return -1;
 }
 
-void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float time, std::vector<glm::mat4>& palette)
+void RestNodePoses(const ModelSkeleton& skeleton, std::vector<ModelNodePose>& poses)
 {
-    palette.assign(skeleton.paletteSize, glm::mat4(1.0f));
+    poses.resize(skeleton.nodes.size());
+    for (size_t index = 0; index < skeleton.nodes.size(); ++index)
+    {
+        const ModelSkeletonNode& node = skeleton.nodes[index];
+        poses[index] = ModelNodePose{node.translation, node.rotation, node.scale, false};
+    }
+}
+
+void EvaluateNodePoses(const ModelSkeleton& skeleton, int32_t clip, float time, std::vector<ModelNodePose>& poses)
+{
+    RestNodePoses(skeleton, poses);
     if (clip < 0 || static_cast<size_t>(clip) >= skeleton.clips.size())
     {
         return;
@@ -116,22 +118,13 @@ void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float tim
             time += animation.duration;
         }
     }
-
-    std::vector<NodePose> poses(skeleton.nodes.size());
-    for (size_t index = 0; index < skeleton.nodes.size(); ++index)
-    {
-        const ModelSkeletonNode& node = skeleton.nodes[index];
-        poses[index].translation = node.translation;
-        poses[index].rotation = node.rotation;
-        poses[index].scale = node.scale;
-    }
     for (const ModelAnimationChannel& channel : animation.channels)
     {
         if (channel.node < 0 || static_cast<size_t>(channel.node) >= poses.size() || channel.times.empty())
         {
             continue;
         }
-        NodePose& pose = poses[static_cast<size_t>(channel.node)];
+        ModelNodePose& pose = poses[static_cast<size_t>(channel.node)];
         const glm::vec4 value = SampleChannel(channel, time);
         switch (channel.path)
         {
@@ -145,25 +138,32 @@ void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float tim
             pose.scale = glm::vec3(value);
             break;
         }
-        pose.animated = true;
+        pose.posed = true;
     }
+}
 
-    std::vector<glm::mat4> world(skeleton.nodes.size(), glm::mat4(1.0f));
+void ComputeNodeWorldMatrices(const ModelSkeleton& skeleton, const std::vector<ModelNodePose>& poses, std::vector<glm::mat4>& world)
+{
+    world.assign(skeleton.nodes.size(), glm::mat4(1.0f));
     for (const int32_t index : skeleton.order)
     {
         const ModelSkeletonNode& node = skeleton.nodes[static_cast<size_t>(index)];
-        const NodePose& pose = poses[static_cast<size_t>(index)];
+        const ModelNodePose& pose = poses[static_cast<size_t>(index)];
         // A node given as a matrix keeps it unless an animation moves it, which then replaces it
         // (glTF forbids animating such a node; the decomposed rest pose stands in).
         glm::mat4 local = node.matrix;
-        if (!node.hasMatrix || pose.animated)
+        if (!node.hasMatrix || pose.posed)
         {
             local = glm::translate(glm::mat4(1.0f), pose.translation) * glm::mat4_cast(pose.rotation) *
                     glm::scale(glm::mat4(1.0f), pose.scale);
         }
         world[static_cast<size_t>(index)] = node.parent >= 0 ? world[static_cast<size_t>(node.parent)] * local : local;
     }
+}
 
+void PaletteFromNodeWorldMatrices(const ModelSkeleton& skeleton, const std::vector<glm::mat4>& world, std::vector<glm::mat4>& palette)
+{
+    palette.assign(skeleton.paletteSize, glm::mat4(1.0f));
     for (const ModelSkinBinding& binding : skeleton.bindings)
     {
         for (size_t joint = 0; joint < binding.jointNodes.size(); ++joint)
@@ -177,5 +177,19 @@ void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float tim
                 world[static_cast<size_t>(node)] * binding.inverseBindMatrices[joint] * binding.bakedInverse;
         }
     }
+}
+
+void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float time, std::vector<glm::mat4>& palette)
+{
+    if (clip < 0 || static_cast<size_t>(clip) >= skeleton.clips.size())
+    {
+        palette.assign(skeleton.paletteSize, glm::mat4(1.0f));
+        return;
+    }
+    std::vector<ModelNodePose> poses;
+    EvaluateNodePoses(skeleton, clip, time, poses);
+    std::vector<glm::mat4> world;
+    ComputeNodeWorldMatrices(skeleton, poses, world);
+    PaletteFromNodeWorldMatrices(skeleton, world, palette);
 }
 }

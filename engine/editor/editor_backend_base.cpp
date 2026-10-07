@@ -133,6 +133,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const bool keyboardCaptured = WantsKeyboardCapture();
     const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
     VehicleRigService::Tick(State(), deltaTime);
+    VehicleDriverService::Tick(State());
     State().modelAnimation.Tick(State(), deltaTime);
     AdvanceTimeOfDay(State().editorWorld.get(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)
@@ -445,6 +446,13 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                     {
                         EntityEditService::ApplySelectedModelAnimation(
                             State(), animation->clip, animation->enabled, animation->playing, animation->speed);
+                    });
+    }
+    if (const auto& driver = actions.selectedModelDriver)
+    {
+        RunUiAction(modelError, "seat the selected model in a car", [&]
+                    {
+                        EntityEditService::ApplySelectedModelDriver(State(), driver->vehicleUuid, driver->seatOffset);
                     });
     }
     if (const auto& useModelLights = actions.selectedUseModelLights)
@@ -791,6 +799,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
 
     State().editorUi.SetVehicleDriveStatus(VehicleDriveService::GetStatus(State()));
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
+    State().editorUi.SetDriverProblems(State().vehicleDrivers.problems);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     State().editorUi.SetAudioStatus(State().audioStatus);
     EditorUiFrameResult result = State().editorUi.Draw(

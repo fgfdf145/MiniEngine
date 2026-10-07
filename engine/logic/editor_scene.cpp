@@ -460,6 +460,11 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
                 entityData.modelAnimationPlaying = animationNode["playing"].as<bool>(entityData.modelAnimationPlaying);
                 entityData.modelAnimationSpeed = animationNode["speed"].as<float>(entityData.modelAnimationSpeed);
             }
+            if (const YAML::Node driverNode = entityNode["driver"]; driverNode && driverNode.IsMap())
+            {
+                entityData.driverVehicleUuid = driverNode["vehicle"].as<std::string>(entityData.driverVehicleUuid);
+                entityData.driverSeatOffset = ReadVec3(driverNode["seat_offset"], entityData.driverSeatOffset);
+            }
             entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
         }
@@ -540,6 +545,13 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
             emitter << YAML::EndMap;
         }
         emitter << YAML::EndMap;
+        if (!entity.driverVehicleUuid.empty())
+        {
+            emitter << YAML::Key << "driver" << YAML::Value << YAML::BeginMap;
+            emitter << YAML::Key << "vehicle" << YAML::Value << entity.driverVehicleUuid;
+            EmitVec3(emitter, "seat_offset", entity.driverSeatOffset);
+            emitter << YAML::EndMap;
+        }
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
         EmitVec3(emitter, "translation", entity.transform.translation);
         EmitVec3(emitter, "rotation", entity.transform.rotationDegrees);
@@ -797,6 +809,8 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     model.animationEnabled = entityData.modelAnimationEnabled;
     model.animationPlaying = entityData.modelAnimationPlaying;
     model.animationSpeed = entityData.modelAnimationSpeed;
+    model.driverVehicleUuid = entityData.driverVehicleUuid;
+    model.driverSeatOffset = entityData.driverSeatOffset;
     m_registry.emplace<ModelBoundsComponent>(entity);
     m_registry.emplace<EditorModelMetadataComponent>(entity);
     m_registry.emplace<ModelRenderableDirty>(entity);
@@ -1229,6 +1243,8 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelAnimationEnabled = model.animationEnabled;
         entityData.modelAnimationPlaying = model.animationPlaying;
         entityData.modelAnimationSpeed = model.animationSpeed;
+        entityData.driverVehicleUuid = model.driverVehicleUuid;
+        entityData.driverSeatOffset = model.driverSeatOffset;
         entityData.transform = transform;
         sceneData.entities.push_back(entityData);
     }

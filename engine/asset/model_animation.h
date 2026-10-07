@@ -89,8 +89,28 @@ struct ModelSkeleton
     int32_t FindNode(const std::string& name) const;
 };
 
-// The joint palette of a pose: per binding, per joint, the matrix that takes a bind pose vertex (in
-// the model's space, as the loader baked it) to its posed place. clip -1 or out of range gives the
-// bind pose, every matrix the identity. time is in seconds, wrapped into the clip's duration.
+// One node's local transform in a pose: its rest transform, with what an animation (or a procedural
+// pose) set. `posed` replaces a node given as a matrix by these; one never posed keeps its matrix.
+struct ModelNodePose
+{
+    glm::vec3 translation{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 scale{1.0f};
+    bool posed = false;
+};
+
+// Every node at rest.
+void RestNodePoses(const ModelSkeleton& skeleton, std::vector<ModelNodePose>& poses);
+// Every node as the clip has it at time (seconds, wrapped into its duration); at rest for clip -1 or
+// one out of range, and where the clip does not move it.
+void EvaluateNodePoses(const ModelSkeleton& skeleton, int32_t clip, float time, std::vector<ModelNodePose>& poses);
+// Each node's transform in the model's space for these local poses.
+void ComputeNodeWorldMatrices(const ModelSkeleton& skeleton, const std::vector<ModelNodePose>& poses, std::vector<glm::mat4>& world);
+// The joint palette for the nodes' model-space transforms: per binding, per joint, the matrix that
+// takes a bind pose vertex (in the model's space, as the loader baked it) to its posed place.
+void PaletteFromNodeWorldMatrices(const ModelSkeleton& skeleton, const std::vector<glm::mat4>& world, std::vector<glm::mat4>& palette);
+
+// The joint palette of a clip at time. clip -1 or out of range gives the bind pose, every matrix the
+// identity. time is in seconds, wrapped into the clip's duration.
 void EvaluateJointPalette(const ModelSkeleton& skeleton, int32_t clip, float time, std::vector<glm::mat4>& palette);
 }

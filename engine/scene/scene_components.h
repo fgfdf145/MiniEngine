@@ -137,6 +137,12 @@ struct ModelComponent
     bool animationEnabled = true;
     bool animationPlaying = true;
     float animationSpeed = 1.0f;
+    // Seats this model in a car as its driver: the car's entity (SceneEntityIdComponent), empty for
+    // none. The model then follows the car, and a humanoid one sits with its hands on the steering
+    // wheel (VehicleDriverService) instead of playing its clip.
+    std::string driverVehicleUuid;
+    // Moves the seat from where it is fitted (metres: to the car's right, up, forward).
+    glm::vec3 driverSeatOffset{0.0f};
 };
 
 struct ModelBoundsComponent

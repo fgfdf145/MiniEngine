@@ -121,20 +121,6 @@ glm::mat4 ComposeMatrix(const PhysicsPose& pose, const glm::vec3& scale)
     return glm::translate(glm::mat4(1.0f), pose.position) * glm::mat4_cast(pose.rotation) * glm::scale(glm::mat4(1.0f), scale);
 }
 
-// Vehicle space is +Z forward; a model facing -Z is half a turn about Y from it (its own inverse).
-glm::quat VehicleToModelRotation(VehicleModelFront front)
-{
-    return front == VehicleModelFront::NegativeZ ? glm::quat(0.0f, 0.0f, 1.0f, 0.0f) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-}
-
-// The way a model faces, from where its wheels are: the front wheels' Z against the rear's.
-VehicleModelFront ModelFrontFromWheels(const ModelWheelRig& rig)
-{
-    const float frontZ = (rig.corners[0].center.z + rig.corners[1].center.z) * 0.5f;
-    const float rearZ = (rig.corners[2].center.z + rig.corners[3].center.z) * 0.5f;
-    return frontZ < rearZ ? VehicleModelFront::NegativeZ : VehicleModelFront::PositiveZ;
-}
-
 // The model's wheels as a layout in vehicle space, scaled as the entity is.
 VehicleWheelLayout BuildWheelLayout(const ModelWheelRig& rig, const glm::quat& vehicleToModel, const glm::vec3& scale)
 {
@@ -255,6 +241,19 @@ VehicleCameraView NextVehicleCameraView(VehicleCameraView view)
 namespace VehicleDriveService
 {
 
+glm::quat VehicleToModelRotation(VehicleModelFront front)
+{
+    // A model facing -Z is half a turn about Y from vehicle space (its own inverse).
+    return front == VehicleModelFront::NegativeZ ? glm::quat(0.0f, 0.0f, 1.0f, 0.0f) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+}
+
+VehicleModelFront ModelFrontFromWheels(const ModelWheelRig& rig)
+{
+    const float frontZ = (rig.corners[0].center.z + rig.corners[1].center.z) * 0.5f;
+    const float rearZ = (rig.corners[2].center.z + rig.corners[3].center.z) * 0.5f;
+    return frontZ < rearZ ? VehicleModelFront::NegativeZ : VehicleModelFront::PositiveZ;
+}
+
 namespace
 {
 // Puts the camera where the view the car is seen from has it, looking round by the session's orbit.
@@ -273,6 +272,11 @@ void PlaceCamera(RendererSharedState& state, VehicleDriveSession& session, const
     VehicleCameraMount mount = session.cameraMounts[static_cast<size_t>(view) - 1];
     if (view == VehicleCameraView::Cockpit)
     {
+        // A character driving the car sees through its own eyes.
+        if (session.driverEyes.has_value())
+        {
+            mount.position = *session.driverEyes;
+        }
         mount.position += SeatOffsetInVehicleSpace(settings.seatOffset);
     }
     UpdateMountedCamera(state.camera, pose, mount, session.orbit);
@@ -800,6 +804,8 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));
     if (session->wheels.has_value())
     {
+        session->steeringWheelTurn = SteeringWheelTurn(
+            *session->wheels, pose, session->physics->GetVehicleWheels(session->vehicle), session->vehicleToModel, session->scale);
         state.rendererWorld.SetSubmeshLocalTransforms(
             session->entity,
             BuildWheelSubmeshTransforms(
@@ -1044,8 +1050,8 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
     {
         const CpuRenderSubmesh& submesh = *entry;
         // Glass, smoke, decals and the top of water are drawn over surfaces rather than being any; alpha-tested
-        // fences and foliage still count.
-        if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water ||
+        // fences and foliage still count. A skinned mesh moves (a character, a driver in the car).
+        if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water || submesh.skinned ||
             submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
             collidesByItself.count(submesh.entity) != 0 || scene.Registry().all_of<StreamedComponent>(submesh.entity))
         {
@@ -1081,6 +1087,25 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
     return lowest;
 }
 
+float SteeringWheelTurn(
+    const VehicleWheelAnimation& animation,
+    const PhysicsPose& body,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::quat& vehicleToModel,
+    const glm::vec3& scale)
+{
+    // The front wheels' steering to the right, in radians: a right turn is a negative turn about Y.
+    float rightSteer = 0.0f;
+    for (size_t index = 0; index < 2 && index < wheels.size(); ++index)
+    {
+        const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheels[index].pose, vehicleToModel, scale);
+        // The turn about Y is twice the half-angle atan2(y, w); q and -q are one rotation.
+        const float sign = motion.steer.w < 0.0f ? -1.0f : 1.0f;
+        rightSteer -= std::atan2(motion.steer.y * sign, motion.steer.w * sign);
+    }
+    return rightSteer / glm::radians(animation.maxSteerDegrees) * glm::radians(animation.steeringWheelLockDegrees);
+}
+
 std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     const VehicleWheelAnimation& animation,
     const PhysicsPose& body,
@@ -1099,8 +1124,6 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     const LoadedModelData& model = *animation.model;
     const std::array<glm::vec3, kModelWheelCornerCount>& restCenters = animation.restCenters;
     std::array<CornerTransforms, kModelWheelCornerCount> corners;
-    // The front wheels' steering to the right, in radians: a right turn is a negative turn about Y.
-    float rightSteer = 0.0f;
     for (size_t index = 0; index < kModelWheelCornerCount && index < wheels.size(); ++index)
     {
         const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheels[index].pose, vehicleToModel, scale);
@@ -1109,20 +1132,12 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
         corners[index].wheel = toCenter * glm::mat4_cast(motion.steer * motion.spin) * fromRest;
         corners[index].disc = toCenter * glm::mat4_cast(motion.steer) * fromRest;
         corners[index].suspension = glm::translate(glm::mat4(1.0f), motion.center - restCenters[index]);
-        if (index < 2)
-        {
-            // The turn about Y is twice the half-angle atan2(y, w); q and -q are one rotation.
-            const float sign = motion.steer.w < 0.0f ? -1.0f : 1.0f;
-            rightSteer -= std::atan2(motion.steer.y * sign, motion.steer.w * sign);
-        }
     }
 
-    // The wheel turns clockwise for the driver, looking along its column, when the car steers right;
-    // at full lock of the front wheels it has turned kSteeringWheelLockDegrees.
     glm::mat4 steeringWheel(1.0f);
     if (model.steeringWheel.has_value())
     {
-        const float turn = rightSteer / glm::radians(animation.maxSteerDegrees) * glm::radians(animation.steeringWheelLockDegrees);
+        const float turn = SteeringWheelTurn(animation, body, wheels, vehicleToModel, scale);
         steeringWheel = glm::translate(glm::mat4(1.0f), model.steeringWheel->center) *
                         glm::rotate(glm::mat4(1.0f), turn, model.steeringWheel->axis) *
                         glm::translate(glm::mat4(1.0f), -model.steeringWheel->center);

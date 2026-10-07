@@ -100,6 +100,14 @@ struct EditorUiActions
         float speed = 1.0f;
     };
     std::optional<ModelAnimationChoice> selectedModelAnimation;
+    // The car the selected model drives (ModelComponent::driverVehicleUuid, empty for none) and its
+    // seat offset.
+    struct ModelDriverChoice
+    {
+        std::string vehicleUuid;
+        glm::vec3 seatOffset{0.0f};
+    };
+    std::optional<ModelDriverChoice> selectedModelDriver;
     std::optional<std::string> selectedSceneLoadPath;
     // A sound file the Assets window asked to hear: played, or stopped when it is already playing.
     std::optional<std::string> previewAudioPath;
@@ -217,6 +225,12 @@ class EditorUiController
     void SetVehicleRigStatus(VehicleRigStatus status)
     {
         m_state.vehicleRigStatus = std::move(status);
+    }
+    // Why the models seated in cars are not sitting in them (VehicleDriverService::Problem), for the
+    // Inspector.
+    void SetDriverProblems(std::unordered_map<entt::entity, std::string> problems)
+    {
+        m_state.driverProblems = std::move(problems);
     }
     // The scene's minimap picture as the backend registered it with ImGui; null when there is none.
     void SetMinimapTexture(ImTextureID texture)

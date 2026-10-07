@@ -2063,6 +2063,32 @@ add_test(
 
 set_target_properties(miniengine_input_state_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_driver_pose_tests
+    driver_pose_tests.cpp
+)
+miniengine_group_target_sources(miniengine_driver_pose_tests)
+
+target_link_libraries(miniengine_driver_pose_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_driver_pose_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_driver_pose_tests>
+            $<TARGET_FILE_DIR:miniengine_driver_pose_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.driver_pose
+    COMMAND miniengine_driver_pose_tests
+)
+
+set_target_properties(miniengine_driver_pose_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_steering_assist_tests
     steering_assist_tests.cpp
 )

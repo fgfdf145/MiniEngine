@@ -3,7 +3,8 @@
 # so the body rolls too), for testing the suspension by driving. The car stands on the flat start, turned
 # half round (its model faces -Z) so that it faces +Z, over the waves.
 # The ground comes from tools/render_scenes/make_rolling_road.py. Needs the car imported from Assetto
-# Corsa at assets/skyline_r34_vspec (not in git), run from the repository's root.
+# Corsa at assets/skyline_r34_vspec (not in git), run from the repository's root. Yuki (assets/Yuki, not in
+# git either) drives it.
 scene:
   version: 3
   selected_entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
@@ -32,6 +33,21 @@ entities:
     transform:
       translation: [0, 0.0006, -10]
       rotation: [0, 180, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 7c1e2d3a-0b4f-4e5a-9d6c-1f2e3a4b5c6d
+    tag: Yuki
+    model:
+      display_name: Yuki.glb
+      source_path: assets/Yuki/Yuki.glb
+      source_uuid: 969ec054-6ba2-4f9f-ac0e-56b40d2429ba
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    driver:
+      vehicle: fdea4903-ce20-40f3-a012-ac1e44d8b155
+      seat_offset: [0, 0, 0]
+    transform:
+      translation: [0, 0.0006, -10]
+      rotation: [0, 0, 0]
       scale: [1, 1, 1]
 lights:
   - entity_uuid: 3289c2f5-55fd-447e-9915-397160b07c1d

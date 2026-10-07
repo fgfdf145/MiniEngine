@@ -34,6 +34,9 @@ void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::st
 // KHR_lights_punctual: turns the lights the selected model carries on or off.
 void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelLights);
 void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed);
+// Seats the selected model in the car `vehicleUuid` as its driver (empty: in none), `seatOffset`
+// metres from where the seat is fitted (VehicleDriverService).
+void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset);
 
 // Applies a finished async model load, if any. Returns true when renderables changed.
 bool PumpAsyncModelLoad(RendererSharedState& state);

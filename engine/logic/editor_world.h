@@ -36,6 +36,8 @@ struct SerializedEntityData
     bool modelAnimationEnabled = true;
     bool modelAnimationPlaying = true;
     float modelAnimationSpeed = 1.0f;
+    std::string driverVehicleUuid;
+    glm::vec3 driverSeatOffset{0.0f};
     TransformComponent transform;
 };
 

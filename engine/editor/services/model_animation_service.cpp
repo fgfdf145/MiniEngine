@@ -15,8 +15,42 @@ void ModelAnimationPlayback::Track(entt::entity entity, std::shared_ptr<const Lo
     {
         entry.time = 0.0f;
     }
+    if (entry.model != model)
+    {
+        entry.rig.reset();
+        entry.rigSearched = false;
+    }
     entry.model = std::move(model);
     entry.sourcePath = sourcePath;
+}
+
+void ModelAnimationPlayback::SetDriverPose(entt::entity entity, const DriverPoseInput& input)
+{
+    if (const auto found = m_entries.find(entity); found != m_entries.end())
+    {
+        found->second.driver = input;
+    }
+}
+
+void ModelAnimationPlayback::ClearDriverPose(entt::entity entity)
+{
+    if (const auto found = m_entries.find(entity); found != m_entries.end())
+    {
+        found->second.driver.reset();
+        found->second.driverResult.reset();
+    }
+}
+
+const DriverPoseResult* ModelAnimationPlayback::GetDriverPoseResult(entt::entity entity) const
+{
+    const auto found = m_entries.find(entity);
+    return found != m_entries.end() && found->second.driverResult.has_value() ? &*found->second.driverResult : nullptr;
+}
+
+const DriverRig* ModelAnimationPlayback::GetDriverRig(entt::entity entity) const
+{
+    const auto found = m_entries.find(entity);
+    return found != m_entries.end() && found->second.rig.has_value() ? &*found->second.rig : nullptr;
 }
 
 void ModelAnimationPlayback::Restart(entt::entity entity)
@@ -74,6 +108,21 @@ void ModelAnimationPlayback::Tick(RendererSharedState& state, float deltaSeconds
         }
         const ModelComponent& model = world.GetModel(entity);
         const ModelSkeleton& skeleton = *entry.model->skeleton;
+        if (!entry.rigSearched)
+        {
+            entry.rig = FindDriverRig(skeleton);
+            entry.rigSearched = true;
+        }
+        if (entry.driver.has_value() && entry.rig.has_value())
+        {
+            DriverPoseResult result;
+            EvaluateDriverPalette(skeleton, *entry.rig, *entry.driver, entry.palette, &result);
+            entry.driverResult = result;
+            state.rendererWorld.SetJointPalette(entity, entry.palette);
+            ++it;
+            continue;
+        }
+        entry.driverResult.reset();
         const int32_t clip = model.animationEnabled ? ResolveClip(skeleton, model.animationClip) : -1;
         if (clip >= 0 && model.animationPlaying)
         {

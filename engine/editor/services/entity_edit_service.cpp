@@ -480,6 +480,24 @@ void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& 
     model.animationSpeed = speed;
 }
 
+void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset)
+{
+    // VehicleDriverService reads these every frame.
+    IEditorWorld& world = state.GetEditorWorld();
+    if (!world.HasSelection() || world.HasLightComponent(world.GetSelectedEntity()))
+    {
+        throw std::runtime_error("No selected model entity available to seat in a car");
+    }
+    const entt::entity selected = world.GetSelectedEntity();
+    if (!vehicleUuid.empty() && world.GetEntityUuid(selected) == vehicleUuid)
+    {
+        throw std::runtime_error("A model cannot drive itself");
+    }
+    ModelComponent& model = world.EditModel(selected);
+    model.driverVehicleUuid = vehicleUuid;
+    model.driverSeatOffset = seatOffset;
+}
+
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 {
     const std::string& name = EditSelectedModel(state, "clear the texture override", [](ModelComponent& model)

@@ -27,6 +27,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace me
 {
@@ -192,6 +195,92 @@ void DrawModelAnimationControls(const ModelComponent& model, EditorUiFrameResult
     if (changed)
     {
         result.actions.selectedModelAnimation = choice;
+    }
+}
+
+// A seated driver (VehicleDriverService): the car the selected model drives, its seat offset and why it
+// is not sitting in it. Shown for a model with skins; any model with a steering wheel is a car.
+void DrawModelDriverControls(
+    const IEditorWorld& scene,
+    entt::entity entity,
+    const ModelComponent& model,
+    const std::unordered_map<entt::entity, std::string>& problems,
+    EditorUiFrameResult& result)
+{
+    if (model.sourcePath.empty())
+    {
+        return;
+    }
+    const std::shared_ptr<const LoadedModelData> data = ModelCache::Get(model.sourcePath);
+    if (!data || !data->skeleton || data->skeleton->bindings.empty())
+    {
+        return;
+    }
+    EditorUiActions::ModelDriverChoice choice{model.driverVehicleUuid, model.driverSeatOffset};
+    bool changed = false;
+
+    ImGui::SeparatorText("Driver");
+    std::string preview = "None";
+    if (!choice.vehicleUuid.empty())
+    {
+        preview = "(not in the scene)";
+    }
+    std::vector<std::pair<std::string, std::string>> cars;
+    for (const entt::entity other : scene.GetSceneOrder())
+    {
+        if (other == entity || !scene.HasModelComponent(other) || !scene.Registry().all_of<SceneEntityIdComponent>(other))
+        {
+            continue;
+        }
+        const std::shared_ptr<const LoadedModelData> otherData = ModelCache::Get(scene.GetModel(other).sourcePath);
+        if (!otherData || !otherData->steeringWheel.has_value())
+        {
+            continue;
+        }
+        cars.emplace_back(scene.GetEntityUuid(other), scene.GetTag(other).name);
+        if (cars.back().first == choice.vehicleUuid)
+        {
+            preview = cars.back().second;
+        }
+    }
+    if (ImGui::BeginCombo("Drives", preview.c_str()))
+    {
+        if (ImGui::Selectable("None", choice.vehicleUuid.empty()) && !choice.vehicleUuid.empty())
+        {
+            choice.vehicleUuid.clear();
+            changed = true;
+        }
+        for (size_t index = 0; index < cars.size(); ++index)
+        {
+            const std::string label = cars[index].second + "##car_" + std::to_string(index);
+            if (ImGui::Selectable(label.c_str(), cars[index].first == choice.vehicleUuid) && cars[index].first != choice.vehicleUuid)
+            {
+                choice.vehicleUuid = cars[index].first;
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Sits the model in the car's driver's seat, its hands on the steering wheel. It follows the car, and a drive "
+                          "turns the wheel in its hands; from the cockpit the camera is at its eyes.");
+    ImGui::BeginDisabled(choice.vehicleUuid.empty());
+    changed |= ImGui::DragFloat3("Seat Offset (m)", &choice.seatOffset.x, 0.005f, -0.5f, 0.5f, "%.3f");
+    ImGui::SetItemTooltip("Moves the hips from where the seat puts them: to the car's right, up, forward.");
+    ImGui::EndDisabled();
+    if (!choice.vehicleUuid.empty())
+    {
+        if (const auto found = problems.find(entity); found != problems.end())
+        {
+            ImGui::TextWrapped("Not seated: %s.", found->second.c_str());
+        }
+        else
+        {
+            ImGui::TextDisabled("Its transform follows the car.");
+        }
+    }
+    if (changed)
+    {
+        result.actions.selectedModelDriver = choice;
     }
 }
 
@@ -794,6 +883,7 @@ void ScenePanel::OnGui(EditorContext& context)
                 }
 
                 DrawModelAnimationControls(model, result);
+                DrawModelDriverControls(scene, selectedEntity, model, context.state.driverProblems, result);
 
                 ImGui::BeginDisabled(model.sourcePath.empty());
                 if (ImGui::Button("Edit Materials"))
