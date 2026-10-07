@@ -168,6 +168,13 @@ struct RendererSharedState
     std::string lastEngineSettingsError;
     // The viewport recording, as the editor backend last saw it.
     VideoRecordingIndicator videoRecording;
+    // The Quad Recording window's cameras (copied from the editor every frame), whether it shows
+    // their pictures, and the quad recording as the backend last saw it.
+    QuadRecordingSettings quadRecording;
+    bool quadRecordingPreview = false;
+    VideoRecordingIndicator quadRecordingIndicator;
+    // What the quad cameras follow, by name: the driven car, else the selected model; empty for none.
+    std::string quadRecordingTarget;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;

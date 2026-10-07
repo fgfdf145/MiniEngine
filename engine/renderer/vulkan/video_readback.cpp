@@ -149,6 +149,86 @@ void VulkanVideoReadback::RecordCopy(
     slot.timeSeconds = timeSeconds;
 }
 
+void VulkanVideoReadback::RecordMosaicCopy(
+    VkCommandBuffer commandBuffer,
+    uint32_t frameSlot,
+    std::span<const MosaicTile> tiles,
+    VkFormat format,
+    VkExtent2D canvasExtent,
+    VkImageLayout layout,
+    double timeSeconds)
+{
+    const std::optional<VideoPixelFormat> pixelFormat = ToVideoPixelFormat(format);
+    if (!pixelFormat || frameSlot >= m_slots.size())
+    {
+        return;
+    }
+    for (const MosaicTile& tile : tiles)
+    {
+        if (tile.x + tile.extent.width > canvasExtent.width || tile.y + tile.extent.height > canvasExtent.height)
+        {
+            throw std::runtime_error("A mosaic tile lies outside its canvas");
+        }
+    }
+    Slot& slot = m_slots[frameSlot];
+    const VkDeviceSize texelBytes = TexelBytes(*pixelFormat);
+    const VkDeviceSize byteCount = static_cast<VkDeviceSize>(canvasExtent.width) * canvasExtent.height * texelBytes;
+    Reserve(slot, byteCount);
+
+    // The canvas black where no tile covers it: opaque for the 8-bit formats, whose alpha is the top
+    // byte of each little-endian word; zero (black) for half floats.
+    vkCmdFillBuffer(commandBuffer, slot.buffer, 0, byteCount, texelBytes == 4 ? 0xFF000000u : 0u);
+    VkBufferMemoryBarrier fillBarrier{};
+    fillBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    fillBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    fillBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    fillBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    fillBarrier.buffer = slot.buffer;
+    fillBarrier.size = byteCount;
+    vkCmdPipelineBarrier(
+        commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &fillBarrier, 0, nullptr);
+
+    // Each image straight into its place: the buffer's rows are the canvas's, so a tile's rows land
+    // a canvas row apart.
+    for (const MosaicTile& tile : tiles)
+    {
+        ImageBarrier(
+            commandBuffer, tile.image, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy region{};
+        region.bufferOffset = (static_cast<VkDeviceSize>(tile.y) * canvasExtent.width + tile.x) * texelBytes;
+        region.bufferRowLength = canvasExtent.width;
+        region.bufferImageHeight = canvasExtent.height;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {tile.extent.width, tile.extent.height, 1};
+        vkCmdCopyImageToBuffer(commandBuffer, tile.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.buffer, 1, &region);
+        ImageBarrier(
+            commandBuffer, tile.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layout,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    }
+
+    // The copies' writes, made visible to the host's reads once the fence is waited on.
+    VkBufferMemoryBarrier bufferBarrier{};
+    bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bufferBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferBarrier.buffer = slot.buffer;
+    bufferBarrier.size = byteCount;
+    vkCmdPipelineBarrier(
+        commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &bufferBarrier, 0, nullptr);
+
+    slot.pending = true;
+    slot.size = byteCount;
+    slot.extent = canvasExtent;
+    slot.format = *pixelFormat;
+    slot.timeSeconds = timeSeconds;
+}
+
 std::optional<VulkanVideoReadback::Frame> VulkanVideoReadback::Take(uint32_t frameSlot)
 {
     if (frameSlot >= m_slots.size() || !m_slots[frameSlot].pending)

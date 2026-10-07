@@ -72,6 +72,19 @@ class IRenderBackend
     virtual void StopVideoRecording()
     {
     }
+    // Films the car being driven (else the selected entity) from four sides at once, its cameras as
+    // the Quad Recording window sets them, composed into one video as it goes (Tools > Record Quad
+    // Cameras, --quad-record; docs/design/2026-10-07-quad-vehicle-recording-design.md). Fails when
+    // there is nothing to film.
+    virtual bool StartQuadRecording(const VideoRecordingRequest& request, std::string& error)
+    {
+        (void)request;
+        error = "This render backend cannot record video";
+        return false;
+    }
+    virtual void StopQuadRecording()
+    {
+    }
     // Logs the recent frames' average CPU and per-pass GPU times. For verification runs (--frames).
     virtual void LogFrameTimings() const
     {

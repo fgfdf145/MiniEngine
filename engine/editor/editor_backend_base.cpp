@@ -3,6 +3,7 @@
 #include "services/capture_state.h"
 #include "services/entity_edit_service.h"
 #include "services/model_import_service.h"
+#include "services/quad_recording.h"
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 #include "services/vehicle_drive_service.h"
@@ -262,6 +263,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         UpdateViewportMatrices(*State().fixedViewportExtent);
     }
     State().renderDebug = uiFrame.renderDebug;
+    State().quadRecording = uiFrame.quadRecording;
+    State().quadRecordingPreview = uiFrame.quadRecordingPreview;
     if (AudioEngine* const audio = State().audio.get())
     {
         audio->SetMasterVolume(uiFrame.audio.EffectiveVolume());
@@ -507,6 +510,11 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         ToggleVideoRecordingFromEditor();
     }
     UpdateVideoRecording();
+    if (actions.toggleQuadRecording)
+    {
+        ToggleQuadRecordingFromEditor();
+    }
+    UpdateQuadRecording();
     if (const auto& savePath = actions.selectedSceneSavePath)
     {
         RunUiAction(sceneError, fmt::format("save scene '{}'", *savePath), [&]
@@ -538,6 +546,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                         ModelImportService::PasteAsset(paste->sourcePath, paste->destinationDirectory);
                     });
     }
+    // Last: the actions above may have stopped the drive or changed the selection the cameras follow.
+    UpdateCaptureViews();
 }
 
 namespace
@@ -743,6 +753,215 @@ void EditorRenderBackendBase::UpdateVideoRecording()
     indicator.droppedFrames = status.framesDropped;
 }
 
+bool EditorRenderBackendBase::StartQuadRecording(const VideoRecordingRequest& request, std::string& error)
+{
+    // The render thread reads the cameras' pictures back for the recorder while it draws.
+    bool started = false;
+    RunWithRenderIdle([&]()
+                      {
+                          started = StartQuadRecordingNow(request, error);
+                      });
+    return started;
+}
+
+bool EditorRenderBackendBase::StartQuadRecordingNow(const VideoRecordingRequest& request, std::string& error)
+{
+    if (m_quadRecording)
+    {
+        error = "A quad recording is already running";
+        return false;
+    }
+    if (!FindQuadRecordingTarget().has_value())
+    {
+        error = "Nothing to film: drive a car or select one";
+        return false;
+    }
+    auto recording = std::make_unique<QuadVideoRecording>();
+    recording->settings = ClampQuadRecordingSettings(State().quadRecording);
+    recording->mosaic = ComputeQuadMosaic(recording->settings);
+    for (size_t index = 0; index < kQuadCameraCount; ++index)
+    {
+        if (recording->settings.labels)
+        {
+            recording->labels[index] = QuadCameraSlotName(static_cast<QuadCameraSlot>(index));
+        }
+    }
+    VideoRecordingSettings settings;
+    settings.path = request.path;
+    settings.width = recording->mosaic.width;
+    settings.height = recording->mosaic.height;
+    settings.framesPerSecond = request.framesPerSecond;
+    settings.pacing = request.everyFrame ? VideoPacing::EveryFrame : VideoPacing::RealTime;
+    try
+    {
+        std::filesystem::create_directories(request.path.parent_path());
+    }
+    catch (const std::exception& exception)
+    {
+        error = exception.what();
+        return false;
+    }
+    recording->recorder = std::make_unique<VideoRecorder>();
+    if (!recording->recorder->Start(settings, error))
+    {
+        return false;
+    }
+    m_quadRecording = std::move(recording);
+    State().quadRecordingIndicator = {};
+    LOG_INFO(
+        "Recording four cameras to '{}' at {}x{}, {} frames a second",
+        request.path.string(), settings.width, settings.height, request.framesPerSecond);
+    return true;
+}
+
+void EditorRenderBackendBase::StopQuadRecording()
+{
+    if (!m_quadRecording)
+    {
+        return;
+    }
+    RunWithRenderIdle([this]()
+                      {
+                          StopQuadRecordingNow();
+                      });
+}
+
+void EditorRenderBackendBase::StopQuadRecordingNow()
+{
+    if (!m_quadRecording)
+    {
+        return;
+    }
+    try
+    {
+        FlushQuadVideoFrames();
+    }
+    catch (const std::exception& error)
+    {
+        LOG_ERROR("Failed to read the last frames of the quad recording back: {}", error.what());
+    }
+    const std::filesystem::path path = m_quadRecording->recorder->GetSettings().path;
+    const VideoRecordingStatus status = m_quadRecording->recorder->Stop();
+    m_quadRecording.reset();
+
+    VideoRecordingIndicator& indicator = State().quadRecordingIndicator;
+    indicator = {};
+    indicator.messageTime = std::chrono::steady_clock::now();
+    if (!status.error.empty())
+    {
+        indicator.messageIsError = true;
+        indicator.message = fmt::format("Recording stopped: {}", status.error);
+        LOG_ERROR("The quad recording to '{}' stopped: {}", path.string(), status.error);
+        return;
+    }
+    const std::string files = status.files.size() > 1 ? fmt::format(" in {} files", status.files.size()) : std::string{};
+    indicator.message = fmt::format(
+        "Saved {} ({:.1f} s, {}{})", path.filename().string(), status.videoSeconds, FormatMegabytes(status.bytesWritten), files);
+    LOG_INFO(
+        "Recorded four cameras for {:.1f} s ({} frames, {} dropped while encoding) to '{}', {}{}",
+        status.videoSeconds, status.framesWritten, status.framesDropped, path.string(), FormatMegabytes(status.bytesWritten), files);
+}
+
+void EditorRenderBackendBase::ToggleQuadRecordingFromEditor()
+{
+    if (m_quadRecording)
+    {
+        StopQuadRecording();
+        return;
+    }
+    VideoRecordingRequest request;
+    request.path = BuildCapturePath("quad", Mp4H264Writer::IsSupported() ? ".mp4" : ".avi");
+    request.framesPerSecond = ClampQuadRecordingSettings(State().quadRecording).framesPerSecond;
+    std::string error;
+    if (!StartQuadRecording(request, error))
+    {
+        VideoRecordingIndicator& indicator = State().quadRecordingIndicator;
+        indicator = {};
+        indicator.messageTime = std::chrono::steady_clock::now();
+        indicator.messageIsError = true;
+        indicator.message = fmt::format("Cannot record: {}", error);
+        LOG_ERROR("Failed to start the quad recording to '{}': {}", request.path.string(), error);
+    }
+}
+
+void EditorRenderBackendBase::UpdateQuadRecording()
+{
+    if (!m_quadRecording)
+    {
+        return;
+    }
+    const VideoRecordingStatus status = m_quadRecording->recorder->GetStatus();
+    if (!status.error.empty())
+    {
+        StopQuadRecording();
+        return;
+    }
+    VideoRecordingIndicator& indicator = State().quadRecordingIndicator;
+    indicator.active = true;
+    indicator.seconds = status.videoSeconds;
+    indicator.bytes = status.bytesWritten;
+    indicator.droppedFrames = status.framesDropped;
+}
+
+std::optional<EditorRenderBackendBase::QuadRecordingTarget> EditorRenderBackendBase::FindQuadRecordingTarget()
+{
+    const VehicleDriveStatus drive = VehicleDriveService::GetStatus(State());
+    if (drive.active)
+    {
+        return QuadRecordingTarget{drive.pose, drive.vehicleName};
+    }
+    const IEditorWorld& world = EditorWorld();
+    if (!world.HasSelection() || !world.HasModelComponent(world.GetSelectedEntity()))
+    {
+        return std::nullopt;
+    }
+    // A car that is not driven faces along its model's +Z, as a car's model is made.
+    const entt::entity entity = world.GetSelectedEntity();
+    const glm::mat4 model = world.GetModelMatrix(entity);
+    PhysicsPose pose;
+    pose.position = glm::vec3(model[3]);
+    const glm::mat3 axes(glm::normalize(glm::vec3(model[0])), glm::normalize(glm::vec3(model[1])), glm::normalize(glm::vec3(model[2])));
+    pose.rotation = glm::normalize(glm::quat_cast(axes));
+    return QuadRecordingTarget{pose, world.GetTag(entity).name};
+}
+
+void EditorRenderBackendBase::UpdateCaptureViews()
+{
+    m_captureViews.clear();
+    State().quadRecordingTarget.clear();
+    const std::optional<QuadRecordingTarget> target = FindQuadRecordingTarget();
+    if (target.has_value())
+    {
+        State().quadRecordingTarget = target->name;
+    }
+    if (!target.has_value() || (!m_quadRecording && !State().quadRecordingPreview))
+    {
+        return;
+    }
+    // The pictures keep the sizes a recording started with; where the cameras are follows the
+    // window as it is edited.
+    const QuadRecordingSettings live = ClampQuadRecordingSettings(State().quadRecording);
+    const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
+    const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
+    for (size_t index = 0; index < kQuadCameraCount; ++index)
+    {
+        QuadCameraSettings camera = live.cameras[index];
+        if (m_quadRecording)
+        {
+            camera.width = m_quadRecording->settings.cameras[index].width;
+            camera.height = m_quadRecording->settings.cameras[index].height;
+        }
+        SceneCaptureView view;
+        view.extent = RenderExtent{camera.width, camera.height};
+        view.camera = PlaceQuadCamera(State().camera, target->pose, camera);
+        view.matrices.view = view.camera.GetViewMatrix();
+        view.matrices.projection = view.camera.GetProjectionMatrix(view.extent, false, useZeroToOneDepth);
+        view.matrices.renderProjection =
+            view.camera.GetProjectionMatrix(view.extent, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(m_backendType));
+        m_captureViews.push_back(view);
+    }
+}
+
 void EditorRenderBackendBase::UpdateKhronosReferenceFraming(RenderExtent extent)
 {
     if (!State().renderDebug.khronosReference || extent.width == 0 || extent.height == 0)
@@ -812,6 +1031,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetVehicleRigStatus(VehicleRigService::GetStatus(State()));
     State().editorUi.SetDriverProblems(State().vehicleDrivers.problems);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
+    State().editorUi.SetQuadRecordingStatus(State().quadRecordingIndicator, State().quadRecordingTarget);
     State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
     State().editorUi.SetProcessStatus(State().processStatus);

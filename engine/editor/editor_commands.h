@@ -80,6 +80,8 @@ struct EditorCommandState
     // The viewport is being recorded to a video (Tools > Record Viewport). The editor UI sets it
     // from the backend every frame.
     bool videoRecording = false;
+    // The car is being filmed from four sides (Tools > Record Quad Cameras), likewise.
+    bool quadRecording = false;
 };
 
 // A panel the Window menu shows and hides (see EditorWindowManager::BuildPanelMenuEntries).
@@ -125,6 +127,7 @@ struct EditorSceneCommands
     std::function<void()> openSceneSettings;
     std::function<void()> captureViewport;
     std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
+    std::function<void()> toggleQuadRecording;  // Record Quad Cameras: starts or stops
     std::function<void()> stepSimulation; // Step: one fixed physics step while paused
     std::function<void()> reloadShaders;
     std::function<void()> showShaderLog;

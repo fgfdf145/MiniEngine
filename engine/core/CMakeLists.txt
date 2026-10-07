@@ -27,6 +27,8 @@ add_library(engine_core
     video/mjpeg_avi_writer.h
     video/mp4_h264_writer.cpp
     video/mp4_h264_writer.h
+    video/video_mosaic.cpp
+    video/video_mosaic.h
     video/video_recorder.cpp
     video/video_recorder.h
 )

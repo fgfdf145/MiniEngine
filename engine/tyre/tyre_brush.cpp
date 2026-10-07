@@ -612,8 +612,7 @@ BrushTyreOutput MakeOutput(const BrushTyreParameters& p, const Patch& patch, con
     const double reference = std::max(std::abs(in.forwardVelocity), p.lowSpeed);
     out.slipRatio = (in.wheelSpeed * patch.effectiveRadius - in.forwardVelocity) / reference;
     out.slipAngle = std::atan2(in.lateralVelocity, std::max(std::abs(in.forwardVelocity), p.lowSpeed));
-    // Rolling resistance turns smoothly through a standstill.
-    out.rollingResistanceTorque = -(p.rollingResistance + std::max(in.extraRollingResistance, 0.0)) * patch.load * patch.effectiveRadius * std::tanh(in.wheelSpeed / 0.5);
+    out.rollingResistanceLimit = (p.rollingResistance + std::max(in.extraRollingResistance, 0.0)) * patch.load * patch.effectiveRadius;
     out.evaluations = s.evaluations;
     out.converged = s.converged;
     out.ribCount = patch.ribCount;

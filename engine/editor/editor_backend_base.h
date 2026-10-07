@@ -1,14 +1,19 @@
 #pragma once
 
 #include "renderer_shared_state.h"
+#include "services/quad_recording.h"
 
+#include <engine/core/video/video_mosaic.h>
 #include <engine/core/video/video_recorder.h>
 #include <engine/renderer/rhi/backend.h>
+#include <engine/renderer/scene_capture_view.h>
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -22,6 +27,8 @@ class EditorRenderBackendBase : public IRenderBackend
     void HandleEvent(const SDL_Event& event) override;
     bool StartVideoRecording(const VideoRecordingRequest& request, std::string& error) override;
     void StopVideoRecording() override;
+    bool StartQuadRecording(const VideoRecordingRequest& request, std::string& error) override;
+    void StopQuadRecording() override;
 
   protected:
     EditorRenderBackendBase(
@@ -42,6 +49,30 @@ class EditorRenderBackendBase : public IRenderBackend
     // Hands the recorder every frame the backend still holds; called before the recording stops.
     virtual void FlushVideoFrames()
     {
+    }
+    // A quad recording while it runs (docs/design/2026-10-07-quad-vehicle-recording-design.md): its
+    // recorder, the canvas its cameras' pictures go into, and the names written on them (empty when
+    // the labels are off). Fixed from start to stop, as the settings it started with.
+    struct QuadVideoRecording
+    {
+        std::unique_ptr<VideoRecorder> recorder;
+        VideoMosaic mosaic;
+        std::array<std::string, kQuadCameraCount> labels;
+        QuadRecordingSettings settings;
+    };
+    const QuadVideoRecording* ActiveQuadRecording() const
+    {
+        return m_quadRecording.get();
+    }
+    // As FlushVideoFrames, for the quad recording.
+    virtual void FlushQuadVideoFrames()
+    {
+    }
+    // This frame's quad cameras, in the canvas's order (UpdateCaptureViews): while a quad recording
+    // runs or the Quad Recording window previews them, and there is something to follow; else none.
+    const std::vector<SceneCaptureView>& CaptureViews() const
+    {
+        return m_captureViews;
     }
     // Runs work while the backend's render thread, if it has one, waits with nothing in hand: for
     // what the render thread reads (the video recorder) or uses (the device) while it draws.
@@ -84,6 +115,23 @@ class EditorRenderBackendBase : public IRenderBackend
     // Every frame: stops a recording whose file could not be written, and updates what the viewport
     // shows of the one running.
     void UpdateVideoRecording();
+    // Tools > Record Quad Cameras: starts a quad recording to captures/quad_<date>_<time>.mp4 (.avi
+    // where there is no Media Foundation), or stops the one running.
+    void ToggleQuadRecordingFromEditor();
+    bool StartQuadRecordingNow(const VideoRecordingRequest& request, std::string& error);
+    void StopQuadRecordingNow();
+    void UpdateQuadRecording();
+    // What the quad cameras follow this frame: the driven car's body, else the selected model; with
+    // its name. Nothing when there is neither.
+    struct QuadRecordingTarget
+    {
+        PhysicsPose pose;
+        std::string name;
+    };
+    std::optional<QuadRecordingTarget> FindQuadRecordingTarget();
+    // Places the quad cameras for this frame, after the UI (whose settings they take) and the drive
+    // (whose pose they follow).
+    void UpdateCaptureViews();
     // The Assets window's sound preview: plays the file, or stops it when it is the one playing.
     void PreviewAudio(const std::string& path);
 
@@ -101,6 +149,8 @@ class EditorRenderBackendBase : public IRenderBackend
     std::optional<KhronosReferenceFraming> m_khronosReferenceFraming;
 
     std::unique_ptr<VideoRecorder> m_videoRecorder;
+    std::unique_ptr<QuadVideoRecording> m_quadRecording;
+    std::vector<SceneCaptureView> m_captureViews;
     // The fixed viewport size before the recording fixed it, put back when it stops.
     std::optional<RenderExtent> m_fixedViewportExtentBeforeRecording;
 

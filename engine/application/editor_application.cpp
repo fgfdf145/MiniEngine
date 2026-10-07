@@ -251,6 +251,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--quad-record")
+        {
+            options.quadRecordPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
         if (argument == "--record-fps")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -620,6 +626,7 @@ int EditorApplication::Run()
     }
     uint32_t renderedFrameCount = 0;
     bool recordingStarted = false;
+    bool quadRecordingStarted = false;
     bool driveStarted = false;
     if (m_options.driveControls.has_value())
     {
@@ -704,6 +711,20 @@ int EditorApplication::Run()
                 throw std::runtime_error("Cannot record to '" + m_options.recordPath->string() + "': " + error);
             }
         }
+        // Once the car it films is driven (when --drive asks for one).
+        if (m_options.quadRecordPath.has_value() && !waiting && !quadRecordingStarted && (!m_options.driveEntity.has_value() || driveStarted))
+        {
+            quadRecordingStarted = true;
+            IRenderBackend::VideoRecordingRequest request;
+            request.path = *m_options.quadRecordPath;
+            request.framesPerSecond = m_options.recordFramesPerSecond;
+            request.everyFrame = true;
+            std::string error;
+            if (!renderer->StartQuadRecording(request, error))
+            {
+                throw std::runtime_error("Cannot record to '" + m_options.quadRecordPath->string() + "': " + error);
+            }
+        }
         // The camera moves only on the frames that count, so it starts from where it was placed.
         if (!waiting && !minimized)
         {
@@ -744,6 +765,7 @@ int EditorApplication::Run()
 
     // Also when the window was closed before the last frame: the file is finished either way.
     renderer->StopVideoRecording();
+    renderer->StopQuadRecording();
     if (m_options.maxFrames > 0)
     {
         renderer->LogFrameTimings();
