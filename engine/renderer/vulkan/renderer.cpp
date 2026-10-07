@@ -704,6 +704,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     // Fixed once NGX has started, before the render thread exists.
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
+    State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown);
     State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
@@ -808,6 +809,7 @@ void VulkanRenderer::ApplyRenderFeedback()
     }
     m_minimapAvailable = feedback.minimapLoaded;
     State().gpuMemory = feedback.gpuMemory;
+    m_pathTracingStatusShown = feedback.pathTracingStatus;
     if (feedback.outOfMemory.value_or(false))
     {
         // World streaming gives memory back before it asks for more.
@@ -1464,11 +1466,24 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.raySet = m_rayScene->GetSet(frame.frameSlot);
         frame.rayTextureSet = m_rayScene->GetTextureSet();
     }
+    // Path tracing mode, where the ray traced effects can run: its light replaces every ambient term,
+    // so the passes that make them stand aside (AO and the probe occlusion here, the GI and the
+    // reflections below). The direct lights and their traced shadows stay.
+    frame.pathTracing = renderDebug.pathTracing;
+    frame.pathTracing.enabled =
+        renderDebug.pathTracing.enabled && rayTracedEffects && m_pathTracePass != nullptr && m_pathTracePass->IsSupported();
+    if (frame.pathTracing.enabled)
+    {
+        frame.ao.enabled = false;
+        frame.rayTracing.ambientOcclusion = false;
+        frame.rayTracing.probeOcclusion = false;
+        frame.rayTracing.reflections = false;
+    }
     frame.aoHistory = m_aoHistory.Advance((frame.ao.enabled || frame.rayTracing.probeOcclusion) && frame.ao.temporalFilter);
     // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
     // view has none, as the Sample Viewer.
     frame.gi = renderDebug.gi;
-    frame.gi.enabled = renderDebug.gi.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    frame.gi.enabled = renderDebug.gi.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference && !frame.pathTracing.enabled;
     frame.giHistory = m_giHistory.Advance(frame.gi.enabled && frame.gi.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
     frame.taaEnabled = taaEnabled;
@@ -1497,19 +1512,23 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.dlssRayReconstruction = m_dlss->HasRayReconstruction();
         frame.view = packet.viewportMatrices.view;
         frame.projection = packet.viewportMatrices.renderProjection;
-        // Ray reconstruction denoises the traced shadow itself; it wants the raw rays.
+        // Ray reconstruction denoises the traced shadow and the paths itself; it wants the raw rays.
         if (frame.dlssRayReconstruction)
         {
             frame.rayTracing.denoise = false;
+            frame.pathTracing.accumulate = false;
+            frame.pathTracing.denoise = false;
         }
         m_dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
     frame.rtShadowHistory = m_rtShadowHistory.Advance(frame.rayTracing.sunShadows && frame.rayTracing.denoise);
+    UpdatePathTracing(frame, packet, selectedLights, lightSelection.ambientLuminance, environmentData, preExposure);
+    m_referenceFrame.pathTraced = frame.pathTracing.enabled;
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
-    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference && !frame.pathTracing.enabled;
     frame.ssrHistory = m_ssrHistory.Advance(SsrTraces(frame));
     // The history this frame writes carries this frame's pre-exposure.
     m_taaHistoryPreExposure = preExposure;
@@ -1729,6 +1748,7 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
         m_gpuMemory = MeasureGpuMemory(frame);
     }
     m_feedback.gpuMemory = m_gpuMemory;
+    m_feedback.pathTracingStatus = m_pathTracingStatus;
 }
 
 GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
@@ -1855,6 +1875,8 @@ void VulkanRenderer::CreateSwapchainResources()
     m_motionHistory.Reset();
     m_aoHistory.Reset();
     m_rtShadowHistory.Reset();
+    m_pathTraceHistory.Reset();
+    m_pathTraceAccumulation.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -1872,6 +1894,7 @@ void VulkanRenderer::DestroySwapchainResources()
     m_scenePasses.clear();
     m_exposurePass = nullptr;
     m_scatterPass = nullptr;
+    m_pathTracePass = nullptr;
     m_forwardPipelines.reset();
     m_scatterPipelines.reset();
     m_geometryPipelines.reset();
@@ -2366,6 +2389,7 @@ void VulkanRenderer::CreateScenePasses()
     m_scenePasses.clear();
     m_exposurePass = nullptr;
     m_scatterPass = nullptr;
+    m_pathTracePass = nullptr;
     m_forwardPipelines.reset();
     m_scatterPipelines.reset();
     m_geometryPipelines.reset();
@@ -2454,6 +2478,15 @@ void VulkanRenderer::CreateScenePasses()
         *m_sceneTargets,
         m_frameSetLayout->GetHandle(),
         *m_rayScene));
+    auto pathTracePass = std::make_unique<VulkanPathTracePass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        *m_rayScene);
+    m_pathTracePass = pathTracePass.get();
+    m_scenePasses.push_back(std::move(pathTracePass));
     m_scenePasses.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -2738,6 +2771,8 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
     m_motionHistory.Reset();
     m_aoHistory.Reset();
     m_rtShadowHistory.Reset();
+    m_pathTraceHistory.Reset();
+    m_pathTraceAccumulation.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -3746,6 +3781,88 @@ void VulkanRenderer::RecordTransitions(
             nullptr,
             1,
             &barrier);
+    }
+}
+
+void VulkanRenderer::UpdatePathTracing(
+    ScenePassFrameContext& frame,
+    const RenderFramePacket& packet,
+    std::span<const GpuLightData> lights,
+    const glm::vec3& ambientLuminance,
+    const EnvironmentUniformData& environment,
+    float preExposure)
+{
+    uint32_t stillFrames = 0;
+    if (frame.pathTracing.enabled)
+    {
+        if (m_pathTracePass->Prepare(*m_sceneTargets))
+        {
+            m_pathTraceHistory.Reset();
+            m_pathTraceAccumulation.Reset();
+        }
+        // The light as the paths see it: every selected light, the ambient, and the sky's sun, air and
+        // HDRI. The clouds drift every frame and are left out, so a still image keeps averaging them.
+        std::vector<glm::vec4> lighting;
+        lighting.reserve(lights.size() * 5 + 9);
+        for (const GpuLightData& light : lights)
+        {
+            lighting.insert(lighting.end(), {light.positionAndRange, light.colorAndIntensity, light.directionAndType, light.spotAndArea, light.areaRightAxis});
+        }
+        lighting.insert(
+            lighting.end(),
+            {glm::vec4(ambientLuminance, 0.0f), environment.sunDirectionAndMode, environment.sunIlluminance, environment.rayleighScattering,
+             environment.mieParameters, environment.ozoneAbsorption, environment.groundAlbedo, environment.hdriParameters,
+             environment.hdriIrradianceSh[0]});
+        PathTraceView view;
+        view.view = packet.viewportMatrices.view;
+        view.projection = packet.viewportMatrices.projection;
+        view.width = frame.extent.width;
+        view.height = frame.extent.height;
+        const bool sceneChanged = packet.contentChanged || m_ddgiMovingInstances.MovedThisFrame() || m_pathTraceGeometryEpoch != m_ddgiGeometryEpoch;
+        stillFrames = m_pathTraceAccumulation.Advance(view, lighting, packet.renderDebug, sceneChanged);
+        frame.pathTraceHistoryCap = PathTraceHistoryCap(frame.pathTracing, stillFrames);
+    }
+    else
+    {
+        m_pathTraceAccumulation.Reset();
+    }
+    m_pathTraceGeometryEpoch = m_ddgiGeometryEpoch;
+    frame.pathTraceHistory = m_pathTraceHistory.Advance(frame.pathTracing.enabled && frame.pathTracing.accumulate);
+    frame.pathTraceHistoryScale = TaaHistoryScale(frame.pathTraceHistory.valid, preExposure, m_pathTraceHistoryPreExposure);
+    m_pathTraceHistoryPreExposure = preExposure;
+
+    const RenderDebugSettings& renderDebug = packet.renderDebug;
+    if (!renderDebug.pathTracing.enabled)
+    {
+        m_pathTracingStatus.clear();
+    }
+    else if (m_pathTracePass == nullptr || !m_pathTracePass->IsSupported())
+    {
+        m_pathTracingStatus = "Needs hardware ray tracing: the GPU has no ray queries";
+    }
+    else if (!frame.pathTracing.enabled)
+    {
+        m_pathTracingStatus = !renderDebug.hardwareRayTracing ? "Off: hardware ray tracing is switched off"
+                              : renderDebug.forwardOnly       ? "Off in the forward-only order"
+                              : renderDebug.khronosReference  ? "Off in the Khronos reference view"
+                                                              : "Waiting for the ray scene";
+    }
+    else if (frame.dlssRayReconstruction)
+    {
+        m_pathTracingStatus = "DLSS ray reconstruction denoises the paths";
+    }
+    else if (!frame.pathTracing.accumulate)
+    {
+        m_pathTracingStatus = "One frame of paths (accumulation off)";
+    }
+    else
+    {
+        // A pixel's history grows by one each still frame from what it held when the image stopped
+        // changing, so the still frames are how far the reference has come.
+        const uint32_t maxFrames = PathTraceHistoryCap(frame.pathTracing, kPathTraceMaxFrames);
+        m_pathTracingStatus = stillFrames >= maxFrames ? std::format("Converged: {} frames averaged", maxFrames)
+                              : stillFrames > 0u       ? std::format("Still for {} of {} frames", stillFrames, maxFrames)
+                                                       : std::format("Moving: up to {} frames averaged", frame.pathTraceHistoryCap);
     }
 }
 

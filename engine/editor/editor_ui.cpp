@@ -312,6 +312,12 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
     m_state.commands.toneMapping = m_state.renderDebug.toneMapper;
     m_state.commands.khronosReference = m_state.renderDebug.khronosReference;
     m_state.commands.antiAliasing = m_state.renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
+    // The pipeline is what the settings make of it: path tracing, the ray traced effects over
+    // rasterization (hybrid), or rasterization alone.
+    m_state.commands.rayTracing = m_state.renderDebug.hardwareRayTracing;
+    m_state.commands.pipelineMode = m_state.renderDebug.pathTracing.enabled  ? RenderPipelineMode::PathTracing
+                                    : m_state.renderDebug.hardwareRayTracing ? RenderPipelineMode::Hybrid
+                                                                             : RenderPipelineMode::Rasterization;
     m_state.commands.videoRecording = m_state.videoRecording.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
     m_state.commands.playState = !m_state.vehicleStatus.active ? PlayState::Stopped
@@ -348,6 +354,15 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
     if (m_state.commands.antiAliasing != before.antiAliasing)
     {
         m_state.renderDebug.taa = m_state.commands.antiAliasing == AntiAliasingMode::Taa;
+    }
+    if (m_state.commands.rayTracing != before.rayTracing)
+    {
+        m_state.renderDebug.hardwareRayTracing = m_state.commands.rayTracing;
+    }
+    if (m_state.commands.pipelineMode != before.pipelineMode)
+    {
+        m_state.renderDebug.pathTracing.enabled = m_state.commands.pipelineMode == RenderPipelineMode::PathTracing;
+        m_state.renderDebug.hardwareRayTracing = m_state.commands.pipelineMode != RenderPipelineMode::Rasterization;
     }
     if (m_state.commands.playState != before.playState)
     {

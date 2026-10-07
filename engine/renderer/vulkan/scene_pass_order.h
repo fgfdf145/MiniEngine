@@ -19,6 +19,9 @@ enum class ScenePassId
     AoResolve,
     SsrTrace,
     SsrResolve,
+    // The path traced indirect light (path_trace_pass.h), which the lighting pass reads in path
+    // tracing mode in place of the ambient terms.
+    PathTrace,
     Lighting,
     // One-bounce indirect diffuse (gi_pass.h): the trace over the lit image, its filter, and the
     // composite that adds it back to the lit image.

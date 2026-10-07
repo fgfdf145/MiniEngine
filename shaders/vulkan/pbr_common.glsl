@@ -1152,6 +1152,62 @@ void ApplyLocalShadow(
 // frustum the grid covers (what a ray traced reflection hits).
 bool shadeAllLocalLights = false;
 
+// ---------------------------------------------------------------------------
+// Path traced indirect light
+// ---------------------------------------------------------------------------
+
+// The lobes the path tracer (path_trace.comp) samples at a G-buffer surface, each as its directional
+// albedo under the layers above it: the base's diffuse and specular (the split sum's, energy
+// compensated, as the ambient term weights them) under the sheen's and the coat's Fresnel, and the
+// coat's own. The trace divides the light each brings by these and the lighting pass multiplies it
+// back, so the denoiser filters light rather than texture, and the two cannot disagree. The specular
+// and coat lobes share one channel. Anisotropy and the sheen's own lobe are left out.
+struct PathTraceLobes
+{
+    vec3 diffuse;
+    vec3 specular;
+    vec3 coat;
+    // The base's lobes are scaled by this (what the sheen and the coat leave of them), and its
+    // specular's energy compensation over the single-scattering lobe the trace samples.
+    float baseScale;
+    vec3 energyCompensation;
+};
+
+PathTraceLobes PathTraceLobesOf(
+    vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, SpecularParams specular, CoatParams coat, SheenParams sheen)
+{
+    float NdV = max(dot(N, V), 0.0);
+    vec2 environmentBrdf = SampleEnvironmentBrdf(roughness, NdV);
+    BaseSpecularAlbedos albedos = EvaluateBaseSpecularAlbedos(environmentBrdf, albedo, metallic, specular);
+    vec3 uncompensated = BaseSpecularAlbedo(environmentBrdf, SurfaceF0(albedo, metallic, specular), SurfaceF90(metallic, specular), specular);
+
+    PathTraceLobes lobes;
+    lobes.baseScale = 1.0;
+    if (HasSheen(sheen))
+    {
+        lobes.baseScale = 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) * SampleSheenAlbedo(sheen.roughness, NdV);
+    }
+    lobes.coat = vec3(0.0);
+    if (coat.factor > 0.0)
+    {
+        float coatNdV = max(dot(coat.normal, V), 0.0);
+        lobes.baseScale *= 1.0 - coat.factor * FresnelSchlick(coatNdV, COAT_F0).x;
+        vec2 coatBrdf = SampleEnvironmentBrdf(coat.roughness, coatNdV);
+        lobes.coat = vec3(coat.factor * (COAT_F0.x * coatBrdf.x + coatBrdf.y));
+    }
+    lobes.diffuse = albedo * (1.0 - metallic) * (vec3(1.0) - albedos.dielectric) * lobes.baseScale;
+    lobes.specular = albedos.total * lobes.baseScale;
+    lobes.energyCompensation = albedos.total / max(uncompensated, vec3(1e-4));
+    return lobes;
+}
+
+// Set by the deferred lighting pass in path tracing mode: the path traced light reaching the surface
+// through its diffuse and specular lobes, demodulated (physical radiance per unit lobe albedo), which
+// takes the place of every ambient term ShadeSurface would add.
+bool pathTracedIndirect = false;
+vec3 pathTracedDiffuse = vec3(0.0);
+vec3 pathTracedSpecular = vec3(0.0);
+
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
 // (ambient + direct) with emissive added afterwards, so the forward image is unchanged by the move
@@ -1179,7 +1235,9 @@ vec3 ShadeSurface(
     // the environment alone.
     bool coatTakesReflection = SsrTracesCoat(coat.factor, coat.roughness, roughness);
     vec4 baseReflection = coatTakesReflection ? vec4(0.0) : reflection;
-    vec3 ambient = EnvironmentMode() == ENVIRONMENT_NONE
+    // In path tracing mode the traced light replaces all of it, added once the layers are composed.
+    vec3 ambient = pathTracedIndirect ? vec3(0.0)
+                 : EnvironmentMode() == ENVIRONMENT_NONE
                        ? EvaluateUniformAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, specular, ao, baseReflection)
                        : EvaluateSkyAmbient(worldPosition, N, geoNormal, V, albedo, metallic, roughness, anisotropy, specular, ao, baseReflection);
 
@@ -1293,7 +1351,8 @@ vec3 ShadeSurface(
         // not pass under the fibres' reflection, as in Filament.
         float sheenScaling = 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) *
                                        SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 0.0));
-        color = (ambient + directAccum) * sheenScaling + sheenAccum + EvaluateSheenAmbient(worldPosition, N, V, sheen) * ao + emissive;
+        vec3 sheenAmbient = pathTracedIndirect ? vec3(0.0) : EvaluateSheenAmbient(worldPosition, N, V, sheen) * ao;
+        color = (ambient + directAccum) * sheenScaling + sheenAccum + sheenAmbient + emissive;
     }
     else
     {
@@ -1302,8 +1361,15 @@ vec3 ShadeSurface(
     if (coat.factor > 0.0)
     {
         float coatFresnel = FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
-        vec3 coatAmbient = EvaluateCoatAmbient(worldPosition, coat, geoNormal, V, ao, coatTakesReflection ? reflection : vec4(0.0));
+        vec3 coatAmbient = pathTracedIndirect ? vec3(0.0)
+                                              : EvaluateCoatAmbient(worldPosition, coat, geoNormal, V, ao, coatTakesReflection ? reflection : vec4(0.0));
         color = color * (1.0 - coat.factor * coatFresnel) + coat.factor * (coatAmbient + coatAccum);
+    }
+    if (pathTracedIndirect)
+    {
+        // The lobes carry the sheen's and the coat's attenuation of the base already.
+        PathTraceLobes lobes = PathTraceLobesOf(N, V, albedo, metallic, roughness, specular, coat, sheen);
+        color += pathTracedDiffuse * lobes.diffuse + pathTracedSpecular * (lobes.specular + lobes.coat);
     }
     return color;
 }

@@ -25,6 +25,7 @@
 #include "gi_pass.h"
 #include "gpu_timer.h"
 #include "ddgi_debug_pass.h"
+#include "path_trace_pass.h"
 #include "ray_scene.h"
 #include "rt_shadow_pass.h"
 #include "ddgi.h"
@@ -51,6 +52,7 @@
 #include <engine/renderer/view_frustum.h>
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
+#include <engine/renderer/path_tracing.h>
 
 #include <array>
 #include <atomic>
@@ -303,6 +305,16 @@ class VulkanRenderer : public EditorRenderBackendBase
         VkCommandBuffer commandBuffer,
         const ScenePassFrameContext& frame,
         std::span<const ScenePassId> passOrder);
+    // The path tracer's per-frame state, once frame.pathTracing says whether it runs: its images the
+    // first time, whether its image stands still and so how long a history a pixel averages, the
+    // history's ping-pong and pre-exposure scale, and its status line.
+    void UpdatePathTracing(
+        ScenePassFrameContext& frame,
+        const RenderFramePacket& packet,
+        std::span<const GpuLightData> lights,
+        const glm::vec3& ambientLuminance,
+        const EnvironmentUniformData& environment,
+        float preExposure);
     void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
@@ -441,6 +453,9 @@ class VulkanRenderer : public EditorRenderBackendBase
         glm::vec3 skyRadiance{0.0f};
         bool uniformSky = false;
         bool ddgiEnabled = false;
+        // The frame was path traced: SceneGi holds the traced diffuse light, which the reference
+        // comparison then checks instead of the probes.
+        bool pathTraced = false;
         // The DDGI levels' grids and the lookup's normal and view bias, in spacings.
         uint32_t ddgiLevels = 0;
         std::array<glm::ivec3, kDdgiMaxLevels> ddgiOrigins{};
@@ -493,6 +508,17 @@ class VulkanRenderer : public EditorRenderBackendBase
     TemporalHistory m_taaHistory;
     // The pre-exposure the TAA history was written with; 0 before any frame wrote it.
     float m_taaHistoryPreExposure = 0.0f;
+    // The path tracer's accumulation, the pre-exposure it was written with, and whether its image is
+    // standing still; reset where the other histories are.
+    TemporalHistory m_pathTraceHistory;
+    float m_pathTraceHistoryPreExposure = 0.0f;
+    PathTraceAccumulation m_pathTraceAccumulation;
+    // The ray scene's install count the accumulation last saw: a new one is a scene change.
+    uint32_t m_pathTraceGeometryEpoch = 0;
+    // What the Graphics Debug window says of path tracing: the render thread's line, and the main
+    // thread's copy from the feedback.
+    std::string m_pathTracingStatus;
+    std::string m_pathTracingStatusShown;
     // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
     uint32_t m_taaFrameIndex = 0;
     // How far the clouds have moved, run on by every frame's time (engine/renderer/volumetric_clouds.h).
@@ -512,6 +538,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanExposureHistogramPass* m_exposurePass = nullptr;
     // Owned by m_scenePasses like the exposure pass; its images back set 0 bindings 19 and 20.
     VulkanScatterPass* m_scatterPass = nullptr;
+    // Owned by m_scenePasses too; makes its images on the first path traced frame.
+    VulkanPathTracePass* m_pathTracePass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
     // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
     std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;

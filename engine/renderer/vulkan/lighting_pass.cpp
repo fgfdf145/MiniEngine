@@ -18,7 +18,8 @@ struct LightingPushConstants
     glm::vec4 backgroundRadiance{0.0f};
     // x = 1 to draw the light cluster heat map instead of shading; y = 1 to read the ray traced sun
     // shadow (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows (the ray
-    // query pipeline); w unused.
+    // query pipeline); w = 1 for path tracing mode (the traced light in SceneGi and SceneReflections
+    // in place of the ambient terms).
     glm::vec4 debug{0.0f};
 };
 
@@ -129,7 +130,7 @@ void VulkanLightingPass::Record(
         frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f,
         frame.rayTracing.sunShadows ? 1.0f : 0.0f,
         traced ? 1.0f : 0.0f,
-        0.0f);
+        frame.pathTracing.enabled ? 1.0f : 0.0f);
     vkCmdPushConstants(
         commandBuffer,
         layout,

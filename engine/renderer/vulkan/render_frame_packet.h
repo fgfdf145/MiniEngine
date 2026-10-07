@@ -76,5 +76,8 @@ struct RenderFeedback
     std::optional<bool> outOfMemory;
     bool minimapLoaded = false;
     GpuMemoryReport gpuMemory;
+    // What path tracing is doing, for the Graphics Debug window: how far a still image has
+    // accumulated, or why it does not run.
+    std::string pathTracingStatus;
 };
 }

@@ -32,7 +32,8 @@ layout(push_constant) uniform LightingConstants
     vec4 backgroundRadiance;
     // x = 1 for the light cluster heat map instead of shading; y = 1 to take the sun's shadow from the
     // ray traced one (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows
-    // (the ray query variant only); w unused.
+    // (the ray query variant only); w = 1 for path tracing mode: the path traced light (SceneGi and
+    // SceneReflections, path_trace_pass.h) in place of every ambient term.
     vec4 debug;
 }
 lightingData;
@@ -204,6 +205,14 @@ void main()
     // Screen-space reflection in HDR target units; ShadeSurface wants physical radiance.
     vec4 reflection = texture(sceneReflections, fragTexCoord);
     reflection.rgb *= ubo.exposure.y;
+    if (lightingData.debug.w > 0.5)
+    {
+        // Path tracing mode: the two targets hold the demodulated traced light, pre-exposed.
+        pathTracedIndirect = true;
+        pathTracedDiffuse = texture(sceneGi, fragTexCoord).rgb * ubo.exposure.y;
+        pathTracedSpecular = reflection.rgb;
+        reflection = vec4(0.0);
+    }
     vec3 color = ShadeSurface(worldPosition, N, geoNormal, V, albedo, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, reflection);
 
     // Opaque and Mask fragments are fully covered by definition; the forward blend pass

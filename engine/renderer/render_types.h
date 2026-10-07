@@ -219,6 +219,35 @@ struct RayTracingSettings
     bool denoise = true;
 };
 
+// GPU path tracing (docs/design/2026-10-07-path-tracing-design.md): every opaque deferred pixel's
+// indirect light, path traced from its G-buffer surface through the ray scene with hardware ray
+// queries, in place of the ambient terms (DDGI, the sky's split sum, reflections, AO and the
+// screen-space GI). The lighting pass keeps the direct lights and their ray traced shadows. While the
+// camera and the scene stand still the frames accumulate toward a reference; DLSS ray reconstruction,
+// when it runs, denoises the raw paths instead of the engine's filters. The Render > Pipeline > Path
+// Tracing mode; it needs hardware ray tracing and falls back to the hybrid image without it.
+struct PathTracingSettings
+{
+    bool operator==(const PathTracingSettings&) const = default;
+
+    bool enabled = false;
+    // Surfaces a path visits after the G-buffer's: 1 is one bounce of indirect light.
+    int maxBounces = 3;
+    // The most a path's vertex may add, in HDR target units (pre-exposed luminance): bright, rarely
+    // found light (a small lamp a diffuse bounce happens to hit) otherwise shows as speckles for many
+    // frames. 0 adds everything, as a reference should.
+    float fireflyClamp = 32.0f;
+    // The local lights next event estimation picks one from, by resampling, at each path vertex.
+    int lightCandidates = 8;
+    // The temporal accumulation: frames reprojected through the motion vectors and averaged, up to
+    // motionFrames while anything moves and up to maxFrames while everything stands still.
+    bool accumulate = true;
+    int motionFrames = 32;
+    int maxFrames = 2048;
+    // The edge-aware spatial filter after it, which fades out as a still image converges.
+    bool denoise = true;
+};
+
 // The operator the tone mapping pass applies to the shaded image (the G-buffer views pick their own).
 // The numeric values are not the tonemap.frag push constant: VulkanTonemapPass maps them.
 enum class ToneMapper : uint32_t
@@ -282,6 +311,8 @@ struct RenderDebugSettings
     // The effects traced with hardware ray tracing; each falls back to its screen-space or shadow-map
     // counterpart without it.
     RayTracingSettings rayTracing;
+    // Path tracing in place of the ambient terms, where hardware rays run.
+    PathTracingSettings pathTracing;
     // How far from the camera the sun's cascaded shadows reach, in metres (ShadowCascadeSettings::
     // maxDistance). The same four cascades cover it, so a longer reach gives coarser shadows.
     float shadowDistance = 80.0f;
