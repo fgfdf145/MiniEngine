@@ -1,0 +1,123 @@
+# BeamNG.drive's Grid Map v2 (levels/gridmap_v2), for testing the suspension on BeamNG's own test strips.
+# The map comes from tools/beamng/bng_build.py (python tools/beamng/bng_build.py gridmap_v2 --install <checkout>),
+# which reads the game's zips and writes assets/models/beamng_gridmap_v2 (not in git): every static shape at
+# its highest detail, the terrain, BeamNG's collision with its ground models' grip, and the water block.
+# BeamNG's coordinates are kept: a BeamNG position (x, y, z) is (x, z, -y) here, north is -Z and the grid
+# floor is at 100 m.
+# The Skyline R34 V-Spec stands on BeamNG's spawn_suspension, facing north into the suspension zone. Its
+# test strips run north from BeamNG y 68 to 212 (here z -68 to -212), side by side at BeamNG x: stones 12-20,
+# sine waves 24-32, potholes 36-44, impact bumps 48-52, cobblestones 56-62, off-road squares 66-72, off-road
+# sine 76-82, logs 86-92, triangles 96-100, blocks 104-110, a drop 114-120, and a rough real road 128-136
+# (y -16 to 224). Speed bumps and kerbs lie west of x 0. Needs the car imported from Assetto Corsa at
+# assets/skyline_r34_vspec (not in git); Yuki (assets/Yuki, not in git either) drives it.
+scene:
+  version: 3
+  selected_entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
+  selected_entity: 1
+entities:
+  - entity_uuid: 5b0e1f7a-8c2d-4e6b-9a41-3d7c2f9e0b18
+    tag: Grid Map v2
+    model:
+      display_name: beamng_gridmap_v2.gltf
+      source_path: assets/models/beamng_gridmap_v2/beamng_gridmap_v2.gltf
+      source_uuid: 08d246af-d485-5df8-ac22-e266d5795465
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: fdea4903-ce20-40f3-a012-ac1e44d8b155
+    tag: skyline_r34_vspec
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [62.087, 100.0006, -20.827]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 7c1e2d3a-0b4f-4e5a-9d6c-1f2e3a4b5c6d
+    tag: Yuki
+    model:
+      display_name: Yuki.glb
+      source_path: assets/Yuki/Yuki.glb
+      source_uuid: 969ec054-6ba2-4f9f-ac0e-56b40d2429ba
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    driver:
+      vehicle: fdea4903-ce20-40f3-a012-ac1e44d8b155
+      seat_offset: [0, 0, 0]
+    transform:
+      translation: [62.087, 100.0006, -20.827]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 3289c2f5-55fd-447e-9915-397160b07c1d
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 120000
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [-7.897634e-06, -30.13556, 44.05117]
+      scale: [0.99999833, 0.99999774, 0.9999993]
+environment:
+  mode: atmosphere
+  atmosphere:
+    ground_albedo: [0.045, 0.045, 0.05]
+    ground_plane: true
+    seamless_horizon: true
+    rayleigh_density_scale: 1
+    mie_density_scale: 1
+    mie_anisotropy: 0.8
+    ozone_density_scale: 1
+    aerial_perspective_distance_scale: 1
+    sun_angular_diameter_degrees: 0.545
+  hdri:
+    path: ""
+    uuid: ""
+    intensity: 1000
+    rotation_degrees: 0
+  height_fog:
+    enabled: false
+    density: 0.001
+    height_falloff: 0.02
+    fog_height: 0
+    start_distance: 0
+    max_opacity: 1
+    albedo: [1, 1, 1]
+    anisotropy: 0.3
+  clouds:
+    enabled: false
+    coverage: 0.45
+    base_altitude: 1500
+    thickness: 2500
+    density: 0.02
+    shape_scale: 7000
+    detail_scale: 600
+    weather_scale: 40000
+    billows: 1
+    forward_anisotropy: 0.8
+    back_anisotropy: -0.3
+    back_weight: 0.3
+    albedo: 0.98
+    ambient_scale: 1
+    haze_distance: 25000
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]
