@@ -452,7 +452,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         RunUiAction(modelError, "seat the selected model in a car", [&]
                     {
-                        EntityEditService::ApplySelectedModelDriver(State(), driver->vehicleUuid, driver->seatOffset);
+                        EntityEditService::ApplySelectedModelDriver(State(), driver->vehicleUuid, driver->seatOffset, driver->grip);
                     });
     }
     if (const auto& useModelLights = actions.selectedUseModelLights)

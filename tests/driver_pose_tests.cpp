@@ -181,6 +181,38 @@ void HandsHoldWhereTheyAreTold()
     Require(turned[static_cast<size_t>(rig.wrist[1])].y < leftLevel.y - 0.08f, "the right hand did not go down in a right turn");
 }
 
+void GripCalibrationMovesTheHand()
+{
+    const ModelSkeleton skeleton = MakeHumanoid();
+    const DriverRig rig = *FindDriverRig(skeleton);
+    DriverPoseInput input;
+    input.hips = glm::vec3(0.0f, 0.5f, 0.0f);
+    input.wheelCenter = glm::vec3(0.0f, 0.8f, 0.38f);
+    input.wheelAxis = glm::vec3(0.0f, 0.0f, 1.0f);
+    std::vector<ModelNodePose> poses;
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> plain = WorldPositions(skeleton, poses);
+
+    // A palm gap takes the wrists out from the rim (the left to +X, the right to -X).
+    input.grip.palmGap = 0.02f;
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> apart = WorldPositions(skeleton, poses);
+    Require(apart[static_cast<size_t>(rig.wrist[0])].x - plain[static_cast<size_t>(rig.wrist[0])].x > 0.015f &&
+                plain[static_cast<size_t>(rig.wrist[1])].x - apart[static_cast<size_t>(rig.wrist[1])].x > 0.015f,
+            "the palm gap did not move both wrists out, mirrored");
+
+    // Pitching the hand (about the rim's run, upright at a quarter to three) swings the wrist round
+    // where the hand holds: as far back or forward for both hands, sideways in mirror.
+    input.grip.palmGap = 0.0f;
+    input.grip.handTurnDegrees = glm::vec3(30.0f, 0.0f, 0.0f);
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> pitched = WorldPositions(skeleton, poses);
+    const glm::vec3 left = pitched[static_cast<size_t>(rig.wrist[0])] - plain[static_cast<size_t>(rig.wrist[0])];
+    const glm::vec3 right = pitched[static_cast<size_t>(rig.wrist[1])] - plain[static_cast<size_t>(rig.wrist[1])];
+    Require(glm::length(left) > 0.01f && std::abs(left.z - right.z) < 0.005f && std::abs(left.x + right.x) < 0.005f,
+            "the hand pitch did not swing the wrists, mirrored");
+}
+
 void HiddenHeadShrinks()
 {
     const ModelSkeleton skeleton = MakeHumanoid();
@@ -512,6 +544,12 @@ void InspectorOffersTheCar()
     // The seat survives a save and a load.
     scene.EditModel(driverEntity).driverSeatOffset = glm::vec3(0.01f, -0.02f, 0.03f);
     scene.EditModel(driverEntity).springBones = false;
+    DriverGripCalibration grip;
+    grip.holdAtDegrees = 60.0f;
+    grip.palmGap = 0.01f;
+    grip.handTurnDegrees = glm::vec3(10.0f, -5.0f, 20.0f);
+    grip.thumbOnRim = false;
+    scene.EditModel(driverEntity).driverGrip = grip;
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "miniengine_driver_pose_tests.yaml";
     SaveEditorSceneDataToFile(scene.CaptureSceneData(), file.string());
     const SerializedSceneData loaded = LoadEditorSceneDataFromFile(file.string());
@@ -522,7 +560,7 @@ void InspectorOffersTheCar()
         if (entity.entityUuid == "driver-uuid")
         {
             found = entity.driverVehicleUuid == "car-uuid" && glm::distance(entity.driverSeatOffset, glm::vec3(0.01f, -0.02f, 0.03f)) < 1e-6f &&
-                    !entity.modelSpringBones;
+                    !entity.modelSpringBones && entity.driverGrip == grip;
         }
         else if (entity.entityUuid == "car-uuid")
         {
@@ -614,6 +652,7 @@ int main()
         SeatedPoseReachesItsTargets();
         HandsHoldWhereTheyAreTold();
         HiddenHeadShrinks();
+        GripCalibrationMovesTheHand();
         HeldHandGoesToTheKnob();
         GearLeverGoesThroughTheGate();
         FeetWorkThePedals();

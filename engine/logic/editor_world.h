@@ -39,6 +39,7 @@ struct SerializedEntityData
     bool modelSpringBones = true;
     std::string driverVehicleUuid;
     glm::vec3 driverSeatOffset{0.0f};
+    DriverGripCalibration driverGrip;
     TransformComponent transform;
 };
 

@@ -116,6 +116,28 @@ struct ModelRenderableDirty
 {
 };
 
+// How a driver's hands hold the steering wheel, set by hand where the fitted grip is not right for a
+// character (VehicleDriverService). The left hand's; the right's is its mirror image.
+struct DriverGripCalibration
+{
+    // Where the hands hold the rim at rest: degrees from the top (90, a quarter to three).
+    float holdAtDegrees = 90.0f;
+    // Where the rim crosses the hand: a share of the way from the wrist to the knuckles (1 at the
+    // fingers' base).
+    float alongHand = 1.05f;
+    // The palm moved off the rim (metres; negative into it).
+    float palmGap = 0.0f;
+    // The hand turned about where it holds (degrees): pitch tips the fingers forward over the rim, yaw
+    // tilts the hand along the rim, roll twists the palm about the hand's length.
+    glm::vec3 handTurnDegrees{0.0f};
+    // Added to every finger joint's bend (degrees; negative opens the hand).
+    float fingerCurlDegrees = 0.0f;
+    // The thumb laid on the rim; off, it stays out.
+    bool thumbOnRim = true;
+
+    bool operator==(const DriverGripCalibration&) const = default;
+};
+
 struct ModelComponent
 {
     std::string sourcePath;
@@ -145,6 +167,7 @@ struct ModelComponent
     std::string driverVehicleUuid;
     // Moves the seat from where it is fitted (metres: to the car's right, up, forward).
     glm::vec3 driverSeatOffset{0.0f};
+    DriverGripCalibration driverGrip;
 };
 
 struct ModelBoundsComponent

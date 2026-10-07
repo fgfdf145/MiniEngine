@@ -3,6 +3,8 @@
 #include "model_animation.h"
 #include "model_spring_bones.h"
 
+#include <engine/scene/scene_components.h>
+
 #include <glm/glm.hpp>
 
 #include <array>
@@ -82,6 +84,9 @@ struct DriverPoseInput
     float wheelRadius = 0.18f;
     float wheelTubeRadius = 0.015f;
     std::array<float, 2> gripAngles{-1.5707964f, 1.5707964f};
+    // How the hands hold the rim, set by hand (the left hand's; the right's mirrors it). Its holdAtDegrees
+    // is for whoever sets gripAngles.
+    DriverGripCalibration grip;
     // The ankles (left, right), on the pedals, and how far each foot is raised from flat (degrees: up
     // the pedal's slope, less as the foot presses it).
     std::array<glm::vec3, 2> ankles{glm::vec3(0.1f, -0.15f, 0.7f), glm::vec3(-0.1f, -0.15f, 0.7f)};

@@ -559,9 +559,10 @@ glm::vec3 RimPoint(const VehicleDriverSeat& seat, float angle)
     return seat.wheelCenter + RimRadial(seat, angle) * seat.wheelRadius;
 }
 
-float RestGrip(size_t side)
+// Where a hand holds the rim at rest, `holdAt` (the left hand's, radians from the top) mirrored for the right.
+float RestGrip(size_t side, float holdAt)
 {
-    return side == 0 ? -glm::half_pi<float>() : glm::half_pi<float>();
+    return side == 0 ? -holdAt : holdAt;
 }
 
 // A hand's reach round the rim from the top (radians): the left's, or the right's mirror of it.
@@ -622,7 +623,7 @@ void UpdateDriverHands(VehicleDriverHands& hands, const VehicleDriverSeat& seat,
     {
         for (size_t side = 0; side < 2; ++side)
         {
-            hands.grips[side] = RestGrip(side) - turn;
+            hands.grips[side] = RestGrip(side, hands.holdAt) - turn;
             hands.moving[side] = false;
         }
         hands.lastTurn = turn;
@@ -682,9 +683,9 @@ void UpdateDriverHands(VehicleDriverHands& hands, const VehicleDriverSeat& seat,
     {
         for (size_t side = 0; side < 2; ++side)
         {
-            if (std::abs(WrapAngle(hands.grips[side] + turn - RestGrip(side))) > glm::radians(kRestOffDegrees))
+            if (std::abs(WrapAngle(hands.grips[side] + turn - RestGrip(side, hands.holdAt))) > glm::radians(kRestOffDegrees))
             {
-                regrip(side, RestGrip(side));
+                regrip(side, RestGrip(side, hands.holdAt));
                 return;
             }
         }
@@ -696,7 +697,8 @@ DriverPoseInput DriverPoseFromSeat(
     const glm::vec3& seatOffset,
     float steeringWheelTurn,
     bool hideHead,
-    const VehicleDriverMotion* motion)
+    const VehicleDriverMotion* motion,
+    const DriverGripCalibration& grip)
 {
     const VehicleDriverFeet feet = motion != nullptr ? motion->feet : VehicleDriverFeet{};
     DriverPoseInput input;
@@ -708,6 +710,7 @@ DriverPoseInput DriverPoseFromSeat(
     input.wheelAxis = seat.wheelAxis;
     input.wheelRadius = seat.wheelRadius;
     input.wheelTubeRadius = seat.wheelTubeRadius;
+    input.grip = grip;
     const float turn = steeringWheelTurn * seat.wheelTurnSign;
     // The hands where they hold the rim, or on their way to a new hold: from where they let go towards
     // the new one as it turns with the wheel, drawn back across the wheel's face at the middle.
@@ -715,7 +718,7 @@ DriverPoseInput DriverPoseFromSeat(
     {
         if (motion == nullptr || !motion->hands.started)
         {
-            input.gripAngles[side] = RestGrip(side);
+            input.gripAngles[side] = RestGrip(side, glm::radians(grip.holdAtDegrees));
             continue;
         }
         const VehicleDriverHands& hands = motion->hands;
@@ -861,11 +864,13 @@ void Tick(RendererSharedState& state, float deltaSeconds)
         const float step = session != nullptr && session->paused ? 0.0f : deltaSeconds;
         const float steeringWheelTurn = driven ? session->steeringWheelTurn : 0.0f;
         UpdateDriverFeet(feet, throttle, brake, clutch, step);
+        motion.hands.holdAt = glm::radians(model.driverGrip.holdAtDegrees);
         UpdateDriverHands(motion.hands, *fitted.seat, steeringWheelTurn * fitted.seat->wheelTurnSign, step);
         // Felt at the chest, where the body's weight swings from: high in the car, it goes with its roll
         // and pitch too.
         UpdateDriverSway(motion.sway, matrix, fitted.seat->hips + glm::vec3(0.0f, kSwayFeltAboveHips, 0.0f), step);
-        DriverPoseInput input = DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, steeringWheelTurn, fromCockpit, &motion);
+        DriverPoseInput input =
+            DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, steeringWheelTurn, fromCockpit, &motion, model.driverGrip);
 
         // A gear change: the hand on the lever's side goes to the knob as the lever moves.
         if (driven && carData->gearLever.has_value())

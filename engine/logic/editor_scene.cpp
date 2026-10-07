@@ -465,6 +465,16 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             {
                 entityData.driverVehicleUuid = driverNode["vehicle"].as<std::string>(entityData.driverVehicleUuid);
                 entityData.driverSeatOffset = ReadVec3(driverNode["seat_offset"], entityData.driverSeatOffset);
+                if (const YAML::Node gripNode = driverNode["grip"]; gripNode && gripNode.IsMap())
+                {
+                    DriverGripCalibration& grip = entityData.driverGrip;
+                    grip.holdAtDegrees = gripNode["hold_at"].as<float>(grip.holdAtDegrees);
+                    grip.alongHand = gripNode["along_hand"].as<float>(grip.alongHand);
+                    grip.palmGap = gripNode["palm_gap"].as<float>(grip.palmGap);
+                    grip.handTurnDegrees = ReadVec3(gripNode["hand_turn"], grip.handTurnDegrees);
+                    grip.fingerCurlDegrees = gripNode["finger_curl"].as<float>(grip.fingerCurlDegrees);
+                    grip.thumbOnRim = gripNode["thumb_on_rim"].as<bool>(grip.thumbOnRim);
+                }
             }
             entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
@@ -555,6 +565,18 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
             emitter << YAML::Key << "driver" << YAML::Value << YAML::BeginMap;
             emitter << YAML::Key << "vehicle" << YAML::Value << entity.driverVehicleUuid;
             EmitVec3(emitter, "seat_offset", entity.driverSeatOffset);
+            if (entity.driverGrip != DriverGripCalibration{})
+            {
+                const DriverGripCalibration& grip = entity.driverGrip;
+                emitter << YAML::Key << "grip" << YAML::Value << YAML::BeginMap;
+                emitter << YAML::Key << "hold_at" << YAML::Value << grip.holdAtDegrees;
+                emitter << YAML::Key << "along_hand" << YAML::Value << grip.alongHand;
+                emitter << YAML::Key << "palm_gap" << YAML::Value << grip.palmGap;
+                EmitVec3(emitter, "hand_turn", grip.handTurnDegrees);
+                emitter << YAML::Key << "finger_curl" << YAML::Value << grip.fingerCurlDegrees;
+                emitter << YAML::Key << "thumb_on_rim" << YAML::Value << grip.thumbOnRim;
+                emitter << YAML::EndMap;
+            }
             emitter << YAML::EndMap;
         }
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
@@ -817,6 +839,7 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     model.springBones = entityData.modelSpringBones;
     model.driverVehicleUuid = entityData.driverVehicleUuid;
     model.driverSeatOffset = entityData.driverSeatOffset;
+    model.driverGrip = entityData.driverGrip;
     m_registry.emplace<ModelBoundsComponent>(entity);
     m_registry.emplace<EditorModelMetadataComponent>(entity);
     m_registry.emplace<ModelRenderableDirty>(entity);
@@ -1252,6 +1275,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelSpringBones = model.springBones;
         entityData.driverVehicleUuid = model.driverVehicleUuid;
         entityData.driverSeatOffset = model.driverSeatOffset;
+        entityData.driverGrip = model.driverGrip;
         entityData.transform = transform;
         sceneData.entities.push_back(entityData);
     }

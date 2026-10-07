@@ -219,7 +219,7 @@ void DrawModelDriverControls(
     {
         return;
     }
-    EditorUiActions::ModelDriverChoice choice{model.driverVehicleUuid, model.driverSeatOffset};
+    EditorUiActions::ModelDriverChoice choice{model.driverVehicleUuid, model.driverSeatOffset, model.driverGrip};
     bool changed = false;
 
     ImGui::SeparatorText("Driver");
@@ -269,6 +269,33 @@ void DrawModelDriverControls(
     ImGui::BeginDisabled(choice.vehicleUuid.empty());
     changed |= ImGui::DragFloat3("Seat Offset (m)", &choice.seatOffset.x, 0.005f, -0.5f, 0.5f, "%.3f");
     ImGui::SetItemTooltip("Moves the hips from where the seat puts them: to the car's right, up, forward.");
+    if (ImGui::TreeNode("Grip Calibration"))
+    {
+        // The left hand's; the right hand mirrors it.
+        DriverGripCalibration& grip = choice.grip;
+        changed |= ImGui::SliderFloat("Hold At (deg)", &grip.holdAtDegrees, 30.0f, 150.0f, "%.0f");
+        ImGui::SetItemTooltip("Where the hands hold the rim at rest, from the top: 90 is a quarter to three, 60 ten to two.");
+        changed |= ImGui::SliderFloat("Rim Along Hand", &grip.alongHand, 0.5f, 1.5f, "%.2f");
+        ImGui::SetItemTooltip("Where the rim crosses the hand, from the wrist (0) to the knuckles (1).");
+        float palmGapCm = grip.palmGap * 100.0f;
+        if (ImGui::SliderFloat("Palm Gap (cm)", &palmGapCm, -3.0f, 3.0f, "%.1f"))
+        {
+            grip.palmGap = palmGapCm / 100.0f;
+            changed = true;
+        }
+        ImGui::SetItemTooltip("Moves the palm off the rim (negative presses it in).");
+        changed |= ImGui::SliderFloat3("Hand Turn (deg)", &grip.handTurnDegrees.x, -90.0f, 90.0f, "%.0f");
+        ImGui::SetItemTooltip("Turns the hand about where it holds: pitch tips the fingers over the rim, yaw tilts the hand along it, roll twists the palm.");
+        changed |= ImGui::SliderFloat("Finger Curl (deg)", &grip.fingerCurlDegrees, -45.0f, 45.0f, "%.0f");
+        ImGui::SetItemTooltip("Added to every finger joint's bend; negative opens the hand.");
+        changed |= ImGui::Checkbox("Thumb on Rim", &grip.thumbOnRim);
+        if (ImGui::Button("Reset Grip"))
+        {
+            grip = DriverGripCalibration{};
+            changed = true;
+        }
+        ImGui::TreePop();
+    }
     ImGui::EndDisabled();
     if (!choice.vehicleUuid.empty())
     {

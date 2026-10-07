@@ -114,6 +114,9 @@ struct VehicleDriverHands
 {
     bool started = false;
     float lastTurn = 0.0f;
+    // Where the left hand holds the rim at rest, radians from the top (DriverGripCalibration::
+    // holdAtDegrees); the right holds its mirror.
+    float holdAt = 1.5707964f;
     // Where each hand holds the rim, as the wheel's own (DriverPoseInput::gripAngles less its turn).
     std::array<float, 2> grips{};
     // A hand on its way to a new hold: how long it has been going, and where it let go (vehicle space).
@@ -142,13 +145,15 @@ struct VehicleDriverMotion
 // The driver's pose in the seat, moved by `seatOffset` (metres: to the car's right, up, forward),
 // holding the wheel turned `steeringWheelTurn` (radians about ModelSteeringWheel::axis, as
 // VehicleDriveSession::steeringWheelTurn) where `motion` has the hands (else at a quarter to three, as
-// at rest), its feet and body as it has them. The driver's model space is the car's vehicle space.
+// at rest), its feet and body as it has them, the hands on the rim as `grip` calibrates them. The driver's
+// model space is the car's vehicle space.
 DriverPoseInput DriverPoseFromSeat(
     const VehicleDriverSeat& seat,
     const glm::vec3& seatOffset,
     float steeringWheelTurn,
     bool hideHead,
-    const VehicleDriverMotion* motion = nullptr);
+    const VehicleDriverMotion* motion = nullptr,
+    const DriverGripCalibration& grip = {});
 
 struct VehicleDriverState
 {

@@ -107,6 +107,7 @@ struct EditorUiActions
     {
         std::string vehicleUuid;
         glm::vec3 seatOffset{0.0f};
+        DriverGripCalibration grip;
     };
     std::optional<ModelDriverChoice> selectedModelDriver;
     std::optional<std::string> selectedSceneLoadPath;

@@ -16,9 +16,8 @@ constexpr glm::vec3 kUp{0.0f, 1.0f, 0.0f};
 constexpr glm::vec3 kForward{0.0f, 0.0f, 1.0f};
 constexpr glm::vec3 kLeft{1.0f, 0.0f, 0.0f};
 
-// The hands: the rim lies across the base of the fingers (this share of the way from the wrist to the
-// knuckles), against the palm, whose skin is this far from the line of the hand's bones.
-constexpr float kRimAlongHand = 1.05f;
+// The hands: the palm's skin is this far from the line of the hand's bones (where the rim lies across
+// the hand, and how the hand is turned on it, are DriverGripCalibration's).
 constexpr float kPalmThickness = 0.018f;
 // The fingers bend at each of their three joints until they touch what the hand holds (a finger is about
 // this thick about its bones), up to these bends; in steps this fine. Holding nothing they close this
@@ -428,8 +427,19 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         HandTarget& target = targets[side];
         target.direction = glm::normalize(wheelAxis - radial * 0.25f);
         target.palm = -radial;
-        const glm::vec3 wheelWrist =
-            grip - target.direction * (rest.handLength[side] * kRimAlongHand) - target.palm * (input.wheelTubeRadius + kPalmThickness);
+        // Turned as calibrated about where it holds: pitch about the rim's run, yaw about the rim's
+        // radius, roll about the hand's length; mirrored for the right hand.
+        {
+            const float mirror = side == 0 ? 1.0f : -1.0f;
+            const glm::vec3 along = glm::normalize(glm::cross(wheelAxis, radial));
+            const glm::vec3 turns = glm::radians(input.grip.handTurnDegrees);
+            const glm::quat turn = glm::angleAxis(turns.z * mirror, target.direction) * glm::angleAxis(turns.y * mirror, radial) *
+                                   glm::angleAxis(turns.x, along);
+            target.direction = turn * target.direction;
+            target.palm = turn * target.palm;
+        }
+        const glm::vec3 wheelWrist = grip - target.direction * (rest.handLength[side] * input.grip.alongHand) -
+                                     target.palm * (input.wheelTubeRadius + kPalmThickness + input.grip.palmGap);
         target.wrist = wheelWrist;
         const DriverHandHold& hold = input.holds[side];
         if (hold.weight > 0.0f)
@@ -567,7 +577,8 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
                 continue;
             }
             std::array<float, 3> curl{};
-            if (finger == 0 && target.holds != HandTarget::Holds::Nothing)
+            const bool thumbLaidOn = target.holds == HandTarget::Holds::Ball || (target.holds == HandTarget::Holds::Rim && input.grip.thumbOnRim);
+            if (finger == 0 && thumbLaidOn)
             {
                 // Laid on what the hand holds below, once the fingers are round it.
                 continue;
@@ -605,6 +616,8 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
                             break;
                         }
                     }
+                    // As calibrated, more or less.
+                    bend = std::max(bend + glm::radians(input.grip.fingerCurlDegrees), 0.0f);
                     curl[joint] = bend;
                     const glm::quat turn = glm::angleAxis(bend, curlAxis);
                     for (size_t later = joint + 1; later < points.size(); ++later)
@@ -630,7 +643,8 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         // turns towards the held thing (its middle line, or a ball's centre) until the next joint touches
         // it, or as near as it gets.
         const std::array<int32_t, 4>& thumb = rig.fingers[side][0];
-        if (target.holds != HandTarget::Holds::Nothing && thumb[0] >= 0 && thumb[1] >= 0 && thumb[2] >= 0)
+        if (target.holds != HandTarget::Holds::Nothing && (target.holds == HandTarget::Holds::Ball || input.grip.thumbOnRim) && thumb[0] >= 0 &&
+            thumb[1] >= 0 && thumb[2] >= 0)
         {
             const auto heldMiddle = [&](const glm::vec3& point)
             {
