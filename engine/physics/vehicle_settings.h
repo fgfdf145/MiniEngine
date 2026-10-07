@@ -283,9 +283,12 @@ struct VehicleSettings
     std::vector<VehicleColliderBox> carColliders;
     std::vector<glm::vec3> chassisHull;
     // How the car's own data places its mass (ApplyCarSpec); 0 leaves FitVehicleSettingsToBounds to
-    // guess from the model's size. The front axle's share of the weight, the centre of mass's height
-    // above the ground (m), and the box (width, height, length, m) whose uniform inertia the body takes
-    // instead of the collision box's.
+    // guess from the model's size. Where the body's centre of mass (chassisCenter + centerOfMassOffset)
+    // sits between the axles as a share of the wheelbase from the rear, its height above the ground (m),
+    // and the box (width, height, length, m) whose uniform inertia the body takes instead of the collision
+    // box's. As in Assetto Corsa, these are the body's: hubs on their own tyre springs (the multibody
+    // suspension's hubMass) are massKg's too but sit at their wheels, and the physics engine's rigid body
+    // has the two together.
     float frontWeightShare = 0.0f;
     float centerOfMassHeight = 0.0f;
     glm::vec3 inertiaBox{0.0f};
@@ -637,8 +640,9 @@ struct VehicleCarSpec
     // The suspension linkage and its rates, per axle.
     std::optional<VehicleSuspensionAxle> frontSuspension;
     std::optional<VehicleSuspensionAxle> rearSuspension;
-    // Where the axles are and how the mass sits: the wheelbase (m), the front axle's share of the
-    // weight, and the box (width, height, length, m) the body's inertia is a uniform box of.
+    // Where the axles are and how the mass sits: the wheelbase (m), where the body's centre of mass sits
+    // between the axles (Assetto Corsa's CG_LOCATION: the body's share of its weight on the front axle,
+    // the hubs not counted), and the box (width, height, length, m) the body's inertia is a uniform box of.
     std::optional<float> wheelbase;
     std::optional<float> frontWeightShare;
     std::optional<glm::vec3> inertiaBox;

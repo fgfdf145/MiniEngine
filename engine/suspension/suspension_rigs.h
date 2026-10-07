@@ -61,8 +61,9 @@ struct CarModel
 };
 
 // Fills staticLoad and each unit's preload so the car rests at its design position, and moves the
-// car frame's origin onto the sprung mass's centre (from the corners' loads).
-void BalanceCar(CarModel& car, double frontAxleShareOfWeight);
+// car frame's origin onto the sprung mass's centre (from the corners' loads). The share is the sprung
+// mass's own (Assetto Corsa's CG_LOCATION: the hubs, at the axles, not counted).
+void BalanceCar(CarModel& car, double frontSprungShare);
 
 StrutUnit MakeCornerUnit(const CarCorner& corner);
 

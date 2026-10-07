@@ -146,18 +146,30 @@ VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec)
         return fuelled;
     }
     const float fuel = *spec.fuelLitres * kFuelKgPerLitre;
-    const float mass = *spec.massKg + fuel;
     const glm::vec3 tank = spec.fuelTankPosition.value_or(glm::vec3(0.0f));
-    fuelled.massKg = mass;
+    fuelled.massKg = *spec.massKg + fuel;
+    // The fuel joins the body, whose centre of mass the weight split and the axles' heights place: the
+    // car's mass less the hubs that ride on their own tyre springs (as PhysicsWorld takes it).
+    float hubs = 0.0f;
+    const bool linkage = spec.frontSuspension.has_value() && spec.rearSuspension.has_value() &&
+                         spec.frontSuspension->type != VehicleSuspensionType::None && spec.rearSuspension->type != VehicleSuspensionType::None;
+    for (const std::optional<VehicleSuspensionAxle>* axle : {&spec.frontSuspension, &spec.rearSuspension})
+    {
+        if (linkage && (*axle)->hubMass > 0.0f && (*axle)->tyreRate > 0.0f)
+        {
+            hubs += 2.0f * (*axle)->hubMass;
+        }
+    }
+    const float body = std::max(*spec.massKg - hubs, 0.5f * *spec.massKg);
     // The tank's share of its weight on the front axle: its distance ahead of the rear axle over the
-    // wheelbase (the centre of mass being frontWeightShare of the wheelbase ahead of it).
+    // wheelbase (the body's centre of mass being frontWeightShare of the wheelbase ahead of it).
     if (spec.frontWeightShare.has_value() && spec.wheelbase.has_value() && *spec.wheelbase > 0.0f)
     {
         const float tankShare = *spec.frontWeightShare + tank.z / *spec.wheelbase;
-        fuelled.frontWeightShare = (*spec.frontWeightShare * *spec.massKg + tankShare * fuel) / mass;
+        fuelled.frontWeightShare = (*spec.frontWeightShare * body + tankShare * fuel) / (body + fuel);
     }
-    // The centre of mass moves up or down by the fuel's moment over the new mass.
-    const float rise = fuel * tank.y / mass;
+    // The body's centre of mass moves up or down by the fuel's moment over its new mass.
+    const float rise = fuel * tank.y / (body + fuel);
     for (std::optional<VehicleSuspensionAxle>* axle : {&fuelled.frontSuspension, &fuelled.rearSuspension})
     {
         if (axle->has_value())
