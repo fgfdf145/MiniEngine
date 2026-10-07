@@ -94,7 +94,7 @@
 
 - **不做 CPU 蒙皮**。glb 的 bind pose 是自然的 A 字姿势，场景 rest pose 是 T 字；引擎照旧按节点变换画（即 bind pose），
   导出脚本按 bind pose（`meshWorld · inverse(IBM)`）算头部坐标系写进扩展。
-- 导出脚本（C:\Project\Yuki	ools\export_yuki.py，旧文件备份在 C:\Project\Yukiackup_2026-10-07）新增：
+- 导出脚本（C:\Project\Yuki\tools\export_yuki.py，旧文件备份在 C:\Project\Yuki\backup_2026-10-07）新增：
   - 材质扩展 `MINIENGINE_toon`：`keywords`、`renderQueue`、`disabledPasses`、全部 floats、colors（Color 类型属性转线性，
     Vector 不转）、13 张贴图索引、`head`（position/forward/up，bind pose）、`character`（粉色角色 rim、面部法线修正）。
   - 顶点属性 `_SMOOTH_NORMAL`：TEXCOORD7 按 shader 的规则（单位长度且 z≠0 才走切线框架）解码到网格空间再镜像 X。
