@@ -6,11 +6,14 @@ include_guard(GLOBAL)
 #
 # Two shared PCHs are built: miniengine_pch_engine with engine_core's usage requirements, which
 # nearly every target links (spdlog's FMT_SHARED and /utf-8, enkiTS's definitions, the vcpkg
-# include directory), and miniengine_pch_plain, the standard library alone, for the targets that
-# link nothing that adds to the command line. A target
-# whose compile definitions and options match neither (engine_core's path macros, KTX, Jolt, a
-# test's fixture directory) gets its own PCH when it has enough sources to pay for it, else none.
-# MSVC warns (C4605/C4651) when a PCH is used with different macros, which the check avoids.
+# include directory), and miniengine_pch_plain for the targets that link nothing that adds to the
+# command line. The plain host links the header-only glm and EnTT, which add only the vcpkg include
+# directory, so its PCH holds them too (engine_scene, engine_suspension). A target whose compile
+# definitions and options match neither (Jolt's, say) gets its own PCH when it has enough sources
+# to pay for it, else none. MSVC warns (C4605/C4651) when a PCH is used with different macros,
+# which the check avoids. So a macro only one file needs goes on that file with
+# SKIP_PRECOMPILE_HEADERS (engine_paths.cpp, texture_loader.cpp) and a test's fixture path in
+# tests/test_fixture_paths.h, keeping the target's compile line on a shared PCH.
 
 set(MINIENGINE_PCH_HEADER "${PROJECT_SOURCE_DIR}/cmake/miniengine_pch.h")
 
@@ -78,6 +81,7 @@ function(_miniengine_add_pch_hosts)
         target_precompile_headers(miniengine_pch_${_host} PRIVATE "${MINIENGINE_PCH_HEADER}")
         set_target_properties(miniengine_pch_${_host} PROPERTIES FOLDER "CMake/PCH")
     endforeach()
+    target_link_libraries(miniengine_pch_plain PRIVATE glm::glm EnTT::EnTT)
     target_link_libraries(miniengine_pch_engine PRIVATE engine_core)
 endfunction()
 

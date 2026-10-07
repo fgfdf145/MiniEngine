@@ -9,13 +9,16 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -27,6 +30,7 @@
 #include <memory>
 #include <mutex>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <set>
@@ -58,6 +62,12 @@
 
 #if __has_include(<imgui.h>)
 #include <imgui.h>
+#endif
+
+// Needs no macro before it (SDL_main.h, which does, is separate); core's input.h, the window and
+// the editor UI reach it from most engine files.
+#if __has_include(<SDL3/SDL.h>)
+#include <SDL3/SDL.h>
 #endif
 
 // spdlog without SPDLOG_COMPILED_LIB is its header-only build; only a target that links the

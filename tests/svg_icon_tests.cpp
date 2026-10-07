@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include "imgui_software_raster.h"
+#include "test_fixture_paths.h"
 
 #include <cmath>
 #include <cstdlib>
