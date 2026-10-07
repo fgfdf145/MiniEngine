@@ -38,7 +38,7 @@ Model Preview 的材质图上方新增 Quick Edit：
 
 R34 的车漆被导入器烘焙成了 `Skin_00_paint.png` = 灰色模板 `Skin_00.png` × 常数颜色 (0, 0.25, 0.70)（gamma 空间，逐像素比值的 10%–90% 分位差 < 0.01）。因子只能在这张蓝色贴图上相乘，改不成别的颜色。
 
-已把 `EXT_Carpaint` 的 base map 换回 `Skin_00.png`，因子设为 (0, 0.047, 0.462)；渲染结果与原来一致（车漆像素均值差 < 1/255）。备份：`out/backup/skyline_r34_vspec.before-paint-factor.gltf`。资产不在 git 里。
+曾把 `EXT_Carpaint` 的 base map 换回 `Skin_00.png`、因子设为 (0, 0.047, 0.462)，渲染与原来一致，但用户觉得直接改色效果不好，要用原本导入的车漆，已恢复原始 glTF（资产不在 git 里）。所以 R34 目前的 Quick Edit 只能在烘焙的蓝色上相乘。
 
 ## 未做
 
