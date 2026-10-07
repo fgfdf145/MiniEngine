@@ -284,6 +284,11 @@ class ModelLoader
     static std::string ImportName(const std::filesystem::path& path);
     static const char* GetImporterName();
     static LoadedModelData LoadModel(const std::string& path, const ModelLoadProgressCallback& progress = {});
+    // The model as its import made it: the material definitions saved beside it are not applied.
+    static LoadedModelData LoadModelAsImported(const std::string& path, const ModelLoadProgressCallback& progress = {});
+    // Applies the material definitions saved beside the model (<stem>_<index>.material.yaml) to a
+    // model LoadModelAsImported read; LoadModel is the two in one.
+    static void ApplyMaterialDefinitions(const std::filesystem::path& modelPath, LoadedModelData& modelData);
 
     // Copies a model into targetDirectory. For an ASCII .gltf the referenced
     // companion files are copied too, sorted into subfolders (buffers/,

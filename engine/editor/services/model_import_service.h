@@ -61,12 +61,14 @@ void PasteAsset(const std::string& sourcePath, const std::string& destinationDir
 // renamed folder, at the new path.
 void OnAssetRenamed(RendererSharedState& state, const std::string& oldPath, const std::string& newPath);
 // Saves the materials at `indices` (all of them when empty) as sidecar .material.yaml files and
-// shows them on every entity drawing the model.
+// shows them on every entity drawing the model. The slots in `restoredIndices` are back to the
+// material their import made: their sidecars are removed instead.
 void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
     const std::vector<ModelImportedMaterialInfo>& materials,
-    const std::vector<uint32_t>& indices = {});
+    const std::vector<uint32_t>& indices = {},
+    const std::vector<uint32_t>& restoredIndices = {});
 // Shows edited materials, each with its slot index, on every entity drawing the model, writing
 // nothing to disk.
 void PreviewImportedModelMaterials(

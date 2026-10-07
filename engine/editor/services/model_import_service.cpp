@@ -413,7 +413,8 @@ void UpdateImportedModelMaterialDefinitions(
     RendererSharedState& state,
     const std::string& modelPathString,
     const std::vector<ModelImportedMaterialInfo>& materials,
-    const std::vector<uint32_t>& indices)
+    const std::vector<uint32_t>& indices,
+    const std::vector<uint32_t>& restoredIndices)
 {
     if (modelPathString.empty() || materials.empty())
     {
@@ -422,7 +423,7 @@ void UpdateImportedModelMaterialDefinitions(
 
     const std::filesystem::path modelPath(modelPathString);
     std::vector<uint32_t> saved = indices;
-    if (saved.empty())
+    if (saved.empty() && restoredIndices.empty())
     {
         for (uint32_t i = 0; i < static_cast<uint32_t>(materials.size()); ++i)
         {
@@ -433,6 +434,13 @@ void UpdateImportedModelMaterialDefinitions(
     // Propagate user edits into the cached raw model data so that
     // Dirty renderable refresh picks up the new blend graphs and PBR factors.
     for (const uint32_t i : saved)
+    {
+        if (i < materials.size())
+        {
+            ModelCache::UpdateMaterial(modelPathString, i, materials[i]);
+        }
+    }
+    for (const uint32_t i : restoredIndices)
     {
         if (i < materials.size())
         {
@@ -459,6 +467,34 @@ void UpdateImportedModelMaterialDefinitions(
         catch (const std::exception& error)
         {
             failures += failures.empty() ? error.what() : std::string("; ") + error.what();
+        }
+    }
+    // A restored slot loses its definition: the one saved at its index, and one saved for its name
+    // at another index (ModelLoader applies either).
+    for (const uint32_t i : restoredIndices)
+    {
+        if (i >= materials.size())
+        {
+            continue;
+        }
+        for (const std::filesystem::path& file : FindMaterialDefinitionFiles(modelPath))
+        {
+            const std::optional<std::string> name = ReadMaterialDefinitionName(file);
+            const bool ownIndex = MaterialDefinitionIndex(modelPath, file) == i;
+            if ((ownIndex && (!name.has_value() || *name == materials[i].name)) ||
+                (!materials[i].name.empty() && name == materials[i].name))
+            {
+                std::error_code error;
+                std::filesystem::remove(file, error);
+                if (error)
+                {
+                    failures += (failures.empty() ? "" : "; ") + ("removing '" + file.string() + "': " + error.message());
+                }
+                else
+                {
+                    LOG_INFO("Material '{}' is back to its import: removed '{}'", materials[i].name, file.string());
+                }
+            }
         }
     }
     if (!failures.empty())

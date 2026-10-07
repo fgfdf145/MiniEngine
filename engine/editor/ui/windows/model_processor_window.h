@@ -65,6 +65,12 @@ class ModelProcessorWindow final : public EditorWindow
     bool m_dirty = false;
     // The slots changed since the last save; previewed in the scene, written by Save.
     std::set<uint32_t> m_editedSlots;
+    // Each slot as the model's import made it, without the definitions saved beside the model.
+    std::vector<ModelImportedMaterialInfo> m_importedMaterials;
+    // Per slot: it shows its imported material, not an edit; Save removes its definition.
+    std::vector<bool> m_slotAsImported;
+    // Per slot: the edit set aside while the slot shows its imported material, to switch back to.
+    std::vector<std::optional<ModelImportedMaterialInfo>> m_stashedEdits;
     // Edits show in the scene as they are made.
     bool m_livePreview = true;
     // The scene shows edits that are not saved, to be reverted when they are dropped.

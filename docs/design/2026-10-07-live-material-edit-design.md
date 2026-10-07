@@ -25,6 +25,18 @@ Model Preview 的材质图上方新增 Quick Edit：
 
 颜色在 gamma 空间编辑（取色器显示的就是屏幕上的颜色），线性因子 = (颜色 × 亮度)^2.2。亮度可以超过 1：kn5 车漆的 diffuse gain（AC 的 ksDiffuse/ksAmbient）会让因子超过 1，GBuffer 的 R8G8B8A8_SRGB 在写入时截断，和导入时烘焙贴图最后截断的结果一致。
 
+## 原版导入材质（As Imported / Edited）
+
+Quick Edit 上方有 **Material: As Imported / Edited** 切换：
+
+- As Imported：该槽换成导入时的材质，即 glTF 本身，不应用旁边保存的 `.material.yaml`（`ModelLoader::LoadModelAsImported`）。对车来说就是所选涂装的原厂车漆。
+- Edited：切回刚才的编辑。切到 As Imported 时编辑被暂存，可以来回对比。
+- 在 As Imported 上做任何修改，该槽就变成以导入材质为起点的新编辑。
+- 打开窗口时，有自己 sidecar 的槽显示 Edited，其余显示 As Imported。
+- Save 时，处于 As Imported 的槽删除自己的 sidecar（按序号，或按名字，与加载规则一致），不写新文件；切换同样实时预览，关窗口不保存就恢复磁盘上的状态。
+
+`ModelLoader::LoadModel` 拆成 `LoadModelAsImported` + `ApplyMaterialDefinitions`，窗口只读一次模型就同时拿到两份材质。
+
 ## 实时预览
 
 - 每次修改发出 `previewImportedModelMaterial`：`ModelCache::UpdateMaterial` 只改这一个材质槽，标脏用到该模型的实体，刷新 renderables。不写盘。
@@ -38,7 +50,7 @@ Model Preview 的材质图上方新增 Quick Edit：
 
 R34 的车漆被导入器烘焙成了 `Skin_00_paint.png` = 灰色模板 `Skin_00.png` × 常数颜色 (0, 0.25, 0.70)（gamma 空间，逐像素比值的 10%–90% 分位差 < 0.01）。因子只能在这张蓝色贴图上相乘，改不成别的颜色。
 
-已把 `EXT_Carpaint` 的 base map 换回 `Skin_00.png`，因子设为 (0, 0.047, 0.462)；渲染结果与原来一致（车漆像素均值差 < 1/255）。备份：`out/backup/skyline_r34_vspec.before-paint-factor.gltf`。资产不在 git 里。
+曾把 `EXT_Carpaint` 的 base map 换回 `Skin_00.png`、因子设为 (0, 0.047, 0.462)，渲染与原来一致，但用户觉得直接改色效果不好，要用原本导入的车漆，已恢复原始 glTF（资产不在 git 里）。所以 R34 目前的 Quick Edit 只能在烘焙的蓝色上相乘。
 
 ## 未做
 
