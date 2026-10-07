@@ -41,6 +41,8 @@ add_library(engine_render_core
     path_tracing.h
     reference_path_tracer.cpp
     reference_path_tracer.h
+    render_features.cpp
+    render_features.h
     render_transform_snapshot.cpp
     render_transform_snapshot.h
     render_types.h

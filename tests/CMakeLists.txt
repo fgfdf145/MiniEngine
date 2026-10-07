@@ -1556,6 +1556,36 @@ add_test(
 
 set_target_properties(miniengine_editor_window_framework_tests PROPERTIES FOLDER "Tests")
 
+# The Graphics Debug panel in each pipeline mode, greying out what the pipeline does not use
+# (MINIENGINE_UI_SNAPSHOT_DIR writes each mode as a PNG).
+add_executable(miniengine_graphics_debug_panel_tests
+    graphics_debug_panel_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_graphics_debug_panel_tests)
+
+target_link_libraries(miniengine_graphics_debug_panel_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_graphics_debug_panel_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_graphics_debug_panel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_graphics_debug_panel_tests>
+            $<TARGET_FILE_DIR:miniengine_graphics_debug_panel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.graphics_debug_panel
+    COMMAND miniengine_graphics_debug_panel_tests
+)
+
+set_target_properties(miniengine_graphics_debug_panel_tests PROPERTIES FOLDER "Tests")
+
 # The streamed world's manifest and what a cell shows near and far (WorldStreamingService). Links
 # engine_editor for the service; nothing is drawn.
 add_executable(miniengine_world_streaming_tests

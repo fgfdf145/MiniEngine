@@ -8,6 +8,7 @@
 #include <engine/renderer/environment_brdf.h>
 #include <engine/renderer/ltc_table.h>
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/renderer/render_features.h>
 #include <engine/renderer/scene_lighting.h>
 
 #include <engine/logic/editor_world.h>
@@ -1131,12 +1132,24 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // What the probes this frame slot updated last time reported (its fence has signalled).
     m_ddgi->TakeFeedback(m_commandContext->GetCurrentFrame(), m_ddgiFeedbackSchedule, m_ddgiFeedback);
 
+    // Which effects the settings leave a place for this frame, as the Graphics Debug panel shows them
+    // (render_features.h): each runs where its switch and its feature are both on.
+    const bool dlssEnabled = m_activeDlssMode != DlssMode::Off && m_dlss->HasFeature();
+    RenderCapabilities capabilities;
+    capabilities.rayQueries = m_rayScene->HasHardwareRayTracing();
+    capabilities.raySceneReady = m_rayScene->IsReady() && m_rayScene->GetTextureSet() != VK_NULL_HANDLE;
+    capabilities.pathTracer = m_pathTracePass != nullptr && m_pathTracePass->IsSupported();
+    capabilities.restirPt = m_restirPtPass != nullptr && m_restirPtPass->IsAvailable();
+    capabilities.dlss = dlssEnabled;
+    capabilities.dlssRayReconstruction = dlssEnabled && m_dlss->HasRayReconstruction();
+    const RenderFeatures features = ResolveRenderFeatures(packet.renderDebug, capabilities);
+
     // DDGI: this frame's levels around the camera and the probes that update. Off in the Khronos
     // reference view, as the Sample Viewer has no GI, and until the ray scene can be traced.
     DdgiUniformData ddgiData{};
     std::vector<uint32_t> ddgiSchedule;
     const DdgiSettings ddgiSettings = packet.renderDebug.ddgi;
-    if (ddgiSettings.enabled && !packet.renderDebug.khronosReference && m_rayScene->IsReady())
+    if (ddgiSettings.enabled && features.ddgi && m_rayScene->IsReady())
     {
         const uint32_t levelCount = static_cast<uint32_t>(std::clamp(ddgiSettings.levels, 1, static_cast<int>(kDdgiMaxLevels)));
         const float baseSpacing = std::clamp(ddgiSettings.baseSpacing, 0.25f, 8.0f);
@@ -1180,8 +1193,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // history keep the plain projection, and the camera block carries the plain view-projection for
     // the motion vectors. The forward-only order has no motion vectors, so it never jitters. DLSS,
     // when it resolves, always does, through as many phases as it upscales (TaaJitterPhaseCount).
-    const bool dlssEnabled = m_activeDlssMode != DlssMode::Off && m_dlss->HasFeature();
-    const bool taaEnabled = dlssEnabled || (packet.renderDebug.taa && !packet.renderDebug.forwardOnly);
+    const bool taaEnabled = dlssEnabled || (packet.renderDebug.taa && features.taa);
     ViewportMatrices renderMatrices = packet.viewportMatrices;
     glm::vec2 jitterPixels(0.0f);
     if (taaEnabled)
@@ -1202,7 +1214,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // and each light learns its first tile through areaRightAxis.w (1 + tile, 0 for none).
     std::vector<LocalShadowTile> localShadowTiles;
     std::vector<GpuLocalShadowTile> gpuShadowTiles;
-    if (packet.renderDebug.localLightShadows && !packet.renderDebug.khronosReference)
+    if (packet.renderDebug.localLightShadows && features.localLightShadows)
     {
         std::vector<LocalShadowLight> shadowLights;
         shadowLights.reserve(selectedLights.size());
@@ -1285,7 +1297,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         environmentData,
         viewProjection,
         // The Sample Viewer does not filter roughness, so the Khronos reference view does not either.
-        packet.renderDebug.specularAntiAliasing && !packet.renderDebug.khronosReference,
+        packet.renderDebug.specularAntiAliasing && features.specularAntiAliasing,
         preExposure,
         ddgiData,
         dlssEnabled ? UpscaleTextureMipBias(
@@ -1394,7 +1406,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     frame.imageIndex = imageIndex;
     frame.frameSlot = m_commandContext->GetCurrentFrame();
     frame.recorder = m_parallelRecorder.get();
-    frame.hardwareRays = m_rayScene->HasHardwareRayTracing() && packet.renderDebug.hardwareRayTracing;
+    frame.hardwareRays = features.hardwareRays;
 
     m_referenceFrame.viewProjection = viewProjection;
     m_referenceFrame.cameraPosition = packet.camera.position;
@@ -1484,46 +1496,31 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The forward-only order runs neither AO pass, so AO is off there by construction. History
     // advances once per recorded frame; a frame that does not accumulate invalidates the next.
     frame.ao = renderDebug.ao;
-    frame.ao.enabled = renderDebug.ao.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    frame.ao.enabled = renderDebug.ao.enabled && features.ao;
     // The ray traced effects, where hardware rays run and the ray scene is ready; the deferred order
-    // only, as the passes they replace.
-    const bool rayTracedEffects = frame.hardwareRays && m_rayScene->IsReady() && m_rayScene->GetTextureSet() != VK_NULL_HANDLE &&
-                                  !renderDebug.forwardOnly && !renderDebug.khronosReference;
+    // only, as the passes they replace. Path tracing, where it runs, replaces every ambient term, so
+    // the passes that make them stand aside (AO and the probe occlusion here, the GI and the
+    // reflections below); the direct lights and their traced shadows stay. As ReSTIR PT
+    // (pathTracing.restir) it shades every deferred pixel itself, direct light too, so the traced
+    // shadows stand aside as well and the plain path tracer records nothing.
     frame.rayTracing = renderDebug.rayTracing;
     frame.rayTracing.occlusionRays = std::clamp(frame.rayTracing.occlusionRays, 1, 8);
-    frame.rayTracing.sunShadows = frame.rayTracing.sunShadows && rayTracedEffects;
-    frame.rayTracing.ambientOcclusion = frame.rayTracing.ambientOcclusion && rayTracedEffects && frame.ao.enabled;
-    frame.rayTracing.probeOcclusion = frame.rayTracing.probeOcclusion && rayTracedEffects && ddgiData.params.x > 0.0f;
-    frame.rayTracing.reflections = frame.rayTracing.reflections && rayTracedEffects;
-    frame.rayTracing.localShadows = frame.rayTracing.localShadows && rayTracedEffects && renderDebug.localLightShadows;
-    if (rayTracedEffects)
+    frame.rayTracing.sunShadows = frame.rayTracing.sunShadows && features.rayTracedSunShadows;
+    frame.rayTracing.ambientOcclusion = frame.rayTracing.ambientOcclusion && features.rayTracedAmbientOcclusion;
+    frame.rayTracing.probeOcclusion = frame.rayTracing.probeOcclusion && features.probeOcclusion && ddgiData.params.x > 0.0f;
+    frame.rayTracing.reflections = frame.rayTracing.reflections && features.rayTracedReflections;
+    frame.rayTracing.localShadows = frame.rayTracing.localShadows && features.rayTracedLocalShadows;
+    if (features.rayTracedEffects)
     {
         frame.raySet = m_rayScene->GetSet(frame.frameSlot);
         frame.rayTextureSet = m_rayScene->GetTextureSet();
     }
-    // Path tracing mode, where the ray traced effects can run: its light replaces every ambient term,
-    // so the passes that make them stand aside (AO and the probe occlusion here, the GI and the
-    // reflections below). The direct lights and their traced shadows stay. As ReSTIR PT
-    // (pathTracing.restir) it shades every deferred pixel itself, direct light too, so the traced
-    // shadows stand aside as well and the plain path tracer records nothing.
-    const bool restirPtAvailable = m_restirPtPass != nullptr && m_restirPtPass->IsAvailable();
-    const bool pathTracerAvailable = m_pathTracePass != nullptr && m_pathTracePass->IsSupported();
     frame.pathTracing = renderDebug.pathTracing;
-    frame.pathTracing.enabled = renderDebug.pathTracing.enabled && rayTracedEffects &&
-                                (renderDebug.pathTracing.restir ? restirPtAvailable : pathTracerAvailable);
-    frame.pathTracing.restir = frame.pathTracing.enabled && renderDebug.pathTracing.restir;
-    if (frame.pathTracing.enabled)
-    {
-        frame.ao.enabled = false;
-        frame.rayTracing.ambientOcclusion = false;
-        frame.rayTracing.probeOcclusion = false;
-        frame.rayTracing.reflections = false;
-    }
+    frame.pathTracing.enabled = features.pathTracing;
+    frame.pathTracing.restir = features.restirPt;
     const RestirPtSettings& restirPt = frame.pathTracing.restirPt;
     if (frame.pathTracing.restir)
     {
-        frame.rayTracing.sunShadows = false;
-        frame.rayTracing.localShadows = false;
         if (m_restirPtPass->Prepare(*m_sceneTargets))
         {
             m_restirPtHistory.Reset();
@@ -1553,7 +1550,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
     // view has none, as the Sample Viewer.
     frame.gi = renderDebug.gi;
-    frame.gi.enabled = renderDebug.gi.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference && !frame.pathTracing.enabled;
+    frame.gi.enabled = renderDebug.gi.enabled && features.gi;
     frame.giHistory = m_giHistory.Advance(frame.gi.enabled && frame.gi.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
     frame.gpuTimer = m_gpuTimer.get();
@@ -1563,7 +1560,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // SSR, above and below).
     frame.khronosReference = renderDebug.khronosReference;
     frame.toneMapper = renderDebug.toneMapper;
-    frame.bloom.enabled = renderDebug.bloom.enabled && !renderDebug.khronosReference;
+    frame.bloom.enabled = renderDebug.bloom.enabled && features.bloom;
 
     frame.whiteBalance = UpdateWhiteBalance(packet);
     frame.hdrOutput = m_swapchain->IsHdr();
@@ -1584,12 +1581,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         frame.view = packet.viewportMatrices.view;
         frame.projection = packet.viewportMatrices.renderProjection;
         // Ray reconstruction denoises the traced shadow and the paths itself; it wants the raw rays.
-        if (frame.dlssRayReconstruction)
-        {
-            frame.rayTracing.denoise = false;
-            frame.pathTracing.accumulate = false;
-            frame.pathTracing.denoise = false;
-        }
+        frame.rayTracing.denoise = frame.rayTracing.denoise && features.rayTracedShadowDenoise;
+        frame.pathTracing.accumulate = frame.pathTracing.accumulate && features.pathTraceAccumulate;
+        frame.pathTracing.denoise = frame.pathTracing.denoise && features.pathTraceDenoise;
         m_dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
@@ -1599,7 +1593,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
-    frame.ssr.enabled = renderDebug.ssr.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference && !frame.pathTracing.enabled;
+    frame.ssr.enabled = renderDebug.ssr.enabled && features.ssr;
     frame.ssrHistory = m_ssrHistory.Advance(SsrTraces(frame));
     // The history this frame writes carries this frame's pre-exposure.
     m_taaHistoryPreExposure = preExposure;

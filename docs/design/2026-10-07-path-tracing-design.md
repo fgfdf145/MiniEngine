@@ -121,3 +121,19 @@ DLSS 光线重构运行时，temporal 和 filter 都不跑，trace 直接写目�
 - 去噪器没有方差缓冲（SVGF 的完整形式），用 3×3 空间方差近似；快速移动时镜面历史较短，噪声更明显。
 - 后续可做：ReSTIR（DI 用于局部光，或续上 ReSTIR PT Enhanced 分支）、自发光三角形 NEE、半分辨率选项、
   镜面通道的命中距离给 DLSS RR。
+
+## Graphics Debug 与管线同步（2026-10-07）
+
+用户要求 Graphics Debug 里的选项与管线同步：路径追踪等模式下用不到的画面效果直接不可点击。
+
+- `engine/renderer/render_features.h`：`ResolveRenderFeatures(RenderDebugSettings, RenderCapabilities)` 给出每个开关
+  在当前管线里有没有位置（`RenderFeatures`）。渲染器的帧设置用它决定各效果（开关 && 特性），面板用同一个函数
+  灰掉没有位置的控件，两边不会再不一致。能力由渲染器按本帧填（ray query、光追场景就绪、两种路径追踪 pass、
+  DLSS、RR）；面板用后端报告的能力，光追场景视为就绪（流送时来回变化，控件不该跟着闪）。
+- 规则：路径追踪 → AO、屏幕空间 GI、SSR、光追反射、光追 AO、探针遮挡、遮挡光线数灰掉；ReSTIR PT 另加光追
+  太阳/局部光阴影及其降噪；forward only → 所有 deferred pass、光追效果、路径追踪、TAA、G-buffer 视图；Khronos
+  参考视图 → 阴影、AO、GI、SSR、bloom、DDGI、镜面 AA、色调映射选择、光追效果；DLSS → TAA、渲染比例；DLSS RR →
+  光追阴影降噪、路径累积/降噪；反射（SSR 与光追）还需要 TAA 历史（TAA 或 DLSS）。
+- 灰掉的段落下有一行原因（"Path tracing replaces it" 等），灰掉的单个开关悬停显示原因。
+- 测试：`miniengine.path_tracing` 覆盖各模式的规则；`miniengine.graphics_debug_panel` 无 GPU 绘制面板的七种模式
+  （`MINIENGINE_UI_SNAPSHOT_DIR` 输出 PNG）。
