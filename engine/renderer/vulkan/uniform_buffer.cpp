@@ -455,7 +455,8 @@ VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice de
         bindings[bindingIndex].binding = bindingIndex;
         bindings[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[bindingIndex].descriptorCount = 1;
-        bindings[bindingIndex].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
+        bindings[bindingIndex].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

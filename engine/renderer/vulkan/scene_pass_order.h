@@ -31,6 +31,10 @@ enum class ScenePassId
     // pass that samples it.
     Scatter,
     Forward,
+    // The anime characters (toon_pass.h): their depth texture and eye mask, then their cel shading,
+    // outlines and see-through hair over the opaque scene, before the transmission copy takes it.
+    ToonPrepass,
+    Toon,
     TransmissionCopy,
     ForwardTranslucent,
     Taa,

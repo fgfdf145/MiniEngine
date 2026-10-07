@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include <engine/renderer/material_pipeline.h>
+#include <engine/scene/toon_material.h>
 
 #include <functional>
 
@@ -29,6 +30,9 @@ struct VulkanDrawItem
     bool scatters = false;
     // A Blend item drawn as a deferred decal by the geometry pass (CpuRenderSubmesh::decal).
     bool decal = false;
+    // An anime character material (RenderSubmesh::toon), shaded by the toon passes; it lives as long
+    // as the render submesh the frame draws.
+    const ToonMaterialData* toon = nullptr;
 };
 
 struct VulkanFrameSyncObjects

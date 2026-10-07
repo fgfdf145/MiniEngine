@@ -13,9 +13,9 @@
 #define RAY_TEXTURE_SET 3
 #endif
 
-// Vertex in engine/asset/mesh.h, 17 floats: position, colour, UV 0, normal, tangent, UV 1
+// Vertex in engine/asset/mesh.h, 20 floats: position, colour, UV 0, normal, tangent, UV 1, outline normal
 // (ray_scene.cpp checks the layout).
-#define RAY_VERTEX_FLOATS 17u
+#define RAY_VERTEX_FLOATS 20u
 #define RAY_VERTEX_COLOR 3u
 #define RAY_VERTEX_UV0 6u
 #define RAY_VERTEX_NORMAL 8u

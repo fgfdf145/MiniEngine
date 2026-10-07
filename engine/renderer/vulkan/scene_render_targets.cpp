@@ -396,6 +396,19 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     selectionOutline.bindToImGui = true;
     selectionOutline.outputSized = true;
 
+    // The toon prepass's targets: the characters' depth in the scene depth's format, their linear
+    // view depth in metres (R32F, a mandatory colour attachment and sampled format) and the eye mask
+    // (R8).
+    TargetDescription& toonDepth = Describe(RenderTargetId::ToonDepth);
+    toonDepth.format = depth.format;
+    toonDepth.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    toonDepth.aspect = depth.aspect;
+    toonDepth.bindToImGui = false;
+    static constexpr std::array<VkFormat, 1> kToonLinearDepthCandidates = {VK_FORMAT_R32_SFLOAT};
+    describeGBufferTarget(RenderTargetId::ToonLinearDepth, "toon linear depth", kToonLinearDepthCandidates);
+    static constexpr std::array<VkFormat, 1> kToonMaskCandidates = {VK_FORMAT_R8_UNORM};
+    describeGBufferTarget(RenderTargetId::ToonMask, "toon mask", kToonMaskCandidates);
+
     // CreateImages makes an image for every id in the enum. A target appended without a
     // description here would reach vkCreateImage with VK_FORMAT_UNDEFINED and fail far from the
     // cause; phase three appends GB4, so name the omission at the point it happens.

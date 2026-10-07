@@ -30,6 +30,7 @@
 #include "ddgi.h"
 #include "scene_render_targets.h"
 #include "selection_outline_pass.h"
+#include "toon_pass.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
 #include "ssr_pass.h"
@@ -102,6 +103,8 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     bool doubleSided = false;
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
     bool decal = false;
+    // An anime character material (CpuRenderSubmesh::toon), which the toon passes shade.
+    std::shared_ptr<const ToonMaterialData> toon;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
@@ -372,6 +375,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The scene as compute shaders trace it (DDGI, and with hardware ray tracing the ray traced
     // effects), and the white texture its texture table names where no material's is.
     std::unique_ptr<VulkanRayScene> m_rayScene;
+    // The toon passes' per-frame materials (toon_pass.h), made with the first scene passes.
+    std::unique_ptr<VulkanToonMaterials> m_toonMaterials;
     std::unique_ptr<VulkanTexture> m_rayDefaultTexture;
     // The DDGI probes, the CPU's schedule of their updates, the level layout their data belongs to
     // (count and base spacing: another one invalidates every probe) and the frame index that seeds

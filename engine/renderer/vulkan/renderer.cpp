@@ -1309,6 +1309,49 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         drawItems.erase(decals, drawItems.end());
     }
 
+    // The anime characters' draws for the toon passes: opaque before transparent, each in Unity's
+    // render queue order. Their transparent draws are the toon passes' alone; the opaque ones stay
+    // among drawItems for the geometry pass.
+    std::vector<VulkanDrawItem> toonDrawItems;
+    for (const VulkanDrawItem& item : drawItems)
+    {
+        if (item.toon != nullptr)
+        {
+            toonDrawItems.push_back(item);
+        }
+    }
+    if (!toonDrawItems.empty())
+    {
+        std::stable_sort(
+            toonDrawItems.begin(),
+            toonDrawItems.end(),
+            [](const VulkanDrawItem& a, const VulkanDrawItem& b)
+            {
+                const bool aTransparent = a.toon->Has(kToonFeatureTransparent);
+                const bool bTransparent = b.toon->Has(kToonFeatureTransparent);
+                if (aTransparent != bTransparent)
+                {
+                    return !aTransparent;
+                }
+                return a.toon->RenderQueue() < b.toon->RenderQueue();
+            });
+        drawItems.erase(
+            std::remove_if(
+                drawItems.begin(),
+                drawItems.end(),
+                [](const VulkanDrawItem& item)
+                {
+                    return item.toon != nullptr && item.pipelineKey.alphaMode == MaterialAlphaMode::Blend;
+                }),
+            drawItems.end());
+        const uint32_t written = m_toonMaterials->Write(m_commandContext->GetCurrentFrame(), toonDrawItems);
+        if (written < toonDrawItems.size())
+        {
+            LOG_WARN("{} toon draws this frame; the toon passes draw the first {}", toonDrawItems.size(), written);
+            toonDrawItems.resize(written);
+        }
+    }
+
     m_cpuStages.Mark("DrawItems");
     ScenePassFrameContext frame{};
     frame.imageIndex = imageIndex;
@@ -1378,6 +1421,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     frame.forwardPipelines = m_forwardPipelines.get();
     frame.geometryPipelines = m_geometryPipelines.get();
     frame.decalDrawItems = decalDrawItems;
+    frame.toonDrawItems = toonDrawItems;
+    frame.toonExposureScale = std::exp2(std::clamp(packet.renderDebug.toonExposureEv, -8.0f, 8.0f));
     frame.decalPipelines = m_decalPipelines.get();
     std::vector<VulkanDrawItem> scatterDrawItems;
     for (const VulkanDrawItem& item : drawItems)
@@ -2114,6 +2159,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_ltcAmplitudes.reset();
     m_environmentProbe.reset();
     m_ddgi.reset();
+    m_toonMaterials.reset();
     m_rayScene.reset();
     m_rayDefaultTexture.reset();
     m_atmosphere.reset();
@@ -2454,6 +2500,25 @@ void VulkanRenderer::CreateScenePasses()
         *m_rayScene));
     m_scenePasses.push_back(std::move(scatterPass));
     m_scenePasses.push_back(std::move(forwardPass));
+    if (!m_toonMaterials)
+    {
+        m_toonMaterials = std::make_unique<VulkanToonMaterials>(
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    }
+    m_scenePasses.push_back(std::make_unique<VulkanToonPrepass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        m_materialSetLayout->GetHandle(),
+        *m_toonMaterials));
+    m_scenePasses.push_back(std::make_unique<VulkanToonPass>(
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        m_materialSetLayout->GetHandle(),
+        *m_toonMaterials));
     m_scenePasses.push_back(std::make_unique<VulkanTransmissionCopyPass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -2915,6 +2980,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->doubleSided = cpuRenderSubmesh.doubleSided;
             renderSubmesh->alphaMode = cpuRenderSubmesh.alphaMode;
             renderSubmesh->decal = cpuRenderSubmesh.decal;
+            renderSubmesh->toon = cpuRenderSubmesh.toon;
             renderSubmesh->localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
             renderSubmesh->localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
             renderSubmesh->name = cpuRenderSubmesh.name;
@@ -3482,7 +3548,9 @@ void VulkanRenderer::AppendDrawItem(
         view *
         drawConstants.model *
         glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
-    const bool forwardShaded = renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
+    // A toon material's opaque draw is the geometry pass's like any deferred one (its forward flag
+    // keeps the lighting pass off it), and the toon passes shade it; triangle.frag never does.
+    const bool forwardShaded = !renderSubmesh.toon && renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
                                (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
     const bool transmissive = forwardShaded && (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u;
     sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded, transmissive});
@@ -3499,7 +3567,8 @@ void VulkanRenderer::AppendDrawItem(
         forwardShaded,
         transmissive,
         MaterialScatters(renderSubmesh.material),
-        renderSubmesh.decal});
+        renderSubmesh.decal,
+        renderSubmesh.toon.get()});
 }
 
 std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(

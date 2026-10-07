@@ -3,7 +3,7 @@
 目标：C:\Project\Yuki\Yuki.glb 在 viewport 中按 AnimateApp（Unity 6 URP，shader
 "Universal Render Pipeline/Anime/Character"，NiloToon 克隆）的方式完整着色。
 
-状态：**研究完成，引擎代码尚未改动**。下面是恢复工作所需的全部结论。
+状态：**已实现**（2026-10-07）。第 1、2 节是研究结论，第 3 节是最初的方案，第 4 节是实际实现与验证结果（与方案不同处以第 4 节为准）。
 
 ## 1. 研究产物（都在 C:\Project\Yuki\research）
 
@@ -87,3 +87,49 @@
      （Hair_Front 在掩码=1 处丢弃，Redraw 只画掩码=1 处）。
    - toon 参数：pass 自己的每帧 SSBO（set 2），push constant 偏移 64 传索引。
    - 应用 aerial perspective；附加光源先不做。
+
+## 4. 实现（2026-10-07）
+
+与第 3 节方案的差别：
+
+- **不做 CPU 蒙皮**。glb 的 bind pose 是自然的 A 字姿势，场景 rest pose 是 T 字；引擎照旧按节点变换画（即 bind pose），
+  导出脚本按 bind pose（`meshWorld · inverse(IBM)`）算头部坐标系写进扩展。
+- 导出脚本（C:\Project\Yuki	ools\export_yuki.py，旧文件备份在 C:\Project\Yukiackup_2026-10-07）新增：
+  - 材质扩展 `MINIENGINE_toon`：`keywords`、`renderQueue`、`disabledPasses`、全部 floats、colors（Color 类型属性转线性，
+    Vector 不转）、13 张贴图索引、`head`（position/forward/up，bind pose）、`character`（粉色角色 rim、面部法线修正）。
+  - 顶点属性 `_SMOOTH_NORMAL`：TEXCOORD7 按 shader 的规则（单位长度且 z≠0 才走切线框架）解码到网格空间再镜像 X。
+
+引擎：
+
+- `engine/scene/toon_material.h`：`GpuToonMaterial`（29 x vec4，std430）+ 特性位 `kToonFeature*`。
+- 加载器 `ReadToonMaterial`：关键字 → 特性位；Unity stencil（Pass=Replace → 写眼睛掩码，Comp=NotEqual/Equal → 测试）；
+  贴图放进 PBR 的空闲槽，颜色空间一致：
+  `_ShadingGradeMap`→metallic(2)、`_AdditiveMatCapMask`→roughness(3)、`_OcclusionMap`→occlusion(4)、
+  `_AdditiveMatCap`→emissive(5, sRGB)、`_AlphaBlendMatCapMask`→clearcoat(13)、`_FaceMaskMap`→clearcoatRoughness(14)、
+  `_AlphaBlendMatCap`→sheenColor(15, sRGB)、`_SkinMaskMap`→sheenRoughness(16)、`_FaceShadowGradientMap`→specular(18)、
+  `_FaceShadowGradientMaskMap`→iridescence(21)、`_OutlineWidthTexture`→iridescenceThickness(22)、`_AlphaOverrideMap`→transmission(23)。
+  对应的 PBR 系数全为 0，几何/光线追踪路径不受影响。材质集改为 vertex+fragment 可见（描边宽度在顶点阶段读）。
+- `Vertex` 增加 `outlineNormal[3]`（20 floats；`RAY_VERTEX_FLOATS` 同步改为 20）。只有 toon 管线读 location 6。
+- 渲染：
+  - 不透明 toon 仍进 geometry pass（深度/法线/运动矢量），材质带 forward 标志让 lighting pass 跳过；
+    draw item 不标 `forwardShaded`，triangle.frag 不着色它们。透明 toon（队列 2450/2452/2454）只由 toon pass 画。
+  - `ScenePassId::ToonPrepass`、`Toon` 排在 Forward 之后、TransmissionCopy 之前（两种 pass 顺序都有）。
+  - ToonPrepass：私有 `ToonDepth` + `ToonLinearDepth`(R32F，脸部推后 0.04 m) + `ToonMask`(R8，眼睛)。透明项只写深度纹理不写掩码。
+  - Toon：不透明（GE + depth bias，triangle.vert 与 toon.vert 都声明 `invariant gl_Position`，否则深度对不上会出现成片黑块）
+    → 全部描边（正面剔除）→ 透明项（SrcAlpha 混合，眼睛掩码模拟 stencil）。
+  - 每帧 toon 材质放在 `VulkanToonMaterials`（每帧槽一个 host-visible SSBO，最多 512 个 draw），push constant 带索引和曝光倍数。
+- 光照单位：着色在 Unity 单位里算（主光颜色归一到亮度 1），再乘 `主光照度/π × exposure × 2^toonExposureEv`。
+  `RenderDebugSettings::toonExposureEv` 默认 +1 EV（Graphics Debug → Anime characters），因为自动曝光让阳光下的白色漫反射只到纸白的一半左右，
+  而原 app 的角色是 display-referred 的。主光取投影的平行光，没有则第一盏平行光，再没有用环境光。
+- 自阴影用引擎的太阳级联阴影代替角色专用阴影图；附加光源（点/聚光）未实现。
+
+验证（Debug，1024²，headless）：
+
+- 正面主光、左右 90° 侧光、背光、全身各角度截图：脸部 SDF 在鼻梁处干净分界且左右镜像正确；眼睛/眉毛透过刘海可见；
+  描边、matcap、阴影色、裙子 alpha-blend matcap 正常；背光时边缘光在朝光的轮廓上（几像素宽，符合原公式）。
+- Vulkan 验证层无警告无错误；GPU 开销 ToonPrepass 0.03 ms + Toon 0.12 ms。
+- ctest：除 `asset_browser_window`（main 上已知的 ImGui 字体断言）和 `vehicle_overlay`（main 的 d530fab 把默认 rib 数改成 50 但测试仍断言 10）外全部通过。
+
+复现截图：`--scene <只含 Yuki 的场景> --wait-for-scene --camera x,y,z,yaw,pitch --frames 120 --capture`。
+注意 `--model` 会在模型加载后重新取景，`--camera` 会被覆盖；且导入目录已存在时 `--model <外部路径>` 会失败。
+平行光旋转是先 Y 后 X 再 Z：侧光要用 Z（如 `[0,0,±75]`），`[45,φ,0]` 的 φ 对朝下的方向不起作用。

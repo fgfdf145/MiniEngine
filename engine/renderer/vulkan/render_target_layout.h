@@ -60,6 +60,12 @@ enum class RenderTargetId : uint32_t
     // g 1 where it ran this frame).
     ShadowRaw,
     SceneShadow,
+    // The toon prepass (toon_pass.h): the anime characters' own depth, their linear view depth (the
+    // depth texture their rim light and contact shadow read) and the eye mask that stands in for the
+    // stencil their shader writes, all at the render size.
+    ToonDepth,
+    ToonLinearDepth,
+    ToonMask,
     Count
 };
 

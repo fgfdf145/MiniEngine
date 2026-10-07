@@ -23,9 +23,12 @@ namespace
 // DDGI debug views follow the composite, whose input they overwrite for the tone mapping pass to show.
 // The ray traced sun shadow follows the geometry pass, whose depth and normals it traces from, and is in
 // the deferred order only; it writes a neutral result while it does not trace.
+// The toon passes follow the forward pass in both: the anime characters are cel shaded over the opaque
+// scene (their opaque surfaces are in the G-buffer, which gives them depth, normals and motion) and
+// come before the transmission copy, so glass shows them.
 // The selection outline comes last in both: it reads the finished scene depth and writes an image of
 // its own, which nothing in the scene reads.
-constexpr std::array<ScenePassId, 21> kDeferredOrder = {
+constexpr std::array<ScenePassId, 23> kDeferredOrder = {
     ScenePassId::Geometry,
     ScenePassId::RtShadow,
     ScenePassId::AoTrace,
@@ -39,6 +42,8 @@ constexpr std::array<ScenePassId, 21> kDeferredOrder = {
     ScenePassId::DdgiDebug,
     ScenePassId::Scatter,
     ScenePassId::Forward,
+    ScenePassId::ToonPrepass,
+    ScenePassId::Toon,
     ScenePassId::TransmissionCopy,
     ScenePassId::ForwardTranslucent,
     ScenePassId::Taa,
@@ -48,9 +53,11 @@ constexpr std::array<ScenePassId, 21> kDeferredOrder = {
     ScenePassId::SelectionMask,
     ScenePassId::SelectionOutline};
 
-constexpr std::array<ScenePassId, 10> kForwardOnlyOrder = {
+constexpr std::array<ScenePassId, 12> kForwardOnlyOrder = {
     ScenePassId::Scatter,
     ScenePassId::Forward,
+    ScenePassId::ToonPrepass,
+    ScenePassId::Toon,
     ScenePassId::TransmissionCopy,
     ScenePassId::ForwardTranslucent,
     ScenePassId::Taa,
@@ -91,6 +98,10 @@ const char* ScenePassName(ScenePassId id)
         return "Scatter";
     case ScenePassId::Forward:
         return "Forward";
+    case ScenePassId::ToonPrepass:
+        return "ToonPrepass";
+    case ScenePassId::Toon:
+        return "Toon";
     case ScenePassId::TransmissionCopy:
         return "TransmissionCopy";
     case ScenePassId::ForwardTranslucent:

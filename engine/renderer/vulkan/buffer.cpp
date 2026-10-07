@@ -57,6 +57,18 @@ std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions(
     return attributeDescriptions;
 }
 
+std::array<VkVertexInputAttributeDescription, 5> GetToonVertexAttributeDescriptions()
+{
+    const std::array<VkVertexInputAttributeDescription, 6> common = GetVertexAttributeDescriptions();
+    // Position, UV 0, normal and UV 1 as every material pipeline reads them; no colour or tangent.
+    std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions = {common[0], common[2], common[3], common[5], {}};
+    attributeDescriptions[4].binding = 0;
+    attributeDescriptions[4].location = 6;
+    attributeDescriptions[4].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[4].offset = static_cast<uint32_t>(offsetof(Vertex, outlineNormal));
+    return attributeDescriptions;
+}
+
 VkVertexInputBindingDescription GetPositionBindingDescription()
 {
     VkVertexInputBindingDescription bindingDescription{};

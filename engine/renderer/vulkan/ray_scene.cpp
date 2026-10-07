@@ -43,7 +43,7 @@ struct RayMeshGeometry
 };
 static_assert(sizeof(RayMeshGeometry) == 16, "RayMeshGeometry must match ray_hit_common.glsl");
 // Hit shading reads vertices as floats at these offsets (RAY_VERTEX_* in ray_hit_common.glsl).
-static_assert(sizeof(Vertex) == 17 * sizeof(float), "RAY_VERTEX_FLOATS in ray_hit_common.glsl must match Vertex");
+static_assert(sizeof(Vertex) == 20 * sizeof(float), "RAY_VERTEX_FLOATS in ray_hit_common.glsl must match Vertex");
 static_assert(offsetof(Vertex, color) == 3 * sizeof(float) && offsetof(Vertex, texCoord) == 6 * sizeof(float) &&
                   offsetof(Vertex, normal) == 8 * sizeof(float) && offsetof(Vertex, texCoord1) == 15 * sizeof(float),
               "RAY_VERTEX_* offsets in ray_hit_common.glsl must match Vertex");

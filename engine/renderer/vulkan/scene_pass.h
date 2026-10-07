@@ -141,6 +141,13 @@ struct ScenePassFrameContext
     bool physicalSky = false;
     // The geometry pass draws the atmosphere's ground plane (AtmosphereSettings::groundPlane).
     bool groundPlane = false;
+    // The anime character draws (VulkanDrawItem::toon) for the toon passes: the opaque ones, then the
+    // transparent ones, each in render queue order. A draw's index here is its toon material's index in
+    // VulkanToonMaterials. The opaque ones are among drawItems as well (the geometry pass lays them
+    // down); the transparent ones only here.
+    std::span<const VulkanDrawItem> toonDrawItems;
+    // What the toon passes multiply their radiance by: 2 to the RenderDebugSettings::toonExposureEv.
+    float toonExposureScale = 1.0f;
     // The selected entity's submeshes for the selection outline, every one in the frustum but its
     // decals, drawn as the shadow casters are (ShadowDrawItem); empty without a selection. The
     // view-projection is unjittered, so the outline holds still while TAA jitters the scene.

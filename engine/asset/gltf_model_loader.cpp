@@ -743,6 +743,250 @@ TextureSampler ReadTextureSampler(const tinygltf::Model& model, int textureIndex
     return TextureSamplerFromGltf(sampler.wrapS, sampler.wrapT, sampler.magFilter, sampler.minFilter);
 }
 
+// MINIENGINE_toon: an anime character material, as export_yuki.py writes it from the Unity
+// material (its keywords, render queue, disabled passes, every float and colour, its maps and the
+// character's head frame). The parameters go into the toon passes' block; each map goes into a PBR
+// slot the toon material has no use for, one of the same colour space (ToonTextureSlot in
+// shaders/vulkan/toon_common.glsl names them), so it travels through the material set unchanged.
+std::shared_ptr<const ToonMaterialData> ReadToonMaterial(
+    const tinygltf::Model& model,
+    const tinygltf::Value& extension,
+    const std::filesystem::path& modelPath,
+    ModelMaterialData& materialData)
+{
+    const auto number = [&](const char* group, const char* name, float fallback)
+    {
+        if (!extension.Has(group) || !extension.Get(group).Has(name))
+        {
+            return fallback;
+        }
+        const tinygltf::Value& value = extension.Get(group).Get(name);
+        return value.IsNumber() ? static_cast<float>(value.GetNumberAsDouble()) : fallback;
+    };
+    const auto floatValue = [&](const char* name, float fallback)
+    {
+        return number("floats", name, fallback);
+    };
+    // A colour or vector, four components; the fallback where it is missing or short.
+    const auto vector = [&](const char* group, const char* name, std::array<float, 4> fallback)
+    {
+        if (!extension.Has(group) || !extension.Get(group).Has(name) || !extension.Get(group).Get(name).IsArray())
+        {
+            return fallback;
+        }
+        const tinygltf::Value& value = extension.Get(group).Get(name);
+        for (size_t index = 0; index < std::min<size_t>(4, value.ArrayLen()); ++index)
+        {
+            if (value.Get(static_cast<int>(index)).IsNumber())
+            {
+                fallback[index] = static_cast<float>(value.Get(static_cast<int>(index)).GetNumberAsDouble());
+            }
+        }
+        return fallback;
+    };
+    const auto color = [&](const char* name, std::array<float, 4> fallback)
+    {
+        return vector("colors", name, fallback);
+    };
+    const auto copy3 = [](float* destination, const std::array<float, 4>& source)
+    {
+        std::copy_n(source.begin(), 3, destination);
+    };
+
+    std::unordered_set<std::string> keywords;
+    if (extension.Has("keywords") && extension.Get("keywords").IsArray())
+    {
+        for (size_t index = 0; index < extension.Get("keywords").ArrayLen(); ++index)
+        {
+            const tinygltf::Value& keyword = extension.Get("keywords").Get(static_cast<int>(index));
+            if (keyword.IsString())
+            {
+                keywords.insert(keyword.Get<std::string>());
+            }
+        }
+    }
+    bool outlineDisabled = false;
+    if (extension.Has("disabledPasses") && extension.Get("disabledPasses").IsArray())
+    {
+        for (size_t index = 0; index < extension.Get("disabledPasses").ArrayLen(); ++index)
+        {
+            const tinygltf::Value& pass = extension.Get("disabledPasses").Get(static_cast<int>(index));
+            outlineDisabled = outlineDisabled || (pass.IsString() && pass.Get<std::string>() == "AnimeOutline");
+        }
+    }
+
+    auto toon = std::make_shared<ToonMaterialData>();
+    GpuToonMaterial& gpu = toon->gpu;
+    uint32_t features = 0u;
+    const std::array<std::pair<const char*, uint32_t>, 14> keywordFeatures = {{
+        {"_FACE", kToonFeatureFace},
+        {"_FACE_MASK", kToonFeatureFaceMask},
+        {"_FACE_SHADOW_GRADIENTMAP", kToonFeatureFaceSdf},
+        {"_SKIN", kToonFeatureSkin},
+        {"_SKIN_MASK", kToonFeatureSkinMask},
+        {"_SHADOW_COLOR", kToonFeatureShadowColor},
+        {"_OCCLUSION_MAP", kToonFeatureOcclusion},
+        {"_SHADING_GRADEMAP", kToonFeatureShadingGrade},
+        {"_ADDITIVE_MATCAP", kToonFeatureAdditiveMatCap},
+        {"_ALPHA_BLEND_MATCAP", kToonFeatureAlphaBlendMatCap},
+        {"_ALPHA_OVERRIDE", kToonFeatureAlphaOverride},
+        {"_ALPHATEST_ON", kToonFeatureAlphaTest},
+        {"_OUTLINE_WIDTH_TEXTURE", kToonFeatureOutlineWidthTexture},
+        {"_DEPTHTEX_RIMLIGHT_SHADOW", kToonFeatureDepthTexRimShadow},
+    }};
+    for (const auto& [keyword, feature] : keywordFeatures)
+    {
+        if (keywords.count(keyword) != 0)
+        {
+            features |= feature;
+        }
+    }
+    if (floatValue("_EnableSelfShadow", 0.0f) != 0.0f)
+    {
+        features |= kToonFeatureSelfShadow;
+    }
+    if (!outlineDisabled)
+    {
+        features |= kToonFeatureOutline;
+    }
+    if (floatValue("_SurfaceType", 0.0f) != 0.0f)
+    {
+        features |= kToonFeatureTransparent;
+    }
+    // Unity's CompareFunction (3 Equal, 6 NotEqual) and StencilOp (2 Replace). The model has one
+    // stencil value, so a mark and its tests are all it needs.
+    if (floatValue("_StencilPass", 0.0f) == 2.0f)
+    {
+        features |= kToonFeatureStencilWrite;
+    }
+    if (floatValue("_StencilComp", 8.0f) == 6.0f)
+    {
+        features |= kToonFeatureStencilNotEqual;
+    }
+    else if (floatValue("_StencilComp", 8.0f) == 3.0f)
+    {
+        features |= kToonFeatureStencilEqual;
+    }
+    gpu.features[0] = features;
+    const tinygltf::Value* queue = extension.Has("renderQueue") ? &extension.Get("renderQueue") : nullptr;
+    gpu.features[1] = queue != nullptr && queue->IsNumber() ? static_cast<uint32_t>(std::max(0.0, queue->GetNumberAsDouble())) : 2000u;
+
+    const std::array<float, 4> baseColor = color("_BaseColor", {1.0f, 1.0f, 1.0f, 1.0f});
+    std::copy(baseColor.begin(), baseColor.end(), gpu.baseColor);
+    const std::array<float, 4> ramp = vector("colors", "_MainLightRamp", {-0.05f, 0.05f, 0.0f, 0.0f});
+    gpu.mainLight[0] = ramp[0];
+    gpu.mainLight[1] = ramp[1];
+    gpu.mainLight[2] = floatValue("_MainLightIgnoreCelShade", 0.0f);
+    gpu.mainLight[3] = floatValue("_Cutoff", 0.5f);
+    gpu.occlusion[0] = floatValue("_OcclusionRemapStart", 0.0f);
+    gpu.occlusion[1] = floatValue("_OcclusionRemapEnd", 1.0f);
+    gpu.occlusion[2] = floatValue("_OcclusionStrength", 1.0f);
+    gpu.occlusion[3] = floatValue("_AlphaOverrideStrength", 1.0f);
+    gpu.shadingGrade[0] = floatValue("_ShadingGradeMapRemapStart", 0.0f);
+    gpu.shadingGrade[1] = floatValue("_ShadingGradeMapRemapEnd", 1.0f);
+    gpu.shadingGrade[2] = floatValue("_ShadingGradeMapStrength", 1.0f);
+    gpu.shadingGrade[3] = floatValue("_ShadingGradeMapApplyRange", 1.0f);
+    gpu.shadingGrade2[0] = floatValue("_ShadingGradeMapMidPointOffset", 0.0f);
+    gpu.shadingGrade2[1] = floatValue("_ShadingGradeMapInvertColor", 0.0f);
+    gpu.shadingGrade2[2] = floatValue("_FaceMaskMapInvertColor", 0.0f);
+    gpu.shadingGrade2[3] = floatValue("_AlphaBlendMatCapMaskInvert", 0.0f);
+    copy3(gpu.shadowTint, color("_ShadowTint", {1.0f, 1.0f, 1.0f, 1.0f}));
+    gpu.shadowTint[3] = floatValue("_ShadowHSVStrength", 1.0f);
+    gpu.shadowHsv[0] = floatValue("_ShadowHueOffset", 0.0f);
+    gpu.shadowHsv[1] = floatValue("_ShadowSaturationBoost", 0.2f);
+    gpu.shadowHsv[2] = floatValue("_ShadowValueMultiply", 0.7f);
+    gpu.shadowHsv[3] = floatValue("_SelfShadowIntensity", 1.0f);
+    copy3(gpu.skinShadowTint, color("_SkinShadowTintColor", {1.0f, 0.8f, 0.8f, 1.0f}));
+    gpu.skinShadowTint[3] = floatValue("_SelfShadowIntensityForNonFace", 1.0f);
+    copy3(gpu.faceShadowTint, color("_FaceShadowTintColor", {1.0f, 0.9f, 0.9f, 1.0f}));
+    gpu.faceShadowTint[3] = floatValue("_SelfShadowIntensityForFace", 0.0f);
+    gpu.alphaOverride[0] = floatValue("_ApplyAlphaOverrideOnlyWhenFaceForwardIsPointingToCamera", 0.0f);
+    gpu.alphaOverride[1] = floatValue("_ApplyAlphaOverrideOnlyWhenFaceForwardIsPointingToCameraRemapStart", 0.0f);
+    gpu.alphaOverride[2] = floatValue("_ApplyAlphaOverrideOnlyWhenFaceForwardIsPointingToCameraRemapEnd", 1.0f);
+    gpu.alphaOverride[3] = floatValue("_AlphaBlendMatCapStrength", 1.0f);
+    const std::array<float, 4> alphaBlendTint = color("_AlphaBlendMatCapTint", {1.0f, 1.0f, 1.0f, 1.0f});
+    std::copy(alphaBlendTint.begin(), alphaBlendTint.end(), gpu.alphaBlendMatCapTint);
+    copy3(gpu.additiveMatCap, color("_AdditiveMatCapTint", {1.0f, 1.0f, 1.0f, 1.0f}));
+    gpu.additiveMatCap[3] = floatValue("_AdditiveMatCapIntensity", 1.0f);
+    gpu.additiveMatCap2[0] = floatValue("_AdditiveMatCapMaskRemapStart", 0.0f);
+    gpu.additiveMatCap2[1] = floatValue("_AdditiveMatCapMaskRemapEnd", 1.0f);
+    gpu.additiveMatCap2[2] = floatValue("_AdditiveMatCapExtractBrightArea", 0.0f);
+    gpu.additiveMatCap2[3] = floatValue("_AdditiveMatCapMixWithBaseMapColor", 0.5f);
+    copy3(gpu.rimLight, color("_RimLightColor", {1.0f, 1.0f, 1.0f, 1.0f}));
+    gpu.rimLight[3] = floatValue("_RimLightIntensity", 1.5f);
+    gpu.depthTexRim[0] = floatValue("_RimLightMixWithBaseMap", 0.5f);
+    gpu.depthTexRim[1] = floatValue("_DepthTexRimLightAndShadowWidthMultiplier", 0.5f);
+    gpu.depthTexRim[2] = floatValue("_DepthTexRimLightWidthMultiplier", 1.0f);
+    gpu.depthTexRim[3] = floatValue("_DepthTexRimLightFixDottedLineArtifactsExtendMultiplier", 0.1f);
+    gpu.depthTexShadow[0] = floatValue("_DepthTexShadowWidthMultiplier", 1.0f);
+    gpu.depthTexShadow[1] = floatValue("_DepthTexShadowUsage", 1.0f);
+    gpu.depthTexShadow[2] = floatValue("_DepthTexShadowIgnoreLightDir", 0.0f);
+    gpu.depthTexShadow[3] = floatValue("_DepthTexShadowBrightness", 0.85f);
+    copy3(gpu.depthTexShadowTint, color("_DepthTexShadowTintColor", {1.0f, 1.0f, 1.0f, 1.0f}));
+    gpu.depthTexShadowTint[3] = floatValue("_DepthTexShadowBrightnessForFace", 1.0f);
+    copy3(gpu.depthTexShadowTintFace, color("_DepthTexShadowTintColorForFace", {1.0f, 0.7f, 0.7f, 1.0f}));
+    gpu.depthTexShadowTintFace[3] = floatValue("_FaceAreaCameraDepthTextureZWriteOffset", 0.04f);
+    gpu.depthTexRim2[0] = floatValue("_DepthTexRimLightThresholdOffset", 0.0f);
+    gpu.depthTexRim2[1] = std::max(floatValue("_DepthTexRimLightFadeoutRange", 1.0f), 1e-4f);
+    gpu.depthTexRim2[2] = floatValue("_PerCharZOffset", 0.0f);
+    gpu.faceSdf[0] = floatValue("_FaceShadowGradientMapFaceMidPoint", 0.5f);
+    gpu.faceSdf[1] = floatValue("_FaceShadowGradientIntensity", 1.0f);
+    gpu.faceSdf[2] = floatValue("_FaceShadowGradientOffset", 0.1f);
+    gpu.faceSdf[3] = floatValue("_FaceShadowGradientResultSoftness", 0.005f);
+    gpu.faceSdf2[0] = floatValue("_FaceShadowGradientRemoveGeometryShadow", 0.0f);
+    // The character's controller drives the face normal fix at run time, over the material's own
+    // flatten-or-sphere choice.
+    gpu.faceSdf2[1] = floatValue("_FixFaceNormalAmount", 1.0f) * floatValue("_FixFaceNormalAmountPerMaterial", 1.0f) *
+                      number("character", "faceNormalFixAmount", 1.0f);
+    gpu.faceSdf2[2] = number("character", "faceNormalFixMethod", floatValue("_FixFaceNormalUseFlattenOrProxySphereMethod", 0.0f));
+    gpu.outline[0] = floatValue("_OutlineWidth", 0.5f) * floatValue("_OutlineWidthExtraMultiplier", 1.0f) *
+                     floatValue("_PerCharacterOutlineWidthMultiply", 1.0f);
+    gpu.outline[1] = floatValue("_OutlineZOffset", 0.0001f) + floatValue("_OutlineBaseZOffset", 0.0f);
+    gpu.outline[2] = floatValue("_OutlineZOffsetForFaceArea", 0.02f);
+    copy3(gpu.outlineTint, color("_OutlineTintColor", {0.25f, 0.25f, 0.25f, 1.0f}));
+    const std::array<float, 4> skinOutline = color("_OutlineTintColorSkinAreaOverride", {0.4f, 0.2f, 0.2f, 1.0f});
+    std::copy(skinOutline.begin(), skinOutline.end(), gpu.outlineSkinOverride);
+    copy3(gpu.headPosition, vector("head", "position", {0.0f, 0.0f, 0.0f, 0.0f}));
+    gpu.headPosition[3] = number("character", "rimPower", 4.0f);
+    copy3(gpu.headForward, vector("head", "forward", {0.0f, 0.0f, 1.0f, 0.0f}));
+    copy3(gpu.headUp, vector("head", "up", {0.0f, 1.0f, 0.0f, 0.0f}));
+    copy3(gpu.characterRim, vector("character", "rimColor", {0.0f, 0.0f, 0.0f, 0.0f}));
+
+    // The maps, each into its PBR slot (the toon material shades none of them as PBR: its
+    // metallic, emission, coat, sheen, iridescence and transmission factors stay zero).
+    const auto map = [&](const char* name) -> std::string
+    {
+        if (!extension.Has("textures") || !extension.Get("textures").Has(name) || !extension.Get("textures").Get(name).IsNumber())
+        {
+            return {};
+        }
+        return ResolveImagePath(model, modelPath, extension.Get("textures").Get(name).GetNumberAsInt());
+    };
+    if (std::string baseMap = map("_BaseMap"); !baseMap.empty())
+    {
+        materialData.baseColorTexturePath = std::move(baseMap);
+    }
+    materialData.metallicTexturePath = map("_ShadingGradeMap");
+    materialData.roughnessTexturePath = map("_AdditiveMatCapMask");
+    materialData.occlusionTexturePath = map("_OcclusionMap");
+    materialData.emissiveTexturePath = map("_AdditiveMatCap");
+    materialData.clearcoatTexturePath = map("_AlphaBlendMatCapMask");
+    materialData.clearcoatRoughnessTexturePath = map("_FaceMaskMap");
+    materialData.sheenColorTexturePath = map("_AlphaBlendMatCap");
+    materialData.sheenRoughnessTexturePath = map("_SkinMaskMap");
+    materialData.specularTexturePath = map("_FaceShadowGradientMap");
+    materialData.iridescenceTexturePath = map("_FaceShadowGradientMaskMap");
+    materialData.iridescenceThicknessTexturePath = map("_OutlineWidthTexture");
+    materialData.transmissionTexturePath = map("_AlphaOverrideMap");
+    materialData.metallicFactor = 0.0f;
+    materialData.roughnessFactor = 1.0f;
+    materialData.emissiveColor[0] = materialData.emissiveColor[1] = materialData.emissiveColor[2] = 0.0f;
+    // The face shadow map is read on TEXCOORD_1, every other map on TEXCOORD_0, by the toon shaders
+    // themselves; the slots' own transforms stay identity.
+    materialData.textureTransforms = {};
+    return toon;
+}
+
 ModelMaterialData BuildMaterialData(
     const tinygltf::Model& model,
     const tinygltf::Material& material,
@@ -1145,6 +1389,10 @@ ModelMaterialData BuildMaterialData(
                                    ? ClampMaterialAlphaValue(static_cast<float>(material.alphaCutoff), 0.5f)
                                    : 0.5f;
     materialData.opacity = 1.0f;
+    if (const auto toon = material.extensions.find("MINIENGINE_toon"); toon != material.extensions.end() && toon->second.IsObject())
+    {
+        materialData.toon = ReadToonMaterial(model, toon->second, modelPath, materialData);
+    }
     return materialData;
 }
 
@@ -1426,6 +1674,16 @@ void AppendPrimitive(
             throw std::runtime_error("glTF TEXCOORD_0 accessor count does not match POSITION accessor count");
         }
     }
+    // MINIENGINE_toon's smoothed normal, which an outline is pushed along.
+    std::vector<float> outlineNormals;
+    if (const auto it = primitive.attributes.find("_SMOOTH_NORMAL"); it != primitive.attributes.end())
+    {
+        outlineNormals = ReadAccessorFloatComponents(model, it->second, 3);
+        if (outlineNormals.size() / 3 != vertexCount)
+        {
+            throw std::runtime_error("glTF _SMOOTH_NORMAL accessor count does not match POSITION accessor count");
+        }
+    }
     std::vector<float> texCoords1;
     if (const auto it = primitive.attributes.find("TEXCOORD_1"); it != primitive.attributes.end())
     {
@@ -1513,6 +1771,21 @@ void AppendPrimitive(
             vertex.normal[0] = normal.x;
             vertex.normal[1] = normal.y;
             vertex.normal[2] = normal.z;
+        }
+        if (!outlineNormals.empty())
+        {
+            const glm::vec3 outlineNormal = normalMatrix * glm::vec3(
+                                                               outlineNormals[vertexIndex * 3 + 0],
+                                                               outlineNormals[vertexIndex * 3 + 1],
+                                                               outlineNormals[vertexIndex * 3 + 2]);
+            if (glm::dot(outlineNormal, outlineNormal) > 0.0f && std::isfinite(outlineNormal.x) &&
+                std::isfinite(outlineNormal.y) && std::isfinite(outlineNormal.z))
+            {
+                const glm::vec3 unit = glm::normalize(outlineNormal);
+                vertex.outlineNormal[0] = unit.x;
+                vertex.outlineNormal[1] = unit.y;
+                vertex.outlineNormal[2] = unit.z;
+            }
         }
 
         if (!tangents.empty())
@@ -2776,7 +3049,7 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 27> kImplementedExtensions = {
+constexpr std::array<std::string_view, 28> kImplementedExtensions = {
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
@@ -2802,6 +3075,7 @@ constexpr std::array<std::string_view, 27> kImplementedExtensions = {
     "KHR_xmp_json_ld",
     "MINIENGINE_collision",
     "MINIENGINE_materials_detail_layers",
+    "MINIENGINE_toon",
     "MINIENGINE_vehicle",
     "MINIENGINE_water"};
 

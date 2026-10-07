@@ -17,6 +17,9 @@ struct Vertex
     float tangent[4];
     // TEXCOORD_1, zero when the mesh has none. Textures read it through their transform's texCoord.
     float texCoord1[2];
+    // The smoothed normal a toon outline is pushed along (MINIENGINE_toon's _SMOOTH_NORMAL), in the
+    // same space as normal; zero when the mesh has none, and the toon passes fall back to normal.
+    float outlineNormal[3];
 };
 
 struct MeshData

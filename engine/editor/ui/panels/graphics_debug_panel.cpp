@@ -131,6 +131,10 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Max distance (m)##ssr", &debug.ssr.maxDistance, 1.0f, 200.0f, "%.0f");
     ImGui::EndDisabled();
 
+    // MINIENGINE_toon materials (anime characters) over the rest of the scene.
+    ImGui::SeparatorText("Anime characters");
+    DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
+
     ImGui::SeparatorText("Output");
     // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
     ImGui::Checkbox("HDR output", &debug.hdrOutput);

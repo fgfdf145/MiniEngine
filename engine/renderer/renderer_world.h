@@ -5,6 +5,7 @@
 
 #include <engine/scene/scene_components.h>
 #include <engine/scene/scene_world.h>
+#include <engine/scene/toon_material.h>
 
 #include <memory>
 #include <stdexcept>
@@ -74,6 +75,8 @@ struct CpuRenderSubmesh
     bool decal = false;
     // The top of water (ModelSubmeshData::water): drawn, and never collided with.
     bool water = false;
+    // An anime character material (MINIENGINE_toon), which the toon passes shade; null for PBR.
+    std::shared_ptr<const ToonMaterialData> toon;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
