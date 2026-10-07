@@ -46,6 +46,7 @@ constexpr uint32_t kFlagDualMotion = 32u;
 constexpr uint32_t kFlagRussianRoulette = 64u;
 constexpr uint32_t kFlagAccumulate = 128u;
 constexpr uint32_t kFlagHistoryValid = 256u;
+constexpr uint32_t kFlagPermutation = 512u;
 
 // PT_PAIRING_SIZES: three textures of different sizes, so their repeats do not line up (section 3.2),
 // each with sigma 16, the Gaussian that matches the usual 30-pixel uniform disk (section 7).
@@ -183,7 +184,7 @@ void VulkanRestirPtPass::Record(
                       (settings.footprintReconnection ? kFlagFootprint : 0u) | (settings.decorrelation ? kFlagDecorrelation : 0u) |
                       (settings.colorNoiseReduction ? kFlagColorNoise : 0u) | (settings.dualMotionVectors ? kFlagDualMotion : 0u) |
                       (settings.russianRoulette ? kFlagRussianRoulette : 0u) | (settings.accumulate ? kFlagAccumulate : 0u) |
-                      (frame.restirPtHistory.valid ? kFlagHistoryValid : 0u);
+                      (frame.restirPtHistory.valid ? kFlagHistoryValid : 0u) | (settings.permutationSampling ? kFlagPermutation : 0u);
     constants.maxBounces = static_cast<uint32_t>(std::clamp(frame.pathTracing.maxBounces, 0, 5));
     constants.neeCandidates = static_cast<uint32_t>(std::clamp(frame.pathTracing.lightCandidates, 1, 32));
     constants.debugView = static_cast<uint32_t>(std::clamp(settings.debugView, 0, 5));

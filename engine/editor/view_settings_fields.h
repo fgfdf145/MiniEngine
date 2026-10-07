@@ -49,6 +49,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("restir_pt", "cap_gamma", restirPt.capGamma);
     visit("restir_pt", "color_noise_reduction", restirPt.colorNoiseReduction);
     visit("restir_pt", "dual_motion_vectors", restirPt.dualMotionVectors);
+    visit("restir_pt", "permutation_sampling", restirPt.permutationSampling);
     visit("restir_pt", "russian_roulette", restirPt.russianRoulette);
     visit("restir_pt", "accumulate", restirPt.accumulate);
     visit("restir_pt", "debug_view", restirPt.debugView);

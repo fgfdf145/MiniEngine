@@ -240,15 +240,21 @@ struct RestirPtSettings
     // The old criterion's shortest reconnection, in metres.
     float legacyDistance = 0.1f;
     // The temporal confidence cap, lowered where neighbours share samples (section 5's duplication map):
-    // cap = lerp(cap, capMin, duplication ^ capGamma) while decorrelation is on.
+    // cap = lerp(cap, capMin, duplication ^ capGamma) while decorrelation is on. The paper's 20 keeps a
+    // sample on a pixel for so long that DLSS ray reconstruction takes its slowly changing noise for
+    // texture (blotchy car paint); 4 measured closer to the reference with it.
     bool decorrelation = true;
-    float cap = 20.0f;
+    float cap = 4.0f;
     float capMin = 1.0f;
     float capGamma = 0.1f;
     // Shading with the spatial reuse's vector-valued weights (section 6.3).
     bool colorNoiseReduction = true;
     // Disoccluded pixels look for a temporal neighbour along the occluder's motion (section 6.4).
     bool dualMotionVectors = true;
+    // Temporal reuse takes its history from a pixel of the 2 x 2 quad chosen per frame (RTXDI's
+    // permutation sampling), so a pixel does not keep resampling its own history and the noise the
+    // denoiser sees moves.
+    bool permutationSampling = true;
     // Russian roulette on the initial paths only (section 6.2.4).
     bool russianRoulette = true;
     // Averages the frames while the camera and scene stand still: with both reuses off, an unbiased

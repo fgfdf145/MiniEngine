@@ -290,6 +290,11 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
         }
         ImGui::Checkbox("Colour noise reduction##restir", &restirPt.colorNoiseReduction);
         ImGui::Checkbox("Dual motion vectors##restir", &restirPt.dualMotionVectors);
+        ImGui::Checkbox("Permutation sampling##restir", &restirPt.permutationSampling);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Temporal reuse takes a neighbour in the 2 x 2 quad: noise the denoiser can average");
+        }
         ImGui::Checkbox("Russian roulette##restir", &restirPt.russianRoulette);
         ImGui::Checkbox("Accumulate (still camera)##restir", &restirPt.accumulate);
         static const char* kViews[] = {"Image", "Duplication map", "Reconnection vertex", "Confidence (log2)", "Path length", "Pairing check"};
