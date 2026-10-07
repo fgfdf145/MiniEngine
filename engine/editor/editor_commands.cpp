@@ -347,6 +347,17 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
             return state.videoRecording;
         },
         IfBound(scene.toggleVideoRecording));
+    // The car from the front, the rear and both sides at once, composed into one video as it is
+    // filmed (Window > Quad Recording sets the cameras up).
+    Add(
+        registry, "tools.record_quad_cameras", "Record Quad Cameras", "Tools/Record Quad Cameras", ICON_PH_SQUARES_FOUR,
+        ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_F12,
+        scene.toggleQuadRecording,
+        [&state]
+        {
+            return state.quadRecording;
+        },
+        IfBound(scene.toggleQuadRecording));
     // Shaders are compiled with the build, not by the editor, so there is no log or cache to show.
     AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_PH_FILE_TEXT, 0, scene.showShaderLog);
     registry.AddSeparator("Tools");

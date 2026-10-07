@@ -5,6 +5,7 @@
 #include <engine/core/video/video_recorder.h>
 
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace me
@@ -33,6 +34,26 @@ class VulkanVideoReadback
         VkImage image,
         VkFormat format,
         VkExtent2D extent,
+        VkImageLayout layout,
+        double timeSeconds);
+
+    // One image of a mosaic: where its top-left corner goes on the canvas, in pixels.
+    struct MosaicTile
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkExtent2D extent{};
+        uint32_t x = 0;
+        uint32_t y = 0;
+    };
+    // Records the copy of several images of one format, each in layout and returned to it, into one
+    // canvas of canvasExtent in the slot's buffer, the rest of it black: a quad recording's frame
+    // (docs/design/2026-10-07-quad-vehicle-recording-design.md). The tiles must lie inside the canvas.
+    void RecordMosaicCopy(
+        VkCommandBuffer commandBuffer,
+        uint32_t frameSlot,
+        std::span<const MosaicTile> tiles,
+        VkFormat format,
+        VkExtent2D canvasExtent,
         VkImageLayout layout,
         double timeSeconds);
 

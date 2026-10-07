@@ -7,6 +7,7 @@
 #include <engine/renderer/atmosphere.h>
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -21,7 +22,8 @@ namespace me
 // on the queue, so the one at the head of Record covers the previous frame's fragment reads.
 //
 // Set 0 names these images for every draw, whatever the mode, so the first Record moves them out
-// of UNDEFINED and clears them even when the atmosphere is off.
+// of UNDEFINED and clears them even when the atmosphere is off (and a view's first RecordView its
+// own).
 class VulkanAtmosphere
 {
   public:
@@ -35,6 +37,8 @@ class VulkanAtmosphere
     VulkanAtmosphere(const VulkanAtmosphere&) = delete;
     VulkanAtmosphere& operator=(const VulkanAtmosphere&) = delete;
 
+    // The shared part of the frame: the LUTs but the aerial perspective, the clouds' noise, plume
+    // map and shadow map, and the sky's SH. Each view's own part follows in RecordView.
     // parameters is null when the frame does not render the atmosphere; the frame descriptor set
     // carries the same parameters in its camera block.
     // frameSlot picks the host-visible copy of the sky's SH this frame leaves for the CPU (see
@@ -55,27 +59,78 @@ class VulkanAtmosphere
 
     TextureDescriptorBinding GetTransmittanceBinding() const;
     TextureDescriptorBinding GetSkyViewBinding() const;
-    TextureDescriptorBinding GetAerialPerspectiveBinding() const;
     // The volumetric clouds' noise (cloud_noise.comp), built on the first Record; REPEAT sampler.
     TextureDescriptorBinding GetCloudShapeNoiseBinding() const;
     TextureDescriptorBinding GetCloudDetailNoiseBinding() const;
     // The clouds' shadow map (cloud_shadow.comp), written every frame the atmosphere renders.
     TextureDescriptorBinding GetCloudShadowBinding() const;
     TextureDescriptorBinding GetCloudWeatherBinding() const;
+    VkBuffer GetIrradianceBuffer() const;
 
+  private:
+    struct LutImage
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+    };
+
+  public:
+    // What one camera the scene is drawn from has of the atmosphere for itself
+    // (docs/design/2026-10-07-quad-vehicle-recording-design.md): the aerial perspective volume, which
+    // spans that camera's frustum, and its clouds' march target, resolved image and history, with
+    // the set 1 that names them. The LUTs, the noise and the cloud shadow map are the atmosphere's,
+    // shared by every view. Made by CreateView; outlived by the atmosphere that made it.
+    class View
+    {
+      public:
+        ~View();
+        View(const View&) = delete;
+        View& operator=(const View&) = delete;
+
+      private:
+        friend class VulkanAtmosphere;
+        explicit View(VkDevice device);
+
+        VkDevice m_device = VK_NULL_HANDLE;
+        LutImage m_aerialPerspective{};
+        // RGBA16F, GENERAL: the march's samples (half the scene's extent, rounded up), the resolved
+        // clouds the sky reads and last frame's copy of them, the history (both at the scene's
+        // extent). Fresh after (re)creation until their first transition, when there is no history.
+        LutImage m_cloudTarget{};
+        LutImage m_cloudResolved{};
+        LutImage m_cloudHistory{};
+        VkExtent2D m_cloudSceneExtent{};
+        bool m_cloudTargetFresh = true;
+        // The aerial perspective volume is moved out of UNDEFINED and cleared by the view's first
+        // RecordView (or, for the atmosphere's placeholder view, its first Record).
+        bool m_initialized = false;
+        // Steps the marched pixel through each 2 x 2 block, every frame, with TAA or without.
+        uint32_t m_cloudFrame = 0;
+        VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+        VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
+    };
+
+    // A view with placeholder clouds until EnsureCloudTarget names its extent.
+    std::unique_ptr<View> CreateView();
+    TextureDescriptorBinding GetAerialPerspectiveBinding(const View& view) const;
     // The clouds for the sky pass to composite, at the scene's extent
     // (docs/design/2026-10-06-cumulus-generation-design.md, temporal reconstruction): each frame
     // cloud_march.comp marches one pixel of every 2 x 2 block, a quarter of them, and
     // cloud_resolve.comp rebuilds the rest from the reprojected history. EnsureCloudTarget
-    // recreates the targets when the extent changed and returns true; the caller has waited for
-    // the device and then repoints set 0 binding 28 (VulkanUniformBuffer::SetCloudTarget).
-    // RecordClouds marches and resolves, after Record, and orders the sky pass's reads after its
-    // writes.
-    bool EnsureCloudTarget(VkExtent2D sceneExtent);
-    // timer, when given, marks "CloudMarch" between the two passes.
-    void RecordClouds(VkCommandBuffer commandBuffer, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer = nullptr);
-    TextureDescriptorBinding GetCloudTargetBinding() const;
-    VkBuffer GetIrradianceBuffer() const;
+    // recreates the view's targets when the extent changed and returns true; the caller has waited
+    // for the device and then repoints set 0 binding 28 (VulkanUniformBuffer::SetCloudTarget).
+    bool EnsureCloudTarget(View& view, VkExtent2D sceneExtent);
+    TextureDescriptorBinding GetCloudTargetBinding(const View& view) const;
+    // After Record, with the view's frame set: its aerial perspective volume (when the frame renders
+    // the atmosphere), then its clouds marched and resolved, ordered before the sky pass's reads.
+    // timer, when given, marks "CloudMarch" between the two cloud passes.
+    void RecordView(
+        VkCommandBuffer commandBuffer,
+        View& view,
+        VkDescriptorSet frameDescriptorSet,
+        bool atmosphere,
+        VulkanGpuTimer* timer = nullptr);
 
   private:
     enum Lut : size_t
@@ -102,24 +157,17 @@ class VulkanAtmosphere
         kCloudWeather,
         kCloudNoiseCount
     };
-    // The images the first Record moves out of UNDEFINED: the LUTs, the noise and the shadow map.
-    static constexpr size_t kNoiseImagesBegin = kLutCount;
-    static constexpr size_t kShadowImageIndex = kNoiseImagesBegin + static_cast<size_t>(kCloudNoiseCount);
-    static constexpr size_t kInitialImageCount = kShadowImageIndex + 1;
-
-    struct LutImage
-    {
-        VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkImageView view = VK_NULL_HANDLE;
-    };
-
     void CreateImages();
+    void CreateLutImage(LutImage& image, VkExtent3D extent);
+    static void DestroyImage(VkDevice device, LutImage& image);
     void CreateDescriptors();
-    void CreateCloudTargets(VkExtent2D sceneExtent);
+    void CreateCloudTargets(View& view, VkExtent2D sceneExtent);
     void CreateCloudImage(LutImage& image, VkExtent2D extent, VkImageUsageFlags usage, const char* name);
-    void DestroyCloudTargets();
-    void WriteCloudTargetDescriptors();
+    // Writes every binding of a view's set 1: the atmosphere's images and buffers, and the view's own.
+    void WriteViewDescriptors(const View& view);
+    // Moves the view's images out of UNDEFINED and clears its aerial perspective volume.
+    void InitializeView(VkCommandBuffer commandBuffer, View& view);
+    void RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer);
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
     void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
@@ -130,25 +178,18 @@ class VulkanAtmosphere
     VkDevice m_device = VK_NULL_HANDLE;
     VkSampler m_sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
+    // The view whose set the shared passes in Record bind: its aerial perspective volume and clouds
+    // are 1 x 1 placeholders that nothing reads.
+    std::unique_ptr<View> m_placeholderView;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    // The transmittance, multiple scattering and sky-view LUTs; the aerial perspective volume is each
+    // view's own, so its slot stays empty.
     std::array<LutImage, kLutCount> m_images{};
     // RGBA8 volumes, written once and then only sampled; GENERAL like the LUTs.
     std::array<LutImage, kCloudNoiseCount> m_cloudNoise{};
     VkSampler m_cloudSampler = VK_NULL_HANDLE;
     // RGBA16F, r the transmittance toward the sun; GENERAL like the LUTs.
     LutImage m_cloudShadow{};
-    // RGBA16F, GENERAL: the march's samples (half the scene's extent, rounded up), the resolved
-    // clouds the sky reads and last frame's copy of them, the history (both at the scene's
-    // extent). Fresh after (re)creation until their first transition, when there is no history.
-    LutImage m_cloudTarget{};
-    LutImage m_cloudResolved{};
-    LutImage m_cloudHistory{};
-    VkExtent2D m_cloudSceneExtent{};
-    bool m_cloudTargetFresh = true;
-    // Steps the marched pixel through each 2 x 2 block, every frame, with TAA or without.
-    uint32_t m_cloudFrame = 0;
     bool m_cloudNoiseBuilt = false;
     // The phases of life the plume map was last built at.
     glm::vec4 m_cloudWeatherLife{0.0f};

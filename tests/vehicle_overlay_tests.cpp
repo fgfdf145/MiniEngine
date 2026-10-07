@@ -238,7 +238,7 @@ void TestOverlayDrawsTheBrushPatch()
     Require(std::abs(recut.lateralForce) > 0.5f * std::abs(outer.lateralForce), "still cornering on the recut tyres");
 
     // From above and a little behind the tyre, looking down at its patch.
-    const glm::vec3 target = outer.contactPosition;
+    const glm::vec3 target(outer.contactPosition);
     const glm::vec3 eye = target + outer.contactNormal * 0.9f - outer.contactLongitudinal * 0.35f - outer.contactLateral * 0.1f;
     const glm::mat4 view = glm::lookAt(eye, target, outer.contactLongitudinal);
     glm::mat4 projection = glm::perspective(glm::radians(40.0f), static_cast<float>(kWidth) / kHeight, 0.05f, 100.0f);

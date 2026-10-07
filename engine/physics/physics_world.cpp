@@ -305,7 +305,7 @@ JPH::Vec3 ToJolt(const glm::vec3& value)
     return JPH::Vec3(value.x, value.y, value.z);
 }
 
-JPH::RVec3 ToJoltPosition(const glm::vec3& value)
+JPH::RVec3 ToJoltPosition(const glm::dvec3& value)
 {
     return JPH::RVec3(value.x, value.y, value.z);
 }
@@ -320,12 +320,11 @@ glm::vec3 FromJolt(JPH::Vec3Arg value)
     return glm::vec3(value.GetX(), value.GetY(), value.GetZ());
 }
 
-#ifdef JPH_DOUBLE_PRECISION
-glm::vec3 FromJolt(JPH::RVec3Arg value)
+// A world position, kept in double (see PhysicsPose).
+glm::dvec3 FromJoltPosition(JPH::RVec3Arg value)
 {
-    return glm::vec3(static_cast<float>(value.GetX()), static_cast<float>(value.GetY()), static_cast<float>(value.GetZ()));
+    return glm::dvec3(value.GetX(), value.GetY(), value.GetZ());
 }
-#endif
 
 glm::quat FromJolt(JPH::QuatArg value)
 {
@@ -335,7 +334,7 @@ glm::quat FromJolt(JPH::QuatArg value)
 PhysicsPose FromJolt(JPH::RMat44Arg transform)
 {
     PhysicsPose pose;
-    pose.position = FromJolt(transform.GetTranslation());
+    pose.position = FromJoltPosition(transform.GetTranslation());
     pose.rotation = FromJolt(transform.GetQuaternion());
     return pose;
 }
@@ -343,7 +342,7 @@ PhysicsPose FromJolt(JPH::RMat44Arg transform)
 PhysicsPose Interpolate(const PhysicsPose& from, const PhysicsPose& to, float alpha)
 {
     PhysicsPose pose;
-    pose.position = glm::mix(from.position, to.position, alpha);
+    pose.position = glm::mix(from.position, to.position, static_cast<double>(alpha));
     pose.rotation = glm::slerp(from.rotation, to.rotation, alpha);
     return pose;
 }
@@ -428,6 +427,18 @@ EndStopPush PushOfEndStop(double rate, double damping, double depth, double clos
         return {};
     }
     return {spring + damper, rate, damping};
+}
+
+// Rolling resistance as dry friction on a wheel's spin, the moment (N m) to apply with the step's
+// `torque` already on it: up to `limit` it holds the wheel still, as a parked car stays put until pushed
+// with about the coefficient's share of its weight; past it the roll is opposed by `limit`. Judged on
+// the spin the step would leave, so it stops the wheel and never turns it back (the physics engine's
+// brakes work the same way). Smoothed through the standstill instead (a viscous drag below some speed),
+// it held nothing back: a few newtons left from the suspension settling rolled the R34 on its hub
+// masses at 2 mm/s for over a minute.
+float RollingResistanceTorque(float wheelSpeed, float torque, float inertia, float limit, float dt)
+{
+    return std::clamp(-(wheelSpeed * inertia / dt + torque), -limit, limit);
 }
 
 // How far the axle's tyre deflects before the rim meets the ground: its sidewall's height (radius
@@ -971,6 +982,8 @@ struct PhysicsWorld::Impl
         std::array<BrushWheel, kVehicleWheelCount> brushWheels{};
         // The turns the physics engine left out (ApplyDroppedRotation), rad about world axes.
         std::array<double, 3> droppedRotation{};
+        // Each wheel's roll angle before the step (RollWheelsBySpinAfterStep), rad.
+        std::array<float, kVehicleWheelCount> spinAngleBefore{};
     };
 
     void BuildCorners(Vehicle& vehicle) const
@@ -2159,7 +2172,9 @@ struct PhysicsWorld::Impl
             const JPH::Vec3 force = longitudinals[index] * static_cast<float>(out.Fx) + lefts[index] * static_cast<float>(out.Fy);
             bodies.AddForce(body.GetID(), force, positions[index], JPH::EActivation::DontActivate);
             bodies.AddTorque(body.GetID(), normals[index] * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
-            wheel.ApplyTorque(static_cast<float>(-out.Fx * out.effectiveRadius + out.rollingResistanceTorque), dt);
+            const float torque = static_cast<float>(-out.Fx * out.effectiveRadius);
+            const float rolling = RollingResistanceTorque(wheel.GetAngularVelocity(), torque, wheel.GetSettings()->mInertia, static_cast<float>(out.rollingResistanceLimit), dt);
+            wheel.ApplyTorque(torque + rolling, dt);
             state.force = force;
             state.load = static_cast<float>(inputs[index].load);
             state.contact = true;
@@ -2199,6 +2214,32 @@ struct PhysicsWorld::Impl
         const JPH::RVec3 origin = body.GetCenterOfMassPosition() - rotation * body.GetShape()->GetCenterOfMass();
         physicsSystem.GetBodyInterface().SetPositionAndRotation(body.GetID(), origin, rotation, JPH::EActivation::DontActivate);
         dropped = {};
+    }
+
+    // The physics engine turns each wheel through its roll angle by the spin it has after the tyre's
+    // torque and before the brakes', which then stop it: a braked wheel whose tyre pulls on it (the rear
+    // tyres holding the car on a slope with the hand brake on, or the tread's bend left from stopping)
+    // turned on, some 7 deg/s on the R34 on a 5 deg slope, while its speed read zero. Turned instead by
+    // the spin it ends the step with, a wheel the brakes hold stands still, and one that rolls turns as
+    // the body moves, by its velocity at the step's end.
+    void RememberWheelAngles(Vehicle& vehicle) const
+    {
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (size_t index = 0; index < wheels.size() && index < vehicle.spinAngleBefore.size(); ++index)
+        {
+            vehicle.spinAngleBefore[index] = wheels[static_cast<JPH::uint>(index)]->GetRotationAngle();
+        }
+    }
+
+    void RollWheelsBySpinAfterStep(Vehicle& vehicle) const
+    {
+        constexpr float kTurn = 2.0f * std::numbers::pi_v<float>;
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (size_t index = 0; index < wheels.size() && index < vehicle.spinAngleBefore.size(); ++index)
+        {
+            JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+            wheel.SetRotationAngle(std::fmod(vehicle.spinAngleBefore[index] + wheel.GetAngularVelocity() * kFixedStepSeconds, kTurn));
+        }
     }
 
     // The turbos' boost follows the steady level the revs and throttle ask of each, by the game's lag (a
@@ -2281,7 +2322,9 @@ struct PhysicsWorld::Impl
             }
             const float load = std::max(wheel->GetSuspensionLambda() / kFixedStepSeconds, 0.0f);
             const float radius = wheel->GetSettings()->mRadius;
-            static_cast<JPH::WheelWV*>(wheel)->ApplyTorque(-coefficient * load * radius * std::tanh(wheel->GetAngularVelocity() / 0.5f), kFixedStepSeconds);
+            auto* driven = static_cast<JPH::WheelWV*>(wheel);
+            const float rolling = RollingResistanceTorque(driven->GetAngularVelocity(), 0.0f, driven->GetSettings()->mInertia, coefficient * load * radius, kFixedStepSeconds);
+            driven->ApplyTorque(rolling, kFixedStepSeconds);
         }
     }
 
@@ -2418,7 +2461,7 @@ struct PhysicsWorld::Impl
     VehicleSnapshot Capture(const Vehicle& vehicle) const
     {
         VehicleSnapshot snapshot;
-        snapshot.chassis.position = FromJolt(vehicle.body->GetPosition());
+        snapshot.chassis.position = FromJoltPosition(vehicle.body->GetPosition());
         snapshot.chassis.rotation = FromJolt(vehicle.body->GetRotation());
         const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
         snapshot.wheels.reserve(wheels.size());
@@ -2449,7 +2492,7 @@ struct PhysicsWorld::Impl
 
             const JPH::WheelSettings& wheelSettings = *wheel.GetSettings();
             const JPH::Quat bodyRotation = vehicle.body->GetRotation();
-            state.mount = FromJolt(vehicle.body->GetPosition() + bodyRotation * wheelSettings.mPosition);
+            state.mount = FromJoltPosition(vehicle.body->GetPosition() + bodyRotation * wheelSettings.mPosition);
             state.suspensionAxis = FromJolt(bodyRotation * wheelSettings.mSuspensionDirection.Normalized());
             state.suspensionMinLength = wheelSettings.mSuspensionMinLength;
             state.suspensionMaxLength = wheelSettings.mSuspensionMaxLength;
@@ -2471,7 +2514,7 @@ struct PhysicsWorld::Impl
                     // has it, the tyre squashed between them.
                     state.unsprungMass = true;
                     state.tyreDeflection = static_cast<float>(corner.tyreDeflection);
-                    state.pose.position = FromJolt(vehicle.body->GetWorldTransform() * ToJolt(corner.hubCenter));
+                    state.pose.position = FromJoltPosition(vehicle.body->GetWorldTransform() * ToJolt(corner.hubCenter));
                     state.suspensionLength = corner.designLength - (corner.hubCenter.y - corner.designCenter.y);
                 }
             }
@@ -2479,7 +2522,7 @@ struct PhysicsWorld::Impl
             {
                 const auto& wheelWV = static_cast<const JPH::WheelWV&>(wheel);
                 // The solver's impulses over the step it ran are the step's mean forces.
-                state.contactPosition = FromJolt(wheel.GetContactPosition());
+                state.contactPosition = FromJoltPosition(wheel.GetContactPosition());
                 state.contactNormal = FromJolt(wheel.GetContactNormal());
                 state.contactLongitudinal = FromJolt(wheel.GetContactLongitudinal());
                 state.contactLateral = FromJolt(wheel.GetContactLateral());
@@ -2615,7 +2658,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
     return AddStaticMesh(vertices, indices, grip);
 }
 
-bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip)
+bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip, const glm::dvec3& origin)
 {
     const float friction = grip.friction;
     // Vertices at the same place become one. The physics engine finds a triangle's neighbours by the
@@ -2710,7 +2753,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
             return 0;
         }
         JPH::BodyCreationSettings bodySettings(
-            shape.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
+            shape.Get(), ToJoltPosition(origin), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
         bodySettings.mFriction = bodyFriction;
         bodySettings.mUserData = userData;
         const JPH::BodyID body = m_impl->physicsSystem.GetBodyInterface().CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
@@ -2727,7 +2770,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
     return addBody(std::move(walkable), 0) + addBody(std::move(steep), kWheelsIgnoreBody) > 0;
 }
 
-void PhysicsWorld::AddStaticBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
+void PhysicsWorld::AddStaticBox(const glm::dvec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
 {
     const JPH::Vec3 extents = JPH::Vec3::sMax(ToJolt(halfExtents), JPH::Vec3::sReplicate(0.01f));
     JPH::BodyCreationSettings bodySettings(
@@ -2989,9 +3032,9 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.previous = vehicle.current;
 }
 
-std::optional<float> PhysicsWorld::FindGroundBelow(const glm::vec3& from, float maxDistance) const
+std::optional<double> PhysicsWorld::FindGroundBelow(const glm::dvec3& from, double maxDistance) const
 {
-    const JPH::RRayCast ray{ToJoltPosition(from), JPH::Vec3(0.0f, -maxDistance, 0.0f)};
+    const JPH::RRayCast ray{ToJoltPosition(from), JPH::Vec3(0.0f, static_cast<float>(-maxDistance), 0.0f)};
     JPH::RayCastResult hit;
     const JPH::SpecifiedBroadPhaseLayerFilter broadPhaseFilter(BroadPhaseLayers::kStatic);
     const JPH::SpecifiedObjectLayerFilter objectFilter(ObjectLayers::kStatic);
@@ -2999,7 +3042,7 @@ std::optional<float> PhysicsWorld::FindGroundBelow(const glm::vec3& from, float 
     {
         return std::nullopt;
     }
-    return from.y - hit.mFraction * maxDistance;
+    return from.y - static_cast<double>(hit.mFraction) * maxDistance;
 }
 
 PhysicsPose PhysicsWorld::GetVehiclePose(VehicleId id) const
@@ -3027,7 +3070,7 @@ VehicleLinkage PhysicsWorld::GetVehicleLinkage(VehicleId id) const
         vehicle.axles[axle]->Sketch(halfTrack, sketch);
         const auto toWorld = [&](const suspension::Vec3& p) {
             const glm::vec3 inVehicle = left.designCenter + CornerToVehicle(p - suspension::Vec3(0.0, halfTrack, 0.0));
-            return FromJolt(transform * ToJolt(inVehicle));
+            return FromJoltPosition(transform * ToJolt(inVehicle));
         };
         for (const auto& [a, b] : sketch.links)
         {
@@ -3063,10 +3106,10 @@ std::vector<VehicleWheelState> PhysicsWorld::GetVehicleWheels(VehicleId id) cons
         wheels[index].spinAngle -= (1.0f - alpha) * wheels[index].spinStep;
         wheels[index].pose.rotation = wheels[index].pose.rotation * glm::angleAxis(wheels[index].spinAngle, glm::vec3(1.0f, 0.0f, 0.0f));
         // The points drawn on the wheel move with it; the forces are the last step's.
-        wheels[index].mount = glm::mix(before.mount, wheels[index].mount, alpha);
+        wheels[index].mount = glm::mix(before.mount, wheels[index].mount, static_cast<double>(alpha));
         if (before.inContact && wheels[index].inContact)
         {
-            wheels[index].contactPosition = glm::mix(before.contactPosition, wheels[index].contactPosition, alpha);
+            wheels[index].contactPosition = glm::mix(before.contactPosition, wheels[index].contactPosition, static_cast<double>(alpha));
         }
     }
     return wheels;
@@ -3191,6 +3234,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.ApplyRearSteer(vehicle, input);
             controller->SetDriverInput(impl.SpoolTurbos(vehicle, *controller, input.forward), input.right, input.brake, input.handBrake);
             impl.ApplyEngineCoast(vehicle, *controller, input.forward);
+            impl.RememberWheelAngles(vehicle);
         }
 
         const JPH::EPhysicsUpdateError error =
@@ -3203,6 +3247,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
             impl.ApplyDroppedRotation(vehicle);
+            impl.RollWheelsBySpinAfterStep(vehicle);
             vehicle.previous = std::move(vehicle.current);
             vehicle.current = impl.Capture(vehicle);
         }

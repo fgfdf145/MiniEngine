@@ -308,8 +308,14 @@ void DrawMinimap(
 
 // While recording, a blinking red dot, the video's length and size at the top centre; for a few
 // seconds after, where it was saved or why it stopped. Drawn by ImGui over the viewport, so it is
-// not in the video.
-void DrawVideoRecordingIndicator(const ViewportOverlayRect& rect, float uiScale, const VideoRecordingIndicator& recording)
+// not in the video. A second recording (the quad cameras') goes on the line below, its text after
+// `prefix`.
+void DrawVideoRecordingIndicator(
+    const ViewportOverlayRect& rect,
+    float uiScale,
+    const VideoRecordingIndicator& recording,
+    const char* prefix = "",
+    int line = 0)
 {
     constexpr double kMessageSeconds = 6.0;
     std::string text;
@@ -318,7 +324,7 @@ void DrawVideoRecordingIndicator(const ViewportOverlayRect& rect, float uiScale,
     {
         const int totalSeconds = static_cast<int>(recording.seconds);
         text = fmt::format(
-            "REC  {:02}:{:02}  {:.1f} MB", totalSeconds / 60, totalSeconds % 60,
+            "{}REC  {:02}:{:02}  {:.1f} MB", prefix, totalSeconds / 60, totalSeconds % 60,
             static_cast<double>(recording.bytes) / (1024.0 * 1024.0));
         if (recording.droppedFrames > 0)
         {
@@ -343,7 +349,8 @@ void DrawVideoRecordingIndicator(const ViewportOverlayRect& rect, float uiScale,
     const float dotSpace = recording.active ? dotRadius * 2.0f + padding : 0.0f;
     const ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
     const float width = padding * 2.0f + dotSpace + textSize.x;
-    const ImVec2 min(rect.origin.x + (rect.size.x - width) * 0.5f, rect.origin.y + margin);
+    const float lineHeight = textSize.y + padding * 3.0f;
+    const ImVec2 min(rect.origin.x + (rect.size.x - width) * 0.5f, rect.origin.y + margin + lineHeight * static_cast<float>(line));
     const ImVec2 max(min.x + width, min.y + textSize.y + padding * 2.0f);
     drawList->AddRectFilled(min, max, IM_COL32(0, 0, 0, 170), 4.0f * uiScale);
     if (recording.active)
@@ -1296,6 +1303,7 @@ void ViewportPanel::OnGui(EditorContext& context)
             *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleRigStatus.linkage, UiScale());
     }
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
+    DrawVideoRecordingIndicator(viewportRect, UiScale(), state.quadRecordingStatus, "QUAD ", 1);
     // GT7's driving HUD along the bottom while a car is driven.
     const bool drivingHud = state.vehicleStatus.active && state.commands.drivingHud;
     if (drivingHud && viewportRect.drawList != nullptr)
@@ -1310,7 +1318,7 @@ void ViewportPanel::OnGui(EditorContext& context)
             UiScale(),
             state.minimapTexture,
             scene.GetMinimap(),
-            state.vehicleStatus.pose.position,
+            glm::vec3(state.vehicleStatus.pose.position),
             state.vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
             drivingHud);
     }

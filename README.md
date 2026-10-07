@@ -157,7 +157,10 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --frames <count>    渲染指定正整数帧后退出
 --capture <file.png> 与 --frames 一起使用，退出前把最后一帧的视口（色调映射后的 LDR 图）保存为 PNG
 --record <file.mp4|file.avi> 把视口录成视频（.mp4 为 H.264，仅 Windows；.avi 为 MJPEG）：从计入 --frames 的第二帧起每帧一帧视频（与帧耗时无关）
---record-fps <n>    --record 的视频帧率，默认 30
+--record-fps <n>    --record 和 --quad-record 的视频帧率，默认 30
+--quad-record <file.mp4|file.avi>
+                    从前后左右四个方向同时拍摄驾驶中的车（--drive，否则选中的模型），边拍边拼成一个视频；
+                    机位用 Window > Quad Recording 保存的设置
 --no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
 --priority <级别>    本次运行的进程优先级：below-normal、normal、above-normal 或 high（默认取 Preferences > Process，初始为 high）
 --cpus <核心>        本次运行可用的逻辑处理器：all、performance（混合架构的 P 核）或列表如 0,2,4-7；任务系统的工作线程数随之取核心数减二

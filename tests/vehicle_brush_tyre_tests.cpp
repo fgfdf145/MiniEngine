@@ -35,7 +35,7 @@ void Require(bool condition, const std::string& message)
     }
 }
 
-bool Finite(const glm::vec3& v)
+bool Finite(const glm::dvec3& v)
 {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
@@ -136,9 +136,9 @@ void TestCarStandsStill(const char* car, const VehicleSettings& settings)
     AddGround(world);
     const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 3.0f);
-    const glm::vec3 settled = world.GetVehiclePose(id).position;
+    const glm::dvec3 settled = world.GetVehiclePose(id).position;
     Simulate(world, 5.0f);
-    const glm::vec3 later = world.GetVehiclePose(id).position;
+    const glm::dvec3 later = world.GetVehiclePose(id).position;
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
     std::cout << car << " (" << Name(settings.tyreModel) << ") standing: moved " << glm::length(later - settled) * 1000.0f << " mm in 5 s";
     if (settings.tyreModel == VehicleTyreModel::Brush)
@@ -164,20 +164,102 @@ void TestCarHoldsOnASlope(const char* car, const VehicleSettings& settings)
     controls.handBrake = 1.0f;
     world.SetVehicleControls(id, controls);
     Simulate(world, 2.0f);
-    const glm::vec3 start = world.GetVehiclePose(id).position;
+    const glm::dvec3 start = world.GetVehiclePose(id).position;
     Simulate(world, 2.5f);
-    const glm::vec3 middle = world.GetVehiclePose(id).position;
+    const glm::dvec3 middle = world.GetVehiclePose(id).position;
+    const std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
     Simulate(world, 2.5f);
+    const std::vector<VehicleWheelState> after = world.GetVehicleWheels(id);
     const float slid = glm::length(world.GetVehiclePose(id).position - start);
     const float late = glm::length(world.GetVehiclePose(id).position - middle);
+    // The braked wheels stand still while their tyres hold the car: drawn by their roll angle, they
+    // turned on at several degrees a second when the angle took the spin from before the brakes.
+    float turned = 0.0f;
+    for (size_t index = 0; index < after.size(); ++index)
+    {
+        turned = std::max(turned, std::abs(after[index].spinAngle - before[index].spinAngle));
+    }
     std::cout << car << " (" << Name(settings.tyreModel) << ") on a 10 deg slope, braked: slid " << slid * 1000.0f << " mm in 5 s, "
-              << late * 1000.0f << " mm of it in the last 2.5 s\n";
+              << late * 1000.0f << " mm of it in the last 2.5 s, a wheel turned " << turned * 180.0f / kPi << " deg in it\n";
+    Require(turned < 0.2f * kPi / 180.0f, std::string(car) + "'s braked wheels stand still, one turned " + std::to_string(turned * 180.0f / kPi) + " deg");
     Require(Finite(world.GetVehiclePose(id).position), "the car's position stays finite");
     Require(slid < 0.05f, std::string(car) + " holds on the slope");
     if (settings.tyreModel == VehicleTyreModel::Brush)
     {
         Require(late < 1e-4f, std::string(car) + " does not creep on the brush tyre, moved " + std::to_string(late * 1000.0f) + " mm");
     }
+}
+
+// Rolled gently and let go on flat ground, the car comes to rest on its rolling resistance alone and
+// stays there, its wheels still: the resistance holds a wheel at rest as dry friction does. Smoothed
+// through the standstill (a drag in proportion to the spin below 0.5 rad/s) it let the car roll on at
+// millimetres a second for a minute, its wheels turning while it looked parked.
+void TestCarRollsToAStop(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 2.0f);
+    VehicleControls controls;
+    controls.throttle = 0.3f;
+    world.SetVehicleControls(id, controls);
+    for (int i = 0; i < 500 && world.GetVehicleTelemetry(id).forwardSpeed < 0.5f; ++i)
+    {
+        Simulate(world, 0.01f);
+    }
+    const float rolling = world.GetVehicleTelemetry(id).forwardSpeed;
+    world.SetVehicleControls(id, VehicleControls{});
+    // At 1.2 % of its weight the resistance takes some 4.5 s to stop a car from 0.5 m/s.
+    Simulate(world, 8.0f);
+    const glm::dvec3 settled = world.GetVehiclePose(id).position;
+    const std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
+    Simulate(world, 5.0f);
+    const std::vector<VehicleWheelState> after = world.GetVehicleWheels(id);
+    const float moved = glm::length(world.GetVehiclePose(id).position - settled);
+    float turned = 0.0f;
+    for (size_t index = 0; index < after.size(); ++index)
+    {
+        turned = std::max(turned, std::abs(after[index].spinAngle - before[index].spinAngle));
+    }
+    std::cout << car << " (" << Name(settings.tyreModel) << ") let go at " << rolling << " m/s: in the 5 s from 8 s after, moved " << moved * 1000.0f
+              << " mm, a wheel turned " << turned * 180.0f / kPi << " deg\n";
+    Require(rolling > 0.3f, std::string(car) + " rolls before it is let go");
+    Require(moved < 1e-3f, std::string(car) + " comes to rest, moved " + std::to_string(moved * 1000.0f) + " mm");
+    Require(turned < 0.2f * kPi / 180.0f, std::string(car) + "'s wheels stop turning, one turned " + std::to_string(turned * 180.0f / kPi) + " deg");
+}
+
+// Far from the world's origin the car drives as it does at it: let go at 0.5 m/s 6 km out (where the
+// GTA map's Vice City lies), it rolls as far before it stops. With the world in float, positions there
+// are 0.5 mm apart and a 1 ms step under 0.24 m/s moved the car not at all, so it stopped short and
+// then stood with its wheels still turning.
+void TestFarFromTheOriginAsAtIt(const char* car, const VehicleSettings& settings)
+{
+    const auto rollOut = [&](const glm::dvec3& origin)
+    {
+        PhysicsWorld world;
+        const std::vector<glm::vec3> vertices = {{-200.0f, 0.0f, -200.0f}, {-200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, 200.0f}, {200.0f, 0.0f, -200.0f}};
+        Require(world.AddStaticMesh(vertices, std::vector<uint32_t>{0, 1, 2, 0, 2, 3}, SurfaceGrip{}, origin), "the ground builds");
+        const VehicleId id = world.AddVehicle(settings, {origin + glm::dvec3(0.0, 0.1, 0.0), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 2.0f);
+        VehicleControls controls;
+        controls.throttle = 0.3f;
+        world.SetVehicleControls(id, controls);
+        for (int i = 0; i < 500 && world.GetVehicleTelemetry(id).forwardSpeed < 0.5f; ++i)
+        {
+            Simulate(world, 0.01f);
+        }
+        world.SetVehicleControls(id, VehicleControls{});
+        const glm::dvec3 released = world.GetVehiclePose(id).position;
+        Simulate(world, 8.0f);
+        return std::pair{glm::length(world.GetVehiclePose(id).position - released), released - origin};
+    };
+    const auto [atOrigin, launchAtOrigin] = rollOut(glm::dvec3(0.0));
+    const auto [farOut, launchFarOut] = rollOut(glm::dvec3(6000.0, 6.0, -6000.0));
+    std::cout << car << " (" << Name(settings.tyreModel) << ") let go at 0.5 m/s: rolls " << atOrigin * 1000.0 << " mm at the origin, " << farOut * 1000.0
+              << " mm 6 km out\n";
+    Require(atOrigin > 0.3, std::string(car) + " rolls on after it is let go");
+    Require(glm::length(launchFarOut - launchAtOrigin) < 1e-3, std::string(car) + " sets off as it does at the origin");
+    Require(std::abs(farOut - atOrigin) < 1e-3, std::string(car) + " rolls as far 6 km out as at the origin");
 }
 
 // ---- Load ----
@@ -286,7 +368,7 @@ StopReport StopFrom100(const VehicleSettings& settings)
     controls.brake = 1.0f;
     world.SetVehicleControls(id, controls);
     StopReport report;
-    const glm::vec3 start = world.GetVehiclePose(id).position;
+    const glm::dvec3 start = world.GetVehiclePose(id).position;
     float previous = world.GetVehicleTelemetry(id).forwardSpeed;
     int samples = 0;
     int locked = 0;
@@ -309,7 +391,7 @@ StopReport StopFrom100(const VehicleSettings& settings)
             break;
         }
     }
-    const glm::vec3 end = world.GetVehiclePose(id).position;
+    const glm::dvec3 end = world.GetVehiclePose(id).position;
     report.distance = std::abs(end.z - start.z);
     report.drift = std::abs(end.x - start.x);
     report.lockedShare = samples > 0 ? static_cast<float>(locked) / static_cast<float>(samples) : 0.0f;
@@ -414,7 +496,7 @@ void TestCarRunsStraight(const char* car, const VehicleSettings& settings)
             break;
         }
     }
-    const glm::vec3 end = world.GetVehiclePose(id).position;
+    const glm::dvec3 end = world.GetVehiclePose(id).position;
     std::cout << car << " flat out straight: " << world.GetVehicleTelemetry(id).forwardSpeed * 3.6f << " km/h, sideways " << end.x << " m, worst heading " << worstYaw * 180.0f / kPi << " deg\n";
     Require(std::abs(end.x) < 1.0f && worstYaw < 2.0f * kPi / 180.0f, std::string(car) + " runs straight");
 }
@@ -589,6 +671,14 @@ int main()
         run(prefix + "holds on a slope", [&]
             {
                 TestCarHoldsOnASlope(car.name, brush);
+            });
+        run(prefix + "rolls to a stop", [&]
+            {
+                TestCarRollsToAStop(car.name, brush);
+            });
+        run(prefix + "far from the origin", [&]
+            {
+                TestFarFromTheOriginAsAtIt(car.name, brush);
             });
         run(prefix + "tyre load is the step's", [&]
             {

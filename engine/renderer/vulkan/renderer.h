@@ -32,6 +32,7 @@
 #include "restir_pt_pass.h"
 #include "ddgi.h"
 #include "scene_render_targets.h"
+#include "scene_view.h"
 #include "selection_outline_pass.h"
 #include "skinning_pass.h"
 #include "toon_pass.h"
@@ -56,6 +57,8 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 #include <engine/renderer/path_tracing.h>
+#include <engine/renderer/local_shadows.h>
+#include <engine/renderer/render_features.h>
 
 #include <array>
 #include <deque>
@@ -202,6 +205,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void HandleBackendEvent(const SDL_Event& event) override;
     bool WantsKeyboardCapture() const override;
     void FlushVideoFrames() override;
+    void FlushQuadVideoFrames() override;
     void RunWithRenderIdle(const std::function<void()>& work) override;
 
   private:
@@ -211,8 +215,66 @@ class VulkanRenderer : public EditorRenderBackendBase
     void ApplyImGuiTextureRequests(const ImDrawData& drawData);
     // Main thread: everything the render thread will read of this frame.
     void BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent);
-    // Render thread: draws one frame from its packet.
+    // A frame's work that every view shares, done once before the views (RenderFrame): the lights,
+    // every draw's model matrix and the shadow casters, the sky, the probes, the local shadow atlas,
+    // the skinning and the white balance.
+    struct SharedFrameState
+    {
+        uint32_t imageIndex = 0;
+        uint32_t frameSlot = 0;
+        SceneLightSelection lightSelection;
+        std::vector<GpuLightData> selectedLights;
+        uint32_t directionalLightCount = 0;
+        int32_t shadowLightIndex = -1;
+        std::vector<glm::mat4> models;
+        std::vector<MotionKey> motionKeys;
+        std::vector<uint32_t> drawSlots;
+        std::vector<ShadowDrawItem> shadowDrawItems;
+        uint64_t shadowCasterKey = 0;
+        EnvironmentMode environmentMode = EnvironmentMode::None;
+        AtmosphereParameters atmosphereParameters{};
+        std::optional<AtmosphereSun> sun;
+        DdgiUniformData ddgiData{};
+        std::vector<LocalShadowTile> localShadowTiles;
+        std::vector<GpuLocalShadowTile> gpuShadowTiles;
+        std::vector<VulkanSkinningPass::Dispatch> skinningDispatches;
+        glm::mat3 whiteBalance{1.0f};
+        // The viewport's: a capture view takes away DLSS (PrepareView).
+        RenderCapabilities capabilities;
+    };
+    // One view's frame, prepared before recording: its uniforms written, its draws, its cascades,
+    // and the frame context its passes record with (which points into the draws, so this stays put).
+    struct PreparedView
+    {
+        VulkanSceneView* view = nullptr;
+        ScenePassFrameContext frame{};
+        std::span<const ScenePassId> passOrder;
+        std::optional<ShadowCascadePlan> shadowPlan;
+        EnvironmentUniformData environment{};
+        std::vector<VulkanDrawItem> drawItems;
+        std::vector<VulkanDrawItem> decalDrawItems;
+        std::vector<VulkanDrawItem> toonDrawItems;
+        std::vector<VulkanDrawItem> scatterDrawItems;
+        std::vector<ShadowDrawItem> selectionDrawItems;
+    };
+    // Render thread: draws one frame from its packet, every capture view's then the viewport's.
     void RenderFrame(RenderFramePacket& frame);
+    // A view's frame from camera, whose EV UpdateAutoExposure has adapted. The viewport's alone runs
+    // DLSS, path tracing, the selection outline and the G-buffer debug views.
+    std::unique_ptr<PreparedView> PrepareView(
+        VulkanSceneView& view,
+        const Camera& camera,
+        const ViewportMatrices& viewportMatrices,
+        bool viewport,
+        const SharedFrameState& shared,
+        RenderFramePacket& packet);
+    // The camera block's environment for a camera at cameraPosition, its clouds' march jitter at
+    // taaFrameIndex.
+    EnvironmentUniformData BuildViewEnvironment(
+        const SharedFrameState& shared,
+        const RenderFramePacket& packet,
+        const glm::vec3& cameraPosition,
+        uint32_t taaFrameIndex) const;
     void PublishFeedback(const RenderFramePacket& frame);
     // The device-local memory now (docs/design/2026-10-07-vram-budget-design.md). Render thread.
     GpuMemoryReport MeasureGpuMemory(const RenderFramePacket& frame) const;
@@ -223,7 +285,11 @@ class VulkanRenderer : public EditorRenderBackendBase
 
     void CreateDeviceResources();
     void DestroyDeviceResources();
-    EnvironmentDescriptorBindings BuildEnvironmentBindings() const;
+    // Set 0's environment bindings for a view: the shared images, and the view's own scatter images,
+    // aerial perspective and clouds.
+    EnvironmentDescriptorBindings BuildEnvironmentBindings(const VulkanSceneView& view) const;
+    // A view's set 0 for drawCapacity draws, with every live draw's material written in.
+    std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
     VkSampler EquirectangularSampler() const;
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
@@ -233,8 +299,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     void UpdateMinimapTexture(const std::string& path);
     void ReleaseMinimapTexture();
     void CreateSwapchainResources();
-    void CreateScenePasses();
-    IScenePass* FindScenePass(ScenePassId id) const;
+    // A view's passes on its targets; the viewport's also build the material pipelines every view
+    // draws with (the views' render passes are alike, so compatible).
+    void CreateScenePasses(VulkanSceneView& view);
     void DestroySwapchainResources();
     void CreateDescriptorResources();
     void DestroyDescriptorResources();
@@ -254,6 +321,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     SceneExtents ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
     void SyncSceneTargets(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug);
+    // Rebuilds a view's targets at another size, and what was made from them; its histories start
+    // over. Waits for the device.
+    void RebuildViewTargets(VulkanSceneView& view, VkExtent2D render, VkExtent2D output);
+    // Keeps one capture view per camera the frame names, each at its camera's size: made, resized
+    // or dropped (waiting for the device) as the cameras come and go.
+    void SyncCaptureViews(std::span<const SceneCaptureView> cameras);
+    std::unique_ptr<VulkanSceneView> CreateCaptureView(VkExtent2D extent);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources(const RenderFramePacket& frame);
@@ -319,12 +393,16 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::mat4& viewProjection) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
+        VulkanSceneView& view,
         const RenderPassIo& io,
         const ScenePassFrameContext& frame);
+    // timer, when given, marks each pass.
     void RecordScenePasses(
         VkCommandBuffer commandBuffer,
+        VulkanSceneView& view,
         const ScenePassFrameContext& frame,
-        std::span<const ScenePassId> passOrder);
+        std::span<const ScenePassId> passOrder,
+        VulkanGpuTimer* timer);
     // The path tracer's per-frame state, once frame.pathTracing says whether it runs: its images the
     // first time, whether its image stands still and so how long a history a pixel averages, the
     // history's ping-pong and pre-exposure scale, and its status line.
@@ -338,7 +416,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
-    void UpdateAutoExposure(RenderFramePacket& frame, uint32_t frameSlot);
+    void UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot);
     // Adapts the white point toward this frame's illuminant estimate and returns the balance the
     // tone mapping pass applies (identity when auto white balance is off).
     glm::mat3 UpdateWhiteBalance(RenderFramePacket& frame);
@@ -429,9 +507,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;
     std::unique_ptr<VulkanMaterialDescriptorSetLayout> m_materialSetLayout;
     VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
-    // Device lifetime too: its image has a fixed size and is shared by every frame in flight, and
-    // every VulkanUniformBuffer binds it into set 0.
-    std::unique_ptr<VulkanShadowPass> m_shadowPass;
+    // Device lifetime too: its image has a fixed size and is shared by every frame in flight and
+    // every view, and every VulkanUniformBuffer binds it into set 0.
     std::unique_ptr<VulkanLocalShadowPass> m_localShadowPass;
     // Device lifetime as well, for the same reasons: fixed-size images shared by every frame in
     // flight and bound into set 0 by every VulkanUniformBuffer.
@@ -443,8 +520,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanRayScene> m_rayScene;
     // Poses the skinned submeshes at the start of every frame (skinning_pass.h).
     std::unique_ptr<VulkanSkinningPass> m_skinningPass;
-    // The toon passes' per-frame materials (toon_pass.h), made with the first scene passes.
-    std::unique_ptr<VulkanToonMaterials> m_toonMaterials;
     std::unique_ptr<VulkanTexture> m_rayDefaultTexture;
     // The DDGI probes, the CPU's schedule of their updates, the level layout their data belongs to
     // (count and base spacing: another one invalidates every probe) and the frame index that seeds
@@ -495,6 +570,14 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanVideoReadback> m_videoReadback;
     // Hands the recording the slot's frame once its fence has been waited on, if it holds one.
     void SubmitVideoFrame(uint32_t frameSlot);
+    // The quad recording's canvases on their way back, and the same for them; their cameras' names
+    // are written on before they go.
+    std::unique_ptr<VulkanVideoReadback> m_quadReadback;
+    void SubmitQuadVideoFrame(uint32_t frameSlot);
+    void SubmitQuadCanvas(VulkanVideoReadback::Frame& canvas);
+    // Where each capture view's picture goes on the quad recording's canvas this frame; empty
+    // without a recording, or while a view is not at its tile's size.
+    std::vector<VulkanVideoReadback::MosaicTile> BuildQuadMosaicTiles(uint32_t imageIndex) const;
     // What the last drawn frame showed, for CaptureDdgiReference: its unjittered view-projection and
     // camera, pre-exposure, frame slot and debug view, the directional lights as they reached the
     // scene, and its sky, which the reference supports only when uniform.
@@ -527,16 +610,15 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanSamplerCache> m_samplerCache;
     // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).
     std::unique_ptr<VulkanTransmissionImage> m_transmissionImage;
-    std::unique_ptr<VulkanUniformBuffer> m_uniformBuffer;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
     std::unique_ptr<VulkanRenderPass> m_renderPass;
-    std::unique_ptr<SceneRenderTargets> m_sceneTargets;
-    // False until auto exposure has metered its first frame, which it then snaps to instead of
-    // fading in from the default EV.
-    bool m_hasMeteredExposure = false;
-    // Two-stage auto exposure (see StepAutoExposure): the long-term stage, and the sun and sky
-    // references gathered while recording the previous frame.
-    AutoExposureState m_autoExposureState;
+    // The viewport's camera: its targets, passes, frame sets and histories (scene_view.h). Its
+    // shadow pass is made with the device; the rest with the swapchain.
+    VulkanSceneView m_view;
+    // The quad recording's cameras, in the frame's order (RenderFramePacket::captureViews).
+    std::vector<std::unique_ptr<VulkanSceneView>> m_captureViews;
+    // The sun and sky references auto exposure meters against, gathered while recording the
+    // previous frame; shared by every view.
     ExposureReferences m_exposureReferences;
     // Auto white balance (see white_balance.h): the references gathered with the exposure ones, and
     // the adapted white point; empty until the first balanced frame.
@@ -547,36 +629,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     uint32_t m_droppedLocalShadowCount = 0;
-    // Scoped to one command buffer: the recording lambda resets it per frame, because a target's
-    // layout belongs to one of its per-frame copies and not to the target as a whole. The resets
-    // at the image lifetime boundaries keep it from describing a destroyed image even when no
-    // frame is recorded in between.
-    RenderTargetLayoutTracker m_layoutTracker;
-    // Last frame's matrices for motion vectors. Reset wherever the scene targets are rebuilt,
-    // because a new extent is a new projection and would otherwise read as full-screen motion.
-    MotionHistory m_motionHistory;
-    // Which AO history image each frame reads and writes. Reset with the motion history, because
-    // the resolve pass recreates its history images at the same points.
-    TemporalHistory m_aoHistory;
-    TemporalHistory m_rtShadowHistory;
-    TemporalHistory m_giHistory;
-    TemporalHistory m_ssrHistory;
-    TemporalHistory m_taaHistory;
-    // ReSTIR PT's reservoirs and surface records: whether last frame's are this frame's history, and
-    // which surface buffer is which. Reset with the others, and when the pass makes its buffers.
-    TemporalHistory m_restirPtHistory;
-    // Last frame's camera, which ReSTIR PT's temporal reuse shifts paths to, and what the accumulate
-    // mode compares to tell a still camera.
-    glm::vec3 m_previousCameraPosition{0.0f};
+    // What ReSTIR PT's accumulate mode compares to tell a still camera (the viewport's only).
     glm::mat4 m_restirPtAccumulationView{0.0f};
     uint32_t m_restirPtAccumulatedFrames = 0;
     uint64_t m_restirPtAccumulationEpochs = 0;
-    // The pre-exposure the TAA history was written with; 0 before any frame wrote it.
-    float m_taaHistoryPreExposure = 0.0f;
-    // The path tracer's accumulation, the pre-exposure it was written with, and whether its image is
-    // standing still; reset where the other histories are.
-    TemporalHistory m_pathTraceHistory;
-    float m_pathTraceHistoryPreExposure = 0.0f;
+    // Whether the viewport's path traced image is standing still; reset where its histories are.
     PathTraceAccumulation m_pathTraceAccumulation;
     // The ray scene's install count the accumulation last saw: a new one is a scene change.
     uint32_t m_pathTraceGeometryEpoch = 0;
@@ -584,29 +641,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // thread's copy from the feedback.
     std::string m_pathTracingStatus;
     std::string m_pathTracingStatusShown;
-    // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
-    uint32_t m_taaFrameIndex = 0;
     // How far the clouds have moved, run on by every frame's time (engine/renderer/volumetric_clouds.h).
     CloudMotion m_cloudMotion;
-    // Seeds the AO trace's noise; advances once per recorded frame.
-    uint32_t m_aoFrameIndex = 0;
-    // Set 2 and the set 1 filler for every pass that samples the G-buffer. Rebuilt with the passes
-    // on a swapchain recreate, and rewritten before them on a viewport resize.
-    std::unique_ptr<VulkanGBufferDescriptors> m_gbufferDescriptors;
-    // Every scene pass, owned, in construction order. Record order is decided per frame by
-    // BuildScenePassOrder and resolved through FindScenePass, so this list is only ever walked
-    // whole — when the targets are rebuilt. Adding a pass is one push_back in CreateScenePasses.
-    std::vector<std::unique_ptr<IScenePass>> m_scenePasses;
-    // Non-owning: the exposure pass inside m_scenePasses, kept typed because UpdateAutoExposure
-    // reads its histograms. Set and cleared together with the list, so it is null exactly when
-    // the list is empty, which UpdateAutoExposure already checks for.
-    VulkanExposureHistogramPass* m_exposurePass = nullptr;
-    // Owned by m_scenePasses like the exposure pass; its images back set 0 bindings 19 and 20.
-    VulkanScatterPass* m_scatterPass = nullptr;
-    // Owned by m_scenePasses too; makes its images on the first path traced frame.
-    VulkanPathTracePass* m_pathTracePass = nullptr;
-    // Owned by m_scenePasses too: the renderer makes its buffers the first frame it runs.
-    VulkanRestirPtPass* m_restirPtPass = nullptr;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
     // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
     std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;
@@ -647,8 +683,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::string m_sceneUploadStatus;
     std::optional<bool> m_outOfMemoryChange;
     GpuMemoryReport m_gpuMemory;
-    // The EV100 auto exposure reached; the main thread's camera trails it by a frame.
-    std::optional<float> m_renderExposureEv100;
     // The main thread's copy of RenderFeedback::minimapLoaded.
     bool m_minimapAvailable = false;
 };

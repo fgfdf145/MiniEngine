@@ -362,7 +362,7 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
     const uint32_t samples = std::max(reference.samples, 1u);
     const uint32_t stride = std::max(reference.stride, 1u);
     const ReferenceFrame& frame = m_referenceFrame;
-    if (!m_lastRecordedImageIndex.has_value() || !m_sceneTargets)
+    if (!m_lastRecordedImageIndex.has_value() || !m_view.targets)
     {
         throw std::runtime_error("No frame has been drawn to compare");
     }
@@ -400,12 +400,12 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
     request.device = m_device->GetHandle();
     request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
     request.queue = m_device->GetGraphicsQueue();
-    request.image = m_sceneTargets->GetImage(
+    request.image = m_view.targets->GetImage(
         RenderTargetId::SceneGi,
-        m_sceneTargets->ResolveIndex(RenderTargetId::SceneGi, *m_lastRecordedImageIndex, frame.frameSlot));
-    request.format = m_sceneTargets->GetFormat(RenderTargetId::SceneGi);
-    request.extent = m_sceneTargets->GetExtent();
-    request.layout = m_layoutTracker.GetLayout(RenderTargetId::SceneGi);
+        m_view.targets->ResolveIndex(RenderTargetId::SceneGi, *m_lastRecordedImageIndex, frame.frameSlot));
+    request.format = m_view.targets->GetFormat(RenderTargetId::SceneGi);
+    request.extent = m_view.targets->GetExtent();
+    request.layout = m_view.layoutTracker.GetLayout(RenderTargetId::SceneGi);
     if (request.layout == VK_IMAGE_LAYOUT_UNDEFINED)
     {
         throw std::runtime_error("The last frame did not write the DDGI irradiance or the path traced light");
