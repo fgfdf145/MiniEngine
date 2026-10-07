@@ -105,9 +105,17 @@ target_link_libraries(engine_asset
         draco::draco
 )
 
+# MINIENGINE_HAS_KTX goes on texture_loader.cpp alone, the one file that reads it, so
+# engine_asset's own compile line can match the shared precompiled header
+# (MiniEnginePch.cmake); a file compiled with macros its PCH was built without skips the PCH.
 if(TARGET KTX::ktx)
     target_link_libraries(engine_asset PRIVATE KTX::ktx)
-    target_compile_definitions(engine_asset PRIVATE MINIENGINE_HAS_KTX=1)
+    set(_miniengine_has_ktx 1)
 else()
-    target_compile_definitions(engine_asset PRIVATE MINIENGINE_HAS_KTX=0)
+    set(_miniengine_has_ktx 0)
 endif()
+set_source_files_properties(texture_loader.cpp
+    PROPERTIES
+        COMPILE_DEFINITIONS "MINIENGINE_HAS_KTX=${_miniengine_has_ktx}"
+        SKIP_PRECOMPILE_HEADERS ON
+)

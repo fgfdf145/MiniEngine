@@ -42,12 +42,14 @@ target_include_directories(engine_core
 
 # Fallbacks for EnginePaths, used only when neither a command-line override nor
 # an environment variable supplies the root. Keep these the only path
-# definitions in the build.
-target_compile_definitions(engine_core
-    PRIVATE
-        MINIENGINE_DEFAULT_PROJECT_DIR="${PROJECT_SOURCE_DIR}"
-        MINIENGINE_DEFAULT_CACHE_DIR="${MINIENGINE_DEFAULT_CACHE_DIR}"
-        MINIENGINE_DEFAULT_SHADER_DIR="${MINIENGINE_SHADER_OUTPUT_DIR}"
+# definitions in the build. They go on engine_paths.cpp alone so engine_core's
+# own compile line matches the shared precompiled header (MiniEnginePch.cmake);
+# a file compiled with macros its PCH was built without skips the PCH.
+set_source_files_properties(paths/engine_paths.cpp
+    PROPERTIES
+        COMPILE_DEFINITIONS
+            "MINIENGINE_DEFAULT_PROJECT_DIR=\"${PROJECT_SOURCE_DIR}\";MINIENGINE_DEFAULT_CACHE_DIR=\"${MINIENGINE_DEFAULT_CACHE_DIR}\";MINIENGINE_DEFAULT_SHADER_DIR=\"${MINIENGINE_SHADER_OUTPUT_DIR}\""
+        SKIP_PRECOMPILE_HEADERS ON
 )
 
 # The version is read from project(VERSION) and compiled into engine_version.cpp alone, so bumping
@@ -56,6 +58,7 @@ set_source_files_properties(version/engine_version.cpp
     PROPERTIES
         COMPILE_DEFINITIONS
             "MINIENGINE_VERSION_MAJOR=${PROJECT_VERSION_MAJOR};MINIENGINE_VERSION_MINOR=${PROJECT_VERSION_MINOR};MINIENGINE_VERSION_PATCH=${PROJECT_VERSION_PATCH};MINIENGINE_VERSION_STRING=\"${PROJECT_VERSION}\""
+        SKIP_PRECOMPILE_HEADERS ON
 )
 
 target_link_libraries(engine_core

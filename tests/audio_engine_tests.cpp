@@ -1,5 +1,7 @@
 #include <engine/audio/audio_engine.h>
 
+#include "test_fixture_paths.h"
+
 #include <cmath>
 #include <cstdint>
 #include <filesystem>

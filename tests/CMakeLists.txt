@@ -1,3 +1,8 @@
+# Fixture paths for the tests that read files from the source tree. A generated header rather than
+# compile definitions keeps those tests on the shared precompiled header (MiniEnginePch.cmake).
+set(MINIENGINE_TEST_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(test_fixture_paths.h.in "${MINIENGINE_TEST_GENERATED_DIR}/test_fixture_paths.h" @ONLY)
+
 add_executable(miniengine_scene_identity_tests
     editor_scene_identity_tests.cpp
 )
@@ -1841,10 +1846,7 @@ target_link_libraries(miniengine_tyre_tests
         engine_tyre
 )
 
-target_compile_definitions(miniengine_tyre_tests
-    PRIVATE
-        MINIENGINE_TYRE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tyres"
-)
+target_include_directories(miniengine_tyre_tests PRIVATE "${MINIENGINE_TEST_GENERATED_DIR}")
 
 add_test(
     NAME miniengine.tyre
@@ -2043,8 +2045,7 @@ target_link_libraries(miniengine_gt7_hud_tests
     PRIVATE
         engine_editor
 )
-target_include_directories(miniengine_gt7_hud_tests PRIVATE "${Stb_INCLUDE_DIR}")
-target_compile_definitions(miniengine_gt7_hud_tests PRIVATE "MINIENGINE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
+target_include_directories(miniengine_gt7_hud_tests PRIVATE "${Stb_INCLUDE_DIR}" "${MINIENGINE_TEST_GENERATED_DIR}")
 
 if(WIN32)
     add_custom_command(TARGET miniengine_gt7_hud_tests POST_BUILD
@@ -2072,8 +2073,7 @@ target_link_libraries(miniengine_svg_icon_tests
     PRIVATE
         engine_asset
 )
-target_include_directories(miniengine_svg_icon_tests PRIVATE "${Stb_INCLUDE_DIR}")
-target_compile_definitions(miniengine_svg_icon_tests PRIVATE "MINIENGINE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
+target_include_directories(miniengine_svg_icon_tests PRIVATE "${Stb_INCLUDE_DIR}" "${MINIENGINE_TEST_GENERATED_DIR}")
 
 if(WIN32)
     add_custom_command(TARGET miniengine_svg_icon_tests POST_BUILD
@@ -2102,11 +2102,9 @@ target_link_libraries(miniengine_audio_engine_tests
         engine_audio
 )
 
-# A quarter second of a 440 Hz sine in each compressed format miniaudio decodes for us.
-target_compile_definitions(miniengine_audio_engine_tests
-    PRIVATE
-        MINIENGINE_AUDIO_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/audio"
-)
+# A quarter second of a 440 Hz sine in each compressed format miniaudio decodes for us
+# (MINIENGINE_AUDIO_FIXTURES in test_fixture_paths.h).
+target_include_directories(miniengine_audio_engine_tests PRIVATE "${MINIENGINE_TEST_GENERATED_DIR}")
 
 if(WIN32)
     add_custom_command(TARGET miniengine_audio_engine_tests POST_BUILD

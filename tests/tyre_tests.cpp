@@ -2,6 +2,8 @@
 #include <engine/tyre/tyre_magic_formula.h>
 #include <engine/tyre/tyre_tir_file.h>
 
+#include "test_fixture_paths.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
