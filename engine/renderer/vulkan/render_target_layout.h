@@ -66,6 +66,10 @@ enum class RenderTargetId : uint32_t
     ToonDepth,
     ToonLinearDepth,
     ToonMask,
+    // ReSTIR PT's shading (restir_pt_pass.h), written by compute: rgb the reflected light the paths
+    // carry to each deferred pixel, physical radiance times the pre-exposure, which the lighting pass
+    // adds in place of its own lights and ambient.
+    ScenePathTrace,
     Count
 };
 

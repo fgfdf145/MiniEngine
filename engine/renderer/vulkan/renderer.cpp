@@ -636,6 +636,7 @@ VulkanRenderer::~VulkanRenderer()
     DestroySwapchainResources();
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_restirPtPass = nullptr;
     m_gbufferDescriptors.reset();
     m_sceneTargets.reset();
     m_imguiLayer.reset();
@@ -1468,16 +1469,51 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }
     // Path tracing mode, where the ray traced effects can run: its light replaces every ambient term,
     // so the passes that make them stand aside (AO and the probe occlusion here, the GI and the
-    // reflections below). The direct lights and their traced shadows stay.
+    // reflections below). The direct lights and their traced shadows stay. As ReSTIR PT
+    // (pathTracing.restir) it shades every deferred pixel itself, direct light too, so the traced
+    // shadows stand aside as well and the plain path tracer records nothing.
+    const bool restirPtAvailable = m_restirPtPass != nullptr && m_restirPtPass->IsAvailable();
+    const bool pathTracerAvailable = m_pathTracePass != nullptr && m_pathTracePass->IsSupported();
     frame.pathTracing = renderDebug.pathTracing;
-    frame.pathTracing.enabled =
-        renderDebug.pathTracing.enabled && rayTracedEffects && m_pathTracePass != nullptr && m_pathTracePass->IsSupported();
+    frame.pathTracing.enabled = renderDebug.pathTracing.enabled && rayTracedEffects &&
+                                (renderDebug.pathTracing.restir ? restirPtAvailable : pathTracerAvailable);
+    frame.pathTracing.restir = frame.pathTracing.enabled && renderDebug.pathTracing.restir;
     if (frame.pathTracing.enabled)
     {
         frame.ao.enabled = false;
         frame.rayTracing.ambientOcclusion = false;
         frame.rayTracing.probeOcclusion = false;
         frame.rayTracing.reflections = false;
+    }
+    const RestirPtSettings& restirPt = frame.pathTracing.restirPt;
+    if (frame.pathTracing.restir)
+    {
+        frame.rayTracing.sunShadows = false;
+        frame.rayTracing.localShadows = false;
+        if (m_restirPtPass->Prepare(*m_sceneTargets))
+        {
+            m_restirPtHistory.Reset();
+            m_restirPtAccumulatedFrames = 0;
+        }
+    }
+    frame.restirPtHistory = m_restirPtHistory.Advance(frame.pathTracing.restir && (restirPt.temporalReuse || restirPt.spatialReuse));
+    frame.previousCameraPosition = m_previousCameraPosition;
+    m_previousCameraPosition = packet.camera.position;
+    // ReSTIR PT's accumulate mode averages while the camera holds still; any change starts it again, as
+    // do the scene's geometry and lighting changes (DDGI's epochs count them).
+    const glm::mat4 accumulationView = packet.viewportMatrices.renderProjection * packet.viewportMatrices.view;
+    const uint64_t accumulationEpochs = (static_cast<uint64_t>(ddgiGeometryEpoch) << 32) | ddgiLightingEpoch;
+    if (!frame.pathTracing.restir || !restirPt.accumulate || accumulationView != m_restirPtAccumulationView ||
+        accumulationEpochs != m_restirPtAccumulationEpochs)
+    {
+        m_restirPtAccumulatedFrames = 0;
+    }
+    m_restirPtAccumulationView = accumulationView;
+    m_restirPtAccumulationEpochs = accumulationEpochs;
+    frame.restirPtAccumulatedFrames = m_restirPtAccumulatedFrames;
+    if (frame.pathTracing.restir && restirPt.accumulate)
+    {
+        ++m_restirPtAccumulatedFrames;
     }
     frame.aoHistory = m_aoHistory.Advance((frame.ao.enabled || frame.rayTracing.probeOcclusion) && frame.ao.temporalFilter);
     // The one-bounce indirect diffuse, likewise only in the deferred order; the Khronos reference
@@ -1486,6 +1522,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     frame.gi.enabled = renderDebug.gi.enabled && !renderDebug.forwardOnly && !renderDebug.khronosReference && !frame.pathTracing.enabled;
     frame.giHistory = m_giHistory.Advance(frame.gi.enabled && frame.gi.temporalFilter);
     frame.frameIndex = m_aoFrameIndex++;
+    frame.gpuTimer = m_gpuTimer.get();
     frame.taaEnabled = taaEnabled;
     frame.bloom = renderDebug.bloom;
     // The Khronos reference view renders what the Sample Viewer does: no glare or bloom (nor AO or
@@ -1524,7 +1561,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The traced shadow accumulates only while its filters run.
     frame.rtShadowHistory = m_rtShadowHistory.Advance(frame.rayTracing.sunShadows && frame.rayTracing.denoise);
     UpdatePathTracing(frame, packet, selectedLights, lightSelection.ambientLuminance, environmentData, preExposure);
-    m_referenceFrame.pathTraced = frame.pathTracing.enabled;
+    m_referenceFrame.pathTraced = frame.pathTracing.enabled && !frame.pathTracing.restir;
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
     frame.ssr = renderDebug.ssr;
@@ -1877,6 +1914,7 @@ void VulkanRenderer::CreateSwapchainResources()
     m_rtShadowHistory.Reset();
     m_pathTraceHistory.Reset();
     m_pathTraceAccumulation.Reset();
+    m_restirPtHistory.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -1893,6 +1931,7 @@ void VulkanRenderer::DestroySwapchainResources()
     // is undefined again, so the tracker goes back to square one with it.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_restirPtPass = nullptr;
     m_scatterPass = nullptr;
     m_pathTracePass = nullptr;
     m_forwardPipelines.reset();
@@ -2388,6 +2427,7 @@ void VulkanRenderer::CreateScenePasses()
     // every owned pass to follow them; see SyncSceneTargets.
     m_scenePasses.clear();
     m_exposurePass = nullptr;
+    m_restirPtPass = nullptr;
     m_scatterPass = nullptr;
     m_pathTracePass = nullptr;
     m_forwardPipelines.reset();
@@ -2487,6 +2527,15 @@ void VulkanRenderer::CreateScenePasses()
         *m_rayScene);
     m_pathTracePass = pathTracePass.get();
     m_scenePasses.push_back(std::move(pathTracePass));
+    auto restirPtPass = std::make_unique<VulkanRestirPtPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        *m_sceneTargets,
+        m_frameSetLayout->GetHandle(),
+        *m_rayScene);
+    m_restirPtPass = restirPtPass.get();
+    m_scenePasses.push_back(std::move(restirPtPass));
     m_scenePasses.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -2773,6 +2822,7 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
     m_rtShadowHistory.Reset();
     m_pathTraceHistory.Reset();
     m_pathTraceAccumulation.Reset();
+    m_restirPtHistory.Reset();
     m_giHistory.Reset();
     m_ssrHistory.Reset();
     m_taaHistory.Reset();
@@ -3793,7 +3843,9 @@ void VulkanRenderer::UpdatePathTracing(
     float preExposure)
 {
     uint32_t stillFrames = 0;
-    if (frame.pathTracing.enabled)
+    // The plain path tracer: not while ReSTIR PT runs in its place (its bookkeeping is in the frame setup).
+    const bool plainPathTracing = frame.pathTracing.enabled && !frame.pathTracing.restir;
+    if (plainPathTracing)
     {
         if (m_pathTracePass->Prepare(*m_sceneTargets))
         {
@@ -3827,7 +3879,7 @@ void VulkanRenderer::UpdatePathTracing(
         m_pathTraceAccumulation.Reset();
     }
     m_pathTraceGeometryEpoch = m_ddgiGeometryEpoch;
-    frame.pathTraceHistory = m_pathTraceHistory.Advance(frame.pathTracing.enabled && frame.pathTracing.accumulate);
+    frame.pathTraceHistory = m_pathTraceHistory.Advance(plainPathTracing && frame.pathTracing.accumulate);
     frame.pathTraceHistoryScale = TaaHistoryScale(frame.pathTraceHistory.valid, preExposure, m_pathTraceHistoryPreExposure);
     m_pathTraceHistoryPreExposure = preExposure;
 
@@ -3835,6 +3887,13 @@ void VulkanRenderer::UpdatePathTracing(
     if (!renderDebug.pathTracing.enabled)
     {
         m_pathTracingStatus.clear();
+    }
+    else if (renderDebug.pathTracing.restir && frame.pathTracing.restir)
+    {
+        const RestirPtSettings& restirPt = frame.pathTracing.restirPt;
+        m_pathTracingStatus = frame.dlssRayReconstruction ? "ReSTIR PT: DLSS ray reconstruction denoises it"
+                              : restirPt.accumulate       ? std::format("ReSTIR PT: {} still frames averaged", frame.restirPtAccumulatedFrames)
+                                                          : "ReSTIR PT: best with DLSS ray reconstruction";
     }
     else if (m_pathTracePass == nullptr || !m_pathTracePass->IsSupported())
     {

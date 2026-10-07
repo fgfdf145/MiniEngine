@@ -56,6 +56,8 @@ add_library(engine_render_core
     spherical_harmonics.h
     taa_jitter.cpp
     taa_jitter.h
+    restir_pairing.cpp
+    restir_pairing.h
     temporal_history.cpp
     temporal_history.h
     view_frustum.cpp
@@ -123,6 +125,8 @@ add_library(engine_renderer
     vulkan/rt_shadow_pass.h
     vulkan/path_trace_pass.cpp
     vulkan/path_trace_pass.h
+    vulkan/restir_pt_pass.cpp
+    vulkan/restir_pt_pass.h
     vulkan/ddgi_reference_capture.cpp
     vulkan/common.h
     vulkan/device.cpp
@@ -319,6 +323,7 @@ set(MINIENGINE_SHADER_INCLUDES
     ray_hit_common.glsl
     rt_shadow_common.glsl
     path_trace_common.glsl
+    restir_pt_common.glsl
     ddgi_common.glsl
     ground_plane.glsl
 )
@@ -392,6 +397,11 @@ set(MINIENGINE_HARDWARE_RAY_SHADERS
     rt_shadow_trace.comp
     rt_reflection_trace.comp
     path_trace.comp
+    restir_pt_initial.comp
+    restir_pt_temporal.comp
+    restir_pt_spatial_shift.comp
+    restir_pt_spatial.comp
+    restir_pt_duplication.comp
 )
 
 miniengine_add_shaders(engine_renderer_shaders ${MINIENGINE_SHADER_SOURCES})

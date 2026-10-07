@@ -25,5 +25,8 @@ layout(set = 2, binding = 10) uniform sampler2D sceneReflections;
 layout(set = 2, binding = 11) uniform sampler2D sceneGi;
 // The ray traced sun shadow (rt_shadow_filter.comp): r visibility, g 1 where it ran this frame.
 layout(set = 2, binding = 12) uniform sampler2D sceneShadow;
+// ReSTIR PT's shading (restir_pt_spatial.comp): rgb pre-exposed reflected radiance, read where the
+// lighting pass's push constant debug.w says it ran.
+layout(set = 2, binding = 13) uniform sampler2D scenePathTrace;
 
 #endif

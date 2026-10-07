@@ -1,0 +1,60 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// ReSTIR PT's duplication map (the paper's section 5): for each pixel's final reservoir, the share of the
+// 288 others in its 17 x 17 neighbourhood that hold a copy of the same initial sample, told by the path
+// seed every shift carries along. Next frame's temporal reuse lowers the history's confidence cap where
+// it is high. The seeds of a 32 x 32 tile (the group's 16 x 16 pixels and an 8-pixel apron) are read
+// into shared memory once.
+
+#include "scene_common.glsl"
+#include "gbuffer_common.glsl"
+#include "pbr_common.glsl"
+#include "pre_exposure.glsl"
+#include "ray_tracing_common.glsl"
+#include "material_common.glsl"
+#include "material_uv.glsl"
+#include "ray_hit_common.glsl"
+#include "restir_pt_common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+const int RADIUS = 8;
+const int TILE = 32;
+shared uint seeds[TILE * TILE];
+
+void main()
+{
+    ivec2 groupOrigin = ivec2(gl_WorkGroupID.xy) * 16 - RADIUS;
+    for (uint i = gl_LocalInvocationIndex; i < uint(TILE * TILE); i += 256u)
+    {
+        ivec2 p = groupOrigin + ivec2(int(i) % TILE, int(i) / TILE);
+        seeds[i] = PtInside(p) ? historyReservoirs[PtPixelIndex(p) * 4u + 1u].x : 0u;
+    }
+    barrier();
+
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (!PtInside(pixel))
+    {
+        return;
+    }
+    ivec2 local = ivec2(gl_LocalInvocationID.xy) + RADIUS;
+    uint own = seeds[local.y * TILE + local.x];
+    uint copies = 0u;
+    if (own != 0u)
+    {
+        for (int dy = -RADIUS; dy <= RADIUS; ++dy)
+        {
+            for (int dx = -RADIUS; dx <= RADIUS; ++dx)
+            {
+                copies += seeds[(local.y + dy) * TILE + local.x + dx] == own ? 1u : 0u;
+            }
+        }
+        copies -= 1u;
+    }
+    duplication[PtPixelIndex(pixel)] = float(copies) / 288.0;
+}

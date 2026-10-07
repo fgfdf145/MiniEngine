@@ -36,6 +36,7 @@ RenderTargetKind GetRenderTargetKind(RenderTargetId target)
     case RenderTargetId::SceneGi:
     case RenderTargetId::ShadowRaw:
     case RenderTargetId::SceneShadow:
+    case RenderTargetId::ScenePathTrace:
         return RenderTargetKind::Storage;
     default:
         return RenderTargetKind::Color;

@@ -15,6 +15,8 @@ enum class ScenePassId
     Geometry,
     // The ray traced sun shadow (rt_shadow_pass.h), which the lighting pass reads.
     RtShadow,
+    // ReSTIR PT (restir_pt_pass.h): the path traced lighting the lighting pass adds while it runs.
+    RestirPt,
     AoTrace,
     AoResolve,
     SsrTrace,
