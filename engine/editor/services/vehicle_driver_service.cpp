@@ -87,6 +87,33 @@ constexpr float kPedalThreshold = 0.03f;
 // A hand on the gear lever holds the knob from above, a little ahead, its fingers pointing forward and
 // down.
 constexpr float kKnobGripAbove = 0.015f;
+// The body's sway: degrees of lean per m/s^2 felt, a share of that backwards (the seat's back holds
+// it), the most each way, and the spring it swings on (its natural frequency, Hz, and damping ratio);
+// what the driver feels is smoothed over about this long.
+constexpr float kSwayDegreesPerAcceleration = 0.8f;
+constexpr float kSwayBackShare = 0.3f;
+constexpr float kMaxSwaySideDegrees = 12.0f;
+constexpr float kMaxSwayForwardDegrees = 12.0f;
+constexpr float kMaxSwayBackDegrees = 3.0f;
+constexpr float kSwayFrequency = 1.6f;
+constexpr float kSwayDamping = 0.5f;
+constexpr float kFeltSeconds = 0.1f;
+constexpr float kSwayStepSeconds = 1.0f / 240.0f;
+// Faster than this the car has jumped (a reset), and the sway starts again.
+constexpr float kJumpSpeed = 150.0f;
+// Hand over hand: how far round each hand reaches from the top (the left hand's range; the right's is
+// its mirror), where a hand takes hold again (this far inside the far end of its range), how long a
+// hand takes to get there (crossing over, drawn back towards the driver at the middle of the way), and
+// how close to the middle the wheel must be, and how still, for the hands to go back to a quarter to
+// three.
+constexpr float kLeftHandMinDegrees = -170.0f;
+constexpr float kLeftHandMaxDegrees = 100.0f;
+constexpr float kRegripInsideDegrees = 50.0f;
+constexpr float kHandMoveSeconds = 0.25f;
+constexpr float kHandCrossBack = 0.1f;
+constexpr float kRestTurnDegrees = 20.0f;
+constexpr float kRestTurnRate = 1.0f;
+constexpr float kRestOffDegrees = 40.0f;
 // Legs straightened to at most this share of their length.
 constexpr float kMaxLegStretch = 0.95f;
 // The hands hold the rim at its middle: the rim's outer edge less half its thickness.
@@ -94,7 +121,7 @@ constexpr float kRimHalfThickness = 0.012f;
 // For the hands to reach the wheel, the back bends forward off the seat's in these steps up to this
 // far, then the hips slide forward too, until neither wrist needs more than this share of its arm's
 // length: a short driver leans in before the knees come up under the wheel.
-constexpr float kMaxArmStretch = 0.98f;
+constexpr float kMaxArmStretch = 0.93f;
 constexpr float kLeanStepDegrees = 2.0f;
 constexpr float kMaxLeanDegrees = 20.0f;
 constexpr float kSlideStep = 0.01f;
@@ -307,6 +334,10 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
         }
     }
     seat.hips = glm::vec3(x, cushion + kHipsAboveCushion, back + kHipsBeforeBack);
+    seat.cushionHeight = cushion;
+    seat.backPoint = glm::vec3(x, cushion + kBackLowerHeight, back);
+    // The back leans back: it faces forward and a little up.
+    seat.backNormal = glm::vec3(0.0f, std::sin(glm::radians(seat.reclineDegrees)), std::cos(glm::radians(seat.reclineDegrees)));
 
     const glm::vec3 floorRay(x, cushion, seat.hips.z + kFloorRayAhead);
     const std::optional<float> floorHit = rays.Cast(floorRay, down, 1.0f);
@@ -475,13 +506,171 @@ float Smooth(float value)
 }
 }
 
+namespace
+{
+float WrapAngle(float angle)
+{
+    const float turn = glm::two_pi<float>();
+    angle = std::fmod(angle + glm::pi<float>(), turn);
+    return (angle < 0.0f ? angle + turn : angle) - glm::pi<float>();
+}
+
+// The rim's up, square to the column.
+glm::vec3 WheelUp(const VehicleDriverSeat& seat)
+{
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    return glm::normalize(up - seat.wheelAxis * glm::dot(up, seat.wheelAxis));
+}
+
+glm::vec3 RimRadial(const VehicleDriverSeat& seat, float angle)
+{
+    return glm::angleAxis(angle, seat.wheelAxis) * WheelUp(seat);
+}
+
+glm::vec3 RimPoint(const VehicleDriverSeat& seat, float angle)
+{
+    return seat.wheelCenter + RimRadial(seat, angle) * seat.wheelRadius;
+}
+
+float RestGrip(size_t side)
+{
+    return side == 0 ? -glm::half_pi<float>() : glm::half_pi<float>();
+}
+
+// A hand's reach round the rim from the top (radians): the left's, or the right's mirror of it.
+std::pair<float, float> HandRange(size_t side)
+{
+    const float low = glm::radians(kLeftHandMinDegrees);
+    const float high = glm::radians(kLeftHandMaxDegrees);
+    return side == 0 ? std::pair<float, float>(low, high) : std::pair<float, float>(-high, -low);
+}
+}
+
+void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, float deltaSeconds)
+{
+    if (deltaSeconds <= 0.0f)
+    {
+        return;
+    }
+    const glm::vec3 position(vehicleToWorld[3]);
+    const glm::vec3 velocity = (position - sway.lastPosition) / deltaSeconds;
+    if (sway.samples > 0 && glm::length(velocity) > kJumpSpeed)
+    {
+        sway = VehicleDriverSway{};
+    }
+    sway.samples = std::min(sway.samples + 1, 3);
+    if (sway.samples >= 3)
+    {
+        // Felt: the acceleration less gravity, in the car's frame.
+        const glm::vec3 acceleration = (velocity - sway.lastVelocity) / deltaSeconds - glm::vec3(0.0f, -9.81f, 0.0f);
+        const glm::mat3 axes(
+            glm::normalize(glm::vec3(vehicleToWorld[0])), glm::normalize(glm::vec3(vehicleToWorld[1])), glm::normalize(glm::vec3(vehicleToWorld[2])));
+        const glm::vec3 felt = glm::transpose(axes) * acceleration;
+        sway.felt += (felt - sway.felt) * (1.0f - std::exp(-deltaSeconds / kFeltSeconds));
+    }
+    if (sway.samples >= 2)
+    {
+        sway.lastVelocity = velocity;
+    }
+    sway.lastPosition = position;
+
+    // Thrown the other way from what pushes the car: outwards in a corner, forward under braking.
+    const float side = std::clamp(-sway.felt.x * kSwayDegreesPerAcceleration, -kMaxSwaySideDegrees, kMaxSwaySideDegrees);
+    float forward = -sway.felt.z * kSwayDegreesPerAcceleration;
+    forward = forward < 0.0f ? std::max(forward * kSwayBackShare, -kMaxSwayBackDegrees) : std::min(forward, kMaxSwayForwardDegrees);
+    const glm::vec2 target(side, forward);
+    const float omega = glm::two_pi<float>() * kSwayFrequency;
+    for (float left = std::min(deltaSeconds, 0.1f); left > 0.0f; left -= kSwayStepSeconds)
+    {
+        const float step = std::min(left, kSwayStepSeconds);
+        sway.leanRate += (omega * omega * (target - sway.lean) - 2.0f * kSwayDamping * omega * sway.leanRate) * step;
+        sway.lean += sway.leanRate * step;
+    }
+}
+
+void UpdateDriverHands(VehicleDriverHands& hands, const VehicleDriverSeat& seat, float turn, float deltaSeconds)
+{
+    if (!hands.started)
+    {
+        for (size_t side = 0; side < 2; ++side)
+        {
+            hands.grips[side] = RestGrip(side) - turn;
+            hands.moving[side] = false;
+        }
+        hands.lastTurn = turn;
+        hands.started = true;
+    }
+    const float rate = deltaSeconds > 0.0f ? (turn - hands.lastTurn) / deltaSeconds : 0.0f;
+    hands.lastTurn = turn;
+
+    for (size_t side = 0; side < 2; ++side)
+    {
+        if (hands.moving[side])
+        {
+            hands.moveSeconds[side] += std::max(deltaSeconds, 0.0f);
+            hands.moving[side] = hands.moveSeconds[side] < kHandMoveSeconds;
+        }
+    }
+    if (hands.moving[0] || hands.moving[1])
+    {
+        return;
+    }
+    const auto regrip = [&](size_t side, float worldAngle)
+    {
+        hands.releasedAt[side] = RimPoint(seat, hands.grips[side] + turn);
+        hands.grips[side] = worldAngle - turn;
+        hands.moving[side] = true;
+        hands.moveSeconds[side] = 0.0f;
+    };
+    // The hand furthest past its reach lets go first.
+    float worst = 0.0f;
+    size_t worstSide = 2;
+    float worstTarget = 0.0f;
+    for (size_t side = 0; side < 2; ++side)
+    {
+        const float held = WrapAngle(hands.grips[side] + turn);
+        const auto [low, high] = HandRange(side);
+        const float inside = glm::radians(kRegripInsideDegrees);
+        if (held > high && held - high > worst)
+        {
+            worst = held - high;
+            worstSide = side;
+            worstTarget = low + inside;
+        }
+        else if (held < low && low - held > worst)
+        {
+            worst = low - held;
+            worstSide = side;
+            worstTarget = high - inside;
+        }
+    }
+    if (worstSide < 2)
+    {
+        regrip(worstSide, worstTarget);
+        return;
+    }
+    // Back near the middle and held still: a hand far from a quarter to three goes back there.
+    if (std::abs(WrapAngle(turn)) < glm::radians(kRestTurnDegrees) && std::abs(rate) < kRestTurnRate)
+    {
+        for (size_t side = 0; side < 2; ++side)
+        {
+            if (std::abs(WrapAngle(hands.grips[side] + turn - RestGrip(side))) > glm::radians(kRestOffDegrees))
+            {
+                regrip(side, RestGrip(side));
+                return;
+            }
+        }
+    }
+}
+
 DriverPoseInput DriverPoseFromSeat(
     const VehicleDriverSeat& seat,
     const glm::vec3& seatOffset,
     float steeringWheelTurn,
     bool hideHead,
-    const VehicleDriverFeet& feet)
+    const VehicleDriverMotion* motion)
 {
+    const VehicleDriverFeet feet = motion != nullptr ? motion->feet : VehicleDriverFeet{};
     DriverPoseInput input;
     // Vehicle space has +X to the car's left.
     input.hips = seat.hips + glm::vec3(-seatOffset.x, seatOffset.y, seatOffset.z);
@@ -490,7 +679,39 @@ DriverPoseInput DriverPoseFromSeat(
     input.wheelCenter = seat.wheelCenter;
     input.wheelAxis = seat.wheelAxis;
     input.wheelRadius = seat.wheelRadius;
-    input.wheelTurn = steeringWheelTurn * seat.wheelTurnSign;
+    const float turn = steeringWheelTurn * seat.wheelTurnSign;
+    // The hands where they hold the rim, or on their way to a new hold: from where they let go towards
+    // the new one as it turns with the wheel, drawn back across the wheel's face at the middle.
+    for (size_t side = 0; side < 2; ++side)
+    {
+        if (motion == nullptr || !motion->hands.started)
+        {
+            input.gripAngles[side] = RestGrip(side);
+            continue;
+        }
+        const VehicleDriverHands& hands = motion->hands;
+        input.gripAngles[side] = hands.grips[side] + turn;
+        if (hands.moving[side])
+        {
+            const float along = Smooth(hands.moveSeconds[side] / kHandMoveSeconds);
+            const glm::vec3 radial = RimRadial(seat, input.gripAngles[side]);
+            DriverHandHold& hold = input.holds[side];
+            hold.grip = glm::mix(hands.releasedAt[side], RimPoint(seat, input.gripAngles[side]), along) -
+                        seat.wheelAxis * (kHandCrossBack * std::sin(glm::pi<float>() * along));
+            hold.direction = glm::normalize(seat.wheelAxis - radial * 0.25f);
+            hold.palmFacing = -radial;
+            hold.alongHand = 1.0f;
+            hold.weight = 1.0f;
+        }
+    }
+    if (motion != nullptr)
+    {
+        input.swayDegrees = motion->sway.lean;
+    }
+    // The hair and skirt lie on the seat's cushion and back.
+    input.seatPlanes = {
+        SpringBonePlane{glm::vec3(seat.backPoint.x, seat.cushionHeight, seat.backPoint.z), glm::vec3(0.0f, 1.0f, 0.0f)},
+        SpringBonePlane{seat.backPoint, seat.backNormal}};
     // The right foot between the accelerator and the brake, the left between the foot rest and the
     // clutch, lifted on the way across.
     const glm::vec3 up(0.0f, 1.0f, 0.0f);
@@ -518,7 +739,7 @@ DriverPoseInput DriverPoseFromSeat(
         }
     }
     // A right turn (positive) looks right, which is a negative yaw.
-    input.headYawDegrees = std::clamp(-glm::degrees(input.wheelTurn) * kHeadYawShare, -kMaxHeadYawDegrees, kMaxHeadYawDegrees);
+    input.headYawDegrees = std::clamp(-glm::degrees(turn) * kHeadYawShare, -kMaxHeadYawDegrees, kMaxHeadYawDegrees);
     input.hideHead = hideHead;
     return input;
 }
@@ -592,8 +813,9 @@ void Tick(RendererSharedState& state, float deltaSeconds)
         const bool driven = session != nullptr && session->entity == car;
         const bool fromCockpit = driven && state.vehicleDrive.camera.follow && state.vehicleDrive.cameraView == VehicleCameraView::Cockpit;
 
-        // The feet work the pedals the car is driven with.
-        VehicleDriverFeet& feet = drivers.feet[entity];
+        // The feet work the pedals the car is driven with, the hands go round the wheel, the body sways.
+        VehicleDriverMotion& motion = drivers.motion[entity];
+        VehicleDriverFeet& feet = motion.feet;
         float throttle = 0.0f;
         float brake = 0.0f;
         float clutch = 0.0f;
@@ -607,8 +829,12 @@ void Tick(RendererSharedState& state, float deltaSeconds)
             brake = std::max(controls.brake, std::max(-controls.throttle * way, 0.0f));
             clutch = controls.clutchPedal ? 1.0f : std::clamp(1.0f - telemetry.clutch, 0.0f, 1.0f);
         }
-        UpdateDriverFeet(feet, throttle, brake, clutch, session != nullptr && session->paused ? 0.0f : deltaSeconds);
-        DriverPoseInput input = DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, driven ? session->steeringWheelTurn : 0.0f, fromCockpit, feet);
+        const float step = session != nullptr && session->paused ? 0.0f : deltaSeconds;
+        const float steeringWheelTurn = driven ? session->steeringWheelTurn : 0.0f;
+        UpdateDriverFeet(feet, throttle, brake, clutch, step);
+        UpdateDriverHands(motion.hands, *fitted.seat, steeringWheelTurn * fitted.seat->wheelTurnSign, step);
+        UpdateDriverSway(motion.sway, matrix, step);
+        DriverPoseInput input = DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, steeringWheelTurn, fromCockpit, &motion);
 
         // A gear change: the hand on the lever's side goes to the knob as the lever moves.
         if (driven && carData->gearLever.has_value())
@@ -645,9 +871,9 @@ void Tick(RendererSharedState& state, float deltaSeconds)
             state.modelAnimation.ClearDriverPose(entity);
         }
     }
-    for (auto it = drivers.feet.begin(); it != drivers.feet.end();)
+    for (auto it = drivers.motion.begin(); it != drivers.motion.end();)
     {
-        it = posed.count(it->first) == 0 ? drivers.feet.erase(it) : std::next(it);
+        it = posed.count(it->first) == 0 ? drivers.motion.erase(it) : std::next(it);
     }
     drivers.posed = std::move(posed);
     if (session != nullptr && !sessionHasDriver)

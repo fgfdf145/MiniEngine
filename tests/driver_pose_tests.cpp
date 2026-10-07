@@ -3,6 +3,7 @@
 #include <engine/asset/model_cache.h>
 #include <engine/asset/model_driver_pose.h>
 #include <engine/asset/model_loader.h>
+#include <engine/asset/model_spring_bones.h>
 #include <engine/editor/command_registry.h>
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/services/vehicle_drive_service.h>
@@ -15,6 +16,7 @@
 
 #include <imgui.h>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
@@ -136,7 +138,7 @@ void SeatedPoseReachesItsTargets()
     Require(result.eyes.y > at[static_cast<size_t>(rig->head)].y, "the eyes are not on the head");
 }
 
-void HandsFollowTheWheel()
+void HandsHoldWhereTheyAreTold()
 {
     const ModelSkeleton skeleton = MakeHumanoid();
     const DriverRig rig = *FindDriverRig(skeleton);
@@ -147,8 +149,8 @@ void HandsFollowTheWheel()
     std::vector<ModelNodePose> poses;
     PoseDriver(skeleton, rig, input, poses);
     const glm::vec3 leftLevel = WorldPositions(skeleton, poses)[static_cast<size_t>(rig.wrist[0])];
-    // A right turn takes the left hand up over the top, the right one down.
-    input.wheelTurn = glm::radians(60.0f);
+    // Turned right with the wheel, the left hand goes up over the top, the right one down.
+    input.gripAngles = {glm::radians(-30.0f), glm::radians(150.0f)};
     PoseDriver(skeleton, rig, input, poses);
     const std::vector<glm::vec3> turned = WorldPositions(skeleton, poses);
     Require(turned[static_cast<size_t>(rig.wrist[0])].y > leftLevel.y + 0.08f, "the left hand did not go up in a right turn");
@@ -246,6 +248,139 @@ void FeetWorkThePedals()
         UpdateDriverFeet(feet, 1.0f, 0.0f, 0.0f, 1.0f / 60.0f);
     }
     Require(feet.leftOnClutch == 0.0f && feet.clutch < 0.01f, "the left foot did not go back to the rest");
+}
+
+VehicleDriverSeat TestSeat()
+{
+    VehicleDriverSeat seat;
+    seat.wheelCenter = glm::vec3(0.0f, 0.8f, 0.4f);
+    seat.wheelAxis = glm::normalize(glm::vec3(0.0f, -0.35f, 0.94f));
+    seat.wheelRadius = 0.18f;
+    return seat;
+}
+
+float Wrapped(float angle)
+{
+    return std::remainder(angle, glm::two_pi<float>());
+}
+
+void HandsGoHandOverHand()
+{
+    const VehicleDriverSeat seat = TestSeat();
+    VehicleDriverHands hands;
+    UpdateDriverHands(hands, seat, 0.0f, 1.0f / 60.0f);
+    Require(std::abs(hands.grips[0] + glm::half_pi<float>()) < 1e-4f && std::abs(hands.grips[1] - glm::half_pi<float>()) < 1e-4f,
+            "the hands do not start at a quarter to three");
+    // A turn and a half to the right at a full turn a second: the hands take turns letting go, never
+    // both at once, never far past their reach, and they cross.
+    int regrips = 0;
+    bool crossed = false;
+    std::array<bool, 2> wasMoving{};
+    float turn = 0.0f;
+    for (int frame = 0; frame < 90; ++frame)
+    {
+        turn += glm::two_pi<float>() / 60.0f;
+        UpdateDriverHands(hands, seat, turn, 1.0f / 60.0f);
+        Require(!(hands.moving[0] && hands.moving[1]), "both hands let go");
+        const float left = Wrapped(hands.grips[0] + turn);
+        const float right = Wrapped(hands.grips[1] + turn);
+        for (size_t side = 0; side < 2; ++side)
+        {
+            const bool letGo = hands.moving[side] && !wasMoving[side];
+            regrips += letGo ? 1 : 0;
+            // Crossed: the right hand reaches over to take hold left of the left hand, on the upper half.
+            crossed = crossed || (letGo && side == 1 && right < left && right < 0.0f);
+            wasMoving[side] = hands.moving[side];
+        }
+        Require(hands.moving[0] || left < glm::radians(140.0f), "the left hand held on far past its reach");
+        Require(hands.moving[1] || right > glm::radians(-140.0f), "the right hand held on far past its reach");
+    }
+    Require(regrips >= 3, "the hands did not go hand over hand");
+    Require(crossed, "the arms never crossed");
+    // Back to the middle and held there, the hands go back to a quarter to three.
+    for (int frame = 0; frame < 240; ++frame)
+    {
+        turn += (0.0f - turn) * 0.2f;
+        UpdateDriverHands(hands, seat, turn, 1.0f / 60.0f);
+    }
+    for (int frame = 0; frame < 120; ++frame)
+    {
+        UpdateDriverHands(hands, seat, turn, 1.0f / 60.0f);
+    }
+    Require(std::abs(Wrapped(hands.grips[0] + turn + glm::half_pi<float>())) < 0.05f &&
+                std::abs(Wrapped(hands.grips[1] + turn - glm::half_pi<float>())) < 0.05f,
+            "the hands did not go back to a quarter to three");
+}
+
+void BodySwaysWithTheCar()
+{
+    // Braking at 8 m/s^2 in a straight line leans the body forward; a right turn leans it left.
+    VehicleDriverSway braking;
+    glm::vec3 position(0.0f);
+    float speed = 30.0f;
+    for (int frame = 0; frame < 60; ++frame)
+    {
+        speed -= 8.0f / 60.0f;
+        position.z += speed / 60.0f;
+        UpdateDriverSway(braking, glm::translate(glm::mat4(1.0f), position), 1.0f / 60.0f);
+    }
+    Require(braking.lean.y > 3.0f && std::abs(braking.lean.x) < 0.5f, "braking did not lean the body forward");
+
+    // Round a 50 m circle to the right at 20 m/s (8 m/s^2 inwards), the car facing along its way.
+    VehicleDriverSway turning;
+    for (int frame = 0; frame < 90; ++frame)
+    {
+        const float angle = 20.0f / 50.0f * static_cast<float>(frame) / 60.0f;
+        // Turning right is turning about -Y; the centre is to the car's right (-X).
+        const glm::mat4 rotation = glm::mat4_cast(glm::angleAxis(-angle, glm::vec3(0.0f, 1.0f, 0.0f)));
+        const glm::vec3 centre(-50.0f, 0.0f, 0.0f);
+        const glm::vec3 onCircle = centre + glm::vec3(rotation * glm::vec4(50.0f, 0.0f, 0.0f, 0.0f));
+        UpdateDriverSway(turning, glm::translate(glm::mat4(1.0f), onCircle) * rotation, 1.0f / 60.0f);
+    }
+    Require(turning.lean.x > 3.0f, "a right turn did not lean the body to the left");
+}
+
+void HairSwings()
+{
+    // A three-joint hair strand under a head, skinned, hanging down.
+    ModelSkeleton skeleton;
+    const int32_t head = AddNode(skeleton, "Head_M", -1, glm::vec3(0.0f, 1.5f, 0.0f));
+    const int32_t first = AddNode(skeleton, "Emi_hair_B_1_0", head, glm::vec3(0.0f, 0.0f, -0.1f));
+    const int32_t second = AddNode(skeleton, "Emi_hair_B_1_1", first, glm::vec3(0.0f, -0.1f, 0.0f));
+    const int32_t third = AddNode(skeleton, "Emi_hair_B_1_2", second, glm::vec3(0.0f, -0.1f, 0.0f));
+    AddNode(skeleton, "Emi_hair_B_1_3", third, glm::vec3(0.0f, -0.1f, 0.0f));
+    ModelSkinBinding binding;
+    for (int32_t node = 0; node < static_cast<int32_t>(skeleton.nodes.size()); ++node)
+    {
+        binding.jointNodes.push_back(node);
+        binding.inverseBindMatrices.push_back(glm::mat4(1.0f));
+    }
+    skeleton.bindings.push_back(binding);
+    skeleton.paletteSize = static_cast<uint32_t>(binding.jointNodes.size());
+    const SpringBoneSystem system = BuildSpringBones(skeleton);
+    Require(system.joints.size() == 3, "the strand's joints were not found");
+
+    // The head carried forward and stopped hard: the strand swings on forward, its bones keep their length.
+    SpringBoneState state;
+    std::vector<ModelNodePose> poses;
+    float z = 0.0f;
+    float tipForward = 0.0f;
+    for (int frame = 0; frame < 40; ++frame)
+    {
+        z += frame < 20 ? 0.2f : 0.0f;
+        RestNodePoses(skeleton, poses);
+        SimulateSpringBones(skeleton, system, state, poses, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, z)), 1.0f / 60.0f);
+        std::vector<glm::mat4> world;
+        ComputeNodeWorldMatrices(skeleton, poses, world);
+        const glm::vec3 root(world[static_cast<size_t>(first)][3]);
+        const glm::vec3 tip(world.back()[3]);
+        Require(std::abs(glm::distance(glm::vec3(world[static_cast<size_t>(second)][3]), root) - 0.1f) < 1e-3f, "a hair bone stretched");
+        if (frame > 20)
+        {
+            tipForward = std::max(tipForward, tip.z - root.z);
+        }
+    }
+    Require(tipForward > 0.05f, "the strand did not swing on when the head stopped");
 }
 
 void Print(const char* name, const glm::vec3& value)
@@ -388,6 +523,18 @@ void PrintRealFit()
         Print("shoulder", at[static_cast<size_t>(rig->shoulder[side])]);
         Print("elbow", at[static_cast<size_t>(rig->elbow[side])]);
         Print("wrist", at[static_cast<size_t>(rig->wrist[side])]);
+        // Each hand joint's distance from the rim's middle line (a circle round the column).
+        const auto fromRim = [&](const glm::vec3& point)
+        {
+            const glm::vec3 offset = point - seat->wheelCenter;
+            const glm::vec3 inPlane = offset - seat->wheelAxis * glm::dot(offset, seat->wheelAxis);
+            const glm::vec3 onRim = seat->wheelCenter + glm::normalize(inPlane) * seat->wheelRadius;
+            return glm::distance(point, onRim);
+        };
+        std::printf("  from the rim: wrist %.3f, knuckle %.3f, middle finger %.3f %.3f, tip side %.3f\n",
+                    fromRim(at[static_cast<size_t>(rig->wrist[side])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][0])]),
+                    fromRim(at[static_cast<size_t>(rig->fingers[side][2][1])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][2])]),
+                    fromRim(at[static_cast<size_t>(rig->fingers[side][2][2]) + 1]));
     }
 }
 }
@@ -404,11 +551,14 @@ int main()
     try
     {
         SeatedPoseReachesItsTargets();
-        HandsFollowTheWheel();
+        HandsHoldWhereTheyAreTold();
         HiddenHeadShrinks();
         HeldHandGoesToTheKnob();
         GearLeverGoesThroughTheGate();
         FeetWorkThePedals();
+        HandsGoHandOverHand();
+        BodySwaysWithTheCar();
+        HairSwings();
         InspectorOffersTheCar();
         PrintRealFit();
     }

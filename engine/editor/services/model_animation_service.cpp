@@ -111,12 +111,25 @@ void ModelAnimationPlayback::Tick(RendererSharedState& state, float deltaSeconds
         if (!entry.rigSearched)
         {
             entry.rig = FindDriverRig(skeleton);
+            entry.springBones = BuildSpringBones(skeleton);
+            entry.springState = SpringBoneState{};
             entry.rigSearched = true;
         }
+        const glm::mat4 modelToWorld = world.GetModelMatrix(entity);
         if (entry.driver.has_value() && entry.rig.has_value())
         {
+            // Posed without hiding the head, so that the hair swings from it, then hidden.
+            DriverPoseInput input = *entry.driver;
+            input.hideHead = false;
             DriverPoseResult result;
-            EvaluateDriverPalette(skeleton, *entry.rig, *entry.driver, entry.palette, &result);
+            PoseDriver(skeleton, *entry.rig, input, entry.poses, &result);
+            SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds, input.seatPlanes);
+            if (entry.driver->hideHead)
+            {
+                HideDriverHead(*entry.rig, entry.poses);
+            }
+            ComputeNodeWorldMatrices(skeleton, entry.poses, entry.world);
+            PaletteFromNodeWorldMatrices(skeleton, entry.world, entry.palette);
             entry.driverResult = result;
             state.rendererWorld.SetJointPalette(entity, entry.palette);
             ++it;
@@ -134,7 +147,20 @@ void ModelAnimationPlayback::Tick(RendererSharedState& state, float deltaSeconds
                 entry.time = std::fmod(entry.time, duration);
             }
         }
-        EvaluateJointPalette(skeleton, clip, entry.time, entry.palette);
+        if (clip >= 0)
+        {
+            // The clip, and the hair and skirt swinging from it.
+            EvaluateNodePoses(skeleton, clip, entry.time, entry.poses);
+            SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds);
+            ComputeNodeWorldMatrices(skeleton, entry.poses, entry.world);
+            PaletteFromNodeWorldMatrices(skeleton, entry.world, entry.palette);
+        }
+        else
+        {
+            // The bind pose, which the nodes' rest transforms need not be.
+            EvaluateJointPalette(skeleton, -1, 0.0f, entry.palette);
+            entry.springState = SpringBoneState{};
+        }
         state.rendererWorld.SetJointPalette(entity, entry.palette);
         ++it;
     }

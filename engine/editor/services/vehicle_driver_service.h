@@ -49,6 +49,11 @@ struct VehicleDriverSeat
     float hipHalfWidth = 0.07f;
     float footLength = 0.13f;
     float footRestPitch = -0.4f;
+    // The seat's cushion (its height) and back (a point on it, at the hips' height, and its facing),
+    // which the driver's hair and skirt lie on.
+    float cushionHeight = 0.4f;
+    glm::vec3 backPoint{0.0f};
+    glm::vec3 backNormal{0.0f, 0.0f, 1.0f};
     // The driver's eyes the seat was found from: the car's data, else from the steering wheel.
     glm::vec3 carEyes{0.0f};
     // How far forward the hips slid for the hands to reach the wheel (metres).
@@ -79,21 +84,67 @@ struct VehicleDriverFeet
     float clutchHold = 0.0f;
 };
 
+// The body thrown about by the car: a damped spring on its lean, driven by what the driver feels (the
+// car's acceleration less gravity, in the car's own frame), forward under braking, back a little under
+// power, outwards in a corner.
+struct VehicleDriverSway
+{
+    int samples = 0;
+    glm::vec3 lastPosition{0.0f};
+    glm::vec3 lastVelocity{0.0f};
+    // What the driver feels, smoothed, in vehicle space (m/s^2).
+    glm::vec3 felt{0.0f};
+    // To the driver's left and forward (degrees, DriverPoseInput::swayDegrees), and how fast they change.
+    glm::vec2 lean{0.0f};
+    glm::vec2 leanRate{0.0f};
+};
+
+// Moves the sway on for the car's vehicle space at vehicleToWorld now; deltaSeconds of 0 holds it.
+void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, float deltaSeconds);
+
+// Where the hands hold the steering wheel, hand over hand: each holds a point of the rim and turns with
+// it until it is as far round as it reaches (the left hand from 170 degrees left of the top to 100
+// right of it, the right the other way round), then lets go and takes hold again further back, crossing
+// over the other arm; back near the middle each hand goes back to a quarter to three. One hand at a time.
+struct VehicleDriverHands
+{
+    bool started = false;
+    float lastTurn = 0.0f;
+    // Where each hand holds the rim, as the wheel's own (DriverPoseInput::gripAngles less its turn).
+    std::array<float, 2> grips{};
+    // A hand on its way to a new hold: how long it has been going, and where it let go (vehicle space).
+    std::array<bool, 2> moving{};
+    std::array<float, 2> moveSeconds{};
+    std::array<glm::vec3, 2> releasedAt{};
+};
+
+// Moves the hands on for the wheel turned `turn` (radians about the seat's wheelAxis, clockwise as the
+// driver sees it).
+void UpdateDriverHands(VehicleDriverHands& hands, const VehicleDriverSeat& seat, float turn, float deltaSeconds);
+
 // The pedals as the driver works them: from the car's controls (the accelerator and the brake, the
 // throttle pulled against the gear braking) and the clutch's opening (the pedal, or the automatic
 // clutch while the gears change). Moves the feet between pedals over a moment and eases the presses.
 void UpdateDriverFeet(VehicleDriverFeet& feet, float throttle, float brake, float clutch, float deltaSeconds);
 
+// What moves the driver from frame to frame.
+struct VehicleDriverMotion
+{
+    VehicleDriverFeet feet;
+    VehicleDriverSway sway;
+    VehicleDriverHands hands;
+};
+
 // The driver's pose in the seat, moved by `seatOffset` (metres: to the car's right, up, forward),
 // holding the wheel turned `steeringWheelTurn` (radians about ModelSteeringWheel::axis, as
-// VehicleDriveSession::steeringWheelTurn), the feet as `feet` has them. The driver's model space is the
-// car's vehicle space.
+// VehicleDriveSession::steeringWheelTurn) where `motion` has the hands (else at a quarter to three, as
+// at rest), its feet and body as it has them. The driver's model space is the car's vehicle space.
 DriverPoseInput DriverPoseFromSeat(
     const VehicleDriverSeat& seat,
     const glm::vec3& seatOffset,
     float steeringWheelTurn,
     bool hideHead,
-    const VehicleDriverFeet& feet = {});
+    const VehicleDriverMotion* motion = nullptr);
 
 struct VehicleDriverState
 {
@@ -108,8 +159,8 @@ struct VehicleDriverState
     std::map<std::pair<const LoadedModelData*, const LoadedModelData*>, FittedSeat> seats;
     // The entities posed as drivers in the last frame.
     std::unordered_set<entt::entity> posed;
-    // Each driver's feet, carried from frame to frame.
-    std::unordered_map<entt::entity, VehicleDriverFeet> feet;
+    // Each driver's feet, body and hands, carried from frame to frame.
+    std::unordered_map<entt::entity, VehicleDriverMotion> motion;
     // Entity ids found before, checked again on use.
     std::unordered_map<std::string, entt::entity> entitiesById;
     // Why a model with a car to drive is not sitting in it; no entry when it is.
@@ -122,7 +173,8 @@ namespace VehicleDriverService
 // (ModelComponent::driverVehicleUuid) takes the car's transform, its model space the car's vehicle
 // space, and a humanoid one sits in the driver's seat holding the steering wheel as the drive turns
 // it. While the car is driven from the cockpit, the driver's head is hidden and the camera sits at its
-// eyes; its feet work the pedals and a hand changes gear on the gear lever.
+// eyes; its feet work the pedals, a hand changes gear on the gear lever, the hands go hand over hand
+// round the wheel and the body sways with the car.
 void Tick(RendererSharedState& state, float deltaSeconds);
 
 // Why the entity is not sitting in its car (no such car, no steering wheel, no humanoid skeleton);

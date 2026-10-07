@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model_animation.h"
+#include "model_spring_bones.h"
 
 #include <glm/glm.hpp>
 
@@ -44,13 +45,15 @@ struct DriverRig
 std::optional<DriverRig> FindDriverRig(const ModelSkeleton& skeleton);
 
 // A hand off the wheel, holding something else (the gear lever's knob): where the palm holds it, which
-// way the hand points and the palm faces, and how far the hand has gone there from the wheel (0 on
-// the wheel, 1 there).
+// way the hand points and the palm faces, where along the hand it is held (a share of the way from the
+// wrist to the knuckles: a knob in the middle of the palm, a rim across the fingers' base at 1), and how
+// far the hand has gone there from the wheel (0 on the wheel, 1 there).
 struct DriverHandHold
 {
     glm::vec3 grip{0.0f};
     glm::vec3 direction{0.0f, 0.0f, 1.0f};
     glm::vec3 palmFacing{0.0f, -1.0f, 0.0f};
+    float alongHand = 0.6f;
     float weight = 0.0f;
 };
 
@@ -64,13 +67,16 @@ struct DriverPoseInput
     // much forward from it, towards the wheel.
     float reclineDegrees = 15.0f;
     float leanDegrees = 0.0f;
+    // The body thrown about by the car: leaning to the driver's left (x) and forward (y), degrees, from
+    // the waist and chest; the head keeps itself nearer upright.
+    glm::vec2 swayDegrees{0.0f};
     // The steering wheel: its centre, its column pointing away from the driver (unit), the radius
-    // the hands hold it at, and how far it has turned (radians; positive is clockwise as the driver
-    // sees it, a right turn).
+    // the hands hold it at, and where on the rim each hand (left, right) holds it: radians from the
+    // top, clockwise as the driver sees it (a quarter to three is -pi/2 and pi/2).
     glm::vec3 wheelCenter{0.0f, 0.4f, 0.6f};
     glm::vec3 wheelAxis{0.0f, -0.35f, 0.94f};
     float wheelRadius = 0.18f;
-    float wheelTurn = 0.0f;
+    std::array<float, 2> gripAngles{-1.5707964f, 1.5707964f};
     // The ankles (left, right), on the pedals, and how far each foot is raised from flat (degrees: up
     // the pedal's slope, less as the foot presses it).
     std::array<glm::vec3, 2> ankles{glm::vec3(0.1f, -0.15f, 0.7f), glm::vec3(-0.1f, -0.15f, 0.7f)};
@@ -81,6 +87,8 @@ struct DriverPoseInput
     float headYawDegrees = 0.0f;
     // Shrinks the head (and everything on it, the hair too) away: for a camera at the driver's eyes.
     bool hideHead = false;
+    // The seat's cushion and back, which hair and a skirt lie on (spring bones).
+    std::vector<SpringBonePlane> seatPlanes;
 };
 
 struct DriverPoseResult
@@ -93,11 +101,13 @@ struct DriverPoseResult
 };
 
 // The joints' local poses for a driver seated at `input`: the pelvis and back leaned back on the
-// seat, the legs bent to the pedals and the hands on the wheel at a quarter to three (two-bone
-// inverse kinematics with the knees up and the elbows down), the fingers closed round the rim. The
-// hands follow the wheel up to 120 degrees each way and slide round the rim beyond.
+// seat, the legs bent to the pedals and the hands on the rim where gripAngles say (two-bone inverse
+// kinematics with the knees up and the elbows down), the fingers closed round it.
 void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const DriverPoseInput& input, std::vector<ModelNodePose>& poses,
                 DriverPoseResult* result = nullptr);
+
+// Shrinks the head away (DriverPoseInput::hideHead), for a pose made without it.
+void HideDriverHead(const DriverRig& rig, std::vector<ModelNodePose>& poses);
 
 // PoseDriver's joint palette.
 void EvaluateDriverPalette(const ModelSkeleton& skeleton, const DriverRig& rig, const DriverPoseInput& input, std::vector<glm::mat4>& palette,

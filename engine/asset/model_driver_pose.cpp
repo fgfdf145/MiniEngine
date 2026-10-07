@@ -16,25 +16,29 @@ constexpr glm::vec3 kUp{0.0f, 1.0f, 0.0f};
 constexpr glm::vec3 kForward{0.0f, 0.0f, 1.0f};
 constexpr glm::vec3 kLeft{1.0f, 0.0f, 0.0f};
 
-// The hands: the wheel held at a quarter to three, followed this far each way before the hands slide
-// round the rim; the wrist behind the rim and outside it, the palm round it.
-constexpr float kGripAboveLevelDegrees = 0.0f;
-constexpr float kMaxHandTurnDegrees = 120.0f;
-constexpr float kWristBehindRim = 0.045f;
-constexpr float kWristOutsideRim = 0.03f;
+// The hands: the rim lies across the base of the fingers (this share of the way from the wrist to the
+// knuckles), against the palm, which is this far from the line of the hand's bones.
+constexpr float kRimAlongHand = 1.0f;
+constexpr float kPalmBelowBones = 0.025f;
 // The fingers' bend at their three joints from the palm, closed round a rim; the thumb lies along it.
-constexpr std::array<float, 3> kFingerCurlDegrees{45.0f, 70.0f, 45.0f};
+constexpr std::array<float, 3> kFingerCurlDegrees{45.0f, 70.0f, 60.0f};
 constexpr std::array<float, 3> kThumbCurlDegrees{10.0f, 20.0f, 20.0f};
-// A hand held elsewhere has its wrist this far back from where the palm holds, and this far off the
-// palm's side; on its way there from the wheel it rises this much at the middle.
-constexpr float kHeldWristBehindGrip = 0.06f;
-constexpr float kHeldWristOffPalm = 0.03f;
+// A hand on its way from the wheel to something else rises this much at the middle.
 constexpr float kHandCarryLift = 0.05f;
-// The neck and head take back this share of the back's recline each, so the eyes look at the road.
+// The neck and head take back this share of the back's recline each, so the eyes look at the road, and
+// together this share of the body's sway.
 constexpr float kNeckUprightShare = 0.5f;
 constexpr float kHeadUprightShare = 0.4f;
-// The shoulder blades bring the shoulders forward by up to this much when the arms are nearly straight.
+constexpr float kHeadSteadyShare = 0.6f;
+// The shoulder blades bring the shoulders forward by up to this much when the arms are nearly straight,
+// and let the shoulders down this much, relaxed; each follows its hand up or down by this share.
 constexpr float kMaxShoulderReachDegrees = 15.0f;
+constexpr float kShoulderDropDegrees = 5.0f;
+constexpr float kShoulderFollowShare = 0.25f;
+// The chest turns and tilts this share of the way towards the line between the hands (so the shoulders
+// go with the wheel as it turns and the arms cross), up to this far; the neck turns the head back.
+constexpr float kChestFollowShare = 0.3f;
+constexpr float kMaxChestTurnDegrees = 15.0f;
 // A hidden head is shrunk to this scale about its joint.
 constexpr float kHiddenHeadScale = 1e-3f;
 
@@ -193,6 +197,8 @@ struct RestFrames
     std::array<glm::vec3, 2> footSide{};
     // How far the line from the ankle to the ball of the foot points below level (radians, negative).
     std::array<float, 2> footPitch{};
+    // From the wrist to the knuckles (the middle finger's base).
+    std::array<float, 2> handLength{};
 };
 
 RestFrames ComputeRestFrames(const ModelSkeleton& skeleton, const DriverRig& rig)
@@ -218,6 +224,7 @@ RestFrames ComputeRestFrames(const ModelSkeleton& skeleton, const DriverRig& rig
         frames.kneeHinge[side] = toLocal(rig.hip[side], SafeNormalize(glm::cross(thigh, -kForward), kLeft));
         frames.palm[side] = toLocal(rig.wrist[side], -kUp);
         frames.footSide[side] = toLocal(rig.ankle[side], kLeft);
+        frames.handLength[side] = glm::distance(position(rig.wrist[side]), position(rig.handEnd[side]));
         const glm::vec3 foot = SafeNormalize(position(rig.toes[side]) - position(rig.ankle[side]), kForward);
         frames.footPitch[side] = std::asin(std::clamp(foot.y, -1.0f, 1.0f));
     }
@@ -289,16 +296,20 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
 
     // The back bends forward from the seat, half at the waist and half at the chest; the neck and head
     // come back towards upright and turn towards the corner.
+    // The car's sway leans it over (a lean to the left is a turn about +Z the negative way) and forward.
     const float lean = glm::radians(input.leanDegrees);
-    posing.Turn(rig.spine, glm::angleAxis(lean * 0.5f, kLeft));
+    const glm::quat sway = glm::angleAxis(glm::radians(input.swayDegrees.y), kLeft) * glm::angleAxis(-glm::radians(input.swayDegrees.x), kForward);
+    const glm::quat halfBack = glm::angleAxis(lean * 0.5f, kLeft) * Fraction(sway, 0.5f);
+    posing.Turn(rig.spine, halfBack);
     posing.Update();
-    posing.Turn(rig.chest, glm::angleAxis(lean * 0.5f, kLeft));
+    posing.Turn(rig.chest, halfBack);
     posing.Update();
     const float backFromUpright = recline - lean;
     const float headYaw = glm::radians(input.headYawDegrees);
-    posing.Turn(rig.neck, glm::angleAxis(headYaw * 0.4f, kUp) * glm::angleAxis(backFromUpright * kNeckUprightShare, kLeft));
+    const glm::quat steady = Fraction(glm::conjugate(sway), kHeadSteadyShare * 0.5f);
+    posing.Turn(rig.neck, glm::angleAxis(headYaw * 0.4f, kUp) * steady * glm::angleAxis(backFromUpright * kNeckUprightShare, kLeft));
     posing.Update();
-    posing.Turn(rig.head, glm::angleAxis(headYaw * 0.6f, kUp) * glm::angleAxis(backFromUpright * kHeadUprightShare, kLeft));
+    posing.Turn(rig.head, glm::angleAxis(headYaw * 0.6f, kUp) * steady * glm::angleAxis(backFromUpright * kHeadUprightShare, kLeft));
     posing.Update();
 
     // Legs: the knees up, the ankles on the pedals, the feet up the pedals' slope.
@@ -379,41 +390,81 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
     }
     posing.Update();
 
-    // Arms: the hands on the rim, the elbows down and a little out.
+    // Arms: where each hand goes first, the hands on the rim; or gone (part of the way, lifted at the
+    // middle) to what it holds instead.
     const glm::vec3 wheelAxis = SafeNormalize(input.wheelAxis, kForward);
     const glm::vec3 wheelUp = SafeNormalize(kUp - wheelAxis * glm::dot(kUp, wheelAxis), kUp);
-    const glm::vec3 wheelLeft = glm::normalize(glm::cross(wheelUp, wheelAxis));
-    const float gripLift = glm::radians(kGripAboveLevelDegrees);
-    const float maxHandTurn = glm::radians(kMaxHandTurnDegrees);
+    struct HandTarget
+    {
+        glm::vec3 wrist;
+        glm::vec3 direction;
+        glm::vec3 palm;
+    };
+    std::array<HandTarget, 2> targets{};
     for (size_t side = 0; side < 2; ++side)
     {
-        const float outward = side == 0 ? 1.0f : -1.0f;
-        const glm::vec3 restRadial = glm::normalize(wheelLeft * (outward * std::cos(gripLift)) + wheelUp * std::sin(gripLift));
-        const float handTurn = std::clamp(input.wheelTurn, -maxHandTurn, maxHandTurn);
-        const glm::vec3 radial = glm::angleAxis(handTurn, wheelAxis) * restRadial;
+        // A turn about the column, which points away from the driver, is clockwise as the driver sees it.
+        const glm::vec3 radial = glm::angleAxis(input.gripAngles[side], wheelAxis) * wheelUp;
         const glm::vec3 grip = input.wheelCenter + radial * input.wheelRadius;
-        // The hand reaches over the rim, its palm towards the wheel's centre; or it has gone (part of
-        // the way, lifted at the middle) to what it holds instead.
-        const glm::vec3 wheelWrist = grip - wheelAxis * kWristBehindRim + radial * kWristOutsideRim;
-        glm::vec3 handDirection = glm::normalize(wheelAxis - radial * 0.25f);
-        glm::vec3 palmFacing = -radial;
-        glm::vec3 wristTarget = wheelWrist;
+        // The hand reaches over the rim, its palm towards the wheel's centre.
+        HandTarget& target = targets[side];
+        target.direction = glm::normalize(wheelAxis - radial * 0.25f);
+        target.palm = -radial;
+        const glm::vec3 wheelWrist = grip - target.direction * (rest.handLength[side] * kRimAlongHand) - target.palm * kPalmBelowBones;
+        target.wrist = wheelWrist;
         const DriverHandHold& hold = input.holds[side];
         if (hold.weight > 0.0f)
         {
             const float weight = std::min(hold.weight, 1.0f);
             const glm::vec3 heldDirection = SafeNormalize(hold.direction, kForward);
             const glm::vec3 heldPalm = SafeNormalize(hold.palmFacing, -kUp);
-            const glm::vec3 heldWrist = hold.grip - heldDirection * kHeldWristBehindGrip - heldPalm * kHeldWristOffPalm;
-            wristTarget = glm::mix(wheelWrist, heldWrist, weight) + kUp * (kHandCarryLift * std::sin(glm::pi<float>() * weight));
-            handDirection = SafeNormalize(glm::mix(handDirection, heldDirection, weight), heldDirection);
-            palmFacing = SafeNormalize(glm::mix(palmFacing, heldPalm, weight), heldPalm);
+            const glm::vec3 heldWrist = hold.grip - heldDirection * (rest.handLength[side] * hold.alongHand) - heldPalm * kPalmBelowBones;
+            target.wrist = glm::mix(wheelWrist, heldWrist, weight) + kUp * (kHandCarryLift * std::sin(glm::pi<float>() * weight));
+            target.direction = SafeNormalize(glm::mix(target.direction, heldDirection, weight), heldDirection);
+            target.palm = SafeNormalize(glm::mix(target.palm, heldPalm, weight), heldPalm);
         }
+    }
 
-        // Nearly straight arms reach with the shoulder blades too.
+    // The chest goes part of the way with the line between the hands (left to right, as the shoulders'
+    // is), turning and tilting; the neck takes the turn back off the head.
+    {
+        const glm::vec3 across = targets[0].wrist - targets[1].wrist;
+        const glm::vec3 shoulders = posing.Position(rig.shoulder[0]) - posing.Position(rig.shoulder[1]);
+        const float maxTurn = glm::radians(kMaxChestTurnDegrees);
+        const float yaw = std::clamp(
+            (std::atan2(-across.z, across.x) - std::atan2(-shoulders.z, shoulders.x)) * kChestFollowShare, -maxTurn, maxTurn);
+        const float roll = std::clamp(
+            (std::atan2(across.y, glm::length(glm::vec2(across.x, across.z))) -
+             std::atan2(shoulders.y, glm::length(glm::vec2(shoulders.x, shoulders.z)))) *
+                kChestFollowShare,
+            -maxTurn, maxTurn);
+        // A left side going up is a turn about +Z the positive way (+X towards +Y).
+        const glm::quat chestTurn = glm::angleAxis(yaw, kUp) * glm::angleAxis(roll, kForward);
+        posing.Turn(rig.chest, chestTurn);
+        posing.Update();
+        posing.Turn(rig.neck, glm::conjugate(chestTurn));
+        posing.Update();
+    }
+
+    for (size_t side = 0; side < 2; ++side)
+    {
+        const float outward = side == 0 ? 1.0f : -1.0f;
+        const glm::vec3 wristTarget = targets[side].wrist;
+        const glm::vec3 handDirection = targets[side].direction;
+        const glm::vec3 palmFacing = targets[side].palm;
+
+        // The shoulder blade lets the shoulder down, relaxed, follows the hand up or down a little, and
+        // brings the shoulder forward as the arm nears straight.
         if (rig.scapula[side] >= 0)
         {
             const glm::vec3 blade = posing.Position(rig.scapula[side]);
+            const glm::vec3 shoulderNow = posing.Position(rig.shoulder[side]);
+            const float handAbove = std::atan2(wristTarget.y - shoulderNow.y, glm::length(glm::vec2(wristTarget.x - shoulderNow.x, wristTarget.z - shoulderNow.z)));
+            const float raise = handAbove * kShoulderFollowShare - glm::radians(kShoulderDropDegrees);
+            // Raising the left shoulder (+X) is a turn about +Z the positive way, the right's the other.
+            posing.Turn(rig.scapula[side], glm::angleAxis(raise * outward, kForward));
+            posing.Update();
+
             const glm::vec3 shoulder = posing.Position(rig.shoulder[side]);
             const float armLength = glm::distance(shoulder, posing.Position(rig.elbow[side])) +
                                     glm::distance(posing.Position(rig.elbow[side]), posing.Position(rig.wrist[side]));
@@ -502,10 +553,15 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
     }
     if (input.hideHead)
     {
-        ModelNodePose& head = posing.Pose(rig.head);
-        head.scale = glm::vec3(kHiddenHeadScale);
-        head.posed = true;
+        HideDriverHead(rig, poses);
     }
+}
+
+void HideDriverHead(const DriverRig& rig, std::vector<ModelNodePose>& poses)
+{
+    ModelNodePose& head = poses[static_cast<size_t>(rig.head)];
+    head.scale = glm::vec3(kHiddenHeadScale);
+    head.posed = true;
 }
 
 void EvaluateDriverPalette(const ModelSkeleton& skeleton, const DriverRig& rig, const DriverPoseInput& input, std::vector<glm::mat4>& palette,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/asset/model_driver_pose.h>
+#include <engine/asset/model_spring_bones.h>
 #include <engine/asset/model_loader.h>
 
 #include <entt/entt.hpp>
@@ -30,8 +31,9 @@ class ModelAnimationPlayback
     void Forget(entt::entity entity);
     void Clear();
 
-    // Advances every tracked entity's clip by deltaSeconds (times its speed, while it plays) and sets
-    // its joint palette; drops the entities the scene no longer has, or that hold another model now.
+    // Advances every tracked entity's clip by deltaSeconds (times its speed, while it plays), swings its
+    // hair and skirt (SimulateSpringBones) and sets its joint palette; drops the entities the scene no
+    // longer has, or that hold another model now.
     void Tick(RendererSharedState& state, float deltaSeconds);
 
     // Poses the entity as a seated driver (PoseDriver) instead of playing its clip, from the next Tick
@@ -59,6 +61,11 @@ class ModelAnimationPlayback
         bool rigSearched = false;
         std::optional<DriverPoseInput> driver;
         std::optional<DriverPoseResult> driverResult;
+        // The hair and skirt (spring bones), and the pose they work on, kept to save allocations.
+        SpringBoneSystem springBones;
+        SpringBoneState springState;
+        std::vector<ModelNodePose> poses;
+        std::vector<glm::mat4> world;
     };
     std::unordered_map<entt::entity, Entry> m_entries;
 };
