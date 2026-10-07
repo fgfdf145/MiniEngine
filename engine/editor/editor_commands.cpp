@@ -284,6 +284,26 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
         {
             return state.drivingHud;
         });
+    Add(
+        registry, "view.minimap", "Minimap", "View/Minimap", ICON_PH_MAP_TRIFOLD, ImGuiMod_Alt | ImGuiKey_M,
+        [&state]
+        {
+            state.minimap = !state.minimap;
+        },
+        [&state]
+        {
+            return state.minimap;
+        });
+    Add(
+        registry, "view.viewport_ui", "Viewport UI", "View/Viewport UI", ICON_PH_LAYOUT, ImGuiMod_Alt | ImGuiKey_U,
+        [&state]
+        {
+            state.viewportUi = !state.viewportUi;
+        },
+        [&state]
+        {
+            return state.viewportUi;
+        });
 }
 
 void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)

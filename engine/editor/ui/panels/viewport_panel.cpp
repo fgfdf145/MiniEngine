@@ -1337,7 +1337,10 @@ void ViewportPanel::OnGui(EditorContext& context)
         HandleViewportShortcuts(scene, viewportRect);
     }
     RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
-    if (state.vehicleStatus.active)
+    // View > Viewport UI off leaves the picture clean but for the gizmos, the selection and a
+    // recording's indicator.
+    const bool viewportUi = state.commands.viewportUi;
+    if (viewportUi && state.vehicleStatus.active)
     {
         DrawVehiclePhysicsOverlay(
             *viewportRect.drawList,
@@ -1353,7 +1356,7 @@ void ViewportPanel::OnGui(EditorContext& context)
                 *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleStatus.linkage, UiScale());
         }
     }
-    if (state.vehicleRigStatus.active && context.windows.Get<SuspensionRigsPanel>().ShowLinkage())
+    if (viewportUi && state.vehicleRigStatus.active && context.windows.Get<SuspensionRigsPanel>().ShowLinkage())
     {
         DrawVehicleLinkageOverlay(
             *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleRigStatus.linkage, UiScale());
@@ -1361,13 +1364,14 @@ void ViewportPanel::OnGui(EditorContext& context)
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.quadRecordingStatus, "QUAD ", 1);
     // GT7's driving HUD along the bottom while a car is driven.
-    const bool drivingHud = state.vehicleStatus.active && state.commands.drivingHud;
+    const bool drivingHud = viewportUi && state.vehicleStatus.active && state.commands.drivingHud;
     if (drivingHud && viewportRect.drawList != nullptr)
     {
         DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus, ImGui::GetTime()));
     }
     // Centred on the car while one is driven, else on the camera.
-    if (state.vehicleStatus.active)
+    const bool minimap = viewportUi && state.commands.minimap;
+    if (minimap && state.vehicleStatus.active)
     {
         DrawMinimap(
             viewportRect,
@@ -1378,17 +1382,23 @@ void ViewportPanel::OnGui(EditorContext& context)
             state.vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
             drivingHud);
     }
-    else
+    else if (minimap)
     {
         DrawMinimap(viewportRect, UiScale(), state.minimapTexture, scene.GetMinimap(), camera.position, camera.GetForward());
     }
     if (fullscreen)
     {
-        DrawFullscreenViewportHud(viewportRect, UiScale(), ImGui::GetTime() - state.fullscreenEnteredTime, state.vehicleStatus, drivingHud);
+        if (viewportUi)
+        {
+            DrawFullscreenViewportHud(viewportRect, UiScale(), ImGui::GetTime() - state.fullscreenEnteredTime, state.vehicleStatus, drivingHud);
+        }
         return;
     }
-    DrawViewManipulator(camera, matrices, viewportRect, UiScale());
-    RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+    if (viewportUi)
+    {
+        DrawViewManipulator(camera, matrices, viewportRect, UiScale());
+        RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
+    }
     // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
     if (state.commands.gizmos)
     {
@@ -1402,6 +1412,10 @@ void ViewportPanel::OnGui(EditorContext& context)
     AppendLightProjectedCenters(scene, matrices, viewportRect, UiScale(), projectedCenters);
     HandleViewportSelection(scene, projectedCenters, viewportRect, UiScale());
     DrawViewportSelectionOverlay(scene, matrices, viewportRect, UiScale(), static_cast<bool>(state.selectionOutlineTexture));
+    if (!viewportUi)
+    {
+        return;
+    }
     const float textMargin = kOverlayTextMarginPixels * UiScale();
     ImGui::SetCursorScreenPos(ImVec2(viewportRect.origin.x + textMargin, viewportRect.origin.y + textMargin));
     ImGui::BeginGroup();
