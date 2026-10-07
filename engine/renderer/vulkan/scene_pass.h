@@ -136,6 +136,16 @@ struct ScenePassFrameContext
     VkDescriptorSet rayTextureSet = VK_NULL_HANDLE;
     // The traced sun shadow's temporal filter history, as aoHistory is the AO resolve's.
     TemporalHistoryFrame rtShadowHistory;
+    // Path tracing in place of the ambient terms (path_trace_pass.h). enabled only where it runs this
+    // frame (hardware rays, a ready ray scene, the deferred order, not the Khronos reference view), and
+    // then raySet and rayTextureSet are bound; accumulate and denoise are off while DLSS ray
+    // reconstruction denoises the raw paths. Its history as aoHistory is the AO resolve's; what that
+    // history is multiplied by (this frame's pre-exposure over the one it was written with); and the
+    // longest history a pixel may average this frame (PathTraceHistoryCap).
+    PathTracingSettings pathTracing;
+    TemporalHistoryFrame pathTraceHistory;
+    float pathTraceHistoryScale = 1.0f;
+    uint32_t pathTraceHistoryCap = 1;
     // The pixels no geometry covered hold the atmosphere or an HDRI: physical radiance that the
     // exposure histogram meters, unlike the flat background of EnvironmentMode::None.
     bool physicalSky = false;

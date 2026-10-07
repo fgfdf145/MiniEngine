@@ -166,6 +166,10 @@ float RayHash(uint a, uint b)
 #ifdef RAY_TEXTURED_ALPHA
 // In ray_hit_common.glsl, which a shader defining RAY_TEXTURED_ALPHA includes after this file.
 bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint rayId);
+// Cleared by a shader for rays whose result is averaged over a wide lobe (the path tracer's diffuse
+// bounces), where the coverage decision gives the same light for less: the texture test is the most
+// expensive part of tracing through foliage.
+bool rayTexturedAlpha = true;
 #endif
 
 // Whether a candidate hit stops the ray: a partly covered surface (foliage cards, glass) stops the
@@ -174,11 +178,13 @@ bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint ray
 bool AcceptHit(uint instance, uint triangle, vec2 barycentrics, uint rayId)
 {
 #ifdef RAY_TEXTURED_ALPHA
-    return AcceptTexturedHit(instance, triangle, barycentrics, rayId);
-#else
+    if (rayTexturedAlpha)
+    {
+        return AcceptTexturedHit(instance, triangle, barycentrics, rayId);
+    }
+#endif
     float coverage = rayMaterials[rayInstances[instance].data.z].albedoCoverage.a;
     return coverage >= 1.0 || RayHash(rayId, triangle) < coverage;
-#endif
 }
 
 #ifdef RAY_QUERY

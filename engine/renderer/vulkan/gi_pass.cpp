@@ -268,6 +268,12 @@ void VulkanGiResolvePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
+    // In path tracing mode SceneGi holds the path traced diffuse light, which stays for the indirect
+    // diffuse view and the reference comparison (--reference); nothing binds this pass's history.
+    if (frame.pathTracing.enabled)
+    {
+        return;
+    }
     // Runs even with GI off: the bound descriptors name both history images in GENERAL, and the
     // debug view reads the zero it writes.
     m_history.RecordBarrier(commandBuffer, frame.giHistory.valid);

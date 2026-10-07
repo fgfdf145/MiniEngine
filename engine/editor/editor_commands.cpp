@@ -288,8 +288,8 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
 
 void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)
 {
-    // The editor UI sets the renderer's tone mapping and TAA from these. The pipeline modes and ray
-    // tracing need rayTracingSupported, which stays false until the renderer has them.
+    // The editor UI sets the renderer's tone mapping, TAA, pipeline and ray tracing from these. The
+    // pipeline modes but Rasterization, and the Ray Tracing switch, need rayTracingSupported.
     const auto rayTracingSupported = [&state]
     {
         return state.rayTracingSupported;

@@ -107,6 +107,42 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     }
     ImGui::Unindent();
     ImGui::EndDisabled();
+
+    // Path tracing in place of the ambient terms (also Render > Pipeline > Path Tracing): it needs the
+    // hardware rays above, and says what it is doing below.
+    ImGui::SeparatorText("Path tracing");
+    PathTracingSettings& pathTracing = debug.pathTracing;
+    ImGui::BeginDisabled(!state.pathTracingAvailable);
+    ImGui::Checkbox("Enabled##pt", &pathTracing.enabled);
+    ImGui::BeginDisabled(!pathTracing.enabled);
+    DragIntInRange("Bounces##pt", &pathTracing.maxBounces, 1, 16);
+    DragIntInRange("Light candidates##pt", &pathTracing.lightCandidates, 1, 32);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Local lights each path vertex resamples one from for its shadow ray");
+    }
+    DragFloatInRange("Firefly clamp##pt", &pathTracing.fireflyClamp, 0.0f, 1000.0f, "%.1f");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The brightest a path vertex may add, in display units; 0 clamps nothing (reference)");
+    }
+    ImGui::Checkbox("Accumulate##pt", &pathTracing.accumulate);
+    ImGui::BeginDisabled(!pathTracing.accumulate);
+    DragIntInRange("Frames while moving##pt", &pathTracing.motionFrames, 1, 256);
+    DragIntInRange("Frames while still##pt", &pathTracing.maxFrames, 1, 2048);
+    ImGui::EndDisabled();
+    ImGui::Checkbox("Denoise##pt", &pathTracing.denoise);
+    if (ImGui::SmallButton("Reset##pt"))
+    {
+        pathTracing = PathTracingSettings{.enabled = pathTracing.enabled};
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    if (!state.pathTracingStatus.empty())
+    {
+        ImGui::TextDisabled("%s", state.pathTracingStatus.c_str());
+    }
+
     DragFloatInRange("Shadow distance (m)", &debug.shadowDistance, 10.0f, 5000.0f, "%.0f");
     // The forward-only order has no motion vectors, so TAA is off there whatever this says; DLSS
     // takes its place while it resolves.

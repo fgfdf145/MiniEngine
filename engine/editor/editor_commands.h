@@ -43,9 +43,9 @@ enum class AntiAliasingMode
 };
 
 // What the checkable commands read and write. The editor UI copies the transform tool, the debug
-// view, tone mapping, anti-aliasing and the play state to and from the scene, the renderer and the
-// driven car each frame, and the viewport reads the gizmo switch. The pipeline, ray tracing and
-// wireframe commands stay disabled while the renderer has nothing behind them.
+// view, tone mapping, anti-aliasing, the pipeline, ray tracing and the play state to and from the
+// scene, the renderer and the driven car each frame, and the viewport reads the gizmo switch. The
+// wireframe command stays disabled while the renderer has nothing behind it.
 struct EditorCommandState
 {
     TransformTool transformTool = TransformTool::Move;
@@ -64,8 +64,10 @@ struct EditorCommandState
     // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
     // The editor UI turns the window fullscreen and back.
     bool viewportFullscreen = false;
-    // The renderer traces no hardware rays and has no GPU path tracer (DDGI traces its own compute
-    // BVH), so Hybrid, Path Tracing and the Ray Tracing switch are disabled until it does.
+    // The pipeline modes map onto the render settings: Path Tracing is PathTracingSettings::enabled,
+    // Hybrid the ray traced effects (RenderDebugSettings::hardwareRayTracing) and Rasterization neither;
+    // the Ray Tracing switch is hardwareRayTracing itself. Hybrid, Path Tracing and the switch need a
+    // GPU with ray queries, which the backend reports here.
     bool rayTracingSupported = false;
     // The material pipelines are fill-only; Wireframe is disabled until they have line variants.
     bool wireframeSupported = false;

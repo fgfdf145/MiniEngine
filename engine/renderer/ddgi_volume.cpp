@@ -325,7 +325,8 @@ uint32_t DdgiProbeScheduler::StaleCount(uint32_t level) const
 
 std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> models)
 {
-    if (models.size() != m_previous.size())
+    m_movedThisFrame = models.size() != m_previous.size();
+    if (m_movedThisFrame)
     {
         m_previous.assign(models.begin(), models.end());
         m_stillFrames.assign(models.size(), kDdgiMovingInstanceFrames);
@@ -338,6 +339,7 @@ std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> 
         {
             m_previous[index] = models[index];
             m_stillFrames[index] = 0;
+            m_movedThisFrame = true;
         }
         else if (m_stillFrames[index] < kDdgiMovingInstanceFrames)
         {
@@ -346,6 +348,11 @@ std::span<const uint8_t> DdgiMovingInstances::Update(std::span<const glm::mat4> 
         m_skipped[index] = m_stillFrames[index] < kDdgiMovingInstanceFrames ? 1u : 0u;
     }
     return m_skipped;
+}
+
+bool DdgiMovingInstances::MovedThisFrame() const
+{
+    return m_movedThisFrame;
 }
 
 bool DdgiLightingWatch::Update(std::span<const glm::vec4> lighting)

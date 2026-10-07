@@ -416,6 +416,32 @@ endif()
 
 set_target_properties(miniengine_temporal_history_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_path_tracing_tests
+    path_tracing_tests.cpp
+)
+miniengine_group_target_sources(miniengine_path_tracing_tests)
+
+target_link_libraries(miniengine_path_tracing_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.path_tracing
+    COMMAND miniengine_path_tracing_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_path_tracing_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_path_tracing_tests>
+            $<TARGET_FILE_DIR:miniengine_path_tracing_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_path_tracing_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_atmosphere_tests
     atmosphere_tests.cpp
 )
