@@ -394,9 +394,9 @@ void TestCarFloatsThenSinksInWater()
     VehicleControls controls;
     controls.throttle = 1.0f;
     world.SetVehicleControls(car, controls);
-    const glm::vec3 before = world.GetVehiclePose(car).position;
+    const glm::dvec3 before = world.GetVehiclePose(car).position;
     Simulate(world, 3.0f);
-    const glm::vec3 after = world.GetVehiclePose(car).position;
+    const glm::dvec3 after = world.GetVehiclePose(car).position;
     Require(glm::length(glm::vec2(after.x - before.x, after.z - before.z)) < 1.0f, "a drowned engine drives nowhere");
 
     world.ResetVehicle(car, {glm::vec3(0.0f, 0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
@@ -461,9 +461,9 @@ void TestCarRecoversFromItsRoof()
     PhysicsPose pose = world.GetVehiclePose(car);
     Require((pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f)).y < -0.5f, "the car lies on its roof");
 
-    const std::optional<float> ground = world.FindGroundBelow(pose.position + glm::vec3(0.0f, 1.0f, 0.0f), 100.0f);
+    const std::optional<double> ground = world.FindGroundBelow(pose.position + glm::dvec3(0.0, 1.0, 0.0), 100.0);
     Require(ground.has_value() && std::abs(*ground) < 1e-3f, "the ray finds the ground through the car, not the car");
-    Require(!world.FindGroundBelow(glm::vec3(500.0f, 1.0f, 0.0f), 100.0f).has_value(), "and nothing off the edge of the world");
+    Require(!world.FindGroundBelow(glm::dvec3(500.0, 1.0, 0.0), 100.0).has_value(), "and nothing off the edge of the world");
 
     world.ResetVehicle(car, {glm::vec3(pose.position.x, *ground + 0.15f, pose.position.z), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 2.0f);
@@ -734,7 +734,7 @@ void TestWheelStateReportsTyrePhysics()
         RequireNear(wheel.suspensionMinLength, settings.suspensionMinLength, 1e-5f, "the travel's bump end");
         RequireNear(wheel.suspensionMaxLength, settings.suspensionMaxLength, 1e-5f, "and droop end");
         RequireNear(wheel.contactPosition.y, 0.0f, 0.02f, "the contact patch is on the ground");
-        RequireNear(glm::length(wheel.mount + wheel.suspensionAxis * wheel.suspensionLength - wheel.pose.position), 0.0f, 0.02f, "the wheel hangs its suspension length below the mount");
+        RequireNear(static_cast<float>(glm::length(wheel.mount + glm::dvec3(wheel.suspensionAxis * wheel.suspensionLength) - wheel.pose.position)), 0.0f, 0.02f, "the wheel hangs its suspension length below the mount");
         Require(wheel.longitudinalPeakFriction > 1.3f && wheel.longitudinalPeakFriction < 1.5f, "the peak grip is the tyre's, " + std::to_string(wheel.longitudinalPeakFriction));
         Require(wheel.lateralPeakFriction > 1.5f && wheel.lateralPeakFriction < 1.7f, "across too, " + std::to_string(wheel.lateralPeakFriction));
     }
@@ -1067,7 +1067,7 @@ void TestWheelMotionSeesTheModelsAxes()
     const PhysicsPose body{glm::vec3(5.0f, 1.0f, 2.0f), glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f))};
     const glm::vec3 offset(0.7f, 0.2f, 1.3f);
     const glm::quat steer = glm::angleAxis(glm::radians(20.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    const PhysicsPose wheel{body.position + body.rotation * offset, body.rotation * steer};
+    const PhysicsPose wheel{body.position + glm::dvec3(body.rotation * offset), body.rotation * steer};
 
     const VehicleWheelMotion motion = ComputeVehicleWheelMotion(body, wheel, halfTurn, glm::vec3(2.0f));
     Require(glm::length(motion.center - glm::vec3(-0.35f, 0.1f, -0.65f)) < 1e-4f, "the offset in the model's axes and unscaled");
@@ -1241,8 +1241,8 @@ void TestCarScrapingAWallStaysOnTheGround()
     {
         world.Update(1.0f / 60.0f);
         const PhysicsPose pose = world.GetVehiclePose(car);
-        furthest = std::max(furthest, pose.position.x);
-        highest = std::max(highest, pose.position.y);
+        furthest = std::max(furthest, static_cast<float>(pose.position.x));
+        highest = std::max(highest, static_cast<float>(pose.position.y));
         mostRoll = std::max(mostRoll, std::abs(RollDegrees(pose.rotation)));
     }
     Require(world.GetVehiclePose(car).position.z > 50.0f, "the car drove on along the wall");
@@ -1359,12 +1359,12 @@ void TestMultibodyCarRestsAtItsDesignPosition(bool unsprung)
     // The linkage for drawing sits at the wheels: every joint on an upright within half a metre of one.
     const VehicleLinkage linkage = world.GetVehicleLinkage(car);
     Require(linkage.links.size() >= 16 && linkage.carriers.size() >= 12 && !linkage.joints.empty(), "the linkage to draw");
-    for (const glm::vec3& joint : linkage.joints)
+    for (const glm::dvec3& joint : linkage.joints)
     {
         float nearest = 1e9f;
         for (const VehicleWheelState& wheel : wheels)
         {
-            nearest = std::min(nearest, glm::length(joint - wheel.pose.position));
+            nearest = std::min(nearest, static_cast<float>(glm::length(joint - wheel.pose.position)));
         }
         Require(nearest < 0.5f, "a joint at its wheel, " + std::to_string(nearest) + " m away");
     }
@@ -1765,8 +1765,8 @@ void TestSplitterGlidesOverTheSeamsOfSeparateCells()
         if (pose.position.z > -40.0f)
         {
             atWavesKmh = atWavesKmh == 0.0f ? kmh : atWavesKmh;
-            fastestRise = std::max(fastestRise, (pose.position.y - lastY) / kFrame);
-            highest = std::max(highest, pose.position.y);
+            fastestRise = std::max(fastestRise, static_cast<float>(pose.position.y - lastY) / kFrame);
+            highest = std::max(highest, static_cast<float>(pose.position.y));
             worstFrameLossKmh = std::max(worstFrameLossKmh, lastKmh - kmh);
         }
         lastY = pose.position.y;
@@ -1866,7 +1866,7 @@ void TestRodLengthRestsWhereTheModelDrawsTheWheels()
         const VehicleSuspensionAxle& axle = index < 2 ? settings.frontSuspension : settings.rearSuspension;
         const double springLoad = wheels[index].suspensionForce - axle.hubMass * 9.81;
         const double expected = VehicleRestTravel(axle, springLoad);
-        const glm::vec3 center = toBody * (wheels[index].pose.position - pose.position);
+        const glm::vec3 center = toBody * glm::vec3(wheels[index].pose.position - pose.position);
         std::cout << "GT-R with rod lengths, wheel " << index << ": travel " << wheels[index].travel * 1000.0f << " mm (springs give " << expected * 1000.0
                   << "), " << glm::length(center - layout[index].center) * 1000.0f << " mm from the model's wheel; camber " << wheels[index].camberDegrees
                   << " deg (" << plainWheels[index].camberDegrees << " at the design position)\n";
@@ -2050,20 +2050,20 @@ void TestHubsLoadTheTyresFromTheWheels()
         world.Update(PhysicsWorld::kFixedStepSeconds);
         const PhysicsPose pose = world.GetVehiclePose(car);
         const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
-        const glm::vec3 body = pose.position + pose.rotation * (settings.chassisCenter + settings.centerOfMassOffset);
-        glm::vec3 center = (settings.massKg - hubs) * body;
+        const glm::dvec3 body = pose.position + glm::dvec3(pose.rotation * (settings.chassisCenter + settings.centerOfMassOffset));
+        glm::dvec3 center = static_cast<double>(settings.massKg - hubs) * body;
         for (size_t index = 0; index < wheels.size(); ++index)
         {
-            center += (index < 2 ? spec.frontSuspension->hubMass : spec.rearSuspension->hubMass) * wheels[index].pose.position;
+            center += static_cast<double>(index < 2 ? spec.frontSuspension->hubMass : spec.rearSuspension->hubMass) * wheels[index].pose.position;
         }
-        center /= settings.massKg;
+        center /= static_cast<double>(settings.massKg);
         for (const VehicleWheelState& wheel : wheels)
         {
-            moment += wheel.suspensionForce * glm::dot(wheel.contactPosition - center, down) / kSteps;
+            moment += wheel.suspensionForce * glm::dot(glm::vec3(wheel.contactPosition - center), down) / kSteps;
             load += wheel.suspensionForce / kSteps;
         }
-        height += glm::dot(center, up) / kSteps;
-        bodyHeight += glm::dot(body, up) / kSteps;
+        height += static_cast<float>(glm::dot(center, glm::dvec3(up))) / kSteps;
+        bodyHeight += static_cast<float>(glm::dot(body, glm::dvec3(up))) / kSteps;
     }
     const float shift = moment / (weight * along);
     std::cout << "GT-R braked on a 0.3 g slope: the tyres' loads balance it about the body and hubs' centre of mass as from " << shift * 1000.0f
@@ -2425,7 +2425,7 @@ void BrakeFromSpeed(const VehicleSettings& settings, float& lockedSeconds, float
     controls = {};
     controls.brake = 1.0f;
     world.SetVehicleControls(car, controls);
-    const glm::vec3 start = world.GetVehiclePose(car).position;
+    const glm::dvec3 start = world.GetVehiclePose(car).position;
     lockedSeconds = 0.0f;
     for (float time = 0.0f; time < 10.0f; time += 0.01f)
     {
@@ -2982,7 +2982,7 @@ void TestCarBodyIsItsBoxesAndShell()
         bounds = world.GetVehicleBodyBounds(id);
         Simulate(world, 2.0f);
         const PhysicsPose pose = world.GetVehiclePose(id);
-        return (pose.position + pose.rotation * centreOfMass).y;
+        return static_cast<float>((pose.position + glm::dvec3(pose.rotation * centreOfMass)).y);
     };
     std::pair<glm::vec3, glm::vec3> plainBounds;
     std::pair<glm::vec3, glm::vec3> ownBounds;

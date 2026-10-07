@@ -84,9 +84,10 @@ Camera PlaceQuadCamera(const Camera& lens, const PhysicsPose& carPose, const Qua
     {
         return glm::vec3(-rightUpForward.x, rightUpForward.y, rightUpForward.z);
     };
-    const glm::vec3 position = carPose.position + frame * toVehicle(settings.position);
-    const glm::vec3 target = carPose.position + frame * toVehicle(settings.target);
-    glm::vec3 direction = target - position;
+    // Relative to the car in float; the car's position, in double, only places the camera.
+    const glm::vec3 offset = frame * toVehicle(settings.position);
+    const glm::vec3 position = glm::vec3(carPose.position + glm::dvec3(offset));
+    glm::vec3 direction = frame * toVehicle(settings.target) - offset;
     const float distance = glm::length(direction);
     direction = distance > 1e-4f ? direction / distance : frame * glm::vec3(0.0f, 0.0f, 1.0f);
 

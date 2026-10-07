@@ -305,7 +305,7 @@ JPH::Vec3 ToJolt(const glm::vec3& value)
     return JPH::Vec3(value.x, value.y, value.z);
 }
 
-JPH::RVec3 ToJoltPosition(const glm::vec3& value)
+JPH::RVec3 ToJoltPosition(const glm::dvec3& value)
 {
     return JPH::RVec3(value.x, value.y, value.z);
 }
@@ -320,12 +320,11 @@ glm::vec3 FromJolt(JPH::Vec3Arg value)
     return glm::vec3(value.GetX(), value.GetY(), value.GetZ());
 }
 
-#ifdef JPH_DOUBLE_PRECISION
-glm::vec3 FromJolt(JPH::RVec3Arg value)
+// A world position, kept in double (see PhysicsPose).
+glm::dvec3 FromJoltPosition(JPH::RVec3Arg value)
 {
-    return glm::vec3(static_cast<float>(value.GetX()), static_cast<float>(value.GetY()), static_cast<float>(value.GetZ()));
+    return glm::dvec3(value.GetX(), value.GetY(), value.GetZ());
 }
-#endif
 
 glm::quat FromJolt(JPH::QuatArg value)
 {
@@ -335,7 +334,7 @@ glm::quat FromJolt(JPH::QuatArg value)
 PhysicsPose FromJolt(JPH::RMat44Arg transform)
 {
     PhysicsPose pose;
-    pose.position = FromJolt(transform.GetTranslation());
+    pose.position = FromJoltPosition(transform.GetTranslation());
     pose.rotation = FromJolt(transform.GetQuaternion());
     return pose;
 }
@@ -343,7 +342,7 @@ PhysicsPose FromJolt(JPH::RMat44Arg transform)
 PhysicsPose Interpolate(const PhysicsPose& from, const PhysicsPose& to, float alpha)
 {
     PhysicsPose pose;
-    pose.position = glm::mix(from.position, to.position, alpha);
+    pose.position = glm::mix(from.position, to.position, static_cast<double>(alpha));
     pose.rotation = glm::slerp(from.rotation, to.rotation, alpha);
     return pose;
 }
@@ -2462,7 +2461,7 @@ struct PhysicsWorld::Impl
     VehicleSnapshot Capture(const Vehicle& vehicle) const
     {
         VehicleSnapshot snapshot;
-        snapshot.chassis.position = FromJolt(vehicle.body->GetPosition());
+        snapshot.chassis.position = FromJoltPosition(vehicle.body->GetPosition());
         snapshot.chassis.rotation = FromJolt(vehicle.body->GetRotation());
         const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
         snapshot.wheels.reserve(wheels.size());
@@ -2493,7 +2492,7 @@ struct PhysicsWorld::Impl
 
             const JPH::WheelSettings& wheelSettings = *wheel.GetSettings();
             const JPH::Quat bodyRotation = vehicle.body->GetRotation();
-            state.mount = FromJolt(vehicle.body->GetPosition() + bodyRotation * wheelSettings.mPosition);
+            state.mount = FromJoltPosition(vehicle.body->GetPosition() + bodyRotation * wheelSettings.mPosition);
             state.suspensionAxis = FromJolt(bodyRotation * wheelSettings.mSuspensionDirection.Normalized());
             state.suspensionMinLength = wheelSettings.mSuspensionMinLength;
             state.suspensionMaxLength = wheelSettings.mSuspensionMaxLength;
@@ -2515,7 +2514,7 @@ struct PhysicsWorld::Impl
                     // has it, the tyre squashed between them.
                     state.unsprungMass = true;
                     state.tyreDeflection = static_cast<float>(corner.tyreDeflection);
-                    state.pose.position = FromJolt(vehicle.body->GetWorldTransform() * ToJolt(corner.hubCenter));
+                    state.pose.position = FromJoltPosition(vehicle.body->GetWorldTransform() * ToJolt(corner.hubCenter));
                     state.suspensionLength = corner.designLength - (corner.hubCenter.y - corner.designCenter.y);
                 }
             }
@@ -2523,7 +2522,7 @@ struct PhysicsWorld::Impl
             {
                 const auto& wheelWV = static_cast<const JPH::WheelWV&>(wheel);
                 // The solver's impulses over the step it ran are the step's mean forces.
-                state.contactPosition = FromJolt(wheel.GetContactPosition());
+                state.contactPosition = FromJoltPosition(wheel.GetContactPosition());
                 state.contactNormal = FromJolt(wheel.GetContactNormal());
                 state.contactLongitudinal = FromJolt(wheel.GetContactLongitudinal());
                 state.contactLateral = FromJolt(wheel.GetContactLateral());
@@ -2659,7 +2658,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
     return AddStaticMesh(vertices, indices, grip);
 }
 
-bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip)
+bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip, const glm::dvec3& origin)
 {
     const float friction = grip.friction;
     // Vertices at the same place become one. The physics engine finds a triangle's neighbours by the
@@ -2754,7 +2753,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
             return 0;
         }
         JPH::BodyCreationSettings bodySettings(
-            shape.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
+            shape.Get(), ToJoltPosition(origin), JPH::Quat::sIdentity(), JPH::EMotionType::Static, ObjectLayers::kStatic);
         bodySettings.mFriction = bodyFriction;
         bodySettings.mUserData = userData;
         const JPH::BodyID body = m_impl->physicsSystem.GetBodyInterface().CreateAndAddBody(bodySettings, JPH::EActivation::DontActivate);
@@ -2771,7 +2770,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
     return addBody(std::move(walkable), 0) + addBody(std::move(steep), kWheelsIgnoreBody) > 0;
 }
 
-void PhysicsWorld::AddStaticBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
+void PhysicsWorld::AddStaticBox(const glm::dvec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
 {
     const JPH::Vec3 extents = JPH::Vec3::sMax(ToJolt(halfExtents), JPH::Vec3::sReplicate(0.01f));
     JPH::BodyCreationSettings bodySettings(
@@ -3033,9 +3032,9 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     vehicle.previous = vehicle.current;
 }
 
-std::optional<float> PhysicsWorld::FindGroundBelow(const glm::vec3& from, float maxDistance) const
+std::optional<double> PhysicsWorld::FindGroundBelow(const glm::dvec3& from, double maxDistance) const
 {
-    const JPH::RRayCast ray{ToJoltPosition(from), JPH::Vec3(0.0f, -maxDistance, 0.0f)};
+    const JPH::RRayCast ray{ToJoltPosition(from), JPH::Vec3(0.0f, static_cast<float>(-maxDistance), 0.0f)};
     JPH::RayCastResult hit;
     const JPH::SpecifiedBroadPhaseLayerFilter broadPhaseFilter(BroadPhaseLayers::kStatic);
     const JPH::SpecifiedObjectLayerFilter objectFilter(ObjectLayers::kStatic);
@@ -3043,7 +3042,7 @@ std::optional<float> PhysicsWorld::FindGroundBelow(const glm::vec3& from, float 
     {
         return std::nullopt;
     }
-    return from.y - hit.mFraction * maxDistance;
+    return from.y - static_cast<double>(hit.mFraction) * maxDistance;
 }
 
 PhysicsPose PhysicsWorld::GetVehiclePose(VehicleId id) const
@@ -3071,7 +3070,7 @@ VehicleLinkage PhysicsWorld::GetVehicleLinkage(VehicleId id) const
         vehicle.axles[axle]->Sketch(halfTrack, sketch);
         const auto toWorld = [&](const suspension::Vec3& p) {
             const glm::vec3 inVehicle = left.designCenter + CornerToVehicle(p - suspension::Vec3(0.0, halfTrack, 0.0));
-            return FromJolt(transform * ToJolt(inVehicle));
+            return FromJoltPosition(transform * ToJolt(inVehicle));
         };
         for (const auto& [a, b] : sketch.links)
         {
@@ -3107,10 +3106,10 @@ std::vector<VehicleWheelState> PhysicsWorld::GetVehicleWheels(VehicleId id) cons
         wheels[index].spinAngle -= (1.0f - alpha) * wheels[index].spinStep;
         wheels[index].pose.rotation = wheels[index].pose.rotation * glm::angleAxis(wheels[index].spinAngle, glm::vec3(1.0f, 0.0f, 0.0f));
         // The points drawn on the wheel move with it; the forces are the last step's.
-        wheels[index].mount = glm::mix(before.mount, wheels[index].mount, alpha);
+        wheels[index].mount = glm::mix(before.mount, wheels[index].mount, static_cast<double>(alpha));
         if (before.inContact && wheels[index].inContact)
         {
-            wheels[index].contactPosition = glm::mix(before.contactPosition, wheels[index].contactPosition, alpha);
+            wheels[index].contactPosition = glm::mix(before.contactPosition, wheels[index].contactPosition, static_cast<double>(alpha));
         }
     }
     return wheels;

@@ -111,14 +111,15 @@ PhysicsPose DecomposePose(const glm::mat4& matrix, glm::vec3& scale)
         glm::vec3(matrix[2]) / scale.z);
 
     PhysicsPose pose;
-    pose.position = glm::vec3(matrix[3]);
+    pose.position = glm::dvec3(glm::vec3(matrix[3]));
     pose.rotation = glm::normalize(glm::quat_cast(rotation));
     return pose;
 }
 
+// The scene's transforms are in float: here the double pose is rounded to the scene's precision.
 glm::mat4 ComposeMatrix(const PhysicsPose& pose, const glm::vec3& scale)
 {
-    return glm::translate(glm::mat4(1.0f), pose.position) * glm::mat4_cast(pose.rotation) * glm::scale(glm::mat4(1.0f), scale);
+    return glm::translate(glm::mat4(1.0f), glm::vec3(pose.position)) * glm::mat4_cast(pose.rotation) * glm::scale(glm::mat4(1.0f), scale);
 }
 
 // The model's wheels as a layout in vehicle space, scaled as the entity is.
@@ -418,22 +419,22 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
         }
     }
 
-    glm::vec3 carWorldMin = session->startPose.position;
-    glm::vec3 carWorldMax = session->startPose.position;
+    glm::vec3 carWorldMin = glm::vec3(session->startPose.position);
+    glm::vec3 carWorldMax = glm::vec3(session->startPose.position);
     ComputeWorldModelBounds(world, entity, carWorldMin, carWorldMax);
 
     session->physics = std::make_unique<PhysicsWorld>();
     const float lowestGeometry = AddSceneCollision(*session->physics, state.rendererWorld, world, entity, carWorldMin.y);
     const float groundY = std::min(lowestGeometry, carWorldMin.y);
     session->physics->AddStaticBox(
-        glm::vec3(session->startPose.position.x, groundY - kGroundPlaneHalfThickness, session->startPose.position.z),
+        glm::dvec3(session->startPose.position.x, groundY - kGroundPlaneHalfThickness, session->startPose.position.z),
         glm::vec3(kGroundPlaneHalfSize, kGroundPlaneHalfThickness, kGroundPlaneHalfSize));
     session->vehicle = session->physics->AddVehicle(settings, session->startPose);
     session->gearShift.from = session->gearShift.to = session->physics->GetVehicleTelemetry(session->vehicle).gear;
-    if (const std::optional<float> ground = session->physics->FindGroundBelow(
-            session->startPose.position + glm::vec3(0.0f, kRecoverRayLift, 0.0f), kRecoverRayLength))
+    if (const std::optional<double> ground = session->physics->FindGroundBelow(
+            session->startPose.position + glm::dvec3(0.0, kRecoverRayLift, 0.0), kRecoverRayLength))
     {
-        session->startHeightAboveGround = std::clamp(session->startPose.position.y - *ground, 0.0f, kRecoverMaxHeightAboveGround);
+        session->startHeightAboveGround = std::clamp(static_cast<float>(session->startPose.position.y - *ground), 0.0f, kRecoverMaxHeightAboveGround);
     }
 
     const double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
@@ -514,8 +515,8 @@ void Recover(RendererSharedState& state)
     PhysicsPose pose;
     pose.rotation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
     pose.position = current.position;
-    if (const std::optional<float> ground =
-            session->physics->FindGroundBelow(current.position + glm::vec3(0.0f, kRecoverRayLift, 0.0f), kRecoverRayLength))
+    if (const std::optional<double> ground =
+            session->physics->FindGroundBelow(current.position + glm::dvec3(0.0, kRecoverRayLift, 0.0), kRecoverRayLength))
     {
         pose.position.y = *ground + session->startHeightAboveGround + kRecoverDropHeight;
     }
@@ -990,7 +991,10 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         lowest = any ? std::min(lowest, meshLowest) : meshLowest;
         any = true;
     };
-    std::vector<glm::vec3> worldVertices;
+    // Each mesh's vertices relative to its entity's position, which the physics takes in double: turned
+    // and scaled, they stay near their own origin and keep their float precision however far out the
+    // entity stands (world positions in float are 0.5 mm apart at 6000 m).
+    std::vector<glm::vec3> localVertices;
 
     // A model that carries the game's own collision (an Assetto Corsa track's physics meshes) collides
     // through that alone, each surface at its friction: what it draws is for looking at.
@@ -1008,17 +1012,20 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         }
         collidesByItself.insert(entity);
         const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
+        const glm::dvec3 origin(modelMatrix[3]);
+        const glm::mat3 linear(modelMatrix);
         size_t triangles = 0;
         for (const ModelCollisionMesh& mesh : model->collisionMeshes)
         {
-            worldVertices.clear();
-            worldVertices.reserve(mesh.positions.size());
+            localVertices.clear();
+            localVertices.reserve(mesh.positions.size());
             float meshLowest = 0.0f;
             for (const glm::vec3& position : mesh.positions)
             {
-                const glm::vec3 world = glm::vec3(modelMatrix * glm::vec4(position, 1.0f));
-                meshLowest = worldVertices.empty() ? world.y : std::min(meshLowest, world.y);
-                worldVertices.push_back(world);
+                const glm::vec3 local = linear * position;
+                const float y = static_cast<float>(origin.y + local.y);
+                meshLowest = localVertices.empty() ? y : std::min(meshLowest, y);
+                localVertices.push_back(local);
             }
             SurfaceGrip grip;
             grip.friction = mesh.friction;
@@ -1026,7 +1033,7 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
             grip.wetSpeedFalloff = mesh.wetSpeedFalloff;
             grip.slidingShare = mesh.slidingShare;
             grip.rollingResistance = mesh.rollingResistance;
-            if (physics.AddStaticMesh(worldVertices, mesh.indices, grip))
+            if (physics.AddStaticMesh(localVertices, mesh.indices, grip, origin))
             {
                 noteLowest(meshLowest);
                 triangles += mesh.indices.size() / 3;
@@ -1052,7 +1059,7 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
             continue;
         }
         const glm::mat4 modelMatrix = scene.GetModelMatrix(entity);
-        worldVertices.clear();
+        std::vector<glm::vec3> worldVertices;
         worldVertices.reserve(model->water.positions.size());
         for (const glm::vec3& position : model->water.positions)
         {
@@ -1077,23 +1084,26 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
         }
 
         const glm::mat4 modelMatrix = scene.GetModelMatrix(submesh.entity);
-        worldVertices.clear();
-        worldVertices.reserve(submesh.mesh->vertices.size());
+        const glm::dvec3 origin(modelMatrix[3]);
+        const glm::mat3 linear(modelMatrix);
+        localVertices.clear();
+        localVertices.reserve(submesh.mesh->vertices.size());
         float submeshLowest = 0.0f;
         for (const Vertex& vertex : submesh.mesh->vertices)
         {
-            const glm::vec3 position = glm::vec3(modelMatrix * glm::vec4(vertex.position[0], vertex.position[1], vertex.position[2], 1.0f));
-            submeshLowest = worldVertices.empty() ? position.y : std::min(submeshLowest, position.y);
-            worldVertices.push_back(position);
+            const glm::vec3 local = linear * glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]);
+            const float y = static_cast<float>(origin.y + local.y);
+            submeshLowest = localVertices.empty() ? y : std::min(submeshLowest, y);
+            localVertices.push_back(local);
         }
         // Grass and weeds are cut-out cards, drawn and not solid: the verge is a million of them.
-        if (submesh.alphaMode == MaterialAlphaMode::Mask && IsGroundCover(worldVertices, submesh.mesh->indices))
+        if (submesh.alphaMode == MaterialAlphaMode::Mask && IsGroundCover(localVertices, submesh.mesh->indices))
         {
             ++groundCoverSubmeshes;
             groundCoverTriangles += submesh.mesh->indices.size() / 3;
             continue;
         }
-        if (physics.AddStaticMesh(worldVertices, submesh.mesh->indices))
+        if (physics.AddStaticMesh(localVertices, submesh.mesh->indices, SurfaceGrip{}, origin))
         {
             noteLowest(submeshLowest);
         }
@@ -1226,20 +1236,20 @@ void UpdateChaseCamera(
     }
     heading = glm::normalize(heading);
 
-    const glm::vec3 target = vehiclePose.position + glm::vec3(0.0f, settings.lookHeight, 0.0f);
     // The place behind the car and above it, swung about the point the camera looks at: pitched about
-    // the car's right, then turned about the vertical.
+    // the car's right, then turned about the vertical. The arm is relative and in float; the point it
+    // swings about is the car's, in double, rounded to the camera's float only at the end.
     const glm::vec3 up(0.0f, 1.0f, 0.0f);
-    const glm::vec3 lookAt = vehiclePose.position + glm::vec3(0.0f, settings.lookHeight, 0.0f);
-    glm::vec3 arm = vehiclePose.position + glm::vec3(0.0f, settings.height, 0.0f) - heading * settings.distance - lookAt;
+    const glm::dvec3 lookAt = vehiclePose.position + glm::dvec3(0.0, settings.lookHeight, 0.0);
+    glm::vec3 arm = glm::vec3(0.0f, settings.height - settings.lookHeight, 0.0f) - heading * settings.distance;
     arm = glm::angleAxis(glm::radians(orbit.pitchDegrees), glm::normalize(glm::cross(up, heading))) * arm;
     arm = glm::angleAxis(glm::radians(orbit.yawDegrees), up) * arm;
     // Locked to the car, with no smoothing of the car's travel or of its heading: the camera keeps the
     // same place relative to the body, as in Gran Turismo 7, so a view from the car's side stays on the
     // side instead of lagging round as the heading changes.
-    camera.position = lookAt + arm;
+    camera.position = glm::vec3(lookAt + glm::dvec3(arm));
 
-    const glm::vec3 toTarget = target - camera.position;
+    const glm::vec3 toTarget = -arm;
     if (glm::length(toTarget) > 1e-4f)
     {
         const glm::vec3 direction = glm::normalize(toTarget);
@@ -1306,7 +1316,7 @@ void UpdateMountedCamera(Camera& camera, const PhysicsPose& vehiclePose, const V
     const glm::vec3 up(-std::sin(yaw) * std::sin(pitch), std::cos(pitch), -std::cos(yaw) * std::sin(pitch));
 
     // Fixed to the body with no smoothing, so it pitches and rolls with it as GT7's cockpit view does.
-    camera.position = vehiclePose.position + vehiclePose.rotation * mount.position;
+    camera.position = glm::vec3(vehiclePose.position + glm::dvec3(vehiclePose.rotation * mount.position));
     camera.worldUp = glm::normalize(vehiclePose.rotation * up);
     const glm::vec3 direction = glm::normalize(vehiclePose.rotation * forward);
     camera.yawDegrees = glm::degrees(std::atan2(direction.z, direction.x));

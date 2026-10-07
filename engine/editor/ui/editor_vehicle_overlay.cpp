@@ -214,31 +214,33 @@ WheelAxes GetWheelAxes(const VehicleWheelState& wheel)
 void DrawSuspension(const Painter& painter, const VehicleWheelState& wheel, size_t index)
 {
     const WheelAxes axes = GetWheelAxes(wheel);
-    const glm::vec3 center = wheel.pose.position;
+    // Drawn through the renderer's float view: the double positions are rounded to it.
+    const glm::vec3 center(wheel.pose.position);
+    const glm::vec3 mount(wheel.mount);
     const float compression = ComputeCompression(wheel);
     const ImU32 color = wheel.inContact ? GetCompressionColor(compression) : kAirborneColor;
 
     // The spring, from where it hangs to the wheel's centre.
-    painter.Spring(wheel.mount, center, color);
-    painter.Dot(wheel.mount, 3.0f, kTextColor);
+    painter.Spring(mount, center, color);
+    painter.Dot(mount, 3.0f, kTextColor);
 
     // The travel as a rail beside the tyre on the car's outer side: the mount's end is full bump, the far
     // end full droop, and the marker is where the wheel is. The left wheels are the even ones, and the
     // axle points to the car's left.
     const float outward = index % 2 == 0 ? 1.0f : -1.0f;
     const glm::vec3 offset = axes.axle * outward * (wheel.width * 0.5f + 0.1f);
-    const glm::vec3 bump = wheel.mount + wheel.suspensionAxis * wheel.suspensionMinLength + offset;
-    const glm::vec3 droop = wheel.mount + wheel.suspensionAxis * wheel.suspensionMaxLength + offset;
+    const glm::vec3 bump = mount + wheel.suspensionAxis * wheel.suspensionMinLength + offset;
+    const glm::vec3 droop = mount + wheel.suspensionAxis * wheel.suspensionMaxLength + offset;
     painter.Line(bump, droop, kRailColor, 3.0f);
     painter.Line(bump - axes.forward * 0.03f, bump + axes.forward * 0.03f, kBumpStopColor, 2.0f);
     painter.Line(droop - axes.forward * 0.03f, droop + axes.forward * 0.03f, kRailColor, 2.0f);
-    painter.Dot(wheel.mount + wheel.suspensionAxis * wheel.suspensionLength + offset, 4.5f, color);
+    painter.Dot(mount + wheel.suspensionAxis * wheel.suspensionLength + offset, 4.5f, color);
 }
 
 void DrawTyre(const Painter& painter, const VehicleWheelState& wheel, bool drawsPatch)
 {
     const WheelAxes axes = GetWheelAxes(wheel);
-    const glm::vec3 center = wheel.pose.position;
+    const glm::vec3 center(wheel.pose.position);
     const float usage = wheel.inContact ? std::max(GripUsageAlong(wheel), GripUsageAcross(wheel)) : 0.0f;
     const ImU32 color = wheel.inContact ? GetGripUsageColor(usage) : kAirborneColor;
 
@@ -269,11 +271,8 @@ void DrawTyre(const Painter& painter, const VehicleWheelState& wheel, bool draws
     // the tread, filled by how much grip it uses.
     const glm::vec3 along = wheel.contactLongitudinal * (wheel.radius * 0.3f);
     const glm::vec3 across = wheel.contactLateral * (wheel.width * 0.5f);
-    const std::array<glm::vec3, 4> corners = {
-        wheel.contactPosition + along + across,
-        wheel.contactPosition + along - across,
-        wheel.contactPosition - along - across,
-        wheel.contactPosition - along + across};
+    const glm::vec3 contact(wheel.contactPosition);
+    const std::array<glm::vec3, 4> corners = {contact + along + across, contact + along - across, contact - along - across, contact - along + across};
     std::array<ImVec2, 4> projected;
     for (size_t corner = 0; corner < corners.size(); ++corner)
     {
@@ -302,7 +301,7 @@ void DrawBrushPatch(const Painter& painter, const VehicleWheelState& wheel, floa
     {
         return;
     }
-    const glm::vec3 origin = wheel.contactPosition + wheel.contactNormal * 0.004f;
+    const glm::vec3 origin = glm::vec3(wheel.contactPosition) + wheel.contactNormal * 0.004f;
     const glm::vec3 forward = wheel.contactLongitudinal;
     const glm::vec3 left = -wheel.contactLateral;
     const float xc = wheel.carcassDeflection.x;
@@ -405,9 +404,10 @@ void DrawForces(const Painter& painter, const VehicleWheelState& wheel, float me
     }
     const float metresPerNewton = metresPerKilonewton * 0.001f;
     // What the ground does to the car: up through the spring, and along and across the tyre.
-    painter.Arrow(wheel.contactPosition, wheel.contactNormal * (wheel.suspensionForce * metresPerNewton), kLoadColor);
-    painter.Arrow(wheel.contactPosition, wheel.contactLongitudinal * (wheel.longitudinalForce * metresPerNewton), kDriveColor);
-    painter.Arrow(wheel.contactPosition, wheel.contactLateral * (wheel.lateralForce * metresPerNewton), kCornerColor);
+    const glm::vec3 contact(wheel.contactPosition);
+    painter.Arrow(contact, wheel.contactNormal * (wheel.suspensionForce * metresPerNewton), kLoadColor);
+    painter.Arrow(contact, wheel.contactLongitudinal * (wheel.longitudinalForce * metresPerNewton), kDriveColor);
+    painter.Arrow(contact, wheel.contactLateral * (wheel.lateralForce * metresPerNewton), kCornerColor);
 }
 
 void DrawFrictionCircles(const Painter& painter, const std::vector<VehicleWheelState>& wheels)
@@ -479,19 +479,19 @@ void DrawVehicleLinkageOverlay(
     constexpr ImU32 kJointColor = IM_COL32(255, 215, 75, 255);
     for (const auto& [a, b] : linkage.links)
     {
-        painter.Line(a, b, kLinkColor, 2.5f);
+        painter.Line(glm::vec3(a), glm::vec3(b), kLinkColor, 2.5f);
     }
     for (const auto& [a, b] : linkage.carriers)
     {
-        painter.Line(a, b, kCarrierColor, 3.0f);
+        painter.Line(glm::vec3(a), glm::vec3(b), kCarrierColor, 3.0f);
     }
-    for (const glm::vec3& p : linkage.chassis)
+    for (const glm::dvec3& p : linkage.chassis)
     {
-        painter.Dot(p, 3.5f, kChassisColor);
+        painter.Dot(glm::vec3(p), 3.5f, kChassisColor);
     }
-    for (const glm::vec3& p : linkage.joints)
+    for (const glm::dvec3& p : linkage.joints)
     {
-        painter.Dot(p, 3.5f, kJointColor);
+        painter.Dot(glm::vec3(p), 3.5f, kJointColor);
     }
 }
 

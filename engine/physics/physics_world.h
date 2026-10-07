@@ -19,9 +19,12 @@ namespace me
 
 using VehicleId = uint32_t;
 
+// World positions are in double: a world reaches thousands of metres from its origin (the GTA map puts
+// Vice City at x + 6000 m), where floats are some 0.5 mm apart and a slow car's step would round away.
+// Directions, forces and anything relative to the car stay in float.
 struct PhysicsPose
 {
-    glm::vec3 position{0.0f};
+    glm::dvec3 position{0.0};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
@@ -42,7 +45,7 @@ struct VehicleWheelState
 
     // What the last fixed step did at this wheel, for drawing it. World space, forces in newtons.
     // Where the suspension hangs from, and the way it extends (unit, from the mount to the wheel).
-    glm::vec3 mount{0.0f};
+    glm::dvec3 mount{0.0};
     glm::vec3 suspensionAxis{0.0f, -1.0f, 0.0f};
     // The travel: the suspension's length at full bump and at full droop, and what the spring holds at
     // rest under the car's weight is up to the caller (ComputeRestSuspensionLength).
@@ -52,7 +55,7 @@ struct VehicleWheelState
     float width = 0.0f;
     // The rest apply while inContact: where the tyre meets the ground, the ground's normal, and the
     // tyre's rolling and sideways directions along it.
-    glm::vec3 contactPosition{0.0f};
+    glm::dvec3 contactPosition{0.0};
     glm::vec3 contactNormal{0.0f, 1.0f, 0.0f};
     glm::vec3 contactLongitudinal{0.0f, 0.0f, 1.0f};
     glm::vec3 contactLateral{1.0f, 0.0f, 0.0f};
@@ -121,10 +124,10 @@ struct VehicleWheelState
 // moving parts. Empty for a car on straight springs.
 struct VehicleLinkage
 {
-    std::vector<std::array<glm::vec3, 2>> links;
-    std::vector<std::array<glm::vec3, 2>> carriers;
-    std::vector<glm::vec3> chassis;
-    std::vector<glm::vec3> joints;
+    std::vector<std::array<glm::dvec3, 2>> links;
+    std::vector<std::array<glm::dvec3, 2>> carriers;
+    std::vector<glm::dvec3> chassis;
+    std::vector<glm::dvec3> joints;
 };
 
 struct VehicleTelemetry
@@ -201,19 +204,21 @@ class PhysicsWorld
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
-    // A triangle mesh that never moves, in world space, three indices per triangle, of a surface with
-    // this friction coefficient (about 1 for tarmac, 0.6 for grass). Degenerate triangles are dropped.
-    // False, adding nothing, when no triangle is left.
+    // A triangle mesh that never moves, three indices per triangle, of a surface with this friction
+    // coefficient (about 1 for tarmac, 0.6 for grass). Its vertices are relative to `origin` in world
+    // space: kept near their own origin they keep their float precision however far out the mesh lies.
+    // Degenerate triangles are dropped. False, adding nothing, when no triangle is left.
     bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, float friction = kDefaultSurfaceFriction);
-    bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip);
+    bool AddStaticMesh(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices, const SurfaceGrip& grip, const glm::dvec3& origin = glm::dvec3(0.0));
     void AddStaticBox(
-        const glm::vec3& center,
+        const glm::dvec3& center,
         const glm::vec3& halfExtents,
         const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
         float friction = kDefaultSurfaceFriction);
     // The top of the world's water, world-space triangles seen from above (WaterSurface). Below it a
     // car is held up by buoyancy and slowed by drag while it fills, then sinks, and once the water is
     // over most of it the engine drowns and gives no more drive, as in the games the maps come from.
+    // In float: the surface only sets the buoyancy, which half a millimetre does not change.
     void AddWaterSurface(std::span<const glm::vec3> vertices, std::span<const uint32_t> indices);
     size_t GetWaterTriangleCount() const;
     size_t GetStaticBodyCount() const;
@@ -229,7 +234,7 @@ class PhysicsWorld
     void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
     // The height of the first static surface (track, ground, walls) straight below `from`, within
     // `maxDistance`; cars are not hit. Empty when there is none.
-    std::optional<float> FindGroundBelow(const glm::vec3& from, float maxDistance) const;
+    std::optional<double> FindGroundBelow(const glm::dvec3& from, double maxDistance) const;
     PhysicsPose GetVehiclePose(VehicleId vehicle) const;
     std::vector<VehicleWheelState> GetVehicleWheels(VehicleId vehicle) const;
     VehicleLinkage GetVehicleLinkage(VehicleId vehicle) const;

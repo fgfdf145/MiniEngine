@@ -134,7 +134,7 @@ void TestDefaultCamerasAroundACar()
     lens.exposureEv100 = 13.0f;
 
     const Camera front = PlaceQuadCamera(lens, car, cameras[static_cast<size_t>(QuadCameraSlot::Front)]);
-    Require(Near(front.position, car.position + glm::vec3(0.0f, 0.8f, 6.0f)), "the front camera is ahead: " + Describe(front.position));
+    Require(Near(front.position, glm::vec3(car.position) + glm::vec3(0.0f, 0.8f, 6.0f)), "the front camera is ahead: " + Describe(front.position));
     Require(front.GetForward().z < -0.99f, "the front camera looks back at the car");
     Require(Near(front.worldUp, glm::vec3(0.0f, 1.0f, 0.0f)), "level");
     Require(front.farPlane == 5000.0f && front.exposureEv100 == 13.0f, "the lens's far plane and exposure");
@@ -142,14 +142,14 @@ void TestDefaultCamerasAroundACar()
     Require(Near(front.fovDegrees, 35.0f), "its own field of view");
 
     const Camera rear = PlaceQuadCamera(lens, car, cameras[static_cast<size_t>(QuadCameraSlot::Rear)]);
-    Require(Near(rear.position, car.position + glm::vec3(0.0f, 0.8f, -6.0f)) && rear.GetForward().z > 0.99f, "the rear camera behind, looking forward");
+    Require(Near(rear.position, glm::vec3(car.position) + glm::vec3(0.0f, 0.8f, -6.0f)) && rear.GetForward().z > 0.99f, "the rear camera behind, looking forward");
 
     // Vehicle space's +X is the car's left: facing world +Z, that is world +X.
     const Camera left = PlaceQuadCamera(lens, car, cameras[static_cast<size_t>(QuadCameraSlot::Left)]);
-    Require(Near(left.position, car.position + glm::vec3(6.0f, 0.8f, 0.0f)), "the left camera on the car's left: " + Describe(left.position));
+    Require(Near(left.position, glm::vec3(car.position) + glm::vec3(6.0f, 0.8f, 0.0f)), "the left camera on the car's left: " + Describe(left.position));
     Require(left.GetForward().x < -0.99f, "looking at the car's left side");
     const Camera right = PlaceQuadCamera(lens, car, cameras[static_cast<size_t>(QuadCameraSlot::Right)]);
-    Require(Near(right.position, car.position + glm::vec3(-6.0f, 0.8f, 0.0f)), "the right camera on the car's right");
+    Require(Near(right.position, glm::vec3(car.position) + glm::vec3(-6.0f, 0.8f, 0.0f)), "the right camera on the car's right");
     // The camera's right is forward x up; seen from the car's right, its nose is on the right of
     // the picture.
     Require(glm::dot(right.GetRight(), glm::vec3(0.0f, 0.0f, 1.0f)) > 0.99f, "from the right, the car's front is to the right");

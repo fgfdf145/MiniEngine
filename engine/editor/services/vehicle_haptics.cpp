@@ -240,7 +240,7 @@ VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& set
     {
         const VehicleWheelState& wheel = input.wheels[index];
         VehicleAudioHapticsState::Wheel& track = state.wheels[index];
-        const size_t side = glm::dot(wheel.pose.position - input.body.position, carRight) > 0.0f ? 1 : 0;
+        const size_t side = glm::dot(glm::vec3(wheel.pose.position - input.body.position), carRight) > 0.0f ? 1 : 0;
 
         // The suspension's and the tyre's compression together: what the road pushes up at the hub.
         const float compression = wheel.suspensionMaxLength - wheel.suspensionLength + (wheel.unsprungMass ? wheel.tyreDeflection : 0.0f);

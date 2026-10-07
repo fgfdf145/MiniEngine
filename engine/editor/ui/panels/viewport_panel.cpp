@@ -1318,7 +1318,7 @@ void ViewportPanel::OnGui(EditorContext& context)
             UiScale(),
             state.minimapTexture,
             scene.GetMinimap(),
-            state.vehicleStatus.pose.position,
+            glm::vec3(state.vehicleStatus.pose.position),
             state.vehicleStatus.pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f),
             drivingHud);
     }
