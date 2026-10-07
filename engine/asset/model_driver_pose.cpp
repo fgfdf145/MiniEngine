@@ -25,9 +25,11 @@ constexpr float kWristOutsideRim = 0.03f;
 // The fingers' bend at their three joints from the palm, closed round a rim; the thumb lies along it.
 constexpr std::array<float, 3> kFingerCurlDegrees{45.0f, 70.0f, 45.0f};
 constexpr std::array<float, 3> kThumbCurlDegrees{10.0f, 20.0f, 20.0f};
-// The feet: the line from the ankle to the ball of the foot raised this much from where the rest pose
-// has it, onto a pedal's slope.
-constexpr float kFootRaiseDegrees = 40.0f;
+// A hand held elsewhere has its wrist this far back from where the palm holds, and this far off the
+// palm's side; on its way there from the wheel it rises this much at the middle.
+constexpr float kHeldWristBehindGrip = 0.06f;
+constexpr float kHeldWristOffPalm = 0.03f;
+constexpr float kHandCarryLift = 0.05f;
 // The neck and head take back this share of the back's recline each, so the eyes look at the road.
 constexpr float kNeckUprightShare = 0.5f;
 constexpr float kHeadUprightShare = 0.4f;
@@ -331,7 +333,7 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         const glm::vec3 foot = posing.Position(rig.toes[side]) - posing.Position(rig.ankle[side]);
         const glm::vec3 footSide = posing.Rotation(rig.ankle[side]) * rest.footSide[side];
         // The rest pose's foot, flat on the floor, raised up the pedal and pointing straight ahead.
-        const float pitch = rest.footPitch[side] + glm::radians(kFootRaiseDegrees);
+        const float pitch = rest.footPitch[side] + glm::radians(input.footRaiseDegrees[side]);
         const glm::vec3 newFoot = kForward * std::cos(pitch) + kUp * std::sin(pitch);
         posing.Turn(rig.ankle[side], TurnFrames(foot, footSide, newFoot, kLeft));
         posing.Update();
@@ -390,7 +392,23 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         const float handTurn = std::clamp(input.wheelTurn, -maxHandTurn, maxHandTurn);
         const glm::vec3 radial = glm::angleAxis(handTurn, wheelAxis) * restRadial;
         const glm::vec3 grip = input.wheelCenter + radial * input.wheelRadius;
-        const glm::vec3 wristTarget = grip - wheelAxis * kWristBehindRim + radial * kWristOutsideRim;
+        // The hand reaches over the rim, its palm towards the wheel's centre; or it has gone (part of
+        // the way, lifted at the middle) to what it holds instead.
+        const glm::vec3 wheelWrist = grip - wheelAxis * kWristBehindRim + radial * kWristOutsideRim;
+        glm::vec3 handDirection = glm::normalize(wheelAxis - radial * 0.25f);
+        glm::vec3 palmFacing = -radial;
+        glm::vec3 wristTarget = wheelWrist;
+        const DriverHandHold& hold = input.holds[side];
+        if (hold.weight > 0.0f)
+        {
+            const float weight = std::min(hold.weight, 1.0f);
+            const glm::vec3 heldDirection = SafeNormalize(hold.direction, kForward);
+            const glm::vec3 heldPalm = SafeNormalize(hold.palmFacing, -kUp);
+            const glm::vec3 heldWrist = hold.grip - heldDirection * kHeldWristBehindGrip - heldPalm * kHeldWristOffPalm;
+            wristTarget = glm::mix(wheelWrist, heldWrist, weight) + kUp * (kHandCarryLift * std::sin(glm::pi<float>() * weight));
+            handDirection = SafeNormalize(glm::mix(handDirection, heldDirection, weight), heldDirection);
+            palmFacing = SafeNormalize(glm::mix(palmFacing, heldPalm, weight), heldPalm);
+        }
 
         // Nearly straight arms reach with the shoulder blades too.
         if (rig.scapula[side] >= 0)
@@ -430,10 +448,8 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         posing.Turn(rig.elbow[side], TurnBetween(lower, newLower));
         posing.Update();
 
-        // The hand reaches over the rim, its palm towards the wheel's centre; the forearm's twist
-        // joints take a share of its turn about the forearm.
-        const glm::vec3 handDirection = glm::normalize(wheelAxis - radial * 0.25f);
-        const glm::vec3 palmFacing = -radial;
+        // The hand turned to point and face as it holds; the forearm's twist joints take a share of
+        // its turn about the forearm.
         const glm::vec3 hand = posing.Position(rig.handEnd[side]) - posing.Position(rig.wrist[side]);
         const glm::vec3 palm = posing.Rotation(rig.wrist[side]) * rest.palm[side];
         const glm::quat handTurnFrames = TurnFrames(hand, palm, handDirection, palmFacing);

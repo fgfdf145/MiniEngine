@@ -425,6 +425,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
         glm::vec3(session->startPose.position.x, groundY - kGroundPlaneHalfThickness, session->startPose.position.z),
         glm::vec3(kGroundPlaneHalfSize, kGroundPlaneHalfThickness, kGroundPlaneHalfSize));
     session->vehicle = session->physics->AddVehicle(settings, session->startPose);
+    session->gearShift.from = session->gearShift.to = session->physics->GetVehicleTelemetry(session->vehicle).gear;
     if (const std::optional<float> ground = session->physics->FindGroundBelow(
             session->startPose.position + glm::vec3(0.0f, kRecoverRayLift, 0.0f), kRecoverRayLength))
     {
@@ -802,18 +803,31 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     PhysicsPose modelPose = pose;
     modelPose.rotation = pose.rotation * session->vehicleToModel;
     world.ApplyTransformMatrix(session->entity, ComposeMatrix(modelPose, session->scale));
+    // The lever follows the gearbox through the gate.
+    StartGearShift(session->gearShift, session->physics->GetVehicleTelemetry(session->vehicle).gear);
+    if (!session->paused)
+    {
+        AdvanceGearShift(session->gearShift, deltaSeconds);
+    }
     if (session->wheels.has_value())
     {
         session->steeringWheelTurn = SteeringWheelTurn(
             *session->wheels, pose, session->physics->GetVehicleWheels(session->vehicle), session->vehicleToModel, session->scale);
-        state.rendererWorld.SetSubmeshLocalTransforms(
-            session->entity,
-            BuildWheelSubmeshTransforms(
-                *session->wheels,
-                pose,
-                session->physics->GetVehicleWheels(session->vehicle),
-                session->vehicleToModel,
-                session->scale));
+        std::vector<glm::mat4> transforms = BuildWheelSubmeshTransforms(
+            *session->wheels, pose, session->physics->GetVehicleWheels(session->vehicle), session->vehicleToModel, session->scale);
+        const LoadedModelData& model = *session->wheels->model;
+        if (model.gearLever.has_value())
+        {
+            const glm::mat4 lever = GearLeverTransform(*model.gearLever, GearLeverGatePosition(session->gearShift), session->vehicleToModel);
+            for (size_t index = 0; index < model.submeshes.size() && index < transforms.size(); ++index)
+            {
+                if (model.submeshes[index].gearLever)
+                {
+                    transforms[index] = lever;
+                }
+            }
+        }
+        state.rendererWorld.SetSubmeshLocalTransforms(session->entity, std::move(transforms));
     }
     if (!state.vehicleDrive.camera.follow)
     {

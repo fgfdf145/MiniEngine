@@ -2123,7 +2123,24 @@ struct WheelNodeTag
     uint8_t corner = 0;
     // Below a STEER_HR node.
     bool steeringWheel = false;
+    // Below a SHIFT node (IsGearLeverNodeName).
+    bool gearLever = false;
 };
+
+// SHIFT, SHIFTER and SHIFT_<digits>, ignoring case; not SHIFT_LIGHTS and the like.
+bool IsGearLeverNodeName(const std::string& name)
+{
+    const std::string lower = ToLowerAscii(name);
+    if (lower == "shift" || lower == "shifter")
+    {
+        return true;
+    }
+    return lower.size() > 6 && lower.compare(0, 6, "shift_") == 0 &&
+           std::all_of(lower.begin() + 6, lower.end(), [](char c)
+                       {
+                           return c >= '0' && c <= '9';
+                       });
+}
 
 WheelNodeTag ParseWheelNodeName(const std::string& name)
 {
@@ -2316,7 +2333,54 @@ struct WheelScan
 {
     std::array<std::optional<glm::vec3>, kModelWheelCornerCount> centers;
     std::optional<ModelSteeringWheel> steeringWheel;
+    // The deepest gear lever node's origin, in the model's space.
+    std::optional<glm::vec3> gearLeverPivot;
 };
+
+// The gear lever: its pivot, and its knob, the middle of the lever's vertices within 15% of the
+// farthest from the pivot. Nullopt when no submesh is under a SHIFT node.
+std::optional<ModelGearLever> BuildGearLever(const WheelScan& scan, const std::vector<ModelSubmeshData>& submeshes)
+{
+    if (!scan.gearLeverPivot.has_value())
+    {
+        return std::nullopt;
+    }
+    const glm::vec3 pivot = *scan.gearLeverPivot;
+    float farthest = 0.0f;
+    for (const ModelSubmeshData& submesh : submeshes)
+    {
+        if (submesh.gearLever)
+        {
+            for (const Vertex& vertex : submesh.mesh.vertices)
+            {
+                farthest = std::max(farthest, glm::distance(glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]), pivot));
+            }
+        }
+    }
+    if (farthest <= 0.0f)
+    {
+        return std::nullopt;
+    }
+    glm::vec3 sum(0.0f);
+    size_t count = 0;
+    for (const ModelSubmeshData& submesh : submeshes)
+    {
+        if (!submesh.gearLever)
+        {
+            continue;
+        }
+        for (const Vertex& vertex : submesh.mesh.vertices)
+        {
+            const glm::vec3 position(vertex.position[0], vertex.position[1], vertex.position[2]);
+            if (glm::distance(position, pivot) >= farthest * 0.85f)
+            {
+                sum += position;
+                ++count;
+            }
+        }
+    }
+    return ModelGearLever{pivot, sum / static_cast<float>(count)};
+}
 
 // The rig, once every corner has a wheel node with meshes; nullopt otherwise. The submeshes'
 // vertices are already in model space.
@@ -2399,8 +2463,10 @@ void TraverseNode(
     if (wheelTag.part == ModelWheelPart::None)
     {
         const bool steeringWheel = wheelTag.steeringWheel;
+        const bool gearLever = wheelTag.gearLever;
         wheelTag = ParseWheelNodeName(node.name);
         wheelTag.steeringWheel = steeringWheel;
+        wheelTag.gearLever = gearLever;
         if (wheelTag.part == ModelWheelPart::Wheel && !wheelScan.centers[wheelTag.corner].has_value())
         {
             wheelScan.centers[wheelTag.corner] = glm::vec3(worldTransform[3]);
@@ -2410,6 +2476,12 @@ void TraverseNode(
     {
         wheelTag.steeringWheel = true;
         wheelScan.steeringWheel = ModelSteeringWheel{glm::vec3(worldTransform[3]), glm::normalize(glm::vec3(worldTransform[2]))};
+    }
+    if (IsGearLeverNodeName(node.name))
+    {
+        // The deepest one turns: the R34's Shift_1 holds the lever's base, its Shift_2 the pivot.
+        wheelTag.gearLever = true;
+        wheelScan.gearLeverPivot = glm::vec3(worldTransform[3]);
     }
     const size_t firstNewSubmesh = modelData.submeshes.size();
 
@@ -2489,6 +2561,7 @@ void TraverseNode(
         modelData.submeshes[index].wheelPart = wheelTag.part;
         modelData.submeshes[index].wheelCorner = wheelTag.corner;
         modelData.submeshes[index].steeringWheel = wheelTag.steeringWheel;
+        modelData.submeshes[index].gearLever = wheelTag.gearLever;
     }
 
     for (int childIndex : node.children)
@@ -3267,6 +3340,7 @@ LoadedModelData BuildLoadedModelData(
     {
         modelData.steeringWheel = wheelScan.steeringWheel;
     }
+    modelData.gearLever = BuildGearLever(wheelScan, modelData.submeshes);
 
     // A model of collision or water alone (a streamed world's collision, kept loaded while its drawn
     // cells come and go) draws nothing and is still a model.

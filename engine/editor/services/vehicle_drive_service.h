@@ -2,6 +2,7 @@
 
 #include <engine/asset/model_loader.h>
 #include <engine/audio/gamepad_haptics.h>
+#include <engine/editor/services/vehicle_gear_shift.h>
 #include <engine/editor/services/vehicle_haptics.h>
 #include <engine/editor/services/vehicle_steering_assist.h>
 #include <engine/physics/physics_world.h>
@@ -202,6 +203,8 @@ struct VehicleDriveSession
     // A character driving the car (VehicleDriverService): its eyes in vehicle space, where the
     // cockpit camera sits instead of the car's own.
     std::optional<glm::vec3> driverEyes;
+    // The gearbox's last change as the lever (and a driver's hand) make it.
+    VehicleGearShift gearShift;
     bool paused = false;
     bool stepRequested = false;
     // The keyboard's steering, eased towards full lock rather than jumping to it.

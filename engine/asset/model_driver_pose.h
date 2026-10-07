@@ -43,6 +43,17 @@ struct DriverRig
 // The rig when the skeleton has every joint the pose needs (fingers and eyes are optional).
 std::optional<DriverRig> FindDriverRig(const ModelSkeleton& skeleton);
 
+// A hand off the wheel, holding something else (the gear lever's knob): where the palm holds it, which
+// way the hand points and the palm faces, and how far the hand has gone there from the wheel (0 on
+// the wheel, 1 there).
+struct DriverHandHold
+{
+    glm::vec3 grip{0.0f};
+    glm::vec3 direction{0.0f, 0.0f, 1.0f};
+    glm::vec3 palmFacing{0.0f, -1.0f, 0.0f};
+    float weight = 0.0f;
+};
+
 // Where the driver sits and what it holds, in the character's model space (+Z its front, +Y up,
 // +X its left), as a car's seat puts it there.
 struct DriverPoseInput
@@ -60,8 +71,12 @@ struct DriverPoseInput
     glm::vec3 wheelAxis{0.0f, -0.35f, 0.94f};
     float wheelRadius = 0.18f;
     float wheelTurn = 0.0f;
-    // The ankles (left, right), on the pedals.
+    // The ankles (left, right), on the pedals, and how far each foot is raised from flat (degrees: up
+    // the pedal's slope, less as the foot presses it).
     std::array<glm::vec3, 2> ankles{glm::vec3(0.1f, -0.15f, 0.7f), glm::vec3(-0.1f, -0.15f, 0.7f)};
+    std::array<float, 2> footRaiseDegrees{40.0f, 40.0f};
+    // A hand on the gear lever instead of the wheel, per side.
+    std::array<DriverHandHold, 2> holds{};
     // The head turned towards where the car goes (degrees, positive to the driver's left).
     float headYawDegrees = 0.0f;
     // Shrinks the head (and everything on it, the hair too) away: for a camera at the driver's eyes.

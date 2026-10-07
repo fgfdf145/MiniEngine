@@ -133,7 +133,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const bool keyboardCaptured = WantsKeyboardCapture();
     const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
     VehicleRigService::Tick(State(), deltaTime);
-    VehicleDriverService::Tick(State());
+    VehicleDriverService::Tick(State(), deltaTime);
     State().modelAnimation.Tick(State(), deltaTime);
     AdvanceTimeOfDay(State().editorWorld.get(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)

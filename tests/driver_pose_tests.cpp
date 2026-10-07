@@ -7,6 +7,7 @@
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/editor/services/vehicle_driver_service.h>
+#include <engine/editor/services/vehicle_gear_shift.h>
 #include <engine/editor/ui/framework/editor_style.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
 #include <engine/editor/ui/panels/scene_panel.h>
@@ -30,6 +31,9 @@ using namespace me;
 
 namespace
 {
+// Shorter than the time the left foot stays on the clutch.
+constexpr float kFootHoldTestSeconds = 0.1f;
+
 void Require(bool condition, const std::string& message)
 {
     if (!condition)
@@ -162,6 +166,88 @@ void HiddenHeadShrinks()
     Require(poses[static_cast<size_t>(rig.head)].scale.x < 0.01f, "the head was not hidden");
 }
 
+void HeldHandGoesToTheKnob()
+{
+    const ModelSkeleton skeleton = MakeHumanoid();
+    const DriverRig rig = *FindDriverRig(skeleton);
+    DriverPoseInput input;
+    input.hips = glm::vec3(0.0f, 0.5f, 0.0f);
+    input.wheelCenter = glm::vec3(0.0f, 0.8f, 0.38f);
+    input.holds[0].grip = glm::vec3(0.3f, 0.55f, 0.25f);
+    input.holds[0].direction = glm::normalize(glm::vec3(0.0f, -0.4f, 1.0f));
+    input.holds[0].palmFacing = glm::normalize(glm::vec3(0.0f, -1.0f, -0.4f));
+    input.holds[0].weight = 1.0f;
+    std::vector<ModelNodePose> poses;
+    PoseDriver(skeleton, rig, input, poses);
+    const std::vector<glm::vec3> at = WorldPositions(skeleton, poses);
+    const glm::vec3 wrist = at[static_cast<size_t>(rig.wrist[0])];
+    // The wrist behind the grip, off the palm's side; the right hand stays on the wheel.
+    Require(glm::distance(wrist, input.holds[0].grip) < 0.09f && wrist.z < input.holds[0].grip.z, "the hand did not go to the knob");
+    Require(std::abs(glm::distance(at[static_cast<size_t>(rig.wrist[1])], input.wheelCenter) - 0.2f) < 0.06f, "the other hand left the wheel");
+}
+
+void GearLeverGoesThroughTheGate()
+{
+    Require(GearGatePosition(1) == glm::vec2(1.0f, 1.0f) && GearGatePosition(2) == glm::vec2(1.0f, -1.0f), "first and second are not left");
+    Require(GearGatePosition(3) == glm::vec2(0.0f, 1.0f) && GearGatePosition(6) == glm::vec2(-1.0f, -1.0f), "the gate's planes are wrong");
+    Require(GearGatePosition(0) == glm::vec2(0.0f) && GearGatePosition(-1).x > 1.5f, "neutral or reverse is wrong");
+
+    VehicleGearShift shift;
+    shift.from = shift.to = 2;
+    StartGearShift(shift, 3);
+    Require(shift.seconds == 0.0f && GearShiftHandWeight(shift) == 0.0f, "a shift does not start with the hand on the wheel");
+    AdvanceGearShift(shift, kGearShiftReachSeconds);
+    Require(GearShiftHandWeight(shift) == 1.0f && GearLeverGatePosition(shift) == GearGatePosition(2), "the hand reaches the lever before it moves");
+    // Halfway through the move the lever is on the gate's middle line, between the planes.
+    AdvanceGearShift(shift, kGearShiftMoveSeconds * 0.5f);
+    const glm::vec2 middle = GearLeverGatePosition(shift);
+    Require(std::abs(middle.y) < 1e-4f && middle.x > -1e-4f && middle.x < 1.0f + 1e-4f, "the lever does not go by way of neutral");
+    AdvanceGearShift(shift, kGearShiftMoveSeconds * 0.5f);
+    Require(glm::distance(GearLeverGatePosition(shift), GearGatePosition(3)) < 1e-4f, "the lever did not reach third");
+    AdvanceGearShift(shift, kGearShiftReturnSeconds);
+    Require(GearShiftHandWeight(shift) < 1e-3f, "the hand did not go back to the wheel");
+
+    // Another change while the hand comes back takes it to the lever again from where it is.
+    shift.seconds = kGearShiftReachSeconds + kGearShiftMoveSeconds + kGearShiftReturnSeconds * 0.5f;
+    const float before = GearShiftHandWeight(shift);
+    StartGearShift(shift, 4);
+    Require(std::abs(GearShiftHandWeight(shift) - before) < 0.2f && shift.from == 3, "a quick second change jumps the hand");
+
+    // The lever turns about its pivot, its knob moved forward for an odd gear.
+    const ModelGearLever lever{glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(0.0f, 0.65f, 0.0f)};
+    const glm::vec3 knob = glm::vec3(GearLeverTransform(lever, GearGatePosition(1), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)) * glm::vec4(lever.knob, 1.0f));
+    Require(knob.z > 0.04f && knob.x > 0.03f && std::abs(glm::distance(knob, lever.pivot) - 0.15f) < 1e-4f, "the knob is not in first");
+}
+
+void FeetWorkThePedals()
+{
+    VehicleDriverFeet feet;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        UpdateDriverFeet(feet, 0.0f, 0.8f, 0.0f, 1.0f / 60.0f);
+    }
+    Require(feet.rightOnBrake == 1.0f && std::abs(feet.brake - 0.8f) < 0.01f && feet.throttle < 0.01f, "the right foot did not brake");
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        UpdateDriverFeet(feet, 0.0f, 0.0f, 0.0f, 1.0f / 60.0f);
+    }
+    Require(feet.rightOnBrake == 1.0f && feet.brake < 0.01f, "the right foot left the brake with nothing to do");
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        UpdateDriverFeet(feet, 1.0f, 0.0f, 1.0f, 1.0f / 60.0f);
+    }
+    Require(feet.rightOnBrake == 0.0f && feet.throttle > 0.95f, "the right foot did not go back to the accelerator");
+    Require(feet.leftOnClutch == 1.0f && feet.clutch > 0.95f, "the left foot did not press the clutch");
+    // It stays on the clutch a moment after it closes, then goes back to the rest.
+    UpdateDriverFeet(feet, 1.0f, 0.0f, 0.0f, kFootHoldTestSeconds);
+    Require(feet.leftOnClutch == 1.0f, "the left foot left the clutch at once");
+    for (int frame = 0; frame < 60; ++frame)
+    {
+        UpdateDriverFeet(feet, 1.0f, 0.0f, 0.0f, 1.0f / 60.0f);
+    }
+    Require(feet.leftOnClutch == 0.0f && feet.clutch < 0.01f, "the left foot did not go back to the rest");
+}
+
 void Print(const char* name, const glm::vec3& value)
 {
     std::printf("  %-18s (%7.3f, %7.3f, %7.3f)\n", name, value.x, value.y, value.z);
@@ -275,11 +361,19 @@ void PrintRealFit()
     const float turn = std::getenv("MINIENGINE_DRIVER_TURN") != nullptr ? glm::radians(static_cast<float>(std::atof(std::getenv("MINIENGINE_DRIVER_TURN")))) : 0.0f;
     std::vector<ModelNodePose> poses;
     DriverPoseResult result;
-    PoseDriver(*driver.skeleton, *rig, DriverPoseFromSeat(*seat, glm::vec3(0.0f), turn, false), poses, &result);
+    const DriverPoseInput input = DriverPoseFromSeat(*seat, glm::vec3(0.0f), turn, false);
+    PoseDriver(*driver.skeleton, *rig, input, poses, &result);
     const std::vector<glm::vec3> at = WorldPositions(*driver.skeleton, poses);
     std::printf("Fit (vehicle space): slide %.2f, recline %.1f, wheel r %.3f, arm stretch %.2f %.2f\n", seat->slide, seat->reclineDegrees,
                 seat->wheelRadius, result.armStretch[0], result.armStretch[1]);
     Print("car eyes", seat->carEyes);
+    if (car.gearLever.has_value())
+    {
+        Print("lever pivot", glm::conjugate(vehicleToModel) * car.gearLever->pivot);
+        Print("lever knob", glm::conjugate(vehicleToModel) * car.gearLever->knob);
+        const glm::vec3 first = glm::vec3(GearLeverTransform(*car.gearLever, GearGatePosition(1), vehicleToModel) * glm::vec4(car.gearLever->knob, 1.0f));
+        Print("knob in first", glm::conjugate(vehicleToModel) * first);
+    }
     Print("eyes", result.eyes);
     Print("wheel", seat->wheelCenter);
     Print("hips target", seat->hips);
@@ -289,7 +383,7 @@ void PrintRealFit()
         Print("hip", at[static_cast<size_t>(rig->hip[side])]);
         Print("knee", at[static_cast<size_t>(rig->knee[side])]);
         Print("ankle", at[static_cast<size_t>(rig->ankle[side])]);
-        Print("ankle target", seat->ankles[side]);
+        Print("ankle target", input.ankles[side]);
         Print("toes", at[static_cast<size_t>(rig->toes[side])]);
         Print("shoulder", at[static_cast<size_t>(rig->shoulder[side])]);
         Print("elbow", at[static_cast<size_t>(rig->elbow[side])]);
@@ -312,6 +406,9 @@ int main()
         SeatedPoseReachesItsTargets();
         HandsFollowTheWheel();
         HiddenHeadShrinks();
+        HeldHandGoesToTheKnob();
+        GearLeverGoesThroughTheGate();
+        FeetWorkThePedals();
         InspectorOffersTheCar();
         PrintRealFit();
     }

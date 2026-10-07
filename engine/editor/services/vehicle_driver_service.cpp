@@ -3,12 +3,15 @@
 #include <engine/asset/model_cache.h>
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
+#include <engine/editor/services/vehicle_gear_shift.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
+#include <vector>
 
 namespace me
 {
@@ -40,11 +43,50 @@ constexpr float kFloorRayAhead = 0.65f;
 constexpr float kToeBoardRayHeight = 0.12f;
 constexpr float kFloorFallbackBelowCushion = 0.2f;
 constexpr float kToeBoardFallbackAhead = 0.95f;
-// The ankles over the floor, behind the toe board (heels on the floor, the balls of the feet on the
-// pedals), each this far to the side of the hips' middle.
-constexpr float kAnkleAboveFloor = 0.10f;
-constexpr float kAnkleBehindToeBoard = 0.22f;
-constexpr float kAnkleSpread = 0.10f;
+// The pedals are looked for across the footwell this far each side of the steering wheel's centre, in
+// steps this wide, this high over the floor, out to this far ahead of where the floor was found: what
+// stands between these two distances before the toe board, between these two widths, is a pedal (the
+// door's trim, slanting across the scan's end, shows as a sliver). From the
+// driver's right: the accelerator, the brake, the clutch and the foot rest.
+constexpr float kPedalScanHalfWidth = 0.32f;
+constexpr float kPedalScanStep = 0.01f;
+constexpr float kPedalScanHeight = 0.12f;
+constexpr float kPedalScanLength = 0.6f;
+constexpr float kPedalStandOff = 0.04f;
+constexpr float kMaxPedalStandOff = 0.2f;
+constexpr float kMinPedalWidth = 0.03f;
+constexpr float kMaxPedalWidth = 0.14f;
+// Where the pedals are when none are found: across from the steering wheel's centre (to its left),
+// this far before the toe board.
+constexpr float kFallbackThrottleAcross = -0.18f;
+constexpr float kFallbackBrakeAcross = -0.08f;
+constexpr float kFallbackClutchAcross = 0.03f;
+constexpr float kFallbackFootRestAcross = 0.16f;
+constexpr float kFallbackPedalBeforeToeBoard = 0.08f;
+// The ball of the foot this far behind a pedal's face (the sole), the foot raised this much from flat
+// on a pedal at rest. A press tips the foot forward and moves the ankle forward: the accelerator
+// hinges forward, the brake pushes, the clutch goes a long way.
+constexpr float kSoleThickness = 0.02f;
+constexpr float kFootRaiseDegrees = 50.0f;
+struct PedalTravel
+{
+    float tipDegrees;
+    float forward;
+};
+constexpr PedalTravel kThrottleTravel{15.0f, 0.02f};
+constexpr PedalTravel kBrakeTravel{8.0f, 0.04f};
+constexpr PedalTravel kClutchTravel{5.0f, 0.09f};
+// A foot moves between pedals in this long, lifted this much at the middle; it stays on the clutch this
+// long after the clutch closed, and presses follow the pedals over about this long.
+constexpr float kFootMoveSeconds = 0.15f;
+constexpr float kFootLift = 0.04f;
+constexpr float kClutchHoldSeconds = 0.4f;
+constexpr float kPressSeconds = 0.05f;
+// Pedal inputs below this are none.
+constexpr float kPedalThreshold = 0.03f;
+// A hand on the gear lever holds the knob from above, a little ahead, its fingers pointing forward and
+// down.
+constexpr float kKnobGripAbove = 0.015f;
 // Legs straightened to at most this share of their length.
 constexpr float kMaxLegStretch = 0.95f;
 // The hands hold the rim at its middle: the rim's outer edge less half its thickness.
@@ -269,18 +311,79 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
     const glm::vec3 floorRay(x, cushion, seat.hips.z + kFloorRayAhead);
     const std::optional<float> floorHit = rays.Cast(floorRay, down, 1.0f);
     const float floor = floorHit.has_value() ? floorRay.y - *floorHit : cushion - kFloorFallbackBelowCushion;
-    const glm::vec3 toeBoardRay(x, floor + kToeBoardRayHeight, floorRay.z);
-    const std::optional<float> toeBoardHit = rays.Cast(toeBoardRay, forward, 1.5f);
-    const float toeBoard = toeBoardHit.has_value() ? toeBoardRay.z + *toeBoardHit : seat.hips.z + kToeBoardFallbackAhead;
+    // Across the footwell at the pedals' height: most rays meet the toe board, the pedals stand before
+    // it (a ray through a gap may reach the engine bay; the door's trim is nearer at one side).
+    const float pedalHeight = floor + kPedalScanHeight;
+    std::vector<std::pair<float, float>> scan;
+    for (float across = -kPedalScanHalfWidth; across <= kPedalScanHalfWidth + 1e-4f; across += kPedalScanStep)
+    {
+        const glm::vec3 origin(x + across, pedalHeight, floorRay.z);
+        if (const std::optional<float> hit = rays.Cast(origin, forward, kPedalScanLength))
+        {
+            scan.emplace_back(origin.x, origin.z + *hit);
+        }
+    }
+    const bool toeBoardFound = !scan.empty();
+    float toeBoard = seat.hips.z + kToeBoardFallbackAhead;
+    if (toeBoardFound)
+    {
+        std::vector<float> depths;
+        for (const auto& [across, depth] : scan)
+        {
+            depths.push_back(depth);
+        }
+        std::sort(depths.begin(), depths.end());
+        toeBoard = depths[(depths.size() * 3) / 4];
+    }
+    std::vector<glm::vec3> pedals;
+    for (size_t index = 0; index < scan.size();)
+    {
+        size_t end = index;
+        float nearest = 1e9f;
+        while (end < scan.size() && scan[end].second < toeBoard - kPedalStandOff && scan[end].second > toeBoard - kMaxPedalStandOff &&
+               (end == index || scan[end].first - scan[end - 1].first < kPedalScanStep * 1.5f))
+        {
+            nearest = std::min(nearest, scan[end].second);
+            ++end;
+        }
+        if (end == index)
+        {
+            ++index;
+            continue;
+        }
+        const float width = scan[end - 1].first - scan[index].first + kPedalScanStep;
+        if (width >= kMinPedalWidth - 1e-4f && width <= kMaxPedalWidth)
+        {
+            pedals.emplace_back((scan[index].first + scan[end - 1].first) * 0.5f, pedalHeight, nearest);
+        }
+        index = end;
+    }
+    // From the driver's right (vehicle space's -X) to the left.
+    std::sort(pedals.begin(), pedals.end(), [](const glm::vec3& a, const glm::vec3& b)
+              {
+                  return a.x < b.x;
+              });
+    const auto fallback = [&](float across)
+    {
+        return glm::vec3(x + across, pedalHeight, toeBoard - kFallbackPedalBeforeToeBoard);
+    };
+    seat.pedalsFound = pedals.size() >= 2;
+    seat.throttle = seat.pedalsFound ? pedals[0] : fallback(kFallbackThrottleAcross);
+    seat.brake = seat.pedalsFound ? pedals[1] : fallback(kFallbackBrakeAcross);
+    seat.clutch = pedals.size() >= 3 ? pedals[2] : seat.brake + (seat.brake - seat.throttle);
+    seat.footRest = pedals.size() >= 4 ? pedals[3] : seat.clutch + glm::vec3(kFallbackFootRestAcross - kFallbackClutchAcross, 0.0f, 0.0f);
 
-    // The legs' length, from the rest pose.
+    // The legs and feet, from the rest pose.
     std::vector<ModelNodePose> rest;
     RestNodePoses(skeleton, rest);
     std::vector<glm::mat4> restWorld;
     ComputeNodeWorldMatrices(skeleton, rest, restWorld);
-    const float legLength = glm::distance(RestPosition(restWorld, rig.hip[0]), RestPosition(restWorld, rig.knee[0])) +
-                            glm::distance(RestPosition(restWorld, rig.knee[0]), RestPosition(restWorld, rig.ankle[0]));
-    const float hipHalfWidth = glm::distance(RestPosition(restWorld, rig.hip[0]), RestPosition(restWorld, rig.hip[1])) * 0.5f;
+    seat.legLength = glm::distance(RestPosition(restWorld, rig.hip[0]), RestPosition(restWorld, rig.knee[0])) +
+                     glm::distance(RestPosition(restWorld, rig.knee[0]), RestPosition(restWorld, rig.ankle[0]));
+    seat.hipHalfWidth = glm::distance(RestPosition(restWorld, rig.hip[0]), RestPosition(restWorld, rig.hip[1])) * 0.5f;
+    const glm::vec3 restFoot = RestPosition(restWorld, rig.toes[0]) - RestPosition(restWorld, rig.ankle[0]);
+    seat.footLength = glm::length(restFoot);
+    seat.footRestPitch = std::asin(std::clamp(restFoot.y / std::max(seat.footLength, 1e-4f), -1.0f, 1.0f));
 
     // The hips slide forward until the hands reach the wheel with the elbows bent; the feet stay on
     // the pedals unless the legs would be straighter than they can push.
@@ -291,19 +394,6 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
     {
         seat.slide = slide;
         seat.hips = seatHips + forward * slide;
-        for (size_t side = 0; side < 2; ++side)
-        {
-            const float outward = side == 0 ? 1.0f : -1.0f;
-            glm::vec3 ankle(seat.hips.x + outward * kAnkleSpread, floor + kAnkleAboveFloor, toeBoard - kAnkleBehindToeBoard);
-            const glm::vec3 hip = seat.hips + glm::vec3(outward * hipHalfWidth, 0.0f, 0.0f);
-            const float across = glm::length(glm::vec2(ankle.x - hip.x, ankle.y - hip.y));
-            const float reach = kMaxLegStretch * legLength;
-            if (reach > across)
-            {
-                ankle.z = std::min(ankle.z, hip.z + std::sqrt(reach * reach - across * across));
-            }
-            seat.ankles[side] = ankle;
-        }
         bool reaches = false;
         for (float lean = slide > 0.0f ? kMaxLeanDegrees : 0.0f; lean <= kMaxLeanDegrees + 1e-3f; lean += kLeanStepDegrees)
         {
@@ -323,13 +413,74 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
     }
     LOG_INFO(
         "Driver's seat: hips at ({:.3f}, {:.3f}, {:.3f}) (slid {:.2f} m forward), back {:.0f} deg, leaning {:.0f} deg off it, cushion {} at {:.3f}, floor {} at {:.3f}, "
-        "toe board {} at {:.3f}, steering wheel radius {:.3f}",
+        "toe board {} at {:.3f}, steering wheel radius {:.3f}; {} pedals found (accelerator x {:.3f}, brake {:.3f}, clutch {:.3f}, foot rest {:.3f}, at z {:.3f})",
         seat.hips.x, seat.hips.y, seat.hips.z, seat.slide, seat.reclineDegrees, seat.leanDegrees, cushionHit.has_value() ? "found" : "guessed", cushion,
-        floorHit.has_value() ? "found" : "guessed", floor, toeBoardHit.has_value() ? "found" : "guessed", toeBoard, seat.wheelRadius);
+        floorHit.has_value() ? "found" : "guessed", floor, toeBoardFound ? "found" : "guessed", toeBoard, seat.wheelRadius, pedals.size(),
+        seat.throttle.x, seat.brake.x, seat.clutch.x, seat.footRest.x, seat.throttle.z);
     return seat;
 }
 
-DriverPoseInput DriverPoseFromSeat(const VehicleDriverSeat& seat, const glm::vec3& seatOffset, float steeringWheelTurn, bool hideHead)
+void UpdateDriverFeet(VehicleDriverFeet& feet, float throttle, float brake, float clutch, float deltaSeconds)
+{
+    const float step = std::max(deltaSeconds, 0.0f) / kFootMoveSeconds;
+    const auto moveTowards = [step](float value, float target)
+    {
+        return value < target ? std::min(value + step, target) : std::max(value - step, target);
+    };
+    // The right foot goes to the brake for a brake and back to the accelerator for the accelerator;
+    // with neither it stays on the brake once there.
+    if (brake > kPedalThreshold)
+    {
+        feet.rightOnBrake = moveTowards(feet.rightOnBrake, 1.0f);
+    }
+    else if (throttle > kPedalThreshold || feet.rightOnBrake < 1.0f)
+    {
+        feet.rightOnBrake = moveTowards(feet.rightOnBrake, 0.0f);
+    }
+    // The left foot goes to the clutch, and stays a moment after it closes, as through a gear change.
+    feet.clutchHold = clutch > kPedalThreshold ? kClutchHoldSeconds : std::max(feet.clutchHold - std::max(deltaSeconds, 0.0f), 0.0f);
+    feet.leftOnClutch = moveTowards(feet.leftOnClutch, feet.clutchHold > 0.0f ? 1.0f : 0.0f);
+
+    // A pedal is pressed once the foot is on it.
+    const float ease = 1.0f - std::exp(-std::max(deltaSeconds, 0.0f) / kPressSeconds);
+    const auto press = [ease](float value, float target)
+    {
+        return value + (target - value) * ease;
+    };
+    const auto onPedal = [](float there)
+    {
+        return std::clamp((there - 0.8f) * 5.0f, 0.0f, 1.0f);
+    };
+    feet.throttle = press(feet.throttle, std::clamp(throttle, 0.0f, 1.0f) * onPedal(1.0f - feet.rightOnBrake));
+    feet.brake = press(feet.brake, std::clamp(brake, 0.0f, 1.0f) * onPedal(feet.rightOnBrake));
+    feet.clutch = press(feet.clutch, std::clamp(clutch, 0.0f, 1.0f) * onPedal(feet.leftOnClutch));
+}
+
+namespace
+{
+// The ankle for the ball of the foot on `pedal`, pressed `pressed` of the way, and the foot's raise.
+std::pair<glm::vec3, float> FootOnPedal(const VehicleDriverSeat& seat, const glm::vec3& pedal, const PedalTravel& travel, float pressed)
+{
+    const float raise = kFootRaiseDegrees - travel.tipDegrees * pressed;
+    const float pitch = seat.footRestPitch + glm::radians(raise);
+    const glm::vec3 forward(0.0f, 0.0f, 1.0f);
+    const glm::vec3 foot = (forward * std::cos(pitch) + glm::vec3(0.0f, 1.0f, 0.0f) * std::sin(pitch)) * seat.footLength;
+    return {pedal - forward * (kSoleThickness - travel.forward * pressed) - foot, raise};
+}
+
+float Smooth(float value)
+{
+    const float t = std::clamp(value, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+}
+
+DriverPoseInput DriverPoseFromSeat(
+    const VehicleDriverSeat& seat,
+    const glm::vec3& seatOffset,
+    float steeringWheelTurn,
+    bool hideHead,
+    const VehicleDriverFeet& feet)
 {
     DriverPoseInput input;
     // Vehicle space has +X to the car's left.
@@ -340,7 +491,32 @@ DriverPoseInput DriverPoseFromSeat(const VehicleDriverSeat& seat, const glm::vec
     input.wheelAxis = seat.wheelAxis;
     input.wheelRadius = seat.wheelRadius;
     input.wheelTurn = steeringWheelTurn * seat.wheelTurnSign;
-    input.ankles = seat.ankles;
+    // The right foot between the accelerator and the brake, the left between the foot rest and the
+    // clutch, lifted on the way across.
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    const std::pair<glm::vec3, float> throttle = FootOnPedal(seat, seat.throttle, kThrottleTravel, feet.throttle);
+    const std::pair<glm::vec3, float> brake = FootOnPedal(seat, seat.brake, kBrakeTravel, feet.brake);
+    const std::pair<glm::vec3, float> footRest = FootOnPedal(seat, seat.footRest, PedalTravel{0.0f, 0.0f}, 0.0f);
+    const std::pair<glm::vec3, float> clutch = FootOnPedal(seat, seat.clutch, kClutchTravel, feet.clutch);
+    const float right = Smooth(feet.rightOnBrake);
+    const float left = Smooth(feet.leftOnClutch);
+    input.ankles[0] = glm::mix(footRest.first, clutch.first, left) + up * (kFootLift * std::sin(glm::pi<float>() * left));
+    input.footRaiseDegrees[0] = glm::mix(footRest.second, clutch.second, left);
+    input.ankles[1] = glm::mix(throttle.first, brake.first, right) + up * (kFootLift * std::sin(glm::pi<float>() * right));
+    input.footRaiseDegrees[1] = glm::mix(throttle.second, brake.second, right);
+    // Not past where the legs can push.
+    for (size_t side = 0; side < 2; ++side)
+    {
+        const float outward = side == 0 ? 1.0f : -1.0f;
+        glm::vec3& ankle = input.ankles[side];
+        const glm::vec3 hip = input.hips + glm::vec3(outward * seat.hipHalfWidth, 0.0f, 0.0f);
+        const float across = glm::length(glm::vec2(ankle.x - hip.x, ankle.y - hip.y));
+        const float reach = kMaxLegStretch * seat.legLength;
+        if (reach > across)
+        {
+            ankle.z = std::min(ankle.z, hip.z + std::sqrt(reach * reach - across * across));
+        }
+    }
     // A right turn (positive) looks right, which is a negative yaw.
     input.headYawDegrees = std::clamp(-glm::degrees(input.wheelTurn) * kHeadYawShare, -kMaxHeadYawDegrees, kMaxHeadYawDegrees);
     input.hideHead = hideHead;
@@ -350,7 +526,7 @@ DriverPoseInput DriverPoseFromSeat(const VehicleDriverSeat& seat, const glm::vec
 namespace VehicleDriverService
 {
 
-void Tick(RendererSharedState& state)
+void Tick(RendererSharedState& state, float deltaSeconds)
 {
     VehicleDriverState& drivers = state.vehicleDrivers;
     drivers.problems.clear();
@@ -415,8 +591,42 @@ void Tick(RendererSharedState& state)
 
         const bool driven = session != nullptr && session->entity == car;
         const bool fromCockpit = driven && state.vehicleDrive.camera.follow && state.vehicleDrive.cameraView == VehicleCameraView::Cockpit;
-        state.modelAnimation.SetDriverPose(
-            entity, DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, driven ? session->steeringWheelTurn : 0.0f, fromCockpit));
+
+        // The feet work the pedals the car is driven with.
+        VehicleDriverFeet& feet = drivers.feet[entity];
+        float throttle = 0.0f;
+        float brake = 0.0f;
+        float clutch = 0.0f;
+        if (driven)
+        {
+            const VehicleControls& controls = session->controls;
+            const VehicleTelemetry telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
+            // The throttle drives the way the gear does (either way in neutral); pulled against it, it brakes.
+            const float way = telemetry.gear != 0 ? (telemetry.gear > 0 ? 1.0f : -1.0f) : (controls.throttle < 0.0f ? -1.0f : 1.0f);
+            throttle = std::max(controls.throttle * way, 0.0f);
+            brake = std::max(controls.brake, std::max(-controls.throttle * way, 0.0f));
+            clutch = controls.clutchPedal ? 1.0f : std::clamp(1.0f - telemetry.clutch, 0.0f, 1.0f);
+        }
+        UpdateDriverFeet(feet, throttle, brake, clutch, session != nullptr && session->paused ? 0.0f : deltaSeconds);
+        DriverPoseInput input = DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, driven ? session->steeringWheelTurn : 0.0f, fromCockpit, feet);
+
+        // A gear change: the hand on the lever's side goes to the knob as the lever moves.
+        if (driven && carData->gearLever.has_value())
+        {
+            const float weight = GearShiftHandWeight(session->gearShift);
+            if (weight > 0.0f)
+            {
+                const glm::mat4 lever = GearLeverTransform(*carData->gearLever, GearLeverGatePosition(session->gearShift), vehicleToModel);
+                const glm::vec3 knob = glm::conjugate(vehicleToModel) * glm::vec3(lever * glm::vec4(carData->gearLever->knob, 1.0f));
+                const size_t side = knob.x >= input.hips.x ? 0 : 1;
+                DriverHandHold& hold = input.holds[side];
+                hold.grip = knob + glm::vec3(0.0f, kKnobGripAbove, 0.0f);
+                hold.direction = glm::normalize(glm::vec3(0.0f, -0.4f, 1.0f));
+                hold.palmFacing = glm::normalize(glm::vec3(0.0f, -1.0f, -0.4f));
+                hold.weight = weight;
+            }
+        }
+        state.modelAnimation.SetDriverPose(entity, input);
         posed.insert(entity);
         if (driven && !sessionHasDriver)
         {
@@ -434,6 +644,10 @@ void Tick(RendererSharedState& state)
         {
             state.modelAnimation.ClearDriverPose(entity);
         }
+    }
+    for (auto it = drivers.feet.begin(); it != drivers.feet.end();)
+    {
+        it = posed.count(it->first) == 0 ? drivers.feet.erase(it) : std::next(it);
     }
     drivers.posed = std::move(posed);
     if (session != nullptr && !sessionHasDriver)

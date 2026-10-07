@@ -32,6 +32,8 @@ add_library(engine_editor
     services/vehicle_drive_service.h
     services/vehicle_driver_service.cpp
     services/vehicle_driver_service.h
+    services/vehicle_gear_shift.cpp
+    services/vehicle_gear_shift.h
     services/vehicle_haptics.cpp
     services/vehicle_haptics.h
     services/vehicle_steering_assist.cpp

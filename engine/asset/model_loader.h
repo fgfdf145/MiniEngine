@@ -135,6 +135,8 @@ struct ModelSubmeshData
     uint8_t wheelCorner = 0;
     // Under the STEER_HR node: the steering wheel, which turns about LoadedModelData::steeringWheel.
     bool steeringWheel = false;
+    // Under a SHIFT node: the gear lever, which tilts about LoadedModelData::gearLever's pivot.
+    bool gearLever = false;
     // Skinned (glTF skin with JOINTS_0 / WEIGHTS_0, MeshData::skin): its binding in
     // LoadedModelData::skeleton; -1 for a rigid submesh.
     int32_t skinBinding = -1;
@@ -175,6 +177,15 @@ struct ModelSteeringWheel
 {
     glm::vec3 center{0.0f};
     glm::vec3 axis{0.0f, 0.0f, 1.0f};
+};
+
+// The gear lever as the deepest node called SHIFT, SHIFTER or SHIFT_<n> above its meshes defines it
+// (Assetto Corsa cars' car_shift.ksanim turns the R34's Shift_2), in the model's space: it tilts about
+// the pivot, the node's origin; the knob is the middle of the lever's far end.
+struct ModelGearLever
+{
+    glm::vec3 pivot{0.0f};
+    glm::vec3 knob{0.0f, 0.15f, 0.0f};
 };
 
 // A car's four wheels as its WHEEL_LF, WHEEL_RF, WHEEL_LR and WHEEL_RR nodes define them, in the
@@ -238,6 +249,8 @@ struct LoadedModelData
     std::optional<ModelWheelRig> wheelRig;
     // Set when a STEER_HR node has meshes.
     std::optional<ModelSteeringWheel> steeringWheel;
+    // Set when a SHIFT node has meshes.
+    std::optional<ModelGearLever> gearLever;
     // The car's own figures (MINIENGINE_vehicle: an Assetto Corsa car's data.acd, read by the kn5
     // import), which a drive uses over the default tuning.
     std::optional<VehicleCarSpec> carSpec;
