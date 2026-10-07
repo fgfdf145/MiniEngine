@@ -5,6 +5,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 namespace me
@@ -23,6 +24,16 @@ constexpr bool kEnableValidationLayers = true;
 
 constexpr const char* kValidationLayerName = "VK_LAYER_KHRONOS_validation";
 
+// A Release build validates when the loader is told to load the layer anyway
+// (VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation). The layer then runs either way; enabling it here
+// as well adds debug utils and the engine's messenger, so its messages reach the engine log, carry
+// object names (NGX names its own images) and pass through the filters below.
+bool IsValidationForcedByLoader()
+{
+    const char* layers = std::getenv("VK_INSTANCE_LAYERS");
+    return layers != nullptr && std::strstr(layers, kValidationLayerName) != nullptr;
+}
+
 // The engine never sets VkSwapchainCreateInfoKHR::flags, but third-party implicit layers
 // (OBS-style capture hooks sit between the application and the validation layer) inject
 // VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR into our create info, which validation then
@@ -35,6 +46,35 @@ bool IsExternalLayerSwapchainFlagsArtifact(const VkDebugUtilsMessengerCallbackDa
            std::strstr(callbackData->pMessage, "VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR") != nullptr;
 }
 
+// DLSS ray reconstruction's first evaluation after NGX creates the feature reads two of NGX's own
+// images (named "nv.ngx.dlssd.resource") while they are still UNDEFINED; the evaluation leaves them
+// GENERAL, so it happens once per feature. The engine never sees those images and cannot
+// transition them. Only a message whose every image is NGX's own is downgraded: one of ours in the
+// wrong layout (the inputs NGX reads, which are unnamed) still reports as an error.
+bool IsNgxInternalImageLayout(const VkDebugUtilsMessengerCallbackDataEXT* callbackData)
+{
+    if (!callbackData || !callbackData->pMessageIdName ||
+        std::strstr(callbackData->pMessageIdName, "-None-09600") == nullptr)
+    {
+        return false;
+    }
+    bool anyImage = false;
+    for (uint32_t index = 0; index < callbackData->objectCount; ++index)
+    {
+        const VkDebugUtilsObjectNameInfoEXT& object = callbackData->pObjects[index];
+        if (object.objectType != VK_OBJECT_TYPE_IMAGE)
+        {
+            continue;
+        }
+        if (object.pObjectName == nullptr || std::strncmp(object.pObjectName, "nv.ngx.", 7) != 0)
+        {
+            return false;
+        }
+        anyImage = true;
+    }
+    return anyImage;
+}
+
 VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessengerCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT,
@@ -45,6 +85,10 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessengerCallback(
     if (IsExternalLayerSwapchainFlagsArtifact(callbackData))
     {
         LOG_WARN("[vulkan] (injected by an external implicit layer, not engine code) {}", message);
+    }
+    else if (IsNgxInternalImageLayout(callbackData))
+    {
+        LOG_WARN("[vulkan] (NGX's own image, not engine code) {}", message);
     }
     else if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0)
     {
@@ -80,8 +124,9 @@ VulkanInstance::VulkanInstance(SDL_Window* window, std::span<const std::string> 
         throw std::runtime_error("SDL window is null while creating a Vulkan instance");
     }
 
-    const bool enableValidation = kEnableValidationLayers && IsValidationLayerAvailable();
-    if (kEnableValidationLayers && !enableValidation)
+    const bool requestValidation = kEnableValidationLayers || IsValidationForcedByLoader();
+    const bool enableValidation = requestValidation && IsValidationLayerAvailable();
+    if (requestValidation && !enableValidation)
     {
         LOG_WARN("Vulkan validation layer '{}' not available; running without validation", kValidationLayerName);
     }
