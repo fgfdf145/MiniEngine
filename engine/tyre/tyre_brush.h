@@ -156,8 +156,9 @@ struct BrushTyreInput
 struct BrushTyreOutput
 {
     double Fx = 0.0, Fy = 0.0, Mz = 0.0; // N, N, N m
-    // The rolling resistance moment on the wheel about its axle (opposing its roll), N m.
-    double rollingResistanceTorque = 0.0;
+    // The rolling resistance moment on the wheel about its axle, N m: the most it takes, for it acts as
+    // dry friction on the spin (opposing the roll at this, or holding a wheel at rest against up to it).
+    double rollingResistanceLimit = 0.0;
     double effectiveRadius = 0.0; // R0 - deflection / 3 at the middle rib (23)
     double contactLength = 0.0;   // the longest rib's, m
     double slidingShare = 0.0;    // of the load, on sliding bristles

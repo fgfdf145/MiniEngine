@@ -430,6 +430,18 @@ EndStopPush PushOfEndStop(double rate, double damping, double depth, double clos
     return {spring + damper, rate, damping};
 }
 
+// Rolling resistance as dry friction on a wheel's spin, the moment (N m) to apply with the step's
+// `torque` already on it: up to `limit` it holds the wheel still, as a parked car stays put until pushed
+// with about the coefficient's share of its weight; past it the roll is opposed by `limit`. Judged on
+// the spin the step would leave, so it stops the wheel and never turns it back (the physics engine's
+// brakes work the same way). Smoothed through the standstill instead (a viscous drag below some speed),
+// it held nothing back: a few newtons left from the suspension settling rolled the R34 on its hub
+// masses at 2 mm/s for over a minute.
+float RollingResistanceTorque(float wheelSpeed, float torque, float inertia, float limit, float dt)
+{
+    return std::clamp(-(wheelSpeed * inertia / dt + torque), -limit, limit);
+}
+
 // How far the axle's tyre deflects before the rim meets the ground: its sidewall's height (radius
 // less the rim's) less what stays pinched between them.
 float RimDeflection(const VehicleSettings& settings, size_t wheelIndex)
@@ -971,6 +983,8 @@ struct PhysicsWorld::Impl
         std::array<BrushWheel, kVehicleWheelCount> brushWheels{};
         // The turns the physics engine left out (ApplyDroppedRotation), rad about world axes.
         std::array<double, 3> droppedRotation{};
+        // Each wheel's roll angle before the step (RollWheelsBySpinAfterStep), rad.
+        std::array<float, kVehicleWheelCount> spinAngleBefore{};
     };
 
     void BuildCorners(Vehicle& vehicle) const
@@ -2159,7 +2173,9 @@ struct PhysicsWorld::Impl
             const JPH::Vec3 force = longitudinals[index] * static_cast<float>(out.Fx) + lefts[index] * static_cast<float>(out.Fy);
             bodies.AddForce(body.GetID(), force, positions[index], JPH::EActivation::DontActivate);
             bodies.AddTorque(body.GetID(), normals[index] * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
-            wheel.ApplyTorque(static_cast<float>(-out.Fx * out.effectiveRadius + out.rollingResistanceTorque), dt);
+            const float torque = static_cast<float>(-out.Fx * out.effectiveRadius);
+            const float rolling = RollingResistanceTorque(wheel.GetAngularVelocity(), torque, wheel.GetSettings()->mInertia, static_cast<float>(out.rollingResistanceLimit), dt);
+            wheel.ApplyTorque(torque + rolling, dt);
             state.force = force;
             state.load = static_cast<float>(inputs[index].load);
             state.contact = true;
@@ -2199,6 +2215,32 @@ struct PhysicsWorld::Impl
         const JPH::RVec3 origin = body.GetCenterOfMassPosition() - rotation * body.GetShape()->GetCenterOfMass();
         physicsSystem.GetBodyInterface().SetPositionAndRotation(body.GetID(), origin, rotation, JPH::EActivation::DontActivate);
         dropped = {};
+    }
+
+    // The physics engine turns each wheel through its roll angle by the spin it has after the tyre's
+    // torque and before the brakes', which then stop it: a braked wheel whose tyre pulls on it (the rear
+    // tyres holding the car on a slope with the hand brake on, or the tread's bend left from stopping)
+    // turned on, some 7 deg/s on the R34 on a 5 deg slope, while its speed read zero. Turned instead by
+    // the spin it ends the step with, a wheel the brakes hold stands still, and one that rolls turns as
+    // the body moves, by its velocity at the step's end.
+    void RememberWheelAngles(Vehicle& vehicle) const
+    {
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (size_t index = 0; index < wheels.size() && index < vehicle.spinAngleBefore.size(); ++index)
+        {
+            vehicle.spinAngleBefore[index] = wheels[static_cast<JPH::uint>(index)]->GetRotationAngle();
+        }
+    }
+
+    void RollWheelsBySpinAfterStep(Vehicle& vehicle) const
+    {
+        constexpr float kTurn = 2.0f * std::numbers::pi_v<float>;
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (size_t index = 0; index < wheels.size() && index < vehicle.spinAngleBefore.size(); ++index)
+        {
+            JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+            wheel.SetRotationAngle(std::fmod(vehicle.spinAngleBefore[index] + wheel.GetAngularVelocity() * kFixedStepSeconds, kTurn));
+        }
     }
 
     // The turbos' boost follows the steady level the revs and throttle ask of each, by the game's lag (a
@@ -2281,7 +2323,9 @@ struct PhysicsWorld::Impl
             }
             const float load = std::max(wheel->GetSuspensionLambda() / kFixedStepSeconds, 0.0f);
             const float radius = wheel->GetSettings()->mRadius;
-            static_cast<JPH::WheelWV*>(wheel)->ApplyTorque(-coefficient * load * radius * std::tanh(wheel->GetAngularVelocity() / 0.5f), kFixedStepSeconds);
+            auto* driven = static_cast<JPH::WheelWV*>(wheel);
+            const float rolling = RollingResistanceTorque(driven->GetAngularVelocity(), 0.0f, driven->GetSettings()->mInertia, coefficient * load * radius, kFixedStepSeconds);
+            driven->ApplyTorque(rolling, kFixedStepSeconds);
         }
     }
 
@@ -3191,6 +3235,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.ApplyRearSteer(vehicle, input);
             controller->SetDriverInput(impl.SpoolTurbos(vehicle, *controller, input.forward), input.right, input.brake, input.handBrake);
             impl.ApplyEngineCoast(vehicle, *controller, input.forward);
+            impl.RememberWheelAngles(vehicle);
         }
 
         const JPH::EPhysicsUpdateError error =
@@ -3203,6 +3248,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
             impl.ApplyDroppedRotation(vehicle);
+            impl.RollWheelsBySpinAfterStep(vehicle);
             vehicle.previous = std::move(vehicle.current);
             vehicle.current = impl.Capture(vehicle);
         }

@@ -167,17 +167,65 @@ void TestCarHoldsOnASlope(const char* car, const VehicleSettings& settings)
     const glm::vec3 start = world.GetVehiclePose(id).position;
     Simulate(world, 2.5f);
     const glm::vec3 middle = world.GetVehiclePose(id).position;
+    const std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
     Simulate(world, 2.5f);
+    const std::vector<VehicleWheelState> after = world.GetVehicleWheels(id);
     const float slid = glm::length(world.GetVehiclePose(id).position - start);
     const float late = glm::length(world.GetVehiclePose(id).position - middle);
+    // The braked wheels stand still while their tyres hold the car: drawn by their roll angle, they
+    // turned on at several degrees a second when the angle took the spin from before the brakes.
+    float turned = 0.0f;
+    for (size_t index = 0; index < after.size(); ++index)
+    {
+        turned = std::max(turned, std::abs(after[index].spinAngle - before[index].spinAngle));
+    }
     std::cout << car << " (" << Name(settings.tyreModel) << ") on a 10 deg slope, braked: slid " << slid * 1000.0f << " mm in 5 s, "
-              << late * 1000.0f << " mm of it in the last 2.5 s\n";
+              << late * 1000.0f << " mm of it in the last 2.5 s, a wheel turned " << turned * 180.0f / kPi << " deg in it\n";
+    Require(turned < 0.2f * kPi / 180.0f, std::string(car) + "'s braked wheels stand still, one turned " + std::to_string(turned * 180.0f / kPi) + " deg");
     Require(Finite(world.GetVehiclePose(id).position), "the car's position stays finite");
     Require(slid < 0.05f, std::string(car) + " holds on the slope");
     if (settings.tyreModel == VehicleTyreModel::Brush)
     {
         Require(late < 1e-4f, std::string(car) + " does not creep on the brush tyre, moved " + std::to_string(late * 1000.0f) + " mm");
     }
+}
+
+// Rolled gently and let go on flat ground, the car comes to rest on its rolling resistance alone and
+// stays there, its wheels still: the resistance holds a wheel at rest as dry friction does. Smoothed
+// through the standstill (a drag in proportion to the spin below 0.5 rad/s) it let the car roll on at
+// millimetres a second for a minute, its wheels turning while it looked parked.
+void TestCarRollsToAStop(const char* car, const VehicleSettings& settings)
+{
+    PhysicsWorld world;
+    AddGround(world);
+    const VehicleId id = world.AddVehicle(settings, {glm::vec3(0.0f, 0.1f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 2.0f);
+    VehicleControls controls;
+    controls.throttle = 0.3f;
+    world.SetVehicleControls(id, controls);
+    for (int i = 0; i < 500 && world.GetVehicleTelemetry(id).forwardSpeed < 0.5f; ++i)
+    {
+        Simulate(world, 0.01f);
+    }
+    const float rolling = world.GetVehicleTelemetry(id).forwardSpeed;
+    world.SetVehicleControls(id, VehicleControls{});
+    // At 1.2 % of its weight the resistance takes some 4.5 s to stop a car from 0.5 m/s.
+    Simulate(world, 8.0f);
+    const glm::vec3 settled = world.GetVehiclePose(id).position;
+    const std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
+    Simulate(world, 5.0f);
+    const std::vector<VehicleWheelState> after = world.GetVehicleWheels(id);
+    const float moved = glm::length(world.GetVehiclePose(id).position - settled);
+    float turned = 0.0f;
+    for (size_t index = 0; index < after.size(); ++index)
+    {
+        turned = std::max(turned, std::abs(after[index].spinAngle - before[index].spinAngle));
+    }
+    std::cout << car << " (" << Name(settings.tyreModel) << ") let go at " << rolling << " m/s: in the 5 s from 8 s after, moved " << moved * 1000.0f
+              << " mm, a wheel turned " << turned * 180.0f / kPi << " deg\n";
+    Require(rolling > 0.3f, std::string(car) + " rolls before it is let go");
+    Require(moved < 1e-3f, std::string(car) + " comes to rest, moved " + std::to_string(moved * 1000.0f) + " mm");
+    Require(turned < 0.2f * kPi / 180.0f, std::string(car) + "'s wheels stop turning, one turned " + std::to_string(turned * 180.0f / kPi) + " deg");
 }
 
 // ---- Load ----
@@ -589,6 +637,10 @@ int main()
         run(prefix + "holds on a slope", [&]
             {
                 TestCarHoldsOnASlope(car.name, brush);
+            });
+        run(prefix + "rolls to a stop", [&]
+            {
+                TestCarRollsToAStop(car.name, brush);
             });
         run(prefix + "tyre load is the step's", [&]
             {
