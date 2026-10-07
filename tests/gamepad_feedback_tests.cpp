@@ -138,11 +138,11 @@ void AudioHapticsFollowTheCar()
     haptics = ComputeVehicleAudioHaptics(settings, limiter, slideState, kDt);
     Require(haptics.voices.limiter, "the limiter cuts in");
 
-    // A gear change knocks both hands.
+    // A gear change: the accelerator trigger going slack is its start, so the hands are not knocked.
     VehicleAudioHapticsInput shifted = limiter;
     shifted.telemetry.gear = 4;
     haptics = ComputeVehicleAudioHaptics(settings, shifted, slideState, kDt);
-    Require(haptics.kicks[0] > 0.0f && haptics.kicks[1] > 0.0f, "an upshift thumps");
+    Require(haptics.kicks[0] == 0.0f && haptics.kicks[1] == 0.0f, "an upshift leaves the start to the trigger");
 
     // The clutch is open while the gears change; the drive comes back when it bites.
     shifted.telemetry.clutch = 0.0f;
@@ -165,6 +165,13 @@ void AudioHapticsFollowTheCar()
     ComputeVehicleAudioHaptics(settings, quick, slideState, kDt);
     haptics = ComputeVehicleAudioHaptics(settings, quick, slideState, kDt);
     Require(std::abs(haptics.kicks[0] - 0.3f) < 1.0e-4f, "off the throttle the drive comes back softly");
+
+    // Without the trigger effects the change itself knocks both hands.
+    settings.triggerStrength = 0.0f;
+    quick.telemetry.gear = 6;
+    haptics = ComputeVehicleAudioHaptics(settings, quick, slideState, kDt);
+    Require(haptics.kicks[0] > 0.0f && haptics.kicks[1] > 0.0f, "an upshift thumps without trigger effects");
+    settings.triggerStrength = 1.0f;
 
     settings.audioHaptics = false;
     haptics = ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
@@ -204,6 +211,13 @@ void EngineRumbleFollowsTheRevs()
     Require(stopped.lowFrequencyMotor == 0.0f, "a stopped engine does not rumble");
 }
 
+VehicleHapticsInput PlainPad(int gear, float rpm)
+{
+    VehicleHapticsInput input = Driving(gear, rpm);
+    input.adaptiveTriggers = false;
+    return input;
+}
+
 void GearChangesThump()
 {
     VehicleHapticsSettings settings;
@@ -212,24 +226,88 @@ void GearChangesThump()
     GamepadFeedback steady;
     for (int frame = 0; frame < 30; ++frame)
     {
-        steady = ComputeVehicleFeedback(settings, Driving(2, 4000.0f), state, 1.0f / 60.0f);
+        steady = ComputeVehicleFeedback(settings, PlainPad(2, 4000.0f), state, 1.0f / 60.0f);
     }
-    const GamepadFeedback up = ComputeVehicleFeedback(settings, Driving(3, 4000.0f), state, 1.0f / 60.0f);
+    const GamepadFeedback up = ComputeVehicleFeedback(settings, PlainPad(3, 4000.0f), state, 1.0f / 60.0f);
     Require(up.lowFrequencyMotor > steady.lowFrequencyMotor + 0.2f, "an upshift thumps the big motor");
     Require(up.highFrequencyMotor > 0.0f, "an upshift thumps the small motor too");
 
     GamepadFeedback later;
     for (int frame = 0; frame < 30; ++frame)
     {
-        later = ComputeVehicleFeedback(settings, Driving(3, 4000.0f), state, 1.0f / 60.0f);
+        later = ComputeVehicleFeedback(settings, PlainPad(3, 4000.0f), state, 1.0f / 60.0f);
     }
     Require(later.highFrequencyMotor == 0.0f, "the thump dies away");
 
     // Moving off from neutral is not a gear change to feel.
     VehicleHapticsState neutral;
-    ComputeVehicleFeedback(settings, Driving(0, 1000.0f), neutral, 1.0f / 60.0f);
-    const GamepadFeedback launch = ComputeVehicleFeedback(settings, Driving(1, 1000.0f), neutral, 1.0f / 60.0f);
+    ComputeVehicleFeedback(settings, PlainPad(0, 1000.0f), neutral, 1.0f / 60.0f);
+    const GamepadFeedback launch = ComputeVehicleFeedback(settings, PlainPad(1, 1000.0f), neutral, 1.0f / 60.0f);
     Require(launch.highFrequencyMotor == 0.0f, "neutral to first does not thump");
+
+    // With adaptive triggers the accelerator carries the change, not the motors.
+    VehicleHapticsState dualSense;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        steady = ComputeVehicleFeedback(settings, Driving(2, 4000.0f), dualSense, 1.0f / 60.0f);
+    }
+    const GamepadFeedback triggerUp = ComputeVehicleFeedback(settings, Driving(3, 4000.0f), dualSense, 1.0f / 60.0f);
+    Require(triggerUp.highFrequencyMotor == 0.0f, "adaptive triggers leave the motors out of the change");
+}
+
+void ClutchSlackensTheAccelerator()
+{
+    const VehicleHapticsSettings settings;
+    constexpr float kDt = 1.0f / 60.0f;
+    VehicleHapticsState state;
+    VehicleHapticsInput input = Driving(2, 6000.0f);
+    input.rightTrigger = 0.9f;
+    GamepadFeedback feedback = ComputeVehicleFeedback(settings, input, state, kDt);
+    Require(feedback.rightTrigger.mode == TriggerEffect::Mode::Resistance, "in gear the accelerator pushes back");
+    const TriggerEffect pedal = feedback.rightTrigger;
+
+    // The change opens the clutch: the trigger goes slack, the brake keeps its feel.
+    input.telemetry.gear = 3;
+    input.telemetry.clutch = 0.0f;
+    feedback = ComputeVehicleFeedback(settings, input, state, kDt);
+    Require(feedback.rightTrigger.mode == TriggerEffect::Mode::Off, "an open clutch frees the accelerator");
+    Require(feedback.leftTrigger.mode == TriggerEffect::Mode::Resistance, "the brake is untouched");
+    input.telemetry.clutch = 0.4f;
+    feedback = ComputeVehicleFeedback(settings, input, state, kDt);
+    Require(feedback.rightTrigger.mode == TriggerEffect::Mode::Off, "still slack while it only starts to bite");
+
+    // It bites: the trigger shoves back, stiff over its whole travel, then settles to the pedal.
+    input.telemetry.clutch = 0.8f;
+    feedback = ComputeVehicleFeedback(settings, input, state, kDt);
+    Require(feedback.rightTrigger.mode == TriggerEffect::Mode::Resistance, "the bite shoves back");
+    Require(feedback.rightTrigger.zoneStrength[0] >= 7 && feedback.rightTrigger.zoneStrength[9] >= 7, "hard from the top of the travel under full throttle");
+    input.telemetry.clutch = 1.0f;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        feedback = ComputeVehicleFeedback(settings, input, state, kDt);
+    }
+    Require(feedback.rightTrigger == pedal, "and settles back to the pedal");
+
+    // Off the throttle the shove is softer.
+    VehicleHapticsState coasting;
+    input.rightTrigger = 0.0f;
+    input.telemetry.clutch = 0.0f;
+    ComputeVehicleFeedback(settings, input, coasting, kDt);
+    input.telemetry.clutch = 1.0f;
+    feedback = ComputeVehicleFeedback(settings, input, coasting, kDt);
+    Require(feedback.rightTrigger.zoneStrength[0] > 0 && feedback.rightTrigger.zoneStrength[0] < 7, "off the throttle it shoves softer");
+
+    // A box quicker than a frame never shows the clutch open, and still shoves.
+    VehicleHapticsState quick;
+    input.rightTrigger = 0.9f;
+    input.telemetry.gear = 3;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        ComputeVehicleFeedback(settings, input, quick, kDt);
+    }
+    input.telemetry.gear = 4;
+    feedback = ComputeVehicleFeedback(settings, input, quick, kDt);
+    Require(feedback.rightTrigger.zoneStrength[0] >= 7, "a quick change shoves at once");
 }
 
 void BrakeTriggerShakesWhenAWheelLocks()
@@ -296,6 +374,7 @@ int main()
         AudioHapticsFollowTheCar();
         EngineRumbleFollowsTheRevs();
         GearChangesThump();
+        ClutchSlackensTheAccelerator();
         BrakeTriggerShakesWhenAWheelLocks();
         SwitchesTurnEffectsOff();
     }

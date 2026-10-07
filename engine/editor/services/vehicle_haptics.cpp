@@ -41,6 +41,15 @@ constexpr float kSpinStart = 0.2f;
 constexpr float kSpinFull = 0.6f;
 constexpr uint8_t kSpinFrequencyHz = 32;
 constexpr uint8_t kLimiterFrequencyHz = 40;
+// The clutch carries the drive from here up (its friction, 0 to 1): below it the accelerator trigger
+// hangs slack, and when it climbs back past it the trigger shoves at the finger, as hard as
+// kBiteShove plus kBiteLoadShove under full throttle; the shove holds kBiteHoldSeconds, then fades back
+// to the pedal's own resistance over kBiteFadeSeconds.
+constexpr float kBiteClutch = 0.6f;
+constexpr float kBiteShove = 0.6f;
+constexpr float kBiteLoadShove = 0.4f;
+constexpr float kBiteHoldSeconds = 0.06f;
+constexpr float kBiteFadeSeconds = 0.18f;
 
 // The actuators. The engine's beat: a floor while it runs, then up with the revs and the throttle.
 constexpr float kEngineIdleLevel = 0.05f;
@@ -81,7 +90,6 @@ constexpr float kSlipMaxHz = 220.0f;
 constexpr float kUpshiftKick = 0.6f;
 constexpr float kDownshiftKick = 0.45f;
 // And once the clutch bites past kBiteClutch the drive comes back with a shunt, harder under throttle.
-constexpr float kBiteClutch = 0.6f;
 constexpr float kBiteKick = 0.3f;
 constexpr float kBiteLoadKick = 0.5f;
 
@@ -119,6 +127,19 @@ TriggerEffect Resistance(const std::array<uint8_t, kTriggerZoneCount>& strengths
         }
     }
     return effect;
+}
+
+// The accelerator trigger as the clutch bites: the whole travel stiff at `amount` (0 to 1) of the most
+// it can push, never softer than the pedal's own resistance.
+TriggerEffect Shove(float amount, float scale)
+{
+    std::array<uint8_t, kTriggerZoneCount> strengths{};
+    const uint8_t shove = static_cast<uint8_t>(std::lround(static_cast<float>(kTriggerMaxStrength) * std::clamp(amount, 0.0f, 1.0f)));
+    for (size_t zone = 0; zone < kTriggerZoneCount; ++zone)
+    {
+        strengths[zone] = std::max(shove, kAcceleratorResistance[zone]);
+    }
+    return Resistance(strengths, scale);
 }
 
 // A shake from `fromZone` to the floor; `amount` (0 to 1) is how hard, over amplitudes 3 to 8.
@@ -179,7 +200,9 @@ VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& set
     const float throttle = Saturate(input.rightTrigger);
 
     // A gear change between forward gears, as the rumble has it, and the drive coming back once the
-    // clutch bites in the new gear (a frame later at the soonest, for a box quicker than a frame).
+    // clutch bites in the new gear (a frame later at the soonest, for a box quicker than a frame). With
+    // the adaptive triggers on, the accelerator trigger going slack is the change starting, not a knock.
+    const bool triggersCarryShift = settings.triggerStrength > 0.0f;
     float shiftKick = 0.0f;
     if (state.awaitingBite && telemetry.clutch >= kBiteClutch && telemetry.gear >= 1)
     {
@@ -188,7 +211,10 @@ VehicleAudioHaptics ComputeVehicleAudioHaptics(const VehicleHapticsSettings& set
     }
     if (state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1)
     {
-        shiftKick = telemetry.gear > state.lastGear ? kUpshiftKick : kDownshiftKick;
+        if (!triggersCarryShift)
+        {
+            shiftKick = telemetry.gear > state.lastGear ? kUpshiftKick : kDownshiftKick;
+        }
         state.awaitingBite = true;
     }
     state.hasGear = true;
@@ -276,7 +302,8 @@ GamepadFeedback ComputeVehicleFeedback(const VehicleHapticsSettings& settings, c
     const float dt = std::max(deltaSeconds, 0.0f);
 
     // A gear change between forward gears is felt; moving off from neutral or flipping to reverse is not.
-    if (state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1)
+    const bool shifted = state.hasGear && telemetry.gear != state.lastGear && telemetry.gear >= 1 && state.lastGear >= 1;
+    if (shifted)
     {
         state.shiftStrength = telemetry.gear > state.lastGear ? kUpshiftStrength : kDownshiftStrength;
         state.shiftSeconds = kShiftSeconds;
@@ -316,17 +343,34 @@ GamepadFeedback ComputeVehicleFeedback(const VehicleHapticsSettings& settings, c
             high = kLimiterBuzz;
         }
     }
-    low = std::max(low, shift * kShiftLowMotor);
-    high = std::max(high, shift * kShiftHighMotor);
+    // With adaptive triggers the accelerator carries the gear change instead (below).
+    const float triggerScale = std::max(settings.triggerStrength, 0.0f);
+    if (!input.adaptiveTriggers || triggerScale <= 0.0f)
+    {
+        low = std::max(low, shift * kShiftLowMotor);
+        high = std::max(high, shift * kShiftHighMotor);
+    }
     feedback.lowFrequencyMotor = Quantize(low * rumbleScale);
     feedback.highFrequencyMotor = Quantize(high * rumbleScale);
+
+    // The drive through the clutch: cut while it is open, and coming back with a shove as it bites (at
+    // once, for a box that changes quicker than a frame and never shows the clutch open).
+    const bool driveCut = telemetry.clutch < kBiteClutch;
+    if ((state.driveCut || shifted) && !driveCut)
+    {
+        state.biteStrength = kBiteShove + kBiteLoadShove * Saturate(input.rightTrigger);
+        state.biteAge = 0.0f;
+    }
+    else
+    {
+        state.biteAge = std::min(state.biteAge + dt, 1.0f);
+    }
+    state.driveCut = driveCut;
 
     if (!input.adaptiveTriggers)
     {
         return feedback;
     }
-
-    const float triggerScale = std::max(settings.triggerStrength, 0.0f);
 
     // The brake: a locking wheel shakes it, and it stays shaking a moment so the pulse is felt.
     const bool braking = input.leftTrigger > kTriggerEngagedAt;
@@ -349,9 +393,19 @@ GamepadFeedback ComputeVehicleFeedback(const VehicleHapticsSettings& settings, c
         feedback.leftTrigger = Resistance(kBrakeResistance, triggerScale);
     }
 
-    // The accelerator: wheelspin and the rev limiter shake it, otherwise it pushes back like a pedal.
+    // The accelerator: slack while the clutch is open, shoving back as it bites; then wheelspin and the
+    // rev limiter shake it, otherwise it pushes back like a pedal.
     const bool pushing = input.rightTrigger > kTriggerEngagedAt;
-    if (pushing && telemetry.spinSlip > kSpinStart)
+    const float biteLeft = state.biteAge < kBiteHoldSeconds ? 1.0f : 1.0f - (state.biteAge - kBiteHoldSeconds) / kBiteFadeSeconds;
+    if (driveCut)
+    {
+        feedback.rightTrigger = TriggerEffect{};
+    }
+    else if (biteLeft > 0.0f)
+    {
+        feedback.rightTrigger = Shove(state.biteStrength * biteLeft, triggerScale);
+    }
+    else if (pushing && telemetry.spinSlip > kSpinStart)
     {
         feedback.rightTrigger = Vibration(1, (telemetry.spinSlip - kSpinStart) / (kSpinFull - kSpinStart), kSpinFrequencyHz, triggerScale);
     }
