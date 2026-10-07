@@ -137,6 +137,8 @@ struct ModelComponent
     bool animationEnabled = true;
     bool animationPlaying = true;
     float animationSpeed = 1.0f;
+    // Hair and skirts swing (SimulateSpringBones); off, they keep the animated pose.
+    bool springBones = true;
     // Seats this model in a car as its driver: the car's entity (SceneEntityIdComponent), empty for
     // none. The model then follows the car, and a humanoid one sits with its hands on the steering
     // wheel (VehicleDriverService) instead of playing its clip.

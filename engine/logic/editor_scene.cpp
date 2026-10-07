@@ -453,6 +453,7 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             entityData.modelMaterialVariant =
                 modelNode["material_variant"].as<std::string>(entityData.modelMaterialVariant);
             entityData.modelUseModelLights = modelNode["use_model_lights"].as<bool>(entityData.modelUseModelLights);
+            entityData.modelSpringBones = modelNode["spring_bones"].as<bool>(entityData.modelSpringBones);
             if (const YAML::Node animationNode = modelNode["animation"]; animationNode && animationNode.IsMap())
             {
                 entityData.modelAnimationClip = animationNode["clip"].as<std::string>(entityData.modelAnimationClip);
@@ -533,6 +534,10 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         if (!entity.modelUseModelLights)
         {
             emitter << YAML::Key << "use_model_lights" << YAML::Value << false;
+        }
+        if (!entity.modelSpringBones)
+        {
+            emitter << YAML::Key << "spring_bones" << YAML::Value << false;
         }
         if (!entity.modelAnimationClip.empty() || !entity.modelAnimationEnabled || !entity.modelAnimationPlaying ||
             entity.modelAnimationSpeed != 1.0f)
@@ -809,6 +814,7 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     model.animationEnabled = entityData.modelAnimationEnabled;
     model.animationPlaying = entityData.modelAnimationPlaying;
     model.animationSpeed = entityData.modelAnimationSpeed;
+    model.springBones = entityData.modelSpringBones;
     model.driverVehicleUuid = entityData.driverVehicleUuid;
     model.driverSeatOffset = entityData.driverSeatOffset;
     m_registry.emplace<ModelBoundsComponent>(entity);
@@ -1243,6 +1249,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelAnimationEnabled = model.animationEnabled;
         entityData.modelAnimationPlaying = model.animationPlaying;
         entityData.modelAnimationSpeed = model.animationSpeed;
+        entityData.modelSpringBones = model.springBones;
         entityData.driverVehicleUuid = model.driverVehicleUuid;
         entityData.driverSeatOffset = model.driverSeatOffset;
         entityData.transform = transform;

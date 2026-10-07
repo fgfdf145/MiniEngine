@@ -17,11 +17,16 @@ constexpr glm::vec3 kForward{0.0f, 0.0f, 1.0f};
 constexpr glm::vec3 kLeft{1.0f, 0.0f, 0.0f};
 
 // The hands: the rim lies across the base of the fingers (this share of the way from the wrist to the
-// knuckles), against the palm, which is this far from the line of the hand's bones.
-constexpr float kRimAlongHand = 1.0f;
-constexpr float kPalmBelowBones = 0.025f;
-// The fingers' bend at their three joints from the palm, closed round a rim; the thumb lies along it.
-constexpr std::array<float, 3> kFingerCurlDegrees{45.0f, 70.0f, 60.0f};
+// knuckles), against the palm, whose skin is this far from the line of the hand's bones.
+constexpr float kRimAlongHand = 1.05f;
+constexpr float kPalmThickness = 0.018f;
+// The fingers bend at each of their three joints until they touch what the hand holds (a finger is about
+// this thick about its bones), up to these bends; in steps this fine. Holding nothing they close this
+// share of the way. The thumb lies along what it holds.
+constexpr float kFingerRadius = 0.008f;
+constexpr std::array<float, 3> kMaxFingerCurlDegrees{90.0f, 100.0f, 80.0f};
+constexpr float kFingerCurlStepDegrees = 2.0f;
+constexpr float kEmptyHandCurlShare = 0.35f;
 constexpr std::array<float, 3> kThumbCurlDegrees{10.0f, 20.0f, 20.0f};
 // A hand on its way from the wheel to something else rises this much at the middle.
 constexpr float kHandCarryLift = 0.05f;
@@ -264,7 +269,7 @@ std::optional<DriverRig> FindDriverRig(const ModelSkeleton& skeleton)
         rig.eye[side] = Find(skeleton, "Eye" + suffix);
         for (size_t finger = 0; finger < kFingerNames.size(); ++finger)
         {
-            for (size_t joint = 0; joint < 3; ++joint)
+            for (size_t joint = 0; joint < 4; ++joint)
             {
                 rig.fingers[side][finger][joint] = Find(skeleton, std::string(kFingerNames[finger]) + std::to_string(joint + 1) + suffix);
             }
@@ -394,11 +399,20 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
     // middle) to what it holds instead.
     const glm::vec3 wheelAxis = SafeNormalize(input.wheelAxis, kForward);
     const glm::vec3 wheelUp = SafeNormalize(kUp - wheelAxis * glm::dot(kUp, wheelAxis), kUp);
+    // What the fingers close round: the rim (a circle about the column), a ball, or nothing.
     struct HandTarget
     {
         glm::vec3 wrist;
         glm::vec3 direction;
         glm::vec3 palm;
+        enum class Holds
+        {
+            Rim,
+            Ball,
+            Nothing
+        } holds = Holds::Rim;
+        glm::vec3 ball{0.0f};
+        float ballRadius = 0.0f;
     };
     std::array<HandTarget, 2> targets{};
     for (size_t side = 0; side < 2; ++side)
@@ -410,7 +424,8 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         HandTarget& target = targets[side];
         target.direction = glm::normalize(wheelAxis - radial * 0.25f);
         target.palm = -radial;
-        const glm::vec3 wheelWrist = grip - target.direction * (rest.handLength[side] * kRimAlongHand) - target.palm * kPalmBelowBones;
+        const glm::vec3 wheelWrist =
+            grip - target.direction * (rest.handLength[side] * kRimAlongHand) - target.palm * (input.wheelTubeRadius + kPalmThickness);
         target.wrist = wheelWrist;
         const DriverHandHold& hold = input.holds[side];
         if (hold.weight > 0.0f)
@@ -418,7 +433,14 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
             const float weight = std::min(hold.weight, 1.0f);
             const glm::vec3 heldDirection = SafeNormalize(hold.direction, kForward);
             const glm::vec3 heldPalm = SafeNormalize(hold.palmFacing, -kUp);
-            const glm::vec3 heldWrist = hold.grip - heldDirection * (rest.handLength[side] * hold.alongHand) - heldPalm * kPalmBelowBones;
+            const glm::vec3 heldWrist =
+                hold.grip - heldDirection * (rest.handLength[side] * hold.alongHand) - heldPalm * (hold.objectRadius + kPalmThickness);
+            if (weight >= 0.5f)
+            {
+                target.holds = hold.objectRadius > 0.0f ? HandTarget::Holds::Ball : HandTarget::Holds::Nothing;
+                target.ball = hold.grip;
+                target.ballRadius = hold.objectRadius;
+            }
             target.wrist = glm::mix(wheelWrist, heldWrist, weight) + kUp * (kHandCarryLift * std::sin(glm::pi<float>() * weight));
             target.direction = SafeNormalize(glm::mix(target.direction, heldDirection, weight), heldDirection);
             target.palm = SafeNormalize(glm::mix(target.palm, heldPalm, weight), heldPalm);
@@ -515,25 +537,81 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
         posing.Turn(rig.wrist[side], handTurnFrames);
         posing.Update();
 
-        // The fingers close round the rim: each joint turns about the hand's width, towards the palm.
+        // The fingers close round what the hand holds: each joint turns about the hand's width, towards
+        // the palm, until the next joint (or the tip) touches it.
         const glm::vec3 palmNow = posing.Rotation(rig.wrist[side]) * rest.palm[side];
         const glm::vec3 handNow = glm::normalize(posing.Position(rig.handEnd[side]) - posing.Position(rig.wrist[side]));
         const glm::vec3 curlAxis = SafeNormalize(glm::cross(handNow, palmNow), kLeft);
+        const HandTarget& target = targets[side];
+        const auto distanceToHeld = [&](const glm::vec3& point)
+        {
+            if (target.holds == HandTarget::Holds::Ball)
+            {
+                return glm::distance(point, target.ball) - target.ballRadius;
+            }
+            // From the rim's middle line, less the rim's own radius.
+            const glm::vec3 offset = point - input.wheelCenter;
+            const glm::vec3 inPlane = offset - wheelAxis * glm::dot(offset, wheelAxis);
+            const glm::vec3 onLine = input.wheelCenter + SafeNormalize(inPlane, wheelUp) * input.wheelRadius;
+            return glm::distance(point, onLine) - input.wheelTubeRadius;
+        };
         for (size_t finger = 0; finger < rig.fingers[side].size(); ++finger)
         {
-            const std::array<float, 3>& curl = finger == 0 ? kThumbCurlDegrees : kFingerCurlDegrees;
+            const std::array<int32_t, 4>& joints = rig.fingers[side][finger];
+            if (joints[0] < 0 || joints[1] < 0 || joints[2] < 0)
+            {
+                continue;
+            }
+            std::array<float, 3> curl{};
+            if (finger == 0)
+            {
+                for (size_t joint = 0; joint < 3; ++joint)
+                {
+                    curl[joint] = glm::radians(kThumbCurlDegrees[joint]);
+                }
+            }
+            else if (target.holds == HandTarget::Holds::Nothing)
+            {
+                for (size_t joint = 0; joint < 3; ++joint)
+                {
+                    curl[joint] = glm::radians(kMaxFingerCurlDegrees[joint] * kEmptyHandCurlShare);
+                }
+            }
+            else
+            {
+                // The finger's joints and tip, bent in turn; each bend carries the rest of the finger round.
+                std::array<glm::vec3, 4> points{posing.Position(joints[0]), posing.Position(joints[1]), posing.Position(joints[2]), glm::vec3(0.0f)};
+                points[3] = joints[3] >= 0 ? posing.Position(joints[3]) : points[2] + (points[2] - points[1]) * 0.8f;
+                for (size_t joint = 0; joint < 3; ++joint)
+                {
+                    const glm::vec3 pivot = points[joint];
+                    const float maxCurl = glm::radians(kMaxFingerCurlDegrees[joint]);
+                    float bend = maxCurl;
+                    for (float angle = 0.0f; angle <= maxCurl; angle += glm::radians(kFingerCurlStepDegrees))
+                    {
+                        const glm::vec3 next = pivot + glm::angleAxis(angle, curlAxis) * (points[joint + 1] - pivot);
+                        if (distanceToHeld(next) <= kFingerRadius)
+                        {
+                            bend = angle;
+                            break;
+                        }
+                    }
+                    curl[joint] = bend;
+                    const glm::quat turn = glm::angleAxis(bend, curlAxis);
+                    for (size_t later = joint + 1; later < points.size(); ++later)
+                    {
+                        points[later] = pivot + turn * (points[later] - pivot);
+                    }
+                }
+            }
             for (size_t joint = 0; joint < 3; ++joint)
             {
-                const int32_t node = rig.fingers[side][finger][joint];
-                if (node < 0)
-                {
-                    continue;
-                }
                 // About the same axis for every joint of the hand: a parent's turn leaves its
                 // children's axis where it is, so each joint's own turn can be set before any update.
+                const int32_t node = joints[joint];
                 const glm::vec3 localAxis = glm::conjugate(posing.Rotation(node)) * curlAxis;
                 ModelNodePose& pose = posing.Pose(node);
-                pose.rotation = glm::normalize(pose.rotation * glm::angleAxis(glm::radians(curl[joint]), localAxis));
+                pose.rotation = glm::normalize(pose.rotation * glm::angleAxis(curl[joint], localAxis));
                 pose.posed = true;
             }
         }

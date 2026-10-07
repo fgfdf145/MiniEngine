@@ -34,8 +34,9 @@ struct DriverRig
     // The forearm's twist joints, which share the elbow's parent rotation and spread the hand's turn
     // along the forearm (-1 where the rig has none).
     std::array<std::array<int32_t, 2>, 2> forearmTwist{{{-1, -1}, {-1, -1}}};
-    // Per side, per finger (thumb, index, middle, ring, pinky), its first three joints from the palm.
-    std::array<std::array<std::array<int32_t, 3>, 5>, 2> fingers{};
+    // Per side, per finger (thumb, index, middle, ring, pinky), its three joints from the palm and its
+    // tip (-1 where the rig has no tip joint).
+    std::array<std::array<std::array<int32_t, 4>, 5>, 2> fingers{};
     // The middle finger's base: with the wrist, the hand's length and direction.
     std::array<int32_t, 2> handEnd{-1, -1};
     std::array<int32_t, 2> eye{-1, -1};
@@ -44,16 +45,18 @@ struct DriverRig
 // The rig when the skeleton has every joint the pose needs (fingers and eyes are optional).
 std::optional<DriverRig> FindDriverRig(const ModelSkeleton& skeleton);
 
-// A hand off the wheel, holding something else (the gear lever's knob): where the palm holds it, which
-// way the hand points and the palm faces, where along the hand it is held (a share of the way from the
-// wrist to the knuckles: a knob in the middle of the palm, a rim across the fingers' base at 1), and how
-// far the hand has gone there from the wheel (0 on the wheel, 1 there).
+// A hand off the wheel, holding something else (the gear lever's knob): the middle of what it holds,
+// which way the hand points and the palm faces, where along the hand it is held (a share of the way
+// from the wrist to the knuckles: a knob in the middle of the palm, a rim across the fingers' base just
+// past 1), the held thing's radius (the fingers close round a ball that size; 0, nothing: half closed,
+// as a hand on its way), and how far the hand has gone there from the wheel (0 on the wheel, 1 there).
 struct DriverHandHold
 {
     glm::vec3 grip{0.0f};
     glm::vec3 direction{0.0f, 0.0f, 1.0f};
     glm::vec3 palmFacing{0.0f, -1.0f, 0.0f};
     float alongHand = 0.6f;
+    float objectRadius = 0.0f;
     float weight = 0.0f;
 };
 
@@ -70,12 +73,14 @@ struct DriverPoseInput
     // The body thrown about by the car: leaning to the driver's left (x) and forward (y), degrees, from
     // the waist and chest; the head keeps itself nearer upright.
     glm::vec2 swayDegrees{0.0f};
-    // The steering wheel: its centre, its column pointing away from the driver (unit), the radius
-    // the hands hold it at, and where on the rim each hand (left, right) holds it: radians from the
-    // top, clockwise as the driver sees it (a quarter to three is -pi/2 and pi/2).
+    // The steering wheel: its centre, its column pointing away from the driver (unit), the radius of
+    // the rim's middle line and the rim's own (half its thickness), and where on the rim each hand (left,
+    // right) holds it: radians from the top, clockwise as the driver sees it (a quarter to three is
+    // -pi/2 and pi/2).
     glm::vec3 wheelCenter{0.0f, 0.4f, 0.6f};
     glm::vec3 wheelAxis{0.0f, -0.35f, 0.94f};
     float wheelRadius = 0.18f;
+    float wheelTubeRadius = 0.015f;
     std::array<float, 2> gripAngles{-1.5707964f, 1.5707964f};
     // The ankles (left, right), on the pedals, and how far each foot is raised from flat (degrees: up
     // the pedal's slope, less as the foot presses it).
@@ -102,7 +107,8 @@ struct DriverPoseResult
 
 // The joints' local poses for a driver seated at `input`: the pelvis and back leaned back on the
 // seat, the legs bent to the pedals and the hands on the rim where gripAngles say (two-bone inverse
-// kinematics with the knees up and the elbows down), the fingers closed round it.
+// kinematics with the knees up and the elbows down), the palm against it and each finger joint bent
+// until the finger touches it.
 void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const DriverPoseInput& input, std::vector<ModelNodePose>& poses,
                 DriverPoseResult* result = nullptr);
 

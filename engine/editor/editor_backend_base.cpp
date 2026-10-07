@@ -445,7 +445,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         RunUiAction(modelError, "change the selected model's animation", [&]
                     {
                         EntityEditService::ApplySelectedModelAnimation(
-                            State(), animation->clip, animation->enabled, animation->playing, animation->speed);
+                            State(), animation->clip, animation->enabled, animation->playing, animation->speed, animation->springBones);
                     });
     }
     if (const auto& driver = actions.selectedModelDriver)

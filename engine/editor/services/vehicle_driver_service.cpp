@@ -84,9 +84,9 @@ constexpr float kClutchHoldSeconds = 0.4f;
 constexpr float kPressSeconds = 0.05f;
 // Pedal inputs below this are none.
 constexpr float kPedalThreshold = 0.03f;
-// A hand on the gear lever holds the knob from above, a little ahead, its fingers pointing forward and
-// down.
-constexpr float kKnobGripAbove = 0.015f;
+// A hand on the gear lever holds the knob (about this radius) from above, its fingers pointing forward
+// and down round it.
+constexpr float kKnobRadius = 0.022f;
 // The body's sway: degrees of lean per m/s^2 felt, a share of that backwards (the seat's back holds
 // it), the most each way, and the spring it swings on (its natural frequency, Hz, and damping ratio);
 // what the driver feels is smoothed over about this long.
@@ -116,8 +116,11 @@ constexpr float kRestTurnRate = 1.0f;
 constexpr float kRestOffDegrees = 40.0f;
 // Legs straightened to at most this share of their length.
 constexpr float kMaxLegStretch = 0.95f;
-// The hands hold the rim at its middle: the rim's outer edge less half its thickness.
-constexpr float kRimHalfThickness = 0.012f;
+// The rim's thickness is measured along the column over its outer this much, and taken to be between
+// these (half thicknesses, metres).
+constexpr float kRimBand = 0.05f;
+constexpr float kMinRimTube = 0.008f;
+constexpr float kMaxRimTube = 0.03f;
 // For the hands to reach the wheel, the back bends forward off the seat's in these steps up to this
 // far, then the hips slide forward too, until neither wrist needs more than this share of its arm's
 // length: a short driver leans in before the knees come up under the wheel.
@@ -218,24 +221,44 @@ class CarRays
     glm::quat m_vehicleToModel;
 };
 
-// The rim's radius about the column: the steering wheel's farthest vertex from it.
-float SteeringWheelRadius(const LoadedModelData& car, const ModelSteeringWheel& wheel)
+// The rim: the radius of its middle line about the column and its own (half its thickness, from how
+// far its outer band reaches along the column: the spokes that meet it lie across).
+std::pair<float, float> SteeringWheelRim(const LoadedModelData& car, const ModelSteeringWheel& wheel)
 {
-    float radius = 0.0f;
     const glm::vec3 axis = glm::normalize(wheel.axis);
-    for (const ModelSubmeshData& submesh : car.submeshes)
+    const auto forEachVertex = [&](const auto& visit)
     {
-        if (!submesh.steeringWheel)
+        for (const ModelSubmeshData& submesh : car.submeshes)
         {
-            continue;
+            if (!submesh.steeringWheel)
+            {
+                continue;
+            }
+            for (const Vertex& vertex : submesh.mesh.vertices)
+            {
+                const glm::vec3 offset = glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]) - wheel.center;
+                const float along = glm::dot(offset, axis);
+                visit(glm::length(offset - axis * along), along);
+            }
         }
-        for (const Vertex& vertex : submesh.mesh.vertices)
-        {
-            const glm::vec3 offset = glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]) - wheel.center;
-            radius = std::max(radius, glm::length(offset - axis * glm::dot(offset, axis)));
-        }
-    }
-    return radius;
+    };
+    float outer = 0.0f;
+    forEachVertex([&](float radial, float)
+                  {
+                      outer = std::max(outer, radial);
+                  });
+    float low = 1e9f;
+    float high = -1e9f;
+    forEachVertex([&](float radial, float along)
+                  {
+                      if (radial > outer - kRimBand)
+                      {
+                          low = std::min(low, along);
+                          high = std::max(high, along);
+                      }
+                  });
+    const float tube = high > low ? std::clamp((high - low) * 0.5f, kMinRimTube, kMaxRimTube) : kMinRimTube;
+    return {outer - tube, tube};
 }
 
 glm::vec3 RestPosition(const std::vector<glm::mat4>& world, int32_t node)
@@ -300,7 +323,9 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
         seat.wheelAxis = -seat.wheelAxis;
         seat.wheelTurnSign = -1.0f;
     }
-    seat.wheelRadius = std::max(SteeringWheelRadius(car, *car.steeringWheel) - kRimHalfThickness, 0.1f);
+    const auto [rimRadius, rimTube] = SteeringWheelRim(car, *car.steeringWheel);
+    seat.wheelRadius = std::max(rimRadius, 0.1f);
+    seat.wheelTubeRadius = rimTube;
 
     glm::vec3 eyes = seat.wheelCenter + glm::vec3(0.0f, kEyesOverSteeringWheel, -kEyesBehindSteeringWheel);
     if (car.carSpec.has_value() && car.carSpec->cockpitCamera.has_value())
@@ -444,9 +469,9 @@ std::optional<VehicleDriverSeat> FitDriverSeat(
     }
     LOG_INFO(
         "Driver's seat: hips at ({:.3f}, {:.3f}, {:.3f}) (slid {:.2f} m forward), back {:.0f} deg, leaning {:.0f} deg off it, cushion {} at {:.3f}, floor {} at {:.3f}, "
-        "toe board {} at {:.3f}, steering wheel radius {:.3f}; {} pedals found (accelerator x {:.3f}, brake {:.3f}, clutch {:.3f}, foot rest {:.3f}, at z {:.3f})",
+        "toe board {} at {:.3f}, steering wheel radius {:.3f} (rim {:.3f}); {} pedals found (accelerator x {:.3f}, brake {:.3f}, clutch {:.3f}, foot rest {:.3f}, at z {:.3f})",
         seat.hips.x, seat.hips.y, seat.hips.z, seat.slide, seat.reclineDegrees, seat.leanDegrees, cushionHit.has_value() ? "found" : "guessed", cushion,
-        floorHit.has_value() ? "found" : "guessed", floor, toeBoardFound ? "found" : "guessed", toeBoard, seat.wheelRadius, pedals.size(),
+        floorHit.has_value() ? "found" : "guessed", floor, toeBoardFound ? "found" : "guessed", toeBoard, seat.wheelRadius, seat.wheelTubeRadius, pedals.size(),
         seat.throttle.x, seat.brake.x, seat.clutch.x, seat.footRest.x, seat.throttle.z);
     return seat;
 }
@@ -679,6 +704,7 @@ DriverPoseInput DriverPoseFromSeat(
     input.wheelCenter = seat.wheelCenter;
     input.wheelAxis = seat.wheelAxis;
     input.wheelRadius = seat.wheelRadius;
+    input.wheelTubeRadius = seat.wheelTubeRadius;
     const float turn = steeringWheelTurn * seat.wheelTurnSign;
     // The hands where they hold the rim, or on their way to a new hold: from where they let go towards
     // the new one as it turns with the wheel, drawn back across the wheel's face at the middle.
@@ -846,9 +872,10 @@ void Tick(RendererSharedState& state, float deltaSeconds)
                 const glm::vec3 knob = glm::conjugate(vehicleToModel) * glm::vec3(lever * glm::vec4(carData->gearLever->knob, 1.0f));
                 const size_t side = knob.x >= input.hips.x ? 0 : 1;
                 DriverHandHold& hold = input.holds[side];
-                hold.grip = knob + glm::vec3(0.0f, kKnobGripAbove, 0.0f);
+                hold.grip = knob;
                 hold.direction = glm::normalize(glm::vec3(0.0f, -0.4f, 1.0f));
                 hold.palmFacing = glm::normalize(glm::vec3(0.0f, -1.0f, -0.4f));
+                hold.objectRadius = kKnobRadius;
                 hold.weight = weight;
             }
         }

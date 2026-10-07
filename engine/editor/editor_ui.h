@@ -98,6 +98,7 @@ struct EditorUiActions
         bool enabled = true;
         bool playing = true;
         float speed = 1.0f;
+        bool springBones = true;
     };
     std::optional<ModelAnimationChoice> selectedModelAnimation;
     // The car the selected model drives (ModelComponent::driverVehicleUuid, empty for none) and its

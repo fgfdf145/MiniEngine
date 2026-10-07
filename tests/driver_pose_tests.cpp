@@ -78,7 +78,10 @@ ModelSkeleton MakeHumanoid()
         const int32_t shoulder = AddNode(skeleton, "Shoulder" + suffix, scapula, glm::vec3(0.07f * side, 0.0f, 0.0f));
         const int32_t elbow = AddNode(skeleton, "Elbow" + suffix, shoulder, glm::vec3(0.24f * side, 0.0f, 0.0f));
         const int32_t wrist = AddNode(skeleton, "Wrist" + suffix, elbow, glm::vec3(0.24f * side, 0.0f, 0.0f));
-        AddNode(skeleton, "MiddleFinger1" + suffix, wrist, glm::vec3(0.08f * side, 0.0f, 0.0f));
+        const int32_t middle1 = AddNode(skeleton, "MiddleFinger1" + suffix, wrist, glm::vec3(0.08f * side, 0.0f, 0.0f));
+        const int32_t middle2 = AddNode(skeleton, "MiddleFinger2" + suffix, middle1, glm::vec3(0.045f * side, 0.0f, 0.0f));
+        const int32_t middle3 = AddNode(skeleton, "MiddleFinger3" + suffix, middle2, glm::vec3(0.03f * side, 0.0f, 0.0f));
+        AddNode(skeleton, "MiddleFinger4" + suffix, middle3, glm::vec3(0.025f * side, 0.0f, 0.0f));
     }
     return skeleton;
 }
@@ -134,6 +137,20 @@ void SeatedPoseReachesItsTargets()
         const glm::vec3 shoulder = at[static_cast<size_t>(rig->shoulder[side])];
         Require(elbow.y < shoulder.y && elbow.y < wrist.y, "an elbow is not down");
         Require(result.armStretch[side] < 1.0f, "an arm cannot reach the wheel");
+
+        // The middle finger closed round the rim: its joints and tip on the rim's surface, not in it and
+        // not off it.
+        const auto fromRimSurface = [&](const glm::vec3& point)
+        {
+            const glm::vec3 offset = point - input.wheelCenter;
+            const glm::vec3 inPlane = offset - input.wheelAxis * glm::dot(offset, input.wheelAxis);
+            return glm::distance(point, input.wheelCenter + glm::normalize(inPlane) * input.wheelRadius) - input.wheelTubeRadius;
+        };
+        for (size_t joint = 1; joint < 4; ++joint)
+        {
+            const float gap = fromRimSurface(at[static_cast<size_t>(rig->fingers[side][2][joint])]);
+            Require(gap > -0.005f && gap < 0.02f, "a finger does not close on the rim");
+        }
     }
     Require(result.eyes.y > at[static_cast<size_t>(rig->head)].y, "the eyes are not on the head");
 }
@@ -455,6 +472,7 @@ void InspectorOffersTheCar()
 
     // The seat survives a save and a load.
     scene.EditModel(driverEntity).driverSeatOffset = glm::vec3(0.01f, -0.02f, 0.03f);
+    scene.EditModel(driverEntity).springBones = false;
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "miniengine_driver_pose_tests.yaml";
     SaveEditorSceneDataToFile(scene.CaptureSceneData(), file.string());
     const SerializedSceneData loaded = LoadEditorSceneDataFromFile(file.string());
@@ -464,14 +482,16 @@ void InspectorOffersTheCar()
     {
         if (entity.entityUuid == "driver-uuid")
         {
-            found = entity.driverVehicleUuid == "car-uuid" && glm::distance(entity.driverSeatOffset, glm::vec3(0.01f, -0.02f, 0.03f)) < 1e-6f;
+            found = entity.driverVehicleUuid == "car-uuid" && glm::distance(entity.driverSeatOffset, glm::vec3(0.01f, -0.02f, 0.03f)) < 1e-6f &&
+                    !entity.modelSpringBones;
         }
         else if (entity.entityUuid == "car-uuid")
         {
             Require(entity.driverVehicleUuid.empty(), "the car was saved as a driver");
+            Require(entity.modelSpringBones, "the hair and skirt physics was off by default");
         }
     }
-    Require(found, "the driver's seat was not saved and loaded");
+    Require(found, "the driver's seat or its physics switch was not saved and loaded");
 }
 
 // With MINIENGINE_DRIVER_MODEL and MINIENGINE_DRIVER_CAR set (a character's and a car's glTF), fits the
@@ -531,10 +551,10 @@ void PrintRealFit()
             const glm::vec3 onRim = seat->wheelCenter + glm::normalize(inPlane) * seat->wheelRadius;
             return glm::distance(point, onRim);
         };
-        std::printf("  from the rim: wrist %.3f, knuckle %.3f, middle finger %.3f %.3f, tip side %.3f\n",
+        std::printf("  from the rim's middle (rim %.3f): wrist %.3f, knuckle %.3f, middle finger %.3f %.3f, tip %.3f\n", seat->wheelTubeRadius,
                     fromRim(at[static_cast<size_t>(rig->wrist[side])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][0])]),
                     fromRim(at[static_cast<size_t>(rig->fingers[side][2][1])]), fromRim(at[static_cast<size_t>(rig->fingers[side][2][2])]),
-                    fromRim(at[static_cast<size_t>(rig->fingers[side][2][2]) + 1]));
+                    fromRim(at[static_cast<size_t>(rig->fingers[side][2][3])]));
     }
 }
 }

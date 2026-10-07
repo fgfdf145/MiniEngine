@@ -158,7 +158,8 @@ void DrawModelAnimationControls(const ModelComponent& model, EditorUiFrameResult
         return;
     }
     const ModelSkeleton& skeleton = *data->skeleton;
-    EditorUiActions::ModelAnimationChoice choice{model.animationClip, model.animationEnabled, model.animationPlaying, model.animationSpeed};
+    EditorUiActions::ModelAnimationChoice choice{
+        model.animationClip, model.animationEnabled, model.animationPlaying, model.animationSpeed, model.springBones};
     bool changed = false;
 
     ImGui::SeparatorText("Animation");
@@ -192,6 +193,8 @@ void DrawModelAnimationControls(const ModelComponent& model, EditorUiFrameResult
     ImGui::SameLine();
     changed |= ImGui::DragFloat("Speed", &choice.speed, 0.01f, -4.0f, 4.0f, "%.2fx");
     ImGui::EndDisabled();
+    changed |= ImGui::Checkbox("Hair and Skirt Physics", &choice.springBones);
+    ImGui::SetItemTooltip("Hair, skirts and other dangling parts swing as the body moves; off, they keep the pose as it is animated.");
     if (changed)
     {
         result.actions.selectedModelAnimation = choice;

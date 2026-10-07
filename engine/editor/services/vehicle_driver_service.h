@@ -32,7 +32,9 @@ struct VehicleDriverSeat
     glm::vec3 wheelCenter{0.0f};
     // The steering column, pointing away from the driver.
     glm::vec3 wheelAxis{0.0f, 0.0f, 1.0f};
+    // The rim's middle line about the column, and the rim's own radius (half its thickness).
     float wheelRadius = 0.18f;
+    float wheelTubeRadius = 0.015f;
     // +1 when wheelAxis is the model's own steering axis (ModelSteeringWheel::axis), -1 when it was
     // turned round to point away from the driver: the wheel's turn about it has this sign.
     float wheelTurnSign = 1.0f;

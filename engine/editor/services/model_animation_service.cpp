@@ -123,7 +123,14 @@ void ModelAnimationPlayback::Tick(RendererSharedState& state, float deltaSeconds
             input.hideHead = false;
             DriverPoseResult result;
             PoseDriver(skeleton, *entry.rig, input, entry.poses, &result);
-            SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds, input.seatPlanes);
+            if (model.springBones)
+            {
+                SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds, input.seatPlanes);
+            }
+            else
+            {
+                entry.springState = SpringBoneState{};
+            }
             if (entry.driver->hideHead)
             {
                 HideDriverHead(*entry.rig, entry.poses);
@@ -151,7 +158,14 @@ void ModelAnimationPlayback::Tick(RendererSharedState& state, float deltaSeconds
         {
             // The clip, and the hair and skirt swinging from it.
             EvaluateNodePoses(skeleton, clip, entry.time, entry.poses);
-            SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds);
+            if (model.springBones)
+            {
+                SimulateSpringBones(skeleton, entry.springBones, entry.springState, entry.poses, modelToWorld, deltaSeconds);
+            }
+            else
+            {
+                entry.springState = SpringBoneState{};
+            }
             ComputeNodeWorldMatrices(skeleton, entry.poses, entry.world);
             PaletteFromNodeWorldMatrices(skeleton, entry.world, entry.palette);
         }

@@ -459,7 +459,7 @@ void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelL
     LOG_INFO("Model lights of '{}': {}", name, useModelLights ? "on" : "off");
 }
 
-void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed)
+void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed, bool springBones)
 {
     // The skinning reads these every frame (ModelAnimationService); the renderables stay as they are.
     IEditorWorld& world = state.GetEditorWorld();
@@ -478,6 +478,7 @@ void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& 
     model.animationEnabled = enabled;
     model.animationPlaying = playing;
     model.animationSpeed = speed;
+    model.springBones = springBones;
 }
 
 void ApplySelectedModelDriver(RendererSharedState& state, const std::string& vehicleUuid, const glm::vec3& seatOffset)
