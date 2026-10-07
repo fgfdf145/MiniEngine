@@ -408,7 +408,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         RunUiAction(modelError, fmt::format("update imported model materials '{}'", update->modelPath), [&]
                     {
                         ModelImportService::UpdateImportedModelMaterialDefinitions(
-                            State(), update->modelPath, update->materials, update->indices);
+                            State(), update->modelPath, update->materials, update->indices, update->restoredIndices);
                     });
     }
     if (const auto& preview = actions.previewImportedModelMaterial)

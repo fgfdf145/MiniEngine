@@ -146,7 +146,7 @@ struct MaterialDefinitionFile
 // of that name: at its own index when the names agree, otherwise to the one
 // material that carries the name. A definition that fits nowhere is skipped
 // rather than dressing the wrong material.
-void ApplyMaterialDefinitions(const std::filesystem::path& modelPath, LoadedModelData& modelData)
+void ApplyMaterialDefinitionFiles(const std::filesystem::path& modelPath, LoadedModelData& modelData)
 {
     std::unordered_map<uint32_t, MaterialDefinitionFile> definitions;
     for (const std::filesystem::path& file : FindMaterialDefinitionFiles(modelPath))
@@ -362,6 +362,18 @@ std::filesystem::path ModelLoader::CopyModelWithSortedReferences(
 
 LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadProgressCallback& progress)
 {
+    LoadedModelData modelData = LoadModelAsImported(path, progress);
+    ApplyMaterialDefinitions(path, modelData);
+    return modelData;
+}
+
+void ModelLoader::ApplyMaterialDefinitions(const std::filesystem::path& modelPath, LoadedModelData& modelData)
+{
+    ApplyMaterialDefinitionFiles(modelPath, modelData);
+}
+
+LoadedModelData ModelLoader::LoadModelAsImported(const std::string& path, const ModelLoadProgressCallback& progress)
+{
     const std::filesystem::path modelPath(path);
     if (!IsSupportedModelPath(modelPath))
     {
@@ -376,7 +388,6 @@ LoadedModelData ModelLoader::LoadModel(const std::string& path, const ModelLoadP
     {
         ApplyPbrSettings(material, BuildPbrSettingsFromMaterial(material));
     }
-    ApplyMaterialDefinitions(modelPath, modelData);
     return modelData;
 }
 }

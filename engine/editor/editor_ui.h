@@ -48,8 +48,10 @@ struct EditorUiActions
     {
         std::string modelPath;
         std::vector<ModelImportedMaterialInfo> materials;
-        // The slots to save; all of them when empty.
+        // The slots to save; all of them when empty and nothing is restored.
         std::vector<uint32_t> indices;
+        // The slots back to the material their import made, whose saved definitions are removed.
+        std::vector<uint32_t> restoredIndices;
     };
 
     // Materials edited in the Model Preview window, shown in the scene but not saved: each with

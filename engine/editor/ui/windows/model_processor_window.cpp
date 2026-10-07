@@ -318,9 +318,29 @@ void ModelProcessorWindow::LoadModel(const std::string& modelPath, bool preselec
 
     try
     {
-        const LoadedModelData loadedModel = ModelLoader::LoadModel(m_modelPath);
-        m_loadedModel = loadedModel;
+        LoadedModelData loadedModel = ModelLoader::LoadModelAsImported(m_modelPath);
+        m_importedMaterials = BuildEditableMaterials(loadedModel);
+        ModelLoader::ApplyMaterialDefinitions(m_modelPath, loadedModel);
         m_materials = BuildEditableMaterials(loadedModel);
+        m_loadedModel = std::move(loadedModel);
+        m_importedMaterials.resize(m_materials.size());
+        m_slotAsImported.assign(m_materials.size(), true);
+        m_stashedEdits.assign(m_materials.size(), std::nullopt);
+        // A slot with a definition of its own (by index, or by name as ModelLoader also applies
+        // them) shows an edit.
+        for (const std::filesystem::path& file : FindMaterialDefinitionFiles(m_modelPath))
+        {
+            const std::optional<std::string> name = ReadMaterialDefinitionName(file);
+            const std::optional<uint32_t> index = MaterialDefinitionIndex(m_modelPath, file);
+            for (size_t slot = 0; slot < m_materials.size(); ++slot)
+            {
+                const std::string& slotName = m_materials[slot].name;
+                if ((index == slot && (!name.has_value() || *name == slotName)) || (!slotName.empty() && name == slotName))
+                {
+                    m_slotAsImported[slot] = false;
+                }
+            }
+        }
         if (preselectPaint)
         {
             m_selectedMaterialIndex = FindPaintSlot(m_materials);
@@ -340,6 +360,9 @@ void ModelProcessorWindow::Reset()
     m_statusMessage.clear();
     m_loadedModel = LoadedModelData{};
     m_materials.clear();
+    m_importedMaterials.clear();
+    m_slotAsImported.clear();
+    m_stashedEdits.clear();
     m_selectedMaterialIndex = 0;
     m_selectedUvSubmeshIndex = 0;
     m_dirty = false;
@@ -527,8 +550,50 @@ void ModelProcessorWindow::OnGui(EditorContext& context)
         }
         ImGui::SetItemTooltip("Show edits on the scene's copies of this model as they are made. Save writes them to disk; closing without saving drops them.");
 
+        // The slot as its import made it, or the edit: switching back and forth compares them, and
+        // Save keeps the one shown.
+        bool switched = false;
+        bool asImported = m_slotAsImported[selectedMaterialIndex];
+        std::optional<ModelImportedMaterialInfo>& stashedEdit = m_stashedEdits[selectedMaterialIndex];
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Material");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("As Imported", asImported) && !asImported)
+        {
+            stashedEdit = selectedMaterial;
+            selectedMaterial = m_importedMaterials[selectedMaterialIndex];
+            asImported = true;
+            switched = true;
+        }
+        ImGui::SetItemTooltip("The material exactly as the import made it (for a car, the livery's own paint). Save removes the edit saved for this slot.");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(asImported && !stashedEdit.has_value());
+        if (ImGui::RadioButton("Edited", !asImported) && asImported)
+        {
+            selectedMaterial = *stashedEdit;
+            stashedEdit.reset();
+            asImported = false;
+            switched = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Your edit of this slot. Changing anything below makes the slot an edit.");
+        if (switched)
+        {
+            m_quickEditBrightness = 0.0f;
+            m_materialGraph.selectedNodeId = 0;
+            m_materialGraph.selectedLinkId = 0;
+        }
+
         bool materialChanged = DrawMaterialQuickEdit(selectedMaterial, m_quickEditBrightness);
         materialChanged |= DrawMaterialGraphEditor(selectedMaterial, selectedMaterialIndex);
+        if (materialChanged)
+        {
+            // An edit starts from what is shown, the imported material included.
+            asImported = false;
+            stashedEdit.reset();
+        }
+        m_slotAsImported[selectedMaterialIndex] = asImported;
+        materialChanged |= switched;
         if (materialChanged)
         {
             const MaterialGraphCompileResult compileResult =
@@ -554,10 +619,12 @@ void ModelProcessorWindow::OnGui(EditorContext& context)
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Save Material Graph", ImVec2(220.0f * UiScale(), 0.0f)))
         {
-            result.actions.updatedImportedModelMaterials = EditorUiActions::ImportedModelMaterialsUpdate{
-                m_modelPath,
-                m_materials,
-                std::vector<uint32_t>(m_editedSlots.begin(), m_editedSlots.end())};
+            EditorUiActions::ImportedModelMaterialsUpdate update{m_modelPath, m_materials, {}, {}};
+            for (const uint32_t slot : m_editedSlots)
+            {
+                (m_slotAsImported[slot] ? update.restoredIndices : update.indices).push_back(slot);
+            }
+            result.actions.updatedImportedModelMaterials = std::move(update);
             m_dirty = false;
             m_editedSlots.clear();
             m_scenePreviewed = false;

@@ -168,7 +168,24 @@ void TestPreviewRevertAndSave()
     const LoadedModelData reloaded = ModelLoader::LoadModel(modelPath.string());
     Require(Near(reloaded.materials[0].baseColor[0], 0.8f) && Near(reloaded.materials[0].roughnessFactor, 0.3f),
             "the saved paint loads back");
-    std::cout << "preview, revert and save of a repaint: ok\n";
+
+    // The import's own paint is still there under the saved one.
+    const LoadedModelData asImported = ModelLoader::LoadModelAsImported(modelPath.string());
+    Require(Near(asImported.materials[0].baseColor[2], 0.4f), "LoadModelAsImported ignores the saved definition");
+
+    // Back to the import's paint: the sidecar goes, the scene and a fresh load are blue again.
+    ModelImportedMaterialInfo imported = BuildImportedMaterialInfo(asImported.materials[0]);
+    EnsureMaterialShaderGraph(imported.name, std::nullopt, imported);
+    CompileMaterialShaderGraph(imported);
+    std::vector<ModelImportedMaterialInfo> restored = materials;
+    restored[0] = imported;
+    RebuildSceneRenderables(state);
+    ModelImportService::UpdateImportedModelMaterialDefinitions(state, windowPath, restored, {}, {0u});
+    Require(FindMaterialDefinitionFiles(modelPath).empty(), "restoring the import removes the slot's sidecar");
+    Require(Near(ScenePaintFactor(state)[2], 0.4f), "the scene shows the imported paint again");
+    ModelCache::Invalidate(windowPath);
+    Require(Near(ModelLoader::LoadModel(modelPath.string()).materials[0].baseColor[2], 0.4f), "the imported paint loads back");
+    std::cout << "preview, revert, save and restore of a repaint: ok\n";
 }
 }
 
