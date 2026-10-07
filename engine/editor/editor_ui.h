@@ -353,6 +353,8 @@ class EditorUiController
     // Whether the window is fullscreen as the command state last asked.
     bool m_windowFullscreen = false;
     bool m_resetDockLayoutRequested = false;
+    // What Window > Auto Layout last fitted the docks for (see DrawEditorDockspace).
+    ImGuiID m_autoLayoutKey = 0;
     // Set by the commands, handled once the menus, the toolbar and the shortcuts have run.
     bool m_openSceneRequested = false;
     bool m_saveSceneRequested = false;

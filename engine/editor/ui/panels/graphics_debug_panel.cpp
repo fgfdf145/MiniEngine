@@ -197,6 +197,17 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     }
     ImGui::EndDisabled();
     DrawViewportResolution(debug.viewportResolution, state.forcedViewportExtent);
+    // Window > Auto Layout, here too as it goes with the resolution.
+    ImGui::BeginDisabled(!debug.viewportResolution.fixed && !state.forcedViewportExtent.has_value());
+    ImGui::Checkbox("Auto layout", &context.state.commands.autoLayout);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            "Sizes the docks round the viewport so it shows the fixed resolution at its own size,\n"
+            "one display pixel per pixel, or as large as fits at its aspect. The panels keep their docks.\n"
+            "It fits again when the resolution, the window or the docks change (Window > Auto Layout).");
+    }
     // NVIDIA DLSS replaces TAA in the deferred order: DLAA at the viewport's size, or super
     // resolution from a smaller render size. Where it cannot run, TAA resolves instead.
     static constexpr std::array<const char*, 6> kDlssModeNames = {

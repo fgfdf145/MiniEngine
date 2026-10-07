@@ -110,6 +110,9 @@ struct EditorSharedState
     // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
     // recording's size while it runs); unset when the viewport's own settings decide.
     std::optional<RenderExtent> forcedViewportExtent;
+    // The space the viewport panel had for its picture when it last drew docked, in points (its dock
+    // node less the tab bar), for Window > Auto Layout; unset while it floats or is fullscreen.
+    std::optional<ImVec2> viewportPanelArea;
     // Whether the backend can path trace (hardware ray tracing), and what it says of path tracing.
     bool pathTracingAvailable = false;
     std::string pathTracingStatus;

@@ -384,7 +384,7 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
     AddBound(registry, "tools.clear_shader_cache", "Clear Shader Cache", "Tools/Clear Shader Cache", ICON_PH_TRASH, 0, scene.clearShaderCache);
 }
 
-void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommands& window)
+void RegisterWindowCommands(CommandRegistry& registry, EditorCommandState& state, const EditorWindowCommands& window)
 {
     for (const EditorPanelMenuEntry& panel : window.panels)
     {
@@ -417,6 +417,16 @@ void RegisterWindowCommands(CommandRegistry& registry, const EditorWindowCommand
             }
         });
     Add(registry, "window.reset_layout", "Reset Layout", "Window/Reset Layout", ICON_PH_SQUARE_SPLIT_HORIZONTAL, 0, window.resetLayout);
+    Add(
+        registry, "window.auto_layout", "Auto Layout", "Window/Auto Layout", ICON_PH_FRAME_CORNERS, 0,
+        [&state]
+        {
+            state.autoLayout = !state.autoLayout;
+        },
+        [&state]
+        {
+            return state.autoLayout;
+        });
 }
 
 void RegisterHelpCommands(CommandRegistry& registry, const EditorSceneCommands& scene)
@@ -440,7 +450,7 @@ void RegisterEditorCommands(
     RegisterViewCommands(registry, state, scene);
     RegisterRenderCommands(registry, state, scene);
     RegisterToolsCommands(registry, state, scene);
-    RegisterWindowCommands(registry, window);
+    RegisterWindowCommands(registry, state, window);
     RegisterHelpCommands(registry, scene);
 }
 

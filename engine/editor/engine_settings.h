@@ -40,6 +40,8 @@ struct EditorUiSettings
     platform::ui::UiScaleConfiguration scale = platform::ui::BuildDefaultUiScaleConfiguration();
     EditorWindowVisibilitySettings windows;
     EditorThemeSettings theme;
+    // Window > Auto Layout (EditorCommandState::autoLayout).
+    bool autoLayout = false;
 };
 
 // The camera's settings and the renderer's: what the Camera and Graphics Debug panels set, kept from

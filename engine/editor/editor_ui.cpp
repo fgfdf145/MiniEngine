@@ -25,6 +25,7 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <system_error>
@@ -32,6 +33,40 @@
 
 namespace me
 {
+
+namespace
+{
+// Window > Auto Layout, when it is on and the viewport renders at a fixed size: the backend's
+// (--viewport-size, a recording), else the viewport resolution setting. The render scale is left out:
+// the picture is shown at the resolution's size whatever share of it is rendered.
+std::optional<ViewportAutoLayout> BuildViewportAutoLayout(const EditorSharedState& state, const char* viewportWindowName, float uiScale)
+{
+    if (!state.commands.autoLayout || !state.viewportPanelArea.has_value())
+    {
+        return std::nullopt;
+    }
+    ImVec2 pixels;
+    if (state.forcedViewportExtent.has_value() && state.forcedViewportExtent->IsValid())
+    {
+        pixels = ImVec2(static_cast<float>(state.forcedViewportExtent->width), static_cast<float>(state.forcedViewportExtent->height));
+    }
+    else if (state.renderDebug.viewportResolution.fixed)
+    {
+        const ViewportResolutionSettings& resolution = state.renderDebug.viewportResolution;
+        pixels = ImVec2(
+            static_cast<float>(std::clamp(resolution.width, ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize)),
+            static_cast<float>(std::clamp(resolution.height, ViewportResolutionSettings::kMinSize, ViewportResolutionSettings::kMaxSize)));
+    }
+    else
+    {
+        return std::nullopt;
+    }
+    // Display pixels per point: 2 on Retina, 1 on Windows, where the UI scale enlarges the fonts instead.
+    const float pixelsPerPoint = std::max(ImGui::GetIO().DisplayFramebufferScale.x, 1.0f);
+    return ViewportAutoLayout{
+        viewportWindowName, *state.viewportPanelArea, ImVec2(pixels.x / pixelsPerPoint, pixels.y / pixelsPerPoint), uiScale};
+}
+}
 
 EditorUiController::EditorUiController()
 {
@@ -184,6 +219,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
         m_state.process = settings.process;
         m_state.quadRecording = settings.quadRecording;
         m_windows.ApplyOpenState(settings.editorUi.windows);
+        m_state.commands.autoLayout = settings.editorUi.autoLayout;
         m_hasAppliedEngineSettings = true;
     }
 
@@ -198,6 +234,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     settings.process = m_state.process;
     settings.quadRecording = m_state.quadRecording;
     m_windows.WriteOpenState(settings.editorUi.windows);
+    settings.editorUi.autoLayout = m_state.commands.autoLayout;
     m_style.WriteSettings(settings.editorUi);
 }
 
@@ -244,6 +281,7 @@ EditorUiFrameResult EditorUiController::Draw(
     m_state.quadRecordingPreview = false;
     // Every panel's open state, to save the settings when one opens or closes.
     const std::vector<bool> previousOpen = m_windows.CapturePanelOpenState();
+    const bool previousAutoLayout = m_state.commands.autoLayout;
 
     // Shortcuts first, so what they change shows in this frame's menus and panels. The menu bar
     // and the toolbar come before the dock space, which fills the area they leave.
@@ -274,7 +312,11 @@ EditorUiFrameResult EditorUiController::Draw(
     ApplyCommandStateToEditor(commandStateBefore, scene);
     if (!fullscreen)
     {
-        DrawEditorDockspace(std::exchange(m_resetDockLayoutRequested, false), m_windows.GetPanels());
+        DrawEditorDockspace(
+            std::exchange(m_resetDockLayoutRequested, false),
+            m_windows.GetPanels(),
+            BuildViewportAutoLayout(m_state, m_windows.Get<ViewportPanel>().GetTitle().c_str(), m_style.EffectiveUiScale()),
+            m_autoLayoutKey);
     }
     result.actions = std::exchange(m_commandActions, {});
     HandleFileCommands(context);
@@ -282,7 +324,7 @@ EditorUiFrameResult EditorUiController::Draw(
     // Every window, panel and modal. Over the fullscreen viewport only those that draw there.
     m_windows.TickAndDraw(context, fullscreen);
 
-    const bool windowToggled = previousOpen != m_windows.CapturePanelOpenState();
+    const bool windowToggled = previousOpen != m_windows.CapturePanelOpenState() || previousAutoLayout != m_state.commands.autoLayout;
     // The Theme panel sets engineSettingsChanged itself when the palette changes.
     result.engineSettingsChanged = result.engineSettingsChanged ||
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||

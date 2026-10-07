@@ -561,6 +561,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
             LoadUiScaleSettings(uiNode["scale"], settings.editorUi.scale);
             LoadWindowVisibilitySettings(uiNode["windows"], settings.editorUi.windows);
             LoadThemeSettings(uiNode["theme"], settings.editorUi.theme);
+            settings.editorUi.autoLayout = ReadBoolOrDefault(uiNode["auto_layout"], settings.editorUi.autoLayout);
         }
         LoadViewSettings(root["camera"], root["render"], settings.view);
         if (const YAML::Node audioNode = root["audio"]; audioNode && audioNode.IsMap())
@@ -619,6 +620,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
             output << (scaleIndex + 1 < configuredScales.size() ? ",\n" : "\n");
         }
         output << "    },\n";
+        output << "    \"auto_layout\": " << JsonBool(settings.editorUi.autoLayout) << ",\n";
         output << "    \"windows\": {\n";
         size_t windowIndex = 0;
         for (const auto& [key, open] : settings.editorUi.windows.open)

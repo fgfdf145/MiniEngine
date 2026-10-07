@@ -60,5 +60,22 @@ std::optional<std::string> PickFilePath(FileDialogType type, bool requested);
 // --- editor_dockspace.cpp -------------------------------------------------
 // The dock space over the main viewport's work area, with the default layout when it is empty: each
 // panel docked in its default slot. `resetLayout` puts every window back where that layout has it.
-ImGuiID DrawEditorDockspace(bool resetLayout, std::span<EditorPanel* const> panels);
+//
+// With `autoLayout` (Window > Auto Layout), the splits round the viewport panel are moved so its
+// picture is the fixed viewport resolution at one display pixel per output pixel, or the largest
+// it can be at that aspect when that does not fit; the panels keep the docks they are in and the
+// space is taken from them or given to them. It fits again when the resolution, the window or the
+// docks change, not every frame, so a splitter dragged afterwards stays where it was put.
+struct ViewportAutoLayout
+{
+    // The viewport panel's ImGui window and the space it had for its picture when it last drew.
+    const char* windowName = nullptr;
+    ImVec2 panelArea{0.0f, 0.0f};
+    // The fixed resolution in points (its pixels over the display's pixels per point).
+    ImVec2 imageSize{0.0f, 0.0f};
+    float uiScale = 1.0f;
+};
+// fittedKey: what the layout was last fitted for, kept by the caller across frames (0: not fitted).
+ImGuiID DrawEditorDockspace(
+    bool resetLayout, std::span<EditorPanel* const> panels, const std::optional<ViewportAutoLayout>& autoLayout, ImGuiID& fittedKey);
 }

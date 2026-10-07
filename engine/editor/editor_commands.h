@@ -70,6 +70,9 @@ struct EditorCommandState
     // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
     // The editor UI turns the window fullscreen and back.
     bool viewportFullscreen = false;
+    // Window > Auto Layout: the docks round the viewport are sized so it shows a fixed viewport
+    // resolution at its own size (see ViewportAutoLayout). Kept in the editor settings.
+    bool autoLayout = false;
     // The pipeline modes map onto the render settings: Path Tracing is PathTracingSettings::enabled,
     // Hybrid the ray traced effects (RenderDebugSettings::hardwareRayTracing) and Rasterization neither;
     // the Ray Tracing switch is hardwareRayTracing itself. Hybrid, Path Tracing and the switch need a

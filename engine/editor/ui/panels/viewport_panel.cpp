@@ -82,9 +82,10 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
         rect.drawList->AddRectFilled(cursor, ImVec2(cursor.x + available.x, cursor.y + available.y), IM_COL32(0, 0, 0, 255));
         imageSize = available.x / available.y > *fixedAspect ? ImVec2(available.y * *fixedAspect, available.y)
                                                                : ImVec2(available.x, available.x / *fixedAspect);
-        // Whole points, so the image's edges fall on pixels.
-        imageSize.x = std::max(std::floor(imageSize.x), 1.0f);
-        imageSize.y = std::max(std::floor(imageSize.y), 1.0f);
+        // Whole points, so the image's edges fall on pixels; a hair over, so a panel fitted to the
+        // aspect (Window > Auto Layout) does not lose a row to the division's rounding.
+        imageSize.x = std::max(std::floor(imageSize.x + 0.01f), 1.0f);
+        imageSize.y = std::max(std::floor(imageSize.y + 0.01f), 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(
             cursor.x + std::floor((available.x - imageSize.x) * 0.5f),
             cursor.y + std::floor((available.y - imageSize.y) * 0.5f)));
@@ -1286,6 +1287,7 @@ void ViewportPanel::OnGui(EditorContext& context)
     const bool flipViewportImageY = false;
     const float renderScale = state.DlssResolves() ? 1.0f : std::clamp(state.renderDebug.renderScale, 0.25f, 1.0f);
     const std::optional<RenderExtent> fixedExtent = ResolveFixedViewportExtent(state, renderScale);
+    state.viewportPanelArea = !fullscreen && ImGui::IsWindowDocked() ? std::optional<ImVec2>(ImGui::GetContentRegionAvail()) : std::nullopt;
     const ViewportOverlayRect viewportRect =
         BuildViewportOverlayRect(viewportTextureId, flipViewportImageY, FixedViewportAspect(state, fixedExtent));
     if (!fullscreen)

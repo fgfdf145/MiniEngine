@@ -4,6 +4,7 @@
 #include <engine/editor/command_registry.h>
 #include <engine/editor/editor_commands.h>
 #include <engine/editor/editor_ui.h>
+#include <engine/editor/ui/editor_ui_internal.h>
 #include <engine/editor/ui/framework/editor_context.h>
 #include <engine/editor/ui/framework/editor_modal.h>
 #include <engine/editor/ui/framework/editor_panel.h>
@@ -17,10 +18,13 @@
 
 #include "imgui_software_raster.h"
 
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -143,6 +147,41 @@ class TestModal final : public EditorModal
             context.result.actions.newScene = true;
             CloseModal();
         }
+    }
+};
+
+// Panels for the dock layout tests, one type each as the manager keeps one window per type.
+template <int Tag>
+class DockedPanel final : public EditorPanel
+{
+  public:
+    DockedPanel(std::string id, std::string title, EditorDockSlot slot)
+        : EditorPanel(std::move(id), std::move(title), "", slot)
+    {
+        Open();
+    }
+
+  protected:
+    void OnGui(EditorContext&) override
+    {
+    }
+};
+
+// Reports the space it has for its picture, as the viewport panel does.
+class ViewportAreaPanel final : public EditorPanel
+{
+  public:
+    ViewportAreaPanel()
+        : EditorPanel("viewport", "Viewport", "", EditorDockSlot::Center)
+    {
+        Open();
+    }
+
+  protected:
+    void OnGui(EditorContext& context) override
+    {
+        context.state.viewportPanelArea =
+            ImGui::IsWindowDocked() ? std::optional<ImVec2>(ImGui::GetContentRegionAvail()) : std::nullopt;
     }
 };
 
@@ -298,6 +337,110 @@ void TestWindowCommandsAndFocus()
     const ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
     Require(focused != nullptr && std::string_view(focused->Name) == "Tool", "an opened window is focused");
 }
+
+// Window > Auto Layout over the default dock layout: the splits round the viewport move so its picture
+// is the fixed size, the panels keep their docks and are not squeezed under the minimum.
+void TestAutoLayout()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 displaySize = io.DisplaySize;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+    EditorScene scene;
+    Camera camera;
+    ViewportMatrices matrices;
+    EditorFrameInput frame;
+    EditorUiFrameResult result;
+    EditorSharedState state;
+    EditorStyle style;
+    EditorWindowManager windows;
+    CommandRegistry commands;
+    windows.Register<DockedPanel<0>>("scene", "Scene", EditorDockSlot::Left);
+    windows.Register<ViewportAreaPanel>();
+    windows.Register<DockedPanel<1>>("camera", "Camera", EditorDockSlot::RightBottom);
+    windows.Register<DockedPanel<2>>("assets", "Assets", EditorDockSlot::Floating);
+
+    ImGuiID fittedKey = 0;
+    bool reset = true;
+    const auto runFrames = [&](int count, std::optional<ImVec2> imageSize, const std::function<void()>& beforeDock = {})
+    {
+        for (int i = 0; i < count; ++i)
+        {
+            io.DeltaTime = 1.0f / 60.0f;
+            result = EditorUiFrameResult{};
+            EditorContext context{scene, camera, matrices, frame, result, state, style, windows, commands};
+            ImGui::NewFrame();
+            if (i == 0 && beforeDock)
+            {
+                beforeDock();
+            }
+            std::optional<ViewportAutoLayout> layout;
+            if (imageSize.has_value() && state.viewportPanelArea.has_value())
+            {
+                layout = ViewportAutoLayout{"Viewport", *state.viewportPanelArea, *imageSize, 1.0f};
+            }
+            DrawEditorDockspace(std::exchange(reset, false), windows.GetPanels(), layout, fittedKey);
+            windows.TickAndDraw(context, false);
+            ImGui::Render();
+            test::ServeTextures(*ImGui::GetDrawData());
+        }
+    };
+    const auto area = [&]
+    {
+        return state.viewportPanelArea.value_or(ImVec2(0.0f, 0.0f));
+    };
+    const auto nodeWidth = [](const char* window)
+    {
+        const ImGuiWindow* found = ImGui::FindWindowByName(window);
+        return found != nullptr && found->DockNode != nullptr ? found->DockNode->Size.x : 0.0f;
+    };
+
+    runFrames(3, std::nullopt);
+    Require(state.viewportPanelArea.has_value(), "the default layout docks the viewport");
+    const float defaultHeight = area().y;
+
+    // Nothing above or below the viewport in the default layout: the width fits, the height stays.
+    runFrames(3, ImVec2(640.0f, 360.0f));
+    Require(area().x == 640.0f && area().y == defaultHeight, "auto layout fits the viewport's width to the picture");
+    Require(fittedKey != 0, "the fit is remembered");
+
+    // Wider than the panels round it can give: they stop at the minimum, the picture keeps its aspect.
+    runFrames(3, ImVec2(1600.0f, 400.0f));
+    Require(area().x > 640.0f && area().x < 1600.0f, "a picture too wide for the window gets what the panels can give");
+    Require(nodeWidth("Scene") >= 159.5f && nodeWidth("Camera") >= 159.5f, "the panels round the viewport keep the minimum width");
+
+    // A panel docked under the viewport gives the height too.
+    runFrames(
+        3,
+        ImVec2(640.0f, 360.0f),
+        []
+        {
+            const ImGuiWindow* viewport = ImGui::FindWindowByName("Viewport");
+            ImGuiID bottom = 0;
+            ImGuiID top = 0;
+            ImGui::DockBuilderSplitNode(viewport->DockId, ImGuiDir_Down, 0.3f, &bottom, &top);
+            ImGui::DockBuilderDockWindow("Viewport", top);
+            ImGui::DockBuilderDockWindow("Assets", bottom);
+            ImGui::DockBuilderFinish(ImHashStr("EditorDockspace"));
+        });
+    Require(area().x == 640.0f && area().y == 360.0f, "with a panel below, the viewport fits both ways");
+
+    // The window grows: the viewport is fitted again.
+    io.DisplaySize = ImVec2(1500.0f, 860.0f);
+    runFrames(3, ImVec2(640.0f, 360.0f));
+    Require(area().x == 640.0f && area().y == 360.0f, "a resized window is fitted again");
+
+    // A splitter moved afterwards stays: the fit runs again only when something it depends on changes.
+    ImGuiWindow* scenePanel = ImGui::FindWindowByName("Scene");
+    ImGuiDockNode* sceneNode = scenePanel->DockNode;
+    sceneNode->Size.x += 40.0f;
+    sceneNode->WantLockSizeOnce = true;
+    runFrames(2, ImVec2(640.0f, 360.0f));
+    Require(area().x == 600.0f, "a splitter dragged after the fit stays where it was put");
+
+    io.DisplaySize = displaySize;
+    io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
+}
 }
 
 int main()
@@ -317,6 +460,7 @@ int main()
         TestModalLifecycle();
         TestOpenStateSettings();
         TestWindowCommandsAndFocus();
+        TestAutoLayout();
         std::cout << "editor_window_framework_tests passed\n";
     }
     catch (const std::exception& error)
