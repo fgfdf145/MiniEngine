@@ -24,8 +24,12 @@ struct SsrPushConstants
     float maxRoughness = 0.8f;
     float historyScale = 1.0f;
     uint32_t frameIndex = 0;
+    uint32_t flags = 0;
 };
-static_assert(sizeof(SsrPushConstants) == 32, "SsrPushConstants must match ssr_trace.comp");
+static_assert(sizeof(SsrPushConstants) == 36, "SsrPushConstants must match ssr_trace.comp");
+
+// Must match SSR_TRACE_FLAG_* in shaders/vulkan/ssr_half_res.glsl.
+constexpr uint32_t kTraceFlagFullResolution = 1u;
 
 // Must match SsrResolveConstants in shaders/vulkan/ssr_resolve.comp.
 struct SsrResolvePushConstants
@@ -43,6 +47,7 @@ static_assert(sizeof(SsrResolvePushConstants) == 32, "SsrResolvePushConstants mu
 // Must match the SSR_FLAG_* constants in ssr_resolve.comp.
 constexpr uint32_t kFlagTraced = 1u;
 constexpr uint32_t kFlagHistoryValid = 2u;
+constexpr uint32_t kFlagPassThrough = 4u;
 
 glm::vec2 Extent(const ScenePassFrameContext& frame)
 {
@@ -201,10 +206,13 @@ void VulkanSsrTracePass::Record(
     constants.maxRoughness = std::clamp(frame.ssr.maxRoughness, 0.05f, 1.0f);
     constants.historyScale = frame.taaHistoryScale;
     constants.frameIndex = frame.frameIndex;
+    // DLSS ray reconstruction denoises the reflections itself and wants a raw sample in every pixel
+    // (ssr_half_res.glsl); otherwise half resolution, filtered by the resolve.
+    constants.flags = frame.dlssRayReconstruction ? kTraceFlagFullResolution : 0u;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SsrRaw, frame.imageIndex, frame.frameSlot);
     const VkDescriptorSet passSet = m_descriptorSets.at(slot * 2 + frame.taaHistory.readIndex);
-    const VkExtent2D extent = targets.GetTargetExtent(RenderTargetId::SsrRaw);
+    const VkExtent2D extent = frame.dlssRayReconstruction ? frame.extent : VkExtent2D{(frame.extent.width + 1) / 2, (frame.extent.height + 1) / 2};
     if (frame.rayTracing.reflections && m_tracedPipeline != VK_NULL_HANDLE)
     {
         // The scene, not the screen: the rays reach as far as the sky.
@@ -361,7 +369,8 @@ void VulkanSsrResolvePass::Record(
     constants.invExtent = 1.0f / constants.extent;
     // The resolve's history was written last frame, at last frame's pre-exposure, like TAA's.
     constants.historyScale = frame.taaHistoryScale;
-    constants.flags = (SsrTraces(frame) ? kFlagTraced : 0u) | (frame.ssrHistory.valid ? kFlagHistoryValid : 0u);
+    constants.flags = (SsrTraces(frame) ? kFlagTraced : 0u) | (frame.ssrHistory.valid ? kFlagHistoryValid : 0u) |
+                      (frame.dlssRayReconstruction ? kFlagPassThrough : 0u);
     constants.frameIndex = frame.frameIndex;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneReflections, frame.imageIndex, frame.frameSlot);

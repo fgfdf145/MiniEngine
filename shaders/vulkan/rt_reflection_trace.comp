@@ -8,9 +8,10 @@
 // Ray traced reflections (VulkanSsrTracePass's hardware variant, docs/design/
 // 2026-10-07-ray-traced-effects-design.md): the screen-space trace's lobe and output, with the ray
 // traced through the scene instead of marched against the depth buffer, so what is off screen or
-// hidden is reflected too. One ray a pixel at half resolution, drawn from the GGX visible normals of
-// the pixel's lobe (the coat's on car paint, ssr_lobe.glsl). Where the hit is the surface the screen
-// shows at that point, its colour comes from last frame's anti-aliased image as the screen-space trace
+// hidden is reflected too. One ray a pixel at half resolution (every pixel, with white noise, under
+// DLSS ray reconstruction), drawn from the GGX visible normals of the pixel's lobe (the coat's on car
+// paint, ssr_lobe.glsl). Where the hit is the surface the screen shows at that point, its colour
+// comes from last frame's anti-aliased image as the screen-space trace
 // takes it; elsewhere the hit is shaded here: its material from the mesh and the material's textures
 // (ray_hit_common.glsl), lit by ShadeSurface with every light, the DDGI probes' ambient and a traced
 // shadow ray toward the sun. A miss sees the sky. Writes SsrRaw for the SSR resolve: rgb radiance in
@@ -49,6 +50,7 @@ layout(push_constant) uniform SsrConstants
     float maxRoughness;
     float historyScale;
     uint frameIndex;
+    uint flags;
 }
 ssr;
 
@@ -94,19 +96,20 @@ float HitSunVisibility(vec3 position, vec3 faceNormal, uint rayId)
 
 void main()
 {
-    ivec2 halfPixel = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(halfPixel, SsrHalfResExtent(ivec2(ssr.extent)))))
+    bool fullResolution = (ssr.flags & SSR_TRACE_FLAG_FULL_RES) != 0u;
+    ivec2 rawPixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(rawPixel, fullResolution ? ivec2(ssr.extent) : SsrHalfResExtent(ivec2(ssr.extent)))))
     {
         return;
     }
-    ivec2 pixel = SsrHalfResSourcePixel(halfPixel, ssr.frameIndex, ivec2(ssr.extent));
+    ivec2 pixel = fullResolution ? rawPixel : SsrHalfResSourcePixel(rawPixel, ssr.frameIndex, ivec2(ssr.extent));
 
     float depth = texelFetch(depthTexture, pixel, 0).r;
     SsrLobe lobe = ReadSsrLobe(pixel);
     float roughnessFade = SsrRoughnessFade(lobe.roughness, ssr.maxRoughness);
     if (IsFarDepth(depth) || roughnessFade <= 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -118,12 +121,13 @@ void main()
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - worldPosition);
 
     vec2 frameOffset = vec2(float(ssr.frameIndex % 64u) * 5.588238, float(ssr.frameIndex % 64u) * 7.123);
-    vec2 u = vec2(InterleavedGradientNoise(vec2(pixel) + frameOffset), InterleavedGradientNoise(vec2(pixel.yx) + frameOffset * 1.37));
+    vec2 u = fullResolution ? SsrWhiteNoise(pixel, ssr.frameIndex)
+                            : vec2(InterleavedGradientNoise(vec2(pixel) + frameOffset), InterleavedGradientNoise(vec2(pixel.yx) + frameOffset * 1.37));
     vec3 H = SampleGgxVisibleNormal(N, V, lobe.roughness, u);
     vec3 R = reflect(-V, H);
     if (dot(R, N) <= 0.0 || dot(R, geoNormal) <= 0.0)
     {
-        imageStore(ssrRawImage, halfPixel, vec4(0.0));
+        imageStore(ssrRawImage, rawPixel, vec4(0.0));
         return;
     }
 
@@ -204,5 +208,5 @@ void main()
     {
         radiance = vec3(0.0);
     }
-    imageStore(ssrRawImage, halfPixel, vec4(min(radiance, vec3(65504.0)), roughnessFade));
+    imageStore(ssrRawImage, rawPixel, vec4(min(radiance, vec3(65504.0)), roughnessFade));
 }

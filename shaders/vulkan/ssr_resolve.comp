@@ -42,6 +42,9 @@ resolve;
 
 const uint SSR_FLAG_TRACED = 1u;
 const uint SSR_FLAG_HISTORY_VALID = 2u;
+// The trace ran at full resolution for DLSS ray reconstruction (ssr_half_res.glsl): each pixel's raw
+// sample goes to the lighting pass as it is, and the denoiser filters it.
+const uint SSR_FLAG_PASS_THROUGH = 4u;
 
 const float CURRENT_WEIGHT = 0.125;
 const float DEPTH_TOLERANCE = 0.05;
@@ -80,6 +83,20 @@ void main()
         {
             imageStore(historyImage, pixel, vec4(0.0));
         }
+        return;
+    }
+
+    if ((resolve.flags & SSR_FLAG_PASS_THROUGH) != 0u)
+    {
+        vec4 raw = texelFetch(ssrRawTexture, pixel, 0);
+        if (any(isnan(raw)) || any(isinf(raw)))
+        {
+            raw = vec4(0.0);
+        }
+        // Kept as history too (premultiplied, as the filtered path stores it), so leaving ray
+        // reconstruction starts from it.
+        imageStore(historyImage, pixel, vec4(raw.rgb * raw.a, raw.a));
+        imageStore(reflectionsImage, pixel, vec4(min(raw.rgb, vec3(65504.0)), clamp(raw.a, 0.0, 1.0)));
         return;
     }
 

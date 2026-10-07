@@ -16,4 +16,25 @@ ivec2 SsrHalfResExtent(ivec2 extent)
     return (extent + 1) / 2;
 }
 
+// Under DLSS ray reconstruction the trace instead runs at full resolution with white noise, and the
+// resolve passes its samples through unfiltered: the denoiser wants a fresh, independent sample in
+// every pixel every frame. Half-resolution samples spread by the resolve's filters and its slowly
+// clipped history reach it as noise that holds still, which it keeps as blotches on glossy paint.
+const uint SSR_TRACE_FLAG_FULL_RES = 1u;
+
+// PCG (Jarzynski and Olano 2020).
+uint SsrHash(uint v)
+{
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+vec2 SsrWhiteNoise(ivec2 pixel, uint frameIndex)
+{
+    uint seed = SsrHash(uint(pixel.x) ^ SsrHash(uint(pixel.y) ^ SsrHash(frameIndex)));
+    uint second = SsrHash(seed);
+    return vec2(float(seed >> 8), float(second >> 8)) * (1.0 / 16777216.0);
+}
+
 #endif
