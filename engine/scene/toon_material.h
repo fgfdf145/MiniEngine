@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace me
 {
@@ -122,6 +123,9 @@ static_assert(offsetof(GpuToonMaterial, features) == 28 * 16, "features must be 
 struct ToonMaterialData
 {
     GpuToonMaterial gpu;
+    // The head bone's node name; on a skinned mesh the face's frame (gpu.headPosition and the rest,
+    // at the bind pose) follows that joint as the model animates.
+    std::string headNode;
 
     uint32_t Features() const
     {

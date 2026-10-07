@@ -30,6 +30,8 @@ class RenderTransformSnapshot
     {
         return m_entityCount;
     }
+    // The entity's joint palette as it was at the capture; null without one.
+    const std::vector<glm::mat4>* GetJointPalette(entt::entity entity) const;
 
   private:
     // By entity index (entt::to_entity): the entity found there, entt::null where none, and its
@@ -40,5 +42,6 @@ class RenderTransformSnapshot
     std::vector<uint32_t> m_setIndices;
     size_t m_entityCount = 0;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_localTransforms;
+    std::unordered_map<entt::entity, std::vector<glm::mat4>> m_jointPalettes;
 };
 }

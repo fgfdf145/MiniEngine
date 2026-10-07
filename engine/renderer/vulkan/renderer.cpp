@@ -1311,6 +1311,24 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         drawItems.erase(decals, drawItems.end());
     }
 
+    // Every skinned submesh posed by its entity's palette this frame, drawn or culled: it may still cast
+    // a shadow into view. Without a palette (not yet ticked) it keeps the pose it has.
+    std::vector<VulkanSkinningPass::Dispatch> skinningDispatches;
+    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
+    {
+        if (!renderSubmesh->skinned || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        {
+            continue;
+        }
+        const std::vector<glm::mat4>* palette = packet.transforms.GetJointPalette(renderSubmesh->entity);
+        if (palette == nullptr)
+        {
+            continue;
+        }
+        skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
+    }
+
     // The anime characters' draws for the toon passes: opaque before transparent, each in Unity's
     // render queue order. Their transparent draws are the toon passes' alone; the opaque ones stay
     // among drawItems for the geometry pass.
@@ -1346,7 +1364,22 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                     return item.toon != nullptr && item.pipelineKey.alphaMode == MaterialAlphaMode::Blend;
                 }),
             drawItems.end());
-        const uint32_t written = m_toonMaterials->Write(m_commandContext->GetCurrentFrame(), toonDrawItems);
+        // A skinned face's frame follows its head joint: the palette entry takes the bind pose's
+        // head to where the animation has it.
+        std::vector<glm::mat4> headPoses(toonDrawItems.size(), glm::mat4(1.0f));
+        for (size_t index = 0; index < toonDrawItems.size(); ++index)
+        {
+            const VulkanDrawItem& item = toonDrawItems[index];
+            if (item.toonHeadJoint >= 0)
+            {
+                const std::vector<glm::mat4>* palette = packet.transforms.GetJointPalette(item.entity);
+                if (palette != nullptr && static_cast<size_t>(item.toonHeadJoint) < palette->size())
+                {
+                    headPoses[index] = (*palette)[static_cast<size_t>(item.toonHeadJoint)];
+                }
+            }
+        }
+        const uint32_t written = m_toonMaterials->Write(m_commandContext->GetCurrentFrame(), toonDrawItems, headPoses);
         if (written < toonDrawItems.size())
         {
             LOG_WARN("{} toon draws this frame; the toon passes draw the first {}", toonDrawItems.size(), written);
@@ -1589,6 +1622,10 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // anyway.
                                               m_layoutTracker.Reset();
                                               m_gpuTimer->BeginFrame(commandBuffer, frame.frameSlot);
+
+                                              // The skinned submeshes posed first: every pass after draws them.
+                                              m_skinningPass->Record(commandBuffer, frame.frameSlot, skinningDispatches);
+                                              m_gpuTimer->Mark(commandBuffer, "Skinning");
 
                                               // Ahead of the scene passes, whose material pass samples it. It
                                               // orders itself through its render pass dependencies and never
@@ -1970,6 +2007,11 @@ void VulkanRenderer::CreateDeviceResources()
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
         rayDefaultTexture);
+    m_skinningPass = std::make_unique<VulkanSkinningPass>(
+        m_device->GetPhysicalDevice(),
+        m_device->GetHandle(),
+        m_pipelineCache,
+        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -2183,6 +2225,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_environmentProbe.reset();
     m_ddgi.reset();
     m_toonMaterials.reset();
+    m_skinningPass.reset();
     m_rayScene.reset();
     m_rayDefaultTexture.reset();
     m_atmosphere.reset();
@@ -2996,7 +3039,10 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->revision = cpuRenderSubmesh.revision;
             renderSubmesh->motionKey = MotionKey{static_cast<uint32_t>(entt::to_integral(cpuRenderSubmesh.entity)), ordinal};
             renderSubmesh->mesh = cpuRenderSubmesh.mesh;
-            if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get()); live != liveBuffers.end())
+            // A skinned mesh's buffers are the skinning pass's output for this submesh alone: another
+            // entity with the same model poses its own copy.
+            if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get());
+                live != liveBuffers.end() && !cpuRenderSubmesh.mesh->IsSkinned())
             {
                 renderSubmesh->buffer = live->second;
             }
@@ -3016,6 +3062,14 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->alphaMode = cpuRenderSubmesh.alphaMode;
             renderSubmesh->decal = cpuRenderSubmesh.decal;
             renderSubmesh->toon = cpuRenderSubmesh.toon;
+            renderSubmesh->skinned = cpuRenderSubmesh.skinned && renderSubmesh->buffer->IsSkinned();
+            renderSubmesh->paletteOffset = cpuRenderSubmesh.paletteOffset;
+            renderSubmesh->jointCount = cpuRenderSubmesh.jointCount;
+            renderSubmesh->toonHeadJoint = cpuRenderSubmesh.toonHeadJoint;
+            if (renderSubmesh->skinned)
+            {
+                renderSubmesh->skinningSet = m_skinningPass->Acquire(*renderSubmesh->buffer);
+            }
             renderSubmesh->localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
             renderSubmesh->localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
             renderSubmesh->name = cpuRenderSubmesh.name;
@@ -3332,6 +3386,8 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& fra
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
+            m_skinningPass->Release(renderSubmesh->skinningSet);
+            renderSubmesh->skinningSet = VK_NULL_HANDLE;
         }
     }
     std::erase_if(m_renderSubmeshes, isRemoved);
@@ -3489,6 +3545,8 @@ void VulkanRenderer::ApplyRenderContent(
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
+            m_skinningPass->Release(renderSubmesh->skinningSet);
+            renderSubmesh->skinningSet = VK_NULL_HANDLE;
             m_liveSubmeshes.erase(renderSubmesh->revision);
         }
         for (const RenderSubmesh* renderSubmesh : placed)
@@ -3603,7 +3661,10 @@ void VulkanRenderer::AppendDrawItem(
         transmissive,
         MaterialScatters(renderSubmesh.material),
         renderSubmesh.decal,
-        renderSubmesh.toon.get()});
+        renderSubmesh.toon.get(),
+        renderSubmesh.entity,
+        renderSubmesh.toonHeadJoint,
+        renderSubmesh.buffer->GetPreviousPositionHandle()});
 }
 
 std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(

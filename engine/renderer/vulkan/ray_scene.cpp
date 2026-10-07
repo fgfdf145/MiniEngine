@@ -423,7 +423,12 @@ void VulkanRayScene::SetContent(
             // the GPU when this content installs.
             if (m_acceleration)
             {
-                build.blas = m_acceleration->Prepare(distinct, bvhs);
+                std::vector<VkDeviceAddress> positionAddresses(distinct.size(), 0);
+                for (size_t index = 0; index < distinct.size(); ++index)
+                {
+                    positionAddresses[index] = build.meshBuffers[index] ? build.meshBuffers[index]->GetPositionAddress() : 0;
+                }
+                build.blas = m_acceleration->Prepare(distinct, bvhs, positionAddresses);
 
                 // Hit shading's view of the meshes: each one's buffer addresses, and each leaf
                 // triangle's index in its index list, laid out as the triangles are.

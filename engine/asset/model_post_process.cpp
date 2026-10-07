@@ -35,8 +35,18 @@ void GenerateFlatNormals(MeshData& meshData)
 {
     std::vector<Vertex> vertices;
     vertices.reserve(meshData.indices.size());
+    // A skin stays parallel to the vertices: each corner takes its source vertex's.
+    std::vector<VertexSkin> skin;
+    skin.reserve(meshData.IsSkinned() ? meshData.indices.size() : 0);
     for (size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
     {
+        if (meshData.IsSkinned())
+        {
+            for (size_t corner = 0; corner < 3; ++corner)
+            {
+                skin.push_back(meshData.skin[meshData.indices[index + corner]]);
+            }
+        }
         std::array<Vertex, 3> corners = {
             meshData.vertices[meshData.indices[index + 0]],
             meshData.vertices[meshData.indices[index + 1]],
@@ -60,6 +70,7 @@ void GenerateFlatNormals(MeshData& meshData)
     }
 
     meshData.vertices = std::move(vertices);
+    meshData.skin = std::move(skin);
     for (size_t index = 0; index < meshData.indices.size(); ++index)
     {
         meshData.indices[index] = static_cast<uint32_t>(index);

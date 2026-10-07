@@ -148,6 +148,21 @@ const std::unordered_map<entt::entity, std::vector<glm::mat4>>& RendererWorld::G
     return m_submeshLocalTransforms;
 }
 
+void RendererWorld::SetJointPalette(entt::entity entity, std::vector<glm::mat4> palette)
+{
+    m_jointPalettes[entity] = std::move(palette);
+}
+
+void RendererWorld::ClearJointPalette(entt::entity entity)
+{
+    m_jointPalettes.erase(entity);
+}
+
+const std::unordered_map<entt::entity, std::vector<glm::mat4>>& RendererWorld::GetJointPalettes() const
+{
+    return m_jointPalettes;
+}
+
 void RendererWorld::SetModelLights(std::vector<CpuModelLight> modelLights)
 {
     m_modelLights = std::move(modelLights);

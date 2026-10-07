@@ -48,6 +48,19 @@ struct RayBlas::VertexBatch
 
 RayBlas::~RayBlas()
 {
+    if (indexBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(device, indexBuffer, nullptr);
+    }
+    if (indexMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device, indexMemory, nullptr);
+    }
+    if (updateScratch != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(device, updateScratch, nullptr);
+    }
+    VulkanMemoryPool::Free(device, updateScratchMemory);
     if (handle != VK_NULL_HANDLE)
     {
         functions->destroyAccelerationStructure(device, handle, nullptr);
@@ -106,6 +119,25 @@ VkAccelerationStructureGeometryKHR TriangleGeometry(VkDeviceAddress vertices, ui
     return geometry;
 }
 
+// A skinned mesh's triangles: its posed positions, indexed in the hierarchy's leaf order.
+VkAccelerationStructureGeometryKHR IndexedTriangleGeometry(VkDeviceAddress vertices, uint32_t vertexCount, VkDeviceAddress indices)
+{
+    VkAccelerationStructureGeometryKHR geometry = TriangleGeometry(vertices, 1);
+    VkAccelerationStructureGeometryTrianglesDataKHR& triangles = geometry.geometry.triangles;
+    triangles.maxVertex = vertexCount > 0 ? vertexCount - 1 : 0;
+    triangles.indexType = VK_INDEX_TYPE_UINT32;
+    triangles.indexData.deviceAddress = indices;
+    return geometry;
+}
+
+// The geometry a bottom level is built from: its leaf-ordered vertex batch, or a dynamic one's posed
+// positions through its index buffer.
+VkAccelerationStructureGeometryKHR BlasGeometry(const RayBlas& blas)
+{
+    return blas.dynamic ? IndexedTriangleGeometry(blas.dynamicPositions, blas.dynamicVertexCount, blas.indexAddress)
+                        : TriangleGeometry(blas.vertices->address + blas.vertexOffset, blas.triangleCount);
+}
+
 VkAccelerationStructureGeometryKHR InstanceGeometry(VkDeviceAddress instances)
 {
     VkAccelerationStructureGeometryKHR geometry{};
@@ -145,6 +177,9 @@ constexpr double kCompactionMinimumSaving = 0.05;
 
 constexpr VkBuildAccelerationStructureFlagsKHR kBottomLevelFlags =
     VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+// A skinned mesh's: refitted every frame, so built to update and never compacted.
+constexpr VkBuildAccelerationStructureFlagsKHR kDynamicBottomLevelFlags =
+    VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
 }
 
 VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameCount)
@@ -375,8 +410,13 @@ void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
 
 std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
     std::span<const std::shared_ptr<const MeshData>> meshes,
-    std::span<const std::shared_ptr<const MeshBvh>> bvhs) const
+    std::span<const std::shared_ptr<const MeshBvh>> bvhs,
+    std::span<const VkDeviceAddress> positionAddresses) const
 {
+    const auto positionAddress = [&](uint32_t index) -> VkDeviceAddress
+    {
+        return index < positionAddresses.size() && meshes[index]->IsSkinned() ? positionAddresses[index] : 0;
+    };
     std::vector<std::shared_ptr<RayBlas>> result(meshes.size());
     // The meshes a live bottom level already covers keep it; the rest are made below. A mesh another
     // build made but has not installed yet counts as live: whichever content installs first builds it.
@@ -393,6 +433,11 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
             if (cached != m_cache->meshes.end() && cached->second.mesh.lock() == meshes[index])
             {
                 result[index] = cached->second.blas.lock();
+                // A dynamic one is built over one buffer's positions: another buffer needs its own.
+                if (result[index] && result[index]->dynamicPositions != positionAddress(index))
+                {
+                    result[index].reset();
+                }
             }
             if (!result[index])
             {
@@ -450,11 +495,36 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
                 blas->vertexOffset = offsets[index];
                 blas->triangleCount = static_cast<uint32_t>(bvh.triangles.size());
 
-                const VkAccelerationStructureGeometryKHR geometry = TriangleGeometry(0, blas->triangleCount);
+                const MeshData& mesh = *meshes[fresh[index]];
+                blas->dynamicPositions = positionAddress(fresh[index]);
+                blas->dynamic = blas->dynamicPositions != 0;
+                if (blas->dynamic)
+                {
+                    // Each leaf triangle's three vertex indices, in leaf order.
+                    blas->dynamicVertexCount = static_cast<uint32_t>(mesh.vertices.size());
+                    Buffer indices = CreateBuffer(
+                        sizeof(uint32_t) * 3 * bvh.sourceTriangles.size(),
+                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        true);
+                    auto* written = static_cast<uint32_t*>(indices.mapped);
+                    for (const uint32_t source : bvh.sourceTriangles)
+                    {
+                        for (uint32_t corner = 0; corner < 3; ++corner)
+                        {
+                            *written++ = mesh.indices[source * 3 + corner];
+                        }
+                    }
+                    blas->indexBuffer = indices.buffer;
+                    blas->indexMemory = indices.memory;
+                    blas->indexAddress = indices.address;
+                }
+
+                const VkAccelerationStructureGeometryKHR geometry =
+                    blas->dynamic ? IndexedTriangleGeometry(0, blas->dynamicVertexCount, 0) : TriangleGeometry(0, blas->triangleCount);
                 VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
                 buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
                 buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-                buildInfo.flags = kBottomLevelFlags;
+                buildInfo.flags = blas->dynamic ? kDynamicBottomLevelFlags : kBottomLevelFlags;
                 buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
                 buildInfo.geometryCount = 1;
                 buildInfo.pGeometries = &geometry;
@@ -462,6 +532,16 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
                 sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
                 m_functions->getBuildSizes(m_device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &blas->triangleCount, &sizes);
                 blas->scratchSize = sizes.buildScratchSize;
+                if (blas->dynamic)
+                {
+                    Buffer scratch = CreateBuffer(
+                        sizes.updateScratchSize + m_scratchAlignment,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        false);
+                    blas->updateScratch = scratch.buffer;
+                    blas->updateScratchMemory = scratch.pooled;
+                    blas->updateScratchAddress = AlignUp(scratch.address, m_scratchAlignment);
+                }
 
                 VkBufferCreateInfo bufferInfo{};
                 bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -656,6 +736,11 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
 void VulkanRayAcceleration::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool buildTopLevel)
 {
     bool builtBottom = RecordBottomLevels(commandBuffer, frameSlot);
+    if (buildTopLevel && RecordDynamicUpdates(commandBuffer))
+    {
+        builtBottom = true;
+        m_topLevels[frameSlot].dirty = true;
+    }
     if (!m_compactionCopies.empty())
     {
         // The originals were built in earlier submissions (or just now).
@@ -706,6 +791,57 @@ void VulkanRayAcceleration::Record(VkCommandBuffer commandBuffer, uint32_t frame
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
         VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+}
+
+bool VulkanRayAcceleration::RecordDynamicUpdates(VkCommandBuffer commandBuffer)
+{
+    std::vector<RayBlas*> dynamic;
+    for (const std::shared_ptr<RayBlas>& blas : m_meshBlas)
+    {
+        if (blas && blas->dynamic && blas->built)
+        {
+            dynamic.push_back(blas.get());
+        }
+    }
+    if (dynamic.empty())
+    {
+        return false;
+    }
+    // The skinning pass wrote the positions; the frames before read the structures this refits.
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask =
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+    std::vector<VkAccelerationStructureGeometryKHR> geometries(dynamic.size());
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos(dynamic.size());
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges(dynamic.size());
+    std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> rangePointers(dynamic.size());
+    for (size_t index = 0; index < dynamic.size(); ++index)
+    {
+        const RayBlas& blas = *dynamic[index];
+        geometries[index] = BlasGeometry(blas);
+        VkAccelerationStructureBuildGeometryInfoKHR& info = infos[index];
+        info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        info.flags = kDynamicBottomLevelFlags;
+        info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+        info.srcAccelerationStructure = blas.handle;
+        info.dstAccelerationStructure = blas.handle;
+        info.geometryCount = 1;
+        info.pGeometries = &geometries[index];
+        info.scratchData.deviceAddress = blas.updateScratchAddress;
+        ranges[index].primitiveCount = blas.triangleCount;
+        rangePointers[index] = &ranges[index];
+    }
+    m_functions->cmdBuild(commandBuffer, static_cast<uint32_t>(infos.size()), infos.data(), rangePointers.data());
+    return true;
 }
 
 bool VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, uint32_t frameSlot)
@@ -771,11 +907,11 @@ bool VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
             {
                 break;
             }
-            geometries.push_back(TriangleGeometry(blas.vertices->address + blas.vertexOffset, blas.triangleCount));
+            geometries.push_back(BlasGeometry(blas));
             VkAccelerationStructureBuildGeometryInfoKHR info{};
             info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
             info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            info.flags = kBottomLevelFlags;
+            info.flags = blas.dynamic ? kDynamicBottomLevelFlags : kBottomLevelFlags;
             info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
             info.dstAccelerationStructure = blas.handle;
             info.geometryCount = 1;
@@ -811,18 +947,27 @@ bool VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
     handles.reserve(batch.size());
     for (const std::shared_ptr<RayBlas>& blas : batch)
     {
+        // A dynamic one is never compacted (nor allowed to be).
+        if (blas->dynamic)
+        {
+            blas->compacted = true;
+            continue;
+        }
         handles.push_back(blas->handle);
         queries.structures.push_back(blas);
     }
-    vkCmdResetQueryPool(commandBuffer, queries.pool, 0, static_cast<uint32_t>(handles.size()));
     AccelerationBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
-    m_functions->cmdWriteProperties(
-        commandBuffer,
-        static_cast<uint32_t>(handles.size()),
-        handles.data(),
-        VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-        queries.pool,
-        0);
+    if (!handles.empty())
+    {
+        vkCmdResetQueryPool(commandBuffer, queries.pool, 0, static_cast<uint32_t>(handles.size()));
+        m_functions->cmdWriteProperties(
+            commandBuffer,
+            static_cast<uint32_t>(handles.size()),
+            handles.data(),
+            VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+            queries.pool,
+            0);
+    }
 
     Retired& retired = m_retired[frameSlot];
     retired.buffers.push_back(scratch);

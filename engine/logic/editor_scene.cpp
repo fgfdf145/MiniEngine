@@ -453,6 +453,13 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             entityData.modelMaterialVariant =
                 modelNode["material_variant"].as<std::string>(entityData.modelMaterialVariant);
             entityData.modelUseModelLights = modelNode["use_model_lights"].as<bool>(entityData.modelUseModelLights);
+            if (const YAML::Node animationNode = modelNode["animation"]; animationNode && animationNode.IsMap())
+            {
+                entityData.modelAnimationClip = animationNode["clip"].as<std::string>(entityData.modelAnimationClip);
+                entityData.modelAnimationEnabled = animationNode["enabled"].as<bool>(entityData.modelAnimationEnabled);
+                entityData.modelAnimationPlaying = animationNode["playing"].as<bool>(entityData.modelAnimationPlaying);
+                entityData.modelAnimationSpeed = animationNode["speed"].as<float>(entityData.modelAnimationSpeed);
+            }
             entityData.transform = ReadTransformComponent(entityNode["transform"], entityData.transform);
             sceneData.entities.push_back(entityData);
         }
@@ -521,6 +528,16 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         if (!entity.modelUseModelLights)
         {
             emitter << YAML::Key << "use_model_lights" << YAML::Value << false;
+        }
+        if (!entity.modelAnimationClip.empty() || !entity.modelAnimationEnabled || !entity.modelAnimationPlaying ||
+            entity.modelAnimationSpeed != 1.0f)
+        {
+            emitter << YAML::Key << "animation" << YAML::Value << YAML::BeginMap;
+            emitter << YAML::Key << "clip" << YAML::Value << entity.modelAnimationClip;
+            emitter << YAML::Key << "enabled" << YAML::Value << entity.modelAnimationEnabled;
+            emitter << YAML::Key << "playing" << YAML::Value << entity.modelAnimationPlaying;
+            emitter << YAML::Key << "speed" << YAML::Value << entity.modelAnimationSpeed;
+            emitter << YAML::EndMap;
         }
         emitter << YAML::EndMap;
         emitter << YAML::Key << "transform" << YAML::Value << YAML::BeginMap;
@@ -776,6 +793,10 @@ entt::entity EditorScene::CreateEntity(const SerializedEntityData& entityData)
     model.baseColorTextureOverrideUuid = entityData.modelBaseColorTextureOverrideUuid;
     model.materialVariant = entityData.modelMaterialVariant;
     model.useModelLights = entityData.modelUseModelLights;
+    model.animationClip = entityData.modelAnimationClip;
+    model.animationEnabled = entityData.modelAnimationEnabled;
+    model.animationPlaying = entityData.modelAnimationPlaying;
+    model.animationSpeed = entityData.modelAnimationSpeed;
     m_registry.emplace<ModelBoundsComponent>(entity);
     m_registry.emplace<EditorModelMetadataComponent>(entity);
     m_registry.emplace<ModelRenderableDirty>(entity);
@@ -1204,6 +1225,10 @@ SerializedSceneData EditorScene::CaptureSceneData() const
         entityData.modelBaseColorTextureOverrideUuid = model.baseColorTextureOverrideUuid;
         entityData.modelMaterialVariant = model.materialVariant;
         entityData.modelUseModelLights = model.useModelLights;
+        entityData.modelAnimationClip = model.animationClip;
+        entityData.modelAnimationEnabled = model.animationEnabled;
+        entityData.modelAnimationPlaying = model.animationPlaying;
+        entityData.modelAnimationSpeed = model.animationSpeed;
         entityData.transform = transform;
         sceneData.entities.push_back(entityData);
     }

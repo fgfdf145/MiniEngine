@@ -14,9 +14,15 @@ namespace me
 
 VkVertexInputBindingDescription GetVertexBindingDescription();
 std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions();
-// What toon.vert reads: position, UV 0, normal and UV 1 at their usual locations, and the toon
-// outline's smoothed normal (Vertex::outlineNormal) at location 6, which nothing else reads.
-std::array<VkVertexInputAttributeDescription, 5> GetToonVertexAttributeDescriptions();
+// What toon.vert reads: position, UV 0, normal and UV 1 at their usual locations, the toon outline's
+// smoothed normal (Vertex::outlineNormal) at location 6, which nothing else reads, and last frame's
+// position from binding 1 (GetPreviousPositionAttributeDescription).
+std::array<VkVertexInputAttributeDescription, 6> GetToonVertexAttributeDescriptions();
+// The previous frame's positions (VulkanBuffer::GetPreviousPositionHandle) beside the vertex for the
+// material pipelines: binding 1, location 7, 12 bytes a vertex, which triangle.vert's motion vectors
+// start from.
+VkVertexInputBindingDescription GetPreviousPositionBindingDescription();
+VkVertexInputAttributeDescription GetPreviousPositionAttributeDescription();
 // The position-only stream (VulkanBuffer::GetPositionHandle): binding 0, location 0, 12 bytes a
 // vertex. Depth-only passes read it instead of the full vertex, a fifth of the bytes.
 VkVertexInputBindingDescription GetPositionBindingDescription();
@@ -59,6 +65,32 @@ class VulkanBuffer
     // 0 unless made deviceAddressable.
     VkDeviceAddress GetVertexAddress() const;
     VkDeviceAddress GetIndexAddress() const;
+    // A skinned mesh (MeshData::skin): the vertex and position buffers are the skinning pass's output
+    // (VulkanSkinningPass), from the bind pose vertices and the skin (VertexSkin, 24 bytes a vertex).
+    bool IsSkinned() const
+    {
+        return m_skinned;
+    }
+    VkBuffer GetBindPoseHandle() const
+    {
+        return m_bindPoseBuffer;
+    }
+    VkBuffer GetSkinHandle() const
+    {
+        return m_skinBuffer;
+    }
+    // Where each vertex was last frame, before the entity's own motion: a skinned mesh's last pose (the
+    // skinning pass keeps it), anyone else's position stream.
+    VkBuffer GetPreviousPositionHandle() const
+    {
+        return m_skinned ? m_previousPositionBuffer : m_positionBuffer;
+    }
+    // A skinned, device-addressable mesh's position stream, which its ray tracing bottom level is
+    // built and refitted from (VulkanRayAcceleration); 0 otherwise.
+    VkDeviceAddress GetPositionAddress() const
+    {
+        return m_positionAddress;
+    }
 
   private:
     // Shared by the destructor and the constructors' unwind path. Skips null handles.
@@ -95,5 +127,15 @@ class VulkanBuffer
     VulkanPooledMemory m_indexMemory;
     VkBuffer m_positionBuffer = VK_NULL_HANDLE;
     VulkanPooledMemory m_positionMemory;
+    // A skinned mesh's bind pose vertices and skin, which the skinning pass reads to write the vertex
+    // and position buffers above (storage buffers too, then).
+    bool m_skinned = false;
+    VkDeviceAddress m_positionAddress = 0;
+    VkBuffer m_bindPoseBuffer = VK_NULL_HANDLE;
+    VulkanPooledMemory m_bindPoseMemory;
+    VkBuffer m_skinBuffer = VK_NULL_HANDLE;
+    VulkanPooledMemory m_skinMemory;
+    VkBuffer m_previousPositionBuffer = VK_NULL_HANDLE;
+    VulkanPooledMemory m_previousPositionMemory;
 };
 }

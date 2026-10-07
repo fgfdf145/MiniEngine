@@ -40,8 +40,10 @@ class VulkanToonMaterials
     VulkanToonMaterials(const VulkanToonMaterials&) = delete;
     VulkanToonMaterials& operator=(const VulkanToonMaterials&) = delete;
 
-    // Copies each draw's toon material to its index in the slot's buffer; returns how many fit.
-    uint32_t Write(uint32_t frameSlot, std::span<const VulkanDrawItem> toonDrawItems);
+    // Copies each draw's toon material to its index in the slot's buffer, its head frame moved by its
+    // head pose (parallel to the draws: the joint's palette matrix, the identity for a rigid face);
+    // returns how many fit.
+    uint32_t Write(uint32_t frameSlot, std::span<const VulkanDrawItem> toonDrawItems, std::span<const glm::mat4> headPoses);
     VkDescriptorSetLayout GetSetLayout() const;
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
 

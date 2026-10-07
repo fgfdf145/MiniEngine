@@ -133,3 +133,22 @@
 复现截图：`--scene <只含 Yuki 的场景> --wait-for-scene --camera x,y,z,yaw,pitch --frames 120 --capture`。
 注意 `--model` 会在模型加载后重新取景，`--camera` 会被覆盖；且导入目录已存在时 `--model <外部路径>` 会失败。
 平行光旋转是先 Y 后 X 再 Z：侧光要用 Z（如 `[0,0,±75]`），`[45,φ,0]` 的 φ 对朝下的方向不起作用。
+
+## 5. 蒙皮与动画（2026-10-07）
+
+- 加载器：`JOINTS_0/WEIGHTS_0` → `MeshData::skin`（`VertexSkin`，24 字节），`BuildSkeleton` 读出节点层级、每个蒙皮节点一个
+  `ModelSkinBinding`（joints、IBM、烘进顶点的节点世界矩阵之逆）和全部动画的 T/R/S 通道（`engine/asset/model_animation.*`）。
+  顶点仍是 bind pose（A 字姿势）；调色板矩阵 = `jointWorld · IBM · bakedInverse`，不播放时全是单位阵。
+  Morph target 权重通道未读。
+- 播放：`ModelComponent` 新增 `animationClip`（空 = 自动：名为 idle 的，否则第一个）、`animationEnabled`、`animationPlaying`、
+  `animationSpeed`，随场景保存（`model.animation`）。Inspector → ModelComponent → Animation 可选全部 25 个动画。
+  `ModelAnimationPlayback`（`RendererSharedState::modelAnimation`）每帧推进时间、算调色板交给 `RendererWorld::SetJointPalette`，
+  快照带到渲染线程。
+- GPU：`VulkanSkinningPass`（`skin.comp`）每帧最先跑，把每个蒙皮子网格的 bind pose 写进它自己的顶点/位置缓冲
+  （蒙皮网格不再和别的实体共享缓冲），所以阴影、G-buffer、toon、选中描边都画的是当前姿势；同时把上一帧位置滚进
+  previous-position 流，材质管线 binding 1 / location 7 读它算运动矢量（刚体网格绑定的就是位置流本身）。
+- toon：脸部坐标系跟随头骨（`MINIENGINE_toon.head.node` = Head_M，调色板矩阵变换），透明 toon 项（前发等）在 toon pass 里写
+  velocity，否则 TAA 下头发边缘会撕裂。
+- 硬件光追：蒙皮网格的 BLAS 用其位置流按叶序索引建（ALLOW_UPDATE、不压缩），每帧 refit 后重建 TLAS，RT 阴影/反射跟随姿势。
+  软件 BVH（无硬件光追时）仍是 bind pose；同一蒙皮网格的多个实体共用一个 BLAS（按第一个的姿势）。
+- 验证：idle、hello、dance_120bpm 截图姿势正确，地面 RT 阴影跟随；蒙皮 0.14 ms；验证层干净；111 个测试通过。

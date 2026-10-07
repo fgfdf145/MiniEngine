@@ -2,6 +2,7 @@
 
 #include "kn5_importer.h"
 #include "mesh.h"
+#include "model_animation.h"
 
 #include <engine/scene/material_graph.h>
 #include <engine/physics/vehicle_settings.h>
@@ -134,6 +135,9 @@ struct ModelSubmeshData
     uint8_t wheelCorner = 0;
     // Under the STEER_HR node: the steering wheel, which turns about LoadedModelData::steeringWheel.
     bool steeringWheel = false;
+    // Skinned (glTF skin with JOINTS_0 / WEIGHTS_0, MeshData::skin): its binding in
+    // LoadedModelData::skeleton; -1 for a rigid submesh.
+    int32_t skinBinding = -1;
     // Drawn by a MINIENGINE_water node: the top of water, which a car goes through rather than stands on.
     bool water = false;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
@@ -237,6 +241,8 @@ struct LoadedModelData
     // The car's own figures (MINIENGINE_vehicle: an Assetto Corsa car's data.acd, read by the kn5
     // import), which a drive uses over the default tuning.
     std::optional<VehicleCarSpec> carSpec;
+    // The node hierarchy, skins and animations, when the model has skinned meshes or animations.
+    std::shared_ptr<const ModelSkeleton> skeleton;
     glm::vec3 minBounds{0.0f, 0.0f, 0.0f};
     glm::vec3 maxBounds{0.0f, 0.0f, 0.0f};
     bool hasBounds = false;

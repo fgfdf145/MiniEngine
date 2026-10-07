@@ -44,9 +44,9 @@ void RecordMaterialDrawItems(
             boundPipeline = requiredPipeline;
         }
 
-        const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer};
-        const VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        const VkBuffer vertexBuffers[] = {drawItem.vertexBuffer, drawItem.previousPositionBuffer};
+        const VkDeviceSize offsets[] = {0, 0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(commandBuffer, drawItem.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdBindDescriptorSets(
             commandBuffer,

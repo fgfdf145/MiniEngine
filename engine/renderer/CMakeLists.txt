@@ -178,6 +178,8 @@ add_library(engine_renderer
     vulkan/scene_render_targets.h
     vulkan/selection_outline_pass.cpp
     vulkan/selection_outline_pass.h
+    vulkan/skinning_pass.cpp
+    vulkan/skinning_pass.h
     vulkan/toon_pass.cpp
     vulkan/toon_pass.h
     vulkan/local_shadow_pass.cpp
@@ -259,6 +261,7 @@ set(MINIENGINE_SHADER_SOURCES
     shadow_depth.vert
     shadow.frag
     selection_outline.frag
+    skin.comp
     toon.vert
     toon.frag
     toon_prepass.frag

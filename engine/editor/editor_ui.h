@@ -89,6 +89,15 @@ struct EditorUiActions
     std::optional<std::string> selectedMaterialVariant;
     // KHR_lights_punctual: whether the selected model's own lights shine.
     std::optional<bool> selectedUseModelLights;
+    // glTF animations: what the selected model plays (ModelComponent::animationClip and the rest).
+    struct ModelAnimationChoice
+    {
+        std::string clip;
+        bool enabled = true;
+        bool playing = true;
+        float speed = 1.0f;
+    };
+    std::optional<ModelAnimationChoice> selectedModelAnimation;
     std::optional<std::string> selectedSceneLoadPath;
     // A sound file the Assets window asked to hear: played, or stopped when it is already playing.
     std::optional<std::string> previewAudioPath;

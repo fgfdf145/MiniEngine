@@ -32,6 +32,10 @@ struct SerializedEntityData
     // KHR_materials_variants: the variant's name, empty for the glTF's default bindings.
     std::string modelMaterialVariant;
     bool modelUseModelLights = true;
+    std::string modelAnimationClip;
+    bool modelAnimationEnabled = true;
+    bool modelAnimationPlaying = true;
+    float modelAnimationSpeed = 1.0f;
     TransformComponent transform;
 };
 

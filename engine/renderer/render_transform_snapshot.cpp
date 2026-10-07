@@ -35,6 +35,10 @@ void RenderTransformSnapshot::Capture(const RendererWorld& world, const CpuRende
     {
         m_localTransforms[entity] = transforms;
     }
+    for (const auto& [entity, palette] : world.GetJointPalettes())
+    {
+        m_jointPalettes[entity] = palette;
+    }
 }
 
 void RenderTransformSnapshot::Clear()
@@ -46,6 +50,13 @@ void RenderTransformSnapshot::Clear()
     m_setIndices.clear();
     m_entityCount = 0;
     m_localTransforms.clear();
+    m_jointPalettes.clear();
+}
+
+const std::vector<glm::mat4>* RenderTransformSnapshot::GetJointPalette(entt::entity entity) const
+{
+    const auto found = m_jointPalettes.find(entity);
+    return found == m_jointPalettes.end() ? nullptr : &found->second;
 }
 
 bool RenderTransformSnapshot::Contains(entt::entity entity) const

@@ -24,6 +24,9 @@ layout(location = 2) in vec2 inTexCoord;
 layout(location = 3) in vec3 inNormal;
 layout(location = 4) in vec4 inTangent;
 layout(location = 5) in vec2 inTexCoord1;
+// Where this vertex was last frame in the model's space: a skinned mesh's last pose, anyone else's
+// position (VulkanBuffer::GetPreviousPositionHandle).
+layout(location = 7) in vec3 inPreviousPosition;
 
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
@@ -68,7 +71,7 @@ void main()
     gl_Position = ubo.proj * ubo.view * worldPosition;
     // Unjittered, like prevViewProj, so motion vectors measure motion and not the TAA jitter.
     fragCurrClip = ubo.viewProjNoJitter * worldPosition;
-    fragPrevClip = ubo.prevViewProj * (previousModelData.previousModels[gl_InstanceIndex] * vec4(inPosition, 1.0));
+    fragPrevClip = ubo.prevViewProj * (previousModelData.previousModels[gl_InstanceIndex] * vec4(inPreviousPosition, 1.0));
     fragColor = inColor;
     fragTexCoord = inTexCoord;
     fragTexCoord1 = inTexCoord1;

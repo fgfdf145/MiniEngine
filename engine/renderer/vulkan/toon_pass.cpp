@@ -43,7 +43,9 @@ struct ToonPipelineDescription
     bool blend = false;
     // Per colour attachment: write it, or leave it as it is.
     std::array<bool, 2> writeAttachment = {true, true};
-    uint32_t colorAttachmentCount = 1;
+    uint32_t colorAttachmentCount = 2;
+    // The prepass's targets: one channel each.
+    bool singleChannel = false;
 };
 
 VkPipeline CreateToonPipeline(
@@ -54,12 +56,13 @@ VkPipeline CreateToonPipeline(
     const ToonPipelineDescription& description,
     const char* label)
 {
-    const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
+    const std::array<VkVertexInputBindingDescription, 2> bindingDescriptions = {
+        GetVertexBindingDescription(), GetPreviousPositionBindingDescription()};
     const auto attributeDescriptions = GetToonVertexAttributeDescriptions();
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDescription;
+    vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());
+    vertexInput.pVertexBindingDescriptions = bindingDescriptions.data();
     vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
     vertexInput.pVertexAttributeDescriptions = attributeDescriptions.data();
 
@@ -103,11 +106,13 @@ VkPipeline CreateToonPipeline(
     for (uint32_t index = 0; index < description.colorAttachmentCount; ++index)
     {
         VkPipelineColorBlendAttachmentState& attachment = blendAttachments[index];
-        // The HDR target's alpha keeps its clear value, as the forward pass leaves it.
+        // The toon pass's two targets take rgb alike (the HDR target's alpha keeps its clear value, as
+        // the forward pass leaves it; the velocity's b is the coat normal no toon surface has): every
+        // attachment's state the same, which a device without independent blending requires. The
+        // prepass writes its single-channel targets' r.
         attachment.colorWriteMask = description.writeAttachment[index]
-                                        ? (description.colorAttachmentCount == 1
-                                               ? VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT
-                                               : VK_COLOR_COMPONENT_R_BIT)
+                                        ? (description.singleChannel ? VK_COLOR_COMPONENT_R_BIT
+                                                                     : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT)
                                         : 0u;
         if (description.blend)
         {
@@ -192,8 +197,9 @@ void RecordToonDraw(
     uint32_t toonIndex,
     float exposureScale)
 {
-    const VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.vertexBuffer, &offset);
+    const std::array<VkBuffer, 2> buffers = {item.vertexBuffer, item.previousPositionBuffer};
+    const std::array<VkDeviceSize, 2> offsets = {0, 0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 2, buffers.data(), offsets.data());
     vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &item.descriptorSet, 0, nullptr);
     ToonPushConstants constants{};
@@ -321,13 +327,24 @@ VulkanToonMaterials::~VulkanToonMaterials()
     DestroyHandles();
 }
 
-uint32_t VulkanToonMaterials::Write(uint32_t frameSlot, std::span<const VulkanDrawItem> toonDrawItems)
+uint32_t VulkanToonMaterials::Write(uint32_t frameSlot, std::span<const VulkanDrawItem> toonDrawItems, std::span<const glm::mat4> headPoses)
 {
     const uint32_t count = static_cast<uint32_t>(std::min<size_t>(toonDrawItems.size(), kMaxDraws));
     auto* materials = static_cast<GpuToonMaterial*>(m_mapped.at(frameSlot));
     for (uint32_t index = 0; index < count; ++index)
     {
-        std::memcpy(&materials[index], &toonDrawItems[index].toon->gpu, sizeof(GpuToonMaterial));
+        GpuToonMaterial material = toonDrawItems[index].toon->gpu;
+        if (index < headPoses.size())
+        {
+            const glm::mat4& pose = headPoses[index];
+            const glm::vec3 position = glm::vec3(pose * glm::vec4(material.headPosition[0], material.headPosition[1], material.headPosition[2], 1.0f));
+            const glm::vec3 forward = glm::normalize(glm::mat3(pose) * glm::vec3(material.headForward[0], material.headForward[1], material.headForward[2]));
+            const glm::vec3 up = glm::normalize(glm::mat3(pose) * glm::vec3(material.headUp[0], material.headUp[1], material.headUp[2]));
+            std::copy_n(&position.x, 3, material.headPosition);
+            std::copy_n(&forward.x, 3, material.headForward);
+            std::copy_n(&up.x, 3, material.headUp);
+        }
+        std::memcpy(&materials[index], &material, sizeof(GpuToonMaterial));
     }
     return count;
 }
@@ -525,6 +542,7 @@ void VulkanToonPrepass::CreatePipelines(
         description.cullMode = (index % 2) == 1 ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
         description.depthCompare = kReverseDepthNearer;
         description.colorAttachmentCount = 2;
+        description.singleChannel = true;
         // A transparent surface adds its depth but leaves the eye mask to the opaque ones.
         description.writeAttachment = {true, !transparent};
         m_pipelines[index] = CreateToonPipeline(
@@ -620,7 +638,10 @@ ScenePassId VulkanToonPass::Id() const
 RenderPassIo VulkanToonPass::Io() const
 {
     static constexpr std::array<RenderTargetId, 2> kReads = {RenderTargetId::ToonLinearDepth, RenderTargetId::ToonMask};
-    static constexpr std::array<RenderTargetId, 2> kWrites = {RenderTargetId::SceneHdr, RenderTargetId::SceneDepth};
+    // The velocity too: the transparent surfaces (the front hair) are in no G-buffer, so their motion
+    // goes in here for TAA and DLSS.
+    static constexpr std::array<RenderTargetId, 3> kWrites = {
+        RenderTargetId::SceneHdr, RenderTargetId::SceneDepth, RenderTargetId::GBufferVelocity};
     RenderPassIo io{};
     io.reads = kReads;
     io.writes = kWrites;
@@ -699,7 +720,7 @@ void VulkanToonPass::CreateRenderPass(const SceneRenderTargets& targets)
 {
     // As the forward pass's load variant: the HDR target and the scene depth, kept in the layouts the
     // tracker put them in.
-    std::array<VkAttachmentDescription, 2> attachments{};
+    std::array<VkAttachmentDescription, 3> attachments{};
     attachments[0].format = targets.GetFormat(RenderTargetId::SceneHdr);
     attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -712,13 +733,17 @@ void VulkanToonPass::CreateRenderPass(const SceneRenderTargets& targets)
     attachments[1].format = targets.GetFormat(RenderTargetId::SceneDepth);
     attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachments[2] = attachments[0];
+    attachments[2].format = targets.GetFormat(RenderTargetId::GBufferVelocity);
 
-    const VkAttachmentReference colorReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    const std::array<VkAttachmentReference, 2> colorReferences = {
+        VkAttachmentReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        VkAttachmentReference{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     const VkAttachmentReference depthReference{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorReference;
+    subpass.colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
+    subpass.pColorAttachments = colorReferences.data();
     subpass.pDepthStencilAttachment = &depthReference;
 
     VkRenderPassCreateInfo renderPassInfo{};
@@ -861,9 +886,10 @@ void VulkanToonPass::CreateFramebuffers(const SceneRenderTargets& targets)
     m_framebuffers.reserve(copyCount);
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
-        const std::array<VkImageView, 2> attachments = {
+        const std::array<VkImageView, 3> attachments = {
             targets.GetView(RenderTargetId::SceneHdr, slot),
-            targets.GetView(RenderTargetId::SceneDepth, slot)};
+            targets.GetView(RenderTargetId::SceneDepth, slot),
+            targets.GetView(RenderTargetId::GBufferVelocity, slot)};
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = m_renderPass;

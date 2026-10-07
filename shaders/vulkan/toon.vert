@@ -13,6 +13,14 @@ layout(location = 2) in vec2 inTexCoord;
 layout(location = 3) in vec3 inNormal;
 layout(location = 5) in vec2 inTexCoord1;
 layout(location = 6) in vec3 inOutlineNormal;
+// Where this vertex was last frame (VulkanBuffer::GetPreviousPositionHandle), and the draw's model
+// matrix then (by its firstInstance, as triangle.vert reads it): the motion the toon pass writes.
+layout(location = 7) in vec3 inPreviousPosition;
+layout(set = 0, binding = 2) readonly buffer PreviousModelBuffer
+{
+    mat4 previousModels[];
+}
+previousModelData;
 
 layout(location = 0) out vec3 fragWorldPosition;
 // The shading normal, which the face normal fix bends toward the face's forward.
@@ -24,6 +32,9 @@ layout(location = 4) out vec3 fragSmoothNormal;
 // The vertex normal unbent, which the outline is coloured by.
 layout(location = 5) out vec3 fragGeometryNormal;
 layout(location = 6) flat out uint fragToonIndex;
+// Unjittered clip positions now and last frame, for the velocity (as triangle.vert's).
+layout(location = 7) out vec4 fragCurrClip;
+layout(location = 8) out vec4 fragPrevClip;
 
 // The same expression as triangle.vert's, so an opaque surface lands on the depth the geometry pass
 // wrote for it.
@@ -93,4 +104,6 @@ void main()
     fragTexCoord = inTexCoord;
     fragTexCoord1 = inTexCoord1;
     fragToonIndex = drawData.toonIndex;
+    fragCurrClip = ubo.viewProjNoJitter * worldPosition;
+    fragPrevClip = ubo.prevViewProj * (previousModelData.previousModels[gl_InstanceIndex] * vec4(inPreviousPosition, 1.0));
 }

@@ -33,6 +33,7 @@ void ClearSelectedModelBaseColorTexture(RendererSharedState& state);
 void ApplySelectedModelMaterialVariant(RendererSharedState& state, const std::string& variant);
 // KHR_lights_punctual: turns the lights the selected model carries on or off.
 void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelLights);
+void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed);
 
 // Applies a finished async model load, if any. Returns true when renderables changed.
 bool PumpAsyncModelLoad(RendererSharedState& state);

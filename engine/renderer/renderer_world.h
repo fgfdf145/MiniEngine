@@ -77,6 +77,13 @@ struct CpuRenderSubmesh
     bool water = false;
     // An anime character material (MINIENGINE_toon), which the toon passes shade; null for PBR.
     std::shared_ptr<const ToonMaterialData> toon;
+    // Skinned (MeshData::skin): its joints are the entity's joint palette (RendererWorld::
+    // SetJointPalette) from paletteOffset, jointCount of them. A toon face follows the palette entry
+    // toonHeadJoint (absolute, -1 for none): the joint of the head bone it names.
+    bool skinned = false;
+    uint32_t paletteOffset = 0;
+    uint32_t jointCount = 0;
+    int32_t toonHeadJoint = -1;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
@@ -126,6 +133,13 @@ class RendererWorld
     glm::mat4 GetSubmeshModelMatrix(entt::entity entity, uint32_t ordinal) const;
     const std::unordered_map<entt::entity, std::vector<glm::mat4>>& GetSubmeshLocalTransforms() const;
 
+    // An animated entity's joint palette (EvaluateJointPalette): what its skinned submeshes
+    // (CpuRenderSubmesh::skinBinding) are deformed by, from their palette offsets. Without one they
+    // keep their bind pose.
+    void SetJointPalette(entt::entity entity, std::vector<glm::mat4> palette);
+    void ClearJointPalette(entt::entity entity);
+    const std::unordered_map<entt::entity, std::vector<glm::mat4>>& GetJointPalettes() const;
+
     void SetModelLights(std::vector<CpuModelLight> modelLights);
     void ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights);
     bool RemoveEntityModelLights(entt::entity entity);
@@ -141,6 +155,7 @@ class RendererWorld
     mutable std::shared_ptr<const CpuRenderSubmeshList> m_snapshot;
     uint64_t m_nextRevision = 1;
     std::vector<CpuModelLight> m_modelLights;
+    std::unordered_map<entt::entity, std::vector<glm::mat4>> m_jointPalettes;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_submeshLocalTransforms;
 };
 }

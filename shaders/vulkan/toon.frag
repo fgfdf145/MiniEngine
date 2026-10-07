@@ -27,8 +27,20 @@ layout(location = 3) in vec2 fragTexCoord1;
 layout(location = 4) in vec3 fragSmoothNormal;
 layout(location = 5) in vec3 fragGeometryNormal;
 layout(location = 6) flat in uint fragToonIndex;
+layout(location = 7) in vec4 fragCurrClip;
+layout(location = 8) in vec4 fragPrevClip;
 
 layout(location = 0) out vec4 outColor;
+// GBufferVelocity, as gbuffer.frag writes it: rg the motion in UV units (current - previous); b the
+// coat normal's x, none here. Blended with the colour's alpha on a transparent surface.
+layout(location = 1) out vec4 outVelocity;
+
+vec4 ToonVelocity(float alpha)
+{
+    vec2 current = fragCurrClip.xy / fragCurrClip.w;
+    vec2 previous = fragPrevClip.xy / fragPrevClip.w;
+    return vec4((current - previous) * 0.5, 0.0, alpha);
+}
 
 // The main light as the shader sees it: where it comes from, its colour normalised to unit luminance
 // (a white sun is 1, as Unity's directional light at intensity 1), and the luminance the toon
@@ -120,6 +132,7 @@ void main()
         color *= mix(material.outlineTint.rgb, material.outlineSkinOverride.rgb, material.outlineSkinOverride.a * skinMask);
         color = ApplyAerialPerspective(color * light.luminance, fragWorldPosition) * ubo.exposure.x * drawData.exposureScale;
         outColor = vec4(color, 1.0);
+        outVelocity = ToonVelocity(1.0);
         return;
     }
 
@@ -238,4 +251,5 @@ void main()
 
     color = ApplyAerialPerspective(color * light.luminance, fragWorldPosition) * ubo.exposure.x * drawData.exposureScale;
     outColor = vec4(color, ToonHas(material, TOON_FEATURE_TRANSPARENT) ? alpha : 1.0);
+    outVelocity = ToonVelocity(outColor.a);
 }

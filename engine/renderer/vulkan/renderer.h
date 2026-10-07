@@ -31,6 +31,7 @@
 #include "ddgi.h"
 #include "scene_render_targets.h"
 #include "selection_outline_pass.h"
+#include "skinning_pass.h"
 #include "toon_pass.h"
 #include "shadow_pass.h"
 #include "swapchain.h"
@@ -107,6 +108,14 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     bool decal = false;
     // An anime character material (CpuRenderSubmesh::toon), which the toon passes shade.
     std::shared_ptr<const ToonMaterialData> toon;
+    // Skinned: the skinning pass deforms its buffers by the entity's joint palette, from
+    // paletteOffset, every frame (CpuRenderSubmesh::skinned and the rest).
+    bool skinned = false;
+    uint32_t paletteOffset = 0;
+    uint32_t jointCount = 0;
+    int32_t toonHeadJoint = -1;
+    // The skinning pass's descriptor set for its buffers, made with the submesh.
+    mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     std::string name;
@@ -387,6 +396,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The scene as compute shaders trace it (DDGI, and with hardware ray tracing the ray traced
     // effects), and the white texture its texture table names where no material's is.
     std::unique_ptr<VulkanRayScene> m_rayScene;
+    // Poses the skinned submeshes at the start of every frame (skinning_pass.h).
+    std::unique_ptr<VulkanSkinningPass> m_skinningPass;
     // The toon passes' per-frame materials (toon_pass.h), made with the first scene passes.
     std::unique_ptr<VulkanToonMaterials> m_toonMaterials;
     std::unique_ptr<VulkanTexture> m_rayDefaultTexture;

@@ -133,6 +133,7 @@ bool EditorRenderBackendBase::TickSharedFrame()
     const bool keyboardCaptured = WantsKeyboardCapture();
     const bool driving = VehicleDriveService::Tick(State(), deltaTime, keyboardCaptured);
     VehicleRigService::Tick(State(), deltaTime);
+    State().modelAnimation.Tick(State(), deltaTime);
     AdvanceTimeOfDay(State().editorWorld.get(), deltaTime);
     if (!driving || !State().vehicleDrive.camera.follow)
     {
@@ -436,6 +437,14 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         RunUiAction(modelError, fmt::format("apply material variant '{}' to selected model", *variant), [&]
                     {
                         EntityEditService::ApplySelectedModelMaterialVariant(State(), *variant);
+                    });
+    }
+    if (const auto& animation = actions.selectedModelAnimation)
+    {
+        RunUiAction(modelError, "change the selected model's animation", [&]
+                    {
+                        EntityEditService::ApplySelectedModelAnimation(
+                            State(), animation->clip, animation->enabled, animation->playing, animation->speed);
                     });
     }
     if (const auto& useModelLights = actions.selectedUseModelLights)

@@ -18,6 +18,8 @@ add_library(engine_editor
     services/capture_state.h
     services/entity_edit_service.cpp
     services/entity_edit_service.h
+    services/model_animation_service.cpp
+    services/model_animation_service.h
     services/model_import_service.cpp
     services/model_import_service.h
     services/scene_io_service.cpp

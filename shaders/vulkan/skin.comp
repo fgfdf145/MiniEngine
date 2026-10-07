@@ -1,0 +1,103 @@
+#version 450
+
+// Linear blend skinning (VulkanSkinningPass): one skinned submesh's bind pose vertices, each moved by
+// the weighted sum of its joints' palette matrices, written over the vertex buffer every pass draws
+// and the position stream the depth-only passes read.
+layout(local_size_x = 64) in;
+
+// Vertex in engine/asset/mesh.h, 20 floats: position, colour, UV 0, normal, tangent, UV 1, outline
+// normal.
+const uint kVertexFloats = 20u;
+const uint kPosition = 0u;
+const uint kNormal = 8u;
+const uint kTangent = 11u;
+const uint kOutlineNormal = 17u;
+
+layout(set = 0, binding = 0) readonly buffer BindPose
+{
+    float bindPose[];
+};
+// VertexSkin, six words a vertex: four 16-bit joints in two words, then four float weights.
+layout(set = 0, binding = 1) readonly buffer Skin
+{
+    uint skin[];
+};
+layout(set = 0, binding = 2) writeonly buffer Vertices
+{
+    float vertices[];
+};
+// Read as well: last frame's pose rolls into previousPositions before this one is written.
+layout(set = 0, binding = 3) buffer Positions
+{
+    float positions[];
+};
+layout(set = 0, binding = 4) writeonly buffer PreviousPositions
+{
+    float previousPositions[];
+};
+// This frame's joint matrices, every skinned submesh's run in turn.
+layout(set = 1, binding = 0) readonly buffer Palette
+{
+    mat4 palette[];
+};
+
+layout(push_constant) uniform Constants
+{
+    uint vertexCount;
+    uint paletteBase;
+}
+constants;
+
+vec3 ReadVec3(uint base)
+{
+    return vec3(bindPose[base], bindPose[base + 1u], bindPose[base + 2u]);
+}
+
+void WriteVec3(uint base, vec3 value)
+{
+    vertices[base] = value.x;
+    vertices[base + 1u] = value.y;
+    vertices[base + 2u] = value.z;
+}
+
+void main()
+{
+    uint vertex = gl_GlobalInvocationID.x;
+    if (vertex >= constants.vertexCount)
+    {
+        return;
+    }
+
+    uint s = vertex * 6u;
+    uvec4 joints = uvec4(skin[s] & 0xFFFFu, skin[s] >> 16u, skin[s + 1u] & 0xFFFFu, skin[s + 1u] >> 16u);
+    vec4 weights = vec4(uintBitsToFloat(skin[s + 2u]), uintBitsToFloat(skin[s + 3u]), uintBitsToFloat(skin[s + 4u]), uintBitsToFloat(skin[s + 5u]));
+    uint base = constants.paletteBase;
+    mat4 m = weights.x * palette[base + joints.x] + weights.y * palette[base + joints.y] +
+             weights.z * palette[base + joints.z] + weights.w * palette[base + joints.w];
+
+    uint v = vertex * kVertexFloats;
+    // What skinning leaves alone (colour, UVs, the tangent's sign) is copied through.
+    for (uint i = 0u; i < kVertexFloats; ++i)
+    {
+        vertices[v + i] = bindPose[v + i];
+    }
+
+    vec3 position = (m * vec4(ReadVec3(v + kPosition), 1.0)).xyz;
+    WriteVec3(v + kPosition, position);
+    // Where the vertex was, for the motion vectors (triangle.vert); the first pose sees the bind pose.
+    previousPositions[vertex * 3u] = positions[vertex * 3u];
+    previousPositions[vertex * 3u + 1u] = positions[vertex * 3u + 1u];
+    previousPositions[vertex * 3u + 2u] = positions[vertex * 3u + 2u];
+    positions[vertex * 3u] = position.x;
+    positions[vertex * 3u + 1u] = position.y;
+    positions[vertex * 3u + 2u] = position.z;
+
+    // Directions by the matrix's linear part: rotations and the near-uniform scales a rig has.
+    mat3 linear = mat3(m);
+    vec3 normal = linear * ReadVec3(v + kNormal);
+    WriteVec3(v + kNormal, dot(normal, normal) > 0.0 ? normalize(normal) : ReadVec3(v + kNormal));
+    vec3 tangent = linear * ReadVec3(v + kTangent);
+    WriteVec3(v + kTangent, dot(tangent, tangent) > 0.0 ? normalize(tangent) : ReadVec3(v + kTangent));
+    vec3 outline = linear * ReadVec3(v + kOutlineNormal);
+    WriteVec3(v + kOutlineNormal, dot(outline, outline) > 0.0 ? normalize(outline) : outline);
+}

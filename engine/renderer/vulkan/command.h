@@ -4,6 +4,8 @@
 #include <engine/renderer/material_pipeline.h>
 #include <engine/scene/toon_material.h>
 
+#include <entt/entt.hpp>
+
 #include <functional>
 
 namespace me
@@ -33,6 +35,13 @@ struct VulkanDrawItem
     // An anime character material (RenderSubmesh::toon), shaded by the toon passes; it lives as long
     // as the render submesh the frame draws.
     const ToonMaterialData* toon = nullptr;
+    // The entity drawn, and for a skinned toon face the palette entry of its head joint (-1 for none),
+    // which the toon passes' head frame follows.
+    entt::entity entity = entt::null;
+    int32_t toonHeadJoint = -1;
+    // Where each vertex was last frame (VulkanBuffer::GetPreviousPositionHandle): binding 1 of the
+    // material pipelines, whose motion vectors start from it.
+    VkBuffer previousPositionBuffer = VK_NULL_HANDLE;
 };
 
 struct VulkanFrameSyncObjects

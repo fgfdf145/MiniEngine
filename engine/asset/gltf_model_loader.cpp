@@ -951,6 +951,10 @@ std::shared_ptr<const ToonMaterialData> ReadToonMaterial(
     copy3(gpu.headForward, vector("head", "forward", {0.0f, 0.0f, 1.0f, 0.0f}));
     copy3(gpu.headUp, vector("head", "up", {0.0f, 1.0f, 0.0f, 0.0f}));
     copy3(gpu.characterRim, vector("character", "rimColor", {0.0f, 0.0f, 0.0f, 0.0f}));
+    if (extension.Has("head") && extension.Get("head").Has("node") && extension.Get("head").Get("node").IsString())
+    {
+        toon->headNode = extension.Get("head").Get("node").Get<std::string>();
+    }
 
     // The maps, each into its PBR slot (the toon material shades none of them as PBR: its
     // metallic, emission, coat, sheen, iridescence and transmission factors stay zero).
@@ -1704,6 +1708,43 @@ void AppendPrimitive(
 
     ModelSubmeshData submeshData{};
     submeshData.name = BuildSubmeshName(node, mesh, primitiveIndex) + nameSuffix;
+    // A skinned node's vertices keep their joints and weights; skinBinding holds the node's index
+    // until BuildSkeleton turns it into the binding's (an instanced copy is drawn rigid).
+    if (node.skin >= 0 && nameSuffix.empty())
+    {
+        const auto jointsIt = primitive.attributes.find("JOINTS_0");
+        const auto weightsIt = primitive.attributes.find("WEIGHTS_0");
+        if (jointsIt != primitive.attributes.end() && weightsIt != primitive.attributes.end())
+        {
+            const std::vector<float> joints = ReadAccessorFloatComponents(model, jointsIt->second, 4);
+            const std::vector<float> weights = ReadAccessorFloatComponents(model, weightsIt->second, 4);
+            if (joints.size() / 4 != vertexCount || weights.size() / 4 != vertexCount)
+            {
+                throw std::runtime_error("glTF JOINTS_0 or WEIGHTS_0 accessor count does not match POSITION accessor count");
+            }
+            submeshData.mesh.skin.resize(vertexCount);
+            for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+            {
+                VertexSkin& skin = submeshData.mesh.skin[vertexIndex];
+                float total = 0.0f;
+                for (size_t influence = 0; influence < 4; ++influence)
+                {
+                    skin.joints[influence] = static_cast<uint16_t>(std::max(joints[vertexIndex * 4 + influence], 0.0f));
+                    skin.weights[influence] = std::max(weights[vertexIndex * 4 + influence], 0.0f);
+                    total += skin.weights[influence];
+                }
+                for (float& weight : skin.weights)
+                {
+                    weight = total > 0.0f ? weight / total : 0.0f;
+                }
+                if (total <= 0.0f)
+                {
+                    skin.weights[0] = 1.0f;
+                }
+            }
+            submeshData.skinBinding = static_cast<int32_t>(&node - model.nodes.data());
+        }
+    }
     if (primitive.material >= 0)
     {
         EnsureIndexInRange(static_cast<size_t>(primitive.material), model.materials.size(), "material");
@@ -2950,6 +2991,203 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
     return spec;
 }
 
+// glTF skins and animations: the node hierarchy at rest, a binding for every skinned node its
+// submeshes reference (their skinBinding is that node's index until here), and every animation's
+// translation, rotation and scale channels (morph target weights are not read). Null for a model with
+// neither skins nor animations.
+std::shared_ptr<const ModelSkeleton> BuildSkeleton(const tinygltf::Model& model, LoadedModelData& modelData)
+{
+    const bool skinned = std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)
+                                     {
+                                         return submesh.skinBinding >= 0;
+                                     });
+    if (!skinned && model.animations.empty())
+    {
+        return nullptr;
+    }
+
+    auto skeleton = std::make_shared<ModelSkeleton>();
+    skeleton->nodes.resize(model.nodes.size());
+    for (size_t index = 0; index < model.nodes.size(); ++index)
+    {
+        const tinygltf::Node& source = model.nodes[index];
+        ModelSkeletonNode& node = skeleton->nodes[index];
+        node.name = source.name;
+        if (source.matrix.size() == 16)
+        {
+            node.hasMatrix = true;
+            node.matrix = BuildNodeMatrix(source);
+        }
+        if (source.translation.size() == 3)
+        {
+            node.translation = glm::vec3(source.translation[0], source.translation[1], source.translation[2]);
+        }
+        if (source.rotation.size() == 4)
+        {
+            node.rotation = glm::normalize(glm::quat(
+                static_cast<float>(source.rotation[3]),
+                static_cast<float>(source.rotation[0]),
+                static_cast<float>(source.rotation[1]),
+                static_cast<float>(source.rotation[2])));
+        }
+        if (source.scale.size() == 3)
+        {
+            node.scale = glm::vec3(source.scale[0], source.scale[1], source.scale[2]);
+        }
+        for (const int child : source.children)
+        {
+            if (child >= 0 && static_cast<size_t>(child) < model.nodes.size())
+            {
+                skeleton->nodes[static_cast<size_t>(child)].parent = static_cast<int32_t>(index);
+            }
+        }
+    }
+    // Parents before children: a walk down from every root.
+    std::vector<int32_t> stack;
+    for (size_t index = 0; index < skeleton->nodes.size(); ++index)
+    {
+        if (skeleton->nodes[index].parent < 0)
+        {
+            stack.push_back(static_cast<int32_t>(index));
+        }
+    }
+    std::vector<bool> visited(skeleton->nodes.size(), false);
+    while (!stack.empty())
+    {
+        const int32_t index = stack.back();
+        stack.pop_back();
+        if (visited[static_cast<size_t>(index)])
+        {
+            continue;
+        }
+        visited[static_cast<size_t>(index)] = true;
+        skeleton->order.push_back(index);
+        for (const int child : model.nodes[static_cast<size_t>(index)].children)
+        {
+            if (child >= 0 && static_cast<size_t>(child) < model.nodes.size())
+            {
+                stack.push_back(child);
+            }
+        }
+    }
+    std::vector<glm::mat4> world(skeleton->nodes.size(), glm::mat4(1.0f));
+    for (const int32_t index : skeleton->order)
+    {
+        const int32_t parent = skeleton->nodes[static_cast<size_t>(index)].parent;
+        const glm::mat4 local = BuildNodeMatrix(model.nodes[static_cast<size_t>(index)]);
+        world[static_cast<size_t>(index)] = parent >= 0 ? world[static_cast<size_t>(parent)] * local : local;
+    }
+
+    std::unordered_map<int32_t, int32_t> bindingOfNode;
+    for (ModelSubmeshData& submesh : modelData.submeshes)
+    {
+        if (submesh.skinBinding < 0)
+        {
+            continue;
+        }
+        const int32_t nodeIndex = submesh.skinBinding;
+        auto found = bindingOfNode.find(nodeIndex);
+        if (found == bindingOfNode.end())
+        {
+            const tinygltf::Skin& skin = model.skins.at(static_cast<size_t>(model.nodes[static_cast<size_t>(nodeIndex)].skin));
+            ModelSkinBinding binding;
+            binding.jointNodes.assign(skin.joints.begin(), skin.joints.end());
+            binding.inverseBindMatrices.assign(binding.jointNodes.size(), glm::mat4(1.0f));
+            if (skin.inverseBindMatrices >= 0)
+            {
+                const std::vector<float> matrices = ReadAccessorFloatComponents(model, skin.inverseBindMatrices, 16);
+                for (size_t joint = 0; joint < binding.jointNodes.size() && (joint + 1) * 16 <= matrices.size(); ++joint)
+                {
+                    binding.inverseBindMatrices[joint] = glm::make_mat4(matrices.data() + joint * 16);
+                }
+            }
+            binding.bakedInverse = glm::inverse(world[static_cast<size_t>(nodeIndex)]);
+            binding.paletteOffset = skeleton->paletteSize;
+            skeleton->paletteSize += static_cast<uint32_t>(binding.jointNodes.size());
+            found = bindingOfNode.emplace(nodeIndex, static_cast<int32_t>(skeleton->bindings.size())).first;
+            skeleton->bindings.push_back(std::move(binding));
+        }
+        submesh.skinBinding = found->second;
+        // A vertex naming a joint its skin lacks would read past the binding's palette.
+        const uint16_t jointCount = static_cast<uint16_t>(skeleton->bindings[static_cast<size_t>(found->second)].jointNodes.size());
+        for (VertexSkin& skin : submesh.mesh.skin)
+        {
+            for (size_t influence = 0; influence < 4; ++influence)
+            {
+                if (skin.joints[influence] >= jointCount)
+                {
+                    skin.joints[influence] = 0;
+                    skin.weights[influence] = 0.0f;
+                }
+            }
+        }
+    }
+
+    for (const tinygltf::Animation& animation : model.animations)
+    {
+        ModelAnimationClip clip;
+        clip.name = animation.name.empty() ? "Animation " + std::to_string(skeleton->clips.size()) : animation.name;
+        for (const tinygltf::AnimationChannel& source : animation.channels)
+        {
+            ModelAnimationChannel channel;
+            if (source.target_path == "translation")
+            {
+                channel.path = ModelAnimationPath::Translation;
+            }
+            else if (source.target_path == "rotation")
+            {
+                channel.path = ModelAnimationPath::Rotation;
+            }
+            else if (source.target_path == "scale")
+            {
+                channel.path = ModelAnimationPath::Scale;
+            }
+            else
+            {
+                continue;
+            }
+            if (source.target_node < 0 || static_cast<size_t>(source.target_node) >= model.nodes.size() || source.sampler < 0 ||
+                static_cast<size_t>(source.sampler) >= animation.samplers.size())
+            {
+                continue;
+            }
+            const tinygltf::AnimationSampler& sampler = animation.samplers[static_cast<size_t>(source.sampler)];
+            channel.node = source.target_node;
+            channel.interpolation = sampler.interpolation == "STEP"          ? ModelAnimationInterpolation::Step
+                                    : sampler.interpolation == "CUBICSPLINE" ? ModelAnimationInterpolation::CubicSpline
+                                                                             : ModelAnimationInterpolation::Linear;
+            channel.times = ReadAccessorFloatComponents(model, sampler.input, 1);
+            const int components = channel.path == ModelAnimationPath::Rotation ? 4 : 3;
+            const std::vector<float> values = ReadAccessorFloatComponents(model, sampler.output, components);
+            const size_t valuesPerKey = channel.interpolation == ModelAnimationInterpolation::CubicSpline ? 3 : 1;
+            if (channel.times.empty() || values.size() < channel.times.size() * valuesPerKey * static_cast<size_t>(components))
+            {
+                continue;
+            }
+            channel.values.resize(channel.times.size() * valuesPerKey);
+            for (size_t value = 0; value < channel.values.size(); ++value)
+            {
+                glm::vec4& destination = channel.values[value];
+                destination = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                for (int component = 0; component < components; ++component)
+                {
+                    destination[component] = values[value * static_cast<size_t>(components) + static_cast<size_t>(component)];
+                }
+            }
+            clip.duration = std::max(clip.duration, channel.times.back());
+            clip.channels.push_back(std::move(channel));
+        }
+        if (!clip.channels.empty())
+        {
+            skeleton->clips.push_back(std::move(clip));
+        }
+    }
+    LOG_INFO(
+        "glTF skeleton: {} nodes, {} skin bindings ({} joints), {} animations",
+        skeleton->nodes.size(), skeleton->bindings.size(), skeleton->paletteSize, skeleton->clips.size());
+    return skeleton;
+}
+
 LoadedModelData BuildLoadedModelData(
     const tinygltf::Model& tinyModel,
     const std::filesystem::path& modelPath,
@@ -3019,6 +3257,7 @@ LoadedModelData BuildLoadedModelData(
         }
     }
 
+    modelData.skeleton = BuildSkeleton(tinyModel, modelData);
     modelData.carSpec = ReadCarSpec(tinyModel);
     modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
     if (std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)

@@ -39,6 +39,8 @@
     model_cache.h
     model_import_target.cpp
     model_import_target.h
+    model_animation.cpp
+    model_animation.h
     model_loader.cpp
     model_loader.h
     model_post_process.cpp

@@ -130,6 +130,13 @@ struct ModelComponent
     std::string materialVariant;
     // KHR_lights_punctual: whether the lights the model carries shine, through this entity's transform.
     bool useModelLights = true;
+    // glTF animations (ModelSkeleton::clips), for a model that has them: the clip by name, empty for
+    // the automatic choice (one named "idle", else the first); off, the skinned meshes stay in their
+    // bind pose. Paused, the clip holds its frame; speed scales its time.
+    std::string animationClip;
+    bool animationEnabled = true;
+    bool animationPlaying = true;
+    float animationSpeed = 1.0f;
 };
 
 struct ModelBoundsComponent

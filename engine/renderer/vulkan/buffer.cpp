@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -57,16 +58,36 @@ std::array<VkVertexInputAttributeDescription, 6> GetVertexAttributeDescriptions(
     return attributeDescriptions;
 }
 
-std::array<VkVertexInputAttributeDescription, 5> GetToonVertexAttributeDescriptions()
+std::array<VkVertexInputAttributeDescription, 6> GetToonVertexAttributeDescriptions()
 {
     const std::array<VkVertexInputAttributeDescription, 6> common = GetVertexAttributeDescriptions();
     // Position, UV 0, normal and UV 1 as every material pipeline reads them; no colour or tangent.
-    std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions = {common[0], common[2], common[3], common[5], {}};
+    std::array<VkVertexInputAttributeDescription, 6> attributeDescriptions = {
+        common[0], common[2], common[3], common[5], {}, GetPreviousPositionAttributeDescription()};
     attributeDescriptions[4].binding = 0;
     attributeDescriptions[4].location = 6;
     attributeDescriptions[4].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[4].offset = static_cast<uint32_t>(offsetof(Vertex, outlineNormal));
     return attributeDescriptions;
+}
+
+VkVertexInputBindingDescription GetPreviousPositionBindingDescription()
+{
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 1;
+    bindingDescription.stride = sizeof(float) * 3;
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    return bindingDescription;
+}
+
+VkVertexInputAttributeDescription GetPreviousPositionAttributeDescription()
+{
+    VkVertexInputAttributeDescription attributeDescription{};
+    attributeDescription.binding = 1;
+    attributeDescription.location = 7;
+    attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescription.offset = 0;
+    return attributeDescription;
 }
 
 VkVertexInputBindingDescription GetPositionBindingDescription()
@@ -126,7 +147,8 @@ VulkanBuffer::VulkanBuffer(
       m_device(device),
       m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
       m_indexCount(static_cast<uint32_t>(meshData.indices.size())),
-      m_deviceAddressable(deviceAddressable)
+      m_deviceAddressable(deviceAddressable),
+      m_skinned(meshData.IsSkinned() && meshData.skin.size() == meshData.vertices.size())
 {
     // A throw out of a constructor skips the destructor, so whatever was created before the
     // failure is released here with the same call the destructor makes. The copies recorded into
@@ -136,6 +158,24 @@ VulkanBuffer::VulkanBuffer(
         UploadVertices(meshData, uploadBatch);
         UploadIndices(meshData, uploadBatch);
         UploadPositions(meshData, uploadBatch);
+        if (m_skinned)
+        {
+            static_assert(sizeof(VertexSkin) == 24, "skin.comp reads VertexSkin as six words");
+            UploadDeviceLocal(
+                meshData.vertices.data(),
+                static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                uploadBatch,
+                m_bindPoseBuffer,
+                m_bindPoseMemory);
+            UploadDeviceLocal(
+                meshData.skin.data(),
+                static_cast<VkDeviceSize>(sizeof(VertexSkin) * meshData.skin.size()),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                uploadBatch,
+                m_skinBuffer,
+                m_skinMemory);
+        }
     }
     catch (...)
     {
@@ -151,6 +191,17 @@ VulkanBuffer::~VulkanBuffer()
 
 void VulkanBuffer::DestroyHandles()
 {
+    for (auto [buffer, memory] : {std::pair<VkBuffer*, VulkanPooledMemory*>{&m_bindPoseBuffer, &m_bindPoseMemory},
+                                  std::pair<VkBuffer*, VulkanPooledMemory*>{&m_skinBuffer, &m_skinMemory},
+                                  std::pair<VkBuffer*, VulkanPooledMemory*>{&m_previousPositionBuffer, &m_previousPositionMemory}})
+    {
+        if (*buffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(m_device, *buffer, nullptr);
+            *buffer = VK_NULL_HANDLE;
+        }
+        VulkanMemoryPool::Free(m_device, *memory);
+    }
     if (m_positionBuffer != VK_NULL_HANDLE)
     {
         vkDestroyBuffer(m_device, m_positionBuffer, nullptr);
@@ -358,7 +409,7 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
     UploadDeviceLocal(
         meshData.vertices.data(),
         static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_skinned ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u),
         uploadBatch,
         m_vertexBuffer,
         m_vertexMemory,
@@ -385,12 +436,25 @@ void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& 
     {
         positions.insert(positions.end(), std::begin(vertex.position), std::end(vertex.position));
     }
+    if (m_skinned)
+    {
+        // Last frame's pose, which the skinning pass rolls the positions into before posing them anew.
+        UploadDeviceLocal(
+            positions.data(),
+            static_cast<VkDeviceSize>(sizeof(float) * positions.size()),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            uploadBatch,
+            m_previousPositionBuffer,
+            m_previousPositionMemory);
+    }
     UploadDeviceLocal(
         positions.data(),
         static_cast<VkDeviceSize>(sizeof(float) * positions.size()),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_skinned ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u) |
+            (m_skinned && m_deviceAddressable ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
         uploadBatch,
         m_positionBuffer,
-        m_positionMemory);
+        m_positionMemory,
+        m_skinned && m_deviceAddressable ? &m_positionAddress : nullptr);
 }
 }

@@ -3,6 +3,7 @@
 #include "editor_ui.h"
 #include "engine_settings.h"
 #include "services/vehicle_drive_service.h"
+#include "services/model_animation_service.h"
 #include "services/vehicle_rig_service.h"
 #include "services/world_streaming_service.h"
 
@@ -150,6 +151,8 @@ struct RendererSharedState
     EditorUiController editorUi;
     std::unique_ptr<IEditorWorld> editorWorld;
     RendererWorld rendererWorld;
+    // The skinned models' animations, which ModelAnimationPlayback::Tick advances every frame.
+    ModelAnimationPlayback modelAnimation;
     ViewportDragPreviewState viewportDragPreview;
     AsyncModelLoad asyncLoad;
     AsyncSceneLoad asyncSceneLoad;

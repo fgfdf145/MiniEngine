@@ -7,7 +7,9 @@
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <type_traits>
 
 namespace me
 {
@@ -60,13 +62,19 @@ VulkanPipelineSet::VulkanPipelineSet(
         const VulkanShaderModule vertexShader(m_device, shaderDir / "triangle.vert.spv");
         const VulkanShaderModule fragmentShader(m_device, shaderDir / config.fragmentShader);
 
-        const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
-        const auto attributeDescriptions = GetVertexAttributeDescriptions();
+        // The vertex, and beside it where each vertex was last frame (a skinned mesh's last pose).
+        const std::array<VkVertexInputBindingDescription, 2> bindingDescriptions = {
+            GetVertexBindingDescription(), GetPreviousPositionBindingDescription()};
+        const auto vertexAttributes = GetVertexAttributeDescriptions();
+        std::array<VkVertexInputAttributeDescription, 7> attributeDescriptions{};
+        static_assert(std::tuple_size_v<std::remove_const_t<decltype(vertexAttributes)>> + 1 == 7, "one more attribute than the vertex has");
+        std::copy(vertexAttributes.begin(), vertexAttributes.end(), attributeDescriptions.begin());
+        attributeDescriptions.back() = GetPreviousPositionAttributeDescription();
 
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 1;
-        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = bindingDescriptions.data();
         vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
         vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 

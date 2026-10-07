@@ -177,6 +177,17 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         }
     }
 
+    // A skinned model plays its animations (ModelAnimationPlayback); one without keeps no palette.
+    if (modelData.skeleton && !modelData.skeleton->bindings.empty())
+    {
+        state.modelAnimation.Track(entity, modelDataPtr, model.sourcePath);
+    }
+    else
+    {
+        state.modelAnimation.Forget(entity);
+        state.rendererWorld.ClearJointPalette(entity);
+    }
+
     renderSubmeshes.reserve(modelData.submeshes.size());
     for (const ModelSubmeshData& submesh : modelData.submeshes)
     {
@@ -299,6 +310,34 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
                               (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
         renderSubmesh.water = submesh.water;
         renderSubmesh.textureSamplers = material.textureSamplers;
+        // A skinned submesh is deformed by the entity's joint palette from its binding's offset. Its
+        // bounds are the model's, grown for the reach of a pose: the bind pose's own would cull a limb
+        // an animation swings out of them.
+        if (submesh.mesh.IsSkinned() && submesh.skinBinding >= 0 && modelData.skeleton &&
+            static_cast<size_t>(submesh.skinBinding) < modelData.skeleton->bindings.size())
+        {
+            const ModelSkinBinding& binding = modelData.skeleton->bindings[static_cast<size_t>(submesh.skinBinding)];
+            renderSubmesh.skinned = true;
+            renderSubmesh.paletteOffset = binding.paletteOffset;
+            renderSubmesh.jointCount = static_cast<uint32_t>(binding.jointNodes.size());
+            if (modelData.hasBounds)
+            {
+                renderSubmesh.localBoundsCenter = (modelData.minBounds + modelData.maxBounds) * 0.5f;
+                renderSubmesh.localBoundsRadius = glm::length(modelData.maxBounds - modelData.minBounds) * 0.75f;
+            }
+            if (material.toon && !material.toon->headNode.empty())
+            {
+                const int32_t headNode = modelData.skeleton->FindNode(material.toon->headNode);
+                for (size_t joint = 0; joint < binding.jointNodes.size(); ++joint)
+                {
+                    if (binding.jointNodes[joint] == headNode)
+                    {
+                        renderSubmesh.toonHeadJoint = static_cast<int32_t>(binding.paletteOffset + joint);
+                        break;
+                    }
+                }
+            }
+        }
         // A toon material is the toon passes' to shade: the geometry pass still lays down its depth,
         // normals and motion, and the forward flag keeps the lighting pass off its pixels.
         if (material.toon && submesh.hasTexCoords)

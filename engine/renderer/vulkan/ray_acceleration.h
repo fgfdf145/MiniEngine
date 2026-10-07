@@ -53,6 +53,19 @@ struct RayBlas
     // install's number, which says whether the offset is the installed content's.
     bool built = false;
     bool compacted = false;
+    // A skinned mesh's: built over its posed position stream (indexed by leaf order, so a hit's
+    // primitive index is still the hierarchy's), allowed to update, never compacted, and refitted every
+    // frame the top level is built (VulkanRayAcceleration::Record). It holds its leaf-ordered index
+    // buffer and its update scratch.
+    bool dynamic = false;
+    VkDeviceAddress dynamicPositions = 0;
+    uint32_t dynamicVertexCount = 0;
+    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory indexMemory = VK_NULL_HANDLE;
+    VkDeviceAddress indexAddress = 0;
+    VkBuffer updateScratch = VK_NULL_HANDLE;
+    VulkanPooledMemory updateScratchMemory;
+    VkDeviceAddress updateScratchAddress = 0;
     uint32_t installedNodeOffset = 0;
     uint64_t installNumber = 0;
 };
@@ -74,9 +87,12 @@ class VulkanRayAcceleration
     // Thread-safe, for the ray scene's worker: each mesh's bottom level, parallel to meshes (null for an
     // empty one). A mesh with a live bottom level gets it; the others get new, unbuilt ones whose
     // triangles go into one vertex batch.
+    // A skinned mesh (MeshData::IsSkinned) whose buffer has a position address gets a dynamic bottom
+    // level over that buffer (RayBlas::dynamic); positionAddresses is parallel to meshes, 0 for none.
     std::vector<std::shared_ptr<RayBlas>> Prepare(
         std::span<const std::shared_ptr<const MeshData>> meshes,
-        std::span<const std::shared_ptr<const MeshBvh>> bvhs) const;
+        std::span<const std::shared_ptr<const MeshBvh>> bvhs,
+        std::span<const VkDeviceAddress> positionAddresses) const;
 
     // Render thread, every frame in flight idle: the installed content's bottom levels, indexed like
     // RayScene::meshes, whose unbuilt ones the next Record builds, and every frame slot's top level
@@ -107,6 +123,10 @@ class VulkanRayAcceleration
     size_t GetBottomLevelCount() const;
 
   private:
+    // Refits every built dynamic bottom level (RayBlas::dynamic) to this frame's posed positions;
+    // false when there are none.
+    bool RecordDynamicUpdates(VkCommandBuffer commandBuffer);
+
     struct Buffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;

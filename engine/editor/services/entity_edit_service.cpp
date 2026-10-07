@@ -459,6 +459,27 @@ void ApplySelectedModelUseModelLights(RendererSharedState& state, bool useModelL
     LOG_INFO("Model lights of '{}': {}", name, useModelLights ? "on" : "off");
 }
 
+void ApplySelectedModelAnimation(RendererSharedState& state, const std::string& clip, bool enabled, bool playing, float speed)
+{
+    // The skinning reads these every frame (ModelAnimationService); the renderables stay as they are.
+    IEditorWorld& world = state.GetEditorWorld();
+    if (!world.HasSelection() || world.HasLightComponent(world.GetSelectedEntity()))
+    {
+        throw std::runtime_error("No selected model entity available to change its animation");
+    }
+    const entt::entity selected = world.GetSelectedEntity();
+    ModelComponent& model = world.EditModel(selected);
+    if (model.animationClip != clip)
+    {
+        // A new clip starts from its beginning.
+        state.modelAnimation.Restart(selected);
+    }
+    model.animationClip = clip;
+    model.animationEnabled = enabled;
+    model.animationPlaying = playing;
+    model.animationSpeed = speed;
+}
+
 void ClearSelectedModelBaseColorTexture(RendererSharedState& state)
 {
     const std::string& name = EditSelectedModel(state, "clear the texture override", [](ModelComponent& model)

@@ -4,8 +4,10 @@
 #include <engine/editor/ui/editor_ui_internal.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
 #include <engine/editor/ui/windows/model_processor_window.h>
+#include <engine/editor/services/model_animation_service.h>
 
 #include <engine/asset/asset_registry.h>
+#include <engine/asset/model_cache.h>
 #include <engine/asset/model_loader.h>
 
 #include <engine/editor/ui_colors.h>
@@ -14,6 +16,7 @@
 #include <engine/scene/sun_position.h>
 #include <engine/scene/wind.h>
 #include <IconsPhosphor.h>
+#include <fmt/format.h>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <ImGuizmo.h>
@@ -135,6 +138,60 @@ void DrawImportedModelInspector(const EditorModelMetadataComponent& metadata)
             ImGui::TreePop();
         }
         ImGui::TreePop();
+    }
+}
+
+// glTF animations (ModelAnimationPlayback): the clip the selected model plays, whether it plays, and
+// how fast. Shown for a model with skins and clips.
+void DrawModelAnimationControls(const ModelComponent& model, EditorUiFrameResult& result)
+{
+    if (model.sourcePath.empty())
+    {
+        return;
+    }
+    const std::shared_ptr<const LoadedModelData> data = ModelCache::Get(model.sourcePath);
+    if (!data || !data->skeleton || data->skeleton->clips.empty() || data->skeleton->bindings.empty())
+    {
+        return;
+    }
+    const ModelSkeleton& skeleton = *data->skeleton;
+    EditorUiActions::ModelAnimationChoice choice{model.animationClip, model.animationEnabled, model.animationPlaying, model.animationSpeed};
+    bool changed = false;
+
+    ImGui::SeparatorText("Animation");
+    changed |= ImGui::Checkbox("Animate", &choice.enabled);
+    ImGui::SetItemTooltip("Off, the skinned meshes keep their bind pose.");
+    ImGui::BeginDisabled(!choice.enabled);
+    const int32_t automatic = ModelAnimationPlayback::ResolveClip(skeleton, std::string{});
+    const std::string automaticLabel =
+        "Default (" + (automatic >= 0 ? skeleton.clips[static_cast<size_t>(automatic)].name : std::string("none")) + ")";
+    const std::string preview = choice.clip.empty() ? automaticLabel : choice.clip;
+    if (ImGui::BeginCombo("Clip", preview.c_str(), ImGuiComboFlags_HeightLarge))
+    {
+        if (ImGui::Selectable(automaticLabel.c_str(), choice.clip.empty()) && !choice.clip.empty())
+        {
+            choice.clip.clear();
+            changed = true;
+        }
+        for (size_t index = 0; index < skeleton.clips.size(); ++index)
+        {
+            const ModelAnimationClip& clip = skeleton.clips[index];
+            const std::string label = fmt::format("{}  ({:.1f} s)##clip_{}", clip.name, clip.duration, index);
+            if (ImGui::Selectable(label.c_str(), clip.name == choice.clip) && clip.name != choice.clip)
+            {
+                choice.clip = clip.name;
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    changed |= ImGui::Checkbox("Playing", &choice.playing);
+    ImGui::SameLine();
+    changed |= ImGui::DragFloat("Speed", &choice.speed, 0.01f, -4.0f, 4.0f, "%.2fx");
+    ImGui::EndDisabled();
+    if (changed)
+    {
+        result.actions.selectedModelAnimation = choice;
     }
 }
 
@@ -735,6 +792,8 @@ void ScenePanel::OnGui(EditorContext& context)
                         ImGui::EndCombo();
                     }
                 }
+
+                DrawModelAnimationControls(model, result);
 
                 ImGui::BeginDisabled(model.sourcePath.empty());
                 if (ImGui::Button("Edit Materials"))

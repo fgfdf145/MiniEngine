@@ -22,10 +22,26 @@ struct Vertex
     float outlineNormal[3];
 };
 
+// One vertex's skin (glTF JOINTS_0 / WEIGHTS_0): up to four joints of the submesh's skin binding
+// (ModelSkinBinding) and their weights, which sum to 1. Laid out as skin.comp reads it.
+struct VertexSkin
+{
+    uint16_t joints[4] = {0, 0, 0, 0};
+    float weights[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+};
+
 struct MeshData
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    // Parallel to vertices for a skinned mesh (ModelSubmeshData::skinBinding), empty otherwise: the
+    // vertices are then the bind pose, which the skinning pass deforms each frame.
+    std::vector<VertexSkin> skin;
+
+    bool IsSkinned() const
+    {
+        return !skin.empty();
+    }
 
     bool IsValid() const
     {
