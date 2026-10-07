@@ -203,6 +203,11 @@ class EditorUiController
     {
         return m_state.renderDebug;
     }
+    // The Vehicle panel's camera settings, likewise.
+    VehicleCameraSettings& EditVehicleCamera()
+    {
+        return m_state.vehicle.camera;
+    }
     EditorUiFrameResult Draw(
         Camera& camera,
         ViewportMatrices& matrices,

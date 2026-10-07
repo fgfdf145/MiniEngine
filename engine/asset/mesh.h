@@ -37,10 +37,20 @@ struct MeshData
     // Parallel to vertices for a skinned mesh (ModelSubmeshData::skinBinding), empty otherwise: the
     // vertices are then the bind pose, which the skinning pass deforms each frame.
     std::vector<VertexSkin> skin;
+    // A car's tyre (ModelSubmeshData::tyre): the vertices are its shape at rest, which the tyre
+    // deformation pass flattens on the ground each frame.
+    bool deformable = false;
 
     bool IsSkinned() const
     {
         return !skin.empty();
+    }
+
+    // Posed on the GPU every frame, skinned or deformed: each submesh drawing it holds buffers of its
+    // own, which the skinning pass writes.
+    bool IsPosed() const
+    {
+        return IsSkinned() || deformable;
     }
 
     bool IsValid() const

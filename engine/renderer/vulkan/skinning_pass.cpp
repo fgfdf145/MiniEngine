@@ -46,6 +46,8 @@ VulkanSkinningPass::VulkanSkinningPass(
         m_paletteSetLayout = CreateComputeSetLayout(m_device, kPaletteTypes);
         const std::array<VkDescriptorSetLayout, 2> setLayouts = {m_meshSetLayout, m_paletteSetLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "skin.comp.spv", sizeof(SkinningConstants), m_pipelineLayout, m_pipeline);
+        // The tyres' pipeline shares the layout: the same sets and push constants.
+        m_tyrePipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "tyre_deform.comp.spv");
 
         VkDescriptorPoolSize poolSize{};
         poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -130,7 +132,7 @@ VkDescriptorSet VulkanSkinningPass::Acquire(const VulkanBuffer& buffer)
     }
     const std::array<VkDescriptorBufferInfo, 5> infos = {
         VkDescriptorBufferInfo{buffer.GetBindPoseHandle(), 0, VK_WHOLE_SIZE},
-        VkDescriptorBufferInfo{buffer.GetSkinHandle(), 0, VK_WHOLE_SIZE},
+        VkDescriptorBufferInfo{buffer.IsSkinned() ? buffer.GetSkinHandle() : buffer.GetBindPoseHandle(), 0, VK_WHOLE_SIZE},
         VkDescriptorBufferInfo{buffer.GetVertexHandle(), 0, VK_WHOLE_SIZE},
         VkDescriptorBufferInfo{buffer.GetPositionHandle(), 0, VK_WHOLE_SIZE},
         VkDescriptorBufferInfo{buffer.GetPreviousPositionHandle(), 0, VK_WHOLE_SIZE}};
@@ -179,9 +181,9 @@ void VulkanSkinningPass::Record(VkCommandBuffer commandBuffer, uint32_t frameSlo
     // before (no memory to make visible for a write after a read).
     vkCmdPipelineBarrier(
         commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 0, nullptr);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 1, 1, &m_paletteSets.at(frameSlot), 0, nullptr);
+    VkPipeline bound = VK_NULL_HANDLE;
 
     auto* palette = static_cast<glm::mat4*>(m_paletteMapped.at(frameSlot));
     uint32_t used = 0;
@@ -198,6 +200,12 @@ void VulkanSkinningPass::Record(VkCommandBuffer commandBuffer, uint32_t frameSlo
             break;
         }
         std::memcpy(palette + used, dispatch.palette->data() + dispatch.paletteOffset, sizeof(glm::mat4) * dispatch.jointCount);
+        const VkPipeline pipeline = dispatch.tyre ? m_tyrePipeline : m_pipeline;
+        if (pipeline != bound)
+        {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+            bound = pipeline;
+        }
         SkinningConstants constants{};
         constants.vertexCount = dispatch.buffer->GetVertexCount();
         constants.paletteBase = used;
@@ -236,10 +244,13 @@ void VulkanSkinningPass::DestroyHandles()
     }
     m_paletteBuffers.clear();
     m_paletteSets.clear();
-    if (m_pipeline != VK_NULL_HANDLE)
+    for (VkPipeline* pipeline : {&m_pipeline, &m_tyrePipeline})
     {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
+        if (*pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device, *pipeline, nullptr);
+            *pipeline = VK_NULL_HANDLE;
+        }
     }
     if (m_pipelineLayout != VK_NULL_HANDLE)
     {

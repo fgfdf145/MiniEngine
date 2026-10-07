@@ -35,6 +35,9 @@ class VulkanSkinningPass
         const std::vector<glm::mat4>* palette = nullptr;
         uint32_t paletteOffset = 0;
         uint32_t jointCount = 0;
+        // A tyre (MeshData::deformable): tyre_deform.comp instead of skin.comp, its "joints" the two
+        // matrices of its TyreDeformation (PackTyreDeformation).
+        bool tyre = false;
     };
 
     VulkanSkinningPass(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameSlotCount);
@@ -43,7 +46,8 @@ class VulkanSkinningPass
     VulkanSkinningPass(const VulkanSkinningPass&) = delete;
     VulkanSkinningPass& operator=(const VulkanSkinningPass&) = delete;
 
-    // The set naming a skinned buffer's five buffers; Release it when the buffer goes. It is freed a
+    // The set naming a posed buffer's five buffers (a tyre's has no skin: its bind pose stands in);
+    // Release it when the buffer goes. It is freed a
     // few frames later, once no frame in flight can still be dispatching with it.
     VkDescriptorSet Acquire(const VulkanBuffer& buffer);
     void Release(VkDescriptorSet set);
@@ -61,6 +65,7 @@ class VulkanSkinningPass
     VkDescriptorPool m_pool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
+    VkPipeline m_tyrePipeline = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_paletteBuffers;
     std::vector<VkDeviceMemory> m_paletteMemory;
     std::vector<void*> m_paletteMapped;

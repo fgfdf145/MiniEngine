@@ -17,7 +17,7 @@ class RenderTransformSnapshot
 {
   public:
     // The model matrix of every entity the list names that the world still has, and the world's
-    // submesh local transforms. Keeps its allocations from the last capture.
+    // submesh local transforms, joint palettes and tyre deformations. Keeps its allocations from the last capture.
     void Capture(const RendererWorld& world, const CpuRenderSubmeshList& submeshes);
     void Clear();
 
@@ -32,6 +32,9 @@ class RenderTransformSnapshot
     }
     // The entity's joint palette as it was at the capture; null without one.
     const std::vector<glm::mat4>* GetJointPalette(entt::entity entity) const;
+    // The entity's packed tyre deformations (RendererWorld::SetTyreDeformations) as they were at the
+    // capture; null without them.
+    const std::vector<glm::mat4>* GetTyreDeformations(entt::entity entity) const;
 
   private:
     // By entity index (entt::to_entity): the entity found there, entt::null where none, and its
@@ -43,5 +46,6 @@ class RenderTransformSnapshot
     size_t m_entityCount = 0;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_localTransforms;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_jointPalettes;
+    std::unordered_map<entt::entity, std::vector<glm::mat4>> m_tyreDeformations;
 };
 }

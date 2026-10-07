@@ -342,6 +342,17 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
     const glm::quat& vehicleToModel,
     const glm::vec3& scale);
 
+// Each of the model's tyres (ModelSubmeshData::tyre) squashed where its wheel touches the ground and
+// bent with its carcass: two matrices per submesh (PackTyreDeformation), an inactive pair for every
+// other submesh and for a wheel in the air. `entityMatrix` is the entity's transform and
+// `submeshTransforms` the submeshes' local ones (BuildWheelSubmeshTransforms), which carry each tyre
+// from its shape at rest to the wheel. Empty for a model without tyres.
+std::vector<glm::mat4> BuildTyreDeformations(
+    const LoadedModelData& model,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::mat4& entityMatrix,
+    const std::vector<glm::mat4>& submeshTransforms);
+
 // Turns the orbit by a mouse movement (degrees), or, with `lookHeld` false, eases it back to zero at
 // `recenterRate` per second (0: it stays). Pitch is kept between looking a little up from below and
 // straight down.

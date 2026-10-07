@@ -1,0 +1,219 @@
+#version 450
+
+// A tyre squashed on the ground and bent by its carcass (VulkanSkinningPass): one tyre submesh's
+// vertices at rest, moved as engine/renderer/tyre_deformation.cpp moves them (this mirrors it line for
+// line), written over the vertex buffer every pass draws and the position stream the depth-only
+// passes read. Shares skin.comp's descriptor sets: the skin binding is unused.
+layout(local_size_x = 64) in;
+
+// Vertex in engine/asset/mesh.h, 20 floats: position, colour, UV 0, normal, tangent, UV 1, outline
+// normal.
+const uint kVertexFloats = 20u;
+const uint kPosition = 0u;
+const uint kNormal = 8u;
+const uint kTangent = 11u;
+
+// TyreDeformation's constants (engine/renderer/tyre_deformation.h).
+const float kTyreCarcassSpreadRadians = 1.2;
+const float kTyreMinimumLift = 0.25;
+const float kPi = 3.14159265358979;
+
+layout(set = 0, binding = 0) readonly buffer BindPose
+{
+    float bindPose[];
+};
+layout(set = 0, binding = 2) writeonly buffer Vertices
+{
+    float vertices[];
+};
+// Read as well: last frame's shape rolls into previousPositions before this one is written.
+layout(set = 0, binding = 3) buffer Positions
+{
+    float positions[];
+};
+layout(set = 0, binding = 4) writeonly buffer PreviousPositions
+{
+    float previousPositions[];
+};
+// This frame's matrices: each tyre's two (PackTyreDeformation) among the skinned submeshes' joints.
+layout(set = 1, binding = 0) readonly buffer Palette
+{
+    mat4 palette[];
+};
+
+layout(push_constant) uniform Constants
+{
+    uint vertexCount;
+    uint paletteBase;
+}
+constants;
+
+struct TyreDeformation
+{
+    bool onGround;
+    vec3 center;
+    vec3 axle;
+    float outerRadius;
+    float innerRadius;
+    float axialCenter;
+    vec3 groundNormal;
+    float groundOffset;
+    vec3 forward;
+    vec3 left;
+    float carcassForward;
+    float carcassLeft;
+    float carcassTwist;
+    float carcassBending;
+    float bulge;
+    float smoothing;
+};
+
+TyreDeformation Unpack(mat4 a, mat4 b)
+{
+    TyreDeformation d;
+    d.center = a[0].xyz;
+    d.outerRadius = a[0].w;
+    d.axle = a[1].xyz;
+    d.innerRadius = a[1].w;
+    d.groundNormal = a[2].xyz;
+    d.groundOffset = a[2].w;
+    d.forward = a[3].xyz;
+    d.axialCenter = a[3].w;
+    d.left = b[0].xyz;
+    d.onGround = b[0].w > 0.5;
+    d.carcassForward = b[1].x;
+    d.carcassLeft = b[1].y;
+    d.carcassTwist = b[1].z;
+    d.carcassBending = b[1].w;
+    d.bulge = b[2].x;
+    d.smoothing = b[2].y;
+    return d;
+}
+
+float TyreSmoothPositive(float x, float width)
+{
+    if (x >= width)
+    {
+        return x;
+    }
+    if (x <= -width)
+    {
+        return 0.0;
+    }
+    return (x + width) * (x + width) / (4.0 * width);
+}
+
+vec3 DeformTyrePoint(TyreDeformation d, vec3 point)
+{
+    vec3 offset = point - d.center;
+    float axial = dot(offset, d.axle);
+    vec3 across = offset - d.axle * axial;
+    float r = length(across);
+    float span = d.outerRadius - d.innerRadius;
+    if (!d.onGround || r < 1e-6 || span <= 0.0)
+    {
+        return point;
+    }
+    vec3 radial = across / r;
+    float h = clamp((r - d.innerRadius) / span, 0.0, 1.0);
+    float lift = max(-dot(radial, d.groundNormal), kTyreMinimumLift);
+
+    // In: out of the ground, and with the tread above.
+    float penetration = d.groundOffset - dot(point, d.groundNormal);
+    vec3 treadPoint = d.center + d.axle * axial + radial * d.outerRadius;
+    float treadPenetration = d.groundOffset - dot(treadPoint, d.groundNormal);
+    float treadIn = TyreSmoothPositive(treadPenetration, d.smoothing) / lift;
+    float moveIn = min(max(TyreSmoothPositive(penetration, d.smoothing) / lift, h * h * treadIn), max(r - d.innerRadius, 0.0));
+    vec3 moved = point - radial * moveIn;
+
+    // The sidewall's bulge, away from the middle.
+    float side = axial - d.axialCenter >= 0.0 ? 1.0 : -1.0;
+    moved += d.axle * (side * d.bulge * sin(kPi * h) * treadIn);
+
+    // The carcass, round the patch.
+    vec3 down = -d.groundNormal - d.axle * dot(-d.groundNormal, d.axle);
+    float downLength = length(down);
+    if (downLength > 1e-4)
+    {
+        down /= downLength;
+        float height = (dot(d.center, d.groundNormal) - d.groundOffset) / max(-dot(down, d.groundNormal), 0.1);
+        float patchCos = clamp(height / d.outerRadius, -1.0, 1.0);
+        float patchHalfAngle = acos(patchCos);
+        float patchHalfLength = d.outerRadius * sin(patchHalfAngle);
+        float angle = acos(clamp(dot(radial, down), -1.0, 1.0));
+        float spread = 1.0 - smoothstep(patchHalfAngle, patchHalfAngle + kTyreCarcassSpreadRadians, angle);
+        vec3 patchCenter = d.center + down * height;
+        float x = clamp(dot(moved - patchCenter, d.forward), -patchHalfLength, patchHalfLength);
+        float dx = x - d.carcassForward;
+        float y = d.carcassLeft + d.carcassTwist * dx - 0.5 * d.carcassLeft * d.carcassBending * dx * dx;
+        moved += (d.forward * d.carcassForward + d.left * y) * (h * h * spread);
+    }
+    return moved;
+}
+
+vec3 ReadVec3(uint base)
+{
+    return vec3(bindPose[base], bindPose[base + 1u], bindPose[base + 2u]);
+}
+
+void WriteVec3(uint base, vec3 value)
+{
+    vertices[base] = value.x;
+    vertices[base + 1u] = value.y;
+    vertices[base + 2u] = value.z;
+}
+
+void main()
+{
+    uint vertex = gl_GlobalInvocationID.x;
+    if (vertex >= constants.vertexCount)
+    {
+        return;
+    }
+    TyreDeformation d = Unpack(palette[constants.paletteBase], palette[constants.paletteBase + 1u]);
+
+    uint v = vertex * kVertexFloats;
+    // What the deformation leaves alone (colour, UVs, the tangent's sign) is copied through.
+    for (uint i = 0u; i < kVertexFloats; ++i)
+    {
+        vertices[v + i] = bindPose[v + i];
+    }
+
+    vec3 restPosition = ReadVec3(v + kPosition);
+    vec3 position = restPosition;
+    if (d.onGround)
+    {
+        // DeformTyreVertex: the normal and tangent from the deformation's differences.
+        vec3 restNormal = ReadVec3(v + kNormal);
+        vec3 restTangent = ReadVec3(v + kTangent);
+        float step = 1e-3 * d.outerRadius;
+        vec3 normal = normalize(restNormal);
+        vec3 along = restTangent - normal * dot(restTangent, normal);
+        if (dot(along, along) < 1e-8)
+        {
+            vec3 helper = abs(normal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            along = cross(helper, normal);
+        }
+        along = normalize(along);
+        vec3 across = cross(normal, along);
+
+        position = DeformTyrePoint(d, restPosition);
+        vec3 alongMoved = DeformTyrePoint(d, restPosition + along * step) - position;
+        vec3 acrossMoved = DeformTyrePoint(d, restPosition + across * step) - position;
+        vec3 normalMoved = cross(alongMoved, acrossMoved);
+        vec3 newNormal = dot(normalMoved, normalMoved) > 0.0 ? normalize(normalMoved) : normal;
+        vec3 tangent = alongMoved - newNormal * dot(alongMoved, newNormal);
+        vec3 newTangent = dot(tangent, tangent) > 0.0 ? normalize(tangent) : restTangent;
+        WriteVec3(v + kPosition, position);
+        WriteVec3(v + kNormal, newNormal);
+        WriteVec3(v + kTangent, newTangent);
+    }
+
+    // Where the vertex was, for the motion vectors (triangle.vert).
+    previousPositions[vertex * 3u] = positions[vertex * 3u];
+    previousPositions[vertex * 3u + 1u] = positions[vertex * 3u + 1u];
+    previousPositions[vertex * 3u + 2u] = positions[vertex * 3u + 2u];
+    positions[vertex * 3u] = position.x;
+    positions[vertex * 3u + 1u] = position.y;
+    positions[vertex * 3u + 2u] = position.z;
+}

@@ -2,6 +2,7 @@
 
 #include "gltf_compression.h"
 #include "model_post_process.h"
+#include "model_tyre.h"
 #include "texture_loader.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -3333,6 +3334,7 @@ LoadedModelData BuildLoadedModelData(
     modelData.skeleton = BuildSkeleton(tinyModel, modelData);
     modelData.carSpec = ReadCarSpec(tinyModel);
     modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
+    PrepareModelTyres(modelData);
     if (std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)
                     {
                         return submesh.steeringWheel;

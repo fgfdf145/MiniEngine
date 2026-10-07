@@ -140,6 +140,13 @@ class RendererWorld
     void ClearJointPalette(entt::entity entity);
     const std::unordered_map<entt::entity, std::vector<glm::mat4>>& GetJointPalettes() const;
 
+    // A car's tyres squashed on the ground (engine/renderer/tyre_deformation.h): two matrices
+    // (PackTyreDeformation) per submesh ordinal, as for the local transforms, which its deformable
+    // submeshes are deformed by. Without them, or for an inactive entry, they keep their shape at rest.
+    void SetTyreDeformations(entt::entity entity, std::vector<glm::mat4> packed);
+    void ClearTyreDeformations(entt::entity entity);
+    const std::unordered_map<entt::entity, std::vector<glm::mat4>>& GetTyreDeformations() const;
+
     void SetModelLights(std::vector<CpuModelLight> modelLights);
     void ReplaceEntityModelLights(entt::entity entity, std::vector<CpuModelLight> modelLights);
     bool RemoveEntityModelLights(entt::entity entity);
@@ -157,5 +164,6 @@ class RendererWorld
     std::vector<CpuModelLight> m_modelLights;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_jointPalettes;
     std::unordered_map<entt::entity, std::vector<glm::mat4>> m_submeshLocalTransforms;
+    std::unordered_map<entt::entity, std::vector<glm::mat4>> m_tyreDeformations;
 };
 }

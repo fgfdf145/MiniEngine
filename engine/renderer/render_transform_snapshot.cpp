@@ -39,6 +39,10 @@ void RenderTransformSnapshot::Capture(const RendererWorld& world, const CpuRende
     {
         m_jointPalettes[entity] = palette;
     }
+    for (const auto& [entity, deformations] : world.GetTyreDeformations())
+    {
+        m_tyreDeformations[entity] = deformations;
+    }
 }
 
 void RenderTransformSnapshot::Clear()
@@ -51,12 +55,19 @@ void RenderTransformSnapshot::Clear()
     m_entityCount = 0;
     m_localTransforms.clear();
     m_jointPalettes.clear();
+    m_tyreDeformations.clear();
 }
 
 const std::vector<glm::mat4>* RenderTransformSnapshot::GetJointPalette(entt::entity entity) const
 {
     const auto found = m_jointPalettes.find(entity);
     return found == m_jointPalettes.end() ? nullptr : &found->second;
+}
+
+const std::vector<glm::mat4>* RenderTransformSnapshot::GetTyreDeformations(entt::entity entity) const
+{
+    const auto found = m_tyreDeformations.find(entity);
+    return found == m_tyreDeformations.end() ? nullptr : &found->second;
 }
 
 bool RenderTransformSnapshot::Contains(entt::entity entity) const

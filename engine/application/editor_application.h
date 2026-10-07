@@ -77,8 +77,10 @@ struct EditorApplicationOptions
     // simulated second: a headless test drive (VehicleDriveState::scriptedControls).
     std::optional<std::string> driveEntity;
     std::optional<std::array<float, 2>> driveControls;
-    // --drive-view chase|cockpit|bonnet|bumper: the view the drive is seen from.
+    // --drive-view chase|cockpit|bonnet|bumper: the view the drive is seen from; fixed: the camera stays
+    // where --camera (or the scene) puts it and does not follow the car.
     std::optional<VehicleCameraView> driveView;
+    bool driveCameraFixed = false;
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
     // are mixed into nothing.
     bool audioDisabled = false;

@@ -422,7 +422,7 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
 {
     const auto positionAddress = [&](uint32_t index) -> VkDeviceAddress
     {
-        return index < positionAddresses.size() && meshes[index]->IsSkinned() ? positionAddresses[index] : 0;
+        return index < positionAddresses.size() && meshes[index]->IsPosed() ? positionAddresses[index] : 0;
     };
     std::vector<std::shared_ptr<RayBlas>> result(meshes.size());
     // The meshes a live bottom level already covers keep it; the rest are made below. A mesh another

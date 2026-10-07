@@ -120,6 +120,9 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     uint32_t paletteOffset = 0;
     uint32_t jointCount = 0;
     int32_t toonHeadJoint = -1;
+    // A tyre (MeshData::deformable): the skinning pass deforms its buffers by its TyreDeformation from
+    // the entity's (RenderTransformSnapshot::GetTyreDeformations), every frame.
+    bool tyre = false;
     // The skinning pass's descriptor set for its buffers, made with the submesh.
     mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
     glm::vec3 localBoundsCenter{0.0f};

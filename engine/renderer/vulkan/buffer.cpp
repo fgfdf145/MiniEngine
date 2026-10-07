@@ -148,7 +148,8 @@ VulkanBuffer::VulkanBuffer(
       m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
       m_indexCount(static_cast<uint32_t>(meshData.indices.size())),
       m_deviceAddressable(deviceAddressable),
-      m_skinned(meshData.IsSkinned() && meshData.skin.size() == meshData.vertices.size())
+      m_skinned(meshData.IsSkinned() && meshData.skin.size() == meshData.vertices.size()),
+      m_posed(m_skinned || meshData.deformable)
 {
     // A throw out of a constructor skips the destructor, so whatever was created before the
     // failure is released here with the same call the destructor makes. The copies recorded into
@@ -158,9 +159,8 @@ VulkanBuffer::VulkanBuffer(
         UploadVertices(meshData, uploadBatch);
         UploadIndices(meshData, uploadBatch);
         UploadPositions(meshData, uploadBatch);
-        if (m_skinned)
+        if (m_posed)
         {
-            static_assert(sizeof(VertexSkin) == 24, "skin.comp reads VertexSkin as six words");
             UploadDeviceLocal(
                 meshData.vertices.data(),
                 static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
@@ -168,6 +168,10 @@ VulkanBuffer::VulkanBuffer(
                 uploadBatch,
                 m_bindPoseBuffer,
                 m_bindPoseMemory);
+        }
+        if (m_skinned)
+        {
+            static_assert(sizeof(VertexSkin) == 24, "skin.comp reads VertexSkin as six words");
             UploadDeviceLocal(
                 meshData.skin.data(),
                 static_cast<VkDeviceSize>(sizeof(VertexSkin) * meshData.skin.size()),
@@ -409,7 +413,7 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
     UploadDeviceLocal(
         meshData.vertices.data(),
         static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_skinned ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_posed ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u),
         uploadBatch,
         m_vertexBuffer,
         m_vertexMemory,
@@ -436,7 +440,7 @@ void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& 
     {
         positions.insert(positions.end(), std::begin(vertex.position), std::end(vertex.position));
     }
-    if (m_skinned)
+    if (m_posed)
     {
         // Last frame's pose, which the skinning pass rolls the positions into before posing them anew.
         UploadDeviceLocal(
@@ -450,11 +454,11 @@ void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& 
     UploadDeviceLocal(
         positions.data(),
         static_cast<VkDeviceSize>(sizeof(float) * positions.size()),
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_skinned ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u) |
-            (m_skinned && m_deviceAddressable ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_posed ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u) |
+            (m_posed && m_deviceAddressable ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
         uploadBatch,
         m_positionBuffer,
         m_positionMemory,
-        m_skinned && m_deviceAddressable ? &m_positionAddress : nullptr);
+        m_posed && m_deviceAddressable ? &m_positionAddress : nullptr);
 }
 }

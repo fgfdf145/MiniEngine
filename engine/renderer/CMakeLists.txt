@@ -13,6 +13,8 @@ add_library(engine_render_core
     glare.cpp
     glare.h
     height_fog.cpp
+    tyre_deformation.cpp
+    tyre_deformation.h
     height_fog.h
     volumetric_clouds.cpp
     volumetric_clouds.h
@@ -269,6 +271,7 @@ set(MINIENGINE_SHADER_SOURCES
     shadow.frag
     selection_outline.frag
     skin.comp
+    tyre_deform.comp
     toon.vert
     toon.frag
     toon_prepass.frag

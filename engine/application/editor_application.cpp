@@ -179,6 +179,11 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--drive-view")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            if (value == "fixed")
+            {
+                options.driveCameraFixed = true;
+                continue;
+            }
             for (size_t view = 0; view < kVehicleCameraViewCount && !options.driveView.has_value(); ++view)
             {
                 std::string name = VehicleCameraViewName(static_cast<VehicleCameraView>(view));
@@ -193,7 +198,7 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             }
             if (!options.driveView.has_value())
             {
-                throw std::runtime_error("--drive-view takes chase, cockpit, bonnet or bumper");
+                throw std::runtime_error("--drive-view takes chase, cockpit, bonnet, bumper or fixed");
             }
             continue;
         }
@@ -631,6 +636,10 @@ int EditorApplication::Run()
     if (m_options.driveView.has_value())
     {
         sharedState->vehicleDrive.cameraView = *m_options.driveView;
+    }
+    if (m_options.driveCameraFixed)
+    {
+        sharedState->editorUi.EditVehicleCamera().follow = false;
     }
 
     // Keeps the frame coming while a window edge is dragged, so the area the drag exposes is drawn

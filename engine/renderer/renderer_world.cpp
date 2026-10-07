@@ -148,6 +148,21 @@ const std::unordered_map<entt::entity, std::vector<glm::mat4>>& RendererWorld::G
     return m_submeshLocalTransforms;
 }
 
+void RendererWorld::SetTyreDeformations(entt::entity entity, std::vector<glm::mat4> packed)
+{
+    m_tyreDeformations[entity] = std::move(packed);
+}
+
+void RendererWorld::ClearTyreDeformations(entt::entity entity)
+{
+    m_tyreDeformations.erase(entity);
+}
+
+const std::unordered_map<entt::entity, std::vector<glm::mat4>>& RendererWorld::GetTyreDeformations() const
+{
+    return m_tyreDeformations;
+}
+
 void RendererWorld::SetJointPalette(entt::entity entity, std::vector<glm::mat4> palette)
 {
     m_jointPalettes[entity] = std::move(palette);

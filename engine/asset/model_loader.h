@@ -112,6 +112,21 @@ enum class ModelWheelPart : uint8_t
 // The order of the corners: left front, right front, left rear, right rear.
 inline constexpr size_t kModelWheelCornerCount = 4;
 
+// A tyre's shape about its wheel, in the model's space at rest: what the tyre deformation pass
+// flattens on the ground and bends with the carcass (engine/renderer/tyre_deformation.h).
+struct ModelTyreShape
+{
+    glm::vec3 center{0.0f};
+    // The axle the wheel spins about, unit length.
+    glm::vec3 axle{1.0f, 0.0f, 0.0f};
+    // The tread's reach about the axle, and the bead's, where the tyre sits on the rim and stays.
+    float outerRadius = 0.0f;
+    float innerRadius = 0.0f;
+    // The tyre's middle along the axle from the centre, and half its width.
+    float axialCenter = 0.0f;
+    float halfWidth = 0.0f;
+};
+
 struct ModelSubmeshData
 {
     MeshData mesh;
@@ -137,6 +152,8 @@ struct ModelSubmeshData
     bool steeringWheel = false;
     // Under a SHIFT node: the gear lever, which tilts about LoadedModelData::gearLever's pivot.
     bool gearLever = false;
+    // A wheel's tyre (PrepareModelTyres), whose mesh is deformable; none for every other submesh.
+    std::optional<ModelTyreShape> tyre;
     // Skinned (glTF skin with JOINTS_0 / WEIGHTS_0, MeshData::skin): its binding in
     // LoadedModelData::skeleton; -1 for a rigid submesh.
     int32_t skinBinding = -1;

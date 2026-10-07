@@ -45,6 +45,8 @@
     model_driver_pose.h
     model_spring_bones.cpp
     model_spring_bones.h
+    model_tyre.cpp
+    model_tyre.h
     model_loader.cpp
     model_loader.h
     model_post_process.cpp

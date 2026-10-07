@@ -10,6 +10,7 @@
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/renderer/render_features.h>
 #include <engine/renderer/scene_lighting.h>
+#include <engine/renderer/tyre_deformation.h>
 
 #include <engine/logic/editor_world.h>
 #include <engine/scene/scene_components.h>
@@ -1358,6 +1359,25 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         }
         skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
             renderSubmesh->buffer.get(), renderSubmesh->skinningSet, palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
+    }
+    // Every tyre too, deformed or not: one the car no longer squashes goes back to its shape at rest,
+    // and its last frame's shape keeps rolling into its motion vectors.
+    static const std::vector<glm::mat4> kTyreAtRest = []
+    {
+        const std::array<glm::mat4, 2> packed = PackTyreDeformation(TyreDeformation{});
+        return std::vector<glm::mat4>(packed.begin(), packed.end());
+    }();
+    for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
+    {
+        if (!renderSubmesh->tyre || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        {
+            continue;
+        }
+        const uint32_t first = renderSubmesh->motionKey.submeshOrdinal * 2;
+        const std::vector<glm::mat4>* deformations = packet.transforms.GetTyreDeformations(renderSubmesh->entity);
+        const bool deformed = deformations != nullptr && first + 2 <= deformations->size();
+        skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, deformed ? deformations : &kTyreAtRest, deformed ? first : 0u, 2, true});
     }
 
     // The anime characters' draws for the toon passes: opaque before transparent, each in Unity's
@@ -3144,7 +3164,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->revision = cpuRenderSubmesh.revision;
             renderSubmesh->motionKey = MotionKey{static_cast<uint32_t>(entt::to_integral(cpuRenderSubmesh.entity)), ordinal};
             renderSubmesh->mesh = cpuRenderSubmesh.mesh;
-            // A skinned mesh's buffers are the skinning pass's output for this submesh alone: another
+            // A posed mesh's buffers are the skinning pass's output for this submesh alone: another
             // entity with the same model poses its own copy.
             std::shared_ptr<VulkanBuffer> liveBuffer;
             if (const auto prepared = m_preparedBuffers.find(cpuRenderSubmesh.mesh.get());
@@ -3154,7 +3174,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
                 m_meshBuffers[cpuRenderSubmesh.mesh.get()] = MeshBuffers{cpuRenderSubmesh.mesh, liveBuffer};
             }
             else if (const auto live = m_meshBuffers.find(cpuRenderSubmesh.mesh.get());
-                live != m_meshBuffers.end() && !cpuRenderSubmesh.mesh->IsSkinned() && live->second.mesh.lock() == cpuRenderSubmesh.mesh)
+                live != m_meshBuffers.end() && !cpuRenderSubmesh.mesh->IsPosed() && live->second.mesh.lock() == cpuRenderSubmesh.mesh)
             {
                 liveBuffer = live->second.buffer.lock();
             }
@@ -3168,7 +3188,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
                     m_device->GetPhysicalDevice(), m_device->GetHandle(),
                     *cpuRenderSubmesh.mesh, *uploadBatch, m_device->SupportsRayQuery());
-                if (!cpuRenderSubmesh.mesh->IsSkinned())
+                if (!cpuRenderSubmesh.mesh->IsPosed())
                 {
                     m_meshBuffers[cpuRenderSubmesh.mesh.get()] = MeshBuffers{cpuRenderSubmesh.mesh, renderSubmesh->buffer};
                 }
@@ -3185,7 +3205,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->paletteOffset = cpuRenderSubmesh.paletteOffset;
             renderSubmesh->jointCount = cpuRenderSubmesh.jointCount;
             renderSubmesh->toonHeadJoint = cpuRenderSubmesh.toonHeadJoint;
-            if (renderSubmesh->skinned)
+            renderSubmesh->tyre = cpuRenderSubmesh.mesh->deformable && renderSubmesh->buffer->IsPosed();
+            if (renderSubmesh->skinned || renderSubmesh->tyre)
             {
                 renderSubmesh->skinningSet = m_skinningPass->Acquire(*renderSubmesh->buffer);
             }
@@ -3377,9 +3398,9 @@ void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
         {
             continue;
         }
-        // A new submesh of a mesh with no GPU buffers yet: made before the commit. A skinned mesh's are
+        // A new submesh of a mesh with no GPU buffers yet: made before the commit. A posed mesh's are
         // its own, made with it.
-        if (submesh.mesh && !submesh.mesh->IsSkinned() && m_preparedBuffers.count(submesh.mesh.get()) == 0)
+        if (submesh.mesh && !submesh.mesh->IsPosed() && m_preparedBuffers.count(submesh.mesh.get()) == 0)
         {
             const auto live = m_meshBuffers.find(submesh.mesh.get());
             if (live == m_meshBuffers.end() || live->second.buffer.expired() || live->second.mesh.lock() != submesh.mesh)

@@ -88,7 +88,7 @@ class VulkanRayAcceleration
     // Thread-safe, for the ray scene's worker: each mesh's bottom level, parallel to meshes (null for an
     // empty one). A mesh with a live bottom level gets it; the others get new, unbuilt ones whose
     // triangles go into one vertex batch.
-    // A skinned mesh (MeshData::IsSkinned) whose buffer has a position address gets a dynamic bottom
+    // A posed mesh (MeshData::IsPosed: skinned, or a tyre) whose buffer has a position address gets a dynamic bottom
     // level over that buffer (RayBlas::dynamic); positionAddresses is parallel to meshes, 0 for none.
     std::vector<std::shared_ptr<RayBlas>> Prepare(
         std::span<const std::shared_ptr<const MeshData>> meshes,

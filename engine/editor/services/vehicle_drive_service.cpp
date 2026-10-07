@@ -10,6 +10,7 @@
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/vehicle_wheel_motion.h>
 #include <engine/renderer/renderer_world.h>
+#include <engine/renderer/tyre_deformation.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -467,6 +468,7 @@ void Stop(RendererSharedState& state)
 
     state.input.ClearGamepadFeedback();
     state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
+    state.rendererWorld.ClearTyreDeformations(session->entity);
     IEditorWorld& world = state.GetEditorWorld();
     if (world.IsValidEntity(session->entity) && world.Registry().all_of<TransformComponent>(session->entity))
     {
@@ -683,6 +685,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         LOG_WARN("Stopped driving '{}': its entity is gone", session->name);
         RestoreDriveLens(state.camera, *session);
         state.rendererWorld.ClearSubmeshLocalTransforms(session->entity);
+        state.rendererWorld.ClearTyreDeformations(session->entity);
         state.input.ClearGamepadFeedback();
         state.vehicleDrive.session.reset();
         return false;
@@ -817,8 +820,8 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     {
         session->steeringWheelTurn = SteeringWheelTurn(
             *session->wheels, pose, session->physics->GetVehicleWheels(session->vehicle), session->vehicleToModel, session->scale);
-        std::vector<glm::mat4> transforms = BuildWheelSubmeshTransforms(
-            *session->wheels, pose, session->physics->GetVehicleWheels(session->vehicle), session->vehicleToModel, session->scale);
+        const std::vector<VehicleWheelState> wheels = session->physics->GetVehicleWheels(session->vehicle);
+        std::vector<glm::mat4> transforms = BuildWheelSubmeshTransforms(*session->wheels, pose, wheels, session->vehicleToModel, session->scale);
         const LoadedModelData& model = *session->wheels->model;
         if (model.gearLever.has_value())
         {
@@ -830,6 +833,11 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
                     transforms[index] = lever;
                 }
             }
+        }
+        std::vector<glm::mat4> tyres = BuildTyreDeformations(model, wheels, ComposeMatrix(modelPose, session->scale), transforms);
+        if (!tyres.empty())
+        {
+            state.rendererWorld.SetTyreDeformations(session->entity, std::move(tyres));
         }
         state.rendererWorld.SetSubmeshLocalTransforms(session->entity, std::move(transforms));
     }
@@ -1190,6 +1198,75 @@ std::vector<glm::mat4> BuildWheelSubmeshTransforms(
         }
     }
     return transforms;
+}
+
+std::vector<glm::mat4> BuildTyreDeformations(
+    const LoadedModelData& model,
+    const std::vector<VehicleWheelState>& wheels,
+    const glm::mat4& entityMatrix,
+    const std::vector<glm::mat4>& submeshTransforms)
+{
+    const bool anyTyre = std::any_of(model.submeshes.begin(), model.submeshes.end(), [](const ModelSubmeshData& submesh)
+                                     {
+                                         return submesh.tyre.has_value();
+                                     });
+    if (!anyTyre)
+    {
+        return {};
+    }
+    const std::array<glm::mat4, 2> atRest = PackTyreDeformation(TyreDeformation{});
+    std::vector<glm::mat4> packed;
+    packed.reserve(model.submeshes.size() * 2);
+    for (size_t index = 0; index < model.submeshes.size(); ++index)
+    {
+        const ModelSubmeshData& submesh = model.submeshes[index];
+        std::array<glm::mat4, 2> entry = atRest;
+        if (submesh.tyre.has_value() && index < submeshTransforms.size() && submesh.wheelCorner < wheels.size() &&
+            wheels[submesh.wheelCorner].inContact)
+        {
+            const VehicleWheelState& wheel = wheels[submesh.wheelCorner];
+            const ModelTyreShape& shape = *submesh.tyre;
+            // World space into the tyre's at rest: back through the wheel's own transform and the entity's.
+            const glm::mat4 toWorld = entityMatrix * submeshTransforms[index];
+            const glm::mat4 fromWorld = glm::inverse(toWorld);
+            const glm::mat3 linear(fromWorld);
+            // A normal goes by the inverse transpose of `linear`: the transpose of toWorld's.
+            const glm::vec3 normal = glm::normalize(glm::transpose(glm::mat3(toWorld)) * wheel.contactNormal);
+            const glm::vec3 contact = glm::vec3(fromWorld * glm::vec4(wheel.contactPosition, 1.0f));
+            const glm::vec3 forwardRest = linear * wheel.contactLongitudinal;
+            // Rest-space units per metre, for the carcass's shifts.
+            const float unitsPerMetre = glm::length(forwardRest);
+            glm::vec3 forward = forwardRest - normal * glm::dot(forwardRest, normal);
+            const glm::vec3 leftRest = linear * -wheel.contactLateral;
+            glm::vec3 left = leftRest - normal * glm::dot(leftRest, normal);
+            if (glm::dot(forward, forward) > 1e-10f && glm::dot(left, left) > 1e-10f)
+            {
+                forward = glm::normalize(forward);
+                left = glm::normalize(left - forward * glm::dot(left, forward));
+
+                TyreDeformation deformation;
+                deformation.onGround = true;
+                deformation.center = shape.center;
+                deformation.axle = glm::normalize(shape.axle);
+                deformation.outerRadius = shape.outerRadius;
+                deformation.innerRadius = shape.innerRadius;
+                deformation.axialCenter = shape.axialCenter;
+                deformation.groundNormal = normal;
+                deformation.groundOffset = glm::dot(normal, contact);
+                deformation.forward = forward;
+                deformation.left = left;
+                deformation.carcassForward = wheel.carcassDeflection.x * unitsPerMetre;
+                deformation.carcassLeft = wheel.carcassDeflection.y * unitsPerMetre;
+                deformation.carcassTwist = wheel.carcassDeflection.z;
+                deformation.carcassBending = unitsPerMetre > 0.0f ? wheel.carcassBendingShape / (unitsPerMetre * unitsPerMetre) : 0.0f;
+                deformation.bulge = kTyreBulge;
+                deformation.smoothing = kTyreSmoothing * shape.outerRadius;
+                entry = PackTyreDeformation(deformation);
+            }
+        }
+        packed.insert(packed.end(), entry.begin(), entry.end());
+    }
+    return packed;
 }
 
 void UpdateCameraOrbit(VehicleCameraOrbit& orbit, bool lookHeld, float yawDeltaDegrees, float pitchDeltaDegrees, float recenterRate, float deltaSeconds)

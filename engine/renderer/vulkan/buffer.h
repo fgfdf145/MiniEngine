@@ -71,6 +71,12 @@ class VulkanBuffer
     {
         return m_skinned;
     }
+    // Skinned or a tyre (MeshData::IsPosed): the skinning pass writes the vertex and position buffers
+    // every frame from the bind pose.
+    bool IsPosed() const
+    {
+        return m_posed;
+    }
     VkBuffer GetBindPoseHandle() const
     {
         return m_bindPoseBuffer;
@@ -79,13 +85,13 @@ class VulkanBuffer
     {
         return m_skinBuffer;
     }
-    // Where each vertex was last frame, before the entity's own motion: a skinned mesh's last pose (the
+    // Where each vertex was last frame, before the entity's own motion: a posed mesh's last pose (the
     // skinning pass keeps it), anyone else's position stream.
     VkBuffer GetPreviousPositionHandle() const
     {
-        return m_skinned ? m_previousPositionBuffer : m_positionBuffer;
+        return m_posed ? m_previousPositionBuffer : m_positionBuffer;
     }
-    // A skinned, device-addressable mesh's position stream, which its ray tracing bottom level is
+    // A posed, device-addressable mesh's position stream, which its ray tracing bottom level is
     // built and refitted from (VulkanRayAcceleration); 0 otherwise.
     VkDeviceAddress GetPositionAddress() const
     {
@@ -127,9 +133,10 @@ class VulkanBuffer
     VulkanPooledMemory m_indexMemory;
     VkBuffer m_positionBuffer = VK_NULL_HANDLE;
     VulkanPooledMemory m_positionMemory;
-    // A skinned mesh's bind pose vertices and skin, which the skinning pass reads to write the vertex
-    // and position buffers above (storage buffers too, then).
+    // A posed mesh's bind pose vertices and a skinned one's skin, which the skinning pass reads to
+    // write the vertex and position buffers above (storage buffers too, then).
     bool m_skinned = false;
+    bool m_posed = false;
     VkDeviceAddress m_positionAddress = 0;
     VkBuffer m_bindPoseBuffer = VK_NULL_HANDLE;
     VulkanPooledMemory m_bindPoseMemory;
