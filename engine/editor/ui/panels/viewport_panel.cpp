@@ -179,9 +179,9 @@ Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
     input.brake = std::clamp(std::max(controls.brake, -drive), 0.0f, 1.0f);
     input.steering = controls.steering;
     input.handBrake = controls.handBrake > 0.05f;
-    input.absFitted = vehicle.absFitted;
+    input.absFitted = vehicle.absFitted && vehicle.absOn;
     input.absActive = telemetry.absActive;
-    input.tcsFitted = vehicle.tractionControlFitted;
+    input.tcsFitted = vehicle.tractionControlFitted && vehicle.tractionControlOn;
     input.tcsActive = telemetry.tractionControlCut;
     input.counterSteerAssist = vehicle.counterSteerAssist;
     input.turbo = vehicle.turbo;

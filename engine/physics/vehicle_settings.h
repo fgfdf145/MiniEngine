@@ -401,7 +401,8 @@ struct VehicleSettings
     // The game's traction control (electronics.ini [TRACTION_CONTROL]): above tcMinSpeedKmh, at tcRateHz,
     // the throttle is cut while a driven wheel turns faster than the road by more than tcSlipRatioLimit.
     // A car whose data has electronics uses this instead of tractionControlGrip (which it sets to 0);
-    // a limit of 0 is none. useTractionControl off ignores the car's.
+    // a limit of 0 is none. useTractionControl off switches traction control off, the car's and
+    // tractionControlGrip's alike.
     bool useTractionControl = true;
     float tcSlipRatioLimit = 0.0f;
     float tcMinSpeedKmh = 0.0f;

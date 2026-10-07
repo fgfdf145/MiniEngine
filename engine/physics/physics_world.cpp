@@ -2913,7 +2913,7 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         }
     }
     vehicle.dynamicBrakeBias = settings.dynamicBrakeBias;
-    vehicle.tractionControlGrip = std::max(settings.tractionControlGrip, 0.0f);
+    vehicle.tractionControlGrip = settings.useTractionControl ? std::max(settings.tractionControlGrip, 0.0f) : 0.0f;
     vehicle.defaultClutchStrength = settings.clutchStrength > 0.0f ? settings.clutchStrength : 10.0f;
     vehicle.limitedSlipLock = settings.limitedSlipDifferentials ? std::max(settings.limitedSlipLock, 0.0f) : 0.0f;
     vehicle.drive = settings.drive;
@@ -2991,6 +2991,15 @@ void PhysicsWorld::SetVehicleBrushTyreBristles(VehicleId id, int ribs, int segme
     {
         vehicle.brushTyres[index] = tyre::BrushTyre(BuildBrushTyreParameters(vehicle.settings, index));
     }
+}
+
+void PhysicsWorld::SetVehicleDriverAids(VehicleId id, bool abs, bool tractionControl)
+{
+    // ApplyAntiLock, ApplyTractionControl and SetClutchStrength let go of what they hold at the next step.
+    Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
+    vehicle.settings.useAbs = abs;
+    vehicle.settings.useTractionControl = tractionControl;
+    vehicle.tractionControlGrip = tractionControl ? std::max(vehicle.settings.tractionControlGrip, 0.0f) : 0.0f;
 }
 
 void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)

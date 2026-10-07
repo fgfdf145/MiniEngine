@@ -334,6 +334,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     {
         VehicleDriveService::SetBrushTyreBristles(State(), (*actions.brushTyreBristles)[0], (*actions.brushTyreBristles)[1]);
     }
+    if (actions.driverAids.has_value())
+    {
+        VehicleDriveService::SetDriverAids(State(), (*actions.driverAids)[0], (*actions.driverAids)[1]);
+    }
     if (actions.stepVehicleDrive)
     {
         VehicleDriveService::Step(State());

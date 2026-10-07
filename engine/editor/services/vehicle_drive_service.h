@@ -125,13 +125,16 @@ struct VehicleDriveStatus
     // less when the build or the car is too slow and the drive runs in slow motion).
     float realTimeShare = 1.0f;
     // For the driving HUD: the controls the car took this frame (after the steering assist), the
-    // gearbox, the rev limit, which assists the car has, whether it has turbos, the tyres' compound
-    // initials (front, rear; empty without the car's data) and how far it has driven since the start.
+    // gearbox, the rev limit, which assists the car has and which of those are switched on, whether it
+    // has turbos, the tyres' compound initials (front, rear; empty without the car's data) and how far
+    // it has driven since the start.
     VehicleControls controls;
     bool manualGearbox = false;
     float engineMaxRpm = 7000.0f;
     bool absFitted = false;
     bool tractionControlFitted = false;
+    bool absOn = false;
+    bool tractionControlOn = false;
     bool counterSteerAssist = false;
     bool turbo = false;
     std::string frontTyre;
@@ -242,6 +245,12 @@ struct VehicleDriveSession
     VehicleControls controls;
     bool absFitted = false;
     bool tractionControlFitted = false;
+    // The driver aids' switches (SetDriverAids), and their buttons held in the last frame: each press
+    // switches once.
+    bool absOn = true;
+    bool tractionControlOn = true;
+    bool absButtonHeld = false;
+    bool tractionControlButtonHeld = false;
     bool turbo = false;
     std::string frontTyre;
     std::string rearTyre;
@@ -290,6 +299,8 @@ void SetCameraView(RendererSharedState& state, VehicleCameraView view);
 // The driven car's brush tyres recut into this many ribs and segments along each (0 for the tyre's own
 // count), at once.
 void SetBrushTyreBristles(RendererSharedState& state, int ribs, int segmentsPerRib);
+// Switches the driven car's anti-lock brakes and traction control on or off, at once.
+void SetDriverAids(RendererSharedState& state, bool abs, bool tractionControl);
 // While paused: advances the simulation by one fixed step.
 void Step(RendererSharedState& state);
 
@@ -305,7 +316,8 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
 
 // Keyboard: W/S or the arrow keys for throttle and reverse, A/D or left/right to steer, Space for the
 // hand brake, E/Q to change up/down and N (held) for the clutch (V and the right stick's click change
-// the view, which Tick reads). Gamepad: right and left trigger, left
+// the view, B and the D-pad's left switch ABS, T and the D-pad's right traction control, which Tick
+// reads). Gamepad: right and left trigger, left
 // stick, East button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change
 // up/down and South (Cross, held) for the clutch. With `manualGearbox` the gear buttons change gear, once per press:
 // `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,

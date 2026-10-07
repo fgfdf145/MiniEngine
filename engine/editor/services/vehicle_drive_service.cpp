@@ -405,8 +405,10 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
     session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
     session->frontPeakSlipDegrees = settings.frontTyres.peakSlipAngleDegrees > 0.0f ? settings.frontTyres.peakSlipAngleDegrees : 7.0f;
-    session->absFitted = settings.useAbs && settings.absSlipRatioLimit > 0.0f;
-    session->tractionControlFitted = (settings.useTractionControl && settings.tcSlipRatioLimit > 0.0f) || settings.tractionControlGrip > 0.0f;
+    session->absFitted = settings.absSlipRatioLimit > 0.0f;
+    session->tractionControlFitted = settings.tcSlipRatioLimit > 0.0f || settings.tractionControlGrip > 0.0f;
+    session->absOn = settings.useAbs;
+    session->tractionControlOn = settings.useTractionControl;
     session->turbo = !settings.turbos.empty();
     if (tuning.useCarData && modelData && modelData->carSpec.has_value())
     {
@@ -556,6 +558,21 @@ void SetBrushTyreBristles(RendererSharedState& state, int ribs, int segmentsPerR
     {
         session->physics->SetVehicleBrushTyreBristles(session->vehicle, ribs, segmentsPerRib);
     }
+}
+
+void SetDriverAids(RendererSharedState& state, bool abs, bool tractionControl)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr || (session->absOn == abs && session->tractionControlOn == tractionControl))
+    {
+        return;
+    }
+    session->absOn = abs;
+    session->tractionControlOn = tractionControl;
+    session->physics->SetVehicleDriverAids(session->vehicle, abs, tractionControl);
+    LOG_INFO(
+        "'{}': ABS {}{}, traction control {}{}", session->name, abs ? "on" : "off", session->absFitted ? "" : " (none fitted)",
+        tractionControl ? "on" : "off", session->tractionControlFitted ? "" : " (none fitted)");
 }
 
 void Step(RendererSharedState& state)
@@ -747,6 +764,22 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         SetCameraView(state, NextVehicleCameraView(state.vehicleDrive.cameraView));
     }
     session->viewButtonHeld = viewDown;
+    // B, or the D-pad's left, switches ABS (its lamp is on the HUD's left); T, or the D-pad's right,
+    // traction control (on the right).
+    const int pad = state.input.GetFirstConnectedGamepadIndex();
+    const bool absDown =
+        !keyboardCaptured &&
+        (state.input.IsKeyDown(KeyCode(SDL_SCANCODE_B)) ||
+         (pad >= 0 && state.input.IsGamepadButtonDown(GamepadButton::DpadLeft, static_cast<uint32_t>(pad))));
+    const bool tractionControlDown =
+        !keyboardCaptured &&
+        (state.input.IsKeyDown(KeyCode(SDL_SCANCODE_T)) ||
+         (pad >= 0 && state.input.IsGamepadButtonDown(GamepadButton::DpadRight, static_cast<uint32_t>(pad))));
+    SetDriverAids(
+        state, session->absOn != (absDown && !session->absButtonHeld),
+        session->tractionControlOn != (tractionControlDown && !session->tractionControlButtonHeld));
+    session->absButtonHeld = absDown;
+    session->tractionControlButtonHeld = tractionControlDown;
 
     session->physics->SetVehicleControls(session->vehicle, controls);
     session->controls = controls;
@@ -904,6 +937,8 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.engineMaxRpm = session->engineMaxRpm;
         status.absFitted = session->absFitted;
         status.tractionControlFitted = session->tractionControlFitted;
+        status.absOn = session->absOn;
+        status.tractionControlOn = session->tractionControlOn;
         status.counterSteerAssist = state.vehicleDrive.steeringAssist.enabled && state.vehicleDrive.steeringAssist.counterSteerAssist;
         status.turbo = session->turbo;
         status.frontTyre = session->frontTyre;

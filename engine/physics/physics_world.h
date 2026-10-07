@@ -230,6 +230,10 @@ class PhysicsWorld
     // Recuts a car's brush tyres into this many ribs and segments along each (0 for the tyre's own count)
     // while it drives; their carcasses start again from rest. Nothing for a car on the physics engine's tyres.
     void SetVehicleBrushTyreBristles(VehicleId vehicle, int ribs, int segmentsPerRib);
+    // Switches a car's anti-lock brakes and traction control on or off while it drives (useAbs and
+    // useTractionControl): a car without one stays without it, one switched on works as the car's
+    // settings give it.
+    void SetVehicleDriverAids(VehicleId vehicle, bool abs, bool tractionControl);
     // Puts the car at the pose, stopped, as it was when added.
     void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
     // The height of the first static surface (track, ground, walls) straight below `from`, within

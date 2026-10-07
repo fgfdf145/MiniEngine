@@ -96,6 +96,45 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     }
 }
 
+// ABS and traction control on or off. While a car is driven the switches are its own (the keys and the
+// D-pad switch them too) and a change here reaches it at once; the next drive starts as they are left.
+void DrawDriverAids(VehicleSettings& tuning, const VehicleDriveStatus& status, EditorUiFrameResult& result)
+{
+    if (status.active)
+    {
+        tuning.useAbs = status.absOn;
+        tuning.useTractionControl = status.tractionControlOn;
+    }
+    bool changed = ImGui::Checkbox("ABS", &tuning.useAbs);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Anti-lock brakes, for a car whose data has them (its slip limit and rate): a wheel turning\n"
+                          "slower than the road by more than the limit has its brake let off until it is back under.\n"
+                          "B or the D-pad's left while driving.");
+    }
+    if (status.active && !status.absFitted)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(this car has none)");
+    }
+    changed |= ImGui::Checkbox("Traction Control", &tuning.useTractionControl);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The car's own traction control when its data has one (the throttle is cut while a driven wheel\n"
+                          "spins past its slip limit), else the clutch slipping at Tuning > Traction Control (grip).\n"
+                          "T or the D-pad's right while driving.");
+    }
+    if (status.active && !status.tractionControlFitted)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(this car has none)");
+    }
+    if (changed && status.active)
+    {
+        result.actions.driverAids = std::array<bool, 2>{tuning.useAbs, tuning.useTractionControl};
+    }
+}
+
 // The fields a user tunes; the geometry is fitted to the model when driving starts. True when the
 // brush tyre's rib count changed, which a car being driven takes at once.
 bool DrawTuning(VehicleSettings& tuning)
@@ -184,19 +223,6 @@ bool DrawTuning(VehicleSettings& tuning)
             "moves weight onto the front, a wheel in the air gets none); the car's own front/rear split is not used.\n"
             "Off, the torque goes by that fixed split.");
     }
-    ImGui::Checkbox("ABS", &tuning.useAbs);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Anti-lock brakes, for a car whose data has them (its slip limit and rate): a wheel turning\n"
-                          "slower than the road by more than the limit has its brake let off until it is back under.");
-    }
-    ImGui::Checkbox("Traction Control (car's)", &tuning.useTractionControl);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("The traction control a car's data gives (its slip limit, minimum speed and rate): the throttle\n"
-                          "is cut while a driven wheel spins past the limit. A car with that data does not use the\n"
-                          "\"Traction Control (grip)\" below.");
-    }
     DragFloatInRange("Hand Brake Torque (Nm)", &tuning.maxHandBrakeTorque, 0.0f, 10000.0f, "%.0f", 10.0f);
     DragFloatInRange("Spring Frequency (Hz)", &tuning.suspensionFrequencyHz, 0.5f, 5.0f, "%.2f", 0.01f);
     DragFloatInRange("Spring Damping", &tuning.suspensionDamping, 0.0f, 2.0f, "%.2f", 0.01f);
@@ -206,7 +232,8 @@ bool DrawTuning(VehicleSettings& tuning)
         ImGui::SetTooltip(
             "The clutch slips once the engine asks the driven wheels for more than their tyres can hold: this share of\n"
             "their peak grip on the load they carry. 1 is the limit; more lets them spin up. Off (0) leaves a car at\n"
-            "full throttle in a low gear spinning its tyres several times the ground's speed.");
+            "full throttle in a low gear spinning its tyres several times the ground's speed. A car whose data has\n"
+            "traction control uses that instead. Switched on and off by Controls > Traction Control.");
     }
     ImGui::Checkbox("Anti-roll Bars", &tuning.antiRollBars);
     ImGui::SameLine();
@@ -295,6 +322,7 @@ void VehiclePanel::OnGui(EditorContext& context)
 
     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen))
     {
+        DrawDriverAids(vehicle.tuning, status, result);
         ImGui::Checkbox("Manual Gearbox", &vehicle.manualGearbox);
         if (ImGui::IsItemHovered())
         {
@@ -313,10 +341,12 @@ void VehiclePanel::OnGui(EditorContext& context)
         }
         ImGui::TextUnformatted("Backspace: reset the car    R: flip upright where it is    F5: stop");
         ImGui::TextUnformatted("V: change view (chase, cockpit, bonnet, bumper)");
+        ImGui::TextUnformatted("B: ABS on/off    T: traction control on/off");
         ImGui::TextUnformatted("Hold the right mouse button: look around the car, or turn your head from inside it");
         ImGui::TextDisabled("Gamepad (DualSense / Xbox): R2/L2 (RT/LT), left stick, right stick looks around,");
         ImGui::TextDisabled("Circle (B) hand brake, R1/L1 (RB/LB) change up/down, Cross (A, held) clutch,");
-        ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is, R3 (right stick click) change view");
+        ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is, R3 (right stick click) change view,");
+        ImGui::TextDisabled("D-pad left ABS on/off, D-pad right traction control on/off");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
     }
 

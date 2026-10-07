@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -2409,7 +2410,9 @@ void TestAerodynamicsDragsAndPressesDown()
 
 // Runs a car up to 25 m/s, brakes flat out and reports how long the wheels spent locked (slipping past
 // 0.5 of the ground speed above 8 m/s, below which a wheel rolls to a stop however gently) and how far the car went.
-void BrakeFromSpeed(const VehicleSettings& settings, float& lockedSeconds, float& distance)
+// `beforeBraking` runs at speed, just before the brakes go on.
+void BrakeFromSpeed(
+    const VehicleSettings& settings, float& lockedSeconds, float& distance, const std::function<void(PhysicsWorld&, VehicleId)>& beforeBraking = {})
 {
     PhysicsWorld world;
     AddGroundMesh(world);
@@ -2421,6 +2424,10 @@ void BrakeFromSpeed(const VehicleSettings& settings, float& lockedSeconds, float
     for (int i = 0; i < 4000 && world.GetVehicleTelemetry(car).forwardSpeed < 25.0f; ++i)
     {
         Simulate(world, 0.01f);
+    }
+    if (beforeBraking)
+    {
+        beforeBraking(world, car);
     }
     controls = {};
     controls.brake = 1.0f;
@@ -2597,6 +2604,24 @@ void TestAntiLockBrakesKeepTheWheelsTurning()
     float distanceOff = 0.0f;
     BrakeFromSpeed(car, lockedOff, distanceOff);
     Require(lockedOff > 0.5f, "switched off, the car's ABS does nothing");
+
+    // Switched while driving: off at speed it lets the wheels lock, and on again it keeps them turning.
+    car.useAbs = true;
+    float lockedSwitchedOff = 0.0f;
+    float distanceSwitchedOff = 0.0f;
+    BrakeFromSpeed(car, lockedSwitchedOff, distanceSwitchedOff, [](PhysicsWorld& world, VehicleId id)
+                   {
+                       world.SetVehicleDriverAids(id, false, true);
+                   });
+    Require(lockedSwitchedOff > 0.5f, "switched off while driving, the wheels lock, " + std::to_string(lockedSwitchedOff) + " s");
+    car.useAbs = false;
+    float lockedSwitchedOn = 0.0f;
+    float distanceSwitchedOn = 0.0f;
+    BrakeFromSpeed(car, lockedSwitchedOn, distanceSwitchedOn, [](PhysicsWorld& world, VehicleId id)
+                   {
+                       world.SetVehicleDriverAids(id, true, true);
+                   });
+    Require(lockedSwitchedOn < 0.05f, "switched on while driving, they keep turning, " + std::to_string(lockedSwitchedOn) + " s");
 }
 
 // Full throttle from a standstill for six seconds: how far the rear tyres turn faster than the ground passes
@@ -2609,12 +2634,17 @@ struct LaunchReport
     float meanGap = 0.0f;
 };
 
-LaunchReport MeasureLaunch(const VehicleSettings& tuning)
+// `beforeLaunch` runs once the car has settled, just before the throttle goes down.
+LaunchReport MeasureLaunch(const VehicleSettings& tuning, const std::function<void(PhysicsWorld&, VehicleId)>& beforeLaunch = {})
 {
     PhysicsWorld world;
     AddGroundMesh(world);
     const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 1.0f);
+    if (beforeLaunch)
+    {
+        beforeLaunch(world, car);
+    }
     VehicleControls controls;
     controls.throttle = 1.0f;
     world.SetVehicleControls(car, controls);
@@ -2657,6 +2687,26 @@ void TestDrivenWheelsKeepNearTheGround()
               << " mean, " << held.peakSlip << " peak, the two wheels " << held.meanGap << " apart\n";
     Require(free.meanSlip > 0.15f && free.peakSlip > 0.5f, "without traction control the tyres spin up, " + std::to_string(free.meanSlip));
     Require(held.meanSlip < 0.25f && held.peakSlip < free.peakSlip * 0.85f, "with it they stay near the ground's speed, " + std::to_string(held.meanSlip) + ", " + std::to_string(held.peakSlip));
+
+    // The traction control switch turns the clutch's off too, at the start and while driving, and back on.
+    tuning.useTractionControl = false;
+    const LaunchReport switchedOff = MeasureLaunch(tuning);
+    tuning.useTractionControl = true;
+    const LaunchReport switchedOffWhileDriving = MeasureLaunch(tuning, [](PhysicsWorld& world, VehicleId id)
+                                                               {
+                                                                   world.SetVehicleDriverAids(id, true, false);
+                                                               });
+    tuning.useTractionControl = false;
+    const LaunchReport switchedOnWhileDriving = MeasureLaunch(tuning, [](PhysicsWorld& world, VehicleId id)
+                                                              {
+                                                                  world.SetVehicleDriverAids(id, true, true);
+                                                              });
+    tuning.useTractionControl = true;
+    std::cout << "launch, traction control switched off " << switchedOff.meanSlip << " mean, off while driving " << switchedOffWhileDriving.meanSlip
+              << ", on while driving " << switchedOnWhileDriving.meanSlip << '\n';
+    Require(std::abs(switchedOff.meanSlip - free.meanSlip) < 0.02f, "switched off, the tyres spin up as without it, " + std::to_string(switchedOff.meanSlip));
+    Require(std::abs(switchedOffWhileDriving.meanSlip - free.meanSlip) < 0.02f, "switched off while driving, as well, " + std::to_string(switchedOffWhileDriving.meanSlip));
+    Require(std::abs(switchedOnWhileDriving.meanSlip - held.meanSlip) < 0.02f, "switched on while driving, it holds them, " + std::to_string(switchedOnWhileDriving.meanSlip));
 
     tuning.limitedSlipDifferentials = false;
     tuning.tractionControlGrip = 0.0f; // with it holding both tyres to the ground, an open differential has nothing to show

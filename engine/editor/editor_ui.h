@@ -149,6 +149,9 @@ struct EditorUiActions
     // The brush tyre's cut changed in the tuning (ribs, segments per rib; 0 for the tyre's own): the car
     // being driven takes it at once.
     std::optional<std::array<int, 2>> brushTyreBristles;
+    // ABS and traction control switched on or off (abs, traction control) in the panel: the car being
+    // driven takes it at once.
+    std::optional<std::array<bool, 2>> driverAids;
     // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
     bool startVehicleRig = false;
     bool stopVehicleRig = false;

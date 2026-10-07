@@ -21,8 +21,8 @@ struct Gt7HudInput
     float brake = 0.0f;
     float steering = 0.0f;
     bool handBrake = false;
-    // The assists: fitted (lamp on) and working this moment (lamp red, and the cut shown red on its
-    // pedal's bar).
+    // The assists: fitted and switched on (lamp on; grey when the car has none or it is switched off) and
+    // working this moment (lamp red, and the cut shown red on its pedal's bar).
     bool absFitted = false;
     bool absActive = false;
     bool tcsFitted = false;
