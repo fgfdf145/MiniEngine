@@ -28,6 +28,10 @@ constexpr std::array<float, 3> kMaxFingerCurlDegrees{90.0f, 100.0f, 80.0f};
 constexpr float kFingerCurlStepDegrees = 2.0f;
 constexpr float kEmptyHandCurlShare = 0.35f;
 constexpr std::array<float, 3> kThumbCurlDegrees{10.0f, 20.0f, 20.0f};
+// Holding something, the thumb's joints each turn, up to these, until the next joint lies on it (within
+// this much).
+constexpr std::array<float, 3> kMaxThumbBendDegrees{35.0f, 60.0f, 60.0f};
+constexpr float kThumbSurfaceTolerance = 0.003f;
 // A hand on its way from the wheel to something else rises this much at the middle.
 constexpr float kHandCarryLift = 0.05f;
 // The neck and head take back this share of the back's recline each, so the eyes look at the road, and
@@ -563,6 +567,11 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
                 continue;
             }
             std::array<float, 3> curl{};
+            if (finger == 0 && target.holds != HandTarget::Holds::Nothing)
+            {
+                // Laid on what the hand holds below, once the fingers are round it.
+                continue;
+            }
             if (finger == 0)
             {
                 for (size_t joint = 0; joint < 3; ++joint)
@@ -616,6 +625,67 @@ void PoseDriver(const ModelSkeleton& skeleton, const DriverRig& rig, const Drive
             }
         }
         posing.Update();
+
+        // The thumb on what the hand holds: it does not bend about the fingers' axis, so each of its joints
+        // turns towards the held thing (its middle line, or a ball's centre) until the next joint touches
+        // it, or as near as it gets.
+        const std::array<int32_t, 4>& thumb = rig.fingers[side][0];
+        if (target.holds != HandTarget::Holds::Nothing && thumb[0] >= 0 && thumb[1] >= 0 && thumb[2] >= 0)
+        {
+            const auto heldMiddle = [&](const glm::vec3& point)
+            {
+                if (target.holds == HandTarget::Holds::Ball)
+                {
+                    return target.ball;
+                }
+                const glm::vec3 offset = point - input.wheelCenter;
+                const glm::vec3 inPlane = offset - wheelAxis * glm::dot(offset, wheelAxis);
+                return input.wheelCenter + SafeNormalize(inPlane, wheelUp) * input.wheelRadius;
+            };
+            for (size_t joint = 0; joint < 3; ++joint)
+            {
+                const glm::vec3 pivot = posing.Position(thumb[joint]);
+                glm::vec3 child;
+                if (joint < 2)
+                {
+                    child = posing.Position(thumb[joint + 1]);
+                }
+                else
+                {
+                    child = thumb[3] >= 0 ? posing.Position(thumb[3]) : pivot + (pivot - posing.Position(thumb[1])) * 0.8f;
+                }
+                // Towards it when off it, away when sunk into it: as near the surface as the joint turns.
+                const float start = distanceToHeld(child);
+                if (std::abs(start - kFingerRadius) <= kThumbSurfaceTolerance)
+                {
+                    continue;
+                }
+                const glm::vec3 axis = glm::cross(child - pivot, heldMiddle(child) - pivot);
+                if (glm::length(axis) < 1e-8f)
+                {
+                    continue;
+                }
+                const glm::vec3 unit = glm::normalize(axis) * (start > kFingerRadius ? 1.0f : -1.0f);
+                const float maxBend = glm::radians(kMaxThumbBendDegrees[joint]);
+                float best = 0.0f;
+                float error = std::abs(start - kFingerRadius);
+                for (float angle = glm::radians(kFingerCurlStepDegrees); angle <= maxBend; angle += glm::radians(kFingerCurlStepDegrees))
+                {
+                    const float offSurface = std::abs(distanceToHeld(pivot + glm::angleAxis(angle, unit) * (child - pivot)) - kFingerRadius);
+                    if (offSurface < error)
+                    {
+                        error = offSurface;
+                        best = angle;
+                    }
+                    if (offSurface <= kThumbSurfaceTolerance)
+                    {
+                        break;
+                    }
+                }
+                posing.Turn(thumb[joint], glm::angleAxis(best, unit));
+                posing.Update();
+            }
+        }
     }
 
     if (result != nullptr)

@@ -86,9 +86,10 @@ struct VehicleDriverFeet
     float clutchHold = 0.0f;
 };
 
-// The body thrown about by the car: a damped spring on its lean, driven by what the driver feels (the
-// car's acceleration less gravity, in the car's own frame), forward under braking, back a little under
-// power, outwards in a corner.
+// The body thrown about by the car: a damped spring on its lean, driven by what the driver feels where
+// it sits (the acceleration of that point of the car's body, which rolls and pitches on its springs,
+// less gravity, in the body's own frame), forward under braking, back a little under power, outwards in
+// a corner and as the body rolls.
 struct VehicleDriverSway
 {
     int samples = 0;
@@ -101,8 +102,9 @@ struct VehicleDriverSway
     glm::vec2 leanRate{0.0f};
 };
 
-// Moves the sway on for the car's vehicle space at vehicleToWorld now; deltaSeconds of 0 holds it.
-void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, float deltaSeconds);
+// Moves the sway on for the car's vehicle space at vehicleToWorld now, felt at `feltAt` (a point of the
+// car in vehicle space); deltaSeconds of 0 holds it.
+void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, const glm::vec3& feltAt, float deltaSeconds);
 
 // Where the hands hold the steering wheel, hand over hand: each holds a point of the rim and turns with
 // it until it is as far round as it reaches (the left hand from 170 degrees left of the top to 100

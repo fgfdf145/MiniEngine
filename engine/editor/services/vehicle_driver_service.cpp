@@ -99,6 +99,8 @@ constexpr float kSwayFrequency = 1.6f;
 constexpr float kSwayDamping = 0.5f;
 constexpr float kFeltSeconds = 0.1f;
 constexpr float kSwayStepSeconds = 1.0f / 240.0f;
+// The body's sway is felt this far over the hips (about the chest).
+constexpr float kSwayFeltAboveHips = 0.3f;
 // Faster than this the car has jumped (a reset), and the sway starts again.
 constexpr float kJumpSpeed = 150.0f;
 // Hand over hand: how far round each hand reaches from the top (the left hand's range; the right's is
@@ -571,13 +573,14 @@ std::pair<float, float> HandRange(size_t side)
 }
 }
 
-void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, float deltaSeconds)
+void UpdateDriverSway(VehicleDriverSway& sway, const glm::mat4& vehicleToWorld, const glm::vec3& feltAt, float deltaSeconds)
 {
     if (deltaSeconds <= 0.0f)
     {
         return;
     }
-    const glm::vec3 position(vehicleToWorld[3]);
+    // The point of the body the driver is carried by: as the body rolls and pitches it swings round.
+    const glm::vec3 position(vehicleToWorld * glm::vec4(feltAt, 1.0f));
     const glm::vec3 velocity = (position - sway.lastPosition) / deltaSeconds;
     if (sway.samples > 0 && glm::length(velocity) > kJumpSpeed)
     {
@@ -859,7 +862,9 @@ void Tick(RendererSharedState& state, float deltaSeconds)
         const float steeringWheelTurn = driven ? session->steeringWheelTurn : 0.0f;
         UpdateDriverFeet(feet, throttle, brake, clutch, step);
         UpdateDriverHands(motion.hands, *fitted.seat, steeringWheelTurn * fitted.seat->wheelTurnSign, step);
-        UpdateDriverSway(motion.sway, matrix, step);
+        // Felt at the chest, where the body's weight swings from: high in the car, it goes with its roll
+        // and pitch too.
+        UpdateDriverSway(motion.sway, matrix, fitted.seat->hips + glm::vec3(0.0f, kSwayFeltAboveHips, 0.0f), step);
         DriverPoseInput input = DriverPoseFromSeat(*fitted.seat, model.driverSeatOffset, steeringWheelTurn, fromCockpit, &motion);
 
         // A gear change: the hand on the lever's side goes to the knob as the lever moves.
