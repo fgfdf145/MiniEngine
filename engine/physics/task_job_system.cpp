@@ -46,6 +46,12 @@ int TaskJobSystem::GetMaxConcurrency() const
     return static_cast<int>(m_drainers + 1);
 }
 
+uint32_t TaskJobSystem::ActiveDrainers() const
+{
+    const uint32_t active = TaskSystem::ActiveThreadCount();
+    return std::max(1u, std::min(m_drainers, active > 1 ? active - 1 : 1u));
+}
+
 TaskJobSystem::JobHandle TaskJobSystem::CreateJob(const char* name, JPH::ColorArg color, const JobFunction& function, JPH::uint32 numDependencies)
 {
     // As JobSystemThreadPool: wait for a free job rather than fail.
@@ -130,7 +136,7 @@ void TaskJobSystem::StartDrainTask()
         m_nextDrainTask = (m_nextDrainTask + 1) % kDrainTaskCount;
         if (task.GetIsComplete())
         {
-            task.m_SetSize = m_drainers;
+            task.m_SetSize = ActiveDrainers();
             task.m_MinRange = 1;
             TaskSystem::Scheduler().AddTaskSetToPipe(&task);
             return;

@@ -27,7 +27,8 @@ class TaskJobSystem final : public JPH::JobSystemWithBarrier
 {
   public:
     // drainers: how many threads besides the stepping one run a step's jobs at most; 0 takes
-    // kDefaultDrainers, fewer when the task system has fewer threads.
+    // kDefaultDrainers, fewer when the task system has fewer threads. A burst starts no more of them
+    // than the task system has active threads, so a step follows a change of the process's CPUs.
     TaskJobSystem(uint32_t maxJobs, uint32_t maxBarriers, uint32_t drainers = 0);
     ~TaskJobSystem() override;
 
@@ -35,7 +36,10 @@ class TaskJobSystem final : public JPH::JobSystemWithBarrier
     // handful of threads while every extra drainer costs its wake-up.
     static constexpr uint32_t kDefaultDrainers = 7;
 
+    // Fixed for the job system's life: Jolt reads it several times a step and sizes its jobs by it.
     int GetMaxConcurrency() const override;
+    // The drainers a burst starts now.
+    uint32_t ActiveDrainers() const;
     JobHandle CreateJob(const char* name, JPH::ColorArg color, const JobFunction& function, JPH::uint32 numDependencies = 0) override;
 
   protected:

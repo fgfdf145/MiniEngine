@@ -18,6 +18,7 @@
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/threading/render_thread.h>
+#include <engine/core/threading/task_system.h>
 #include <engine/logic/world_bounds.h>
 #include <engine/platform/process/process_allocation.h>
 #include <engine/platform/window/window.h>
@@ -271,10 +272,12 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     }
     if (uiFrame.processAllocation.has_value())
     {
-        // The task workers keep their number, sized at start-up for the CPUs given then.
         const platform::process::ProcessorTopology topology = platform::process::QueryProcessorTopology();
         const platform::process::ProcessAllocationResult applied =
             platform::process::ApplyProcessAllocation(*uiFrame.processAllocation, topology);
+        // The affinity moves every thread; the task workers (physics steps, parallel loops) must also
+        // shrink or grow to the new CPUs, or they crowd fewer cores or leave new ones idle.
+        TaskSystem::SetActiveWorkerThreads(TaskSystem::WorkersForCpus(static_cast<uint32_t>(applied.cpus.size())));
         State().processStatus = platform::process::DescribeProcessAllocation(*uiFrame.processAllocation, applied, topology);
         LOG_INFO("Process: {}", State().processStatus);
     }

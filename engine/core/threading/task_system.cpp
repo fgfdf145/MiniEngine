@@ -5,6 +5,8 @@
 #include <engine/core/log/log.h>
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -19,9 +21,40 @@ namespace
 {
 std::unique_ptr<enki::TaskScheduler> g_scheduler;
 
+// The workers past the active count, held where enkiTS puts an idle worker to sleep: out of tasks,
+// with nothing of a task on its stack. A worker waiting inside a task (WaitforTask) never gets
+// here, so parking cannot stall the work it was part of.
+struct WorkerParking
+{
+    std::mutex mutex;
+    std::condition_variable wake;
+    // enkiTS numbers the initializing thread 0, then the external slots, then the workers.
+    uint32_t firstWorker = 0;
+    uint32_t workers = 0;
+    std::atomic<uint32_t> active{0};
+    bool stopping = false;
+};
+WorkerParking g_parking;
+
 void OnWorkerStart(uint32_t threadNum)
 {
     ConfigureCurrentThread(("Task worker " + std::to_string(threadNum)).c_str());
+}
+
+// enkiTS calls it as a worker goes to sleep for want of tasks. enkiTS counts the worker as asleep
+// meanwhile, so a wake-up meant for it goes to a sleeping worker or to the next one to sleep.
+void OnWorkerIdle(uint32_t threadNum)
+{
+    if (threadNum < g_parking.firstWorker)
+    {
+        return;
+    }
+    const uint32_t worker = threadNum - g_parking.firstWorker;
+    std::unique_lock lock(g_parking.mutex);
+    g_parking.wake.wait(lock, [worker]()
+                        {
+                            return g_parking.stopping || worker < g_parking.active.load(std::memory_order_relaxed);
+                        });
 }
 
 class FunctionTaskSet final : public enki::ITaskSet
@@ -72,14 +105,24 @@ void TaskSystem::Initialize(const Settings& settings)
     }
     const uint32_t hardwareThreads = std::max(1u, std::thread::hardware_concurrency());
     enki::TaskSchedulerConfig config;
-    config.numTaskThreadsToCreate = settings.workerThreads > 0 ? settings.workerThreads : std::max(1u, hardwareThreads > 2 ? hardwareThreads - 2 : 1u);
+    config.numTaskThreadsToCreate = settings.workerThreads > 0 ? settings.workerThreads : WorkersForCpus(hardwareThreads);
     config.numExternalTaskThreads = settings.externalThreads;
     config.profilerCallbacks.threadStart = &OnWorkerStart;
+    config.profilerCallbacks.waitForNewTaskSuspendStart = &OnWorkerIdle;
+    {
+        // Before the workers start: the first ones may go idle at once.
+        const std::lock_guard lock(g_parking.mutex);
+        g_parking.firstWorker = enki::TaskScheduler::GetNumFirstExternalTaskThread() + config.numExternalTaskThreads;
+        g_parking.workers = config.numTaskThreadsToCreate;
+        g_parking.active = settings.activeWorkerThreads > 0 ? std::min(settings.activeWorkerThreads, g_parking.workers) : g_parking.workers;
+        g_parking.stopping = false;
+    }
     g_scheduler = std::make_unique<enki::TaskScheduler>();
     g_scheduler->Initialize(config);
     LOG_INFO(
-        "Task system: {} worker threads, {} external thread slots, {} hardware threads",
+        "Task system: {} worker threads ({} active), {} external thread slots, {} hardware threads",
         config.numTaskThreadsToCreate,
+        g_parking.active.load(),
         config.numExternalTaskThreads,
         hardwareThreads);
 }
@@ -90,6 +133,12 @@ void TaskSystem::Shutdown()
     {
         return;
     }
+    {
+        // enkiTS waits for every worker to quit, the parked ones included.
+        const std::lock_guard lock(g_parking.mutex);
+        g_parking.stopping = true;
+    }
+    g_parking.wake.notify_all();
     g_scheduler->WaitforAllAndShutdown();
     g_scheduler.reset();
 }
@@ -111,6 +160,45 @@ enki::TaskScheduler& TaskSystem::Scheduler()
 uint32_t TaskSystem::ThreadCount()
 {
     return g_scheduler ? g_scheduler->GetNumTaskThreads() : 1u;
+}
+
+uint32_t TaskSystem::ActiveThreadCount()
+{
+    if (!g_scheduler)
+    {
+        return 1u;
+    }
+    return g_scheduler->GetNumTaskThreads() - (g_parking.workers - g_parking.active.load(std::memory_order_relaxed));
+}
+
+uint32_t TaskSystem::WorkerThreadCount()
+{
+    return g_scheduler ? g_parking.workers : 0u;
+}
+
+uint32_t TaskSystem::WorkersForCpus(uint32_t cpus)
+{
+    return cpus > 2 ? cpus - 2 : 1u;
+}
+
+void TaskSystem::SetActiveWorkerThreads(uint32_t count)
+{
+    if (!g_scheduler)
+    {
+        return;
+    }
+    const uint32_t active = std::clamp(count, 1u, std::max(g_parking.workers, 1u));
+    {
+        const std::lock_guard lock(g_parking.mutex);
+        if (g_parking.active.load(std::memory_order_relaxed) == active)
+        {
+            return;
+        }
+        g_parking.active.store(active, std::memory_order_relaxed);
+    }
+    // Lets the parked workers below the new count go; the ones above it park as they run dry.
+    g_parking.wake.notify_all();
+    LOG_INFO("Task system: {} of {} worker threads active", active, g_parking.workers);
 }
 
 bool TaskSystem::CanWaitOnCurrentThread()

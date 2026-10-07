@@ -121,6 +121,40 @@ void ExternalThreadsRegister()
     Require(threads.Count() > 1, "a registered thread's loop must spread over the workers");
 }
 
+// The threads that ran a loop of ranges long enough for every awake worker to join in.
+std::set<std::thread::id> LoopThreads()
+{
+    std::mutex mutex;
+    std::set<std::thread::id> threads;
+    TaskSystem::ParallelFor(64, 1, [&](uint32_t, uint32_t)
+                            {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                                const std::lock_guard lock(mutex);
+                                threads.insert(std::this_thread::get_id());
+                            });
+    return threads;
+}
+
+// Parked workers take no tasks; let go, they take them again. A worker parks once it runs dry, so
+// a loop after the change wakes the workers that were asleep and they park after it.
+void ParkedWorkersTakeNoTasks()
+{
+    const uint32_t workers = TaskSystem::WorkerThreadCount();
+    TaskSystem::SetActiveWorkerThreads(1);
+    Require(TaskSystem::ActiveThreadCount() == TaskSystem::ThreadCount() - (workers - 1), "one worker active");
+    LoopThreads();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const size_t parkedThreads = LoopThreads().size();
+    Require(parkedThreads <= 2, "the calling thread and one worker, got " + std::to_string(parkedThreads));
+
+    TaskSystem::SetActiveWorkerThreads(0);
+    Require(TaskSystem::ActiveThreadCount() == TaskSystem::ThreadCount() - (workers - 1), "the count is at least one");
+    TaskSystem::SetActiveWorkerThreads(workers + 10);
+    Require(TaskSystem::ActiveThreadCount() == TaskSystem::ThreadCount(), "the count is at most every worker");
+    const size_t wokenThreads = LoopThreads().size();
+    Require(wokenThreads > 2, "let go, the workers take tasks again, got " + std::to_string(wokenThreads));
+}
+
 // Without the scheduler the loop runs inline, in one range.
 void InlineWithoutTheScheduler()
 {
@@ -148,6 +182,13 @@ int main()
         ParallelForCoversEveryIndexOnce();
         ParallelForRethrows();
         ExternalThreadsRegister();
+        ParkedWorkersTakeNoTasks();
+        TaskSystem::Shutdown();
+        // Shutting down lets the parked workers go.
+        settings.activeWorkerThreads = 1;
+        TaskSystem::Initialize(settings);
+        Require(TaskSystem::ActiveThreadCount() == 3, "one of 4 workers, the main thread and one external slot");
+        ParallelForCoversEveryIndexOnce();
         TaskSystem::Shutdown();
         InlineWithoutTheScheduler();
     }

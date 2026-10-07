@@ -1,10 +1,12 @@
 #include <engine/platform/process/process_allocation.h>
 
+#include <atomic>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -103,6 +105,16 @@ void TestAllocationAppliesToTheProcess()
     std::cout << "[process] " << topology.processors.size() << " CPUs, " << topology.PerformanceCount()
               << " performance, hybrid " << (topology.IsHybrid() ? "yes" : "no") << '\n';
 
+    // A thread already running, as the physics and task workers are when the Preferences change.
+    std::atomic<bool> release = false;
+    std::thread running([&release]()
+                        {
+                            while (!release.load())
+                            {
+                                std::this_thread::yield();
+                            }
+                        });
+
     ProcessAllocation allocation;
     allocation.priority = ProcessPriority::AboveNormal;
     allocation.cpus = CpuSelection::Custom;
@@ -117,7 +129,12 @@ void TestAllocationAppliesToTheProcess()
     GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask);
     Require(processMask == (DWORD_PTR{1} << topology.processors.front().index), "Windows holds the affinity mask");
     Require(GetPriorityClass(GetCurrentProcess()) == ABOVE_NORMAL_PRIORITY_CLASS, "Windows holds the priority class");
+    GROUP_AFFINITY threadAffinity{};
+    Require(GetThreadGroupAffinity(running.native_handle(), &threadAffinity) != FALSE, "the running thread's affinity reads");
+    Require(threadAffinity.Mask == processMask, "a thread already running moves to the process's CPUs");
 #endif
+    release = true;
+    running.join();
 
     result = ApplyProcessAllocation(ProcessAllocation{}, topology);
     Require(result.error.empty(), "the default allocation applies: " + result.error);

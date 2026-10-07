@@ -41,8 +41,17 @@
 ## 生效时机
 
 1. `EditorApplication::Run()` 一开始（`EnginePaths::Initialize` 之后、任务系统启动之前）读设置、叠加命令行、应用。
-2. 任务系统的工作线程数按应用后得到的处理器数减二（原来是全部硬件线程减二），所以只给 8 个 P 核时是 6 个工作线程，不会 22 个线程挤 8 个核。`--task-threads` 仍然优先。
-3. Preferences 窗口的 Process 一节改动后当帧应用（`EditorUiFrameResult::processAllocation` → `ApplyUiActions`），并保存设置。工作线程数不随之变化，窗口里注明“按启动时的核心数”，要重新分配线程数需重启。
+2. 任务系统按整台机器的处理器数减二创建工作线程（`--task-threads` 仍然优先），其中按应用后得到的处理器数减二的那些是活动的，其余停放。所以只给 8 个 P 核时 22 个工作线程里 6 个干活，不会 22 个线程挤 8 个核。
+3. Preferences 窗口的 Process 一节改动后当帧应用（`EditorUiFrameResult::processAllocation` → `ApplyUiActions`），并保存设置，同时 `TaskSystem::SetActiveWorkerThreads` 把活动工作线程数改成新的处理器数减二，不用重启。
+
+### 运行中改核心数（2026-10-08 修正）
+
+最初的版本里工作线程数只在启动时定一次。亲和掩码会把所有已有线程（物理、任务工作线程）移到新核心上，但线程数不变：启动时全核、运行中改成 8 个 P 核，仍有 22 个工作线程和 7 个物理排空线程挤 8 个核；反过来启动时 8 核、之后改全核，物理一直只有 6 个工作线程可用。
+
+修正：
+- 停放：enkiTS 的工作线程没活要睡眠时会调 `profilerCallbacks.waitForNewTaskSuspendStart`，引擎在这里让编号超出活动数的工作线程在条件变量上等，直到活动数再变大或任务系统关闭。这个位置在任务之外（`WaitforTask` 里等待的线程不走这里），所以停放不会卡住它参与的工作；enkiTS 把它算作睡眠中，发给它的唤醒信号最多让别的线程多醒一次。
+- 物理：`TaskJobSystem::GetMaxConcurrency` 在整个生命周期内不变（Jolt 一步里多次读它来切分任务，中途变化会让切分对不上），每次开工时启动的排空线程数按 `TaskSystem::ActiveThreadCount() - 1` 取，与上限取小。
+- `TaskSystem::Shutdown` 先放开所有停放的线程，否则 enkiTS 等不到它们退出。
 
 ## 界面
 

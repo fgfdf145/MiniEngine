@@ -32,12 +32,12 @@ namespace
 {
 constexpr glm::vec3 kLuma(0.2126f, 0.7152f, 0.0722f);
 
-// Runs work once on each of the task system's threads at the same time; work takes its share of the
-// job from a counter it shares with the others.
+// Runs work once on each of the task system's active threads at the same time; work takes its share
+// of the job from a counter it shares with the others.
 template <typename Work>
 void RunOnEveryTaskThread(const Work& work)
 {
-    TaskSystem::ParallelFor(TaskSystem::ThreadCount(), 1, [&](uint32_t begin, uint32_t end)
+    TaskSystem::ParallelFor(TaskSystem::ActiveThreadCount(), 1, [&](uint32_t begin, uint32_t end)
                             {
                                 for (uint32_t share = begin; share < end; ++share)
                                 {

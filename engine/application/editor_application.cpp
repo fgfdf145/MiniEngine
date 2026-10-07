@@ -492,11 +492,12 @@ int EditorApplication::Run()
     // loads the rest of the settings later; a change in the Preferences window applies at once.
     const std::vector<uint32_t> processCpus = ApplyStartupProcessAllocation();
     // Before anything runs tasks; stopped after everything that does (the renderer) is gone.
+    // Workers for every CPU the process could be given, those past the CPUs it has now parked, so a
+    // change in the Preferences window resizes the parallel work (physics steps included) at once.
     TaskSystem::Settings taskSettings;
-    // One CPU each is left to the main thread and the render thread.
-    const uint32_t processCpuCount = static_cast<uint32_t>(processCpus.size());
-    taskSettings.workerThreads =
-        m_options.taskThreads > 0 ? m_options.taskThreads : (processCpuCount > 2 ? processCpuCount - 2 : 1u);
+    const auto machineCpus = static_cast<uint32_t>(platform::process::QueryProcessorTopology().processors.size());
+    taskSettings.workerThreads = m_options.taskThreads > 0 ? m_options.taskThreads : TaskSystem::WorkersForCpus(machineCpus);
+    taskSettings.activeWorkerThreads = TaskSystem::WorkersForCpus(static_cast<uint32_t>(processCpus.size()));
     TaskSystem::Initialize(taskSettings);
     struct TaskSystemShutdown
     {

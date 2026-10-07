@@ -121,7 +121,10 @@ void PreferencesWindow::DrawProcessSection(EditorContext& context)
     }
 
     ImGui::TextDisabled("Now: %s", context.state.processStatus.empty() ? "Unknown" : context.state.processStatus.c_str());
-    ImGui::TextDisabled("Task threads: %u, sized for the CPUs given at start-up", TaskSystem::ThreadCount());
+    ImGui::TextDisabled(
+        "Task threads: %u active of %u, following the CPUs (physics steps run on them)",
+        TaskSystem::ActiveThreadCount(),
+        TaskSystem::ThreadCount());
 }
 
 void PreferencesWindow::DrawCpuGrid(platform::process::ProcessAllocation& allocation)

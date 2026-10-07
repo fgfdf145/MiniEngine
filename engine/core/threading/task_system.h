@@ -31,6 +31,8 @@ class TaskSystem
         // Worker threads besides the initializing thread; 0 takes the logical processors less two,
         // which leaves one for the main thread and one for the render thread.
         uint32_t workerThreads = 0;
+        // How many of them take tasks at first; 0 is all of them. See SetActiveWorkerThreads.
+        uint32_t activeWorkerThreads = 0;
         // Threads the scheduler did not start that also add and wait for tasks.
         uint32_t externalThreads = 1;
     };
@@ -40,8 +42,19 @@ class TaskSystem
     static void Shutdown();
     static bool IsRunning();
     static enki::TaskScheduler& Scheduler();
-    // The scheduler's threads, workers and registered external ones included.
+    // The scheduler's threads, workers and registered external ones included. Thread numbers stay
+    // below it, so it sizes per-thread storage.
     static uint32_t ThreadCount();
+    // ThreadCount less the parked workers: how many threads can run tasks at once, for sizing work.
+    static uint32_t ActiveThreadCount();
+    static uint32_t WorkerThreadCount();
+    // Lets the first count workers take tasks (clamped to 1..WorkerThreadCount) and parks the others
+    // the next time they run out of work, so the work follows a change of the process's CPUs without
+    // restarting the scheduler. A parked worker sleeps until a later call lets it run again.
+    static void SetActiveWorkerThreads(uint32_t count);
+    // The workers for a process given cpus logical processors: one each is left to the main thread
+    // and the render thread.
+    static uint32_t WorkersForCpus(uint32_t cpus);
     // True on the threads that may add and wait for tasks: task thread 0, the workers, and
     // registered external threads.
     static bool CanWaitOnCurrentThread();

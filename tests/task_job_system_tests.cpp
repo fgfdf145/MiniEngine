@@ -120,6 +120,21 @@ int main()
                 RunJobs(jobSystem, 300, false);
             }
 
+            // Fewer CPUs: a burst starts fewer drainers, while Jolt keeps the concurrency it sized its
+            // jobs by.
+            const int concurrency = jobSystem.GetMaxConcurrency();
+            const uint32_t drainers = jobSystem.ActiveDrainers();
+            TaskSystem::SetActiveWorkerThreads(1);
+            Require(jobSystem.ActiveDrainers() == TaskSystem::ActiveThreadCount() - 1 && jobSystem.ActiveDrainers() < drainers,
+                    "the drainers follow the active workers");
+            Require(jobSystem.GetMaxConcurrency() == concurrency, "the concurrency stays");
+            for (int round = 0; round < 10; ++round)
+            {
+                RunJobs(jobSystem, 300, false);
+            }
+            TaskSystem::SetActiveWorkerThreads(TaskSystem::WorkerThreadCount());
+            Require(jobSystem.ActiveDrainers() == drainers, "more CPUs bring the drainers back");
+
             // Stepped from a thread the scheduler takes no tasks from: the barrier runs every job there.
             std::exception_ptr error;
             size_t outsiderThreads = 0;
