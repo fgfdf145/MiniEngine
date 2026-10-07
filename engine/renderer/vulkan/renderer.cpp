@@ -625,6 +625,11 @@ VulkanRenderer::~VulkanRenderer()
     {
         vkDeviceWaitIdle(m_device->GetHandle());
     }
+    // The device is idle: what was retired goes now, before the caches and the ray scene it names.
+    m_uploadBatches.clear();
+    m_preparedBuffers.clear();
+    m_meshesToUpload.clear();
+    m_retireQueue.Flush();
     m_videoReadback.reset();
 
     DestroyDescriptorResources();
@@ -642,7 +647,6 @@ VulkanRenderer::~VulkanRenderer()
     m_sceneTargets.reset();
     m_imguiLayer.reset();
     m_textureStore.clear();
-    m_textureStagingBatches.clear();
     m_stagedTextures.clear();
     m_renderSubmeshes.clear();
     m_liveSubmeshes.clear();
@@ -650,6 +654,7 @@ VulkanRenderer::~VulkanRenderer()
     m_samplerCache.reset();
     DestroyDeviceResources();
     m_dlss.reset();
+    m_stagingChunkPool.reset();
     m_device.reset();
     m_instance.reset();
 }
@@ -861,6 +866,10 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     const FrameStallReporter stallReporter;
     const auto frameStart = std::chrono::steady_clock::now();
     m_cpuStages.BeginFrame();
+
+    // What the frames that have finished no longer need, draw slots among it, before this frame's
+    // change of content asks for some.
+    m_retireQueue.Collect(m_commandContext->CompletedSubmits());
 
     if (packet.contentChanged)
     {
@@ -1090,9 +1099,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // then this frame's instances go into this slot's.
     if (m_rayScene->HasFinishedBuild())
     {
-        m_commandContext->WaitForAllFrames();
-        m_cpuStages.Mark("RayInstallWait");
-        m_rayScene->InstallBuild();
+        m_rayScene->InstallBuild([this]()
+                                 {
+                                     m_commandContext->WaitForAllFrames();
+                                     m_cpuStages.Mark("RayInstallWait");
+                                 });
         m_cpuStages.Mark("RayInstall");
         // The probes keep the light they hold: most of it still holds (a streamed cell far away
         // changes nothing here), and each probe whose light the new content changes notices at its
@@ -1995,6 +2006,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_device->GetHandle());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
     m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_device->GetHandle(), m_materialSetLayout->GetHandle());
+    m_stagingChunkPool = std::make_unique<VulkanStagingChunkPool>(m_device->GetHandle());
 
     VkPipelineCacheCreateInfo cacheInfo{};
     cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -2040,7 +2052,12 @@ void VulkanRenderer::CreateDeviceResources()
         m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
-        rayDefaultTexture);
+        rayDefaultTexture,
+        m_device->SupportsUpdateUnusedWhilePending());
+    m_rayScene->SetRetire([this](std::function<void()> release)
+                          {
+                              Retire(std::move(release));
+                          });
     m_skinningPass = std::make_unique<VulkanSkinningPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -2746,10 +2763,22 @@ uint32_t VulkanRenderer::AcquireDrawSlot()
 
 void VulkanRenderer::ReleaseDrawSlot(uint32_t slot)
 {
+    // Handed out again only once no frame in flight draws from it: a new draw is written into the
+    // per-draw buffers without waiting for the GPU.
     if (slot != RenderSubmesh::kNoDrawSlot)
     {
-        m_freeDrawSlots.push_back(slot);
+        Retire([this, slot]()
+               {
+                   m_freeDrawSlots.push_back(slot);
+               });
     }
+}
+
+void VulkanRenderer::Retire(std::function<void()> release)
+{
+    // After the next frame's submit too: an upload batch submitted before it, in this frame, may use
+    // what is retired, and only a later frame's fence covers that batch.
+    m_retireQueue.Retire(m_commandContext->LastSubmit() + 1, std::move(release));
 }
 
 void VulkanRenderer::DestroyDescriptorResources()
@@ -2888,25 +2917,43 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     std::unordered_map<std::string, uint32_t> keyToIndex;
     std::vector<std::string> addedTextureKeys;
 
-    // Batch every texture and submesh-buffer upload below into a handful of submit+wait
-    // rounds instead of one per resource: VulkanTexture/VulkanBuffer used to each own their
+    // Batch every texture and submesh-buffer upload below into a handful of submits instead of
+    // one per resource: VulkanTexture/VulkanBuffer used to each own their
     // upload (command pool, submit, vkQueueWaitIdle), which serializes hundreds of GPU
     // round-trips in a row for models with many submeshes/textures (e.g. Sponza: 405 submeshes,
     // up to ~170 unique textures). Flushing periodically bounds how much staging memory is held
     // at once while still cutting the number of GPU stalls by roughly two orders of magnitude. The
     // batch stages out of its own few chunks, and flushes once this much is staged: a count of
     // resources flushed a streamed cell's thousand small buffers sixteen times, each a queue wait.
+    // The batches are submitted without a wait (VulkanUploadBatch::SubmitWithoutWait): the frames that
+    // draw the new content come after them on the queue. A failed upload waits for them all before it
+    // drops what they uploaded into.
     constexpr VkDeviceSize kStagedBytesPerUploadFlush = VkDeviceSize{64} << 20;
-    VulkanUploadBatch uploadBatch(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue());
+    const auto makeUploadBatch = [this]()
+    {
+        auto batch = std::make_unique<VulkanUploadBatch>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            m_device->GetQueueFamilies().graphicsFamily.value(),
+            m_device->GetGraphicsQueue());
+        batch->SetChunkPool(m_stagingChunkPool.get());
+        return batch;
+    };
+    std::unique_ptr<VulkanUploadBatch> uploadBatch = makeUploadBatch();
+    const auto submitUploadBatch = [&]()
+    {
+        if (!uploadBatch->IsEmpty())
+        {
+            uploadBatch->SubmitWithoutWait();
+            m_uploadBatches.push_back(std::move(uploadBatch));
+            uploadBatch = makeUploadBatch();
+        }
+    };
     auto flushUploadBatchIfNeeded = [&]()
     {
-        if (uploadBatch.StagedBytes() >= kStagedBytesPerUploadFlush)
+        if (uploadBatch->StagedBytes() >= kStagedBytesPerUploadFlush)
         {
-            uploadBatch.Flush();
+            submitUploadBatch();
         }
     };
 
@@ -2937,7 +2984,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             return it->second;
         if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
             return indexOf(key, stored->second.texture.get());
-        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), data, uploadBatch, fmt);
+        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), data, *uploadBatch, fmt);
         flushUploadBatchIfNeeded();
         return indexOf(key, store(key, std::move(texture), true));
     };
@@ -2986,7 +3033,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             std::unique_ptr<VulkanTexture> texture = UploadPreparedTexture(
                 PrepareTexture(texturePath, usage, compressTextures, TextureCacheDirectory()),
                 usage,
-                uploadBatch);
+                *uploadBatch);
             flushUploadBatchIfNeeded();
             if (recordedTextureKeys != nullptr)
                 recordedTextureKeys->push_back(key);
@@ -3007,6 +3054,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     // stored, which no live submesh names yet.
     const auto dropAdded = [&]()
     {
+        // The batches already submitted may still be copying into what goes here.
+        m_uploadBatches.clear();
         recordedTextureKeys = nullptr;
         m_materialSets->AbandonPending();
         for (const std::string& key : addedTextureKeys)
@@ -3050,13 +3099,32 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             defaultLayerIndex, defaultLayerIndex};
 
         // The geometry already on the GPU, by the CPU mesh it came from: a mesh the model cache still
-        // holds is the same data, so its buffers carry over. Gathered on the first new submesh.
-        std::unordered_map<const MeshData*, std::shared_ptr<VulkanBuffer>> liveBuffers;
-        bool liveBuffersGathered = false;
+        // holds is the same data, so its buffers carry over (m_meshBuffers).
+        if (m_meshBuffers.size() > 2 * m_renderSubmeshes.size() + 1024)
+        {
+            std::erase_if(m_meshBuffers, [](const auto& entry)
+                          {
+                              return entry.second.buffer.expired() || entry.second.mesh.expired();
+                          });
+        }
+        // An entity's submeshes come one after another: the ordinal counts along a run, and the map is
+        // touched only where the entity changes.
+        entt::entity runEntity = entt::null;
+        uint32_t runOrdinal = 0;
         for (const std::shared_ptr<const CpuRenderSubmesh>& entry : *frame.renderSubmeshes)
         {
             const CpuRenderSubmesh& cpuRenderSubmesh = *entry;
-            const uint32_t ordinal = nextSubmeshOrdinal[cpuRenderSubmesh.entity]++;
+            if (cpuRenderSubmesh.entity != runEntity)
+            {
+                if (runEntity != entt::null)
+                {
+                    nextSubmeshOrdinal[runEntity] = runOrdinal;
+                }
+                runEntity = cpuRenderSubmesh.entity;
+                const auto counted = nextSubmeshOrdinal.find(runEntity);
+                runOrdinal = counted != nextSubmeshOrdinal.end() ? counted->second : 0u;
+            }
+            const uint32_t ordinal = runOrdinal++;
 
             // Kept: a submesh the GPU already has, with its textures, material set and draw slot.
             if (const auto live = m_liveSubmeshes.find(cpuRenderSubmesh.revision); live != m_liveSubmeshes.end())
@@ -3066,19 +3134,6 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
                 continue;
             }
 
-            if (!liveBuffersGathered)
-            {
-                liveBuffers.reserve(m_renderSubmeshes.size());
-                for (const std::shared_ptr<const RenderSubmesh>& live : m_renderSubmeshes)
-                {
-                    if (live->mesh && live->buffer)
-                    {
-                        liveBuffers.emplace(live->mesh.get(), live->buffer);
-                    }
-                }
-                liveBuffersGathered = true;
-            }
-
             auto renderSubmesh = std::make_shared<RenderSubmesh>();
             renderSubmesh->entity = cpuRenderSubmesh.entity;
             renderSubmesh->revision = cpuRenderSubmesh.revision;
@@ -3086,18 +3141,32 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             renderSubmesh->mesh = cpuRenderSubmesh.mesh;
             // A skinned mesh's buffers are the skinning pass's output for this submesh alone: another
             // entity with the same model poses its own copy.
-            if (const auto live = liveBuffers.find(cpuRenderSubmesh.mesh.get());
-                live != liveBuffers.end() && !cpuRenderSubmesh.mesh->IsSkinned())
+            std::shared_ptr<VulkanBuffer> liveBuffer;
+            if (const auto prepared = m_preparedBuffers.find(cpuRenderSubmesh.mesh.get());
+                prepared != m_preparedBuffers.end() && prepared->second.buffer && prepared->second.mesh == cpuRenderSubmesh.mesh)
             {
-                renderSubmesh->buffer = live->second;
+                liveBuffer = prepared->second.buffer;
+                m_meshBuffers[cpuRenderSubmesh.mesh.get()] = MeshBuffers{cpuRenderSubmesh.mesh, liveBuffer};
+            }
+            else if (const auto live = m_meshBuffers.find(cpuRenderSubmesh.mesh.get());
+                live != m_meshBuffers.end() && !cpuRenderSubmesh.mesh->IsSkinned() && live->second.mesh.lock() == cpuRenderSubmesh.mesh)
+            {
+                liveBuffer = live->second.buffer.lock();
+            }
+            if (liveBuffer)
+            {
+                renderSubmesh->buffer = std::move(liveBuffer);
             }
             else
             {
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
                     m_device->GetPhysicalDevice(), m_device->GetHandle(),
-                    *cpuRenderSubmesh.mesh, uploadBatch, m_device->SupportsRayQuery());
-                liveBuffers.emplace(cpuRenderSubmesh.mesh.get(), renderSubmesh->buffer);
+                    *cpuRenderSubmesh.mesh, *uploadBatch, m_device->SupportsRayQuery());
+                if (!cpuRenderSubmesh.mesh->IsSkinned())
+                {
+                    m_meshBuffers[cpuRenderSubmesh.mesh.get()] = MeshBuffers{cpuRenderSubmesh.mesh, renderSubmesh->buffer};
+                }
                 ++newBufferCount;
                 flushUploadBatchIfNeeded();
             }
@@ -3179,7 +3248,11 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             madeSubmeshes[index]->rayMetallic = bindings[index].metallic;
             madeSubmeshes[index]->rayRoughness = bindings[index].roughness;
         }
-        uploadBatch.Flush();
+        if (!uploadBatch->IsEmpty())
+        {
+            uploadBatch->SubmitWithoutWait();
+            m_uploadBatches.push_back(std::move(uploadBatch));
+        }
     }
     catch (...)
     {
@@ -3200,6 +3273,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     }
 
     const size_t submeshCount = newRenderSubmeshes.size();
+    m_unreferencedTextureKeys.insert(m_unreferencedTextureKeys.end(), addedTextureKeys.begin(), addedTextureKeys.end());
     const auto applyStart = std::chrono::steady_clock::now();
     try
     {
@@ -3222,10 +3296,25 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
 
 void VulkanRenderer::DropUnreferencedTextures()
 {
-    std::erase_if(m_textureStore, [](const auto& entry)
-                  {
-                      return entry.second.references == 0 && !entry.second.permanent;
-                  });
+    // Destroyed once the frames in flight, which may still sample them, have finished. Only the textures
+    // that lost their last reference or were just stored can have none.
+    auto dropped = std::make_shared<std::vector<std::unique_ptr<VulkanTexture>>>();
+    for (const std::string& key : m_unreferencedTextureKeys)
+    {
+        if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references == 0 && !entry->second.permanent)
+        {
+            dropped->push_back(std::move(entry->second.texture));
+            m_textureStore.erase(entry);
+        }
+    }
+    m_unreferencedTextureKeys.clear();
+    if (!dropped->empty())
+    {
+        Retire([dropped]()
+               {
+                   dropped->clear();
+               });
+    }
 }
 
 void VulkanRenderer::UploadSceneResourcesOrKeepPrevious(const RenderFramePacket& frame)
@@ -3247,11 +3336,19 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious(const RenderFramePacket&
         return;
     }
 
-    // Staged textures the scene no longer needed are released with the change they were for, after
-    // their uploads (rarely any: a change stages only what it asks for).
+    // Prepared buffers the change did not use (a submesh dropped again before it committed) go once
+    // their uploads have run; the used ones live on in their submeshes.
+    ReleasePreparedBuffers();
+
+    // Staged textures the scene no longer needed are released with the change they were for, once
+    // their uploads have run (rarely any: a change stages only what it asks for).
     if (!m_stagedTextures.empty())
     {
-        m_textureStagingBatches.clear();
+        auto unused = std::make_shared<std::unordered_map<std::string, std::unique_ptr<VulkanTexture>>>(std::move(m_stagedTextures));
+        Retire([unused]()
+               {
+                   unused->clear();
+               });
     }
     m_stagedTextures.clear();
     m_failedTextureKeys.clear();
@@ -3271,8 +3368,23 @@ void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
     for (const std::shared_ptr<const CpuRenderSubmesh>& entry : *frame.renderSubmeshes)
     {
         const CpuRenderSubmesh& submesh = *entry;
+        if (m_liveSubmeshes.count(submesh.revision) != 0)
+        {
+            continue;
+        }
+        // A new submesh of a mesh with no GPU buffers yet: made before the commit. A skinned mesh's are
+        // its own, made with it.
+        if (submesh.mesh && !submesh.mesh->IsSkinned() && m_preparedBuffers.count(submesh.mesh.get()) == 0)
+        {
+            const auto live = m_meshBuffers.find(submesh.mesh.get());
+            if (live == m_meshBuffers.end() || live->second.buffer.expired() || live->second.mesh.lock() != submesh.mesh)
+            {
+                m_preparedBuffers.emplace(submesh.mesh.get(), PreparedBuffers{submesh.mesh, nullptr});
+                m_meshesToUpload.push_back(submesh.mesh);
+            }
+        }
         // A submesh the GPU already draws has every texture it names.
-        if (!submesh.hasTexCoords || m_liveSubmeshes.count(submesh.revision) != 0)
+        if (!submesh.hasTexCoords)
         {
             continue;
         }
@@ -3299,42 +3411,102 @@ void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
 
 void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
 {
-    // A few per frame: the frame loop should keep its pace while a large scene streams in. Small map
-    // textures by the thousand (a streamed cell brings hundreds) are a memcpy into the batch's staging
-    // and a pooled image each; four a frame held a cell back for seconds. Fewer a frame by a time budget
-    // starved the commit, which waits for every texture of the change while cells keep coming.
+    // A few per frame, so the frame loop keeps its pace while a large scene streams in: the new meshes'
+    // buffers (~10 us each) and the prepared textures (a memcpy into the batch's staging and a pooled
+    // image each, ~0.1 ms; a cell brings hundreds), together within a few milliseconds, or a share of the
+    // frame where frames are long (a Debug build, where both cost several times as much and a fixed
+    // budget held cells back for seconds). Four textures a frame held a cell back for seconds, and 64
+    // with a cell's buffers took 12 ms of one frame. While a backlog as large as a scene's first load
+    // waits there is no time limit: the commit waits for all of a change, and a load staged slowly while
+    // cells kept coming never caught up with them.
     constexpr size_t kStagedTexturesPerFrame = 64;
-    std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerFrame);
-    std::erase_if(m_textureStagingBatches, [](const std::unique_ptr<VulkanUploadBatch>& batch)
+    // At least this many whatever they cost (in a Release build about as long as the budget).
+    constexpr size_t kMinStagedTexturesPerFrame = 32;
+    constexpr size_t kStagedTexturesPerGroup = 8;
+    double averageFrameMs = 0.0;
+    for (const double ms : m_cpuFrameMs)
+    {
+        averageFrameMs += ms / static_cast<double>(m_cpuFrameMs.size());
+    }
+    const double meshUploadBudgetMs = std::max(2.0, averageFrameMs * 0.15);
+    const double stagingBudgetMs = std::max(4.0, averageFrameMs * 0.3);
+    constexpr size_t kTextureBacklog = 1024;
+    constexpr size_t kMeshUploadBacklog = 2048;
+    std::erase_if(m_uploadBatches, [](const std::unique_ptr<VulkanUploadBatch>& batch)
                   {
                       return batch->IsComplete();
                   });
 
     // Results of a change that was abandoned are dropped; a later change prepares what it needs
     // again, from the compressed texture cache.
-    if (m_sceneUploadPending && !completed.empty())
+    bool staged = false;
+    if (!m_sceneUploadPending)
+    {
+        m_texturePreparation->TakeCompleted(kStagedTexturesPerFrame);
+    }
+    else
     {
         try
         {
-            auto uploadBatch = std::make_unique<VulkanUploadBatch>(
-                m_device->GetPhysicalDevice(),
-                m_device->GetHandle(),
-                m_device->GetQueueFamilies().graphicsFamily.value(),
-                m_device->GetGraphicsQueue());
-            for (TexturePreparationResult& result : completed)
+            const auto stagingStart = std::chrono::steady_clock::now();
+            const auto elapsedMs = [&stagingStart]()
             {
-                if (!result.texture)
+                return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stagingStart).count();
+            };
+            std::unique_ptr<VulkanUploadBatch> uploadBatch;
+            const auto batch = [&]() -> VulkanUploadBatch&
+            {
+                if (!uploadBatch)
                 {
-                    LOG_ERROR("Failed to load model texture '{}': {}", result.key, result.error);
-                    m_failedTextureKeys.insert(result.key);
-                    continue;
+                    uploadBatch = std::make_unique<VulkanUploadBatch>(
+                        m_device->GetPhysicalDevice(),
+                        m_device->GetHandle(),
+                        m_device->GetQueueFamilies().graphicsFamily.value(),
+                        m_device->GetGraphicsQueue());
+                    uploadBatch->SetChunkPool(m_stagingChunkPool.get());
                 }
-                m_stagedTextures[result.key] = UploadPreparedTexture(*result.texture, result.usage, *uploadBatch);
+                return *uploadBatch;
+            };
+            const bool unlimitedMeshes = m_meshesToUpload.size() > kMeshUploadBacklog;
+            while (!m_meshesToUpload.empty() && (unlimitedMeshes || elapsedMs() < meshUploadBudgetMs))
+            {
+                const std::shared_ptr<const MeshData> mesh = std::move(m_meshesToUpload.front());
+                m_meshesToUpload.pop_front();
+                // Addressable for the ray scene's hit shading when rays run on the hardware.
+                m_preparedBuffers[mesh.get()] = PreparedBuffers{
+                    mesh,
+                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *mesh, batch(), m_device->SupportsRayQuery())};
             }
-            // The frames after this one sample the textures only once the change commits, and the
-            // batch's barrier orders its copies before them: nothing here waits for the GPU.
-            uploadBatch->SubmitWithoutWait();
-            m_textureStagingBatches.push_back(std::move(uploadBatch));
+            const bool unlimitedTextures = m_texturePreparation->PendingCount() > kTextureBacklog;
+            size_t stagedTextures = 0;
+            while (stagedTextures < kStagedTexturesPerFrame &&
+                   (unlimitedTextures || stagedTextures < kMinStagedTexturesPerFrame || elapsedMs() < stagingBudgetMs))
+            {
+                std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerGroup);
+                if (completed.empty())
+                {
+                    break;
+                }
+                staged = true;
+                for (TexturePreparationResult& result : completed)
+                {
+                    ++stagedTextures;
+                    if (!result.texture)
+                    {
+                        LOG_ERROR("Failed to load model texture '{}': {}", result.key, result.error);
+                        m_failedTextureKeys.insert(result.key);
+                        continue;
+                    }
+                    m_stagedTextures[result.key] = UploadPreparedTexture(*result.texture, result.usage, batch());
+                }
+            }
+            if (uploadBatch)
+            {
+                // The frames after this one draw with these only once the change commits, and the batch's
+                // barrier orders its copies before them: nothing here waits for the GPU.
+                uploadBatch->SubmitWithoutWait();
+                m_uploadBatches.push_back(std::move(uploadBatch));
+            }
         }
         catch (const std::exception& error)
         {
@@ -3349,7 +3521,11 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
     }
 
     m_cpuStages.Mark("StageTextures");
-    if (m_sceneUploadPending && m_texturePreparation->IsIdle())
+    // Not in the frame that staged the change's last textures: the two together made one long frame.
+    // Meshes still waiting for their buffers do not hold the commit back, which makes the rest itself:
+    // the buffers are made ahead only while the textures are being prepared (a Debug build makes them
+    // so slowly that waiting for all of them held cells back for seconds).
+    if (m_sceneUploadPending && m_texturePreparation->IsIdle() && !staged)
     {
         m_sceneUploadPending = false;
         UploadSceneResourcesOrKeepPrevious(frame);
@@ -3362,6 +3538,10 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
         const size_t done = m_texturesRequested > pending ? m_texturesRequested - pending : 0;
         m_sceneUploadStatus =
             "Preparing textures: " + std::to_string(done) + " of " + std::to_string(m_texturesRequested);
+        if (!m_meshesToUpload.empty())
+        {
+            m_sceneUploadStatus += ", " + std::to_string(m_meshesToUpload.size()) + " meshes to upload";
+        }
     }
     else
     {
@@ -3369,12 +3549,28 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
     }
 }
 
+void VulkanRenderer::ReleasePreparedBuffers()
+{
+    m_meshesToUpload.clear();
+    if (m_preparedBuffers.empty())
+    {
+        return;
+    }
+    auto prepared = std::make_shared<std::unordered_map<const MeshData*, PreparedBuffers>>(std::move(m_preparedBuffers));
+    m_preparedBuffers.clear();
+    Retire([prepared]()
+           {
+               prepared->clear();
+           });
+}
+
 void VulkanRenderer::AbandonPendingTextures()
 {
     // Staged textures are referenced by no descriptor set; they go once the batches uploading them have
     // run.
     m_sceneUploadPending = false;
-    m_textureStagingBatches.clear();
+    m_uploadBatches.clear();
+    ReleasePreparedBuffers();
     m_stagedTextures.clear();
     m_failedTextureKeys.clear();
     m_texturesRequested = 0;
@@ -3426,21 +3622,27 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& fra
         return;
     }
 
-    // The frames in flight may still draw from the buffers about to be destroyed. What remains is
-    // a subset of the list the uniform buffer was sized for, so its motion slots still cover it;
-    // material binding indices and motion keys are per submesh and stay valid.
-    m_commandContext->WaitForAllFrames();
+    // The frames in flight may still draw from their buffers: the submeshes are retired, not
+    // destroyed. What remains is a subset of the list the uniform buffer was sized for, so its motion
+    // slots still cover it; material binding indices and motion keys are per submesh and stay valid.
+    auto removed = std::make_shared<std::vector<std::shared_ptr<const RenderSubmesh>>>();
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        if (isRemoved(renderSubmesh) && renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot)
+        if (!isRemoved(renderSubmesh))
+        {
+            continue;
+        }
+        removed->push_back(renderSubmesh);
+        if (renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot)
         {
             ReleaseDrawSlot(renderSubmesh->drawSlot);
             renderSubmesh->drawSlot = RenderSubmesh::kNoDrawSlot;
             for (const std::string& key : renderSubmesh->textureKeys)
             {
-                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0)
+                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0 &&
+                                                           --entry->second.references == 0)
                 {
-                    --entry->second.references;
+                    m_unreferencedTextureKeys.push_back(key);
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
@@ -3453,6 +3655,10 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& fra
                   {
                       return isRemoved(entry.second);
                   });
+    Retire([removed]()
+           {
+               removed->clear();
+           });
 }
 
 void VulkanRenderer::ApplyRenderContent(
@@ -3465,13 +3671,8 @@ void VulkanRenderer::ApplyRenderContent(
     // textures, material sets and ray materials.
     if (m_swapchain && m_renderPass && !m_scenePasses.empty())
     {
-        // Slots are written and descriptor sets freed below, which the frames in flight may still
-        // read. The upload has just flushed and waited for its copies, so this costs next to nothing.
-        m_commandContext->WaitForAllFrames();
-
         // Draws new to this content, and the old content's draws it drops (every kept one is in both).
-        std::unordered_set<const RenderSubmesh*> kept;
-        kept.reserve(keptSubmeshCount);
+        const uint64_t commit = ++m_commitSerial;
         std::vector<const RenderSubmesh*> placed;
         for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
         {
@@ -3481,14 +3682,14 @@ void VulkanRenderer::ApplyRenderContent(
             }
             else
             {
-                kept.insert(renderSubmesh.get());
+                renderSubmesh->commitSerial = commit;
             }
         }
         std::vector<const RenderSubmesh*> dropped;
         std::vector<uint32_t> releasedSlots;
         for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
         {
-            if (renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot && kept.count(renderSubmesh.get()) == 0)
+            if (renderSubmesh->drawSlot != RenderSubmesh::kNoDrawSlot && renderSubmesh->commitSerial != commit)
             {
                 dropped.push_back(renderSubmesh.get());
                 releasedSlots.push_back(renderSubmesh->drawSlot);
@@ -3500,10 +3701,19 @@ void VulkanRenderer::ApplyRenderContent(
         for (const RenderSubmesh* renderSubmesh : placed)
         {
             renderSubmesh->drawSlot = AcquireDrawSlot();
+            renderSubmesh->commitSerial = commit;
+        }
+        // New draws go into slots no frame in flight reads, and what the dropped ones held is retired, so
+        // nothing here waits for the GPU; unless the per-draw buffers (and with them the ray scene's
+        // slots) grow, which replaces what the frames in flight read.
+        const bool grows = !m_uniformBuffer || m_uniformBuffer->GetDrawCapacity() < m_drawSlotWatermark;
+        if (grows || m_rayScene->ContentChangeWaitsForFrames())
+        {
+            m_commandContext->WaitForAllFrames();
         }
         try
         {
-            if (!m_uniformBuffer || m_uniformBuffer->GetDrawCapacity() < m_drawSlotWatermark)
+            if (grows)
             {
                 // More draws than the per-draw buffers hold: larger ones, with every draw of the old
                 // content and the new written in, so either can be drawn from them.
@@ -3538,15 +3748,25 @@ void VulkanRenderer::ApplyRenderContent(
                 }
             }
 
-            // The ray scene: every draw's mesh and slot, and the ray materials of the slots that change
-            // hands.
-            std::vector<RaySceneSubmesh> raySubmeshes;
-            raySubmeshes.reserve(newRenderSubmeshes.size());
-            for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
-            {
-                raySubmeshes.push_back(RaySceneSubmesh{
-                    renderSubmesh->mesh, renderSubmesh->buffer, renderSubmesh->alphaMode == MaterialAlphaMode::Blend, renderSubmesh->drawSlot});
-            }
+            // The ray scene: every draw's mesh, slot and where it is now (for the worker's top level),
+            // tens of thousands on a map, made in parallel; and the ray materials of the slots that
+            // change hands.
+            std::vector<RaySceneSubmesh> raySubmeshes(newRenderSubmeshes.size());
+            std::vector<glm::mat4> rayModels(newRenderSubmeshes.size());
+            TaskSystem::ParallelFor(
+                static_cast<uint32_t>(newRenderSubmeshes.size()),
+                1024,
+                [&](uint32_t begin, uint32_t end)
+                {
+                    for (uint32_t index = begin; index < end; ++index)
+                    {
+                        const RenderSubmesh& renderSubmesh = *newRenderSubmeshes[index];
+                        raySubmeshes[index] = RaySceneSubmesh{
+                            renderSubmesh.mesh, renderSubmesh.buffer, renderSubmesh.alphaMode == MaterialAlphaMode::Blend, renderSubmesh.drawSlot};
+                        rayModels[index] = frame.transforms.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
+                    }
+                },
+                TaskPriority::High);
             std::vector<RayMaterialSource> placedMaterials;
             placedMaterials.reserve(placed.size());
             for (const RenderSubmesh* renderSubmesh : placed)
@@ -3560,13 +3780,6 @@ void VulkanRenderer::ApplyRenderContent(
                     renderSubmesh->rayEmissive,
                     renderSubmesh->rayMetallic,
                     renderSubmesh->rayRoughness});
-            }
-            // Where every draw is now, for the worker's top level.
-            std::vector<glm::mat4> rayModels;
-            rayModels.reserve(newRenderSubmeshes.size());
-            for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : newRenderSubmeshes)
-            {
-                rayModels.push_back(frame.transforms.GetSubmeshModelMatrix(renderSubmesh->entity, renderSubmesh->motionKey.submeshOrdinal));
             }
             m_rayScene->SetContent(
                 std::move(raySubmeshes), std::move(rayModels), m_uniformBuffer->GetDrawCapacity(), placedMaterials, releasedSlots);
@@ -3597,9 +3810,10 @@ void VulkanRenderer::ApplyRenderContent(
             renderSubmesh->drawSlot = RenderSubmesh::kNoDrawSlot;
             for (const std::string& key : renderSubmesh->textureKeys)
             {
-                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0)
+                if (auto entry = m_textureStore.find(key); entry != m_textureStore.end() && entry->second.references > 0 &&
+                                                           --entry->second.references == 0)
                 {
-                    --entry->second.references;
+                    m_unreferencedTextureKeys.push_back(key);
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
@@ -3612,14 +3826,23 @@ void VulkanRenderer::ApplyRenderContent(
             m_liveSubmeshes.emplace(renderSubmesh->revision, renderSubmesh->shared_from_this());
         }
         // The material sets no draw names any more go, before the textures they name are destroyed.
-        m_materialSets->FreeUnreferenced();
+        m_materialSets->FreeUnreferenced([this](std::function<void()> release)
+                                         {
+                                             Retire(std::move(release));
+                                         });
     }
 
-    // The textures no draw names any more, now that the material sets that named them are gone and the
-    // frames that sampled them have finished.
+    // The textures no draw names any more, after the material sets that named them (both retired until
+    // the frames that sampled them have finished).
     DropUnreferencedTextures();
     const bool newWorld = keptSubmeshCount * 2 < newRenderSubmeshes.size();
+    // The old list holds the dropped submeshes, whose buffers the frames in flight may still draw from.
+    auto previous = std::make_shared<std::vector<std::shared_ptr<const RenderSubmesh>>>(std::move(m_renderSubmeshes));
     m_renderSubmeshes = std::move(newRenderSubmeshes);
+    Retire([previous]()
+           {
+               previous->clear();
+           });
     // New content may be a different world (a scene that finished loading in the background while
     // the startup scene was on screen). The long-term exposure restarts its warm-up, so it catches
     // up at the short-term rates instead of keeping the old world's light for minutes; the view

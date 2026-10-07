@@ -7,6 +7,7 @@
 #include <engine/renderer/ray_tracing_bvh.h>
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -220,6 +221,10 @@ class VulkanRayAcceleration
         std::vector<std::shared_ptr<RayBlas>> structures;
     };
     std::vector<CompactionQueries> m_compactionQueries;
+    // Structures whose compacted size is known, compacted kCompactionsPerFrame a frame: a cell's
+    // hundreds at once made one frame of 40 ms (a structure, its memory and a copy each).
+    static constexpr size_t kCompactionsPerFrame = 64;
+    std::deque<std::pair<std::shared_ptr<RayBlas>, VkDeviceSize>> m_compactionBacklog;
     // This frame's compacting copies, recorded by Record: from the original to the compacted structure.
     struct CompactionCopy
     {

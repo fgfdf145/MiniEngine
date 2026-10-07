@@ -69,6 +69,11 @@ class VulkanCommandContext
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
     void WaitForAllFrames();
+    // Frames counted by Submit, 1 for the first. A resource the frames submitted so far may use is
+    // free once CompletedSubmits() reaches LastSubmit() as it was then (VulkanRetireQueue).
+    uint64_t LastSubmit() const;
+    // The last submit known to have finished: polls the frame slots' fences.
+    uint64_t CompletedSubmits();
 
     // The slot the frame being recorded belongs to. Advances in Present, so it is stable for the
     // whole of one AcquireNextImage / Submit / Present cycle.
@@ -90,5 +95,9 @@ class VulkanCommandContext
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
     std::vector<VkFence> m_imagesInFlight;
     uint32_t m_currentFrame = 0;
+    uint64_t m_lastSubmit = 0;
+    uint64_t m_completedSubmits = 0;
+    // The submit each frame slot's fence was last armed for.
+    std::vector<uint64_t> m_slotSubmits;
 };
 }

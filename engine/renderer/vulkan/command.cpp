@@ -1,5 +1,7 @@
 #include "command.h"
 
+#include <algorithm>
+
 namespace me
 {
 
@@ -43,6 +45,7 @@ VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32
     CheckVulkan(
         vkWaitForFences(m_device, 1, &currentFrameSyncObjects.inFlightFence, VK_TRUE, UINT64_MAX),
         "Failed waiting for in-flight fence");
+    m_completedSubmits = std::max(m_completedSubmits, m_slotSubmits[m_currentFrame]);
 
     const VkResult acquireResult = vkAcquireNextImageKHR(
         m_device,
@@ -104,6 +107,7 @@ void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
     CheckVulkan(
         vkQueueSubmit(graphicsQueue, 1, &submitInfo, currentFrameSyncObjects.inFlightFence),
         "Failed to submit draw command buffer");
+    m_slotSubmits[m_currentFrame] = ++m_lastSubmit;
 }
 
 VkResult VulkanCommandContext::Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex)
@@ -142,6 +146,25 @@ void VulkanCommandContext::WaitForAllFrames()
             vkWaitForFences(m_device, static_cast<uint32_t>(fences.size()), fences.data(), VK_TRUE, UINT64_MAX),
             "Failed waiting for in-flight render fences");
     }
+    m_completedSubmits = m_lastSubmit;
+}
+
+uint64_t VulkanCommandContext::LastSubmit() const
+{
+    return m_lastSubmit;
+}
+
+uint64_t VulkanCommandContext::CompletedSubmits()
+{
+    // A slot's fence covers its own submit and, the queue running in order, every submit before it.
+    for (size_t slot = 0; slot < m_frameSyncObjects.size(); ++slot)
+    {
+        if (m_slotSubmits[slot] > m_completedSubmits && vkGetFenceStatus(m_device, m_frameSyncObjects[slot].inFlightFence) == VK_SUCCESS)
+        {
+            m_completedSubmits = m_slotSubmits[slot];
+        }
+    }
+    return m_completedSubmits;
 }
 
 void VulkanCommandContext::CreateCommandPool(const QueueFamilyIndices& queueFamilies)
@@ -177,6 +200,7 @@ void VulkanCommandContext::CreateSyncObjects(size_t swapchainImageCount)
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     m_frameSyncObjects.resize(kMaxFramesInFlight);
+    m_slotSubmits.assign(kMaxFramesInFlight, 0);
     for (VulkanFrameSyncObjects& frameSyncObjects : m_frameSyncObjects)
     {
         CheckVulkan(

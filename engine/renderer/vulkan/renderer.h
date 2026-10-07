@@ -27,6 +27,7 @@
 #include "ddgi_debug_pass.h"
 #include "path_trace_pass.h"
 #include "ray_scene.h"
+#include "retire_queue.h"
 #include "rt_shadow_pass.h"
 #include "restir_pt_pass.h"
 #include "ddgi.h"
@@ -57,6 +58,7 @@
 #include <engine/renderer/path_tracing.h>
 
 #include <array>
+#include <deque>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -102,6 +104,9 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     // commit, hence mutable: everything else is fixed once made.
     static constexpr uint32_t kNoDrawSlot = UINT32_MAX;
     mutable uint32_t drawSlot = kNoDrawSlot;
+    // The last commit that drew it (VulkanRenderer::m_commitSerial): a commit tells the draws it keeps
+    // from the ones it drops by this, without a set of every draw.
+    mutable uint64_t commitSerial = 0;
     GpuMaterialData material;
     GpuTextureTransforms textureTransforms;
     bool doubleSided = false;
@@ -262,6 +267,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     void PumpSceneUpload(const RenderFramePacket& frame);
     // Forgets a pending change's staged textures and failures, after it ran out of memory.
     void AbandonPendingTextures();
+    // Drops what a pending change prepared for its new meshes (retired: uploads may be running).
+    void ReleasePreparedBuffers();
     std::unique_ptr<VulkanTexture> UploadPreparedTexture(
         const PreparedTexture& prepared,
         TextureUsage usage,
@@ -351,12 +358,40 @@ class VulkanRenderer : public EditorRenderBackendBase
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;
     std::unique_ptr<VulkanMaterialSetCache> m_materialSets;
-    // Draw slots: freed ones are handed out again first, and the watermark is how many the per-draw
-    // buffers must hold.
+    // Draw slots: freed ones are handed out again first (once the frames that drew from them have
+    // finished), and the watermark is how many the per-draw buffers must hold.
     uint32_t AcquireDrawSlot();
     void ReleaseDrawSlot(uint32_t slot);
+    // What the frames in flight may still use, freed once they have finished (VulkanRetireQueue):
+    // textures, submeshes' buffers, descriptor sets and draw slots a change of content drops.
+    void Retire(std::function<void()> release);
+    VulkanRetireQueue m_retireQueue;
     std::vector<uint32_t> m_freeDrawSlots;
     uint32_t m_drawSlotWatermark = 0;
+    uint64_t m_commitSerial = 0;
+    // The GPU buffers made for each CPU mesh, for a new submesh of a mesh already uploaded: kept
+    // between commits (rebuilding it from every live submesh cost 2.5 ms a change on a map). The
+    // mesh is held weakly too, as an address alone could be a new mesh made where a freed one was.
+    struct MeshBuffers
+    {
+        std::weak_ptr<const MeshData> mesh;
+        std::weak_ptr<VulkanBuffer> buffer;
+    };
+    std::unordered_map<const MeshData*, MeshBuffers> m_meshBuffers;
+    // A pending change's new meshes, whose GPU buffers PumpSceneUpload makes a few at a time before the
+    // commit (a cell of hundreds made in the commit took 9 ms of one frame), and the buffers made so
+    // far, held until the commit uses them.
+    std::deque<std::shared_ptr<const MeshData>> m_meshesToUpload;
+    // The mesh is held so that its address stays its own until the commit.
+    struct PreparedBuffers
+    {
+        std::shared_ptr<const MeshData> mesh;
+        std::shared_ptr<VulkanBuffer> buffer;
+    };
+    std::unordered_map<const MeshData*, PreparedBuffers> m_preparedBuffers;
+    // Textures whose last reference went (or that a commit stored), the only ones DropUnreferencedTextures
+    // looks at.
+    std::vector<std::string> m_unreferencedTextureKeys;
     // Every texture the content draws with, by cache key ("path|color", "__id__|linear"), counted by
     // the submeshes that name it, so a change of content touches only the textures it adds or drops.
     std::unordered_map<std::string, StoredTexture> m_textureStore;
@@ -365,9 +400,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Textures prepared and uploaded for a change that has not committed yet, by cache key. The
     // upload moves the ones it uses into m_textureStore.
     std::unordered_map<std::string, std::unique_ptr<VulkanTexture>> m_stagedTextures;
-    // The batches that staged them, submitted without a wait and dropped once the GPU has run them.
-    // Clearing the list waits for the rest: before any staged texture is destroyed unused.
-    std::vector<std::unique_ptr<VulkanUploadBatch>> m_textureStagingBatches;
+    // The batches that staged them and that uploaded a commit's buffers, submitted without a wait and
+    // dropped once the GPU has run them. Clearing the list waits for the rest: before anything they
+    // upload into is destroyed unused.
+    std::vector<std::unique_ptr<VulkanUploadBatch>> m_uploadBatches;
+    // Their staging memory, kept between batches; made with the device, gone before it.
+    std::unique_ptr<VulkanStagingChunkPool> m_stagingChunkPool;
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
     bool m_sceneUploadPending = false;

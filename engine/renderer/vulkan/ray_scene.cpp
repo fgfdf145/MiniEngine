@@ -78,11 +78,13 @@ VulkanRayScene::VulkanRayScene(
     VkPipelineCache pipelineCache,
     uint32_t frameCount,
     bool hardwareRayTracing,
-    TextureDescriptorBinding defaultTexture)
+    TextureDescriptorBinding defaultTexture,
+    bool updateUnusedWhilePending)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_frameCount(frameCount),
-      m_defaultTexture(defaultTexture)
+      m_defaultTexture(defaultTexture),
+      m_updateUnusedWhilePending(hardwareRayTracing && updateUnusedWhilePending)
 {
     try
     {
@@ -109,8 +111,10 @@ VulkanRayScene::VulkanRayScene(
             vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
             const uint32_t limit = std::min(properties.limits.maxPerStageDescriptorSampledImages, properties.limits.maxDescriptorSetSampledImages);
             m_textureLimit = std::min<uint32_t>(limit > 256u ? limit - 256u : limit / 2u, 1u << 20);
+            // A new draw's textures go into slots no frame in flight reads, while the frames read others.
             const VkDescriptorBindingFlags bindingFlags =
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+                (m_updateUnusedWhilePending ? VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT : 0u);
             VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
             flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
             flagsInfo.bindingCount = 1;
@@ -209,12 +213,17 @@ void VulkanRayScene::SetContent(
     // every few seconds, and every effect falling back to its raster version (DDGI to none) until each
     // build installs made the shadows and the indirect light flicker.
 
-    // Slots that lost their submesh give their sets back; a slot placed again below gets a new one.
+    // Slots that lost their submesh give their sets back once no frame in flight averages with them; a
+    // slot placed again later gets a new one.
     for (const uint32_t index : released)
     {
         if (index < m_materialSlots.size() && m_materialSlots[index].set != VK_NULL_HANDLE)
         {
-            m_materialPools->Free(VulkanDescriptorPoolList::Allocation{m_materialSlots[index].set, m_materialSlots[index].pool});
+            const VulkanDescriptorPoolList::Allocation allocation{m_materialSlots[index].set, m_materialSlots[index].pool};
+            Retire([this, allocation]()
+                   {
+                       m_materialPools->Free(allocation);
+                   });
             m_materialSlots[index] = MaterialSlot{};
         }
     }
@@ -223,7 +232,8 @@ void VulkanRayScene::SetContent(
     // material be averaged into again.
     const uint32_t capacity = std::max(slotCapacity, 1u);
     std::vector<uint32_t> rewrite;
-    if (capacity > m_materialCapacity)
+    const bool grows = capacity > m_materialCapacity;
+    if (grows)
     {
         DestroyBuffer(m_materials);
         m_materials = CreateBuffer(kRayMaterialBytes * capacity, true);
@@ -331,9 +341,11 @@ void VulkanRayScene::SetContent(
         else
         {
             infos.reserve((placed.size() + released.size()) * kRayTexturesPerSlot);
+            // A released slot keeps its descriptors while frames in flight may still read them: no
+            // instance names it from this frame on, and the table is partially bound.
             for (const uint32_t index : released)
             {
-                if (index < m_textureCapacity)
+                if (index < m_textureCapacity && ContentChangeWaitsForFrames())
                 {
                     WriteTextureSlot(index, nullptr, infos, writes);
                 }
@@ -349,42 +361,69 @@ void VulkanRayScene::SetContent(
         }
     }
 
-    m_submeshes = std::move(submeshes);
+    m_submeshes = std::make_shared<const std::vector<RaySceneSubmesh>>(std::move(submeshes));
     MapInstalledSubmeshes();
-    WriteSets();
+    // A new materials buffer, which the frames' sets name (the caller has waited for the frames).
+    if (grows)
+    {
+        WriteSets();
+    }
 
-    // What the hardware may treat as opaque: the materials whose coverage the averaging sets to 1.
-    m_opaqueMaterials.assign(m_materialCapacity, 0u);
-    for (uint32_t index = 0; index < m_materialCapacity; ++index)
+    // What the hardware may treat as opaque: the materials whose coverage the averaging sets to 1. Only
+    // the slots that changed hands change, unless every slot was written again.
+    const auto opaqueOf = [this](uint32_t index) -> uint8_t
     {
         const MaterialSlot& slot = m_materialSlots[index];
         const GpuMaterialData& material = slot.source.material;
         const bool transmits = (material.shadingModel[0] & kShadingFlagTransmission) != 0u && material.transmissionFactors[0] > 0.0f;
-        m_opaqueMaterials[index] = slot.set != VK_NULL_HANDLE && slot.source.alphaMode == MaterialAlphaMode::Opaque && !transmits ? 1u : 0u;
+        return slot.set != VK_NULL_HANDLE && slot.source.alphaMode == MaterialAlphaMode::Opaque && !transmits ? 1u : 0u;
+    };
+    if (m_opaqueMaterials.size() != m_materialCapacity)
+    {
+        m_opaqueMaterials.assign(m_materialCapacity, 0u);
+        for (uint32_t index = 0; index < m_materialCapacity; ++index)
+        {
+            m_opaqueMaterials[index] = opaqueOf(index);
+        }
+    }
+    else
+    {
+        for (const uint32_t index : released)
+        {
+            if (index < m_materialCapacity)
+            {
+                m_opaqueMaterials[index] = opaqueOf(index);
+            }
+        }
+        for (const RayMaterialSource& source : placed)
+        {
+            m_opaqueMaterials[source.slot] = opaqueOf(source.slot);
+        }
     }
 
     // The hierarchies, on a worker: only meshes not built before cost anything. The previous
     // content's hierarchies go in with it and come back out pruned to what this content uses.
-    std::vector<std::shared_ptr<const MeshData>> meshes;
-    std::vector<std::shared_ptr<const VulkanBuffer>> buffers;
-    std::vector<uint8_t> blend;
-    std::vector<uint32_t> slots;
-    meshes.reserve(m_submeshes.size());
-    for (const RaySceneSubmesh& submesh : m_submeshes)
-    {
-        meshes.push_back(submesh.mesh);
-        buffers.push_back(submesh.buffer);
-        blend.push_back(submesh.blend ? 1u : 0u);
-        slots.push_back(submesh.slot);
-    }
     // The task uses this only to make its buffers, which the destructor waits for.
     m_pendingBuild = RunAsync(
         TaskPriority::Medium,
-        [this, meshes = std::move(meshes), buffers = std::move(buffers), blend = std::move(blend), slots = std::move(slots), models = std::move(models), cache = m_buildCache, superseded]() mutable
+        [this, submeshes = m_submeshes, models = std::move(models), cache = m_buildCache, superseded]() mutable
         {
             const auto start = std::chrono::steady_clock::now();
+            std::vector<std::shared_ptr<const MeshData>> meshes;
+            std::vector<std::shared_ptr<const VulkanBuffer>> buffers;
+            std::vector<uint32_t> slots;
             Build build;
-            build.blend = std::move(blend);
+            meshes.reserve(submeshes->size());
+            buffers.reserve(submeshes->size());
+            slots.reserve(submeshes->size());
+            build.blend.reserve(submeshes->size());
+            for (const RaySceneSubmesh& submesh : *submeshes)
+            {
+                meshes.push_back(submesh.mesh);
+                buffers.push_back(submesh.buffer);
+                build.blend.push_back(submesh.blend ? 1u : 0u);
+                slots.push_back(submesh.slot);
+            }
             // First the distinct meshes and which need building, then the builds on a few threads
             // (meshes are independent), then the concatenation in submesh order.
             std::unordered_map<const MeshData*, uint32_t> meshIndex;
@@ -533,23 +572,42 @@ void VulkanRayScene::SetContent(
         });
 }
 
+void VulkanRayScene::SetRetire(std::function<void(std::function<void()>)> retire)
+{
+    m_retire = std::move(retire);
+}
+
+bool VulkanRayScene::ContentChangeWaitsForFrames() const
+{
+    return !m_retire || (m_acceleration && !m_updateUnusedWhilePending);
+}
+
 bool VulkanRayScene::HasFinishedBuild() const
 {
     return m_pendingBuild.valid() && m_pendingBuild.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
 
-void VulkanRayScene::InstallBuild()
+void VulkanRayScene::InstallBuild(const std::function<void()>& waitForFrames)
 {
     Build build = m_pendingBuild.get();
+    // A new capacity replaces every slot's top level and instance buffers, which the frames in flight
+    // use; otherwise nothing they use changes.
+    const size_t capacity = InstanceCapacity(m_instanceCapacity, build.submeshMeshes.size());
+    const bool framesIdle = capacity != m_instanceCapacity || !m_retire;
+    if (framesIdle)
+    {
+        waitForFrames();
+    }
     DropFinishedStaleBuilds();
     m_submeshMeshes = std::move(build.submeshMeshes);
     m_installedBlend = std::move(build.blend);
     // Only the build of the last SetContent installs (the others are stale), so its submeshes are
     // m_submeshes.
     m_installedSubmeshes = m_submeshes;
-    m_installedModels.assign(m_installedSubmeshes.size(), glm::mat4(1.0f));
+    m_installedModels.assign(m_installedSubmeshes->size(), glm::mat4(1.0f));
     MapInstalledSubmeshes();
-    // The old content goes off the frame's thread, as a superseded build does.
+    // The old content goes off the frame's thread, as a superseded build does, once the frames in flight
+    // that trace it have finished.
     Build previous;
     previous.scene = std::move(m_scene);
     previous.topLevel = std::move(m_topLevel);
@@ -562,7 +620,11 @@ void VulkanRayScene::InstallBuild()
         previous.meshGeometry = m_meshGeometry;
         previous.sourceTriangles = m_sourceTriangles;
     }
-    DiscardBuild(std::move(previous));
+    auto retiredContent = std::make_shared<Build>(std::move(previous));
+    Retire([this, retiredContent]()
+           {
+               DiscardBuild(std::move(*retiredContent));
+           });
     m_scene = std::move(build.scene);
     m_topLevel = std::move(build.topLevel);
     m_meshNodes = build.meshNodes;
@@ -584,13 +646,15 @@ void VulkanRayScene::InstallBuild()
         m_scene.instances.push_back(dummy);
     }
 
-    const size_t capacity = InstanceCapacity(m_instanceCapacity, m_submeshMeshes.size());
     if (m_acceleration)
     {
         // The bottom levels only the old content held are freed off the frame's thread too.
-        Build released;
-        released.blas = m_acceleration->Install(std::move(build.blas), m_scene.meshes, IncrementalTopLevel::MaxInstances(capacity));
-        DiscardBuild(std::move(released));
+        auto released = std::make_shared<Build>();
+        released->blas = m_acceleration->Install(std::move(build.blas), m_scene.meshes, IncrementalTopLevel::MaxInstances(capacity));
+        Retire([this, released]()
+               {
+                   DiscardBuild(std::move(*released));
+               });
     }
     if (capacity != m_instanceCapacity)
     {
@@ -606,7 +670,11 @@ void VulkanRayScene::InstallBuild()
     // A new top level, which every frame slot copies the worker's into.
     m_slotGenerations.assign(m_frameCount, 0);
     ++m_topLevelGeneration;
-    WriteSets();
+    ++m_setsGeneration;
+    if (framesIdle)
+    {
+        WriteSets();
+    }
     m_ready = true;
 }
 
@@ -614,21 +682,23 @@ void VulkanRayScene::MapInstalledSubmeshes()
 {
     // A draw slot holds one submesh at a time; the same slot with the same mesh is the same draw.
     std::vector<uint32_t> currentBySlot(m_materialCapacity, kNoSubmesh);
-    for (uint32_t index = 0; index < static_cast<uint32_t>(m_submeshes.size()); ++index)
+    const std::vector<RaySceneSubmesh>& submeshes = *m_submeshes;
+    const std::vector<RaySceneSubmesh>& installedSubmeshes = *m_installedSubmeshes;
+    for (uint32_t index = 0; index < static_cast<uint32_t>(submeshes.size()); ++index)
     {
-        if (m_submeshes[index].slot < currentBySlot.size())
+        if (submeshes[index].slot < currentBySlot.size())
         {
-            currentBySlot[m_submeshes[index].slot] = index;
+            currentBySlot[submeshes[index].slot] = index;
         }
     }
-    m_installedToCurrent.assign(m_installedSubmeshes.size(), kNoSubmesh);
-    for (size_t index = 0; index < m_installedSubmeshes.size(); ++index)
+    m_installedToCurrent.assign(installedSubmeshes.size(), kNoSubmesh);
+    for (size_t index = 0; index < installedSubmeshes.size(); ++index)
     {
-        const RaySceneSubmesh& installed = m_installedSubmeshes[index];
+        const RaySceneSubmesh& installed = installedSubmeshes[index];
         if (installed.slot < currentBySlot.size())
         {
             const uint32_t current = currentBySlot[installed.slot];
-            if (current != kNoSubmesh && m_submeshes[current].mesh == installed.mesh)
+            if (current != kNoSubmesh && submeshes[current].mesh == installed.mesh)
             {
                 m_installedToCurrent[index] = current;
             }
@@ -638,7 +708,12 @@ void VulkanRayScene::MapInstalledSubmeshes()
 
 void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::mat4> models, std::span<const uint8_t> movingInstances)
 {
-    if (!m_ready || models.size() != m_submeshes.size() || m_installedToCurrent.size() != m_submeshMeshes.size())
+    // The slot's last frame has finished: its set may name the installed content now.
+    if (frameSlot < m_slotSetsGenerations.size() && m_slotSetsGenerations[frameSlot] != m_setsGeneration)
+    {
+        WriteSet(frameSlot);
+    }
+    if (!m_ready || models.size() != m_submeshes->size() || m_installedToCurrent.size() != m_submeshMeshes.size())
     {
         return;
     }
@@ -658,7 +733,7 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
         {
             m_installedModels[index] = models[current];
         }
-        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], m_installedModels[index], m_installedSubmeshes[index].slot, flags});
+        inputs.push_back(RayInstanceInput{m_submeshMeshes[index], m_installedModels[index], (*m_installedSubmeshes)[index].slot, flags});
     }
     // Rebuilt only where something moved (IncrementalTopLevel), and copied to a frame slot only when the
     // slot holds an older one.
@@ -1011,6 +1086,27 @@ void VulkanRayScene::RecycleBuffer(Buffer& buffer)
 void VulkanRayScene::WriteSets()
 {
     for (uint32_t slot = 0; slot < m_frameCount; ++slot)
+    {
+        WriteSet(slot);
+    }
+}
+
+void VulkanRayScene::Retire(std::function<void()> release)
+{
+    if (m_retire)
+    {
+        m_retire(std::move(release));
+    }
+    else
+    {
+        release();
+    }
+}
+
+void VulkanRayScene::WriteSet(uint32_t slot)
+{
+    m_slotSetsGenerations.resize(m_frameCount, 0);
+    m_slotSetsGenerations[slot] = m_setsGeneration;
     {
         const std::array<VkDescriptorBufferInfo, 5> infos = {
             VkDescriptorBufferInfo{m_meshNodes.buffer, 0, VK_WHOLE_SIZE},

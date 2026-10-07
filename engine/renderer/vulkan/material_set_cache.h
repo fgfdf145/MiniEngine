@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -33,11 +34,12 @@ class VulkanMaterialSetCache
     // The set for these bindings: the one already made for them, or one made and written now.
     VkDescriptorSet Acquire(const MaterialTextureBinding& binding);
     // Commit's counts: a draw of the new content takes a reference to its set, a draw it drops gives
-    // one back. Then the sets nothing references are freed (the frames that drew them have finished),
-    // before the textures they name are destroyed.
+    // one back. Then the sets nothing references leave the cache, and retire frees each once the frames
+    // that may still draw with it have finished (before the textures they name are destroyed, which
+    // are retired after them).
     void Retain(VkDescriptorSet set);
     void Release(VkDescriptorSet set);
-    void FreeUnreferenced();
+    void FreeUnreferenced(const std::function<void(std::function<void()>)>& retire);
     void AbandonPending();
     size_t Size() const;
 

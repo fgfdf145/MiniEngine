@@ -42,6 +42,9 @@ class VulkanDevice
     // bufferDeviceAddress, enabled when the device offers all of them on Vulkan 1.2 or later. Without
     // it every ray walks the ray scene's own hierarchies in compute (ray_tracing_common.glsl).
     bool SupportsRayQuery() const;
+    // With hardware ray tracing: whether descriptorBindingUpdateUnusedWhilePending is enabled, so the
+    // ray scene's texture table can take a new draw's textures while frames in flight use the table.
+    bool SupportsUpdateUnusedWhilePending() const;
 
     // The device-local heaps' usage and budget summed, in bytes. With VK_EXT_memory_budget they are the
     // driver's (the budget shrinks as other processes take memory); without it the budget is 80 % of
@@ -71,5 +74,6 @@ class VulkanDevice
     bool m_optionalExtensionsEnabled = true;
     bool m_supportsMemoryBudget = false;
     bool m_supportsRayQuery = false;
+    bool m_supportsUpdateUnusedWhilePending = false;
 };
 }
