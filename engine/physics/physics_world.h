@@ -192,10 +192,13 @@ struct SurfaceGrip
 class PhysicsWorld
 {
   public:
-    static constexpr float kFixedStepSeconds = 1.0f / 1000.0f;
-    // A long frame (a hitch, a breakpoint) runs at most this many steps and drops the rest, rather
-    // than taking ever longer to catch up.
-    static constexpr int kMaxStepsPerUpdate = 50;
+    // The fixed step a new world runs at (1000 Hz), and the range SetStepSeconds takes (4000 Hz to 60 Hz).
+    static constexpr float kDefaultStepSeconds = 1.0f / 1000.0f;
+    static constexpr float kMinStepSeconds = 1.0f / 4000.0f;
+    static constexpr float kMaxStepSeconds = 1.0f / 60.0f;
+    // A long frame (a hitch, a breakpoint) catches up at most this much simulated time and drops the
+    // rest, rather than taking ever longer to catch up (MaxStepsPerUpdate steps).
+    static constexpr float kMaxCatchUpSeconds = 0.05f;
     // The friction of static geometry that names none: a road. A wheel's grip is its tyre's coefficient
     // times the surface's ratio (see SurfaceGrip), so Jolt's own default of 0.2 would leave a car with a
     // fifth of its grip.
@@ -247,6 +250,15 @@ class PhysicsWorld
     VehicleTelemetry GetVehicleTelemetry(VehicleId vehicle) const;
     // The body's collision shape's bounds in vehicle space (the chassis box, or the car's boxes and shell).
     std::pair<glm::vec3, glm::vec3> GetVehicleBodyBounds(VehicleId vehicle) const;
+
+    // The length of one fixed step. A new step (clamped to kMinStepSeconds..kMaxStepSeconds) takes
+    // effect from the next Update, also while cars drive: a shorter one follows stiff springs, kerbs and
+    // the tyres' contact more closely at a cost in time that grows in step with the rate; a longer one
+    // is cheaper but can make a stiff car or the brush tyre ring or go unstable.
+    void SetStepSeconds(float seconds);
+    float GetStepSeconds() const;
+    // How many steps a long frame runs at most, kMaxCatchUpSeconds at the current step.
+    int MaxStepsPerUpdate() const;
 
     // Returns how many fixed steps ran. With a wall-clock budget (seconds, 0 for none) the steps stop
     // once that much real time has gone and the backlog is dropped as for a capped frame: a world too

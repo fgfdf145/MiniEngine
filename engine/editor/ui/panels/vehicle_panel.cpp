@@ -12,6 +12,7 @@
 #include <imgui.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace me
@@ -132,6 +133,38 @@ void DrawDriverAids(VehicleSettings& tuning, const VehicleDriveStatus& status, E
     if (changed && status.active)
     {
         result.actions.driverAids = std::array<bool, 2>{tuning.useAbs, tuning.useTractionControl};
+    }
+}
+
+// How many fixed steps the physics takes a simulated second, which a car being driven takes at once.
+void DrawPhysicsRate(int& rateHz)
+{
+    const int minRate = static_cast<int>(std::lround(1.0f / PhysicsWorld::kMaxStepSeconds));
+    const int maxRate = static_cast<int>(std::lround(1.0f / PhysicsWorld::kMinStepSeconds));
+    DragIntInRange("Physics Rate (Hz)", &rateHz, minRate, maxRate);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "How many fixed steps the physics takes per simulated second (1000 by default; Assetto Corsa runs 333).\n"
+            "Faster follows stiff springs, kerbs and the tyres' contact more closely, at a cost that grows in step with\n"
+            "the rate (a world too slow for real time runs in slow motion); slower is cheaper but a stiff car or the\n"
+            "brush tyre can ring or go unstable. Applies at once, also while driving.");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%.3f ms", 1000.0f / static_cast<float>(std::max(rateHz, 1)));
+    static constexpr int kPresets[] = {333, 500, 1000, 2000};
+    for (const int preset : kPresets)
+    {
+        if (preset != kPresets[0])
+        {
+            ImGui::SameLine();
+        }
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d##rate", preset);
+        if (ImGui::SmallButton(label))
+        {
+            rateHz = preset;
+        }
     }
 }
 
@@ -519,9 +552,10 @@ void VehiclePanel::OnGui(EditorContext& context)
 
     if (ImGui::CollapsingHeader("Tuning"))
     {
+        DrawPhysicsRate(vehicle.physicsRateHz);
         if (status.active)
         {
-            ImGui::TextDisabled("Changes apply the next time driving starts.");
+            ImGui::TextDisabled("Other changes apply the next time driving starts.");
         }
         if (DrawTuning(vehicle.tuning) && status.active)
         {

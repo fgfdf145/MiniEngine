@@ -293,6 +293,19 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--physics-rate")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            int number = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), number).ptr != value.data() + value.size() ||
+                number < 60 || number > 4000)
+            {
+                throw std::runtime_error("--physics-rate requires an integer from 60 to 4000");
+            }
+            options.physicsRateHz = number;
+            continue;
+        }
+
         if (argument == "--task-threads")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -644,6 +657,10 @@ int EditorApplication::Run()
     if (m_options.driveView.has_value())
     {
         sharedState->vehicleDrive.cameraView = *m_options.driveView;
+    }
+    if (m_options.physicsRateHz.has_value())
+    {
+        sharedState->editorUi.EditVehiclePhysicsRate() = *m_options.physicsRateHz;
     }
     if (m_options.driveCameraFixed)
     {

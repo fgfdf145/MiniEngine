@@ -343,6 +343,7 @@ EditorUiFrameResult EditorUiController::Draw(
     result.vehicleHaptics = m_state.vehicle.haptics;
     result.vehicleSteeringAssist = m_state.vehicle.steeringAssist;
     result.vehicleManualGearbox = m_state.vehicle.manualGearbox;
+    result.vehiclePhysicsStepSeconds = 1.0f / static_cast<float>(std::max(m_state.vehicle.physicsRateHz, 1));
     result.quadRecording = m_state.quadRecording;
     result.quadRecordingPreview = m_state.quadRecordingPreview;
     return result;

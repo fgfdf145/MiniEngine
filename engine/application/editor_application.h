@@ -85,6 +85,8 @@ struct EditorApplicationOptions
     // where --camera (or the scene) puts it and does not follow the car.
     std::optional<VehicleCameraView> driveView;
     bool driveCameraFixed = false;
+    // --physics-rate HZ: the physics' fixed steps per second (the Vehicle panel's Physics Rate), 60 to 4000.
+    std::optional<int> physicsRateHz;
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
     // are mixed into nothing.
     bool audioDisabled = false;

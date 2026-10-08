@@ -1173,7 +1173,7 @@ struct PhysicsWorld::Impl
             vehicle.lastVelocityValid = false;
             return;
         }
-        constexpr double dt = kFixedStepSeconds;
+        const double dt = stepSeconds;
         const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
         const JPH::Quat toBody = vehicle.body->GetRotation().Conjugated();
         const double rack = vehicle.rackAtLock * std::clamp(static_cast<double>(steering), -1.0, 1.0);
@@ -1357,7 +1357,7 @@ struct PhysicsWorld::Impl
                             const suspension::CornerInput& in, double arb, float cosine)
     {
         Vehicle::Corner& c = vehicle.corners[index];
-        constexpr double dt = kFixedStepSeconds;
+        const double dt = stepSeconds;
         const JPH::Body& body = *vehicle.body;
         const JPH::Quat rotation = body.GetRotation();
         const JPH::RMat44 transform = body.GetWorldTransform();
@@ -1487,7 +1487,7 @@ struct PhysicsWorld::Impl
             vehicle.tcClock = 0.0f;
             return;
         }
-        vehicle.tcClock += kFixedStepSeconds;
+        vehicle.tcClock += stepSeconds;
         const float period = settings.tcRateHz > 0.0f ? 1.0f / settings.tcRateHz : 0.0f;
         if (vehicle.tcClock >= period)
         {
@@ -1533,7 +1533,7 @@ struct PhysicsWorld::Impl
             return;
         }
         constexpr float kMinSpeed = 2.0f;
-        vehicle.absClock += kFixedStepSeconds;
+        vehicle.absClock += stepSeconds;
         const float period = settings.absRateHz > 0.0f ? 1.0f / settings.absRateHz : 0.0f;
         if (vehicle.absClock >= period)
         {
@@ -1587,7 +1587,7 @@ struct PhysicsWorld::Impl
         // No wheel takes more than half the total, so one wheel on the ground does not carry the whole
         // car's brakes.
         constexpr float kMaxShareOfTotal = 0.5f;
-        const float blend = vehicle.filteredLoadValid ? 1.0f - std::exp(-kFixedStepSeconds / kLoadFilterSeconds) : 1.0f;
+        const float blend = vehicle.filteredLoadValid ? 1.0f - std::exp(-stepSeconds / kLoadFilterSeconds) : 1.0f;
         float total = 0.0f;
         float loadSum = 0.0f;
         for (size_t index = 0; index < count; ++index)
@@ -1642,14 +1642,14 @@ struct PhysicsWorld::Impl
         if (manual)
         {
             // The driver's changes since the last step; the clutch pedal and the hand brake declutch.
-            UpdateManualGearbox(vehicle.gearbox, state, std::exchange(vehicle.pendingGearShifts, 0), input.forward, outputRpm, kFixedStepSeconds,
+            UpdateManualGearbox(vehicle.gearbox, state, std::exchange(vehicle.pendingGearShifts, 0), input.forward, outputRpm, stepSeconds,
                                 engineRpm, vehicle.controls.clutchPedal || input.handBrake > 0.0f);
             vehicle.direction = state.gear < 0 ? -1.0f : 1.0f;
         }
         else
         {
             // The driver's changes, if any, as a tiptronic's: the box holds the gear a while after each.
-            UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds, engineRpm,
+            UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, stepSeconds, engineRpm,
                                    std::exchange(vehicle.pendingGearShifts, 0));
         }
         JPH::VehicleTransmission& transmission = controller->GetTransmission();
@@ -1835,10 +1835,10 @@ struct PhysicsWorld::Impl
             // Stiff enough that a wheel is pulled to the other's speed within a few steps, and no stiffer than
             // the step can integrate.
             const float inertia = 0.5f * (left->GetSettings()->mInertia + right->GetSettings()->mInertia);
-            const float stiffness = 0.25f * inertia / kFixedStepSeconds;
+            const float stiffness = 0.25f * inertia / stepSeconds;
             const float torque = std::clamp(stiffness * (left->GetAngularVelocity() - right->GetAngularVelocity()), -limit, limit);
-            left->ApplyTorque(-torque, kFixedStepSeconds);
-            right->ApplyTorque(torque, kFixedStepSeconds);
+            left->ApplyTorque(-torque, stepSeconds);
+            right->ApplyTorque(torque, stepSeconds);
         }
     }
 
@@ -1869,14 +1869,14 @@ struct PhysicsWorld::Impl
         // The coupling's rate at the wheels (Nm per rad/s of the axles' mean speed difference), and the most the
         // step integrates.
         const float rate = settings.centreCouplingRampTorque * finalDrive * finalDrive;
-        const float stableRate = 1.0f / (kFixedStepSeconds * (0.5f / std::max(frontInertia, 0.01f) + 0.5f / std::max(rearInertia, 0.01f)));
+        const float stableRate = 1.0f / (stepSeconds * (0.5f / std::max(frontInertia, 0.01f) + 0.5f / std::max(rearInertia, 0.01f)));
         const float ramp = rate > stableRate ? settings.centreCouplingRampTorque * stableRate / rate : settings.centreCouplingRampTorque;
         const float shaftTorque = ComputeCentreCouplingTorque(ramp, settings.centreCouplingMaxTorque, finalDrive, rearSpeed, frontSpeed);
         const float wheelTorque = 0.5f * shaftTorque * finalDrive;
-        frontLeft->ApplyTorque(wheelTorque, kFixedStepSeconds);
-        frontRight->ApplyTorque(wheelTorque, kFixedStepSeconds);
-        rearLeft->ApplyTorque(-wheelTorque, kFixedStepSeconds);
-        rearRight->ApplyTorque(-wheelTorque, kFixedStepSeconds);
+        frontLeft->ApplyTorque(wheelTorque, stepSeconds);
+        frontRight->ApplyTorque(wheelTorque, stepSeconds);
+        rearLeft->ApplyTorque(-wheelTorque, stepSeconds);
+        rearRight->ApplyTorque(-wheelTorque, stepSeconds);
         vehicle.centreCouplingTorque = shaftTorque;
     }
 
@@ -1905,7 +1905,7 @@ struct PhysicsWorld::Impl
         inputs.gear = static_cast<float>(controller->GetTransmission().GetCurrentGear());
         if (vehicle.controllerLastVelocityValid)
         {
-            const JPH::Vec3 acceleration = toBody * ((vehicle.body->GetLinearVelocity() - vehicle.controllerLastVelocity) / kFixedStepSeconds);
+            const JPH::Vec3 acceleration = toBody * ((vehicle.body->GetLinearVelocity() - vehicle.controllerLastVelocity) / stepSeconds);
             inputs.lateralG = acceleration.GetX() / 9.81f;
         }
         vehicle.controllerLastVelocity = vehicle.body->GetLinearVelocity();
@@ -1922,7 +1922,7 @@ struct PhysicsWorld::Impl
             inputs.slipAngleRearMax = std::max(slip(2), slip(3));
             inputs.oversteerFactor = inputs.slipAngleRearAverage - inputs.slipAngleFrontAverage;
         }
-        vehicle.rearSteerAngle = ComputeRearSteerAngle(EvaluateVehicleControllers(settings.rearSteerControllers, inputs, vehicle.rearSteerFiltered, kFixedStepSeconds));
+        vehicle.rearSteerAngle = ComputeRearSteerAngle(EvaluateVehicleControllers(settings.rearSteerControllers, inputs, vehicle.rearSteerFiltered, stepSeconds));
         // Right is a turn about -Y in the vehicle's frame (+X left, +Z forward).
         const JPH::Quat turn = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), -vehicle.rearSteerAngle);
         for (size_t side = 0; side < 2; ++side)
@@ -2293,7 +2293,7 @@ struct PhysicsWorld::Impl
         {
             return;
         }
-        const JPH::Vec3 turn = body.GetAngularVelocity() * kFixedStepSeconds;
+        const JPH::Vec3 turn = body.GetAngularVelocity() * stepSeconds;
         if (turn.Length() > kSmallestTurn)
         {
             return;
@@ -2336,7 +2336,7 @@ struct PhysicsWorld::Impl
         for (size_t index = 0; index < wheels.size() && index < vehicle.spinAngleBefore.size(); ++index)
         {
             JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
-            wheel.SetRotationAngle(std::fmod(vehicle.spinAngleBefore[index] + wheel.GetAngularVelocity() * kFixedStepSeconds, kTurn));
+            wheel.SetRotationAngle(std::fmod(vehicle.spinAngleBefore[index] + wheel.GetAngularVelocity() * stepSeconds, kTurn));
         }
     }
 
@@ -2362,7 +2362,7 @@ struct PhysicsWorld::Impl
             float& now = vehicle.turboBoost[index];
             const float target = VehicleTurboBoost(turbo, rpm, throttle);
             const float lag = std::clamp(target > now ? turbo.lagUp : turbo.lagDown, 0.0f, 1.0f);
-            const float kept = lag > 0.0f ? std::pow(lag, kGameStepsPerSecond * kFixedStepSeconds) : 0.0f;
+            const float kept = lag > 0.0f ? std::pow(lag, kGameStepsPerSecond * stepSeconds) : 0.0f;
             now = target + (now - target) * kept;
             boost += now;
         }
@@ -2390,7 +2390,7 @@ struct PhysicsWorld::Impl
         const float torque = EngineCoastTorque(vehicle.settings, engine.GetCurrentRPM(), forward);
         if (torque > 0.0f)
         {
-            engine.ApplyTorque(-torque, kFixedStepSeconds);
+            engine.ApplyTorque(-torque, stepSeconds);
         }
     }
 
@@ -2418,11 +2418,11 @@ struct PhysicsWorld::Impl
             {
                 continue;
             }
-            const float load = std::max(wheel->GetSuspensionLambda() / kFixedStepSeconds, 0.0f);
+            const float load = std::max(wheel->GetSuspensionLambda() / stepSeconds, 0.0f);
             const float radius = wheel->GetSettings()->mRadius;
             auto* driven = static_cast<JPH::WheelWV*>(wheel);
-            const float rolling = RollingResistanceTorque(driven->GetAngularVelocity(), 0.0f, driven->GetSettings()->mInertia, coefficient * load * radius, kFixedStepSeconds);
-            driven->ApplyTorque(rolling, kFixedStepSeconds);
+            const float rolling = RollingResistanceTorque(driven->GetAngularVelocity(), 0.0f, driven->GetSettings()->mInertia, coefficient * load * radius, stepSeconds);
+            driven->ApplyTorque(rolling, stepSeconds);
         }
     }
 
@@ -2579,7 +2579,7 @@ struct PhysicsWorld::Impl
                 // moved by whole turns to the one nearest what the wheel's speed says it rolled.
                 float step = state.spinAngle - vehicle.previous.wheels[index].spinAngle;
                 step -= kTurn * std::round(step / kTurn);
-                const float expected = wheel.GetAngularVelocity() * kFixedStepSeconds;
+                const float expected = wheel.GetAngularVelocity() * stepSeconds;
                 step += kTurn * std::round((expected - step) / kTurn);
                 state.spinStep = step;
             }
@@ -2624,9 +2624,9 @@ struct PhysicsWorld::Impl
                 state.contactNormal = FromJolt(wheel.GetContactNormal());
                 state.contactLongitudinal = FromJolt(wheel.GetContactLongitudinal());
                 state.contactLateral = FromJolt(wheel.GetContactLateral());
-                state.suspensionForce = wheel.GetSuspensionLambda() / kFixedStepSeconds;
-                state.longitudinalForce = wheel.GetLongitudinalLambda() / kFixedStepSeconds;
-                state.lateralForce = wheel.GetLateralLambda() / kFixedStepSeconds;
+                state.suspensionForce = wheel.GetSuspensionLambda() / stepSeconds;
+                state.longitudinalForce = wheel.GetLongitudinalLambda() / stepSeconds;
+                state.lateralForce = wheel.GetLateralLambda() / stepSeconds;
                 state.slipRatio = wheelWV.mLongitudinalSlip;
                 state.slipAngleDegrees = JPH::RadiansToDegrees(wheelWV.mLateralSlip);
                 state.longitudinalFriction = wheelWV.mCombinedLongitudinalFriction;
@@ -2686,7 +2686,7 @@ struct PhysicsWorld::Impl
 
     float Alpha() const
     {
-        return std::clamp(accumulatedSeconds / kFixedStepSeconds, 0.0f, 1.0f);
+        return std::clamp(accumulatedSeconds / stepSeconds, 0.0f, 1.0f);
     }
 
     // Declared before the physics system, so they outlive it.
@@ -2725,6 +2725,7 @@ struct PhysicsWorld::Impl
         return grip.frictionCap > 0.0f ? std::min(coefficient, grip.frictionCap) : coefficient;
     }
     std::vector<Vehicle> vehicles;
+    float stepSeconds = kDefaultStepSeconds;
     float accumulatedSeconds = 0.0f;
     bool broadPhaseDirty = false;
 };
@@ -3293,6 +3294,25 @@ size_t PhysicsWorld::GetWaterTriangleCount() const
     return m_impl->water.TriangleCount();
 }
 
+void PhysicsWorld::SetStepSeconds(float seconds)
+{
+    Impl& impl = *m_impl;
+    const float step = std::clamp(seconds, kMinStepSeconds, kMaxStepSeconds);
+    // The carried remainder stays under a step, so the interpolation between the last two steps holds.
+    impl.accumulatedSeconds = std::min(impl.accumulatedSeconds, step);
+    impl.stepSeconds = step;
+}
+
+float PhysicsWorld::GetStepSeconds() const
+{
+    return m_impl->stepSeconds;
+}
+
+int PhysicsWorld::MaxStepsPerUpdate() const
+{
+    return std::max(static_cast<int>(std::lround(kMaxCatchUpSeconds / m_impl->stepSeconds)), 1);
+}
+
 int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
 {
     const auto started = std::chrono::steady_clock::now();
@@ -3305,16 +3325,18 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         impl.broadPhaseDirty = false;
     }
 
+    const float step = impl.stepSeconds;
+    const int maxSteps = MaxStepsPerUpdate();
     impl.accumulatedSeconds += std::max(deltaSeconds, 0.0f);
     int steps = 0;
-    while (impl.accumulatedSeconds >= kFixedStepSeconds && steps < kMaxStepsPerUpdate)
+    while (impl.accumulatedSeconds >= step && steps < maxSteps)
     {
         JPH::BodyInterface& bodies = impl.physicsSystem.GetBodyInterface();
         for (Impl::Vehicle& vehicle : impl.vehicles)
         {
             if (!impl.water.Empty())
             {
-                impl.ApplyWater(vehicle, kFixedStepSeconds);
+                impl.ApplyWater(vehicle, step);
             }
             const JPH::Vec3 localVelocity = vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity();
             VehicleDriverInput input = vehicle.controls.manualGearbox
@@ -3347,7 +3369,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         }
 
         const JPH::EPhysicsUpdateError error =
-            impl.physicsSystem.Update(kFixedStepSeconds, 1, &impl.tempAllocator, impl.jobSystem.get());
+            impl.physicsSystem.Update(step, 1, &impl.tempAllocator, impl.jobSystem.get());
         if (error != JPH::EPhysicsUpdateError::None)
         {
             JoltTrace("PhysicsSystem::Update reported error flags 0x%x", static_cast<unsigned>(error));
@@ -3360,7 +3382,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             vehicle.previous = std::move(vehicle.current);
             vehicle.current = impl.Capture(vehicle);
         }
-        impl.accumulatedSeconds -= kFixedStepSeconds;
+        impl.accumulatedSeconds -= step;
         ++steps;
         if (wallBudgetSeconds > 0.0f && std::chrono::duration<float>(std::chrono::steady_clock::now() - started).count() > wallBudgetSeconds)
         {
@@ -3368,9 +3390,9 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             break;
         }
     }
-    if (steps == kMaxStepsPerUpdate || outOfTime)
+    if (steps == maxSteps || outOfTime)
     {
-        impl.accumulatedSeconds = std::min(impl.accumulatedSeconds, kFixedStepSeconds);
+        impl.accumulatedSeconds = std::min(impl.accumulatedSeconds, step);
     }
     return steps;
 }

@@ -286,7 +286,7 @@ void TestTyreLoadIsTheSteps(const char* car, const VehicleSettings& settings)
     std::vector<VehicleWheelState> before = world.GetVehicleWheels(id);
     for (int step = 0; step < 400; ++step)
     {
-        world.Update(PhysicsWorld::kFixedStepSeconds);
+        world.Update(PhysicsWorld::kDefaultStepSeconds);
         const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
         for (size_t index = 0; index < wheels.size(); ++index)
         {
