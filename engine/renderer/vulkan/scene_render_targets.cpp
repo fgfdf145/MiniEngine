@@ -105,6 +105,11 @@ VkImageView SceneRenderTargets::GetSampledView(RenderTargetId target, uint32_t i
     return image.sampledView != VK_NULL_HANDLE ? image.sampledView : image.view;
 }
 
+nvrhi::ITexture* SceneRenderTargets::GetTexture(RenderTargetId target, uint32_t index) const
+{
+    return Describe(target).images.at(index).texture;
+}
+
 VkExtent2D SceneRenderTargets::GetExtent() const
 {
     return m_extent;

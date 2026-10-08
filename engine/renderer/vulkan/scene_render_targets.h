@@ -60,6 +60,8 @@ class SceneRenderTargets
     // is GetView; for that one it is a depth-only view, because a sampled view may carry only one
     // aspect while the attachment view needs both.
     VkImageView GetSampledView(RenderTargetId target, uint32_t index) const;
+    // The NVRHI texture behind a copy; an NVRHI binding set's view of it is GetSampledView's.
+    nvrhi::ITexture* GetTexture(RenderTargetId target, uint32_t index) const;
 
     // The render size: every target the scene is drawn and lit in.
     VkExtent2D GetExtent() const;

@@ -199,11 +199,12 @@ LUT、空气透视体积、云噪声三张、云阴影、解析后的云，环�
 - DDGI 的更新在写第 L 层的同时采样第 L+1 层（新探针从更粗一层起步），而帧集的视图包含所有层、要求全是
   `SHADER_READ_ONLY_OPTIMAL`，所以更新改从 DDGI 自己的集（binding 6 到 9，`GENERAL`）读图集
   （`DDGI_UPDATE_ATLASES`）。
-- DDGI 的两个 layout 转换并进已有的那两个 `vkCmdPipelineBarrier`。分开记成两个独立的 barrier（就挨着原来的，
-  lavapipe 会把相邻的 barrier 合并成一次 stall，所以执行上应当完全一样）时，Cornell DDGI 场景确定性地变了一点
-  （均值 0.157，最大 31，3.4% 的像素 > 2），其中任何一个单独加都不变，也和 layout 本身无关（`GENERAL→GENERAL`
-  同样会变），基线在 CPU 满载下跑也不变。像是某处依赖了未初始化的内存（命令流形状不同→主机分配不同），原因未查，
-  记为后续。
+- DDGI 的两个 layout 转换并进已有的那两个 `vkCmdPipelineBarrier`。分开记成两个独立的 barrier 时，Cornell DDGI
+  场景变了一点（均值 0.157，最大 31，3.4% 的像素 > 2）。当时以为是某处读了未初始化的内存；后来 B3c 一个与 DDGI
+  无关的改动给出一模一样的另一张图，对比日志才看清是 A/B 本身的竞争：场景加载完后新网格的光追场景在工作线程上
+  建，渲染线程哪一帧装上它不固定，`--wait-for-scene` 开始数帧之前的预热帧数因此差一帧（日志里 10 帧对 11 帧），
+  DDGI 会跨帧累积，所以结果有两个稳定的取值。别的场景不累积，不受影响。这是原有的不确定性，不是这次的改动造成的；
+  要彻底消除，得让等待以渲染线程装好光追场景的那一帧为准（记为后续）。
 - `CreateNvrhiImage/Buffer` 的 debug name 原来就是失败信息本身（"Failed to create a DDGI atlas"），改成去掉
   "Failed to create (the|a|an)" 的部分。
 
@@ -239,6 +240,15 @@ binding set。之后才是阶段 3 的逐 pass 迁移。
 
 验证：A/B 9 个场景逐像素相同，validation 无报告（卡通管线在启动时按新布局创建，也无报告；但这里没有
 卡通场景的资产，卡通的画面没有对比）；ctest 与之前相同。
+
+**B3c 完成（2026-10-09）**：G-buffer 输入集（光照、GI 合成、tonemap 调试视图的 set 2）一步到位：14 个纹理都是
+场景渲染目标，本来就在 `SHADER_READ_ONLY_OPTIMAL`，读的都是同一个 nearest 采样器，所以拆成 14 个 `Texture2D`
+加一个 `gbufferSampler`（binding 64），布局和每个帧槽的集直接用 NVRHI 的（`SceneRenderTargets::GetTexture`
+给出每份拷贝的 NVRHI 纹理；深度加模板的目标 NVRHI 取深度那一面，和原来的 `GetSampledView` 一样）。
+`OnTargetsRebuilt` 重建集，旧集随之释放它们引用的纹理。
+
+验证：A/B 9 个场景逐像素相同，validation 无报告；ctest 与之前相同。Cornell DDGI 在整批 A/B 里有一次落在另一个
+稳定取值上（预热少一帧，见 B2a 那条），同一个 exe 单独重跑三次都和基线逐像素相同。
 
 ### 验证工具
 

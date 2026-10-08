@@ -12,8 +12,10 @@ namespace me
 {
 
 // Set 2 of every pipeline that samples the G-buffer: GB0-GB3, depth, the motion vectors, the
-// resolved AO and GB5 as combined image samplers, one set per frame slot because all eight are transient
-// targets. The lighting pass and
+// resolved AO and the rest of kInputs, and the one sampler they are read with, one set per frame slot
+// because all of them are transient targets. The layout and the sets are NVRHI's
+// (docs/design/2026-10-08-nvrhi-backend-design.md, stage B3); the native pipelines take their
+// Vulkan handles. The lighting pass and
 // the tone mapping debug views both bind it, which is why the renderer owns it and not either
 // pass.
 //
@@ -43,6 +45,9 @@ class VulkanGBufferDescriptors
         // ReSTIR PT's shading, which the lighting pass adds in place of its lights while it runs.
         RenderTargetId::ScenePathTrace};
 
+    // The sampler's binding: one for every input, past them (shaders/vulkan/gbuffer_inputs.slang).
+    static constexpr uint32_t kSamplerBinding = 64;
+
     VulkanGBufferDescriptors(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();
 
@@ -67,10 +72,11 @@ class VulkanGBufferDescriptors
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::BindingLayoutHandle m_setLayout;
     VkDescriptorSetLayout m_emptySetLayout = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
 };
 }
