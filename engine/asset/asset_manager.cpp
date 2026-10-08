@@ -83,8 +83,8 @@ bool IsHiddenAsset(const std::filesystem::path& p)
     return p.filename().string().ends_with(".miniengine_asset.yaml");
 }
 
-// A renamed model keeps its "<stem>_<index>.material.yaml" sidecars attached
-// by renaming them to the new stem.
+// A renamed or moved model keeps its "<stem>_<index>.material.yaml" sidecars
+// attached by renaming them to the new stem beside the new file.
 void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, const std::filesystem::path& newModelPath)
 {
     if (!IsModelExt(oldModelPath))
@@ -100,8 +100,64 @@ void RenameModelMaterialSidecars(const std::filesystem::path& oldModelPath, cons
         std::error_code renameEc;
         std::filesystem::rename(
             definition,
-            definition.parent_path() / (newPrefix + name.substr(oldPrefix.size())),
+            newModelPath.parent_path() / (newPrefix + name.substr(oldPrefix.size())),
             renameEc);
+    }
+}
+
+// Drag payloads. A model keeps the type the viewport accepts, so the same drag can place it
+// in the scene or move it into a folder; every other tile carries the generic one.
+constexpr const char* kModelPayload = "ASSET_MODEL_PATH";
+constexpr const char* kEntryPayload = "ASSET_ENTRY_PATH";
+
+std::string PayloadString(const ImGuiPayload& payload)
+{
+    if (payload.Data == nullptr || payload.DataSize <= 0)
+    {
+        return {};
+    }
+    return std::string(static_cast<const char*>(payload.Data), static_cast<size_t>(payload.DataSize - 1));
+}
+
+bool IsSamePath(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    return AssetPaths::IsSameOrInside(a, b) && AssetPaths::IsSameOrInside(b, a);
+}
+
+// A moved .gltf finds its .bin and textures by relative path: name the files beside it that
+// it mentions and that stay behind.
+void AppendLeftBehindWarnings(
+    const std::filesystem::path& gltfPath,
+    const std::unordered_set<std::string>& movingPaths,
+    std::vector<std::string>& warnings)
+{
+    if (ToLowerAscii(gltfPath.extension().string()) != ".gltf")
+    {
+        return;
+    }
+    constexpr std::uintmax_t kMaxBytes = 64ull * 1024 * 1024;
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(gltfPath, ec);
+    if (ec || size > kMaxBytes)
+    {
+        return;
+    }
+    std::ifstream stream(gltfPath, std::ios::binary);
+    const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+
+    for (std::filesystem::directory_iterator it(gltfPath.parent_path(), ec), end; !ec && it != end; it.increment(ec))
+    {
+        const std::filesystem::path sibling = it->path();
+        if (movingPaths.count(sibling.lexically_normal().string()) > 0 || IsHiddenAsset(sibling))
+        {
+            continue;
+        }
+        // A uri starts with the name ("scene.bin") or runs through it ("textures/body.png").
+        const std::string name = sibling.filename().string();
+        if (content.find('"' + name) != std::string::npos || content.find(name + '/') != std::string::npos)
+        {
+            warnings.push_back("'" + gltfPath.filename().string() + "' uses '" + name + "', which stays behind");
+        }
     }
 }
 
@@ -218,6 +274,7 @@ AssetManagerResult AssetManager::Draw()
     DrawPreviewPanel(result);
     DrawDeleteConfirmModal(result);
     DrawRenameConfirmModal();
+    DrawMoveConfirmModal();
 
     result.renamedAssets = std::move(m_completedRenames);
     m_completedRenames.clear();
@@ -555,6 +612,7 @@ void AssetManager::DrawBreadcrumb()
                 NavigateTo(segments[i]);
             }
             ImGui::PopStyleColor();
+            DrawMoveDropTarget(segments[i]);
         }
     }
 }
@@ -710,14 +768,10 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
                 ImGui::SetTooltip("%s", entry.name.c_str());
             }
 
-            // Drag source (only for model files, drag the specific entry)
-            if (entry.type == AssetType::Model && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+            DrawEntryDragSource(entry, index, result);
+            if (entry.isDir)
             {
-                const std::string pathStr = entry.path.string();
-                ImGui::SetDragDropPayload("ASSET_MODEL_PATH", pathStr.c_str(), pathStr.size() + 1);
-                ImGui::TextUnformatted(entry.name.c_str());
-                result.draggedModelPath = pathStr;
-                ImGui::EndDragDropSource();
+                DrawMoveDropTarget(entry.path);
             }
 
             // Right-click context menu
@@ -1083,6 +1137,259 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, int index, AssetMana
 }
 
 // ---------------------------------------------------------------------------
+// Drag to move
+
+void AssetManager::DrawEntryDragSource(const Entry& entry, int index, AssetManagerResult& result)
+{
+    if (entry.name == ".." || !ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+    {
+        return;
+    }
+
+    // A selected tile carries the whole selection along; an unselected one goes alone.
+    m_draggedPaths.clear();
+    if (m_selectedIndices.count(index) > 0)
+    {
+        std::vector<int> selected(m_selectedIndices.begin(), m_selectedIndices.end());
+        std::sort(selected.begin(), selected.end());
+        for (const int i : selected)
+        {
+            if (i >= 0 && i < static_cast<int>(m_entries.size()) && m_entries[static_cast<size_t>(i)].name != "..")
+            {
+                m_draggedPaths.push_back(m_entries[static_cast<size_t>(i)].path.string());
+            }
+        }
+    }
+    else
+    {
+        m_draggedPaths.push_back(entry.path.string());
+    }
+
+    const std::string pathStr = entry.path.string();
+    if (entry.type == AssetType::Model)
+    {
+        ImGui::SetDragDropPayload(kModelPayload, pathStr.c_str(), pathStr.size() + 1);
+        result.draggedModelPath = pathStr;
+    }
+    else
+    {
+        ImGui::SetDragDropPayload(kEntryPayload, pathStr.c_str(), pathStr.size() + 1);
+    }
+    PushTypeColor(entry.type);
+    ImGui::TextUnformatted(TypeIcon(entry.type));
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (m_draggedPaths.size() > 1)
+    {
+        ImGui::Text("%s and %zu more", entry.name.c_str(), m_draggedPaths.size() - 1);
+    }
+    else
+    {
+        ImGui::TextUnformatted(entry.name.c_str());
+    }
+    ImGui::EndDragDropSource();
+}
+
+void AssetManager::DrawMoveDropTarget(const std::filesystem::path& destination)
+{
+    // Only a drag that started in this browser: its payload names one of the dragged paths.
+    const ImGuiPayload* drag = ImGui::GetDragDropPayload();
+    if (drag == nullptr || !(drag->IsDataType(kModelPayload) || drag->IsDataType(kEntryPayload)) ||
+        std::find(m_draggedPaths.begin(), m_draggedPaths.end(), PayloadString(*drag)) == m_draggedPaths.end())
+    {
+        return;
+    }
+    // A folder never goes into itself or below itself: such a folder is no target at all.
+    for (const std::string& dragged : m_draggedPaths)
+    {
+        if (AssetPaths::IsSameOrInside(destination, dragged))
+        {
+            return;
+        }
+    }
+
+    if (ImGui::BeginDragDropTarget())
+    {
+        const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kModelPayload);
+        if (payload == nullptr)
+        {
+            payload = ImGui::AcceptDragDropPayload(kEntryPayload);
+        }
+        if (payload != nullptr)
+        {
+            RequestMove(m_draggedPaths, destination);
+            m_draggedPaths.clear();
+        }
+        ImGui::EndDragDropTarget();
+    }
+}
+
+void AssetManager::RequestMove(const std::vector<std::string>& sourcePaths, const std::filesystem::path& destination)
+{
+    m_statusError.clear();
+    std::error_code ec;
+    PendingMove move;
+    move.destinationDirectory = destination.string();
+    for (const std::string& sourceString : sourcePaths)
+    {
+        const std::filesystem::path source(sourceString);
+        if (IsSamePath(source.parent_path(), destination))
+        {
+            continue; // already there
+        }
+        if (AssetPaths::IsSameOrInside(destination, source))
+        {
+            m_statusError = "Cannot move '" + source.filename().string() + "' into itself";
+            continue;
+        }
+        if (std::filesystem::exists(destination / source.filename(), ec))
+        {
+            // Never clobber, as with rename.
+            m_statusError = "'" + destination.filename().string() + "' already has a '" +
+                            source.filename().string() + "'";
+            continue;
+        }
+        move.sourcePaths.push_back(sourceString);
+    }
+    if (move.sourcePaths.empty())
+    {
+        return;
+    }
+
+    // Every file that moves, so documents moving together are not counted as referencing
+    // each other: their relative paths still hold after the move.
+    std::vector<std::string> movedNames;
+    std::unordered_set<std::string> movingPaths;
+    for (const std::string& sourceString : move.sourcePaths)
+    {
+        const std::filesystem::path source(sourceString);
+        movedNames.push_back(source.filename().string());
+        movingPaths.insert(source.lexically_normal().string());
+        if (std::filesystem::is_directory(source, ec))
+        {
+            for (const auto& item : std::filesystem::recursive_directory_iterator(
+                     source, std::filesystem::directory_options::skip_permission_denied, ec))
+            {
+                movingPaths.insert(item.path().lexically_normal().string());
+            }
+        }
+        else
+        {
+            for (const std::filesystem::path& definition : FindMaterialDefinitionFiles(source))
+            {
+                movingPaths.insert(definition.lexically_normal().string());
+            }
+            movingPaths.insert(AssetRegistry::SidecarPathFor(source).lexically_normal().string());
+        }
+    }
+
+    // As with rename: scenes reference assets by uuid and follow the move, so only glTF
+    // files and material definitions, which hold plain paths, break.
+    std::vector<std::string> warnings;
+    for (const AssetReference& reference : FindReferencesTo(m_root, movedNames, movingPaths))
+    {
+        if (!IsSceneFile(reference.referencedBy))
+        {
+            warnings.push_back("'" + reference.referencedName + "' is referenced by " + reference.referencedBy);
+        }
+    }
+    for (const std::string& sourceString : move.sourcePaths)
+    {
+        AppendLeftBehindWarnings(sourceString, movingPaths, warnings);
+    }
+
+    if (!warnings.empty())
+    {
+        m_pendingMoveWarnings = std::move(warnings);
+        m_pendingMove = std::move(move);
+        m_openMoveModal = true;
+        return; // the modal performs the move on confirmation
+    }
+    PerformMove(move);
+}
+
+void AssetManager::PerformMove(const PendingMove& move)
+{
+    const std::filesystem::path destination(move.destinationDirectory);
+    for (const std::string& sourceString : move.sourcePaths)
+    {
+        const std::filesystem::path source(sourceString);
+        std::error_code ec;
+        const bool isDir = std::filesystem::is_directory(source, ec);
+        if (!MoveOnDisk(source, destination / source.filename(), isDir, ec))
+        {
+            m_statusError = "Could not move '" + source.filename().string() + "': " + ec.message();
+        }
+    }
+    m_needsScan = true;
+}
+
+void AssetManager::DrawMoveConfirmModal()
+{
+    constexpr const char* kTitle = "Move Referenced Assets?";
+
+    if (m_openMoveModal)
+    {
+        ImGui::OpenPopup(kTitle);
+        m_openMoveModal = false;
+    }
+
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (m_pendingMove.has_value())
+        {
+            const std::string destinationName =
+                std::filesystem::path(m_pendingMove->destinationDirectory).filename().string();
+            if (m_pendingMove->sourcePaths.size() == 1)
+            {
+                ImGui::Text(
+                    "Move '%s' into '%s'?",
+                    std::filesystem::path(m_pendingMove->sourcePaths.front()).filename().string().c_str(),
+                    destinationName.c_str());
+            }
+            else
+            {
+                ImGui::Text("Move %zu items into '%s'?", m_pendingMove->sourcePaths.size(), destinationName.c_str());
+            }
+        }
+        ImGui::Spacing();
+
+        for (const std::string& warning : m_pendingMoveWarnings)
+        {
+            ImGui::TextColored(ui_colors::kTextWarning, "%s", warning.c_str());
+        }
+        ImGui::TextDisabled("Those files find each other by relative path: moving breaks them. Scenes are not affected.");
+        ImGui::Separator();
+
+        if (ImGui::Button("Move Anyway", ImVec2(140.0f * UiScale(), 0.0f)))
+        {
+            if (m_pendingMove.has_value())
+            {
+                PerformMove(*m_pendingMove);
+            }
+            m_pendingMove.reset();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f * UiScale(), 0.0f)))
+        {
+            m_pendingMove.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+
+        ImGui::EndPopup();
+    }
+    else if (m_pendingMove.has_value())
+    {
+        // Dismissed without an explicit choice (e.g. Escape): treat as cancel.
+        m_pendingMove.reset();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rename / new folder
 
 void AssetManager::BeginRename(int index)
@@ -1172,27 +1479,37 @@ void AssetManager::CommitRename()
 void AssetManager::PerformRename(const PendingRename& rename)
 {
     const std::filesystem::path source(rename.sourcePath);
-    const std::filesystem::path target = source.parent_path() / rename.newName;
-
     std::error_code ec;
-    std::filesystem::rename(source, target, ec);
-    if (!ec)
-    {
-        // Parsed model data is keyed on path. Without this, a model re-imported
-        // later at the old path is served the previous file's data.
-        ModelCache::Invalidate(rename.sourcePath);
-
-        // Keep the uuid registry and companion sidecars pointing at the new name.
-        AssetRegistry::OnAssetRenamed(source, target);
-        if (!rename.isDir)
-        {
-            RenameModelMaterialSidecars(source, target);
-        }
-
-        // Reported so open scenes and editors can follow the asset.
-        m_completedRenames.push_back(AssetManagerResult::RenamedAsset{source.string(), target.string()});
-    }
+    MoveOnDisk(source, source.parent_path() / rename.newName, rename.isDir, ec);
     m_needsScan = true;
+}
+
+bool AssetManager::MoveOnDisk(
+    const std::filesystem::path& source,
+    const std::filesystem::path& target,
+    bool isDir,
+    std::error_code& ec)
+{
+    std::filesystem::rename(source, target, ec);
+    if (ec)
+    {
+        return false;
+    }
+
+    // Parsed model data is keyed on path. Without this, a model re-imported
+    // later at the old path is served the previous file's data.
+    ModelCache::Invalidate(source.string());
+
+    // Keep the uuid registry and companion sidecars pointing at the new path.
+    AssetRegistry::OnAssetRenamed(source, target);
+    if (!isDir)
+    {
+        RenameModelMaterialSidecars(source, target);
+    }
+
+    // Reported so open scenes and editors can follow the asset.
+    m_completedRenames.push_back(AssetManagerResult::RenamedAsset{source.string(), target.string()});
+    return true;
 }
 
 void AssetManager::CancelRename()

@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -83,6 +84,14 @@ class AssetManager
         bool isDir = false;
     };
 
+    // Tiles dragged onto a folder (a folder tile, "..", or a breadcrumb segment) move there.
+    // Like a rename, a move that breaks path references is staged until the user confirms it.
+    struct PendingMove
+    {
+        std::vector<std::string> sourcePaths;
+        std::string destinationDirectory;
+    };
+
     void ScanCurrentDir();
     void DrawToolbar(AssetManagerResult& result);
     void DrawBreadcrumb();
@@ -98,9 +107,20 @@ class AssetManager
     void BeginRename(int index);
     void CommitRename();
     void PerformRename(const PendingRename& rename);
+    // Renames or moves one file or folder and keeps the registry, caches and material
+    // sidecars following it. False (with the reason in `ec`) when the filesystem refused.
+    bool MoveOnDisk(const std::filesystem::path& source, const std::filesystem::path& target, bool isDir,
+                    std::error_code& ec);
     void DrawRenameConfirmModal();
     void CancelRename();
     void CreateNewFolder();
+
+    void DrawEntryDragSource(const Entry& entry, int index, AssetManagerResult& result);
+    // Makes the last item a drop target that moves the dragged tiles into `destination`.
+    void DrawMoveDropTarget(const std::filesystem::path& destination);
+    void RequestMove(const std::vector<std::string>& sourcePaths, const std::filesystem::path& destination);
+    void PerformMove(const PendingMove& move);
+    void DrawMoveConfirmModal();
 
     static AssetType ClassifyPath(const std::filesystem::path& p);
     static const char* TypeTag(AssetType t);
@@ -151,5 +171,12 @@ class AssetManager
     std::vector<AssetManagerResult::RenamedAsset> m_completedRenames; // drained into Draw()'s result
     std::vector<std::string> m_pendingRenameWarnings;
     bool m_openRenameModal = false;
+
+    // What the drag started in this browser carries: the dragged tile, or the whole selection
+    // when the tile was part of it.
+    std::vector<std::string> m_draggedPaths;
+    std::optional<PendingMove> m_pendingMove;
+    std::vector<std::string> m_pendingMoveWarnings;
+    bool m_openMoveModal = false;
 };
 }

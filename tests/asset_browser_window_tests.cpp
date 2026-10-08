@@ -1,6 +1,7 @@
 // The Assets window at three widths, drawn without a GPU: the toolbar and the breadcrumb wrap
 // instead of running past the right edge, the tiles fill each row, and the preview panel wraps
 // a long path. With MINIENGINE_UI_SNAPSHOT_DIR set the picture is written there as a PNG.
+// Then tiles dragged onto folders, "..", and a clashing name, with the mouse driven frame by frame.
 
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/asset_registry.h>
@@ -172,6 +173,151 @@ void TestTheWindowFollowsItsWidth()
 
     std::filesystem::remove_all(root.parent_path());
 }
+
+// One frame of a single browser, returning what it reported.
+AssetManagerResult DrawBrowserFrame(AssetManager& manager, ImVec2 mouse, bool mouseDown)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(kWidth), static_cast<float>(kHeight));
+    io.DeltaTime = 1.0f / 60.0f;
+    io.AddMousePosEvent(mouse.x, mouse.y);
+    io.AddMouseButtonEvent(0, mouseDown);
+    ImGui::NewFrame();
+    AssetManagerResult result;
+    ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(570.0f, 540.0f), ImGuiCond_Always);
+    if (ImGui::Begin("Drag", nullptr, ImGuiWindowFlags_NoSavedSettings))
+    {
+        result = manager.Draw();
+    }
+    ImGui::End();
+    ImGui::Render();
+    ServeTextures(*ImGui::GetDrawData());
+    return result;
+}
+
+void SnapshotIfAsked(const char* fileName)
+{
+    if (const char* folder = std::getenv("MINIENGINE_UI_SNAPSHOT_DIR"))
+    {
+        std::filesystem::create_directories(folder);
+        WritePng(Rasterise(*ImGui::GetDrawData(), kWidth, kHeight), kWidth, kHeight, std::filesystem::path(folder) / fileName);
+    }
+}
+
+// The centre of tile `index` in the "Drag" window's list.
+ImVec2 TileCentre(int index)
+{
+    ImGuiWindow* list = FindChild("Drag", "##asset_list");
+    Require(list != nullptr, "the drag window has a tile list");
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float rowWidth = list->ContentRegionRect.GetWidth();
+    const int columns = std::max(1, static_cast<int>((rowWidth + style.ItemSpacing.x) / (96.0f + style.ItemSpacing.x)));
+    const float tileWidth = (rowWidth - style.ItemSpacing.x * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+    const int column = index % columns;
+    const int row = index / columns;
+    return ImVec2(list->ContentRegionRect.Min.x + static_cast<float>(column) * (tileWidth + style.ItemSpacing.x) + tileWidth * 0.5f,
+                  list->ContentRegionRect.Min.y + static_cast<float>(row) * (100.0f + style.ItemSpacing.y) + 50.0f);
+}
+
+// Presses on tile `from`, drags it over tile `to` and lets go there; returns what the browser
+// reported over the whole drag.
+std::vector<AssetManagerResult::RenamedAsset> DragTile(AssetManager& manager, int from, int to,
+                                                       const char* hoverSnapshot = nullptr)
+{
+    const ImVec2 away(-100.0f, -100.0f);
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        DrawBrowserFrame(manager, away, false);
+    }
+    const ImVec2 start = TileCentre(from);
+    const ImVec2 end = TileCentre(to);
+    std::vector<AssetManagerResult::RenamedAsset> renamed;
+    const auto collect = [&](const AssetManagerResult& result)
+    {
+        renamed.insert(renamed.end(), result.renamedAssets.begin(), result.renamedAssets.end());
+    };
+    collect(DrawBrowserFrame(manager, start, false));
+    collect(DrawBrowserFrame(manager, start, true));
+    constexpr int kSteps = 6;
+    for (int step = 1; step <= kSteps; ++step)
+    {
+        const float t = static_cast<float>(step) / static_cast<float>(kSteps);
+        collect(DrawBrowserFrame(manager, ImVec2(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t), true));
+    }
+    collect(DrawBrowserFrame(manager, end, true));
+    if (hoverSnapshot != nullptr)
+    {
+        SnapshotIfAsked(hoverSnapshot);
+    }
+    collect(DrawBrowserFrame(manager, end, false));
+    for (int frame = 0; frame < 2; ++frame)
+    {
+        collect(DrawBrowserFrame(manager, away, false));
+    }
+    return renamed;
+}
+
+void TestDraggingMovesFolders()
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "miniengine_asset_browser_drag_test" / "assets";
+    std::filesystem::remove_all(root.parent_path());
+    Touch(root / "alpha" / "inside" / "rock.png");
+    std::filesystem::create_directories(root / "bravo");
+    Touch(root / "charlie" / "alpha" / "keep.txt");
+    Touch(root / "tree.glb");
+    AssetRegistry::Initialize(root);
+
+    AssetManager manager(root);
+    // Root tiles: alpha, bravo, charlie, tree.glb.
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+
+    // A folder dragged onto a sibling folder goes inside it, with everything it holds.
+    std::vector<AssetManagerResult::RenamedAsset> renamed = DragTile(manager, 0, 1, "asset_browser_drag_hover.png");
+    Require(std::filesystem::exists(root / "bravo" / "alpha" / "inside" / "rock.png"), "alpha moved into bravo");
+    Require(!std::filesystem::exists(root / "alpha"), "alpha left the root");
+    Require(renamed.size() == 1 && std::filesystem::path(renamed[0].newPath) == root / "bravo" / "alpha",
+            "the move is reported so open scenes follow it");
+    Require(AssetRegistry::ResolveUuid(AssetRegistry::GetOrCreateUuid(root / "bravo" / "alpha" / "inside" / "rock.png")).has_value(),
+            "the registry knows the moved texture");
+
+    // A model keeps its viewport payload and still moves into a folder. Root: bravo, charlie, tree.glb.
+    renamed = DragTile(manager, 2, 0);
+    Require(std::filesystem::exists(root / "bravo" / "tree.glb") && !std::filesystem::exists(root / "tree.glb"),
+            "the model moved into bravo");
+
+    // Onto ".." moves a folder up a level. Inside bravo: .., alpha, tree.glb.
+    manager.NavigateTo(root / "bravo");
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+    renamed = DragTile(manager, 1, 0);
+    Require(std::filesystem::exists(root / "alpha" / "inside" / "rock.png") && !std::filesystem::exists(root / "bravo" / "alpha"),
+            "dropping on '..' moved alpha back to the root");
+
+    // A folder that already holds the name refuses the move instead of clobbering it.
+    // Root: alpha, bravo, charlie.
+    manager.NavigateTo(root);
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+    renamed = DragTile(manager, 0, 2);
+    Require(renamed.empty(), "a clashing move does nothing");
+    Require(std::filesystem::exists(root / "alpha" / "inside" / "rock.png") &&
+                std::filesystem::exists(root / "charlie" / "alpha" / "keep.txt") &&
+                !std::filesystem::exists(root / "charlie" / "alpha" / "inside"),
+            "neither folder changed");
+
+    // A .gltf whose buffer stays behind asks first. Root: alpha, bravo, charlie, scene.bin, scene.gltf.
+    std::ofstream(root / "scene.gltf") << R"({"buffers":[{"uri":"scene.bin"}]})";
+    Touch(root / "scene.bin");
+    manager.Refresh();
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+    renamed = DragTile(manager, 4, 1);
+    SnapshotIfAsked("asset_browser_move_confirm.png");
+    Require(renamed.empty() && std::filesystem::exists(root / "scene.gltf"), "the move waits for the confirmation");
+    Require(ImGui::FindWindowByName("Move Referenced Assets?") != nullptr &&
+                ImGui::FindWindowByName("Move Referenced Assets?")->Active,
+            "the confirmation is open");
+
+    std::filesystem::remove_all(root.parent_path());
+}
 }
 
 int main()
@@ -181,7 +327,10 @@ int main()
     io.IniFilename = nullptr;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
-    io.Fonts->AddFontDefault();
+    // An explicit size: ImGui 1.92.9 refuses to merge the sized icon font into an implicitly sized one.
+    ImFontConfig fontConfig;
+    fontConfig.SizePixels = 13.0f;
+    io.Fonts->AddFontDefault(&fontConfig);
     // Anti-aliased lines as geometry with a fading fringe, which the software rasteriser
     // reproduces; the textured kind needs the GPU's filtering.
     ImGui::GetStyle().AntiAliasedLinesUseTex = false;
@@ -190,6 +339,7 @@ int main()
     try
     {
         TestTheWindowFollowsItsWidth();
+        TestDraggingMovesFolders();
         std::cout << "asset browser window tests passed\n";
     }
     catch (const std::exception& error)
