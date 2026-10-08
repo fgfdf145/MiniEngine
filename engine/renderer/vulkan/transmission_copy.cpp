@@ -107,7 +107,7 @@ VulkanTransmissionImage::~VulkanTransmissionImage()
 
 TextureDescriptorBinding VulkanTransmissionImage::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_view, NativeSampler(m_sampler)};
+    return BindTexture(m_view, m_texture, m_sampler);
 }
 
 VkImage VulkanTransmissionImage::GetImage() const

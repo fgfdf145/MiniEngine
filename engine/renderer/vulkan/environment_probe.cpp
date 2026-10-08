@@ -119,7 +119,7 @@ VulkanEnvironmentProbe::~VulkanEnvironmentProbe()
 
 TextureDescriptorBinding VulkanEnvironmentProbe::GetPrefilteredBinding() const
 {
-    return TextureDescriptorBinding{m_prefiltered.cubeView, NativeSampler(m_sampler)};
+    return BindTexture(m_prefiltered.cubeView, m_prefiltered.texture, m_sampler);
 }
 
 void VulkanEnvironmentProbe::Invalidate()

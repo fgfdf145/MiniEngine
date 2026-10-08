@@ -68,7 +68,7 @@ VulkanLocalShadowPass::~VulkanLocalShadowPass()
 
 TextureDescriptorBinding VulkanLocalShadowPass::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_view, NativeSampler(m_sampler)};
+    return BindTexture(m_view, m_texture, m_sampler);
 }
 
 void VulkanLocalShadowPass::Record(

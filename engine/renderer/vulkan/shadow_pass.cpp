@@ -72,7 +72,7 @@ uint32_t VulkanShadowPass::GetResolution() const
 
 TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_arrayView, NativeSampler(m_sampler)};
+    return BindTexture(m_arrayView, m_texture, m_sampler);
 }
 
 std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* cascades, uint64_t casterKey)

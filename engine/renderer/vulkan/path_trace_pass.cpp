@@ -282,12 +282,12 @@ void VulkanPathTracePass::RecordLayerInitialTransition(VkCommandBuffer commandBu
 
 TextureDescriptorBinding VulkanPathTracePass::GetLayerDiffuseBinding() const
 {
-    return TextureDescriptorBinding{m_layerResult.GetView(0), NativeSampler(m_nearestSampler)};
+    return BindTexture(m_layerResult.GetView(0), m_layerResult.GetTexture(0), m_nearestSampler);
 }
 
 TextureDescriptorBinding VulkanPathTracePass::GetLayerSpecularBinding() const
 {
-    return TextureDescriptorBinding{m_layerResult.GetView(1), NativeSampler(m_nearestSampler)};
+    return BindTexture(m_layerResult.GetView(1), m_layerResult.GetTexture(1), m_nearestSampler);
 }
 
 void VulkanPathTracePass::Record(

@@ -251,7 +251,7 @@ void VulkanPathTraceLayerPass::RecordInitialTransition(VkCommandBuffer commandBu
 
 TextureDescriptorBinding VulkanPathTraceLayerPass::GetDepthBinding() const
 {
-    return TextureDescriptorBinding{m_depth.view, NativeSampler(m_sampler)};
+    return BindTexture(m_depth.view, m_depth.texture, m_sampler);
 }
 
 VkImageView VulkanPathTraceLayerPass::GetDepthView() const

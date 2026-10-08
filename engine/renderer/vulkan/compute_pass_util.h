@@ -119,6 +119,7 @@ class HistoryImagePair
 
     VkImage GetImage(uint32_t index) const;
     VkImageView GetView(uint32_t index) const;
+    nvrhi::ITexture* GetTexture(uint32_t index) const;
 
     // Both images, compute to compute. Invalid history is discarded with an UNDEFINED to GENERAL
     // transition, which is also the one a freshly created image needs; valid history keeps its

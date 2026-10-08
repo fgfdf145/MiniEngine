@@ -126,47 +126,47 @@ VulkanAtmosphere::~VulkanAtmosphere()
 
 TextureDescriptorBinding VulkanAtmosphere::GetTransmittanceBinding() const
 {
-    return TextureDescriptorBinding{m_images[kTransmittance].view, NativeSampler(m_sampler)};
+    return BindTexture(m_images[kTransmittance].view, m_images[kTransmittance].texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetSkyViewBinding() const
 {
-    return TextureDescriptorBinding{m_images[kSkyView].view, NativeSampler(m_sampler)};
+    return BindTexture(m_images[kSkyView].view, m_images[kSkyView].texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetMultiScatteringBinding() const
 {
-    return TextureDescriptorBinding{m_images[kMultiScattering].view, NativeSampler(m_sampler)};
+    return BindTexture(m_images[kMultiScattering].view, m_images[kMultiScattering].texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding(const View& view) const
 {
-    return TextureDescriptorBinding{view.m_aerialPerspective.view, NativeSampler(m_sampler)};
+    return BindTexture(view.m_aerialPerspective.view, view.m_aerialPerspective.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudShapeNoiseBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudShape].view, NativeSampler(m_cloudSampler)};
+    return BindTexture(m_cloudNoise[kCloudShape].view, m_cloudNoise[kCloudShape].texture, m_cloudSampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudDetailNoiseBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudDetail].view, NativeSampler(m_cloudSampler)};
+    return BindTexture(m_cloudNoise[kCloudDetail].view, m_cloudNoise[kCloudDetail].texture, m_cloudSampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudShadowBinding() const
 {
-    return TextureDescriptorBinding{m_cloudShadow.view, NativeSampler(m_sampler)};
+    return BindTexture(m_cloudShadow.view, m_cloudShadow.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudWeatherBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudWeather].view, NativeSampler(m_cloudSampler)};
+    return BindTexture(m_cloudNoise[kCloudWeather].view, m_cloudNoise[kCloudWeather].texture, m_cloudSampler);
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudTargetBinding(const View& view) const
 {
-    return TextureDescriptorBinding{view.m_cloudResolved.view, NativeSampler(m_sampler)};
+    return BindTexture(view.m_cloudResolved.view, view.m_cloudResolved.texture, m_sampler);
 }
 
 VulkanAtmosphere::View::View(VkDevice device)
@@ -463,9 +463,9 @@ std::optional<glm::vec3> VulkanAtmosphere::GetSkyAverageRadiance(uint32_t frameS
     return glm::vec3(readback.mapped[0], readback.mapped[1], readback.mapped[2]) * 0.282095f;
 }
 
-VkBuffer VulkanAtmosphere::GetIrradianceBuffer() const
+nvrhi::IBuffer* VulkanAtmosphere::GetIrradianceBuffer() const
 {
-    return m_irradianceBuffer;
+    return m_irradianceHandle;
 }
 
 void VulkanAtmosphere::Record(

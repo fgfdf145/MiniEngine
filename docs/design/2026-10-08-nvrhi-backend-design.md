@@ -209,6 +209,26 @@ LUT、空气透视体积、云噪声三张、云阴影、解析后的云，环�
 
 验证：A/B 对比 A1 之前的基线，9 个场景逐像素相同，validation 无报告；ctest 与之前相同。
 
+**B2b 完成（2026-10-09）**：帧描述符集是 NVRHI 的了。
+- `VulkanFrameDescriptorSetLayout` 用 `nvrhi::BindingLayoutDesc` 建：visibility 是 vertex + pixel + compute
+  （原来各 binding 的 stage 并集），`VulkanBindingOffsets` 全清零（NVRHI 默认把 sampler 挪到 128、CB 到 256、
+  UAV 到 384），所以 slot 就是 binding；相机块是 `ConstantBuffer`，着色器的 `StructuredBuffer` 用
+  `RawBuffer_SRV`（Vulkan 上都是 storage buffer；`StructuredBuffer_SRV` 要求 `structStride`，这些缓冲没有），纹理
+  `Texture_SRV` 加 b + 64 的 `Sampler`。原生管线布局照旧拿 `GetHandle()`（NVRHI 的 `VkDescriptorSetLayout`）。
+- `VulkanUniformBuffer` 每个交换链图像一个 `nvrhi::BindingSetHandle`，原生 pass 绑的是它的
+  `VK_DescriptorSet`；自己的描述符池没了。NVRHI 的 binding set 不能改写，所以 `SetEnvironmentMap` 等四个
+  setter 改成整组重建（调用方本来就先等了所有帧）。缺 NVRHI 纹理、采样器或缓冲的 binding 直接抛异常。
+- `TextureDescriptorBinding` 多了 `texture` 和 `nvrhiSampler`（`BindTexture(view, texture, sampler)` 两边一起
+  填）；NVRHI 自己给整张纹理建视图，帧集的每个来源（级联/局部阴影、大气 8 张、探针、DDGI、透射拷贝、散射、
+  路径追踪层、HDRI、DFG/LTC 表）原生视图本来就是整张图，所以两边一致。环境里的两个缓冲（大气 SH、DDGI 探针
+  状态）改成 `nvrhi::IBuffer*`。`UpdateFrameDescriptorSets`（B1 的拆写）删了。
+
+验证：A/B 对比 A1 之前的基线，9 个场景逐像素相同，validation 无报告；ctest 与之前相同。
+
+下一步（B3）：G-buffer 集、材质集（`MaterialTexture` 宏用 `##Sampler`）、光追集（`rayTextures[]` 拆成纹理数组加
+采样器表）照同样的路子：先让它们的图像平时都在 `SHADER_READ_ONLY_OPTIMAL`，再拆采样器，再换成 NVRHI 的
+binding set。之后才是阶段 3 的逐 pass 迁移。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的

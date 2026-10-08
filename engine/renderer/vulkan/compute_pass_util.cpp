@@ -299,6 +299,11 @@ VkImageView HistoryImagePair::GetView(uint32_t index) const
     return m_images.at(index).view;
 }
 
+nvrhi::ITexture* HistoryImagePair::GetTexture(uint32_t index) const
+{
+    return m_images.at(index).texture;
+}
+
 void HistoryImagePair::RecordBarrier(VkCommandBuffer commandBuffer, bool historyValid) const
 {
     std::array<VkImageMemoryBarrier, 2> barriers{};

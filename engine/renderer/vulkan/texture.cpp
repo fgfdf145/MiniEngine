@@ -382,6 +382,11 @@ VkImageView VulkanTexture::GetImageView() const
     return m_imageView;
 }
 
+nvrhi::ITexture* VulkanTexture::GetNvrhiTexture() const
+{
+    return m_texture;
+}
+
 void VulkanTexture::CreateBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,

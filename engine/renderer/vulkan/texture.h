@@ -76,6 +76,7 @@ class VulkanTexture
     VulkanTexture& operator=(const VulkanTexture&) = delete;
 
     VkImageView GetImageView() const;
+    nvrhi::ITexture* GetNvrhiTexture() const;
 
   private:
     // Shared by the destructor and the constructors' unwind path. Skips null handles.

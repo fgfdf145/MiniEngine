@@ -306,7 +306,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution);
     // A view's set 0 for drawCapacity draws, with every live draw's material written in.
     std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
-    VkSampler EquirectangularSampler() const;
+    nvrhi::ISampler* EquirectangularSampler() const;
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
     void UpdateEnvironmentMap(const SceneEnvironment& environment);

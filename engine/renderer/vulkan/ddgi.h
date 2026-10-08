@@ -65,6 +65,7 @@ class VulkanDdgi
     TextureDescriptorBinding GetIrradianceBinding() const;
     TextureDescriptorBinding GetVisibilityBinding() const;
     VkBuffer GetProbeStateBuffer() const;
+    nvrhi::IBuffer* GetProbeStateHandle() const;
     // The irradiance atlas (RGBA16F, SHADER_READ_ONLY_OPTIMAL), for the reference comparison's readback.
     VkImage GetIrradianceImage() const;
     VkImage GetVisibilityImage() const;

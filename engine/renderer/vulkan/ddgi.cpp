@@ -312,17 +312,22 @@ void VulkanDdgi::Record(
 
 TextureDescriptorBinding VulkanDdgi::GetIrradianceBinding() const
 {
-    return TextureDescriptorBinding{m_irradiance.view, NativeSampler(m_sampler)};
+    return BindTexture(m_irradiance.view, m_irradiance.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanDdgi::GetVisibilityBinding() const
 {
-    return TextureDescriptorBinding{m_visibility.view, NativeSampler(m_sampler)};
+    return BindTexture(m_visibility.view, m_visibility.texture, m_sampler);
 }
 
 VkBuffer VulkanDdgi::GetProbeStateBuffer() const
 {
     return m_states.buffer;
+}
+
+nvrhi::IBuffer* VulkanDdgi::GetProbeStateHandle() const
+{
+    return m_states.handle;
 }
 
 VkImage VulkanDdgi::GetIrradianceImage() const

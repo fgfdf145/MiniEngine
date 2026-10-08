@@ -72,7 +72,7 @@ class VulkanAtmosphere
     // The clouds' shadow map (cloud_shadow.comp), written every frame the atmosphere renders.
     TextureDescriptorBinding GetCloudShadowBinding() const;
     TextureDescriptorBinding GetCloudWeatherBinding() const;
-    VkBuffer GetIrradianceBuffer() const;
+    nvrhi::IBuffer* GetIrradianceBuffer() const;
 
   private:
     struct LutImage

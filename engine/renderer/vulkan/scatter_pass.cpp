@@ -105,12 +105,12 @@ VkRenderPass VulkanScatterPass::GetRenderPass() const
 
 TextureDescriptorBinding VulkanScatterPass::GetLightBinding() const
 {
-    return TextureDescriptorBinding{m_light.view, NativeSampler(m_sampler)};
+    return BindTexture(m_light.view, m_light.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanScatterPass::GetDepthBinding() const
 {
-    return TextureDescriptorBinding{m_depth.view, NativeSampler(m_sampler)};
+    return BindTexture(m_depth.view, m_depth.texture, m_sampler);
 }
 
 void VulkanScatterPass::CreateRenderPass()

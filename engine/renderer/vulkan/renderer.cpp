@@ -2232,7 +2232,7 @@ void VulkanRenderer::CreateDeviceResources()
     // reload rebuild descriptor sets without invalidating the pipelines. The pipeline cache
     // outliving every VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader
     // compilation.
-    m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_device->GetHandle());
+    m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_nvrhi->Get());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
     m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_device->GetHandle(), m_materialSetLayout->GetHandle());
     m_stagingChunkPool = std::make_unique<VulkanStagingChunkPool>(m_device->GetHandle());
@@ -2625,11 +2625,11 @@ void VulkanRenderer::DestroyDeviceResources()
 
 // The sampler of the float textures (the environment map and the DFG and LTC tables): linear with
 // mips, repeating in u for the longitude wrap and clamping in v at the poles.
-VkSampler VulkanRenderer::EquirectangularSampler() const
+nvrhi::ISampler* VulkanRenderer::EquirectangularSampler() const
 {
     TextureSampler sampler;
     sampler.wrapT = TextureWrap::ClampToEdge;
-    return m_samplerCache->GetNative(sampler);
+    return m_samplerCache->Get(sampler);
 }
 
 EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const VulkanSceneView& view) const
@@ -2645,19 +2645,19 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const Vul
     bindings.cloudTarget = m_atmosphere->GetCloudTargetBinding(*view.atmosphere);
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
-    const VkSampler floatTableSampler = EquirectangularSampler();
-    bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), floatTableSampler};
-    bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), floatTableSampler};
-    bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), floatTableSampler};
+    nvrhi::ISampler* floatTableSampler = EquirectangularSampler();
+    bindings.brdfLut = BindTexture(m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetNvrhiTexture(), floatTableSampler);
+    bindings.ltcInverseMatrices = BindTexture(m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetNvrhiTexture(), floatTableSampler);
+    bindings.ltcAmplitudes = BindTexture(m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetNvrhiTexture(), floatTableSampler);
     bindings.transmission = m_transmissionImage->GetSampledBinding();
     bindings.scatterLight = view.scatterPass->GetLightBinding();
     bindings.scatterDepth = view.scatterPass->GetDepthBinding();
     PathTraceLayerBindings(view, bindings.pathTraceLayerDepth, bindings.pathTraceLayerDiffuse, bindings.pathTraceLayerSpecular);
     bindings.ddgiIrradiance = m_ddgi->GetIrradianceBinding();
     bindings.ddgiVisibility = m_ddgi->GetVisibilityBinding();
-    bindings.ddgiProbeStates = m_ddgi->GetProbeStateBuffer();
+    bindings.ddgiProbeStates = m_ddgi->GetProbeStateHandle();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
-    bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), floatTableSampler};
+    bindings.environmentMap = BindTexture(environmentMap.GetImageView(), environmentMap.GetNvrhiTexture(), floatTableSampler);
     return bindings;
 }
 
@@ -2674,7 +2674,8 @@ void VulkanRenderer::PathTraceLayerBindings(
     }
     // Never sampled while the camera block says there is no layer (textureParams.y), but named in
     // the layout the real ones rest in.
-    const TextureDescriptorBinding placeholder{m_environmentBrdfLut->GetImageView(), EquirectangularSampler()};
+    const TextureDescriptorBinding placeholder =
+        BindTexture(m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetNvrhiTexture(), EquirectangularSampler());
     depth = placeholder;
     diffuse = placeholder;
     specular = placeholder;
@@ -2816,10 +2817,10 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                 m_commandContext->WaitForAllFrames();
                 if (m_view.uniformBuffer)
                 {
-                    m_view.uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), EquirectangularSampler()});
+                    m_view.uniformBuffer->SetEnvironmentMap(BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), EquirectangularSampler()));
                     for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
                     {
-                        view->uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), EquirectangularSampler()});
+                        view->uniformBuffer->SetEnvironmentMap(BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), EquirectangularSampler()));
                     }
                 }
                 if (m_environmentProbe)
@@ -3175,7 +3176,7 @@ std::unique_ptr<VulkanUniformBuffer> VulkanRenderer::CreateViewUniformBuffer(con
         m_device->GetHandle(),
         m_nvrhi->Get(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_frameSetLayout->GetHandle(),
+        m_frameSetLayout->Get(),
         view.shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(view),

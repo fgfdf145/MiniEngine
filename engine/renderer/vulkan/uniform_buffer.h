@@ -20,11 +20,22 @@
 namespace me
 {
 
+// A texture view and the sampler it is read with: native descriptor writes take imageView and sampler;
+// an NVRHI binding set (set 0's) makes its own view of all of texture and takes nvrhiSampler, so those
+// are set wherever one may name the binding (BindTexture).
 struct TextureDescriptorBinding
 {
     VkImageView imageView = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
+    nvrhi::ITexture* texture = nullptr;
+    nvrhi::ISampler* nvrhiSampler = nullptr;
 };
+
+// Both sides of a binding of imageView, a view of all of texture, read with sampler.
+inline TextureDescriptorBinding BindTexture(VkImageView imageView, nvrhi::ITexture* texture, nvrhi::ISampler* sampler)
+{
+    return TextureDescriptorBinding{imageView, NativeSampler(sampler), texture, sampler};
+}
 
 // The environment images set 0 binds for the fragment shaders: the atmosphere LUTs and the
 // equirectangular HDRI (a 1x1 black map when none is loaded). Every image set 0 names rests in
@@ -37,7 +48,7 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding aerialPerspective;
     TextureDescriptorBinding environmentMap;
     // Binding 7: the atmosphere's radiance SH (VulkanAtmosphere::GetIrradianceBuffer).
-    VkBuffer irradiance = VK_NULL_HANDLE;
+    nvrhi::IBuffer* irradiance = nullptr;
     // Binding 8: the GGX-prefiltered sky cube (VulkanEnvironmentProbe).
     TextureDescriptorBinding prefiltered;
     // Binding 9: the DFG table.
@@ -55,7 +66,7 @@ struct EnvironmentDescriptorBindings
     // (VulkanDdgi).
     TextureDescriptorBinding ddgiIrradiance;
     TextureDescriptorBinding ddgiVisibility;
-    VkBuffer ddgiProbeStates = VK_NULL_HANDLE;
+    nvrhi::IBuffer* ddgiProbeStates = nullptr;
     // Bindings 24 and 25: the volumetric clouds' shape and detail noise (VulkanAtmosphere).
     TextureDescriptorBinding cloudShapeNoise;
     TextureDescriptorBinding cloudDetailNoise;
@@ -296,25 +307,21 @@ static_assert(
 // (shaders/vulkan's frame headers declare them so).
 inline constexpr uint32_t kFrameSamplerBindingOffset = 64;
 
-// vkUpdateDescriptorSets for the frame set: a combined image sampler write becomes the texture's
-// SAMPLED_IMAGE write and its sampler's SAMPLER write, from the same image info (Vulkan ignores the
-// sampler of the one and the view of the other).
-void UpdateFrameDescriptorSets(VkDevice device, std::span<const VkWriteDescriptorSet> writes);
-
+// Set 0's layout, NVRHI's (docs/design/2026-10-08-nvrhi-backend-design.md, stage B2): the native
+// pipeline layouts take its VkDescriptorSetLayout.
 class VulkanFrameDescriptorSetLayout
 {
   public:
-    explicit VulkanFrameDescriptorSetLayout(VkDevice device);
-    ~VulkanFrameDescriptorSetLayout();
+    explicit VulkanFrameDescriptorSetLayout(nvrhi::IDevice* device);
 
     VulkanFrameDescriptorSetLayout(const VulkanFrameDescriptorSetLayout&) = delete;
     VulkanFrameDescriptorSetLayout& operator=(const VulkanFrameDescriptorSetLayout&) = delete;
 
     VkDescriptorSetLayout GetHandle() const;
+    nvrhi::IBindingLayout* Get() const;
 
   private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_layout;
 };
 
 // The material descriptor set layout is fixed by the shader (13 combined image samplers) and
@@ -345,7 +352,7 @@ class VulkanUniformBuffer
         VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
         uint32_t imageCount,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         TextureDescriptorBinding shadowMap,
         TextureDescriptorBinding localShadowAtlas,
         EnvironmentDescriptorBindings environment,
@@ -359,18 +366,18 @@ class VulkanUniformBuffer
     VulkanUniformBuffer(const VulkanUniformBuffer&) = delete;
     VulkanUniformBuffer& operator=(const VulkanUniformBuffer&) = delete;
 
+    // The native set of the NVRHI binding set for this image.
     VkDescriptorSet GetFrameDescriptorSet(uint32_t imageIndex) const;
-    // Points set 0 binding 6 of every frame set at another environment map. The caller has waited
-    // for every frame in flight: the sets must not be in use while they are written.
+    // Rebuilds every frame set (NVRHI's binding sets cannot be rewritten) with set 0 binding 6 at
+    // another environment map. The caller has waited for every frame in flight: the old sets must
+    // not be in use as they go.
     void SetEnvironmentMap(TextureDescriptorBinding environmentMap);
-    // Points set 0 bindings 19 and 20 of every frame set at the scatter pre-pass's recreated images,
-    // under the same condition.
+    // The same with bindings 19 and 20 at the scatter pre-pass's recreated images.
     void SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth);
-    // Points set 0 binding 28 of every frame set at the clouds' recreated resolved target. The
-    // caller has waited for the device.
+    // The same with binding 28 at the clouds' recreated resolved target. The caller has waited for
+    // the device.
     void SetCloudTarget(TextureDescriptorBinding target);
-    // Points set 0 bindings 29 to 31 of every frame set at the path traced layer's images, or back at
-    // placeholders. The caller has waited for every frame in flight.
+    // The same with bindings 29 to 31 at the path traced layer's images, or back at placeholders.
     void SetPathTraceLayerImages(TextureDescriptorBinding depth, TextureDescriptorBinding diffuse, TextureDescriptorBinding specular);
     uint32_t GetDrawCapacity() const;
     // A draw's material and texture transforms, read by the GPU from the next frame recorded. The
@@ -413,8 +420,9 @@ class VulkanUniformBuffer
         nvrhi::BufferHandle& handle,
         void*& mapped,
         const char* failureMessage);
-    void CreateDescriptorPool(uint32_t imageCount);
-    void CreateDescriptorSets(uint32_t imageCount);
+    // One NVRHI binding set per swapchain image from the buffers and the bindings this object holds;
+    // throws, leaving the previous sets, when one cannot be made.
+    void BuildFrameBindingSets();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -422,8 +430,7 @@ class VulkanUniformBuffer
     TextureDescriptorBinding m_shadowMap;
     TextureDescriptorBinding m_localShadowAtlas;
     EnvironmentDescriptorBindings m_environment;
-    VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    nvrhi::IBindingLayout* m_frameSetLayout = nullptr;
     std::vector<VkBuffer> m_buffers;
     std::vector<nvrhi::BufferHandle> m_handles;
     std::vector<void*> m_mappedBuffers;
@@ -454,6 +461,7 @@ class VulkanUniformBuffer
     std::vector<VkBuffer> m_shadowTileBuffers;
     std::vector<nvrhi::BufferHandle> m_shadowTileHandles;
     std::vector<void*> m_mappedShadowTileBuffers;
+    std::vector<nvrhi::BindingSetHandle> m_frameBindingSets;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
     uint32_t m_imageCount = 0;
 };
