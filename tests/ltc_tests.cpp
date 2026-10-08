@@ -1,5 +1,6 @@
 #include <engine/renderer/ltc_table.h>
 
+#include <engine/renderer/shader_cpp_compat.h>
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -13,8 +14,9 @@
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/ltc_common.glsl>
-#include <shaders/vulkan/brdf_common.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/ltc_common.slang>
+#include <shaders/vulkan/brdf_common.slang>
 }
 
 using namespace me;

@@ -35,6 +35,8 @@ add_subdirectory(engine/logic)
 add_subdirectory(engine/physics)
 add_subdirectory(engine/suspension)
 add_subdirectory(engine/tyre)
+# A build step of the renderer's shaders, so before it.
+add_subdirectory(tools/spirv_invariant_position)
 add_subdirectory(engine/renderer)
 add_subdirectory(engine/editor)
 add_subdirectory(engine/application)

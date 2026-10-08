@@ -1,4 +1,5 @@
 #include <engine/renderer/local_shadows.h>
+#include <engine/renderer/shader_cpp_compat.h>
 
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -13,7 +14,8 @@
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/local_shadow_common.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/local_shadow_common.slang>
 }
 
 using namespace me;

@@ -18,6 +18,7 @@
 *.frag text eol=crlf
 *.comp text eol=crlf
 *.glsl text eol=crlf
+*.slang text eol=crlf
 
 *.cmake text eol=crlf
 *.json text eol=crlf

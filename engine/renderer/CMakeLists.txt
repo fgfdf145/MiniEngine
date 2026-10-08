@@ -238,8 +238,8 @@ source_group(TREE "${PROJECT_SOURCE_DIR}/third_party" PREFIX "third_party" FILES
 # MINIENGINE_SHADER_OUTPUT_DIR is set in MiniEngineBuildOptions.cmake so that
 # engine_core can bake the same value in as the EnginePaths fallback.
 #
-# Every shader stage the renderer loads is listed here by file name. The compiled name is the
-# source name plus ".spv", which is what VulkanShaderModule is given at load time.
+# Every shader stage the renderer loads is listed here by name: the source is shaders/vulkan/<name>.slang
+# and the compiled module <name>.spv, which is what VulkanShaderModule is given at load time.
 set(MINIENGINE_SHADER_SOURCES
     triangle.vert
     triangle.frag
@@ -295,107 +295,74 @@ set(MINIENGINE_SHADER_SOURCES
     ddgi_update.comp
 )
 
-# Files other shaders pull in with #include. Every shader is rebuilt when any of them changes,
-# which is coarser than a per-shader depfile but cannot miss a dependency.
-set(MINIENGINE_SHADER_INCLUDES
-    exposure_histogram.glsl
-    gt7_tonemap.glsl
-    hdr_output.glsl
-    ssr_common.glsl
-    ssr_half_res.glsl
-    local_shadow_common.glsl
-    anisotropy_common.glsl
-    brdf_common.glsl
-    ltc_common.glsl
-    iridescence_common.glsl
-    transmission_common.glsl
-    volume_scatter_common.glsl
-    pbr_neutral.glsl
-    material_layers.glsl
-    detail_layers.glsl
-    material_uv.glsl
-    pre_exposure.glsl
-    reverse_depth.glsl
-    scene_common.glsl
-    toon_common.glsl
-    pbr_common.glsl
-    material_common.glsl
-    specular_aa.glsl
-    gbuffer_common.glsl
-    gbuffer_inputs.glsl
-    normal_map.glsl
-    vbao_common.glsl
-    atmosphere_common.glsl
-    atmosphere_integrate.glsl
-    atmosphere_sampling.glsl
-    height_fog.glsl
-    volumetric_clouds.glsl
-    cloud_reconstruction.glsl
-    cloud_shadow.glsl
-    spherical_harmonics.glsl
-    cubemap_common.glsl
-    ray_tracing_common.glsl
-    ray_hit_common.glsl
-    rt_shadow_common.glsl
-    path_trace_common.glsl
-    emissive_lights_common.glsl
-    light_grid_common.glsl
-    restir_pt_common.glsl
-    ddgi_common.glsl
-    ground_plane.glsl
-)
+# One shader build: shaders/vulkan/shader_name.slang -> output_name.spv in MINIENGINE_SHADER_OUTPUT_DIR
+# (docs/design/2026-10-08-slang-shader-migration-design.md). RAY_QUERY builds target SPIR-V 1.4
+# (Vulkan 1.2), which ray queries need. Extra arguments are NAME=value defines. slangc writes a
+# depfile, so a shader is rebuilt when a file it includes changes.
+function(_miniengine_add_shader_build out_list shader_name output_name ray_query)
+    set(defines ${ARGN})
+    set(slang_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}.slang")
+    set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${output_name}.spv")
+    set(define_flags "")
+    if(ray_query)
+        list(APPEND defines "RAY_QUERY")
+    endif()
+    foreach(define IN LISTS defines)
+        list(APPEND define_flags "-D${define}")
+    endforeach()
+    set(description "${output_name}")
+    if(NOT "${shader_name}" STREQUAL "${output_name}" OR defines)
+        set(description "${output_name} (${shader_name} ${defines})")
+    endif()
+    if(ray_query)
+        set(profile spirv_1_4)
+    else()
+        set(profile spirv_1_3)
+    endif()
+    # Slang cannot mark an output invariant; these get what GLSL's `invariant gl_Position` gave them
+    # afterwards (tools/spirv_invariant_position).
+    set(post_commands "")
+    set(post_depends "")
+    if("${shader_name}" IN_LIST MINIENGINE_INVARIANT_POSITION_SHADERS)
+        set(post_commands COMMAND miniengine_spirv_invariant_position "${shader_output}")
+        set(post_depends miniengine_spirv_invariant_position)
+    endif()
+    # -matrix-layout-column-major: matrices in memory as GLM writes them, and mul(M, v) is GLSL's
+    # M * v. Warning 41012 ("profile implicitly upgraded") lists every capability an intrinsic
+    # might need (bindless sampling names sparse residency, min LOD, ...); the module declares
+    # only those it uses.
+    add_custom_command(
+        OUTPUT "${shader_output}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+        COMMAND ${MINIENGINE_SLANGC_EXECUTABLE} "${slang_source}" -target spirv -profile ${profile}
+                -entry main -matrix-layout-column-major -warnings-disable 41012 ${define_flags}
+                -depfile "${shader_output}.d" -o "${shader_output}"
+        ${post_commands}
+        DEPENDS "${slang_source}" ${post_depends}
+        DEPFILE "${shader_output}.d"
+        COMMENT "Compiling ${description}"
+        VERBATIM
+    )
+    set(${out_list} ${${out_list}} "${shader_output}" PARENT_SCOPE)
+endfunction()
 
 function(miniengine_add_shaders shader_target)
     set(spv_outputs "")
-    set(shader_includes "")
-    foreach(include_name IN LISTS MINIENGINE_SHADER_INCLUDES)
-        list(APPEND shader_includes "${PROJECT_SOURCE_DIR}/shaders/vulkan/${include_name}")
-    endforeach()
     foreach(shader_name IN LISTS ARGN)
-        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
-        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_name}.spv")
-        add_custom_command(
-            OUTPUT "${shader_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}" ${shader_includes}
-            COMMENT "Compiling ${shader_name}"
-            VERBATIM
-        )
-        list(APPEND spv_outputs "${shader_output}")
+        _miniengine_add_shader_build(spv_outputs "${shader_name}" "${shader_name}" FALSE)
     endforeach()
-    # The hardware ray tracing variants (ray_tracing_common.glsl): name.comp -> name_ray_query.comp.spv,
-    # ray queries need SPIR-V 1.4, so Vulkan 1.2.
+
+    # The hardware ray tracing variants (ray_tracing_common.slang): name.comp -> name_ray_query.comp.spv.
     foreach(shader_name IN LISTS MINIENGINE_RAY_QUERY_SHADERS)
-        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
         get_filename_component(shader_stem "${shader_name}" NAME_WE)
         get_filename_component(shader_extension "${shader_name}" LAST_EXT)
-        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_stem}_ray_query${shader_extension}.spv")
-        add_custom_command(
-            OUTPUT "${shader_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}" ${shader_includes}
-            COMMENT "Compiling ${shader_name} (ray query)"
-            VERBATIM
-        )
-        list(APPEND spv_outputs "${shader_output}")
+        _miniengine_add_shader_build(spv_outputs "${shader_name}" "${shader_stem}_ray_query${shader_extension}" TRUE)
     endforeach()
 
     # Shaders only hardware ray tracing runs (the ray traced effects): one ray query build, named as
     # the source.
     foreach(shader_name IN LISTS MINIENGINE_HARDWARE_RAY_SHADERS)
-        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${shader_name}")
-        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${shader_name}.spv")
-        add_custom_command(
-            OUTPUT "${shader_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}" ${shader_includes}
-            COMMENT "Compiling ${shader_name} (hardware ray tracing)"
-            VERBATIM
-        )
-        list(APPEND spv_outputs "${shader_output}")
+        _miniengine_add_shader_build(spv_outputs "${shader_name}" "${shader_name}" TRUE)
     endforeach()
 
     # Shaders compiled again under another name with a define: source|output|NAME=value.
@@ -404,17 +371,7 @@ function(miniengine_add_shaders shader_target)
         list(GET variant_fields 0 variant_source)
         list(GET variant_fields 1 variant_name)
         list(GET variant_fields 2 variant_define)
-        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${variant_source}")
-        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${variant_name}.spv")
-        add_custom_command(
-            OUTPUT "${shader_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} -fshader-stage=frag -D${variant_define} "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}" ${shader_includes}
-            COMMENT "Compiling ${variant_name} (${variant_source}, ${variant_define})"
-            VERBATIM
-        )
-        list(APPEND spv_outputs "${shader_output}")
+        _miniengine_add_shader_build(spv_outputs "${variant_source}" "${variant_name}" FALSE ${variant_define})
     endforeach()
 
     # Hardware ray tracing shaders compiled again under another name with defines:
@@ -425,25 +382,18 @@ function(miniengine_add_shaders shader_target)
         list(GET variant_fields 1 variant_name)
         list(GET variant_fields 2 variant_defines)
         string(REPLACE "," ";" variant_define_list "${variant_defines}")
-        set(variant_flags "")
-        foreach(define IN LISTS variant_define_list)
-            list(APPEND variant_flags "-D${define}")
-        endforeach()
-        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${variant_source}")
-        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${variant_name}.spv")
-        add_custom_command(
-            OUTPUT "${shader_output}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY ${variant_flags} "${shader_source}" -o "${shader_output}"
-            DEPENDS "${shader_source}" ${shader_includes}
-            COMMENT "Compiling ${variant_name} (${variant_source}, ${variant_defines})"
-            VERBATIM
-        )
-        list(APPEND spv_outputs "${shader_output}")
+        _miniengine_add_shader_build(spv_outputs "${variant_source}" "${variant_name}" TRUE ${variant_define_list})
     endforeach()
 
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
+
+# Vertex shaders whose position must be invariant: the toon pass draws the characters' opaque
+# surfaces again on the depth the geometry pass wrote for them.
+set(MINIENGINE_INVARIANT_POSITION_SHADERS
+    triangle.vert
+    toon.vert
+)
 
 # The path traced layer's two passes (path_trace_layer_pass.h): gbuffer.frag writing the nearest
 # forward-shaded surface's depth, then its G-buffer.

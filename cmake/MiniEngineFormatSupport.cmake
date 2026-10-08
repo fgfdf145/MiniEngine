@@ -70,7 +70,7 @@ function(miniengine_classify_format_files tracked_files
     set(whitespace_files)
     foreach(relative_path IN LISTS tracked_files)
         if(relative_path MATCHES
-           "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|vert|frag|comp|geom|tesc|tese|glsl)$")
+           "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl)$")
             list(APPEND clang_files "${relative_path}")
         endif()
         if(relative_path MATCHES "\\.(ps1|sh)$")
@@ -78,7 +78,7 @@ function(miniengine_classify_format_files tracked_files
         endif()
         if(relative_path MATCHES "(^|/)CMakeLists\\.txt$" OR
            relative_path MATCHES
-           "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|vert|frag|comp|geom|tesc|tese|glsl|ps1|sh|cmake)$")
+           "\\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl|slang|ps1|sh|cmake)$")
             list(APPEND whitespace_files "${relative_path}")
         endif()
     endforeach()

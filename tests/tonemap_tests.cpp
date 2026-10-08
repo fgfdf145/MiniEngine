@@ -2,6 +2,7 @@
 
 #include <engine/renderer/camera.h>
 
+#include <engine/renderer/shader_cpp_compat.h>
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -11,13 +12,14 @@
 #include <random>
 #include <stdexcept>
 
-// The tone mapping shader's operator, compiled as C++. gt7_tonemap.glsl is written in the subset
-// of GLSL that GLM also accepts, so the test exercises the same source glslc compiles.
+// The tone mapping shader's operator, compiled as C++. gt7_tonemap.slang is written in the subset
+// of Slang that GLM also accepts, so the test exercises the same source slangc compiles.
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/gt7_tonemap.glsl>
-#include <shaders/vulkan/hdr_output.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/gt7_tonemap.slang>
+#include <shaders/vulkan/hdr_output.slang>
 }
 
 // main() stays in the global namespace; everything it drives lives in me::.
@@ -99,12 +101,12 @@ void PrimariesConversionsAreInverse()
     for (int sample = 0; sample < 1000; ++sample)
     {
         const glm::vec3 color(channel(generator), channel(generator), channel(generator));
-        const glm::vec3 roundTrip = color * shader::kRec709ToRec2020 * shader::kRec2020ToRec709;
+        const glm::vec3 roundTrip = shader::Rec2020ToRec709(shader::Rec709ToRec2020(color));
         Require(MaxAbsDifference(roundTrip, color) <= 1e-4f, "Rec.709 -> Rec.2020 -> Rec.709 must round-trip");
     }
 
     // Both primaries share the D65 white point, so white stays white.
-    const glm::vec3 white = glm::vec3(1.0f) * shader::kRec709ToRec2020;
+    const glm::vec3 white = shader::Rec709ToRec2020(glm::vec3(1.0f));
     Require(MaxAbsDifference(white, glm::vec3(1.0f)) <= 1e-5f, "white must map to white");
 }
 

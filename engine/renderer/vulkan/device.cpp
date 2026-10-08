@@ -209,7 +209,10 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
                                     vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&
                                     vulkan12Features.descriptorBindingPartiallyBound == VK_TRUE &&
                                     vulkan12Features.descriptorBindingVariableDescriptorCount == VK_TRUE;
+    // Hit shading reads the meshes' vertex and index buffers through 64-bit pointers
+    // (ray_hit_common.slang), so it needs 64-bit integers in shaders as well.
     m_supportsRayQuery = rayQueryExtensions && vulkan12Features.bufferDeviceAddress == VK_TRUE && descriptorIndexing &&
+                         supportedFeatures.shaderInt64 == VK_TRUE &&
                          accelerationFeatures.accelerationStructure == VK_TRUE && rayQueryFeatures.rayQuery == VK_TRUE;
     LOG_INFO(
         "Hardware ray tracing: {}",
@@ -238,6 +241,7 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
         m_supportsUpdateUnusedWhilePending = vulkan12Features.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
         enabled12.descriptorBindingUpdateUnusedWhilePending = m_supportsUpdateUnusedWhilePending ? VK_TRUE : VK_FALSE;
     }
+    deviceFeatures.shaderInt64 = m_supportsRayQuery ? VK_TRUE : VK_FALSE;
     VkPhysicalDeviceFeatures2 enabledFeatures{};
     enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     enabledFeatures.features = deviceFeatures;

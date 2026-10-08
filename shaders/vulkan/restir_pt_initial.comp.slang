@@ -1,0 +1,332 @@
+// ReSTIR PT's initial sampling (restir_pt_common.slang): the pixel's primary surface record from the
+// G-buffer, then one path tree from it, NEE at every vertex and a BSDF-sampled continuation, Russian
+// roulette from the second bounce. Weighted reservoir sampling keeps one path of all the tree's
+// candidates, direct and indirect alike (the paper's section 6.1), each candidate weighted by its
+// integrand's luminance times its unbiased contribution weight in primary sample space. The kept path's
+// reconnection vertex is the first vertex pair the criteria accept along it (section 4), or its light
+// vertex when none does (section 6.2.3). Writes the working reservoir, and the output when neither reuse
+// runs.
+
+#define RAY_TEXTURED_ALPHA
+#include "scene_common.slang"
+#include "gbuffer_common.slang"
+#include "pbr_common.slang"
+#include "pre_exposure.slang"
+#include "ray_tracing_common.slang"
+#include "material_common.slang"
+#include "material_uv.slang"
+#include "ray_hit_common.slang"
+#include "restir_pt_common.slang"
+
+// The primary surface from the G-buffer; invalid for the background and what the lighting pass does not
+// shade (unlit, forward-shaded).
+PtSurface PrimarySurface(int2 pixel)
+{
+    float depth = ptDepth.Load(int3(pixel, 0)).r;
+    if (IsFarDepth(depth))
+    {
+        return PtInvalidSurface();
+    }
+    float4 surface = ptSurface.Load(int3(pixel, 0));
+    uint flags = DecodeShadingFlags(surface.a);
+    if ((flags & (SHADING_FLAG_UNLIT | SHADING_FLAG_FORWARD | SHADING_FLAG_TRANSMISSION)) != 0u)
+    {
+        return PtInvalidSurface();
+    }
+    float2 uv = (float2(pixel) + 0.5) / float2(pt.extent);
+    float4 world = mul(ubo.invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));
+    float4 normals = ptNormal.Load(int3(pixel, 0));
+    PtSurface s = PtInvalidSurface();
+    s.position = world.xyz / world.w;
+    s.normal = DecodeNormalOctahedral(normals.rg);
+    s.faceNormal = DecodeNormalOctahedral(normals.ba);
+    s.albedo = ptAlbedo.Load(int3(pixel, 0)).rgb;
+    s.metallic = surface.r;
+    s.roughness = clamp(surface.g, 0.04, 1.0);
+    if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
+    {
+        float4 coat = ptCoat.Load(int3(pixel, 0));
+        s.coatFactor = coat.r;
+        s.coatRoughness = clamp(coat.g, 0.04, 1.0);
+    }
+    s.coatNormal = s.faceNormal;
+    s.black = false;
+    s.valid = true;
+    s.rayOffset = PtPrimaryRayOffset(s.position, ubo.cameraWorldPosition.xyz);
+    return s;
+}
+
+// The path being kept, and the weight sum of the candidates so far.
+static PtReservoir chosen;
+static float chosenTarget = 0.0;
+static float weightSum = 0.0;
+
+void Consider(PtReservoir candidate, float ucw, uint seed, inout uint candidateIndex)
+{
+    float target = PtLuminance(candidate.F);
+    float weight = target * ucw;
+    candidateIndex += 1u;
+    if (!(weight > 0.0) || isinf(weight))
+    {
+        return;
+    }
+    weightSum += weight;
+    if (PtRandom(seed, 15u, candidateIndex) * weightSum < weight)
+    {
+        chosen = candidate;
+        chosenTarget = target;
+    }
+}
+
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    int2 pixel = int2(dispatchThreadId.xy);
+    if (!PtInside(pixel))
+    {
+        return;
+    }
+    uint index = PtPixelIndex(pixel);
+    PtSurface x1 = PrimarySurface(pixel);
+    PtStoreSurfaceRecord(index, x1, ptVelocity.Load(int3(pixel, 0)).rg);
+    chosen = PtEmptyReservoir();
+    if (!x1.valid)
+    {
+        PtStoreReservoir(index, chosen, false);
+        if (!PtFlag(PT_FLAG_TEMPORAL) && !PtFlag(PT_FLAG_SPATIAL))
+        {
+            PtWriteOutput(pixel, float3(0.0), chosen);
+        }
+        return;
+    }
+
+    float3 camera = ubo.cameraWorldPosition.xyz;
+    uint seed = PtPathSeed(pixel);
+    float threshold = PtFootprintThreshold(camera, x1);
+    uint maxVertex = clamp(pt.maxBounces, 0u, 5u) + 1u;
+
+    PtSurface x = x1;
+    float3 V = normalize(camera - x1.position);
+    float3 T = float3(1.0);
+    float inverseSurvival = 1.0;
+    uint lobeBits = 0u;
+    uint candidateIndex = 0u;
+
+    // x_{j-1}: the vertex the pair test at x_j reconnects from.
+    bool hasPrevious = false;
+    float previousRoughness = 1.0;
+    float previousMarginal = 0.0;
+    float previousPdf = 0.0;
+    float3 previousPosition = float3(0.0);
+    float3 previousNormal = float3(0.0, 0.0, 1.0);
+
+    // The reconnection vertex the longer paths share once a pair has been accepted, and the throughput
+    // of the vertices after it.
+    bool rcFound = false;
+    PtReservoir rc = PtEmptyReservoir();
+    uint rcIndex = 0u;
+    float3 suffixThroughput = float3(1.0);
+    // What the stored reconnection vertex changes in the paths through it (see where it is found).
+    float3 rcCorrection = float3(1.0);
+
+    for (uint j = 1u; j <= maxVertex; ++j)
+    {
+        // An unlit surface emits and reflects nothing; its emission was a candidate already.
+        if (x.black)
+        {
+            break;
+        }
+        PtLobes lobes = PtLobeProbabilities(x, V);
+
+        // NEE from x_j: the path x_1 ... x_j, light (d = j + 1).
+        PtNee nee = PtSampleNee(x, V, seed, j, PtNeeCandidates(j));
+        if (nee.valid)
+        {
+            float3 contribution = nee.fcos * nee.irradiance * float(PtLightCount());
+            PtReservoir candidate = rcFound ? rc : PtEmptyReservoir();
+            candidate.seed = seed;
+            candidate.F = T * contribution * rcCorrection;
+            if (rcFound)
+            {
+                candidate.flags = PtShapeFlags(j + 1u, rcIndex, PT_RC_SURFACE, lobeBits, candidate.flags);
+                candidate.rcSuffix = PtStoreSuffix(candidate.F, suffixThroughput * contribution);
+            }
+            else
+            {
+                bool connects = false;
+                if (hasPrevious)
+                {
+                    float3 toX = x.position - previousPosition;
+                    float dist2 = max(dot(toX, toX), 1e-12);
+                    float3 dir = toX * rsqrt(dist2);
+                    bool testX = PtNeeTestsInverseFootprint(lobes);
+                    connects = PtConnectable(previousRoughness, previousMarginal, previousNormal, dir, dist2, false, x.faceNormal,
+                                             testX, testX ? PtMarginalPdf(x, lobes, V, nee.L) : 0.0, 1.0, threshold);
+                    if (connects)
+                    {
+                        // x_j itself, toward the light along NEE's direction (lobe PT_LOBE_NEE, p_k = 1).
+                        PtSetRcSurface(candidate, x);
+                        candidate.flags = PtShapeFlags(j + 1u, j, PT_RC_SURFACE, lobeBits, candidate.flags);
+                        candidate.rcWi = PtPackNormal(nee.L);
+                        // x_j's BSDF as the stored vertex has it, which is what a shift evaluates.
+                        candidate.F = T * PtBsdfEval(PtRcSurface(candidate), V, PtUnpackNormal(candidate.rcWi)) * nee.irradiance * float(PtLightCount());
+                        candidate.rcSuffix = PtStoreSuffix(candidate.F, nee.irradiance * float(PtLightCount()));
+                        candidate.rcJacobian = previousPdf * abs(dot(x.faceNormal, dir)) / dist2;
+                    }
+                }
+                if (!connects)
+                {
+                    candidate.flags = PtShapeFlags(j + 1u, j + 1u, PT_RC_LIGHT, lobeBits, candidate.flags);
+                    candidate.rcPosition = nee.point;
+                    candidate.rcMaterial = nee.light;
+                    candidate.rcJacobian = 1.0;
+                }
+            }
+            Consider(candidate, inverseSurvival * nee.ucw, seed, candidateIndex);
+        }
+
+        // The continuation from x_j.
+        uint lobe = PtChooseLobe(lobes, PtRandom(seed, j, 0u));
+        float3 L;
+        if (!PtSampleLobe(x, lobe, V, float2(PtRandom(seed, j, 1u), PtRandom(seed, j, 2u)), L))
+        {
+            break;
+        }
+        float pdf = PtLobeProbability(lobes, lobe) * PtLobePdf(x, lobe, V, L);
+        float3 fcos = PtLobeEval(x, lobe, V, L);
+        if (pdf <= 0.0 || PtMax3(fcos) <= 0.0)
+        {
+            break;
+        }
+        float marginal = PtMarginalPdf(x, lobes, V, L);
+        float roughness = PtLobeRoughness(x, lobe);
+        lobeBits |= lobe << (2u * (j - 1u));
+
+        if (rcFound)
+        {
+            suffixThroughput *= fcos / pdf;
+        }
+        else if (hasPrevious)
+        {
+            // The pair (x_{j-1}, x_j) for every path continuing from x_j.
+            float3 toX = x.position - previousPosition;
+            float dist2 = max(dot(toX, toX), 1e-12);
+            float3 dir = toX * rsqrt(dist2);
+            bool testX = PtTestsInverseFootprint(lobe);
+            if (PtConnectable(previousRoughness, previousMarginal, previousNormal, dir, dist2, false, x.faceNormal,
+                              testX, marginal, testX ? roughness : 1.0, threshold))
+            {
+                rcFound = true;
+                rcIndex = j;
+                rc = PtEmptyReservoir();
+                PtSetRcSurface(rc, x);
+                rc.rcWi = PtPackNormal(L);
+                // x_j's BSDF and pdf as the stored vertex has them (quantised material, normal and
+                // direction), which is what a shift evaluates; the paths through it are corrected to match.
+                PtSurface stored = PtRcSurface(rc);
+                float3 storedL = PtUnpackNormal(rc.rcWi);
+                float storedPdf = PtLobeProbability(PtLobeProbabilities(stored, V), lobe) * PtLobePdf(stored, lobe, V, storedL);
+                float3 storedRatio = storedPdf > 0.0 ? PtLobeEval(stored, lobe, V, storedL) / storedPdf : float3(0.0);
+                float3 ratio = fcos / pdf;
+                rcCorrection = select(ratio > float3(0.0), storedRatio / max(ratio, float3(1e-30)), float3(0.0));
+                rc.rcJacobian = previousPdf * abs(dot(x.faceNormal, dir)) / dist2 * storedPdf;
+                suffixThroughput = float3(1.0);
+            }
+        }
+        T *= fcos / pdf;
+
+        // Russian roulette on the initial path only; replay never kills a path (section 6.2.4).
+        if (PtFlag(PT_FLAG_RUSSIAN_ROULETTE) && j >= 2u)
+        {
+            float survival = clamp(PtMax3(T), 0.1, 1.0);
+            if (PtRandom(seed, j, 3u) >= survival)
+            {
+                break;
+            }
+            inverseSurvival /= survival;
+        }
+
+        bool miss;
+        PtSurface next = PtTrace(x, L, PtRayId(seed, j), miss);
+        if (miss || (next.valid && PtMax3(next.emissive) > 0.0))
+        {
+            // The path x_1 ... x_j, x_{j+1} ending at the emitter its ray found (d = j + 1).
+            float3 emitted = miss ? PtSkyRadiance(L) : next.emissive;
+            PtReservoir candidate = rcFound ? rc : PtEmptyReservoir();
+            candidate.seed = seed;
+            candidate.F = T * emitted * rcCorrection;
+            if (rcFound)
+            {
+                candidate.flags = PtShapeFlags(j + 1u, rcIndex, PT_RC_SURFACE, lobeBits, candidate.flags);
+                candidate.rcSuffix = PtStoreSuffix(candidate.F, suffixThroughput * emitted);
+            }
+            else
+            {
+                bool connects;
+                float dist2 = 1.0;
+                float3 dir = L;
+                if (miss)
+                {
+                    connects = PtConnectable(roughness, marginal, x.faceNormal, L, 1.0, true, x.faceNormal, false, 0.0, 1.0, threshold);
+                }
+                else
+                {
+                    float3 toNext = next.position - x.position;
+                    dist2 = max(dot(toNext, toNext), 1e-12);
+                    dir = toNext * rsqrt(dist2);
+                    connects = PtConnectable(roughness, marginal, x.faceNormal, dir, dist2, false, next.faceNormal, false, 0.0, 1.0, threshold);
+                }
+                if (connects)
+                {
+                    candidate.flags = PtShapeFlags(j + 1u, j + 1u, miss ? PT_RC_SKY : PT_RC_SURFACE, lobeBits, candidate.flags);
+                    candidate.rcSuffix = PtStoreSuffix(candidate.F, emitted);
+                    if (miss)
+                    {
+                        candidate.rcPosition = L;
+                        candidate.rcJacobian = pdf;
+                    }
+                    else
+                    {
+                        PtSetRcSurface(candidate, next);
+                        candidate.rcJacobian = pdf * abs(dot(next.faceNormal, dir)) / dist2;
+                    }
+                }
+                else
+                {
+                    candidate.flags = PtShapeFlags(j + 1u, 0u, PT_RC_NONE, lobeBits, candidate.flags);
+                }
+            }
+            Consider(candidate, inverseSurvival, seed, candidateIndex);
+        }
+        if (miss || !next.valid || j == maxVertex)
+        {
+            break;
+        }
+
+        hasPrevious = true;
+        previousRoughness = roughness;
+        previousMarginal = marginal;
+        previousPdf = pdf;
+        previousPosition = x.position;
+        previousNormal = x.faceNormal;
+        x = next;
+        V = -L;
+    }
+
+    if (weightSum > 0.0 && chosenTarget > 0.0)
+    {
+        chosen.W = weightSum / chosenTarget;
+        chosen.M = 1.0;
+    }
+    else
+    {
+        chosen = PtEmptyReservoir();
+        chosen.M = 1.0;
+    }
+    PtStoreReservoir(index, chosen, false);
+    if (!PtFlag(PT_FLAG_TEMPORAL) && !PtFlag(PT_FLAG_SPATIAL))
+    {
+        PtWriteOutput(pixel, chosen.F * chosen.W, chosen);
+    }
+}

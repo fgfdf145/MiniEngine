@@ -1,3 +1,4 @@
+#include <engine/renderer/shader_cpp_compat.h>
 #include <glm/glm.hpp>
 
 #include <cmath>
@@ -9,7 +10,8 @@
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/transmission_common.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/transmission_common.slang>
 }
 
 namespace

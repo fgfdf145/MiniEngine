@@ -40,7 +40,7 @@ foreach(_relative_path IN LISTS _clang_relative_files)
 endforeach()
 
 if(NOT _clang_files)
-    message(FATAL_ERROR "No C/C++ or GLSL files were discovered")
+    message(FATAL_ERROR "No C/C++ files were discovered")
 endif()
 
 if(MINIENGINE_FORMAT_MODE STREQUAL "APPLY")

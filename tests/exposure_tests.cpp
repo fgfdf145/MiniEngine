@@ -1,4 +1,5 @@
 #include <engine/renderer/camera.h>
+#include <engine/renderer/shader_cpp_compat.h>
 
 #include <algorithm>
 #include <array>
@@ -13,7 +14,8 @@
 namespace pre_exposure_shader
 {
 using namespace glm;
-#include <shaders/vulkan/pre_exposure.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/pre_exposure.slang>
 }
 
 // main() stays in the global namespace; everything it drives lives in me::.

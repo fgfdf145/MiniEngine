@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -125,8 +126,17 @@ void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
 
 bool EditorRenderBackendBase::TickSharedFrame()
 {
+    // MINIENGINE_FIXED_FRAME_SECONDS=<s>: every frame steps that long instead of the time that passed,
+    // and no time at all while the scene is still loading, so two scripted runs (A/B captures) see
+    // the same clouds, animation and physics however long their loading took.
+    static const float fixedFrameSeconds = []
+    {
+        const char* value = std::getenv("MINIENGINE_FIXED_FRAME_SECONDS");
+        return value != nullptr ? std::max(std::strtof(value, nullptr), 0.0f) : 0.0f;
+    }();
     const auto currentFrameTime = std::chrono::steady_clock::now();
-    const float deltaTime = std::chrono::duration<float>(currentFrameTime - State().lastFrameTime).count();
+    const float deltaTime = fixedFrameSeconds > 0.0f ? (State().IsSceneLoading() ? 0.0f : fixedFrameSeconds)
+                                                     : std::chrono::duration<float>(currentFrameTime - State().lastFrameTime).count();
     State().lastFrameTime = currentFrameTime;
     State().frameDeltaSeconds = deltaTime;
 

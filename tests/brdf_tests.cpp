@@ -1,5 +1,6 @@
 #include <engine/renderer/environment_brdf.h>
 
+#include <engine/renderer/shader_cpp_compat.h>
 #include <glm/glm.hpp>
 
 #include <cmath>
@@ -12,7 +13,8 @@
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/brdf_common.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/brdf_common.slang>
 }
 
 namespace

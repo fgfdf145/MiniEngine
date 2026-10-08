@@ -74,7 +74,6 @@ if(WIN32)
         set(_miniengine_vulkan_library
             "${MINIENGINE_VULKAN_SDK_ROOT}/${_miniengine_vulkan_library_relative_path}"
         )
-        set(_miniengine_vulkan_glslc "${MINIENGINE_VULKAN_SDK_ROOT}/Bin/glslc.exe")
 
         if(EXISTS "${_miniengine_vulkan_include_dir}/vulkan/vulkan.h" AND
            EXISTS "${_miniengine_vulkan_library}")
@@ -98,15 +97,6 @@ if(WIN32)
                 "Path to the Vulkan loader import library"
                 FORCE
             )
-
-            if(EXISTS "${_miniengine_vulkan_glslc}")
-                set(Vulkan_GLSLC_EXECUTABLE
-                    "${_miniengine_vulkan_glslc}"
-                    CACHE FILEPATH
-                    "Path to glslc"
-                    FORCE
-                )
-            endif()
         endif()
     endif()
 
@@ -147,45 +137,30 @@ find_path(MINIENGINE_TINYGLTF_INCLUDE_DIR NAMES tiny_gltf.h REQUIRED)
 # engine_audio: miniaudio is a single header, its implementation compiled in engine/audio.
 find_path(MINIENGINE_MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h REQUIRED)
 
-if(NOT Vulkan_GLSLC_EXECUTABLE)
-    set(_miniengine_glslc_hints "")
-
-    if(DEFINED MINIENGINE_VULKAN_SDK_ROOT AND NOT "${MINIENGINE_VULKAN_SDK_ROOT}" STREQUAL "")
-        list(APPEND _miniengine_glslc_hints
-            "${MINIENGINE_VULKAN_SDK_ROOT}/Bin"
-            "${MINIENGINE_VULKAN_SDK_ROOT}/Bin32"
-        )
-    elseif(DEFINED ENV{VULKAN_SDK} AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")
-        list(APPEND _miniengine_glslc_hints
-            "$ENV{VULKAN_SDK}/Bin"
-            "$ENV{VULKAN_SDK}/Bin32"
-        )
-    endif()
-
-    if(DEFINED VCPKG_INSTALLED_DIR AND NOT "${VCPKG_INSTALLED_DIR}" STREQUAL "")
-        if(DEFINED VCPKG_HOST_TRIPLET AND NOT "${VCPKG_HOST_TRIPLET}" STREQUAL "")
-            list(APPEND _miniengine_glslc_hints
-                "${VCPKG_INSTALLED_DIR}/${VCPKG_HOST_TRIPLET}/tools/shaderc"
-                "${VCPKG_INSTALLED_DIR}/${VCPKG_HOST_TRIPLET}/tools/vulkan"
-            )
-        endif()
-
-        if(DEFINED VCPKG_TARGET_TRIPLET AND NOT "${VCPKG_TARGET_TRIPLET}" STREQUAL "")
-            list(APPEND _miniengine_glslc_hints
-                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/shaderc"
-                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/vulkan"
-            )
-        endif()
-    endif()
-
-    find_program(Vulkan_GLSLC_EXECUTABLE
-        NAMES glslc
-        HINTS ${_miniengine_glslc_hints}
-    )
+# The Slang compiler for the shaders (engine/renderer/CMakeLists.txt): the Vulkan SDK's, else the
+# vcpkg shader-slang host package's.
+set(_miniengine_slangc_hints "")
+if(DEFINED MINIENGINE_VULKAN_SDK_ROOT AND NOT "${MINIENGINE_VULKAN_SDK_ROOT}" STREQUAL "")
+    list(APPEND _miniengine_slangc_hints "${MINIENGINE_VULKAN_SDK_ROOT}/Bin")
+elseif(DEFINED ENV{VULKAN_SDK} AND NOT "$ENV{VULKAN_SDK}" STREQUAL "")
+    list(APPEND _miniengine_slangc_hints "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 endif()
-
-if(NOT Vulkan_GLSLC_EXECUTABLE)
+if(DEFINED VCPKG_INSTALLED_DIR AND NOT "${VCPKG_INSTALLED_DIR}" STREQUAL "")
+    foreach(_miniengine_triplet IN ITEMS "${VCPKG_HOST_TRIPLET}" "${VCPKG_TARGET_TRIPLET}")
+        if(NOT "${_miniengine_triplet}" STREQUAL "")
+            list(APPEND _miniengine_slangc_hints
+                "${VCPKG_INSTALLED_DIR}/${_miniengine_triplet}/tools/shader-slang"
+                "${VCPKG_INSTALLED_DIR}/${_miniengine_triplet}/tools/shader-slang/bin"
+            )
+        endif()
+    endforeach()
+endif()
+find_program(MINIENGINE_SLANGC_EXECUTABLE
+    NAMES slangc
+    HINTS ${_miniengine_slangc_hints}
+)
+if(NOT MINIENGINE_SLANGC_EXECUTABLE)
     message(FATAL_ERROR
-        "glslc was not found. Install the Vulkan SDK or restore the vcpkg shaderc host dependency."
+        "slangc was not found. Install the Vulkan SDK or restore the vcpkg shader-slang host dependency."
     )
 endif()

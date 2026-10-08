@@ -2,6 +2,7 @@
 #include <engine/renderer/camera.h>
 #include <engine/renderer/exposure.h>
 
+#include <engine/renderer/shader_cpp_compat.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -19,7 +20,8 @@
 namespace shader
 {
 using namespace glm;
-#include <shaders/vulkan/pbr_neutral.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/pbr_neutral.slang>
 }
 
 // main() stays in the global namespace; everything it drives lives in me::.

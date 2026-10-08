@@ -1,4 +1,5 @@
 #include "exposure.h"
+#include <engine/renderer/shader_cpp_compat.h>
 
 #include <algorithm>
 #include <cmath>
@@ -8,8 +9,8 @@
 namespace me::exposure_shader
 {
 using namespace glm;
-using uint = unsigned int;
-#include <shaders/vulkan/exposure_histogram.glsl>
+using namespace me::shader_cpp;
+#include <shaders/vulkan/exposure_histogram.slang>
 }
 
 namespace me

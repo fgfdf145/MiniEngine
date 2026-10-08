@@ -218,5 +218,13 @@ struct RendererSharedState
     std::string audioStatus;
     // The priority and CPUs the process runs at (ApplyProcessAllocation), for the Preferences window.
     std::string processStatus;
+
+    // Still loading: the scene file, its models, its textures or its ray scene. --wait-for-scene
+    // counts no frames until it is done.
+    bool IsSceneLoading() const
+    {
+        return asyncSceneLoad.IsActive() || asyncLoad.IsActive() || !pendingModelLoads.empty() ||
+               !sceneUploadStatus.empty() || rayScenePending || !worldStreaming.settled;
+    }
 };
 }
