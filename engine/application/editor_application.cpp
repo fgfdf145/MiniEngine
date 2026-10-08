@@ -304,6 +304,34 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--follow-path")
+        {
+            options.followPath = std::string(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--path-speed-scale")
+        {
+            options.pathSpeedScale = ParseFloatList<1>(ReadRequiredArgument(i, argc, argv, argument), argument)[0];
+            if (!(options.pathSpeedScale > 0.0f))
+            {
+                throw std::runtime_error("--path-speed-scale requires a number above 0");
+            }
+            continue;
+        }
+
+        if (argument == "--replay-drive")
+        {
+            options.replayDrive = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--drive-log")
+        {
+            options.driveLog = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
         if (argument == "--physics-rate")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -447,6 +475,14 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         throw std::runtime_error("Unknown argument: " + std::string(argument));
     }
 
+    if ((options.followPath.has_value() || options.replayDrive.has_value() || options.driveLog.has_value()) && !options.driveEntity.has_value())
+    {
+        throw std::runtime_error("--follow-path, --replay-drive and --drive-log need --drive");
+    }
+    if (options.followPath.has_value() && options.replayDrive.has_value())
+    {
+        throw std::runtime_error("--follow-path and --replay-drive cannot go together");
+    }
     return options;
 }
 
@@ -684,6 +720,8 @@ int EditorApplication::Run()
     bool recordingStarted = false;
     bool quadRecordingStarted = false;
     bool driveStarted = false;
+    const bool automatedDrive = m_options.followPath.has_value() || m_options.replayDrive.has_value();
+    int exitCode = 0;
     if (m_options.driveControls.has_value())
     {
         VehicleControls controls;
@@ -756,6 +794,27 @@ int EditorApplication::Run()
                 throw std::runtime_error("--drive: the scene has no entity named '" + *m_options.driveEntity + "' (it has " + names + ")");
             }
             VehicleDriveService::Start(*sharedState, *found, VehicleDriveService::DefaultTuning());
+            if (m_options.followPath.has_value())
+            {
+                DrivePathTrackSettings track;
+                track.speedScale = m_options.pathSpeedScale;
+                VehicleDriveService::StartPathFollow(*sharedState, *m_options.followPath, track);
+            }
+            else if (m_options.replayDrive.has_value())
+            {
+                VehicleDriveService::StartReplay(*sharedState, *m_options.replayDrive);
+            }
+            sharedState->vehicleDrive.fixedFrameStep = automatedDrive;
+            if (m_options.driveLog.has_value())
+            {
+                VehicleDriveService::StartDriveLog(*sharedState, *m_options.driveLog, !automatedDrive);
+            }
+        }
+        // A path run or replay ends the run when it ends.
+        if (automatedDrive && driveStarted && sharedState->vehicleDrive.automationResult.has_value())
+        {
+            exitCode = *sharedState->vehicleDrive.automationResult ? 0 : 3;
+            break;
         }
         // The recording starts once a frame counts, with the frame after it: the viewport has its
         // size only once a frame has been drawn.
@@ -824,6 +883,7 @@ int EditorApplication::Run()
         }
     }
 
+    VehicleDriveService::StopDriveLog(*sharedState);
     // Also when the window was closed before the last frame: the file is finished either way.
     renderer->StopVideoRecording();
     renderer->StopQuadRecording();
@@ -846,6 +906,6 @@ int EditorApplication::Run()
         renderer->CaptureDdgiReference(reference);
     }
 
-    return 0;
+    return exitCode;
 }
 }

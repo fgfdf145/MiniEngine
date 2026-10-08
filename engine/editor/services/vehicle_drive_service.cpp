@@ -7,6 +7,7 @@
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/vehicle_haptics.h>
+#include <engine/logic/editor_world.h>
 #include <engine/logic/world_bounds.h>
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/vehicle_wheel_motion.h>
@@ -431,6 +432,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->shiftUpRpm = ComputeVehicleShiftPoints(settings).upFull;
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
     session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
+    session->rearAxleZ = settings.rearAxleZ;
     session->frontPeakSlipDegrees = settings.tyres[0].peakSlipAngleDegrees > 0.0f ? settings.tyres[0].peakSlipAngleDegrees : 7.0f;
     session->absFitted = settings.absSlipRatioLimit > 0.0f;
     session->tractionControlFitted = settings.tcSlipRatioLimit > 0.0f || settings.tractionControlGrip > 0.0f;
@@ -492,6 +494,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 
 void Stop(RendererSharedState& state)
 {
+    StopDriveLog(state);
     std::unique_ptr<VehicleDriveSession> session = std::move(state.vehicleDrive.session);
     if (!session)
     {
@@ -523,6 +526,22 @@ void Reset(RendererSharedState& state)
         session->keyboardSteering = 0.0f;
         session->steeringAssist = VehicleSteeringAssistState{};
         session->haptics = VehicleHapticsState{};
+        // A path run or replay starts again from the start with it.
+        if (session->pathFollow.has_value())
+        {
+            session->pathFollow->follower = PathFollowerState{};
+            session->pathFollow->output = PathFollowerOutput{};
+        }
+        if (session->replay.has_value())
+        {
+            session->replay->frame = 0;
+        }
+        session->runStats = DriveRunStats{};
+        session->runStats.followedPath = session->pathFollow.has_value();
+        session->runSeconds = 0.0;
+        session->runEnded = false;
+        session->runSettledSeconds = 0.0f;
+        session->lastVelocity.reset();
     }
 }
 
@@ -561,6 +580,321 @@ void Recover(RendererSharedState& state)
     session->keyboardSteering = 0.0f;
     session->haptics = VehicleHapticsState{};
     LOG_INFO("Put '{}' back on its wheels at ({:.1f}, {:.1f}, {:.1f})", session->name, pose.position.x, pose.position.y, pose.position.z);
+}
+
+namespace
+{
+constexpr float kGravity = 9.81f;
+// A run's figures count once all four wheels have been on the ground this long.
+constexpr float kRunSettleSeconds = 0.3f;
+
+// A pose for the car at `position` across the ground, heading `yaw` (radians, atan2 of its forward's x
+// and z), set down where it started over the ground as Recover does.
+PhysicsPose PoseOnGround(const VehicleDriveSession& session, const glm::dvec3& position, float yaw)
+{
+    PhysicsPose pose;
+    pose.rotation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    pose.position = position;
+    if (const std::optional<double> ground = session.physics->FindGroundBelow(position + glm::dvec3(0.0, kRecoverRayLift, 0.0), kRecoverRayLength))
+    {
+        pose.position.y = *ground + session.startHeightAboveGround + kRecoverDropHeight;
+    }
+    return pose;
+}
+
+// Puts the car at `pose`, stopped, and makes that the start Reset goes back to.
+void PlaceVehicle(RendererSharedState& state, VehicleDriveSession& session, const PhysicsPose& pose)
+{
+    session.startPose = pose;
+    session.physics->ResetVehicle(session.vehicle, pose);
+    session.keyboardSteering = 0.0f;
+    session.steeringAssist = VehicleSteeringAssistState{};
+    session.haptics = VehicleHapticsState{};
+    if (state.vehicleDrive.camera.follow)
+    {
+        PlaceCamera(state, session, pose, 0.0f);
+    }
+}
+
+// A new run's figures, from now.
+void BeginRun(VehicleDriveSession& session)
+{
+    session.runStats = DriveRunStats{};
+    session.runStats.followedPath = session.pathFollow.has_value();
+    session.runSeconds = 0.0;
+    session.runEnded = false;
+    session.runSettledSeconds = 0.0f;
+    session.lastVelocity.reset();
+}
+
+DriveLogHeader LogHeader(const VehicleDriveSession& session)
+{
+    const PhysicsPose pose = session.physics->GetVehiclePose(session.vehicle);
+    DriveLogHeader header;
+    header.startPosition = pose.position;
+    header.startRotation = pose.rotation;
+    header.stepSeconds = session.physics->GetStepSeconds();
+    header.car = session.name;
+    if (session.pathFollow.has_value())
+    {
+        header.path = session.pathFollow->track.name;
+    }
+    return header;
+}
+
+// A path run or replay has ended: its summary is logged, written at the end of the drive log, and kept.
+void EndRun(RendererSharedState& state, VehicleDriveSession& session, bool success, const std::string& what)
+{
+    session.runEnded = true;
+    const std::string summary = fmt::format("{} {}: {}", what, success ? "finished" : "failed", session.runStats.Describe());
+    if (success)
+    {
+        LOG_INFO("{}", summary);
+    }
+    else
+    {
+        LOG_WARN("{}", summary);
+    }
+    session.log.Close(summary);
+    state.vehicleDrive.lastRunSummary = summary;
+    state.vehicleDrive.automationResult = success;
+}
+
+// The controls of a path run or replay this frame, or nothing when the car is not driving itself. A
+// replay's frame also sets how long the frame is and how many physics steps it takes (-1: as many as
+// the frame's time makes).
+std::optional<VehicleControls> AutomatedControls(RendererSharedState& state, VehicleDriveSession& session, float& deltaSeconds, int& replaySteps)
+{
+    replaySteps = -1;
+    if (session.replay.has_value())
+    {
+        VehicleReplayRun& replay = *session.replay;
+        if (replay.frame < replay.replay.frames.size())
+        {
+            const DriveReplayFrame& frame = replay.replay.frames[replay.frame];
+            deltaSeconds = frame.deltaSeconds;
+            replaySteps = frame.physicsSteps;
+            return frame.controls;
+        }
+        if (!session.runEnded)
+        {
+            EndRun(state, session, true, fmt::format("Replay of '{}'", replay.name));
+        }
+        VehicleControls stop;
+        stop.brake = 1.0f;
+        return stop;
+    }
+    if (session.pathFollow.has_value())
+    {
+        VehiclePathFollowRun& run = *session.pathFollow;
+        const PhysicsPose pose = session.physics->GetVehiclePose(session.vehicle);
+        PathFollowerInput input;
+        input.position = pose.position;
+        input.forward = pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+        input.up = pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+        input.forwardSpeed = session.physics->GetVehicleTelemetry(session.vehicle).forwardSpeed;
+        input.wheelbase = session.wheelbase;
+        input.rearAxleOffset = session.rearAxleZ;
+        input.maxSteerDegrees = session.maxSteerDegrees;
+        VehicleControls controls =
+            ComputePathFollowControls(run.track, run.settings, input, run.follower, session.paused ? 0.0f : deltaSeconds, &run.output);
+        if (run.follower.status != PathFollowerStatus::Running && !session.runEnded)
+        {
+            const bool finished = run.follower.status == PathFollowerStatus::Finished;
+            std::string what = fmt::format("Path '{}'", run.track.name);
+            if (!finished)
+            {
+                what += " (" + run.follower.failure + ")";
+            }
+            EndRun(state, session, finished, what);
+        }
+        return controls;
+    }
+    return std::nullopt;
+}
+
+// Gathers the frame into the run's figures and writes it to the drive log, once the physics has stepped.
+void RecordRunFrame(VehicleDriveSession& session, const VehicleControls& controls, float deltaSeconds, int steps)
+{
+    // A path run or replay counts until it ends; a drive by hand while it is written down.
+    const bool automated = session.pathFollow.has_value() || session.replay.has_value();
+    const bool counting = automated ? !session.runEnded : session.log.IsOpen();
+    if (!counting && !session.log.IsOpen())
+    {
+        return;
+    }
+    const float simulated = static_cast<float>(steps) * session.physics->GetStepSeconds();
+    const PhysicsPose pose = session.physics->GetVehiclePose(session.vehicle);
+    const VehicleTelemetry telemetry = session.physics->GetVehicleTelemetry(session.vehicle);
+    const glm::vec3 forward = pose.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+    const glm::vec3 right = pose.rotation * glm::vec3(-1.0f, 0.0f, 0.0f);
+    const glm::vec3 velocity = forward * telemetry.forwardSpeed + right * telemetry.rightSpeed;
+    const float yaw = std::atan2(forward.x, forward.z);
+    session.runSeconds += simulated;
+
+    DriveLogSample sample;
+    sample.time = session.runSeconds;
+    sample.deltaSeconds = deltaSeconds;
+    sample.physicsSteps = steps;
+    sample.position = pose.position;
+    sample.yawDegrees = glm::degrees(yaw);
+    sample.speedKmh = telemetry.forwardSpeed * 3.6f;
+    if (session.pathFollow.has_value())
+    {
+        const PathFollowerOutput& output = session.pathFollow->output;
+        sample.targetKmh = output.targetSpeed * 3.6f;
+        sample.pathDistance = output.distance;
+        sample.lap = output.lap;
+        sample.lateralError = output.lateralError;
+        sample.headingErrorDegrees = output.headingErrorDegrees;
+    }
+    sample.controls = controls;
+    sample.gear = telemetry.gear;
+    sample.rpm = telemetry.engineRpm;
+    if (session.lastVelocity.has_value() && simulated > 0.0f)
+    {
+        const glm::vec3 acceleration = (velocity - *session.lastVelocity) / simulated;
+        sample.longitudinalG = glm::dot(acceleration, forward) / kGravity;
+        sample.lateralG = glm::dot(acceleration, right) / kGravity;
+        // Turning right lowers atan2(x, z): +X is the car's left.
+        sample.yawRateDegrees = -glm::degrees(std::remainder(yaw - session.lastYaw, 2.0f * glm::pi<float>())) / simulated;
+    }
+    sample.bodySlipDegrees =
+        std::abs(telemetry.forwardSpeed) > 1.0f ? glm::degrees(std::atan2(telemetry.rightSpeed, std::abs(telemetry.forwardSpeed))) : 0.0f;
+    sample.absActive = telemetry.absActive;
+    sample.tractionControlCut = telemetry.tractionControlCut;
+    sample.wheelsOnGround = telemetry.wheelsInContact;
+    if (simulated > 0.0f)
+    {
+        session.lastVelocity = velocity;
+        session.lastYaw = yaw;
+    }
+    if (session.runSettledSeconds < kRunSettleSeconds)
+    {
+        session.runSettledSeconds = telemetry.wheelsInContact >= 4 ? session.runSettledSeconds + simulated : 0.0f;
+    }
+    if (counting && session.runSettledSeconds >= kRunSettleSeconds)
+    {
+        session.runStats.Add(sample);
+    }
+    session.log.Write(sample);
+}
+}
+
+void StartPathFollow(RendererSharedState& state, const std::string& name, const DrivePathTrackSettings& track, const PathFollowerSettings& follower)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr)
+    {
+        throw std::runtime_error("drive a car to follow a path");
+    }
+    const std::vector<SceneDrivePath>& paths = state.GetEditorWorld().GetDrivePaths();
+    const auto found = std::find_if(paths.begin(), paths.end(), [&](const SceneDrivePath& path)
+                                    {
+                                        return path.name == name;
+                                    });
+    if (found == paths.end())
+    {
+        std::string names;
+        for (const SceneDrivePath& path : paths)
+        {
+            names += (names.empty() ? "'" : ", '") + path.name + "'";
+        }
+        throw std::runtime_error("the scene has no drive path named '" + name + "' (" + (names.empty() ? std::string("it has none") : "it has " + names) + ")");
+    }
+    VehiclePathFollowRun run;
+    run.track = BuildDrivePathTrack(*found, track);
+    run.settings = follower;
+    if (run.track.Empty())
+    {
+        throw std::runtime_error("the drive path '" + name + "' needs two points or more");
+    }
+    StopAutomation(state);
+    const DrivePathSample& start = run.track.samples.front();
+    PlaceVehicle(state, *session, PoseOnGround(*session, start.position, std::atan2(start.tangent.x, start.tangent.z)));
+    session->pathFollow = std::move(run);
+    BeginRun(*session);
+    state.vehicleDrive.automationResult.reset();
+    const DrivePathTrack& placed = session->pathFollow->track;
+    LOG_INFO(
+        "'{}' follows the path '{}': {:.0f} m{}", session->name, name, placed.length,
+        placed.closed ? fmt::format(" a lap, {} laps", placed.laps) : std::string{});
+}
+
+void StartReplay(RendererSharedState& state, const std::filesystem::path& path)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr)
+    {
+        throw std::runtime_error("drive a car to replay a drive");
+    }
+    VehicleReplayRun run;
+    run.name = path.filename().string();
+    run.replay = ReadDriveLog(path);
+    StopAutomation(state);
+    if (run.replay.header.stepSeconds > 0.0f)
+    {
+        session->physics->SetStepSeconds(run.replay.header.stepSeconds);
+    }
+    PhysicsPose pose;
+    pose.position = run.replay.header.startPosition;
+    pose.rotation = run.replay.header.startRotation;
+    PlaceVehicle(state, *session, pose);
+    if (!run.replay.header.car.empty() && run.replay.header.car != session->name)
+    {
+        LOG_WARN("Replaying '{}', a drive of '{}', with '{}'", run.name, run.replay.header.car, session->name);
+    }
+    LOG_INFO("'{}' replays '{}': {} frames", session->name, run.name, run.replay.frames.size());
+    session->replay = std::move(run);
+    BeginRun(*session);
+    state.vehicleDrive.automationResult.reset();
+}
+
+void StopAutomation(RendererSharedState& state)
+{
+    if (VehicleDriveSession* session = state.vehicleDrive.session.get())
+    {
+        if ((session->pathFollow.has_value() || session->replay.has_value()) && !session->runEnded)
+        {
+            LOG_INFO("'{}' stopped driving itself", session->name);
+        }
+        session->pathFollow.reset();
+        session->replay.reset();
+        session->steeringAssist = VehicleSteeringAssistState{};
+    }
+}
+
+void StartDriveLog(RendererSharedState& state, const std::filesystem::path& path, bool fromStart)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr)
+    {
+        throw std::runtime_error("drive a car to write its drive down");
+    }
+    if (fromStart)
+    {
+        Reset(state);
+    }
+    session->log.Open(path, LogHeader(*session));
+    if (!session->pathFollow.has_value() && !session->replay.has_value())
+    {
+        BeginRun(*session);
+    }
+    LOG_INFO("Writing the drive of '{}' to '{}'", session->name, path.string());
+}
+
+void StopDriveLog(RendererSharedState& state)
+{
+    VehicleDriveSession* session = state.vehicleDrive.session.get();
+    if (session == nullptr || !session->log.IsOpen())
+    {
+        return;
+    }
+    // A hand drive's figures go at its end; a path run's or replay's are written when it ends.
+    const bool automated = session->pathFollow.has_value() || session->replay.has_value();
+    const std::string summary = automated ? std::string{} : session->runStats.Describe();
+    LOG_INFO("Wrote the drive of '{}' to '{}'{}", session->name, session->log.Path().string(), summary.empty() ? std::string{} : ": " + summary);
+    session->log.Close(summary);
 }
 
 void SetPaused(RendererSharedState& state, bool paused)
@@ -739,17 +1073,36 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     }
 
     const std::optional<VehicleControls>& scripted = state.vehicleDrive.scriptedControls;
-    if (scripted.has_value())
+    const float realSeconds = deltaSeconds;
+    const bool fixedRun = scripted.has_value() || (state.vehicleDrive.fixedFrameStep && (session->pathFollow.has_value() || session->replay.has_value()));
+    if (fixedRun)
     {
         deltaSeconds = 1.0f / 60.0f;
     }
-    VehicleControls controls = scripted.has_value()
+    // A path run or replay drives the car (a replay's frame also sets the frame's time and steps).
+    int replaySteps = -1;
+    const std::optional<VehicleControls> automated = AutomatedControls(state, *session, deltaSeconds, replaySteps);
+    // In real time a replay plays its next frame once as much time has gone as that frame took.
+    bool replayHolds = false;
+    if (replaySteps >= 0 && !state.vehicleDrive.fixedFrameStep && !session->paused)
+    {
+        float& clock = session->replay->clock;
+        clock = std::min(clock + realSeconds, 0.25f);
+        replayHolds = clock < deltaSeconds;
+        if (!replayHolds)
+        {
+            clock -= deltaSeconds;
+        }
+    }
+    const bool driverless = scripted.has_value() || automated.has_value();
+    VehicleControls controls = automated.has_value() ? *automated
+                               : scripted.has_value()
                                    ? *scripted
                                    : ReadVehicleControls(
                                          state.input, keyboardCaptured, deltaSeconds, session->keyboardSteering,
                                          state.vehicleDrive.manualGearbox, &session->gearButtonsHeld);
     // The steering assist holds still while the simulation does.
-    if (!scripted.has_value())
+    if (!driverless)
     {
         const VehicleTelemetry telemetry = session->physics->GetVehicleTelemetry(session->vehicle);
         VehicleSteeringAssistInput assist;
@@ -777,7 +1130,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         (state.input.IsKeyDown(KeyCode(SDL_SCANCODE_R)) ||
          (state.input.GetFirstConnectedGamepadIndex() >= 0 &&
           state.input.IsGamepadButtonDown(GamepadButton::North, static_cast<uint32_t>(state.input.GetFirstConnectedGamepadIndex()))));
-    if (recoverDown && !session->recoverHeld && !scripted.has_value())
+    if (recoverDown && !session->recoverHeld && !driverless)
     {
         Recover(state);
     }
@@ -812,9 +1165,13 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
 
     session->physics->SetVehicleControls(session->vehicle, controls);
     session->controls = controls;
-    if (session->physics->GetStepSeconds() != state.vehicleDrive.physicsStepSeconds)
+    // A replay runs at its recording's step, whatever the panel's rate.
+    const float wantedStep = session->replay.has_value() && session->replay->replay.header.stepSeconds > 0.0f
+                                 ? session->replay->replay.header.stepSeconds
+                                 : state.vehicleDrive.physicsStepSeconds;
+    if (session->physics->GetStepSeconds() != wantedStep)
     {
-        session->physics->SetStepSeconds(state.vehicleDrive.physicsStepSeconds);
+        session->physics->SetStepSeconds(wantedStep);
         LOG_INFO("'{}': physics at {:.0f} Hz", session->name, 1.0f / session->physics->GetStepSeconds());
     }
     if (!session->paused)
@@ -824,7 +1181,24 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         constexpr float kPhysicsBudgetSeconds = 0.025f;
         // A scripted drive runs every step, so it is the same however slowly the frames come.
         const auto stepStart = std::chrono::steady_clock::now();
-        const int steps = session->physics->Update(deltaSeconds, scripted.has_value() ? 0.0f : kPhysicsBudgetSeconds);
+        // A replay takes its recording's steps, frame by frame.
+        int steps = 0;
+        if (replaySteps >= 0)
+        {
+            if (!replayHolds)
+            {
+                steps = session->physics->RunSteps(replaySteps);
+                ++session->replay->frame;
+            }
+        }
+        else
+        {
+            steps = session->physics->Update(deltaSeconds, fixedRun ? 0.0f : kPhysicsBudgetSeconds);
+        }
+        if (steps > 0)
+        {
+            RecordRunFrame(*session, controls, deltaSeconds, steps);
+        }
         const float simulatedSeconds = steps * session->physics->GetStepSeconds();
         // The odometer runs on simulated time, as the car moves.
         session->odometerMetres += std::abs(static_cast<double>(session->physics->GetVehicleTelemetry(session->vehicle).forwardSpeed)) *
@@ -846,7 +1220,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
     UpdateGamepadFeedback(state, *session, deltaSeconds, keyboardCaptured);
 
     const PhysicsPose pose = session->physics->GetVehiclePose(session->vehicle);
-    if (scripted.has_value() && !session->paused)
+    if (fixedRun && !session->paused)
     {
         if (session->scriptedSeconds >= session->nextScriptedLogSeconds)
         {
@@ -980,7 +1354,36 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.frontTyre = session->frontTyre;
         status.rearTyre = session->rearTyre;
         status.odometerMetres = session->odometerMetres;
+        VehicleAutomationStatus& automation = status.automation;
+        if (const std::optional<VehiclePathFollowRun>& run = session->pathFollow; run.has_value())
+        {
+            automation.mode = VehicleAutomationMode::Path;
+            automation.name = run->track.name;
+            automation.status = run->follower.status;
+            automation.failure = run->follower.failure;
+            automation.distance = run->output.distance;
+            automation.length = run->track.length;
+            automation.lap = run->output.lap;
+            automation.laps = run->track.closed ? run->track.laps : 1;
+            automation.lateralError = run->output.lateralError;
+            automation.targetKmh = run->output.targetSpeed * 3.6f;
+            automation.closest = run->output.closest;
+            automation.lookahead = run->output.lookahead;
+        }
+        else if (const std::optional<VehicleReplayRun>& replay = session->replay; replay.has_value())
+        {
+            automation.mode = VehicleAutomationMode::Replay;
+            automation.name = replay->name;
+            automation.status = session->runEnded ? PathFollowerStatus::Finished : PathFollowerStatus::Running;
+            automation.frame = replay->frame;
+            automation.frames = replay->replay.frames.size();
+        }
+        if (session->log.IsOpen())
+        {
+            automation.logPath = session->log.Path().string();
+        }
     }
+    status.lastRunSummary = state.vehicleDrive.lastRunSummary;
     return status;
 }
 

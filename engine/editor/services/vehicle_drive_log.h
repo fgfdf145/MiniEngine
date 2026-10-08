@@ -3,6 +3,7 @@
 #include <engine/physics/vehicle_settings.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -17,9 +18,11 @@ namespace me
 // comparing runs, and its controls for replaying the drive exactly.
 struct DriveLogHeader
 {
-    // Where the drive started: the body's position and heading (degrees, atan2 of its forward's x and z).
+    // Where the drive started: the body's pose, as a replay puts it back.
     glm::dvec3 startPosition{0.0};
-    float startYawDegrees = 0.0f;
+    glm::quat startRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    // The physics' fixed step (s), which a replay runs at; 0 when not known.
+    float stepSeconds = 0.0f;
     std::string car;
     // The drive path followed; empty for a drive by hand or a replay.
     std::string path;
@@ -29,8 +32,9 @@ struct DriveLogHeader
 struct DriveLogSample
 {
     double time = 0.0;
-    // The simulated time this frame advanced (s): a replay steps the physics by it again.
+    // The simulated time this frame advanced (s), and the physics steps it took: a replay runs as many.
     float deltaSeconds = 0.0f;
+    int physicsSteps = 0;
     glm::dvec3 position{0.0};
     float yawDegrees = 0.0f;
     float speedKmh = 0.0f;
@@ -83,10 +87,11 @@ class DriveLogWriter
     std::filesystem::path m_path;
 };
 
-// A frame of a drive to replay: how long it was and what the car was given.
+// A frame of a drive to replay: how long it was, the physics steps it took and what the car was given.
 struct DriveReplayFrame
 {
     float deltaSeconds = 0.0f;
+    int physicsSteps = 0;
     VehicleControls controls;
 };
 

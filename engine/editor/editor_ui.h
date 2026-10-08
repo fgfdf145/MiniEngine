@@ -155,6 +155,18 @@ struct EditorUiActions
     // The live seven-post rig (VehicleRigService): put the selected car on it, or take it off.
     bool startVehicleRig = false;
     bool stopVehicleRig = false;
+    // The Drive Paths panel (VehicleDriveService): the car follows a scene's drive path by its name, or
+    // replays a drive log (either starts driving the selected model first when nothing is driven); stops
+    // doing so; and starts writing the drive down (true, from the car's start) or stops (false).
+    struct DrivePathFollow
+    {
+        std::string path;
+        DrivePathTrackSettings track;
+    };
+    std::optional<DrivePathFollow> followDrivePath;
+    std::optional<std::string> replayDriveLog;
+    bool stopDriveAutomation = false;
+    std::optional<bool> driveLog;
 };
 
 struct EditorUiFrameResult

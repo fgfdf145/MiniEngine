@@ -2,8 +2,10 @@
 
 #include <engine/asset/model_loader.h>
 #include <engine/audio/gamepad_haptics.h>
+#include <engine/editor/services/vehicle_drive_log.h>
 #include <engine/editor/services/vehicle_gear_shift.h>
 #include <engine/editor/services/vehicle_haptics.h>
+#include <engine/editor/services/vehicle_path_follower.h>
 #include <engine/editor/services/vehicle_steering_assist.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
@@ -17,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -105,6 +108,39 @@ struct VehiclePhysicsOverlaySettings
     float metresPerKilonewton = 0.15f;
 };
 
+// The car driving itself (docs/design/2026-10-09-drive-path-follow-design.md): along a drive path, or
+// replaying a drive log.
+enum class VehicleAutomationMode : uint8_t
+{
+    None,
+    Path,
+    Replay,
+};
+
+// What the Drive Paths panel and the viewport show of it.
+struct VehicleAutomationStatus
+{
+    VehicleAutomationMode mode = VehicleAutomationMode::None;
+    // The path's name, or the replayed log's file name.
+    std::string name;
+    PathFollowerStatus status = PathFollowerStatus::Running;
+    std::string failure;
+    // Along the path (m) and its length, the lap and the laps to drive; a replay's frame and frame count.
+    double distance = 0.0;
+    double length = 0.0;
+    int lap = 0;
+    int laps = 1;
+    size_t frame = 0;
+    size_t frames = 0;
+    float lateralError = 0.0f;
+    float targetKmh = 0.0f;
+    // The path's point nearest the car and the point it steers for.
+    glm::dvec3 closest{0.0};
+    glm::dvec3 lookahead{0.0};
+    // The drive log being written; empty when none.
+    std::string logPath;
+};
+
 // What the Vehicle panel shows.
 struct VehicleDriveStatus
 {
@@ -143,6 +179,9 @@ struct VehicleDriveStatus
     double odometerMetres = 0.0;
     // The view the car is seen from (also while nothing is driven: the next drive starts in it).
     VehicleCameraView cameraView = VehicleCameraView::Chase;
+    VehicleAutomationStatus automation;
+    // The last path run or replay as it ended (also once the drive has stopped).
+    std::string lastRunSummary;
     std::string lastError;
 };
 
@@ -168,6 +207,25 @@ struct VehicleGearButtons
 {
     bool up = false;
     bool down = false;
+};
+
+// A drive path being followed: the path sampled with its speed plan, and the follower.
+struct VehiclePathFollowRun
+{
+    DrivePathTrack track;
+    PathFollowerSettings settings;
+    PathFollowerState follower;
+    PathFollowerOutput output;
+};
+
+// A drive log being replayed, frame by frame.
+struct VehicleReplayRun
+{
+    std::string name;
+    DriveReplay replay;
+    size_t frame = 0;
+    // In real time: the time gone that the next frame has not yet been played for.
+    float clock = 0.0f;
 };
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
@@ -220,6 +278,8 @@ struct VehicleDriveSession
     VehicleSteeringAssistState steeringAssist;
     float maxSteerDegrees = 35.0f;
     float wheelbase = 2.6f;
+    // The rear axle along the body's forward axis from its origin (m): where a path run steers from.
+    float rearAxleZ = -1.3f;
     float frontPeakSlipDegrees = 7.0f;
     bool resetHeld = false;
     bool recoverHeld = false;
@@ -258,6 +318,21 @@ struct VehicleDriveSession
     std::string frontTyre;
     std::string rearTyre;
     double odometerMetres = 0.0;
+    // The car driving itself: along a drive path or replaying a log (one at most), and the drive written
+    // down. A run's figures are gathered while either goes on, until it ends (runEnded), and while a
+    // drive by hand is written down.
+    std::optional<VehiclePathFollowRun> pathFollow;
+    std::optional<VehicleReplayRun> replay;
+    DriveLogWriter log;
+    DriveRunStats runStats;
+    double runSeconds = 0.0;
+    bool runEnded = false;
+    // How long all four wheels have been on the ground since the run began: its figures count once the
+    // car has settled from being set down (kRunSettleSeconds), not the bump of landing.
+    float runSettledSeconds = 0.0f;
+    // The body's velocity and heading after the last logged frame, for its accelerations and yaw rate.
+    std::optional<glm::vec3> lastVelocity;
+    float lastYaw = 0.0f;
 };
 
 struct VehicleDriveState
@@ -271,6 +346,13 @@ struct VehicleDriveState
     // keyboard's and gamepad's, advances a fixed 1/60 s a frame however long the frame took, and logs
     // its pose once a simulated second.
     std::optional<VehicleControls> scriptedControls;
+    // A path run or replay advances a fixed 1/60 s a frame however long the frame took (a scripted run);
+    // off, it keeps to real time.
+    bool fixedFrameStep = false;
+    // How the last path run or replay ended: true finished, false failed; unset while none has. A
+    // scripted run stops once it is set.
+    std::optional<bool> automationResult;
+    std::string lastRunSummary;
     VehicleCameraSettings camera;
     // The view the car is seen from; it stays for the next drive.
     VehicleCameraView cameraView = VehicleCameraView::Chase;
@@ -308,6 +390,23 @@ void SetBrushTyreBristles(RendererSharedState& state, int ribs, int segmentsPerR
 void SetDriverAids(RendererSharedState& state, bool abs, bool tractionControl);
 // While paused: advances the simulation by one fixed step.
 void Step(RendererSharedState& state);
+
+// The car drives itself along the scene's drive path `name` (ComputePathFollowControls): it is put on
+// the path's start facing along it, which Reset then goes back to. Throws when nothing is driven, or
+// the scene has no such path or it has fewer than two points.
+void StartPathFollow(
+    RendererSharedState& state, const std::string& name, const DrivePathTrackSettings& track = {}, const PathFollowerSettings& follower = {});
+// The car replays a drive log (ReadDriveLog): put back where that drive started, at its physics step,
+// it is given the controls and steps of each of its frames. Throws when nothing is driven or the log
+// cannot be read.
+void StartReplay(RendererSharedState& state, const std::filesystem::path& path);
+// Ends a path run or replay; the keyboard and gamepad drive the car again.
+void StopAutomation(RendererSharedState& state);
+// Writes the drive down from now (DriveLogWriter). With `fromStart` the car first goes back to its
+// start (Reset), so the log can be replayed from where it starts. Throws when nothing is driven or the
+// file cannot be written.
+void StartDriveLog(RendererSharedState& state, const std::filesystem::path& path, bool fromStart);
+void StopDriveLog(RendererSharedState& state);
 
 // Per frame: reads the driver's input, advances the simulation, and moves the car's entity and
 // the chase camera. False when nothing is being driven. Stops driving once the entity is gone.

@@ -240,9 +240,10 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
     const std::filesystem::path file = folder / "drive_path_tests_log.csv";
     DriveLogHeader header;
     header.startPosition = glm::dvec3(62.087, 100.0006, -20.827);
-    header.startYawDegrees = 182.5f;
+    header.startRotation = glm::normalize(glm::quat(0.1f, 0.2f, 0.95f, -0.05f));
+    header.stepSeconds = 1.0f / 1000.0f;
     header.car = "skyline_r34_vspec";
-    header.path = "lane change";
+    header.path = "lane change 2";
     DriveLogWriter writer;
     writer.Open(file, header);
     DriveLogSample sample;
@@ -250,6 +251,7 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
     {
         sample.time = frame * kFrame;
         sample.deltaSeconds = kFrame * (1.0f + 0.1f * frame);
+        sample.physicsSteps = 16 + frame;
         sample.controls.throttle = 0.123456789f * frame;
         sample.controls.steering = -0.333333343f;
         sample.controls.brake = frame == 2 ? 1.0f : 0.0f;
@@ -259,14 +261,19 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
     }
     writer.Close("done");
 
+    const std::string columns = DriveLogColumns();
+    const std::string row = FormatDriveLogRow(sample);
+    Require(std::count(columns.begin(), columns.end(), ',') == std::count(row.begin(), row.end(), ','), "a row's cells do not match the columns");
+
     const DriveReplay replay = ReadDriveLog(file);
     Require(replay.frames.size() == 3, "the log reads back " + std::to_string(replay.frames.size()) + " frames");
-    Require(replay.header.car == "skyline_r34_vspec" && replay.header.path == "lane change", "the header reads back wrong");
-    Require(replay.header.startPosition == header.startPosition && replay.header.startYawDegrees == header.startYawDegrees, "the start reads back wrong");
+    Require(replay.header.car == "skyline_r34_vspec" && replay.header.path == "lane change 2", "the header reads back wrong");
+    Require(replay.header.startPosition == header.startPosition && replay.header.startRotation == header.startRotation, "the start reads back wrong");
+    Require(replay.header.stepSeconds == header.stepSeconds, "the step reads back wrong");
     for (int frame = 0; frame < 3; ++frame)
     {
         const DriveReplayFrame& read = replay.frames[frame];
-        Require(read.deltaSeconds == kFrame * (1.0f + 0.1f * frame), "dt is not read back exactly");
+        Require(read.deltaSeconds == kFrame * (1.0f + 0.1f * frame) && read.physicsSteps == 16 + frame, "dt is not read back exactly");
         Require(read.controls.throttle == 0.123456789f * frame && read.controls.steering == -0.333333343f, "controls are not read back exactly");
         Require(read.controls.gearShifts == (frame == 1 ? 1 : 0) && read.controls.manualGearbox, "the gearbox is not read back");
     }

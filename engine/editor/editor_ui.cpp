@@ -7,6 +7,7 @@
 #include "ui/modals/scene_reset_modal.h"
 #include "ui/panels/asset_browser_panel.h"
 #include "ui/panels/camera_panel.h"
+#include "ui/panels/drive_paths_panel.h"
 #include "ui/panels/graphics_debug_panel.h"
 #include "ui/panels/quad_recording_panel.h"
 #include "ui/panels/input_monitor_panel.h"
@@ -85,6 +86,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<InputMonitorPanel>();
     m_windows.Register<VehiclePanel>();
     m_windows.Register<SuspensionRigsPanel>();
+    m_windows.Register<DrivePathsPanel>();
     m_windows.Register<QuadRecordingPanel>();
     m_windows.Register<ThemePanel>();
     // Floating tool windows, opened by commands or by other windows.

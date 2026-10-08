@@ -89,6 +89,17 @@ struct EditorApplicationOptions
     // where --camera (or the scene) puts it and does not follow the car.
     std::optional<VehicleCameraView> driveView;
     bool driveCameraFixed = false;
+    // --follow-path NAME: with --drive, the car follows the scene's drive path NAME by itself
+    // (VehicleDriveService::StartPathFollow), a fixed 1/60 s a frame; the run ends with the path, exit
+    // code 3 when the car fails it. --path-speed-scale S: every speed the path sets times S.
+    std::optional<std::string> followPath;
+    float pathSpeedScale = 1.0f;
+    // --replay-drive FILE: with --drive, the car replays a drive log (VehicleDriveService::StartReplay);
+    // the run ends with it.
+    std::optional<std::filesystem::path> replayDrive;
+    // --drive-log FILE: with --drive, writes the drive down as CSV (DriveLogWriter), from the path's start
+    // or the replay's, else from the car's.
+    std::optional<std::filesystem::path> driveLog;
     // --physics-rate HZ: the physics' fixed steps per second (the Vehicle panel's Physics Rate), 60 to 4000.
     std::optional<int> physicsRateHz;
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds

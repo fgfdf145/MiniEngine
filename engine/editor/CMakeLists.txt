@@ -82,6 +82,8 @@ add_library(engine_editor
     ui/panels/asset_browser_panel.cpp
     ui/panels/asset_browser_panel.h
     ui/panels/camera_panel.cpp
+    ui/panels/drive_paths_panel.cpp
+    ui/panels/drive_paths_panel.h
     ui/panels/camera_panel.h
     ui/panels/graphics_debug_panel.cpp
     ui/panels/graphics_debug_panel.h

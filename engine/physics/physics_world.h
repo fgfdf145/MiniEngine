@@ -288,6 +288,9 @@ class PhysicsWorld
     // slow to keep up with real time (a debug build, a heavy car) then runs in slow motion instead of
     // taking the frame rate down with it.
     int Update(float deltaSeconds, float wallBudgetSeconds = 0.0f);
+    // Runs exactly `count` fixed steps (at most MaxStepsPerUpdate), whatever time was carried over: a
+    // replayed drive takes the steps its recording took, frame by frame. Returns how many ran.
+    int RunSteps(int count);
 
   private:
     struct Impl;

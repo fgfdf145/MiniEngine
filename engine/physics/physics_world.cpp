@@ -3567,4 +3567,13 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
     }
     return steps;
 }
+
+int PhysicsWorld::RunSteps(int count)
+{
+    // Half a step over the count, so no rounding in the accumulator's subtractions can lose a step; the
+    // half left over only places the drawn pose between the last two steps.
+    const int steps = std::clamp(count, 0, MaxStepsPerUpdate());
+    m_impl->accumulatedSeconds = (static_cast<float>(steps) + 0.5f) * m_impl->stepSeconds;
+    return Update(0.0f);
+}
 }

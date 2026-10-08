@@ -5,6 +5,7 @@
 #include <engine/editor/ui/editor_ui_internal.h>
 #include <engine/editor/ui/editor_vehicle_overlay.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/panels/drive_paths_panel.h>
 #include <engine/editor/ui/panels/suspension_rigs_panel.h>
 
 #include <engine/core/log/log.h>
@@ -1338,6 +1339,13 @@ void ViewportPanel::OnGui(EditorContext& context)
         DrawVehicleLinkageOverlay(
             *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleRigStatus.linkage, UiScale());
     }
+    // The drive paths (and where a car following one steers for); a click may select or place a point.
+    bool drivePathClick = false;
+    if (viewportUi && viewportRect.drawList != nullptr)
+    {
+        drivePathClick = context.windows.Get<DrivePathsPanel>().DrawViewportOverlay(
+            context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, viewportRect.hovered, UiScale());
+    }
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.quadRecordingStatus, "QUAD ", 1);
     // GT7's driving HUD along the bottom while a car is driven.
@@ -1374,7 +1382,9 @@ void ViewportPanel::OnGui(EditorContext& context)
     // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
     if (state.commands.gizmos)
     {
-        if (!DrawDriverWristGizmo(scene, state, matrices, viewportRect, UiScale(), result))
+        if (!DrawDriverWristGizmo(scene, state, matrices, viewportRect, UiScale(), result) &&
+            (viewportRect.drawList == nullptr ||
+             !context.windows.Get<DrivePathsPanel>().DrawPointGizmo(context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, UiScale())))
         {
             DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, UiScale());
         }
@@ -1382,7 +1392,10 @@ void ViewportPanel::OnGui(EditorContext& context)
     }
     std::vector<ProjectedEntityCenter> projectedCenters = ProjectSceneCenters(scene, matrices, viewportRect);
     AppendLightProjectedCenters(scene, matrices, viewportRect, UiScale(), projectedCenters);
-    HandleViewportSelection(scene, projectedCenters, viewportRect, UiScale());
+    if (!drivePathClick)
+    {
+        HandleViewportSelection(scene, projectedCenters, viewportRect, UiScale());
+    }
     DrawViewportSelectionOverlay(scene, matrices, viewportRect, UiScale(), static_cast<bool>(state.selectionOutlineTexture));
     if (!viewportUi)
     {

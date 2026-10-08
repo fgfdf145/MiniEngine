@@ -39,6 +39,8 @@ namespace me
 
 namespace
 {
+std::filesystem::path BuildCapturePath(const char* prefix, const char* extension);
+
 // Runs one action the UI asked for. A failure goes to `error`, where the UI shows it, and to the
 // log as "Failed to <what>: <reason>"; the frame's other actions still run.
 template <typename Action>
@@ -339,6 +341,44 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                     {
                         const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
                         VehicleDriveService::Start(State(), selected, uiFrame.vehicleTuning);
+                    });
+    }
+    if (actions.followDrivePath.has_value() || actions.replayDriveLog.has_value())
+    {
+        RunUiAction(State().vehicleDrive.lastError, "drive by itself", [&]
+                    {
+                        if (!State().vehicleDrive.session)
+                        {
+                            VehicleRigService::Stop(State());
+                            const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
+                            VehicleDriveService::Start(State(), selected, uiFrame.vehicleTuning);
+                        }
+                        if (actions.followDrivePath.has_value())
+                        {
+                            VehicleDriveService::StartPathFollow(State(), actions.followDrivePath->path, actions.followDrivePath->track);
+                        }
+                        else
+                        {
+                            VehicleDriveService::StartReplay(State(), std::filesystem::path(*actions.replayDriveLog));
+                        }
+                    });
+    }
+    if (actions.stopDriveAutomation)
+    {
+        VehicleDriveService::StopAutomation(State());
+    }
+    if (actions.driveLog.has_value())
+    {
+        RunUiAction(State().vehicleDrive.lastError, "write the drive down", [&]
+                    {
+                        if (*actions.driveLog)
+                        {
+                            VehicleDriveService::StartDriveLog(State(), BuildCapturePath("drive", ".csv"), true);
+                        }
+                        else
+                        {
+                            VehicleDriveService::StopDriveLog(State());
+                        }
                     });
     }
     if (actions.pauseVehicleDrive.has_value())

@@ -16,6 +16,7 @@ namespace
 constexpr const char* kColumns[] = {
     "time",
     "dt",
+    "steps",
     "x",
     "y",
     "z",
@@ -102,9 +103,10 @@ std::string FormatDriveLogRow(const DriveLogSample& sample)
     const VehicleControls& controls = sample.controls;
     // {} writes the shortest text that reads back to the same float or double.
     return fmt::format(
-        "{:.4f},{},{:.4f},{:.4f},{:.4f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.4f},{:.3f},{},{},{},{},{},{},{},{},{:.0f},{:.4f},{:.4f},{:.3f},{:.3f},{},{},{}",
+        "{:.4f},{},{},{:.4f},{:.4f},{:.4f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.4f},{:.3f},{},{},{},{},{},{},{},{},{:.0f},{:.4f},{:.4f},{:.3f},{:.3f},{},{},{}",
         sample.time,
         sample.deltaSeconds,
+        sample.physicsSteps,
         sample.position.x,
         sample.position.y,
         sample.position.z,
@@ -148,8 +150,15 @@ void DriveLogWriter::Open(const std::filesystem::path& path, const DriveLogHeade
     }
     m_path = path;
     m_file << "# MiniEngine drive log\n";
+    // The start as x y z and the rotation's w x y z, each read back to the same number.
+    const glm::quat& rotation = header.startRotation;
     m_file << fmt::format(
-        "# start {} {} {} {}\n", header.startPosition.x, header.startPosition.y, header.startPosition.z, header.startYawDegrees);
+        "# start {} {} {} {} {} {} {}\n", header.startPosition.x, header.startPosition.y, header.startPosition.z, rotation.w, rotation.x,
+        rotation.y, rotation.z);
+    if (header.stepSeconds > 0.0f)
+    {
+        m_file << fmt::format("# step_seconds {}\n", header.stepSeconds);
+    }
     if (!header.car.empty())
     {
         m_file << "# car " << header.car << '\n';
@@ -202,7 +211,7 @@ DriveReplay ReadDriveLog(const std::filesystem::path& path)
         }
         return it->second;
     };
-    size_t dt = 0, throttle = 0, brake = 0, steering = 0, handBrake = 0, gearShifts = 0, clutch = 0, manual = 0;
+    size_t dt = 0, steps = 0, throttle = 0, brake = 0, steering = 0, handBrake = 0, gearShifts = 0, clutch = 0, manual = 0;
     while (std::getline(file, line))
     {
         ++lineNumber;
@@ -216,16 +225,35 @@ DriveReplay ReadDriveLog(const std::filesystem::path& path)
             std::istringstream comment{std::string(text.substr(1))};
             std::string key;
             comment >> key;
-            if (key == "start")
+            std::vector<std::string> values;
+            for (std::string value; comment >> value;)
             {
-                comment >> replay.header.startPosition.x >> replay.header.startPosition.y >> replay.header.startPosition.z >>
-                    replay.header.startYawDegrees;
+                values.push_back(value);
+            }
+            const std::string where = fmt::format("line {}", lineNumber);
+            if (key == "start" && values.size() == 7)
+            {
+                DriveLogHeader& header = replay.header;
+                header.startPosition = glm::dvec3(
+                    ParseCell<double>(values[0], "the start at " + where),
+                    ParseCell<double>(values[1], "the start at " + where),
+                    ParseCell<double>(values[2], "the start at " + where));
+                header.startRotation = glm::quat(
+                    ParseCell<float>(values[3], "the start at " + where),
+                    ParseCell<float>(values[4], "the start at " + where),
+                    ParseCell<float>(values[5], "the start at " + where),
+                    ParseCell<float>(values[6], "the start at " + where));
+            }
+            else if (key == "step_seconds" && values.size() == 1)
+            {
+                replay.header.stepSeconds = ParseCell<float>(values[0], "the step at " + where);
             }
             else if (key == "car" || key == "path")
             {
-                std::string value;
-                std::getline(comment >> std::ws, value);
-                (key == "car" ? replay.header.car : replay.header.path) = value;
+                // The rest of the line, spaces and all.
+                std::string_view value = text.substr(1);
+                value.remove_prefix(std::min(value.find(key) + key.size(), value.size()));
+                (key == "car" ? replay.header.car : replay.header.path) = std::string(Trim(value));
             }
             continue;
         }
@@ -237,6 +265,7 @@ DriveReplay ReadDriveLog(const std::filesystem::path& path)
                 columns.emplace(std::string(cells[index]), index);
             }
             dt = column("dt");
+            steps = column("steps");
             throttle = column("throttle");
             brake = column("brake");
             steering = column("steering");
@@ -253,6 +282,7 @@ DriveReplay ReadDriveLog(const std::filesystem::path& path)
         const std::string where = fmt::format("line {}", lineNumber);
         DriveReplayFrame frame;
         frame.deltaSeconds = ParseCell<float>(cells[dt], "dt at " + where);
+        frame.physicsSteps = ParseCell<int>(cells[steps], "steps at " + where);
         frame.controls.throttle = ParseCell<float>(cells[throttle], "throttle at " + where);
         frame.controls.brake = ParseCell<float>(cells[brake], "brake at " + where);
         frame.controls.steering = ParseCell<float>(cells[steering], "steering at " + where);
