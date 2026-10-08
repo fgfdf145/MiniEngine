@@ -174,7 +174,6 @@ class VulkanAtmosphere
     void RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer);
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
     void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void DestroyHandles();
     void DestroyPlumeStaging();
 
@@ -202,21 +201,21 @@ class VulkanAtmosphere
     // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0
     // binding 7. Shared by the frames in flight like the LUTs.
     VkBuffer m_irradianceBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_irradianceMemory = VK_NULL_HANDLE;
+    nvrhi::BufferHandle m_irradianceHandle;
     // The clouds' plume table (BuildCloudPlumeTable), device local, read by cloud_weather.comp
     // through set 1 binding 14; filled from the host-visible staging copy by the first Record,
     // which is freed once that frame has surely finished.
     VkBuffer m_plumeBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_plumeMemory = VK_NULL_HANDLE;
+    nvrhi::BufferHandle m_plumeHandle;
     VkBuffer m_plumeStaging = VK_NULL_HANDLE;
-    VkDeviceMemory m_plumeStagingMemory = VK_NULL_HANDLE;
+    nvrhi::BufferHandle m_plumeStagingHandle;
     uint32_t m_plumeStagingAge = 0;
     // One host-visible copy of the SH per frame in flight, copied after the projection so the CPU
     // reads a finished frame's sky instead of racing the shared buffer.
     struct Readback
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         const float* mapped = nullptr;
         bool written = false;
     };

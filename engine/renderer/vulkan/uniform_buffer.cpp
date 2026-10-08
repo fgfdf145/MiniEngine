@@ -1,5 +1,7 @@
 #include "uniform_buffer.h"
 
+#include "nvrhi_resources.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -13,6 +15,7 @@ namespace me
 VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     uint32_t imageCount,
     VkDescriptorSetLayout frameSetLayout,
     TextureDescriptorBinding shadowMap,
@@ -21,6 +24,7 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     uint32_t drawCapacity)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_shadowMap(shadowMap),
       m_localShadowAtlas(localShadowAtlas),
       m_environment(environment),
@@ -51,83 +55,27 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
 
 void VulkanUniformBuffer::DestroyHandles()
 {
-    for (size_t i = 0; i < m_buffers.size(); ++i)
-    {
-        if (m_mappedBuffers[i] != nullptr)
-        {
-            vkUnmapMemory(m_device, m_memories[i]);
-        }
-        if (m_buffers[i] != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, m_buffers[i], nullptr);
-        }
-        if (m_memories[i] != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, m_memories[i], nullptr);
-        }
-    }
-    for (size_t i = 0; i < m_motionBuffers.size(); ++i)
-    {
-        if (m_motionBuffers[i] != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, m_motionBuffers[i], nullptr);
-        }
-        // Freeing mapped memory unmaps it implicitly.
-        if (m_motionMemories[i] != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, m_motionMemories[i], nullptr);
-        }
-    }
-
-    const auto destroyMapped = [this](std::vector<VkBuffer>& buffers, std::vector<VkDeviceMemory>& memories, std::vector<void*>& mapped)
-    {
-        for (size_t i = 0; i < buffers.size(); ++i)
-        {
-            if (buffers[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyBuffer(m_device, buffers[i], nullptr);
-            }
-            // Freeing mapped memory unmaps it implicitly.
-            if (memories[i] != VK_NULL_HANDLE)
-            {
-                vkFreeMemory(m_device, memories[i], nullptr);
-            }
-        }
-        buffers.clear();
-        memories.clear();
-        mapped.clear();
-    };
-    destroyMapped(m_lightBuffers, m_lightMemories, m_mappedLightBuffers);
-    if (m_materialBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_materialBuffer, nullptr);
-        m_materialBuffer = VK_NULL_HANDLE;
-    }
-    if (m_materialMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_materialMemory, nullptr);
-        m_materialMemory = VK_NULL_HANDLE;
-    }
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
+    m_lightBuffers.clear();
+    m_lightHandles.clear();
+    m_mappedLightBuffers.clear();
+    m_materialHandle = nullptr;
+    m_materialBuffer = VK_NULL_HANDLE;
     m_mappedMaterialBuffer = nullptr;
-    if (m_textureTransformBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_textureTransformBuffer, nullptr);
-        m_textureTransformBuffer = VK_NULL_HANDLE;
-    }
-    if (m_textureTransformMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_textureTransformMemory, nullptr);
-        m_textureTransformMemory = VK_NULL_HANDLE;
-    }
+    m_textureTransformHandle = nullptr;
+    m_textureTransformBuffer = VK_NULL_HANDLE;
     m_mappedTextureTransformBuffer = nullptr;
-    destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
-    destroyMapped(m_shadowTileBuffers, m_shadowTileMemories, m_mappedShadowTileBuffers);
-
+    m_clusterBuffers.clear();
+    m_clusterHandles.clear();
+    m_mappedClusterBuffers.clear();
+    m_shadowTileBuffers.clear();
+    m_shadowTileHandles.clear();
+    m_mappedShadowTileBuffers.clear();
     m_buffers.clear();
-    m_memories.clear();
+    m_handles.clear();
     m_mappedBuffers.clear();
     m_motionBuffers.clear();
-    m_motionMemories.clear();
+    m_motionHandles.clear();
     m_mappedMotionBuffers.clear();
 
     if (m_descriptorPool != VK_NULL_HANDLE)
@@ -521,59 +469,24 @@ VkDescriptorSetLayout VulkanMaterialDescriptorSetLayout::GetHandle() const
 
 void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 {
-    m_buffers.resize(imageCount);
-    m_memories.resize(imageCount);
-    m_mappedBuffers.resize(imageCount);
-
+    m_buffers.assign(imageCount, VK_NULL_HANDLE);
+    m_handles.assign(imageCount, nullptr);
+    m_mappedBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(CameraUniformData);
-        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_buffers[i]), "Failed to create uniform buffer");
-
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, m_buffers[i], &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            memoryRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memories[i]), "Failed to allocate uniform buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, m_buffers[i], m_memories[i], 0), "Failed to bind uniform buffer memory");
-        CheckVulkan(vkMapMemory(m_device, m_memories[i], 0, sizeof(CameraUniformData), 0, &m_mappedBuffers[i]), "Failed to map uniform buffer memory");
+        CreateMappedBuffer(
+            sizeof(CameraUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, m_buffers[i], m_handles[i], m_mappedBuffers[i], "Failed to create uniform buffer");
     }
 
     const VkDeviceSize motionBytes = sizeof(glm::mat4) * m_motionSlotCount;
     m_motionBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_motionMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_motionHandles.assign(imageCount, nullptr);
     m_mappedMotionBuffers.assign(imageCount, nullptr);
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = motionBytes;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_motionBuffers[i]), "Failed to create previous model buffer");
-
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, m_motionBuffers[i], &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            memoryRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_motionMemories[i]), "Failed to allocate previous model buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, m_motionBuffers[i], m_motionMemories[i], 0), "Failed to bind previous model buffer memory");
-        CheckVulkan(vkMapMemory(m_device, m_motionMemories[i], 0, motionBytes, 0, &m_mappedMotionBuffers[i]), "Failed to map previous model buffer memory");
+        CreateMappedBuffer(
+            motionBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_motionBuffers[i], m_motionHandles[i], m_mappedMotionBuffers[i], "Failed to create previous model buffer");
 
         // Identity until the first Update, so nothing ever reads uninitialised memory.
         const std::vector<glm::mat4> identities(m_motionSlotCount, glm::mat4(1.0f));
@@ -584,21 +497,21 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     constexpr VkDeviceSize kClusterBytes =
         sizeof(glm::uvec2) * kLightClusterCount + sizeof(uint32_t) * kLightClusterIndexCapacity;
     m_lightBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_lightMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_lightHandles.assign(imageCount, nullptr);
     m_mappedLightBuffers.assign(imageCount, nullptr);
     m_clusterBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_clusterMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_clusterHandles.assign(imageCount, nullptr);
     m_mappedClusterBuffers.assign(imageCount, nullptr);
     constexpr VkDeviceSize kShadowTileBytes = sizeof(GpuLocalShadowTile) * kLocalShadowTileCount;
     m_shadowTileBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_shadowTileMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_shadowTileHandles.assign(imageCount, nullptr);
     m_mappedShadowTileBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileMemories[i], m_mappedShadowTileBuffers[i]);
+        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileHandles[i], m_mappedShadowTileBuffers[i], "Failed to create the local shadow tile buffer");
         std::memset(m_mappedShadowTileBuffers[i], 0, static_cast<size_t>(kShadowTileBytes));
-        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightMemories[i], m_mappedLightBuffers[i]);
-        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterMemories[i], m_mappedClusterBuffers[i]);
+        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightHandles[i], m_mappedLightBuffers[i], "Failed to create light buffer");
+        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterHandles[i], m_mappedClusterBuffers[i], "Failed to create the light cluster buffer");
         // Empty until the first Update: no light, no cluster lists anything.
         std::memset(m_mappedLightBuffers[i], 0, static_cast<size_t>(kLightBytes));
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
@@ -608,9 +521,9 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     // is left as it is (filling a map's tens of thousands of slots with defaults took tens of
     // milliseconds whenever the buffers grew).
     const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_motionSlotCount;
-    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
+    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialHandle, m_mappedMaterialBuffer, "Failed to create the material buffer");
     const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_motionSlotCount;
-    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformMemory, m_mappedTextureTransformBuffer);
+    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformHandle, m_mappedTextureTransformBuffer, "Failed to create the texture transform buffer");
 }
 
 uint32_t VulkanUniformBuffer::GetDrawCapacity() const
@@ -632,28 +545,17 @@ void VulkanUniformBuffer::CreateMappedBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
     VkBuffer& buffer,
-    VkDeviceMemory& memory,
-    void*& mapped)
+    nvrhi::BufferHandle& handle,
+    void*& mapped,
+    const char* failureMessage)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create light buffer");
-
-    VkMemoryRequirements memoryRequirements{};
-    vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
-
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        memoryRequirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate light buffer memory");
-    CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind light buffer memory");
-    CheckVulkan(vkMapMemory(m_device, memory, 0, size, 0, &mapped), "Failed to map light buffer memory");
+    handle = CreateNvrhiBuffer(
+        m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, failureMessage, &mapped);
 }
 
 void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
@@ -890,23 +792,5 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
     }
-}
-
-uint32_t VulkanUniformBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable uniform buffer memory type");
 }
 }

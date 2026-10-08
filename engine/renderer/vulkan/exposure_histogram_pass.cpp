@@ -1,5 +1,6 @@
 #include "exposure_histogram_pass.h"
 
+#include "nvrhi_resources.h"
 #include "pipeline.h"
 #include "sampler_settings.h"
 
@@ -46,7 +47,8 @@ VulkanExposureHistogramPass::VulkanExposureHistogramPass(
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     // A throw out of a constructor skips the destructor, so everything created before the failure
     // would leak with it. DestroyHandles skips null handles, so unwinding whatever got created is
@@ -268,24 +270,16 @@ void VulkanExposureHistogramPass::CreateHistogramBuffers(uint32_t count)
         bufferInfo.size = kHistogramBytes;
         bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &histogram.buffer), "Failed to create exposure histogram buffer");
-
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(m_device, histogram.buffer, &requirements);
-
         // Coherent, so the CPU sees the GPU's writes once the fence and the host barrier in Record
         // have run, with no invalidate.
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            requirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &histogram.memory), "Failed to allocate exposure histogram memory");
-        CheckVulkan(vkBindBufferMemory(m_device, histogram.buffer, histogram.memory, 0), "Failed to bind exposure histogram memory");
-
         void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(m_device, histogram.memory, 0, kHistogramBytes, 0, &mapped), "Failed to map exposure histogram memory");
+        histogram.handle = CreateNvrhiBuffer(
+            m_nvrhiDevice,
+            bufferInfo,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            histogram.buffer,
+            "Failed to create exposure histogram buffer",
+            &mapped);
         // Zeroed so a slot that has never been recorded reads as an empty histogram.
         std::memset(mapped, 0, static_cast<size_t>(kHistogramBytes));
         histogram.mapped = static_cast<const uint32_t*>(mapped);
@@ -367,24 +361,6 @@ void VulkanExposureHistogramPass::CreateDescriptorSets(const SceneRenderTargets&
     }
 }
 
-uint32_t VulkanExposureHistogramPass::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find a host-visible memory type for the exposure histogram");
-}
-
 void VulkanExposureHistogramPass::DestroyHandles()
 {
     if (m_pipeline != VK_NULL_HANDLE)
@@ -404,18 +380,7 @@ void VulkanExposureHistogramPass::DestroyHandles()
         m_descriptorPool = VK_NULL_HANDLE;
     }
     m_descriptorSets.clear();
-    for (HistogramBuffer& histogram : m_histograms)
-    {
-        if (histogram.buffer != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, histogram.buffer, nullptr);
-        }
-        // Freeing mapped memory unmaps it implicitly.
-        if (histogram.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, histogram.memory, nullptr);
-        }
-    }
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
     m_histograms.clear();
     if (m_setLayout != VK_NULL_HANDLE)
     {

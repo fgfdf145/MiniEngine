@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 
 #include <glm/glm.hpp>
 
@@ -40,7 +41,7 @@ class VulkanSkinningPass
         bool tyre = false;
     };
 
-    VulkanSkinningPass(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameSlotCount);
+    VulkanSkinningPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, VkPipelineCache pipelineCache, uint32_t frameSlotCount);
     ~VulkanSkinningPass();
 
     VulkanSkinningPass(const VulkanSkinningPass&) = delete;
@@ -67,7 +68,7 @@ class VulkanSkinningPass
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkPipeline m_tyrePipeline = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_paletteBuffers;
-    std::vector<VkDeviceMemory> m_paletteMemory;
+    std::vector<nvrhi::BufferHandle> m_paletteHandles;
     std::vector<void*> m_paletteMapped;
     std::vector<VkDescriptorSet> m_paletteSets;
     // Released sets and the frame they were released in; Record frees the ones old enough.

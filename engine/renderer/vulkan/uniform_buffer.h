@@ -8,6 +8,7 @@
 #include "../specular_aa.h"
 #include "../shadow_cascades.h"
 #include "common.h"
+#include "nvrhi_native.h"
 
 #include <glm/glm.hpp>
 
@@ -332,6 +333,7 @@ class VulkanUniformBuffer
     VulkanUniformBuffer(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         uint32_t imageCount,
         VkDescriptorSetLayout frameSetLayout,
         TextureDescriptorBinding shadowMap,
@@ -392,54 +394,55 @@ class VulkanUniformBuffer
     // Shared by the destructor and the constructor's unwind path. Skips null handles.
     void DestroyHandles();
     void CreateBuffers(uint32_t imageCount);
-    // A host-visible, host-coherent buffer, mapped for its lifetime. The handles are written as
-    // they are created, so DestroyHandles releases whatever a throw part way through left behind.
+    // A host-visible, host-coherent buffer, NVRHI's, mapped for its lifetime. The handles are written
+    // as they are created, so DestroyHandles releases whatever a throw part way through left behind.
     void CreateMappedBuffer(
         VkDeviceSize size,
         VkBufferUsageFlags usage,
         VkBuffer& buffer,
-        VkDeviceMemory& memory,
-        void*& mapped);
+        nvrhi::BufferHandle& handle,
+        void*& mapped,
+        const char* failureMessage);
     void CreateDescriptorPool(uint32_t imageCount);
     void CreateDescriptorSets(uint32_t imageCount);
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     TextureDescriptorBinding m_shadowMap;
     TextureDescriptorBinding m_localShadowAtlas;
     EnvironmentDescriptorBindings m_environment;
     VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_buffers;
-    std::vector<VkDeviceMemory> m_memories;
+    std::vector<nvrhi::BufferHandle> m_handles;
     std::vector<void*> m_mappedBuffers;
     // Set 0 binding 2: each draw's previous model matrix, indexed by its firstInstance. One
     // host-visible buffer per swapchain image, sized to the draw list this object was built for.
     std::vector<VkBuffer> m_motionBuffers;
-    std::vector<VkDeviceMemory> m_motionMemories;
+    std::vector<nvrhi::BufferHandle> m_motionHandles;
     std::vector<void*> m_mappedMotionBuffers;
     uint32_t m_motionSlotCount = 0;
     // Set 0 binding 12: every draw's material, written once here and never again. Content changes
     // build a new VulkanUniformBuffer, so one buffer serves every frame in flight.
     VkBuffer m_materialBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_materialMemory = VK_NULL_HANDLE;
+    nvrhi::BufferHandle m_materialHandle;
     void* m_mappedMaterialBuffer = nullptr;
     // Set 0 binding 17: every draw's texture transforms, like the materials written once.
     VkBuffer m_textureTransformBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory m_textureTransformMemory = VK_NULL_HANDLE;
+    nvrhi::BufferHandle m_textureTransformHandle;
     void* m_mappedTextureTransformBuffer = nullptr;
     // Set 0 binding 10: every light the shader evaluates, kMaxSceneLights slots per image.
     std::vector<VkBuffer> m_lightBuffers;
-    std::vector<VkDeviceMemory> m_lightMemories;
+    std::vector<nvrhi::BufferHandle> m_lightHandles;
     std::vector<void*> m_mappedLightBuffers;
     // Set 0 binding 11: the cluster ranges, then the index list, one per image.
     std::vector<VkBuffer> m_clusterBuffers;
-    std::vector<VkDeviceMemory> m_clusterMemories;
+    std::vector<nvrhi::BufferHandle> m_clusterHandles;
     std::vector<void*> m_mappedClusterBuffers;
     // Set 0 binding 14: the local shadow atlas tiles, kLocalShadowTileCount slots per image.
     std::vector<VkBuffer> m_shadowTileBuffers;
-    std::vector<VkDeviceMemory> m_shadowTileMemories;
+    std::vector<nvrhi::BufferHandle> m_shadowTileHandles;
     std::vector<void*> m_mappedShadowTileBuffers;
     std::vector<VkDescriptorSet> m_frameDescriptorSets;
     uint32_t m_imageCount = 0;

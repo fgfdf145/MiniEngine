@@ -2294,6 +2294,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_skinningPass = std::make_unique<VulkanSkinningPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_ddgi = std::make_unique<VulkanDdgi>(
@@ -3078,7 +3079,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     if (!view.toonMaterials)
     {
         view.toonMaterials = std::make_unique<VulkanToonMaterials>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
     view.passes.push_back(std::make_unique<VulkanToonPrepass>(
         m_device->GetHandle(),
@@ -3172,6 +3173,7 @@ std::unique_ptr<VulkanUniformBuffer> VulkanRenderer::CreateViewUniformBuffer(con
     auto uniformBuffer = std::make_unique<VulkanUniformBuffer>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
         m_frameSetLayout->GetHandle(),
         view.shadowPass->GetSampledBinding(),

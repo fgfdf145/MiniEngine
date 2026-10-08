@@ -51,7 +51,7 @@ class VulkanExposureHistogramPass : public IScenePass
     struct HistogramBuffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         const uint32_t* mapped = nullptr;
     };
 
@@ -60,12 +60,12 @@ class VulkanExposureHistogramPass : public IScenePass
     void CreatePipeline(VkPipelineCache pipelineCache);
     void CreateHistogramBuffers(uint32_t count);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     // Shared by the destructor and the constructor's unwind path, as in the other passes.
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;

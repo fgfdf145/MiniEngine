@@ -340,27 +340,7 @@ VulkanDdgi::Buffer VulkanDdgi::CreateBuffer(VkDeviceSize size, VkBufferUsageFlag
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create a DDGI buffer");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, result.buffer, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        m_physicalDevice,
-        requirements.memoryTypeBits,
-        hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    const VkResult allocated = vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory);
-    if (allocated != VK_SUCCESS)
-    {
-        vkDestroyBuffer(m_device, result.buffer, nullptr);
-        CheckVulkan(allocated, "Failed to allocate a DDGI buffer");
-    }
-    CheckVulkan(vkBindBufferMemory(m_device, result.buffer, result.memory, 0), "Failed to bind a DDGI buffer");
-    if (hostVisible)
-    {
-        CheckVulkan(vkMapMemory(m_device, result.memory, 0, VK_WHOLE_SIZE, 0, &result.mapped), "Failed to map a DDGI buffer");
-    }
+    result.handle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, result.buffer, "Failed to create a DDGI buffer", hostVisible ? &result.mapped : nullptr);
     return result;
 }
 
@@ -400,14 +380,7 @@ void VulkanDdgi::DestroyHandles()
     }
     for (Buffer* buffer : buffers)
     {
-        if (buffer->buffer != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, buffer->buffer, nullptr);
-        }
-        if (buffer->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, buffer->memory, nullptr);
-        }
+        // The buffer and its memory go with the handle, released with the rest below.
         *buffer = Buffer{};
     }
     m_sampler = nullptr;

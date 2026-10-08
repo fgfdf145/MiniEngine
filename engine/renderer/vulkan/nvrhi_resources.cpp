@@ -75,4 +75,74 @@ nvrhi::TextureHandle CreateNvrhiImage(nvrhi::IDevice* device, const VkImageCreat
     image = ToNative<VkImage>(texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
     return texture;
 }
+
+nvrhi::BufferHandle CreateNvrhiBuffer(
+    nvrhi::IDevice* device,
+    const VkBufferCreateInfo& info,
+    VkMemoryPropertyFlags properties,
+    VkBuffer& buffer,
+    const char* failureMessage,
+    void** mapped)
+{
+    constexpr VkBufferUsageFlags kKnownUsage =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
+    if (info.flags != 0 || info.sharingMode != VK_SHARING_MODE_EXCLUSIVE || (info.usage & ~kKnownUsage) != 0 ||
+        info.pNext != nullptr || info.size == 0)
+    {
+        throw std::runtime_error(std::string(failureMessage) + ": a buffer NVRHI cannot describe");
+    }
+
+    nvrhi::BufferDesc desc;
+    desc.byteSize = info.size;
+    desc.isVertexBuffer = (info.usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0;
+    desc.isIndexBuffer = (info.usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0;
+    desc.isConstantBuffer = (info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) != 0;
+    desc.isDrawIndirectArgs = (info.usage & VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT) != 0;
+    desc.canHaveUAVs = (info.usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0;
+    desc.canHaveRawViews = desc.canHaveUAVs;
+    desc.isAccelStructBuildInput = (info.usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) != 0;
+    desc.isAccelStructStorage = (info.usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) != 0;
+    desc.isShaderBindingTable = (info.usage & VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR) != 0;
+    if (properties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+    {
+        desc.cpuAccess = nvrhi::CpuAccessMode::None;
+    }
+    else if (properties == (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+    {
+        desc.cpuAccess = nvrhi::CpuAccessMode::Write;
+    }
+    else if ((properties & ~VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
+    {
+        desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+    }
+    else
+    {
+        throw std::runtime_error(std::string(failureMessage) + ": a memory kind NVRHI cannot allocate");
+    }
+    desc.debugName = failureMessage;
+
+    nvrhi::BufferHandle handle = device->createBuffer(desc);
+    if (!handle)
+    {
+        throw VulkanError(VK_ERROR_OUT_OF_DEVICE_MEMORY, failureMessage);
+    }
+    buffer = ToNative<VkBuffer>(handle->getNativeObject(nvrhi::ObjectTypes::VK_Buffer));
+    if (mapped != nullptr)
+    {
+        if (desc.cpuAccess == nvrhi::CpuAccessMode::None)
+        {
+            throw std::runtime_error(std::string(failureMessage) + ": device-local memory cannot be mapped");
+        }
+        *mapped = device->mapBuffer(handle, desc.cpuAccess);
+        if (*mapped == nullptr)
+        {
+            throw VulkanError(VK_ERROR_MEMORY_MAP_FAILED, failureMessage);
+        }
+    }
+    return handle;
+}
 }

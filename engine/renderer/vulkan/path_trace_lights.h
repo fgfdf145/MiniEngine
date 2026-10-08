@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 
 #include <cstdint>
 #include <vector>
@@ -23,7 +24,7 @@ class VulkanRayScene;
 class VulkanPathTraceLights
 {
   public:
-    VulkanPathTraceLights(VkPhysicalDevice physicalDevice, VkDevice device, VkPipelineCache pipelineCache, uint32_t frameCount,
+    VulkanPathTraceLights(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, VkPipelineCache pipelineCache, uint32_t frameCount,
                          VkDescriptorSetLayout frameSetLayout, const VulkanRayScene& rayScene);
     ~VulkanPathTraceLights();
 
@@ -56,7 +57,7 @@ class VulkanPathTraceLights
     struct Buffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         void* mapped = nullptr;
         VkDeviceSize size = 0;
     };
@@ -92,6 +93,7 @@ class VulkanPathTraceLights
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanRayScene& m_rayScene;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;

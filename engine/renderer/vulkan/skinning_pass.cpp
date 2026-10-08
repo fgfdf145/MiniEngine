@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "compute_pass_util.h"
+#include "nvrhi_resources.h"
 
 #include <engine/core/log/log.h>
 
@@ -29,6 +30,7 @@ constexpr uint32_t kSkinningWorkgroupSize = 64;
 VulkanSkinningPass::VulkanSkinningPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     uint32_t frameSlotCount)
     : m_device(device)
@@ -69,21 +71,15 @@ VulkanSkinningPass::VulkanSkinningPass(
             bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             VkBuffer buffer = VK_NULL_HANDLE;
-            CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create joint palette buffer");
-            m_paletteBuffers.push_back(buffer);
-            VkMemoryRequirements requirements{};
-            vkGetBufferMemoryRequirements(m_device, buffer, &requirements);
-            VkMemoryAllocateInfo allocateInfo{};
-            allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocateInfo.allocationSize = requirements.size;
-            allocateInfo.memoryTypeIndex = FindMemoryType(
-                physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            VkDeviceMemory memory = VK_NULL_HANDLE;
-            CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate joint palette memory");
-            m_paletteMemory.push_back(memory);
-            CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind joint palette memory");
             void* mapped = nullptr;
-            CheckVulkan(vkMapMemory(m_device, memory, 0, bytes, 0, &mapped), "Failed to map joint palette memory");
+            m_paletteHandles.push_back(CreateNvrhiBuffer(
+                nvrhiDevice,
+                bufferInfo,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                buffer,
+                "Failed to create joint palette buffer",
+                &mapped));
+            m_paletteBuffers.push_back(buffer);
             m_paletteMapped.push_back(mapped);
 
             VkDescriptorSetAllocateInfo setInfo{};
@@ -231,18 +227,10 @@ void VulkanSkinningPass::Record(VkCommandBuffer commandBuffer, uint32_t frameSlo
 
 void VulkanSkinningPass::DestroyHandles()
 {
-    for (size_t index = 0; index < m_paletteMemory.size(); ++index)
-    {
-        vkUnmapMemory(m_device, m_paletteMemory[index]);
-        vkFreeMemory(m_device, m_paletteMemory[index], nullptr);
-    }
-    m_paletteMemory.clear();
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
     m_paletteMapped.clear();
-    for (VkBuffer buffer : m_paletteBuffers)
-    {
-        vkDestroyBuffer(m_device, buffer, nullptr);
-    }
     m_paletteBuffers.clear();
+    m_paletteHandles.clear();
     m_paletteSets.clear();
     for (VkPipeline* pipeline : {&m_pipeline, &m_tyrePipeline})
     {

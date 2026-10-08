@@ -140,6 +140,18 @@ A4 其余缓冲（uniform、大气、DDGI、光追、回读……）。
 
 验证：A/B 对比 A1 之前的基线，在 A4 一起跑了全部 9 个场景（见 A4）；单独的 A3 编译通过，两个场景逐像素相同。
 
+**A4 完成（2026-10-09）**：其余缓冲。
+- `CreateNvrhiBuffer`：同样从 `VkBufferCreateInfo` 加内存属性说成 `nvrhi::BufferDesc`：device local → `cpuAccess
+  None`；host visible + coherent → `Write`（NVRHI 取第一个 host-visible 类型，桌面驱动上都是 coherent，NVRHI 自己的
+  上传也这样假设）；host cached → `Read`。要映射的直接 `mapBuffer` 常驻映射，释放时随内存一起解除。
+- 帧描述符集的缓冲（相机 UBO、上一帧模型矩阵、光源、cluster、局部阴影 tile、材质、纹理变换）、大气（SH、羽流表和
+  它的 staging、回读）、DDGI、路径追踪的发光三角形表、ReSTIR PT、曝光直方图、蒙皮调色板、卡通材质。
+- 还是原生的（各有去处）：光追场景和加速结构的缓冲（ReBAR 内存类型的选择 NVRHI 说不出；阶段 3 随 `nvrhi::rt`
+  一起换）、上传批次的 staging 分块和回退 staging（阶段 3/4 换 NVRHI 的上传）、视频回读和截图（阶段 4 用
+  staging texture）。
+
+验证（A3 + A4）：A/B 对比 A1 之前的基线，9 个场景逐像素相同；validation 无报告，退出时池里没有残留的块。
+
 ### Linux 上的验证（2026-10-09）
 
 云端会话是 Linux、没有 GPU，所以 `linux-debug` 修到能编能跑（`fix(build)` 提交：GCC 的几处兼容、静态 NVRHI 的

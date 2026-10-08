@@ -108,7 +108,7 @@ VulkanPathTracePass::VulkanPathTracePass(
             m_device, pipelineCache, setLayouts, "path_trace_filter.comp.spv", sizeof(PathTracePushConstants), m_pipelineLayout, m_filterPipeline);
         m_temporalPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "path_trace_temporal.comp.spv");
         m_lights = std::make_unique<VulkanPathTraceLights>(
-            m_physicalDevice, m_device, pipelineCache, static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight), frameSetLayout, rayScene);
+            m_physicalDevice, m_device, m_nvrhiDevice, pipelineCache, static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight), frameSetLayout, rayScene);
         const std::array<VkDescriptorSetLayout, 5> traceLayouts = {
             frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout(), m_lights->GetSetLayout()};
         CreateComputePipeline(

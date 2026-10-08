@@ -79,7 +79,7 @@ class VulkanDdgi
     struct Buffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         void* mapped = nullptr;
     };
 

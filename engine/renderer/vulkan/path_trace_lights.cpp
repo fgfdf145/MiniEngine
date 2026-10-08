@@ -1,6 +1,7 @@
 #include "path_trace_lights.h"
 
 #include "compute_pass_util.h"
+#include "nvrhi_resources.h"
 #include "ray_scene.h"
 
 #include <engine/core/log/log.h>
@@ -56,12 +57,14 @@ uint32_t Groups(uint32_t count)
 VulkanPathTraceLights::VulkanPathTraceLights(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     uint32_t frameCount,
     VkDescriptorSetLayout frameSetLayout,
     const VulkanRayScene& rayScene)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_rayScene(rayScene)
 {
     try
@@ -139,40 +142,13 @@ VulkanPathTraceLights::Buffer VulkanPathTraceLights::CreateBuffer(VkDeviceSize s
     bufferInfo.size = result.size;
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create an emissive light buffer");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, result.buffer, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        m_physicalDevice,
-        requirements.memoryTypeBits,
-        hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    const VkResult allocated = vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory);
-    if (allocated != VK_SUCCESS)
-    {
-        vkDestroyBuffer(m_device, result.buffer, nullptr);
-        CheckVulkan(allocated, "Failed to allocate an emissive light buffer");
-    }
-    CheckVulkan(vkBindBufferMemory(m_device, result.buffer, result.memory, 0), "Failed to bind an emissive light buffer");
-    if (hostVisible)
-    {
-        CheckVulkan(vkMapMemory(m_device, result.memory, 0, VK_WHOLE_SIZE, 0, &result.mapped), "Failed to map an emissive light buffer");
-    }
+    result.handle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, result.buffer, "Failed to create an emissive light buffer", hostVisible ? &result.mapped : nullptr);
     return result;
 }
 
 void VulkanPathTraceLights::DestroyBuffer(Buffer& buffer) const
 {
-    if (buffer.buffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, buffer.buffer, nullptr);
-    }
-    if (buffer.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, buffer.memory, nullptr);
-    }
+    // The buffer and its memory go with the handle, released with the rest below.
     buffer = Buffer{};
 }
 

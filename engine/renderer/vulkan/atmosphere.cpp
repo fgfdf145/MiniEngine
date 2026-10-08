@@ -746,53 +746,36 @@ void VulkanAtmosphere::CreateImages()
     bufferInfo.size = kIrradianceBytes;
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_irradianceBuffer), "Failed to create the sky irradiance buffer");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, m_irradianceBuffer, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_irradianceMemory), "Failed to allocate the sky irradiance buffer");
-    CheckVulkan(vkBindBufferMemory(m_device, m_irradianceBuffer, m_irradianceMemory, 0), "Failed to bind the sky irradiance buffer");
+    m_irradianceHandle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_irradianceBuffer, "Failed to create the sky irradiance buffer");
 
     // The plume table: drawn once on the CPU, staged, copied by the first Record.
     {
         const std::vector<CloudPlumeCell> table = BuildCloudPlumeTable();
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(table.size() * sizeof(CloudPlumeCell));
-        const auto createBuffer = [&](VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory, const char* name)
+        const auto createBuffer = [&](VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, const char* name, void** mapped)
         {
             VkBufferCreateInfo info{};
             info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
             info.size = bytes;
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            CheckVulkan(vkCreateBuffer(m_device, &info, nullptr, &buffer), (std::string("Failed to create the ") + name).c_str());
-            VkMemoryRequirements bufferRequirements{};
-            vkGetBufferMemoryRequirements(m_device, buffer, &bufferRequirements);
-            VkMemoryAllocateInfo allocate{};
-            allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocate.allocationSize = bufferRequirements.size;
-            allocate.memoryTypeIndex = FindMemoryType(bufferRequirements.memoryTypeBits, properties);
-            CheckVulkan(vkAllocateMemory(m_device, &allocate, nullptr, &memory), (std::string("Failed to allocate the ") + name).c_str());
-            CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), (std::string("Failed to bind the ") + name).c_str());
+            return CreateNvrhiBuffer(m_nvrhiDevice, info, properties, buffer, (std::string("Failed to create the ") + name).c_str(), mapped);
         };
-        createBuffer(
+        m_plumeHandle = createBuffer(
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             m_plumeBuffer,
-            m_plumeMemory,
-            "cloud plume table");
-        createBuffer(
+            "cloud plume table",
+            nullptr);
+        void* mapped = nullptr;
+        m_plumeStagingHandle = createBuffer(
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             m_plumeStaging,
-            m_plumeStagingMemory,
-            "cloud plume staging buffer");
-        void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(m_device, m_plumeStagingMemory, 0, bytes, 0, &mapped), "Failed to map the cloud plume staging buffer");
+            "cloud plume staging buffer",
+            &mapped);
         std::memcpy(mapped, table.data(), static_cast<size_t>(bytes));
-        vkUnmapMemory(m_device, m_plumeStagingMemory);
+        m_nvrhiDevice->unmapBuffer(m_plumeStagingHandle);
     }
 
     m_readbacks.resize(VulkanCommandContext::kMaxFramesInFlight);
@@ -803,35 +786,23 @@ void VulkanAtmosphere::CreateImages()
         readbackInfo.size = kIrradianceBytes;
         readbackInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         readbackInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &readbackInfo, nullptr, &readback.buffer), "Failed to create a sky readback buffer");
-        VkMemoryRequirements readbackRequirements{};
-        vkGetBufferMemoryRequirements(m_device, readback.buffer, &readbackRequirements);
-        VkMemoryAllocateInfo readbackAllocate{};
-        readbackAllocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        readbackAllocate.allocationSize = readbackRequirements.size;
-        readbackAllocate.memoryTypeIndex = FindMemoryType(
-            readbackRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &readbackAllocate, nullptr, &readback.memory), "Failed to allocate a sky readback buffer");
-        CheckVulkan(vkBindBufferMemory(m_device, readback.buffer, readback.memory, 0), "Failed to bind a sky readback buffer");
         void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(m_device, readback.memory, 0, kIrradianceBytes, 0, &mapped), "Failed to map a sky readback buffer");
+        readback.handle = CreateNvrhiBuffer(
+            m_nvrhiDevice,
+            readbackInfo,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            readback.buffer,
+            "Failed to create a sky readback buffer",
+            &mapped);
         readback.mapped = static_cast<const float*>(mapped);
     }
 }
 
 void VulkanAtmosphere::DestroyPlumeStaging()
 {
-    if (m_plumeStaging != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_plumeStaging, nullptr);
-        m_plumeStaging = VK_NULL_HANDLE;
-    }
-    if (m_plumeStagingMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_plumeStagingMemory, nullptr);
-        m_plumeStagingMemory = VK_NULL_HANDLE;
-    }
+    // The buffer and its memory go with the handle.
+    m_plumeStagingHandle = nullptr;
+    m_plumeStaging = VK_NULL_HANDLE;
 }
 
 void VulkanAtmosphere::CreateDescriptors()
@@ -885,20 +856,6 @@ void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescript
     }
 }
 
-uint32_t VulkanAtmosphere::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index)
-    {
-        if ((typeFilter & (1u << index)) != 0 && (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties)
-        {
-            return index;
-        }
-    }
-    throw std::runtime_error("Failed to find a memory type for the atmosphere LUTs");
-}
-
 void VulkanAtmosphere::DestroyHandles()
 {
     for (VkPipeline& pipeline : m_pipelines)
@@ -922,39 +879,13 @@ void VulkanAtmosphere::DestroyHandles()
     }
     m_sampler = nullptr;
     m_cloudSampler = nullptr;
-    for (Readback& readback : m_readbacks)
-    {
-        if (readback.buffer != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, readback.buffer, nullptr);
-        }
-        if (readback.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, readback.memory, nullptr);
-        }
-    }
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
     m_readbacks.clear();
-    if (m_irradianceBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_irradianceBuffer, nullptr);
-        m_irradianceBuffer = VK_NULL_HANDLE;
-    }
+    m_irradianceHandle = nullptr;
+    m_irradianceBuffer = VK_NULL_HANDLE;
     DestroyPlumeStaging();
-    if (m_plumeBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_plumeBuffer, nullptr);
-        m_plumeBuffer = VK_NULL_HANDLE;
-    }
-    if (m_plumeMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_plumeMemory, nullptr);
-        m_plumeMemory = VK_NULL_HANDLE;
-    }
-    if (m_irradianceMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_irradianceMemory, nullptr);
-        m_irradianceMemory = VK_NULL_HANDLE;
-    }
+    m_plumeHandle = nullptr;
+    m_plumeBuffer = VK_NULL_HANDLE;
     if (m_cloudShadow.view != VK_NULL_HANDLE)
     {
         vkDestroyImageView(m_device, m_cloudShadow.view, nullptr);

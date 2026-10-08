@@ -35,7 +35,7 @@ class VulkanToonMaterials
     // At most this many toon draws a frame; the rest are left undrawn (with a warning).
     static constexpr uint32_t kMaxDraws = 512;
 
-    VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameSlotCount);
+    VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, uint32_t frameSlotCount);
     ~VulkanToonMaterials();
 
     VulkanToonMaterials(const VulkanToonMaterials&) = delete;
@@ -55,7 +55,7 @@ class VulkanToonMaterials
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_pool = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_buffers;
-    std::vector<VkDeviceMemory> m_memory;
+    std::vector<nvrhi::BufferHandle> m_handles;
     std::vector<void*> m_mapped;
     std::vector<VkDescriptorSet> m_sets;
 };
