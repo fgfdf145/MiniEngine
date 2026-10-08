@@ -1,5 +1,4 @@
 #include "device.h"
-#include "memory_pool.h"
 
 #include <engine/core/log/log.h>
 
@@ -296,8 +295,6 @@ VulkanDevice::~VulkanDevice()
 {
     if (m_device != VK_NULL_HANDLE)
     {
-        // The memory pool's spare blocks (everything else is freed by then).
-        VulkanMemoryPool::ReleaseEmptyBlocks(m_device, 0, SIZE_MAX);
         vkDestroyDevice(m_device, nullptr);
         LOG_INFO("Logical device destroyed");
     }

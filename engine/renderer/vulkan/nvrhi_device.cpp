@@ -2,6 +2,7 @@
 
 #include "device.h"
 #include "instance.h"
+#include "memory_pool.h"
 
 #include <engine/core/log/log.h>
 
@@ -97,6 +98,8 @@ NvrhiDevice::NvrhiDevice(const VulkanInstance& instance, const VulkanDevice& dev
     {
         LOG_INFO("NVRHI device created");
     }
+    m_nativeDevice = device.GetHandle();
+    VulkanMemoryPool::RegisterNvrhiDevice(m_nativeDevice, m_device.Get());
 }
 
 NvrhiDevice::~NvrhiDevice()
@@ -105,6 +108,8 @@ NvrhiDevice::~NvrhiDevice()
     {
         m_device->waitForIdle();
         m_device->runGarbageCollection();
+        // The memory pool's blocks are this device's heaps; every range in them is free by now.
+        VulkanMemoryPool::UnregisterNvrhiDevice(m_nativeDevice);
     }
 }
 }

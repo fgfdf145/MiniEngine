@@ -14,7 +14,8 @@ class VulkanDevice;
 // NVRHI over the engine's own Vulkan instance and device (docs/design/2026-10-08-nvrhi-backend-design.md):
 // VulkanInstance and VulkanDevice choose the device, its features and extensions (DLSS's among them)
 // and the swapchain; NVRHI records and submits on that device. Its messages go to the engine log.
-// MINIENGINE_NVRHI_VALIDATION=1 puts NVRHI's validation layer in front of it.
+// MINIENGINE_NVRHI_VALIDATION=1 puts NVRHI's validation layer in front of it. VulkanMemoryPool's
+// heaps come from it while it lives.
 class NvrhiDevice
 {
   public:
@@ -43,6 +44,7 @@ class NvrhiDevice
     };
 
     MessageLog m_messageLog;
+    VkDevice m_nativeDevice = VK_NULL_HANDLE;
     nvrhi::vulkan::DeviceHandle m_vulkanDevice;
     nvrhi::DeviceHandle m_device;
 };

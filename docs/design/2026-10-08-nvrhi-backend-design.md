@@ -111,6 +111,22 @@ A4 其余缓冲（uniform、大气、DDGI、光追、回读……）。
 
 验证（Linux，见下一节）：A/B 对比改动前的提交，9 个场景逐像素相同。
 
+**A2 完成（2026-10-09）**：网格缓冲、材质纹理和内存池。
+- NVRHI 第三个补丁 `heap-memory-type-and-native.patch`：`HeapDesc::memoryTypeBits`（上游的堆取第一个满足属性的
+  内存类型，不看资源的 `memoryTypeBits`），`IHeap::getNativeObject(VK_DeviceMemory)`（还原生绑定的加速结构要用）；
+- `VulkanMemoryPool` 的 64 MiB 块和 16 MiB 以上的独占分配都是 NVRHI 堆，内存类型照旧由引擎按资源的
+  requirements 选（`memoryTypeBits = 1 << index`），堆在设备有 buffer device address 时带 device address 标志
+  （NVRHI 给它建的每个缓冲都加 `SHADER_DEVICE_ADDRESS`，所以普通缓冲也必须绑在这样的内存上）。
+  `VulkanPooledMemory` 多了 `heap`（引用计数），NVRHI 资源 `bindBufferMemory/bindTextureMemory(heap, offset)`，
+  原生资源仍 `vkBind*Memory(memory, offset)`。`NvrhiDevice` 注册/注销池（注销时释放所有块；还在用的块连同块对象
+  一起泄漏并记日志，避免之后的 `Free` 访问悬空指针）；`VulkanDevice` 不再管池。
+- `VulkanBuffer` 的六个设备缓冲（顶点、索引、位置流、绑定姿势、蒙皮、上一帧位置）是 NVRHI 的 virtual 缓冲，
+  绑到池里；device address 取 `getGpuVirtualAddress()`。没用到的立方体构造函数删了。
+- `VulkanTexture` 的图像是 NVRHI 的 virtual 纹理（`initialState = ShaderResource, keepInitialState`：上传完是
+  `SHADER_READ_ONLY_OPTIMAL`），绑到池里；上传、mip 生成、视图仍是原生的。
+
+验证：A/B 对比 A1 之前的基线（A1 与它逐像素相同），9 个场景逐像素相同；validation 无报告，退出时池里没有残留的块。
+
 ### Linux 上的验证（2026-10-09）
 
 云端会话是 Linux、没有 GPU，所以 `linux-debug` 修到能编能跑（`fix(build)` 提交：GCC 的几处兼容、静态 NVRHI 的

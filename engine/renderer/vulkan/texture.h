@@ -18,7 +18,10 @@ enum class VulkanTextureFormat
 };
 
 // An image and its view, without a sampler: callers pair the view with one from VulkanSamplerCache,
-// so a scene with thousands of textures stays far below the device's sampler limit.
+// so a scene with thousands of textures stays far below the device's sampler limit. The image is
+// NVRHI's, bound to a range of VulkanMemoryPool's heaps; the upload and the view are still recorded
+// and made natively, and leave it in SHADER_READ_ONLY_OPTIMAL (NVRHI's ShaderResource, which it
+// keeps as the texture's state between command lists).
 class VulkanTexture
 {
   public:
@@ -29,12 +32,14 @@ class VulkanTexture
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const std::string& path,
         VulkanUploadBatch& uploadBatch,
         VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const TextureData& textureData,
         VulkanUploadBatch& uploadBatch,
         VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
@@ -43,6 +48,7 @@ class VulkanTexture
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const HalfFloatTextureData& textureData,
         VulkanUploadBatch& uploadBatch);
     // An equirectangular environment map: R32G32B32A32_SFLOAT when the device filters that format
@@ -52,6 +58,7 @@ class VulkanTexture
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const FloatTextureData& equirectangular,
         VulkanUploadBatch& uploadBatch);
     // Uploads a block-compressed texture with its whole mip chain, as prepared by
@@ -60,6 +67,7 @@ class VulkanTexture
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const CompressedTexture& texture,
         VulkanUploadBatch& uploadBatch);
     ~VulkanTexture();
@@ -83,7 +91,8 @@ class VulkanTexture
     static VkFormat ToVkFormat(CompressedTextureFormat format);
     VkFormat GetVkFormat() const;
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;
-    void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format, VkImageUsageFlags usage, VkImage& image, VulkanPooledMemory& memory) const;
+    // A sampled 2D image of format with mipLevels levels into m_texture, m_image and m_memory.
+    void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format);
     void TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t baseMipLevel, uint32_t levelCount) const;
     void CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, VkDeviceSize bufferOffset = 0) const;
     void GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) const;
@@ -92,6 +101,8 @@ class VulkanTexture
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::TextureHandle m_texture;
     VkImage m_image = VK_NULL_HANDLE;
     VulkanPooledMemory m_memory;
     VkImageView m_imageView = VK_NULL_HANDLE;

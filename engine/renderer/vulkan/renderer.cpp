@@ -2274,7 +2274,7 @@ void VulkanRenderer::CreateDeviceResources()
             m_device->GetQueueFamilies().graphicsFamily.value(),
             m_device->GetGraphicsQueue());
         m_rayDefaultTexture = std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
         rayUploadBatch.Flush();
         rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->GetNative(TextureSampler{})};
     }
@@ -2323,6 +2323,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_defaultEnvironmentMap = std::make_unique<VulkanTexture>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         black,
         uploadBatch);
     // The DFG table, one mip, RGBA32F; the shader clamps its lookups to texel centres, so the
@@ -2330,6 +2331,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_environmentBrdfLut = std::make_unique<VulkanTexture>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, kEnvironmentBrdfSampleCount),
         uploadBatch);
     // The LTC tables; like the DFG table, the shader clamps its lookups to texel centres.
@@ -2342,9 +2344,9 @@ void VulkanRenderer::CreateDeviceResources()
         return data;
     };
     m_ltcInverseMatrices = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcInverseMatrices), uploadBatch);
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcInverseMatrices), uploadBatch);
     m_ltcAmplitudes = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcAmplitudes), uploadBatch);
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
 
     m_gpuTimer = std::make_unique<VulkanGpuTimer>(
@@ -2743,6 +2745,7 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
                 m_minimapTexture = std::make_unique<VulkanTexture>(
                     m_device->GetPhysicalDevice(),
                     m_device->GetHandle(),
+                    m_nvrhi->Get(),
                     file.string(),
                     uploadBatch,
                     VulkanTextureFormat::LinearData);
@@ -2805,7 +2808,7 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                     m_device->GetQueueFamilies().graphicsFamily.value(),
                     m_device->GetGraphicsQueue());
                 auto texture = std::make_unique<VulkanTexture>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(), image, uploadBatch);
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), image, uploadBatch);
                 uploadBatch.Flush();
                 // The frame sets name the old map until rewritten, and may be in use.
                 m_commandContext->WaitForAllFrames();
@@ -3475,7 +3478,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             return it->second;
         if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
             return indexOf(key, stored->second.texture.get());
-        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), data, *uploadBatch, fmt);
+        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), data, *uploadBatch, fmt);
         flushUploadBatchIfNeeded();
         return indexOf(key, store(key, std::move(texture), true));
     };
@@ -3668,7 +3671,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             {
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
                     *cpuRenderSubmesh.mesh, *uploadBatch, m_device->SupportsRayQuery());
                 if (!cpuRenderSubmesh.mesh->IsPosed())
                 {
@@ -4016,7 +4019,7 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 m_preparedBuffers[mesh.get()] = PreparedBuffers{
                     mesh,
-                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *mesh, batch(), m_device->SupportsRayQuery())};
+                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *mesh, batch(), m_device->SupportsRayQuery())};
             }
             // A backlog as large as a map's first load stages for longer, though never without a limit:
             // 64 large textures took over 50 ms of one frame.
@@ -4135,14 +4138,14 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
     {
         ++stats.floatTextures;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
             *prepared.halfFloat, uploadBatch);
     }
     if (!prepared.compressed)
     {
         ++stats.uncompressed;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
             prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
     }
     if (prepared.fromCache)
@@ -4155,7 +4158,7 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
         stats.compressSeconds += prepared.compressSeconds;
     }
     return std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(),
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
         *prepared.compressed, uploadBatch);
 }
 
