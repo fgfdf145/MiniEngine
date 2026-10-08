@@ -130,6 +130,9 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
+    // CpuRenderSubmesh::castShadows and drawDistance.
+    bool castShadows = true;
+    DrawDistanceRange drawDistance;
     std::string name;
     // The entity and this submesh's position among that entity's submeshes, which is what
     // MotionHistory finds last frame's model matrix by. A revision keeps its position: replacing an
@@ -360,13 +363,19 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Destroys the stored textures no live submesh names (after the material sets that named them).
     void DropUnreferencedTextures();
     // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh. Submeshes
-    // whose bounding sphere is outside the frustum of viewProjection get no draw item.
+    // whose bounding sphere is outside the frustum of viewProjection, or whose centre is outside their
+    // draw distance from the camera of view, get no draw item.
     std::vector<VulkanDrawItem> BuildDrawItems(
         uint32_t imageIndex,
         std::span<const glm::mat4> models,
         const glm::mat4& viewProjection,
         const glm::mat4& view) const;
-    std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
+    // The shadow casters: every submesh that casts shadows and that the main camera, at cameraPosition,
+    // is within the draw distance of, so a level of detail casts only where it is drawn.
+    std::vector<ShadowDrawItem> BuildShadowDrawItems(
+        uint32_t imageIndex,
+        std::span<const glm::mat4> models,
+        const glm::vec3& cameraPosition) const;
     // One submesh's draw item and sort key, unless the frustum culls it; BuildDrawItems' loop body.
     static void AppendDrawItem(
         const RenderSubmesh& renderSubmesh,
@@ -382,15 +391,18 @@ class VulkanRenderer : public EditorRenderBackendBase
         Opaque,
         Masked,
     };
-    static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh);
+    static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition);
+    // Whether a camera at cameraPosition is within the submesh's draw distance of its bounds' centre.
+    static bool WithinDrawDistance(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition);
     static void FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item);
     // The selected entity's submeshes the selection outline draws (ScenePassFrameContext::
-    // selectionDrawItems): every one but its decals whose bounds reach the frustum of viewProjection.
-    // Empty without a selection (entt::null).
+    // selectionDrawItems): every one but its decals whose bounds reach the frustum of viewProjection
+    // and that a camera at cameraPosition draws. Empty without a selection (entt::null).
     std::vector<ShadowDrawItem> BuildSelectionDrawItems(
         entt::entity selected,
         std::span<const glm::mat4> models,
-        const glm::mat4& viewProjection) const;
+        const glm::mat4& viewProjection,
+        const glm::vec3& cameraPosition) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         VulkanSceneView& view,

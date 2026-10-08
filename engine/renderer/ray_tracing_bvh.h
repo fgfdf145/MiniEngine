@@ -101,6 +101,9 @@ inline constexpr uint32_t kRayInstanceSkip = 1u;
 // Moving instances (see the DDGI design): the probes' rays leave them out, so a passing car leaves no
 // trail in the probes' light; the per-pixel visibility rays (shadows, occlusion, reflections) see them.
 inline constexpr uint32_t kRayInstanceDynamic = 2u;
+// Instances that cast no shadow (CpuRenderSubmesh::castShadows): shadow rays, towards a light, leave
+// them out; every other ray sees them.
+inline constexpr uint32_t kRayInstanceNoShadow = 4u;
 // RayInstance::data.w holds the mesh index above this many flag bits.
 inline constexpr uint32_t kRayInstanceMeshShift = 4u;
 inline constexpr uint32_t kRayInstanceFlagMask = (1u << kRayInstanceMeshShift) - 1u;

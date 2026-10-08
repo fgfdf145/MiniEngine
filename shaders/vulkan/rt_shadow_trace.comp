@@ -78,6 +78,6 @@ void main()
 
     RayHit hit;
     uint rayId = uint(pixel.x) * 73856093u ^ uint(pixel.y) * 19349663u ^ rtShadow.frameIndex * 83492791u;
-    bool blocked = TraceSceneRayMasked(origin, direction, 0.0, MAX_SHADOW_DISTANCE, true, rayId, RAY_MASK_VISIBILITY, hit);
+    bool blocked = TraceSceneRayMasked(origin, direction, 0.0, MAX_SHADOW_DISTANCE, true, rayId, RAY_MASK_SHADOW, hit);
     imageStore(rtShadowRaw, pixel, vec4(blocked ? 0.0 : 1.0, blocked ? hit.t : 0.0, 0.0, 0.0));
 }

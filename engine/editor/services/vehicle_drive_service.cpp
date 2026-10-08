@@ -1125,8 +1125,10 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
     {
         const CpuRenderSubmesh& submesh = *entry;
         // Glass, smoke, decals and the top of water are drawn over surfaces rather than being any; alpha-tested
-        // fences and foliage still count. A skinned mesh moves (a character, a driver in the car).
+        // fences and foliage still count. A skinned mesh moves (a character, a driver in the car). A far level
+        // of detail stands where its near one is.
         if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water || submesh.skinned ||
+            submesh.drawDistance.min > 0.0f ||
             submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
             collidesByItself.count(submesh.entity) != 0 || scene.Registry().all_of<StreamedComponent>(submesh.entity))
         {

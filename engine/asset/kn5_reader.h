@@ -73,8 +73,12 @@ struct Kn5Node
     std::uint32_t materialIndex = 0;
     // False for a mesh the game collides with but never draws, such as a track's physics surfaces.
     bool renderable = true;
-    // The distance from which the game starts drawing the mesh: above 0 for a far LOD.
+    // False for a mesh that casts no shadow: a track's ground, grass, guard rails and far LODs.
+    bool castShadows = true;
+    // The camera distances, in metres, between which the game draws the mesh: lodIn above 0 for a
+    // far LOD, lodOut 0 for no limit. A track's LOD pairs overlap by a few metres (0-25 and 23-250).
     float lodIn = 0.0f;
+    float lodOut = 0.0f;
     // Counts, set even when the geometry itself was skipped.
     std::uint32_t vertexCount = 0;
     std::uint32_t triangleCount = 0;

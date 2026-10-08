@@ -625,6 +625,49 @@ void MissingMaterialsUseTheDefault()
     Require(mixed.submeshes.at(0).materialIndex == 1, "the primitive without a material does not take the model's first");
 }
 
+// MINIENGINE_mesh_draw gives its node's submeshes their shadow and draw distances; nothing else, not
+// the node's children, takes them. Members of the wrong type and distances below zero set nothing.
+void MeshDrawSettingsApply()
+{
+    const ScopedFixtureDirectory directory;
+    const std::string nodes = R"([
+      { "name": "root", "children": [1, 2, 3, 4] },
+      { "name": "near", "mesh": 0, "children": [5],
+        "extensions": { "MINIENGINE_mesh_draw": { "castShadows": false, "maxDistance": 250 } } },
+      { "name": "far", "mesh": 0, "extensions": { "MINIENGINE_mesh_draw": { "minDistance": 230 } } },
+      { "name": "odd", "mesh": 0,
+        "extensions": { "MINIENGINE_mesh_draw": { "castShadows": "no", "minDistance": -5, "maxDistance": "far" } } },
+      { "name": "plain", "mesh": 0 },
+      { "name": "child", "mesh": 0 }
+    ])";
+    const LoadedModelData model = ModelLoader::LoadModel(
+        WriteTriangle(directory.path, "draw", R"("extensionsUsed": ["MINIENGINE_mesh_draw"],)", nodes).string());
+    Require(model.submeshes.size() == 5, "a submesh per mesh node");
+    const auto named = [&model](const std::string& prefix) -> const ModelSubmeshData&
+    {
+        for (const ModelSubmeshData& submesh : model.submeshes)
+        {
+            if (submesh.name.rfind(prefix, 0) == 0 || submesh.name.find("/" + prefix + "/") != std::string::npos)
+            {
+                return submesh;
+            }
+        }
+        throw std::runtime_error("no submesh of node '" + prefix + "'");
+    };
+    const ModelSubmeshData& nearLod = named("near");
+    Require(!nearLod.castShadows, "castShadows false is kept");
+    Require(Near(nearLod.drawDistance.min, 0.0f) && Near(nearLod.drawDistance.max, 250.0f), "the near LOD stops at 250 m");
+    const ModelSubmeshData& farLod = named("far");
+    Require(farLod.castShadows, "an absent castShadows casts");
+    Require(Near(farLod.drawDistance.min, 230.0f) && Near(farLod.drawDistance.max, 0.0f), "the far LOD starts at 230 m, with no end");
+    Require(!farLod.drawDistance.Contains(229.0f) && farLod.drawDistance.Contains(230.0f) && farLod.drawDistance.Contains(1e6f),
+            "from min, inclusive, on");
+    const ModelSubmeshData& odd = named("odd");
+    Require(odd.castShadows && !odd.drawDistance.IsLimited(), "wrongly typed and negative members set nothing");
+    Require(named("plain").castShadows && !named("plain").drawDistance.IsLimited(), "a node without the extension casts at every distance");
+    Require(named("child").castShadows && !named("child").drawDistance.IsLimited(), "a child does not take its parent's settings");
+}
+
 // A car's WHEEL_xx, DISC_xx and SUSP_xx nodes define its wheels: every submesh below one is tagged with
 // its part and corner, and the four wheel nodes give the rig.
 void WheelNodesDefineTheRig()
@@ -708,6 +751,7 @@ int main()
         MissingMaterialsUseTheDefault();
         GpuInstancesExpand();
         WheelNodesDefineTheRig();
+        MeshDrawSettingsApply();
         QuantizedAttributesDecode();
         PunctualLightsImport();
         MeshoptBufferViewsDecode();
