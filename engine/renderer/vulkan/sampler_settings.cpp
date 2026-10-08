@@ -1,5 +1,7 @@
 #include "sampler_settings.h"
 
+#include <stdexcept>
+
 namespace me
 {
 
@@ -50,5 +52,24 @@ nvrhi::SamplerDesc BuildClampSamplerDesc(bool linear)
     desc.maxAnisotropy = 1.0f;
     desc.borderColor = nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f);
     return desc;
+}
+
+// Mixed radix over the fields, mipFilter fastest, so the default TextureSampler (every field 0) is 0.
+TextureSampler VulkanSamplerCache::SamplerAt(uint32_t index)
+{
+    if (index >= kSamplerCount)
+    {
+        throw std::out_of_range("No TextureSampler has this index");
+    }
+    TextureSampler sampler;
+    sampler.mipFilter = static_cast<TextureMipFilter>(index % 3u);
+    index /= 3u;
+    sampler.minFilter = static_cast<TextureFilter>(index % 2u);
+    index /= 2u;
+    sampler.magFilter = static_cast<TextureFilter>(index % 2u);
+    index /= 2u;
+    sampler.wrapT = static_cast<TextureWrap>(index % 3u);
+    sampler.wrapS = static_cast<TextureWrap>(index / 3u);
+    return sampler;
 }
 }

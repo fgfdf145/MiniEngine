@@ -77,6 +77,9 @@ struct RayMaterial
 {
     float4 albedoCoverage; // rgb average albedo, a the share of the surface that stops rays
     float4 emissionFlags;  // rgb average emission (cd/m^2), w flags as uint bits
+    // The slot's ray textures' indices in the sampler table (raySamplers in ray_hit_common.slang),
+    // 8 bits each: x RAY_TEXTURE_BASE_COLOR to RAY_TEXTURE_EMISSIVE from the low byte, y RAY_TEXTURE_NORMAL.
+    uint4 samplers;
 };
 
 [[vk::binding(0, RAY_SCENE_SET)]] StructuredBuffer<BvhNode> meshNodes;

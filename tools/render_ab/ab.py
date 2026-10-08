@@ -8,7 +8,9 @@ Runs each case three times: A twice (the noise floor) and B once, then compares 
                change, built with the same preset), B the current build.
 usage: python tools/render_ab/ab.py [case names...]   (all cases when none given)
 env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug has no Debug folder),
-     AB_EXE (default the preset's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
+     AB_BUILD (default out/build/<preset>: the build B runs, its app and its shaders),
+     AB_BASELINE_BUILD (default out/baseline_src/out/build/<preset>: AB_MODE=exe's A build),
+     AB_EXE (default AB_BUILD's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
      AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab),
      AB_REUSE_A (an earlier run's AB_OUT: its A captures stand in for this run's, so only B runs; for
      AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES)
@@ -35,18 +37,19 @@ PRESET = os.environ.get("AB_PRESET", "vs2026-x64")
 # The Visual Studio generator puts each configuration in a folder of its own; Ninja presets do not.
 APP = os.path.join("app", "Debug", "miniengine_app.exe") if PRESET.startswith("vs") else os.path.join(
     "app", "miniengine_app.exe" if os.name == "nt" else "miniengine_app")
-EXE = os.environ.get("AB_EXE", os.path.join(ROOT, "out", "build", PRESET, APP))
+BUILD = os.environ.get("AB_BUILD") or os.path.join(ROOT, "out", "build", PRESET)
+EXE = os.environ.get("AB_EXE", os.path.join(BUILD, APP))
 ASSETS = os.environ.get("AB_ASSETS", "C:/Project/MiniEngine/assets")
 FRAMES = int(os.environ.get("AB_FRAMES", "90"))
 SIZE = [int(v) for v in os.environ.get("AB_SIZE", "1280x720").split("x")]
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "render_scenes", "scenes")
 SHADERS = {
     "glsl": os.environ.get("AB_REF_SPV") or os.path.join(ROOT, "out", "slang", "ref_spv"),
-    "slang": os.path.join(ROOT, "out", "build", PRESET, "shaders"),
+    "slang": os.path.join(BUILD, "shaders"),
 }
 # AB_MODE=exe: A is the frozen baseline build (out/baseline_src, a worktree of the commit before the
 # change, built with the same preset) with its own shaders, B the current build.
-BASELINE = os.path.join(ROOT, "out", "baseline_src", "out", "build", PRESET)
+BASELINE = os.environ.get("AB_BASELINE_BUILD") or os.path.join(ROOT, "out", "baseline_src", "out", "build", PRESET)
 EXES = {
     "glsl": (EXE, SHADERS["glsl"]),
     "slang": (EXE, SHADERS["slang"]),

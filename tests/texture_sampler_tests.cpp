@@ -2,6 +2,7 @@
 #include <engine/scene/material_graph.h>
 
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -102,6 +103,30 @@ void ClampSamplerReadsTheBaseLevel()
                 "no anisotropy, no comparison");
     }
 }
+void SamplerIndicesCoverEverySampler()
+{
+    Require(VulkanSamplerCache::SamplerAt(0).IsDefault(), "index 0 is the default sampler");
+    std::set<std::tuple<int, int, int, int, int>> seen;
+    for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
+    {
+        const TextureSampler sampler = VulkanSamplerCache::SamplerAt(index);
+        Require(static_cast<int>(sampler.wrapS) <= 2 && static_cast<int>(sampler.wrapT) <= 2 && static_cast<int>(sampler.mipFilter) <= 2,
+                "fields within their enums");
+        seen.insert({static_cast<int>(sampler.wrapS), static_cast<int>(sampler.wrapT), static_cast<int>(sampler.magFilter),
+                     static_cast<int>(sampler.minFilter), static_cast<int>(sampler.mipFilter)});
+    }
+    Require(seen.size() == VulkanSamplerCache::kSamplerCount, "every index a different sampler");
+    bool threw = false;
+    try
+    {
+        VulkanSamplerCache::SamplerAt(VulkanSamplerCache::kSamplerCount);
+    }
+    catch (const std::out_of_range&)
+    {
+        threw = true;
+    }
+    Require(threw, "no sampler past the count");
+}
 }
 
 int main()
@@ -113,6 +138,7 @@ int main()
         DefaultIsTodaysSampler();
         MapsSettingsToSamplers();
         ClampSamplerReadsTheBaseLevel();
+        SamplerIndicesCoverEverySampler();
     }
     catch (const std::exception& error)
     {

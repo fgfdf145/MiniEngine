@@ -2295,8 +2295,13 @@ void VulkanRenderer::CreateDeviceResources()
     // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
     // hardware ray tracing its texture table names a white texture where no material's is.
     TextureDescriptorBinding rayDefaultTexture{};
+    std::vector<VkSampler> raySamplerTable;
     if (m_device->SupportsRayQuery())
     {
+        for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
+        {
+            raySamplerTable.push_back(m_samplerCache->GetNative(VulkanSamplerCache::SamplerAt(index)));
+        }
         VulkanUploadBatch rayUploadBatch(
             m_device->GetHandle(),
             m_device->GetQueueFamilies().graphicsFamily.value(),
@@ -2313,6 +2318,7 @@ void VulkanRenderer::CreateDeviceResources()
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
         rayDefaultTexture,
+        std::move(raySamplerTable),
         m_device->SupportsUpdateUnusedWhilePending());
     m_rayScene->SetRetire([this](std::function<void()> release)
                           {

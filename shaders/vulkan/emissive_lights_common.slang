@@ -171,11 +171,10 @@ bool SampleEmissivePoint(uint light, float2 u, float3 receiver, float footprintW
     point.areaDensity = EmissiveLightProbability(light) * 2.0 / doubleArea;
 
     // The emission map where the point is, at RayTextureLod's level for the footprint.
-    uint textureIndex = asuint(triangle.e1Slot.w) * RAY_TEXTURES_PER_SLOT + RAY_TEXTURE_EMISSIVE;
     float2 uv = triangle.uv01.xy * (1.0 - barycentrics.x - barycentrics.y) + triangle.uv01.zw * barycentrics.x + triangle.uv2.xy * barycentrics.y;
     float cosTheta = abs(facing) / max(length(toReceiver), 1e-6);
     float lod = triangle.v0Lod.w + log2(max(footprintWidth, 1e-6) / max(cosTheta, 0.05));
-    point.radiance = rayTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(uv, lod).rgb * triangle.emission.rgb;
+    point.radiance = RayTextureSampleLevel(asuint(triangle.e1Slot.w), RAY_TEXTURE_EMISSIVE, uv, lod).rgb * triangle.emission.rgb;
     return point.areaDensity > 0.0;
 }
 #endif
