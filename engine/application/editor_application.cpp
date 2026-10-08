@@ -229,6 +229,18 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--display-pattern")
+        {
+            const std::array<float, 2> pattern = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            if (pattern[0] < 0.0f || pattern[0] > static_cast<float>(CalibrationPattern::SampleSky))
+            {
+                throw std::runtime_error("--display-pattern requires a pattern number from 0 to " +
+                                         std::to_string(static_cast<uint32_t>(CalibrationPattern::SampleSky)) + " and a level");
+            }
+            options.displayPattern = DisplayCalibrationView{static_cast<CalibrationPattern>(static_cast<uint32_t>(pattern[0])), pattern[1]};
+            continue;
+        }
+
         if (argument == "--debug-view")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -534,7 +546,7 @@ int EditorApplication::Run()
     // not save the camera or render settings its options changed.
     sharedState->viewSettingsFromCommandLine =
         m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
-        m_options.debugView.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
+        m_options.debugView.has_value() || m_options.displayPattern.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
         m_options.softwareRays;
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
@@ -569,6 +581,10 @@ int EditorApplication::Run()
     if (m_options.debugView.has_value())
     {
         sharedState->editorUi.EditRenderDebug().gbufferView = *m_options.debugView;
+    }
+    if (m_options.displayPattern.has_value())
+    {
+        sharedState->editorUi.EditRenderDebug().calibrationView = *m_options.displayPattern;
     }
     if (m_options.ddgiDisabled)
     {

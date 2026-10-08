@@ -41,6 +41,8 @@ struct RenderFramePacket
     Camera camera;
     ViewportMatrices viewportMatrices;
     RenderDebugSettings renderDebug;
+    // The display output and calibration values this frame (see ResolveDisplayOutput).
+    DisplayOutput display;
     // The size the scene renders at this frame.
     RenderExtent viewportExtent;
     // The window's display in pixels: the largest the viewport can become (fullscreen), which the GPU

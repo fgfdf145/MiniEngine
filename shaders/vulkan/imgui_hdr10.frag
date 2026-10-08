@@ -4,13 +4,18 @@
 // ImGui's fragment shader for an HDR10 swapchain. ImGui's colours are sRGB values (the SDR swapchain
 // is UNORM and shows them as they are), so they are decoded to linear light here; the scene image is
 // display-linear already (see tonemap.frag). The product, 1.0 being SDR white, is placed at
-// kUiWhiteNits, converted to Rec.2020 and PQ-encoded, so the UI keeps its SDR brightness while the
-// scene can exceed it.
+// kUiWhite, converted to Rec.2020 and PQ-encoded, so the UI keeps its SDR brightness while the scene
+// can exceed it. kUiWhite is the OS's SDR content brightness: VulkanImGuiLayer patches this
+// specialization constant's default in the SPIR-V (the backend builds the pipeline without
+// specialization info).
 // The interface must match the backend's glsl_shader.vert (see imgui_impl_vulkan.cpp):
 // since 1.92.8 the texture and the sampler are separate descriptors in sets 0 and 1.
 
 #include "gt7_tonemap.glsl"
 #include "hdr_output.glsl"
+
+// 203 is kUiWhiteNits (a specialization constant takes a literal).
+layout(constant_id = 0) const float kUiWhite = 203.0;
 
 layout(location = 0) out vec4 fColor;
 layout(set = 0, binding = 0) uniform texture2D _Texture;
@@ -30,5 +35,5 @@ void main()
 {
     vec4 color = vec4(SrgbToLinear(In.Color.rgb), In.Color.a) * texture(sampler2D(_Texture, _Sampler), In.UV.st);
     vec3 rec2020 = max(color.rgb, vec3(0.0)) * kRec709ToRec2020;
-    fColor = vec4(PqEncodeNits3(rec2020 * kUiWhiteNits), color.a);
+    fColor = vec4(PqEncodeNits3(rec2020 * kUiWhite), color.a);
 }

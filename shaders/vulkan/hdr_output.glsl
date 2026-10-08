@@ -1,10 +1,11 @@
 // HDR display output: the PQ encoding and the UI white every display-linear value is relative to.
 // Shared by imgui_hdr10.frag, which encodes the whole editor frame, tonemap.frag, which scales the
-// scene into UI-white units, and tests/tonemap_tests.cpp. Written, like gt7_tonemap.glsl, in the
-// subset GLSL and C++/GLM both accept.
+// scene into UI-white units, display_calibration.glsl and tests/tonemap_tests.cpp. Written, like
+// gt7_tonemap.glsl, in the subset GLSL and C++/GLM both accept.
 
-// ITU-R BT.2408's graphics white: display-linear 1.0 (SDR white, the UI's white) shows at this many
-// cd/m^2 on an HDR10 display.
+// ITU-R BT.2408's graphics white: where display-linear 1.0 (SDR white, the UI's white) shows on an
+// HDR10 display when the OS says nothing better (on Windows it follows the SDR content brightness;
+// see display_calibration.h).
 const float kUiWhiteNits = 203.0f;
 
 // SMPTE ST 2084 inverse EOTF: absolute luminance in cd/m^2 to the PQ signal in [0, 1].

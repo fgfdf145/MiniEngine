@@ -5,6 +5,7 @@
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/editor/editor_icons.h>
+#include <engine/renderer/spirv_patch.h>
 
 #include <imgui.h>
 #include <implot.h>
@@ -364,7 +365,7 @@ bool VulkanImGuiLayer::WantsMouseCapture() const
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput)
+void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput, float uiWhiteNits)
 {
     DestroyVulkanResources();
 
@@ -381,6 +382,11 @@ void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, ui
         m_hdrFragmentShader.resize(static_cast<size_t>(size) / sizeof(uint32_t));
         file.seekg(0);
         file.read(reinterpret_cast<char*>(m_hdrFragmentShader.data()), size);
+        // kUiWhite, constant_id 0.
+        if (!PatchSpecConstantFloat(m_hdrFragmentShader, 0, uiWhiteNits))
+        {
+            throw std::runtime_error(path.string() + " has no UI white specialization constant");
+        }
     }
 
     ImGui_ImplVulkan_InitInfo initInfo{};

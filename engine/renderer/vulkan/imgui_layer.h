@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include <string>
+#include <vector>
 
 // ImGui's own type, declared in the global namespace like the rest of ImGui.
 struct ImDrawData;
@@ -36,8 +37,9 @@ class VulkanImGuiLayer
 
     // The render side, used while the main thread builds no UI (construction, swapchain rebuilds).
     // hdrOutput selects imgui_hdr10.frag, which PQ-encodes everything ImGui draws for an HDR10
-    // swapchain; otherwise the backend's own shader writes display-linear values as before.
-    void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput);
+    // swapchain with UI white at uiWhiteNits; otherwise the backend's own shader writes
+    // display-linear values as before.
+    void CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput, float uiWhiteNits);
     void DestroyVulkanResources();
 
   private:

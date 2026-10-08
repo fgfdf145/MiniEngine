@@ -583,6 +583,9 @@ VulkanRenderer::VulkanRenderer(
             return PrepareTexture(path, usage, compressTextures, cacheDirectory);
         },
         std::max(1u, std::thread::hardware_concurrency() / 2));
+    // Before the swapchain, whose mode follows the display's HDR switch.
+    m_displayMonitor = std::make_unique<platform::display::DisplayHdrMonitor>(GetWindow().GetSDLWindow());
+    UpdateDisplayReport();
     CreateSwapchainResources();
     // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
     // and it has no texture files.
@@ -691,8 +694,12 @@ void VulkanRenderer::DrawFrame()
         return;
     }
     const VkExtent2D currentExtent = m_swapchain->GetExtent();
+    // The OS's HDR switch and SDR content brightness can change at any time; a different UI white
+    // means a different ImGui shader.
+    UpdateDisplayReport();
+    const bool uiWhiteChanged = m_swapchain->IsHdr() && std::abs(WantedUiWhiteNits() - m_swapchainUiWhiteNits) > 0.5f;
     if (m_swapchainOutOfDate.exchange(false) || wantedExtent.width != currentExtent.width ||
-        wantedExtent.height != currentExtent.height || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
+        wantedExtent.height != currentExtent.height || WantsHdrSwapchain() != m_swapchainHdrRequested || uiWhiteChanged)
     {
         m_renderThread->RunExclusive([this]()
                                      {
@@ -707,6 +714,15 @@ void VulkanRenderer::DrawFrame()
 
     m_imguiLayer->BeginFrame();
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
+    {
+        EditorDisplayStatus display;
+        display.report = m_displayInfo;
+        display.hdrRequested = m_swapchainHdrRequested;
+        display.hdrActive = m_swapchain->IsHdr();
+        display.output = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, display.hdrActive);
+        display.output.uiWhiteNits = m_swapchainUiWhiteNits;
+        State().editorUi.SetDisplayStatus(std::move(display));
+    }
     // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
     State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
@@ -834,6 +850,10 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.camera = State().camera;
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
+    // The calibration's values, or the display's own until there are some; UI white is the one
+    // ImGui's HDR shader was built with, so the scene and the UI agree on it.
+    packet.display = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, m_swapchain->IsHdr());
+    packet.display.uiWhiteNits = m_swapchainUiWhiteNits;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -1922,12 +1942,17 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.bloom.enabled = renderDebug.bloom.enabled && features.bloom;
 
     frame.whiteBalance = shared.whiteBalance;
-    frame.hdrOutput = m_swapchain->IsHdr();
-    frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
+    frame.display = packet.display;
+    // The calibration screen's patterns are the viewport's alone; the quad recording films the scene.
+    if (viewport)
+    {
+        frame.calibrationView = renderDebug.calibrationView;
+        ApplyHdrMetadata(frame.display);
+    }
     // HDR output shows more of the highlight's brightness directly, so it needs less glare.
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
-        frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
+        frame.display.hdr ? frame.display.maxLuminance : kGlareSdrPeakNits);
     frame.taaHistory = view.taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, view.taaHistoryPreExposure);
     if (dlssEnabled)
@@ -2046,6 +2071,61 @@ bool VulkanRenderer::WantsKeyboardCapture() const
     return m_imguiLayer->WantsKeyboardCapture();
 }
 
+void VulkanRenderer::UpdateDisplayReport()
+{
+    m_displayInfo = m_displayMonitor->Latest();
+    m_displayReport.known = m_displayInfo.known;
+    m_displayReport.hdrEnabled = m_displayInfo.hdrEnabled;
+    m_displayReport.maxLuminance = m_displayInfo.maxLuminance;
+    m_displayReport.maxFullFrameLuminance = m_displayInfo.maxFullFrameLuminance;
+    m_displayReport.minLuminance = m_displayInfo.minLuminance;
+    m_displayReport.sdrWhiteNits = m_displayInfo.sdrWhiteNits;
+}
+
+bool VulkanRenderer::WantsHdrSwapchain() const
+{
+    return WantsHdrOutput(State().renderDebug.display, m_displayReport, State().viewSettingsFromCommandLine);
+}
+
+float VulkanRenderer::WantedUiWhiteNits() const
+{
+    return ResolveDisplayOutput(State().renderDebug.display, m_displayReport, true).uiWhiteNits;
+}
+
+void VulkanRenderer::ApplyHdrMetadata(const DisplayOutput& display)
+{
+    if (!display.hdr || !m_device->SupportsHdrMetadata())
+    {
+        return;
+    }
+    if (m_appliedHdrMetadata.has_value() && m_appliedHdrMetadata->maxLuminance == display.maxLuminance &&
+        m_appliedHdrMetadata->maxFullFrameLuminance == display.maxFullFrameLuminance &&
+        m_appliedHdrMetadata->minLuminance == display.minLuminance)
+    {
+        return;
+    }
+    static const auto setHdrMetadata = reinterpret_cast<PFN_vkSetHdrMetadataEXT>(vkGetDeviceProcAddr(m_device->GetHandle(), "vkSetHdrMetadataEXT"));
+    if (setHdrMetadata == nullptr)
+    {
+        return;
+    }
+    // Rec.2020 primaries and D65: the HDR10 container. The content never exceeds the calibrated peak,
+    // and a full frame never averages above what the display holds over its whole area.
+    VkHdrMetadataEXT metadata{};
+    metadata.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT;
+    metadata.displayPrimaryRed = {0.708f, 0.292f};
+    metadata.displayPrimaryGreen = {0.170f, 0.797f};
+    metadata.displayPrimaryBlue = {0.131f, 0.046f};
+    metadata.whitePoint = {0.3127f, 0.3290f};
+    metadata.maxLuminance = display.maxLuminance;
+    metadata.minLuminance = display.minLuminance;
+    metadata.maxContentLightLevel = display.maxLuminance;
+    metadata.maxFrameAverageLightLevel = std::min(display.maxFullFrameLuminance, display.maxLuminance);
+    const VkSwapchainKHR swapchain = m_swapchain->GetHandle();
+    setHdrMetadata(m_device->GetHandle(), 1, &swapchain, &metadata);
+    m_appliedHdrMetadata = display;
+}
+
 void VulkanRenderer::CreateSwapchainResources()
 {
     const SwapchainSupportDetails supportDetails = m_device->QuerySwapchainSupport();
@@ -2055,8 +2135,14 @@ void VulkanRenderer::CreateSwapchainResources()
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
         supportDetails,
-        State().renderDebug.hdrOutput);
-    m_swapchainHdrRequested = State().renderDebug.hdrOutput;
+        WantsHdrSwapchain());
+    m_swapchainHdrRequested = WantsHdrSwapchain();
+    m_swapchainUiWhiteNits = WantedUiWhiteNits();
+    m_appliedHdrMetadata.reset();
+    LOG_INFO(
+        "Display output: {}{}",
+        m_swapchain->IsHdr() ? "HDR10" : "SDR",
+        m_swapchain->IsHdr() ? std::format(", UI white {:.0f} cd/m^2", m_swapchainUiWhiteNits) : std::string());
     m_renderPass = std::make_unique<VulkanRenderPass>(
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
@@ -2069,7 +2155,8 @@ void VulkanRenderer::CreateSwapchainResources()
     m_imguiLayer->CreateOrUpdateVulkanResources(
         m_renderPass->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_swapchain->IsHdr());
+        m_swapchain->IsHdr(),
+        m_swapchainUiWhiteNits);
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
