@@ -8,6 +8,8 @@
 
 #include <functional>
 
+#include <nvrhi/nvrhi.h>
+
 namespace me
 {
 
@@ -44,21 +46,20 @@ struct VulkanDrawItem
     VkBuffer previousPositionBuffer = VK_NULL_HANDLE;
 };
 
-struct VulkanFrameSyncObjects
-{
-    VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
-    VkFence inFlightFence = VK_NULL_HANDLE;
-};
+class NvrhiDevice;
 
+// The frame's command list and its submission: one NVRHI command list, opened each frame, whose
+// Vulkan command buffer the passes still record into directly while they move to NVRHI
+// (docs/design/2026-10-08-nvrhi-backend-design.md); the swapchain's acquire and present stay native.
 class VulkanCommandContext
 {
   public:
-    // How many frames may be recorded before the oldest must complete. AcquireNextImage waits on
-    // this slot's fence before acquiring, so any resource indexed by GetCurrentFrame() is free for
-    // reuse once that call returns. SceneRenderTargets sizes its transient targets against this.
+    // How many frames may be recorded before the oldest must complete. AcquireNextImage waits for
+    // this slot's last frame before acquiring, so any resource indexed by GetCurrentFrame() is free
+    // for reuse once that call returns. SceneRenderTargets sizes its transient targets against this.
     static constexpr size_t kMaxFramesInFlight = 2;
 
-    VulkanCommandContext(VkDevice device, const QueueFamilyIndices& queueFamilies, size_t commandBufferCount);
+    VulkanCommandContext(NvrhiDevice& nvrhi, VkDevice device, size_t swapchainImageCount);
     ~VulkanCommandContext();
 
     VulkanCommandContext(const VulkanCommandContext&) = delete;
@@ -72,7 +73,7 @@ class VulkanCommandContext
     // Frames counted by Submit, 1 for the first. A resource the frames submitted so far may use is
     // free once CompletedSubmits() reaches LastSubmit() as it was then (VulkanRetireQueue).
     uint64_t LastSubmit() const;
-    // The last submit known to have finished: polls the frame slots' fences.
+    // The last submit known to have finished: polls the frame slots' event queries.
     uint64_t CompletedSubmits();
 
     // The slot the frame being recorded belongs to. Advances in Present, so it is stable for the
@@ -80,24 +81,24 @@ class VulkanCommandContext
     uint32_t GetCurrentFrame() const;
 
   private:
-    void CreateCommandPool(const QueueFamilyIndices& queueFamilies);
-    void AllocateCommandBuffers(size_t commandBufferCount);
-    void CreateSyncObjects(size_t swapchainImageCount);
-
+    NvrhiDevice& m_nvrhi;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkCommandPool m_commandPool = VK_NULL_HANDLE;
-    std::vector<VkCommandBuffer> m_commandBuffers;
-    std::vector<VulkanFrameSyncObjects> m_frameSyncObjects;
+    nvrhi::CommandListHandle m_commandList;
+    // Per frame slot: the semaphore the swapchain signals when the acquired image is free, and the
+    // query that completes with the slot's last submit.
+    std::vector<VkSemaphore> m_imageAvailableSemaphores;
+    std::vector<nvrhi::EventQueryHandle> m_frameQueries;
     // Signaled by Submit and waited on by Present. Indexed by swapchain image (not by frame in
-    // flight): the presentation engine may still be waiting on the semaphore after the frame's
-    // fence has signaled, so a per-frame semaphore could be reused while still in use. Reuse per
-    // image is safe because reacquiring an image implies its previous present consumed the wait.
+    // flight): the presentation engine may still be waiting on the semaphore after the frame has
+    // finished, so a per-frame semaphore could be reused while still in use. Reuse per image is safe
+    // because reacquiring an image implies its previous present consumed the wait.
     std::vector<VkSemaphore> m_renderFinishedSemaphores;
-    std::vector<VkFence> m_imagesInFlight;
+    // Per swapchain image: the frame slot whose submit last rendered to it, -1 for none.
+    std::vector<int> m_imagesInFlight;
     uint32_t m_currentFrame = 0;
     uint64_t m_lastSubmit = 0;
     uint64_t m_completedSubmits = 0;
-    // The submit each frame slot's fence was last armed for.
+    // The submit each frame slot's query was last set for (0 for none yet).
     std::vector<uint64_t> m_slotSubmits;
 };
 }

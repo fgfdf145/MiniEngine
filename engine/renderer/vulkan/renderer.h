@@ -19,6 +19,7 @@
 #include "lighting_pass.h"
 #include "local_shadow_pass.h"
 #include "instance.h"
+#include "nvrhi_device.h"
 #include "pipeline_set.h"
 #include "render_frame_packet.h"
 #include "render_pass.h"
@@ -451,6 +452,8 @@ class VulkanRenderer : public EditorRenderBackendBase
 
     std::unique_ptr<VulkanInstance> m_instance;
     std::unique_ptr<VulkanDevice> m_device;
+    // NVRHI over m_device (docs/design/2026-10-08-nvrhi-backend-design.md).
+    std::unique_ptr<NvrhiDevice> m_nvrhi;
     // NVIDIA DLSS: always made, available only with the SDK on a device and driver that run it.
     std::unique_ptr<VulkanDlss> m_dlss;
     // The DLSS mode the scene targets were last sized for (Off while the engine's TAA resolves), and

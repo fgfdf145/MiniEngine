@@ -1,0 +1,47 @@
+# Overlay rationale: the engine uses NVRHI's Vulkan backend only
+# (docs/design/2026-10-08-nvrhi-backend-design.md). Upstream's port (same commit) builds the D3D11 and
+# D3D12 backends on Windows and depends on directx-headers, is missing from this project's
+# builtin-baseline, and does not support macOS or x86. With a dynamic triplet NVRHI is one shared
+# library that owns vulkan.hpp's dispatcher (initialised in nvrhi::vulkan::createDevice), so the
+# engine's own Vulkan headers never have to match NVRHI's.
+vcpkg_from_github(
+    OUT_SOURCE_PATH SOURCE_PATH
+    REPO NVIDIA-RTX/NVRHI
+    REF 54100464714de88a5a5059d25808f5ccb914ad7d
+    SHA512 56d5de1cc0840e29d8df976a5fe7b13d676c110ba24c09ff5e0caaa73f4aa56cc78d2ec2c31b1cb8da9f5b099c8b8598410792f8343a77ba928da28ba8146b1f
+    HEAD_REF main
+    PATCHES
+        fix-vcpkg-deps.patch
+)
+
+if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
+    set(NVRHI_SHARED ON)
+else()
+    set(NVRHI_SHARED OFF)
+endif()
+
+vcpkg_cmake_configure(
+    SOURCE_PATH "${SOURCE_PATH}"
+    OPTIONS
+        -DNVRHI_BUILD_SHARED=${NVRHI_SHARED}
+        -DNVRHI_INSTALL=ON
+        -DNVRHI_INSTALL_EXPORTS=ON
+        -DNVRHI_WITH_VULKAN=ON
+        -DNVRHI_WITH_VALIDATION=ON
+        -DNVRHI_WITH_DX11=OFF
+        -DNVRHI_WITH_DX12=OFF
+        -DNVRHI_WITH_NVAPI=OFF
+        -DNVRHI_WITH_AFTERMATH=OFF
+        -DNVRHI_WITH_RTXMU=OFF
+)
+
+vcpkg_cmake_install()
+vcpkg_cmake_config_fixup(CONFIG_PATH "lib/cmake/nvrhi")
+vcpkg_copy_pdbs()
+
+file(REMOVE_RECURSE
+    "${CURRENT_PACKAGES_DIR}/debug/include"
+    "${CURRENT_PACKAGES_DIR}/debug/share"
+)
+
+vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE.txt")

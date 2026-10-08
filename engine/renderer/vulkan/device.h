@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -27,6 +28,10 @@ class VulkanDevice
     VkPhysicalDevice GetPhysicalDevice() const;
     const QueueFamilyIndices& GetQueueFamilies() const;
     VkQueue GetGraphicsQueue() const;
+    // The device extensions it was created with, and whether bufferDeviceAddress is on (NVRHI is told
+    // both, nvrhi_device.h).
+    const std::vector<std::string>& GetEnabledExtensions() const;
+    bool BufferDeviceAddressEnabled() const;
     VkQueue GetPresentQueue() const;
     SwapchainSupportDetails QuerySwapchainSupport() const;
     VkSurfaceCapabilitiesKHR QuerySurfaceCapabilities() const;
@@ -75,5 +80,7 @@ class VulkanDevice
     bool m_supportsMemoryBudget = false;
     bool m_supportsRayQuery = false;
     bool m_supportsUpdateUnusedWhilePending = false;
+    bool m_bufferDeviceAddressEnabled = false;
+    std::vector<std::string> m_enabledExtensions;
 };
 }

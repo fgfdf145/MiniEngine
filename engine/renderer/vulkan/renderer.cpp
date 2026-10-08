@@ -550,6 +550,7 @@ VulkanRenderer::VulkanRenderer(
             return VulkanDlss::RequiredDeviceExtensions(instance, physicalDevice);
         },
         State().rayQuery);
+    m_nvrhi = std::make_unique<NvrhiDevice>(*m_instance, *m_device);
     m_dlss = std::make_unique<VulkanDlss>(
         instance,
         m_device->GetPhysicalDevice(),
@@ -659,6 +660,7 @@ VulkanRenderer::~VulkanRenderer()
     DestroyDeviceResources();
     m_dlss.reset();
     m_stagingChunkPool.reset();
+    m_nvrhi.reset();
     m_device.reset();
     m_instance.reset();
 }
@@ -2131,8 +2133,8 @@ void VulkanRenderer::CreateSwapchainResources()
         m_swapchain->GetExtent(),
         m_swapchain->GetImageViews());
     m_commandContext = std::make_unique<VulkanCommandContext>(
+        *m_nvrhi,
         m_device->GetHandle(),
-        m_device->GetQueueFamilies(),
         m_renderPass->GetFramebuffers().size());
     m_imguiLayer->CreateOrUpdateVulkanResources(
         m_renderPass->GetHandle(),

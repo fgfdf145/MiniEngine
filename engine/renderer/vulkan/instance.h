@@ -4,6 +4,7 @@
 
 #include <span>
 #include <string>
+#include <vector>
 
 namespace me
 {
@@ -22,6 +23,8 @@ class VulkanInstance
     VkInstance GetHandle() const;
     VkSurfaceKHR GetSurface() const;
     bool OptionalExtensionsEnabled() const;
+    // The instance extensions it was created with (NVRHI is told them, nvrhi_device.h).
+    const std::vector<std::string>& GetEnabledExtensions() const;
 
   private:
     std::vector<const char*> GetRequiredExtensions(bool enableValidation, std::span<const std::string> optionalExtensions);
@@ -33,5 +36,6 @@ class VulkanInstance
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
     bool m_optionalExtensionsEnabled = true;
+    std::vector<std::string> m_enabledExtensions;
 };
 }

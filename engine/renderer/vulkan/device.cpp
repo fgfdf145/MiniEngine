@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <set>
+#include <stdexcept>
+#include <string>
 
 namespace me
 {
@@ -181,23 +183,38 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationFeatures{};
     accelerationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceVulkan13Features vulkan13Features{};
+    vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     VkPhysicalDeviceVulkan12Features vulkan12Features{};
     vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    vulkan12Features.pNext = &vulkan13Features;
     const bool rayQueryExtensions =
         allowRayQuery && deviceProperties.apiVersion >= VK_API_VERSION_1_2 &&
         std::all_of(kRayQueryExtensions.begin(), kRayQueryExtensions.end(), isAvailable);
     if (rayQueryExtensions)
     {
         accelerationFeatures.pNext = &rayQueryFeatures;
-        vulkan12Features.pNext = &accelerationFeatures;
+        vulkan13Features.pNext = &accelerationFeatures;
     }
-    // Below Vulkan 1.2 there is no 1.2 block, and neither buffer device address nor ray tracing.
-    if (deviceProperties.apiVersion >= VK_API_VERSION_1_2)
+    // NVRHI (nvrhi_device.h) records with synchronization2 barriers and dynamic rendering and tracks
+    // its submits with a timeline semaphore: Vulkan 1.3 and those three features are required.
+    if (deviceProperties.apiVersion < VK_API_VERSION_1_3)
+    {
+        throw std::runtime_error(std::string(deviceProperties.deviceName) + " supports Vulkan " +
+                                 std::to_string(VK_API_VERSION_MAJOR(deviceProperties.apiVersion)) + "." +
+                                 std::to_string(VK_API_VERSION_MINOR(deviceProperties.apiVersion)) + "; the renderer needs 1.3");
+    }
     {
         VkPhysicalDeviceFeatures2 query{};
         query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         query.pNext = &vulkan12Features;
         vkGetPhysicalDeviceFeatures2(m_physicalDevice, &query);
+    }
+    if (vulkan12Features.timelineSemaphore != VK_TRUE || vulkan13Features.synchronization2 != VK_TRUE ||
+        vulkan13Features.dynamicRendering != VK_TRUE)
+    {
+        throw std::runtime_error(std::string(deviceProperties.deviceName) +
+                                 " lacks timeline semaphores, synchronization2 or dynamic rendering");
     }
     if (wantsBufferDeviceAddress)
     {
@@ -221,7 +238,8 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
                            : "off (--no-ray-query), rays walk the compute hierarchies");
 
     // Only the features the engine uses go into the chain it enables. One Vulkan 1.2 block carries
-    // buffer device address for both (it may not be chained beside the standalone feature struct).
+    // buffer device address for both (it may not be chained beside the standalone feature struct),
+    // and NVRHI's timeline semaphore.
     VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQuery{};
     enabledRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     enabledRayQuery.rayQuery = VK_TRUE;
@@ -229,9 +247,16 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     enabledAcceleration.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
     enabledAcceleration.accelerationStructure = VK_TRUE;
     enabledAcceleration.pNext = &enabledRayQuery;
+    VkPhysicalDeviceVulkan13Features enabled13{};
+    enabled13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    enabled13.synchronization2 = VK_TRUE;
+    enabled13.dynamicRendering = VK_TRUE;
     VkPhysicalDeviceVulkan12Features enabled12{};
     enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    enabled12.pNext = &enabled13;
+    enabled12.timelineSemaphore = VK_TRUE;
     enabled12.bufferDeviceAddress = (wantsBufferDeviceAddress || m_supportsRayQuery) ? vulkan12Features.bufferDeviceAddress : VK_FALSE;
+    m_bufferDeviceAddressEnabled = enabled12.bufferDeviceAddress == VK_TRUE;
     if (m_supportsRayQuery)
     {
         enabled12.runtimeDescriptorArray = VK_TRUE;
@@ -248,12 +273,10 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     if (m_supportsRayQuery)
     {
         enabledExtensions.insert(enabledExtensions.end(), kRayQueryExtensions.begin(), kRayQueryExtensions.end());
-        enabled12.pNext = &enabledAcceleration;
+        enabled13.pNext = &enabledAcceleration;
     }
-    if (wantsBufferDeviceAddress || m_supportsRayQuery)
-    {
-        enabledFeatures.pNext = &enabled12;
-    }
+    enabledFeatures.pNext = &enabled12;
+    m_enabledExtensions.assign(enabledExtensions.begin(), enabledExtensions.end());
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -349,6 +372,16 @@ VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const
 const QueueFamilyIndices& VulkanDevice::GetQueueFamilies() const
 {
     return m_queueFamilies;
+}
+
+const std::vector<std::string>& VulkanDevice::GetEnabledExtensions() const
+{
+    return m_enabledExtensions;
+}
+
+bool VulkanDevice::BufferDeviceAddressEnabled() const
+{
+    return m_bufferDeviceAddressEnabled;
 }
 
 VkQueue VulkanDevice::GetGraphicsQueue() const

@@ -32,6 +32,9 @@ CMakeLists.txt text eol=crlf
 .gitignore text eol=crlf
 .gitattributes text eol=crlf
 
+# Patches vcpkg applies to upstream sources: byte for byte, whatever core.autocrlf says.
+*.patch -text
+
 # Fonts embedded into the editor binary.
 *.ttf binary
 

@@ -140,6 +140,8 @@ add_library(engine_renderer
     vulkan/common.h
     vulkan/device.cpp
     vulkan/device.h
+    vulkan/nvrhi_device.cpp
+    vulkan/nvrhi_device.h
     vulkan/dlss.cpp
     vulkan/dlss.h
     vulkan/environment_probe.cpp
@@ -438,6 +440,7 @@ target_link_libraries(engine_renderer
         engine_render_core
         engine_editor
         Vulkan::Vulkan
+        ${MINIENGINE_NVRHI_TARGETS}
         SDL3::SDL3
         glm::glm
         imgui::imgui

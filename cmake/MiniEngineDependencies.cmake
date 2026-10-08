@@ -116,6 +116,17 @@ if(NOT TARGET Vulkan::Vulkan)
     find_package(Vulkan REQUIRED)
 endif()
 find_package(glm CONFIG REQUIRED)
+# The render backend's Vulkan layer (docs/design/2026-10-08-nvrhi-backend-design.md): a shared nvrhi
+# with the Vulkan backend inside, or with a static triplet nvrhi plus nvrhi_vk.
+find_package(nvrhi CONFIG REQUIRED)
+# Its export asks every consumer for VK_USE_PLATFORM_WIN32_KHR, which makes vulkan.h include
+# <windows.h> (min and max macros) in every file that sees the engine's Vulkan headers. Nothing
+# outside NVRHI needs the Win32 surface types.
+set_property(TARGET nvrhi PROPERTY INTERFACE_COMPILE_DEFINITIONS "")
+set(MINIENGINE_NVRHI_TARGETS nvrhi)
+if(TARGET nvrhi_vk)
+    list(APPEND MINIENGINE_NVRHI_TARGETS nvrhi_vk)
+endif()
 find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
 find_package(implot CONFIG REQUIRED)

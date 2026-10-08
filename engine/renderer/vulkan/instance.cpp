@@ -132,6 +132,7 @@ VulkanInstance::VulkanInstance(SDL_Window* window, std::span<const std::string> 
     }
 
     const std::vector<const char*> extensions = GetRequiredExtensions(enableValidation, optionalExtensions);
+    m_enabledExtensions.assign(extensions.begin(), extensions.end());
 
     LOG_INFO("Creating Vulkan instance (validation: {})", enableValidation ? "on" : "off");
     for (size_t i = 0; i < extensions.size(); ++i)
@@ -213,6 +214,11 @@ VkSurfaceKHR VulkanInstance::GetSurface() const
 bool VulkanInstance::OptionalExtensionsEnabled() const
 {
     return m_optionalExtensionsEnabled;
+}
+
+const std::vector<std::string>& VulkanInstance::GetEnabledExtensions() const
+{
+    return m_enabledExtensions;
 }
 
 std::vector<const char*> VulkanInstance::GetRequiredExtensions(bool enableValidation, std::span<const std::string> optionalExtensions)
