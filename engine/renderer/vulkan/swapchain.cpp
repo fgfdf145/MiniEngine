@@ -20,7 +20,7 @@ VulkanSwapchain::VulkanSwapchain(
     m_colorSpace = surfaceFormat.colorSpace;
     if (preferHdr && !IsHdr())
     {
-        LOG_WARN("HDR output was requested, but the surface offers neither scRGB nor HDR10; presenting SDR");
+        LOG_WARN("HDR output was requested, but the surface offers no HDR10 format; presenting SDR");
     }
     const VkPresentModeKHR presentMode = ChoosePresentMode(supportDetails.presentModes);
     const VkExtent2D extent = ChooseExtent(window, supportDetails.capabilities);
@@ -113,28 +113,13 @@ const std::vector<VkImageView>& VulkanSwapchain::GetImageViews() const
 
 bool VulkanSwapchain::IsHdr() const
 {
-    return m_colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT || IsScRgb();
-}
-
-bool VulkanSwapchain::IsScRgb() const
-{
-    return m_colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
+    return m_colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
 }
 
 VkSurfaceFormatKHR VulkanSwapchain::ChooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats, bool preferHdr) const
 {
     if (preferHdr)
     {
-        // scRGB first: Windows composes the desktop in it, and shows SDR windows in it at the SDR
-        // content brightness, so the editor UI written through it lands exactly where an SDR
-        // swapchain's would (see hdr_composite.frag).
-        for (const auto& availableFormat : formats)
-        {
-            if (availableFormat.format == VK_FORMAT_R16G16B16A16_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)
-            {
-                return availableFormat;
-            }
-        }
         for (const VkFormat hdrFormat : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32})
         {
             for (const auto& availableFormat : formats)

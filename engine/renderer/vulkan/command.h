@@ -65,14 +65,7 @@ class VulkanCommandContext
     VulkanCommandContext& operator=(const VulkanCommandContext&) = delete;
 
     VkResult AcquireNextImage(VkSwapchainKHR swapchain, uint32_t& imageIndex);
-    // A frame is two command buffers: work, everything that does not touch the swapchain image, and
-    // present, the pass that draws into it. Submit sends them as two batches, and only the present
-    // batch waits for the presentation engine to hand the image over, so the frame's work never
-    // waits on the display (and the GPU timer's sections of it measure work alone).
-    void RecordCommandBuffers(
-        uint32_t imageIndex,
-        const std::function<void(VkCommandBuffer)>& work,
-        const std::function<void(VkCommandBuffer)>& present);
+    void RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder);
     void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
     VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
     void WaitForAllFrames();
@@ -94,8 +87,6 @@ class VulkanCommandContext
     VkDevice m_device = VK_NULL_HANDLE;
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;
-    // Each swapchain image's present command buffer (RecordCommandBuffers).
-    std::vector<VkCommandBuffer> m_presentCommandBuffers;
     std::vector<VulkanFrameSyncObjects> m_frameSyncObjects;
     // Signaled by Submit and waited on by Present. Indexed by swapchain image (not by frame in
     // flight): the presentation engine may still be waiting on the semaphore after the frame's

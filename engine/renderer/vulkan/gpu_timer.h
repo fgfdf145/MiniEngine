@@ -38,9 +38,6 @@ class VulkanGpuTimer
     // In recording order; empty until a frame has come back.
     std::vector<Section> GetSections() const;
     double GetAverageFrameMs() const;
-    // The frame's average up to the section called name (the whole frame when there is none): the
-    // GPU's own work, without a last section that waits for the presentation engine.
-    double GetAverageFrameMsBefore(const char* name) const;
 
   private:
     void Collect(uint32_t frameSlot);

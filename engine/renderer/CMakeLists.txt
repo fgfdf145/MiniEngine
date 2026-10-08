@@ -10,11 +10,8 @@ add_library(engine_render_core
     bloom_chain.h
     block_suballocator.cpp
     block_suballocator.h
-    frame_pacing.cpp
-    frame_pacing.h
     glare.cpp
     glare.h
-    hdr_display.h
     height_fog.cpp
     tyre_deformation.cpp
     tyre_deformation.h
@@ -125,8 +122,6 @@ add_library(engine_renderer
     vulkan/command.h
     vulkan/compute_pass_util.cpp
     vulkan/compute_pass_util.h
-    vulkan/hdr_composite.cpp
-    vulkan/hdr_composite.h
     vulkan/ddgi.cpp
     vulkan/ddgi.h
     vulkan/ddgi_debug_pass.cpp
@@ -284,8 +279,7 @@ set(MINIENGINE_SHADER_SOURCES
     toon.vert
     toon.frag
     toon_prepass.frag
-    hdr_composite.frag
-    hdr_ui_cut.frag
+    imgui_hdr10.frag
     ssr_trace.comp
     ssr_resolve.comp
     rt_shadow_temporal.comp

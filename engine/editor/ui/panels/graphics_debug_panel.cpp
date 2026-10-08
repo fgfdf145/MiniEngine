@@ -477,20 +477,11 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
 
     ImGui::SeparatorText("Output");
-    // HDR in the viewport only, when the display is in HDR: the editor UI stays exactly as in SDR, at
-    // Windows' SDR content brightness, which is also the scene's paper white.
-    ImGui::Checkbox("HDR output (viewport)", &debug.hdrOutput);
+    // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
+    ImGui::Checkbox("HDR output", &debug.hdrOutput);
     ImGui::BeginDisabled(!debug.hdrOutput);
-    ImGui::Checkbox("Peak from display", &debug.hdrPeakFromDisplay);
-    ImGui::BeginDisabled(debug.hdrPeakFromDisplay);
     DragFloatInRange("Display peak (nits)", &debug.hdrPeakNits, 250.0f, 10000.0f, "%.0f");
     ImGui::EndDisabled();
-    ImGui::Checkbox("Even frame pacing", &debug.hdrFramePacing);
-    ImGui::EndDisabled();
-    if (!state.hdrOutputStatus.empty())
-    {
-        ImGui::TextDisabled("%s", state.hdrOutputStatus.c_str());
-    }
     // Also Render > Tone Mapping. The Khronos reference view always uses PBR Neutral.
     static constexpr std::array<const char*, 3> kToneMapperNames = {"GT7", "PBR Neutral", "None (clipped)"};
     int toneMapper = static_cast<int>(debug.toneMapper);

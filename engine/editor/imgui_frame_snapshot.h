@@ -3,7 +3,6 @@
 #include <imgui.h>
 
 #include <array>
-#include <optional>
 #include <vector>
 
 namespace me
@@ -26,18 +25,6 @@ inline constexpr std::array<ImTextureID, 4> kCaptureViewTextureIds = {
     0xFFFF'FFFF'FFFF'F012ull,
     0xFFFF'FFFF'FFFF'F013ull};
 
-// The rectangle a draw command's vertices cover, in ImGui's display coordinates, with the texture
-// coordinates at its top-left and bottom-right corners: ImGui::Image draws one such quad.
-struct ImGuiCommandQuad
-{
-    ImVec2 min{0.0f, 0.0f};
-    ImVec2 max{0.0f, 0.0f};
-    ImVec2 uvMin{0.0f, 0.0f};
-    ImVec2 uvMax{0.0f, 0.0f};
-};
-
-ImGuiCommandQuad CommandQuad(const ImDrawList& list, const ImDrawCmd& command);
-
 // One frame's ImGui draw data, copied for the render thread to draw while the main thread builds
 // the next frame in the same ImGui context. Every texture reference is resolved to its ID while
 // copying: the font atlas's texture belongs to the context. The draw lists and their buffers are
@@ -56,15 +43,6 @@ class ImGuiFrameSnapshot
     // Points every draw command that samples `from` at `to` instead; with an invalid `to` the
     // commands are left out.
     void ReplaceTexture(ImTextureID from, ImTextureID to);
-    // Turns every draw command that samples `from` into a call to callback with userData, each
-    // followed by resetRenderState (the backend's, which rebinds its own state for what comes next).
-    // The commands keep their clip rectangles and element ranges, so the callback can find the quad
-    // they would have drawn (CommandQuad). Returns the quad of the first, if there was one.
-    std::optional<ImGuiCommandQuad> ReplaceTextureWithCallback(
-        ImTextureID from,
-        ImDrawCallback callback,
-        void* userData,
-        ImDrawCallback resetRenderState);
     // The copy, or null before the first capture or after Clear.
     ImDrawData* GetDrawData();
 

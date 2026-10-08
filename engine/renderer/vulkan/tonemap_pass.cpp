@@ -18,18 +18,16 @@ namespace
 struct TonemapPushConstants
 {
     uint32_t gbufferView = 0;
-    // 1 for HDR output (GT7's HDR curve for peakNits, paper white at paperWhiteNits), 0 for SDR.
+    // 1 for HDR10 output (GT7's HDR curve for peakNits), 0 for SDR.
     uint32_t hdrOutput = 0;
     float peakNits = 1000.0f;
     // The operator: one of the kOperator* values below. Must match TONEMAP_OPERATOR_* in the shader.
     uint32_t toneOperator = 0;
     // The white balance matrix's columns, xyz used (see WhiteBalanceMatrix).
     glm::vec4 whiteBalance[3] = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
-    // HDR output: SDR white in cd/m^2, the scene's paper white and the unit the output is written in.
-    float paperWhiteNits = 250.0f;
 };
 
-static_assert(sizeof(TonemapPushConstants) == 68, "TonemapPushConstants must match the shader's block");
+static_assert(sizeof(TonemapPushConstants) == 64, "TonemapPushConstants must match the shader's block");
 
 constexpr uint32_t kOperatorGt7 = 0;
 // The Khronos reference view: PBR Neutral plus the Sample Viewer's 2.2 gamma on an SDR display.
@@ -175,7 +173,6 @@ void VulkanTonemapPass::Record(
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     constants.hdrOutput = frame.hdrOutput ? 1u : 0u;
     constants.peakNits = frame.hdrPeakNits;
-    constants.paperWhiteNits = frame.hdrPaperWhiteNits;
     constants.toneOperator = ToneOperator(frame);
     for (int column = 0; column < 3; ++column)
     {

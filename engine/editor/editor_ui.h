@@ -282,11 +282,6 @@ class EditorUiController
     {
         m_state.gpuMemoryStatus = std::move(status);
     }
-    // What the Graphics Debug window says of HDR output: the display and what is presented.
-    void SetHdrOutputStatus(std::string status)
-    {
-        m_state.hdrOutputStatus = std::move(status);
-    }
     // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
     // (VulkanDlss::Status).
     void SetDlssStatus(bool available, bool rayReconstructionAvailable, std::string status)

@@ -1,6 +1,5 @@
 #include "imgui_frame_snapshot.h"
 
-#include <algorithm>
 #include <cstring>
 
 namespace me
@@ -18,42 +17,6 @@ void CopyInto(ImVector<T>& dst, const ImVector<T>& src)
         std::memcpy(dst.Data, src.Data, static_cast<size_t>(src.Size) * sizeof(T));
     }
 }
-}
-
-ImGuiCommandQuad CommandQuad(const ImDrawList& list, const ImDrawCmd& command)
-{
-    ImGuiCommandQuad quad;
-    bool first = true;
-    float minSum = 0.0f;
-    float maxSum = 0.0f;
-    for (unsigned int element = 0; element < command.ElemCount; ++element)
-    {
-        const ImDrawIdx index = list.IdxBuffer[static_cast<int>(command.IdxOffset + element)];
-        const ImDrawVert& vertex = list.VtxBuffer[static_cast<int>(command.VtxOffset + index)];
-        const float sum = vertex.pos.x + vertex.pos.y;
-        if (first)
-        {
-            quad.min = quad.max = vertex.pos;
-            quad.uvMin = quad.uvMax = vertex.uv;
-            minSum = maxSum = sum;
-            first = false;
-            continue;
-        }
-        quad.min = ImVec2(std::min(quad.min.x, vertex.pos.x), std::min(quad.min.y, vertex.pos.y));
-        quad.max = ImVec2(std::max(quad.max.x, vertex.pos.x), std::max(quad.max.y, vertex.pos.y));
-        // An axis-aligned quad's top-left corner has the smallest x + y, its bottom-right the largest.
-        if (sum < minSum)
-        {
-            minSum = sum;
-            quad.uvMin = vertex.uv;
-        }
-        if (sum > maxSum)
-        {
-            maxSum = sum;
-            quad.uvMax = vertex.uv;
-        }
-    }
-    return quad;
 }
 
 ImGuiFrameSnapshot::~ImGuiFrameSnapshot()
@@ -136,43 +99,6 @@ void ImGuiFrameSnapshot::ReplaceTexture(ImTextureID from, ImTextureID to)
             ++command;
         }
     }
-}
-std::optional<ImGuiCommandQuad> ImGuiFrameSnapshot::ReplaceTextureWithCallback(
-    ImTextureID from,
-    ImDrawCallback callback,
-    void* userData,
-    ImDrawCallback resetRenderState)
-{
-    std::optional<ImGuiCommandQuad> firstQuad;
-    for (int index = 0; index < m_drawData.CmdListsCount; ++index)
-    {
-        ImDrawList& list = *m_drawData.CmdLists[index];
-        ImVector<ImDrawCmd>& commands = list.CmdBuffer;
-        for (int command = 0; command < commands.Size; ++command)
-        {
-            ImDrawCmd& drawCommand = commands[command];
-            if (drawCommand.UserCallback != nullptr || drawCommand.TexRef._TexID != from)
-            {
-                continue;
-            }
-            if (!firstQuad.has_value())
-            {
-                firstQuad = CommandQuad(list, drawCommand);
-            }
-            drawCommand.UserCallback = callback;
-            drawCommand.UserCallbackData = userData;
-            drawCommand.UserCallbackDataSize = 0;
-            drawCommand.UserCallbackDataOffset = -1;
-            ImDrawCmd reset = drawCommand;
-            reset.UserCallback = resetRenderState;
-            reset.UserCallbackData = nullptr;
-            reset.ElemCount = 0;
-            // Inserting may move the buffer: drawCommand is not used past here.
-            commands.insert(commands.Data + command + 1, reset);
-            ++command;
-        }
-    }
-    return firstQuad;
 }
 
 ImDrawData* ImGuiFrameSnapshot::GetDrawData()
