@@ -1,15 +1,12 @@
 #include "exposure_histogram_pass.h"
 
+#include "nvrhi_pass.h"
 #include "nvrhi_resources.h"
-#include "pipeline.h"
-#include "sampler_settings.h"
 
-#include <engine/core/paths/engine_paths.h>
 #include <engine/renderer/exposure.h>
 
 #include <array>
 #include <cstring>
-#include <filesystem>
 #include <stdexcept>
 
 namespace me
@@ -40,38 +37,26 @@ struct HistogramPushConstants
 };
 }
 
-VulkanExposureHistogramPass::VulkanExposureHistogramPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+VulkanExposureHistogramPass::VulkanExposureHistogramPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    // A throw out of a constructor skips the destructor, so everything created before the failure
-    // would leak with it. DestroyHandles skips null handles, so unwinding whatever got created is
-    // the same call the destructor makes.
-    try
-    {
-        CreateDescriptorSetLayout();
-        CreateSampler(nvrhiDevice);
-        CreatePipeline(pipelineCache);
-        CreateHistogramBuffers(targets.GetTransientCopyCount());
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    nvrhi::BindingLayoutDesc layoutDesc;
+    layoutDesc.visibility = nvrhi::ShaderType::Compute;
+    layoutDesc.registerSpace = 0;
+    layoutDesc.registerSpaceIsDescriptorSet = true;
+    layoutDesc.bindingOffsets = ShaderBindingOffsets();
+    layoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1),
+        nvrhi::BindingLayoutItem::RawBuffer_UAV(2),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(HistogramPushConstants))};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, layoutDesc, "Failed to create the exposure histogram binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "exposure_histogram.comp.spv", {m_setLayout});
+    CreateHistogramBuffers(targets.GetTransientCopyCount());
+    CreateBindingSets(targets);
 }
 
-VulkanExposureHistogramPass::~VulkanExposureHistogramPass()
-{
-    DestroyHandles();
-}
+VulkanExposureHistogramPass::~VulkanExposureHistogramPass() = default;
 
 ScenePassId VulkanExposureHistogramPass::Id() const
 {
@@ -95,68 +80,42 @@ void VulkanExposureHistogramPass::Record(
     const ScenePassFrameContext& frame) const
 {
     // The resolved HDR and depth copies and the histogram buffer are all per frame slot, so one index
-    // picks all three.
+    // picks all three. The two images are read where the native passes leave them, in
+    // SHADER_READ_ONLY_OPTIMAL (the reads above), so NVRHI need not know them.
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
-    const VkBuffer histogram = m_histograms.at(slot).buffer;
+    const HistogramBuffer& histogram = m_histograms.at(slot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    {
+        const NvrhiPassScope scope(commandList, {});
+        // The CPU read this buffer before the frame was submitted, which vkQueueSubmit orders ahead
+        // of the clear, so only the clear-to-atomics and atomics-to-host hazards need barriers. Each
+        // frame leaves it as the atomics did.
+        commandList->beginTrackingBufferState(histogram.handle, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::CopyDest);
+        commandList->clearBufferUInt(histogram.handle, 0);
+        commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
 
-    // The CPU read this buffer before the frame was submitted, which vkQueueSubmit orders ahead of
-    // the clear, so only the clear-to-atomics and atomics-to-host hazards need barriers.
-    vkCmdFillBuffer(commandBuffer, histogram, 0, kHistogramBytes, 0);
+        nvrhi::ComputeState state;
+        state.pipeline = m_pipeline;
+        state.bindings = {m_bindingSets.at(slot)};
+        commandList->setComputeState(state);
+        const HistogramPushConstants constants{
+            frame.outputExtent.width, frame.outputExtent.height, frame.physicalSky ? 1u : 0u, 1.0f / frame.preExposure};
+        commandList->setPushConstants(&constants, sizeof(constants));
+        commandList->dispatch(
+            (frame.outputExtent.width + kWorkgroupSize - 1) / kWorkgroupSize,
+            (frame.outputExtent.height + kWorkgroupSize - 1) / kWorkgroupSize);
+    }
 
-    VkBufferMemoryBarrier clearToCompute{};
-    clearToCompute.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    clearToCompute.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    clearToCompute.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    clearToCompute.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    clearToCompute.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    clearToCompute.buffer = histogram;
-    clearToCompute.offset = 0;
-    clearToCompute.size = kHistogramBytes;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0,
-        0,
-        nullptr,
-        1,
-        &clearToCompute,
-        0,
-        nullptr);
-
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_COMPUTE,
-        m_pipelineLayout,
-        0,
-        1,
-        &m_descriptorSets.at(slot),
-        0,
-        nullptr);
-
-    const HistogramPushConstants constants{
-        frame.outputExtent.width, frame.outputExtent.height, frame.physicalSky ? 1u : 0u, 1.0f / frame.preExposure};
-    vkCmdPushConstants(
-        commandBuffer,
-        m_pipelineLayout,
-        VK_SHADER_STAGE_COMPUTE_BIT,
-        0,
-        sizeof(constants),
-        &constants);
-    vkCmdDispatch(
-        commandBuffer,
-        (frame.outputExtent.width + kWorkgroupSize - 1) / kWorkgroupSize,
-        (frame.outputExtent.height + kWorkgroupSize - 1) / kWorkgroupSize,
-        1);
-
+    // NVRHI has no state for the host's reads: this barrier stays native.
     VkBufferMemoryBarrier computeToHost{};
     computeToHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
     computeToHost.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     computeToHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     computeToHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     computeToHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    computeToHost.buffer = histogram;
+    computeToHost.buffer = histogram.buffer;
     computeToHost.offset = 0;
     computeToHost.size = kHistogramBytes;
     vkCmdPipelineBarrier(
@@ -174,9 +133,9 @@ void VulkanExposureHistogramPass::Record(
 
 void VulkanExposureHistogramPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    // The sets point at the old HDR and depth views. The histogram buffers do not depend on the
+    // The sets name the old HDR and depth images. The histogram buffers do not depend on the
     // targets and keep their last results.
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
 std::optional<glm::vec3> VulkanExposureHistogramPass::GetFrameColor(uint32_t frameSlot) const
@@ -195,74 +154,11 @@ std::span<const uint32_t> VulkanExposureHistogramPass::GetHistogram(uint32_t fra
     return std::span<const uint32_t>(m_histograms.at(frameSlot).mapped, kExposureHistogramBinCount);
 }
 
-void VulkanExposureHistogramPass::CreateDescriptorSetLayout()
-{
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
-    for (uint32_t binding = 0; binding < 2; ++binding)
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-
-    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create exposure histogram descriptor set layout");
-}
-
-void VulkanExposureHistogramPass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
-{
-    // The shader only uses texelFetch, which ignores the sampler's filtering, but a combined image
-    // sampler still needs one. Nearest keeps it valid for depth formats without linear filtering.
-    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create exposure histogram sampler");
-}
-
-void VulkanExposureHistogramPass::CreatePipeline(VkPipelineCache pipelineCache)
-{
-    const VulkanShaderModule computeShader(m_device, EnginePaths::ShaderRoot() / "exposure_histogram.comp.spv");
-
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(HistogramPushConstants);
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_setLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-
-    CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create exposure histogram pipeline layout");
-
-    VkComputePipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    pipelineInfo.stage.module = computeShader.GetHandle();
-    pipelineInfo.stage.pName = "main";
-    pipelineInfo.layout = m_pipelineLayout;
-
-    CheckVulkan(
-        vkCreateComputePipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_pipeline),
-        "Failed to create exposure histogram pipeline");
-}
-
 void VulkanExposureHistogramPass::CreateHistogramBuffers(uint32_t count)
 {
     m_histograms.reserve(count);
     for (uint32_t slot = 0; slot < count; ++slot)
     {
-        // Appended before anything is created so a failure part way through still leaves every
-        // handle created so far reachable by DestroyHandles.
         HistogramBuffer& histogram = m_histograms.emplace_back();
 
         VkBufferCreateInfo bufferInfo{};
@@ -286,107 +182,21 @@ void VulkanExposureHistogramPass::CreateHistogramBuffers(uint32_t count)
     }
 }
 
-void VulkanExposureHistogramPass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanExposureHistogramPass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    // One set per frame slot. The count is fixed (kMaxFramesInFlight), so the pool is sized once
-    // and reset when the target views change.
+    // One set per frame slot.
     const uint32_t copyCount = targets.GetTransientCopyCount();
-
-    if (m_descriptorPool == VK_NULL_HANDLE)
-    {
-        const std::array<VkDescriptorPoolSize, 2> poolSizes = {
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * copyCount},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, copyCount}};
-
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = copyCount;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-
-        CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create exposure histogram descriptor pool");
-    }
-    else
-    {
-        m_descriptorSets.clear();
-        CheckVulkan(vkResetDescriptorPool(m_device, m_descriptorPool, 0), "Failed to reset exposure histogram descriptor pool");
-    }
-
-    const std::vector<VkDescriptorSetLayout> layouts(copyCount, m_setLayout);
-
-    VkDescriptorSetAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = m_descriptorPool;
-    allocateInfo.descriptorSetCount = copyCount;
-    allocateInfo.pSetLayouts = layouts.data();
-
-    m_descriptorSets.assign(copyCount, VK_NULL_HANDLE);
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate exposure histogram descriptor sets");
-
+    m_bindingSets.clear();
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
-        VkDescriptorImageInfo hdrInfo{};
-        hdrInfo.sampler = NativeSampler(m_sampler);
-        hdrInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
-        hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkDescriptorImageInfo depthInfo{};
-        depthInfo.sampler = NativeSampler(m_sampler);
-        depthInfo.imageView = targets.GetSampledView(RenderTargetId::SceneDepth, slot);
-        depthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkDescriptorBufferInfo histogramInfo{};
-        histogramInfo.buffer = m_histograms.at(slot).buffer;
-        histogramInfo.offset = 0;
-        histogramInfo.range = kHistogramBytes;
-
-        std::array<VkWriteDescriptorSet, 3> writes{};
-        for (VkWriteDescriptorSet& write : writes)
-        {
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_descriptorSets[slot];
-            write.descriptorCount = 1;
-        }
-        writes[0].dstBinding = 0;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &hdrInfo;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[1].pImageInfo = &depthInfo;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[2].pBufferInfo = &histogramInfo;
-
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneTaa, slot)),
+            nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+            nvrhi::BindingSetItem::RawBuffer_UAV(2, m_histograms.at(slot).handle, nvrhi::BufferRange(0, kHistogramBytes)),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(HistogramPushConstants))};
+        m_bindingSets.push_back(
+            CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an exposure histogram binding set"));
     }
-}
-
-void VulkanExposureHistogramPass::DestroyHandles()
-{
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    // Destroying the pool frees every set allocated from it.
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    // The buffers and their memory (unmapped as it is freed) go with the handles.
-    m_histograms.clear();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_sampler = nullptr;
 }
 }

@@ -13,7 +13,8 @@ env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug h
      AB_EXE (default AB_BUILD's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
      AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab),
      AB_REUSE_A (an earlier run's AB_OUT: its A captures stand in for this run's, so only B runs; for
-     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES), AB_B_RUNS (default 2: B's runs)
+     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES), AB_B_RUNS (default 2: B's runs),
+     AB_AUTO_EXPOSURE (1: auto exposure and white balance on)
 How many frames a run draws before --wait-for-scene starts counting depends on when the render thread
 finishes loading, one or two either way, and the temporal passes (TAA's jitter and history, DDGI)
 carry that into the capture: two runs of one exe differ now and then. So A runs twice and B
@@ -62,6 +63,9 @@ EXES = {
     "cur": (EXE, SHADERS["slang"]),
 }
 MODE = os.environ.get("AB_MODE", "shaders")
+# AB_AUTO_EXPOSURE=1: auto exposure and white balance meter the exposure histogram, so the captures
+# test it too (the pinned EV keeps it out of them otherwise).
+AUTO_EXPOSURE = "true" if os.environ.get("AB_AUTO_EXPOSURE") == "1" else "false"
 REUSE_A = os.environ.get("AB_REUSE_A")
 A, B = ("base", "cur") if MODE == "exe" else ("glsl", "slang")
 
@@ -140,9 +144,9 @@ def write_state(case, scene, camera, ev, render, path):
         "  fov_degrees: 60",
         f"  exposure_ev100: {ev}",
         "  auto_exposure:",
-        "    enabled: false",
+        f"    enabled: {AUTO_EXPOSURE}",
         "  auto_white_balance:",
-        "    enabled: false",
+        f"    enabled: {AUTO_EXPOSURE}",
         "render_debug:",
     ]
     for key, value in render.items():

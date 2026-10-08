@@ -2992,12 +2992,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
 
     // A rebuilt exposure pass starts with zeroed histograms, which meter as empty, so auto
     // exposure holds its current EV for the kMaxFramesInFlight frames until real ones arrive.
-    auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets);
+    auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(m_nvrhi->Get(), *view.targets);
     view.exposurePass = exposurePass.get();
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
