@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <iterator>
 #include <numbers>
 #include <optional>
 #include <string_view>
@@ -45,20 +46,22 @@ ME_GT7_HUD_SVGS(ME_DECLARE_GT7_HUD_SVG)
 
 namespace
 {
-// The layout is in the pixels of a recording of the game's HUD (a 2000 x 356 strip off the bottom of a
-// frame about 2270 x 1277): x 1135 is the screen's centre, y 356 its bottom edge.
+// The layout is in the pixels of a still of the game's HUD (a 2000 x 356 strip), x 1135 the screen's
+// centre. Measured against a whole 3840 x 2160 frame of the game (the brackets beside the pedal bars
+// and the surface water's), the still was 1.283 times smaller than the screen: the screen is 2992 x
+// 1683 of its pixels, the bottom edge at y 359.
 constexpr float kReferenceCentreX = 1135.0f;
-constexpr float kReferenceBottomY = 356.0f;
-constexpr float kReferenceWidth = 2270.0f;
-constexpr float kReferenceHeight = 1277.0f;
+constexpr float kReferenceBottomY = 359.0f;
+constexpr float kReferenceWidth = 2992.0f;
+constexpr float kReferenceHeight = 1683.0f;
 // Below this scale the strip would be too small to read.
 constexpr float kMinScale = 0.2f;
 
-// The labels as the game shows them in Chinese, in UTF-8 as escapes (the compiler reads the sources in
-// the system's code page): km/h, automatic gearbox, manual gearbox.
-constexpr const char* kKilometresPerHour = "\xE5\x85\xAC\xE9\x87\x8C/\xE5\xB0\x8F\xE6\x97\xB6";
-constexpr const char* kAutomatic = "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8C\xA1";
-constexpr const char* kManual = "\xE6\x89\x8B\xE5\x8A\xA8\xE6\x8C\xA1";
+// The labels as the game's English HUD shows them: the speed's unit, and the gearbox, automatic or
+// manual.
+constexpr const char* kKilometresPerHour = "km/h";
+constexpr const char* kAutomatic = "AT";
+constexpr const char* kManual = "MT";
 
 // Colours, opaque wherever shapes overlap (glyphs, icons), so nothing shows through twice.
 constexpr ImU32 kWhite = IM_COL32(242, 242, 242, 255);
@@ -382,24 +385,22 @@ void DrawRevPanel(Painter& p, const Assets& assets, const Gt7HudInput& input)
     };
     p.DrawList().AddConvexPolyFilled(panel, 6, kPanel);
 
-    // The rev strip: a comb of ticks whose tops arc up to the middle, lit red from the left over the
-    // upper half of the revs and blinking at the limiter.
+    // The rev strip: a comb of ticks whose tops arc up to the middle; the shift light (Gt7ShiftLight)
+    // fills it from the left.
     constexpr int kTicks = 101;
     constexpr float kLeft = 829.0f;
     constexpr float kRight = 1440.0f;
     constexpr float kBase = 197.0f;
     constexpr float kCrest = 160.0f;
     constexpr float kArcRadius = 2661.0f;
-    const float maxRpm = std::max(input.maxRpm, 1000.0f);
-    const float lit = Clamp01((input.rpm - 0.5f * maxRpm) / (0.5f * maxRpm));
-    const bool blinkOff = input.rpm >= 0.97f * maxRpm && std::fmod(input.time * 10.0, 1.0) >= 0.5;
-    const int litTicks = blinkOff ? 0 : static_cast<int>(std::ceil(lit * static_cast<float>(kTicks) - 1e-3f));
+    const Gt7ShiftLight light = ComputeGt7ShiftLight(input.rpm, input.shiftRpm);
+    const int litTicks = static_cast<int>(std::ceil(light.fill * static_cast<float>(kTicks) - 1e-3f));
     for (int tick = 0; tick < kTicks; ++tick)
     {
         const float x = kLeft + (kRight - kLeft) * static_cast<float>(tick) / static_cast<float>(kTicks - 1);
         const float dx = x - kReferenceCentreX;
         const float top = kCrest + kArcRadius - std::sqrt(kArcRadius * kArcRadius - dx * dx);
-        p.Line(x, top, x, kBase, tick < litTicks ? kRed : kTickOff, 2.2f);
+        p.Line(x, top, x, kBase, tick < litTicks ? light.colour : kTickOff, 2.2f);
     }
     // The steering: a red dot beside the grey centre mark.
     p.Disc(kReferenceCentreX, 141.0f, 4.2f, IM_COL32(205, 205, 205, 255));
@@ -560,5 +561,47 @@ bool DrawGt7Hud(ImDrawList& drawList, ImVec2 origin, ImVec2 size, const Gt7HudIn
     }
     drawList.PopClipRect();
     return true;
+}
+
+Gt7ShiftLight ComputeGt7ShiftLight(float rpm, float shiftRpm)
+{
+    // The colours along the fill and when full, from the game's 4K recording (its HUD washed out by the
+    // capture, saturated here to match the steering dot's red).
+    struct Stop
+    {
+        float fill;
+        float r, g, b;
+    };
+    constexpr Stop kStops[] = {
+        {0.0f, 255.0f, 70.0f, 25.0f},
+        {0.5f, 250.0f, 60.0f, 40.0f},
+        {0.65f, 220.0f, 75.0f, 100.0f},
+        {0.8f, 180.0f, 100.0f, 155.0f},
+        {1.0f, 170.0f, 125.0f, 185.0f},
+    };
+    constexpr ImU32 kFull = IM_COL32(120, 190, 195, 255);
+    constexpr float kStart = 0.85f;
+
+    Gt7ShiftLight light;
+    const float shift = std::max(shiftRpm, 1000.0f);
+    if (rpm >= shift)
+    {
+        light.fill = 1.0f;
+        light.colour = kFull;
+        return light;
+    }
+    light.fill = Clamp01((rpm - kStart * shift) / ((1.0f - kStart) * shift));
+    const Stop* upper = std::find_if(std::begin(kStops), std::end(kStops), [&](const Stop& stop)
+                                     {
+                                         return stop.fill >= light.fill;
+                                     });
+    const Stop* lower = upper == std::begin(kStops) ? upper : upper - 1;
+    const float t = upper->fill > lower->fill ? (light.fill - lower->fill) / (upper->fill - lower->fill) : 0.0f;
+    const auto mix = [&](float a, float b)
+    {
+        return static_cast<int>(std::lround(a + (b - a) * t));
+    };
+    light.colour = IM_COL32(mix(lower->r, upper->r), mix(lower->g, upper->g), mix(lower->b, upper->b), 255);
+    return light;
 }
 }

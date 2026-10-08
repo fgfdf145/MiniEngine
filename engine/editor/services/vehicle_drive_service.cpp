@@ -402,6 +402,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
 
     session->engineMinRpm = settings.minRpm;
     session->engineMaxRpm = settings.maxRpm;
+    session->shiftUpRpm = ComputeVehicleShiftPoints(settings).upFull;
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
     session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
     session->frontPeakSlipDegrees = settings.frontTyres.peakSlipAngleDegrees > 0.0f ? settings.frontTyres.peakSlipAngleDegrees : 7.0f;
@@ -935,6 +936,7 @@ VehicleDriveStatus GetStatus(const RendererSharedState& state)
         status.controls = session->controls;
         status.manualGearbox = state.vehicleDrive.manualGearbox;
         status.engineMaxRpm = session->engineMaxRpm;
+        status.shiftUpRpm = session->shiftUpRpm;
         status.absFitted = session->absFitted;
         status.tractionControlFitted = session->tractionControlFitted;
         status.absOn = session->absOn;

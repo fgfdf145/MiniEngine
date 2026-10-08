@@ -12,8 +12,8 @@ struct Gt7HudInput
 {
     float speedKmh = 0.0f;
     float rpm = 0.0f;
-    // The rev limit: the rev strip lights over the upper half of the range up to it.
-    float maxRpm = 7000.0f;
+    // Where to change up: the rev strip's shift light is full there (ComputeGt7ShiftLight).
+    float shiftRpm = 6500.0f;
     int gear = 0; // negative reverse, 0 neutral
     bool manualGearbox = false;
     // The pedals as the car takes them (0 to 1) and the steering (-1 full left to 1 full right).
@@ -36,9 +36,17 @@ struct Gt7HudInput
     // The tyres' compound initials ("SS", "SM"), front and rear; empty draws none.
     std::string frontTyre;
     std::string rearTyre;
-    // Seconds, for what blinks.
-    double time = 0.0;
 };
+
+// The shift light along the top of the rev strip, as the game's: from 85 % of the revs to change up at
+// it fills from the left, orange turning red, rose and lilac as it grows, and at the revs to change up
+// at it is full and teal. It follows the revs as they are, so after a change up it falls as they do.
+struct Gt7ShiftLight
+{
+    float fill = 0.0f; // 0 to 1
+    ImU32 colour = 0;
+};
+Gt7ShiftLight ComputeGt7ShiftLight(float rpm, float shiftRpm);
 
 // Draws Gran Turismo 7's driving HUD along the bottom of the rectangle: the surface water bracket,
 // the tyres round the car, the fuel gauge and odometer, the ABS / hand brake / driving aid lamps,

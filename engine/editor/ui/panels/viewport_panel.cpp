@@ -164,14 +164,14 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
 
 // The driven car as the driving HUD shows it. The pedals are what the car takes: pulling the throttle
 // back brakes, except in the automatic's reverse, where it drives and pushing it brakes.
-Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
+Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle)
 {
     const VehicleTelemetry& telemetry = vehicle.telemetry;
     const VehicleControls& controls = vehicle.controls;
     Gt7HudInput input;
     input.speedKmh = std::abs(telemetry.forwardSpeed) * 3.6f;
     input.rpm = telemetry.engineRpm;
-    input.maxRpm = vehicle.engineMaxRpm;
+    input.shiftRpm = vehicle.shiftUpRpm;
     input.gear = telemetry.gear;
     input.manualGearbox = vehicle.manualGearbox;
     const bool reversing = telemetry.gear < 0 && !vehicle.manualGearbox;
@@ -190,7 +190,6 @@ Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
     input.odometerKm = vehicle.odometerMetres / 1000.0;
     input.frontTyre = vehicle.frontTyre;
     input.rearTyre = vehicle.rearTyre;
-    input.time = time;
     return input;
 }
 
@@ -1369,7 +1368,7 @@ void ViewportPanel::OnGui(EditorContext& context)
     const bool drivingHud = viewportUi && state.vehicleStatus.active && state.commands.drivingHud;
     if (drivingHud && viewportRect.drawList != nullptr)
     {
-        DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus, ImGui::GetTime()));
+        DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus));
     }
     // Centred on the car while one is driven, else on the camera.
     const bool minimap = viewportUi && state.commands.minimap;

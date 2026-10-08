@@ -125,12 +125,13 @@ struct VehicleDriveStatus
     // less when the build or the car is too slow and the drive runs in slow motion).
     float realTimeShare = 1.0f;
     // For the driving HUD: the controls the car took this frame (after the steering assist), the
-    // gearbox, the rev limit, which assists the car has and which of those are switched on, whether it
+    // gearbox, the rev limit and the revs the automatic changes up at on full throttle, which assists the car has and which of those are switched on, whether it
     // has turbos, the tyres' compound initials (front, rear; empty without the car's data) and how far
     // it has driven since the start.
     VehicleControls controls;
     bool manualGearbox = false;
     float engineMaxRpm = 7000.0f;
+    float shiftUpRpm = 6500.0f;
     bool absFitted = false;
     bool tractionControlFitted = false;
     bool absOn = false;
@@ -232,6 +233,8 @@ struct VehicleDriveSession
     // The engine's idle and rev limit, which the gamepad's rumble places the revs between.
     float engineMinRpm = 1000.0f;
     float engineMaxRpm = 7000.0f;
+    // Where the automatic changes up on full throttle (VehicleShiftPoints::upFull): the HUD's shift light.
+    float shiftUpRpm = 6500.0f;
     VehicleHapticsState haptics;
     // A DualSense on USB: its actuators play the engine, the road and the tyres (GamepadHaptics). Opened
     // once per connection of the pad, as finding its device takes a moment and over Bluetooth there is none.
