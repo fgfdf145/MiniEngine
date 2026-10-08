@@ -250,6 +250,83 @@ binding set。之后才是阶段 3 的逐 pass 迁移。
 验证：A/B 9 个场景逐像素相同，validation 无报告；ctest 与之前相同。Cornell DDGI 在整批 A/B 里有一次落在另一个
 稳定取值上（预热少一帧，见 B2a 那条），同一个 exe 单独重跑三次都和基线逐像素相同。
 
+**B3b 完成（2026-10-09，本机）**：光追纹理表（光线查询着色器的 set 3）拆成采样器表加纹理数组。binding 0 是
+`SamplerState raySamplers[108]`：`VulkanSamplerCache` 能造的全部材质采样器（wrapS、wrapT、mag、min、mip 五个
+枚举的组合 3·3·2·2·3 = 108 个，`VulkanSamplerCache::SamplerAt` 编号，默认采样器是 0），每个纹理表分配时写一次；
+binding 1 是 `Texture2D rayTextures[]`（可变数量必须是最后一个 binding，所以纹理从 0 挪到 1），标志照旧
+（partially bound、variable count、update unused while pending）。每个槽 5 张纹理各用哪个采样器，记在这个槽的
+光追材质里：`RayMaterial` 加 `uint4 samplers`（x 低到高四个字节是基色、金属度、粗糙度、自发光，y 是法线），
+由平均材质的 dispatch 从 push constant 原样写进去，所以 `RayMaterial` 从 32 字节变 48 字节
+（`kRayMaterialBytes`，CPU 参考路径追踪器的回读跟着改）。`ray_hit_common` 的 `RayTextureSampleLevel` 统一采样，
+命中着色、带纹理的覆盖测试、发光三角形表都用它。
+
+纹理表仍是原生的：NVRHI 的 bindless 布局（`createBindlessLayout`）既没有可变数量，也没有
+update-unused-while-pending，而流式地图靠后者在帧还在飞的时候往空槽里写新纹理。要换成 NVRHI 得给它打补丁，
+留到阶段 3 迁光追 pass 时再定。
+
+验证：71 个 SPIR-V `spirv-val` 通过；A/B 见下面“Windows 上的验证”。
+
+### Windows + NVIDIA 上的验证（2026-10-09，本机）
+
+云端会话在 lavapipe 上验过的 A1 到 B3c（`fb64ee6`）拿到本机，Debug，`AB_MODE=exe` 对比 `8b6cb8b`（A1 的前半）
+跑了 `ab.py` 的全部 40 个场景（1280x720，90 帧，R34 道路、材质球、发光测试、卡通、DLSS、DLSS RR、路径追踪、
+ReSTIR PT、软件光线、DDGI、各个 G-buffer 调试视图和 10 个 fixture）：
+
+- 11 个场景 A、B 逐像素相同（10 个 fixture 里的 8 个，调试视图 5、15、18），另两个 fixture 和噪声底完全一样；
+- 其余道路场景都在噪声底内，只有 5 个第一次高于噪声底：`materials_rt`、调试视图 1、2、13、14。每个 B 跑三次
+  重测，`materials_rt`、视图 1、13 落回噪声底内；视图 2（法线）只差在轮廓边缘，三次 B 之间也互不相同——是
+  TAA 抖动相位（预热帧数）不同，不是改动造成的（两次 A 恰好帧数相同）。日志里 `materials_rt` 的 A 两次画了 101
+  帧、B 画了 104 帧。
+- ctest 121/121 通过（两个长的车辆物理测试另算），Linux 上那三个已知失败在 Windows 上没有。
+
+### 阶段 3：NVRHI 和原生录制混用（2026-10-09）
+
+逐个 pass 迁的过渡期里，同一个命令缓冲里一段是原生的、一段是 NVRHI 的。做法：
+
+- 帧的命令列表**关掉自动 barrier**（`VulkanCommandContext` 每帧 `open` 后 `setEnableAutomaticBarriers(false)`）：
+  原生代码改了图像布局 NVRHI 看不见，自动 barrier 会按错的状态插。NVRHI pass 自己在每个 dispatch 前
+  `setTextureState` / `setBufferState` 再 `commitBarriers`。
+- `NvrhiPassScope`（`nvrhi_pass.h`）包住一个 NVRHI pass：开始时 `clearState()`（原生命令已经重新绑过管线，NVRHI
+  缓存的绑定状态作废），对和原生 pass 共用的图像 `beginTrackingTextureState(原生代码给它的状态)`；结束时把它们
+  `setTextureState` 回同一状态（同为 UnorderedAccess 时 NVRHI 插一个 UAV barrier，写对后面的原生 pass 可见）、
+  `commitBarriers`、再 `clearState`。只在原生的读布局里读、不改状态的图像（`SHADER_READ_ONLY_OPTIMAL` 的
+  场景目标）不用告诉 NVRHI。
+- pass 自己的图像交给 NVRHI 跟踪：`keepInitialState` + `initialState`（例如 bloom 链、DLSS 的输入都停在
+  ShaderResource），每帧开头的“丢弃内容”barrier 就没了。
+- 每个绑定布局用 `registerSpace` 写出自己是第几个 set，并设 `registerSpaceIsDescriptorSet`（帧集 0、G-buffer 集 2
+  也改了）：NVRHI 的 validation 只靠 register space 区分两个布局的 binding，Vulkan 上非零 register space 又必须
+  带这个标志，而且同一管线里所有布局要一致。`ShaderBindingOffsets()` 代替三处手写的全零偏移。
+- 着色器里只 `Load` 的输入改成不带采样器的 `Texture2D`；采样的照拆采样器的规矩放在 b + 64。
+- 绑定光追场景集（含原生的加速结构）的 pass 要等加速结构迁到 `nvrhi::rt` 以后才能用 NVRHI 管线：NVRHI 管线的
+  每个 set 都得是 NVRHI 布局。所以先迁不碰光追集的 pass。
+- NVRHI 没有 blit（透射拷贝用 `vkCmdBlitImage` 生成 mip）、也没有“主机读”状态（曝光直方图的设备到主机
+  barrier 仍是原生的）。
+
+已迁：bloom（链是 NVRHI 纹理，每对层级一个 binding set）；曝光直方图（NVRHI 清零缓冲，主机 barrier 原生）；
+TAA 解析、DLSS 运动矢量、光线重建引导图（NGX 的 evaluate 和之后拷进历史的那一步仍是原生，阶段 4 再说；
+运动矢量和引导图是 NVRHI 纹理，NGX 拿 `getNativeObject(VK_Image)` / `getNativeView` 的原生句柄）。
+环境探针（捕获和预滤波走 NVRHI；mip 链的 blit 仍原生，夹在 NVRHI 设的 copy 状态之间；`NvrhiSharedTexture` 加了
+`exitState`，新建的立方体从 UNDEFINED 出来）、GI 的 trace 和 resolve（输入都只 Load，不带采样器）。这两步只跑了
+ctest（121/121），A/B 还没跑——下次先对比 TAA 那个提交再继续。
+
+A/B 的预热帧数：同一个 exe 两次运行，`--wait-for-scene` 开始数帧前画的帧数会差一两帧（渲染线程装好场景的
+时机不定），TAA 的抖动相位和历史把它带进截图，所以“A 对 A”有时就不同（B2a 那条说的 DDGI 也是这个）。
+`ab.py` 现在 B 跑两次（`AB_B_RUNS`），只要有一对 A、B 截图逐像素相同就报 `same`——这能证明改动不改画面；
+没有相同的一对时再拿最接近的一对和噪声底比。`AB_AUTO_EXPOSURE=1` 打开自动曝光和白平衡，让截图也检验曝光
+直方图；`AB_BUILD` / `AB_BASELINE_BUILD` 指定 B、A 的构建目录（同一个 worktree 里留几份构建对比相邻提交）。
+
+根治：`--wait-for-scene` 开始数帧的那一帧，应用把 `RendererSharedState::temporalRestart` 加一，随帧包带到渲染
+线程，`VulkanRenderer::RestartTemporalEffects` 让每个视图的时间性效果从头开始：所有历史
+（`ResetHistories`）、TAA 抖动序号、AO 噪声序号、云的重建历史和 2x2 步进、路径追踪的累积、DLSS 的历史。
+于是截图只取决于开始数帧以后的帧，和加载用了几帧无关。自动曝光和 DDGI 的探针不重置（脚本截图一直靠加载
+期间收敛的曝光；DDGI 场景照旧看噪声底）。
+
+整体验证（有了下面的“根治”之后）：B3b + bloom + 直方图 + TAA 一起对比 `fb64ee6` 加时间性重启的基线，40 个场景里
+道路、材质球、路径追踪、ReSTIR、软件光线、fixture 绝大多数逐像素相同；DDGI 场景（不重置）和 DLSS（NGX 本身两次
+运行就不同）看噪声底；`road_dlss` 与 `fixture_cornell_ddgi` 第一次不同，待多跑几次复核。
+之前单步验证：bloom、直方图、TAA 各自对比前一个提交：fixture 场景（TAA 开）`same`，打开自动曝光的两个 fixture
+`same`；道路的光栅、DLSS、DLSS RR 在噪声底内；`MINIENGINE_NVRHI_VALIDATION=1` 无报告。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的
